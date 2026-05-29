@@ -83,7 +83,8 @@ func buildPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
 		prev := poolConfig.PrepareConn
 		poolConfig.PrepareConn = func(ctx context.Context, c *pgx.Conn) (bool, error) {
 			if err := c.Ping(ctx); err != nil {
-				return false, nil
+				// Discard ping error: false,nil tells the pool to drop this conn and retry the query.
+				return false, nil //nolint:nilerr
 			}
 			if prev != nil {
 				return prev(ctx, c)
