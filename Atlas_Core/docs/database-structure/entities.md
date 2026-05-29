@@ -42,7 +42,7 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
     ],
     "mil_view": {
       "classification": "friendly",
-      "last_seen": "2025-11-23T10:05:00Z"
+      "last_seen": "2026-05-29T10:05:00Z"
     },
     "health": {
       "battery_percent": 76
@@ -66,17 +66,17 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
     },
     "status": {
       "value": "active",
-      "last_update": "2025-11-23T10:05:00Z"
+      "last_update": "2026-05-29T10:05:00Z"
     },
     "heartbeat": {
-      "last_seen": "2025-11-23T10:05:00Z"
+      "last_seen": "2026-05-29T10:05:00Z"
     },
     "custom_weather": {
       "wind_speed": 12,
       "gusts": 18
     }
   },
-  "published_at": "2025-11-23T10:00:00Z"
+  "published_at": "2026-05-29T10:00:00Z"
 }
 ```
 

@@ -189,6 +189,27 @@ func TestMediaObjectGetSizeBytes(t *testing.T) {
 	}
 }
 
+func TestMediaObjectRejectsTrailingGarbage(t *testing.T) {
+	// A valid JSON object followed by trailing bytes must be treated as corrupt,
+	// not silently accepted (the streaming decoder would otherwise ignore the tail).
+	obj := &models.MediaObject{
+		ObjectID: "test-obj",
+		JSON:     json.RawMessage(`{"size_bytes":1024}{"injected":true}`),
+	}
+	if got := obj.GetSizeBytes(); got != nil {
+		t.Fatalf("expected nil size for JSON with trailing garbage, got %d", *got)
+	}
+
+	// A well-formed payload (optionally with surrounding whitespace) still parses.
+	ok := &models.MediaObject{
+		ObjectID: "test-obj",
+		JSON:     json.RawMessage(`  {"size_bytes":1024}  `),
+	}
+	if got := ok.GetSizeBytes(); got == nil || *got != 1024 {
+		t.Fatalf("expected size 1024 for valid JSON, got %v", got)
+	}
+}
+
 func TestMediaObjectGetSizeBytesRejectsNegative(t *testing.T) {
 	jsonData := map[string]interface{}{
 		"size_bytes": float64(-1),

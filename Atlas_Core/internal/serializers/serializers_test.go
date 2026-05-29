@@ -464,3 +464,70 @@ func TestSerializeEntities(t *testing.T) {
 		t.Errorf("Expected second entity ID e2, got %s", result[1].EntityID)
 	}
 }
+
+func TestSerializeTasks(t *testing.T) {
+	now := time.Now().UTC()
+	tasks := []*models.Task{
+		{TaskID: "t1", Status: "pending", CreatedAt: now, UpdatedAt: now},
+		{TaskID: "t2", Status: "completed", CreatedAt: now, UpdatedAt: now},
+	}
+
+	result := serializers.SerializeTasks(tasks)
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(result))
+	}
+	if result[0].TaskID != "t1" || result[1].TaskID != "t2" {
+		t.Errorf("Expected task IDs t1,t2, got %s,%s", result[0].TaskID, result[1].TaskID)
+	}
+
+	// Empty input yields a non-nil, zero-length slice (JSON-encodes as []).
+	empty := serializers.SerializeTasks(nil)
+	if empty == nil || len(empty) != 0 {
+		t.Errorf("Expected empty non-nil slice for nil input, got %#v", empty)
+	}
+}
+
+func TestSerializeObjects(t *testing.T) {
+	now := time.Now().UTC()
+	objects := []*models.MediaObject{
+		{ObjectID: "o1", CreatedAt: now, UpdatedAt: now},
+		{ObjectID: "o2", CreatedAt: now, UpdatedAt: now},
+	}
+
+	result := serializers.SerializeObjects(objects)
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(result))
+	}
+	if result[0].ObjectID != "o1" || result[1].ObjectID != "o2" {
+		t.Errorf("Expected object IDs o1,o2, got %s,%s", result[0].ObjectID, result[1].ObjectID)
+	}
+
+	empty := serializers.SerializeObjects(nil)
+	if empty == nil || len(empty) != 0 {
+		t.Errorf("Expected empty non-nil slice for nil input, got %#v", empty)
+	}
+}
+
+func TestSerializeObjectsForList(t *testing.T) {
+	now := time.Now().UTC()
+	objects := []*models.MediaObject{
+		{ObjectID: "o1", CreatedAt: now, UpdatedAt: now},
+		{ObjectID: "o2", CreatedAt: now, UpdatedAt: now},
+	}
+
+	result := serializers.SerializeObjectsForList(objects)
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(result))
+	}
+	if result[0].ObjectID != "o1" || result[1].ObjectID != "o2" {
+		t.Errorf("Expected object IDs o1,o2, got %s,%s", result[0].ObjectID, result[1].ObjectID)
+	}
+
+	empty := serializers.SerializeObjectsForList(nil)
+	if empty == nil || len(empty) != 0 {
+		t.Errorf("Expected empty non-nil slice for nil input, got %#v", empty)
+	}
+}

@@ -23,7 +23,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setPaginationHeaders(w, total, actions.ClampListLimit(limit), offset, len(tasks))
+	setPaginationHeaders(w, total, limit, offset, len(tasks))
 	writeJSON(w, http.StatusOK, tasks)
 }
 
@@ -146,7 +146,7 @@ func (h *Handler) GetTasksByEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setPaginationHeaders(w, total, actions.ClampListLimit(limit), offset, len(tasks))
+	setPaginationHeaders(w, total, limit, offset, len(tasks))
 	writeJSON(w, http.StatusOK, tasks)
 }
 

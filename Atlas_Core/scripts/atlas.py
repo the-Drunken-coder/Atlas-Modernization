@@ -411,11 +411,18 @@ def verify_tunnel_connection(
                     return True, "Connected and healthy"
         except urllib.error.HTTPError as e:
             logger.debug("Tunnel verification HTTP error: %s", e)
-            return False, f"HTTP {e.code}"
+            # A warming tunnel commonly returns 5xx (e.g. Cloudflare 502/503/504)
+            # before the origin is reachable, so keep retrying on server errors.
+            if e.code >= 500:
+                pass  # Tunnel still warming up, retry
+            else:
+                return False, f"HTTP {e.code}"
         except urllib.error.URLError:
             pass  # Network error, retry
         except json.JSONDecodeError:
-            return False, "Non-JSON response"
+            # A warming tunnel may serve a non-JSON HTML error page; keep retrying.
+            logger.debug("Tunnel verification got non-JSON response, retrying")
+            pass
         except Exception as exc:
             logger.debug("Tunnel verification attempt failed: %s", exc)  # Other error, retry
 

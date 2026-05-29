@@ -11,9 +11,32 @@ import (
 )
 
 const (
-	entitySelectSQL = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at FROM entities`
-	taskSelectSQL   = `SELECT task_id, status, entity_id, json, created_at, updated_at FROM tasks`
-	objectSelectSQL = `SELECT object_id, path, content_type, type, json, created_at, updated_at FROM objects`
+	entitySelectSQL    = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at FROM entities`
+	taskSelectSQL      = `SELECT task_id, status, entity_id, json, created_at, updated_at FROM tasks`
+	objectSelectSQL    = `SELECT object_id, path, content_type, type, json, created_at, updated_at FROM objects`
+	deletionsSelectSQL = `SELECT resource_id, deleted_at FROM deletions`
+)
+
+// Allowlists for the identifiers interpolated into cursor-paged SQL. Every value
+// is supplied by code (never by request input), but validating against a fixed
+// set keeps the dynamic SQL safe even if a future caller is added carelessly.
+var (
+	allowedSelectFrom = map[string]struct{}{
+		entitySelectSQL:    {},
+		taskSelectSQL:      {},
+		objectSelectSQL:    {},
+		deletionsSelectSQL: {},
+	}
+	allowedColumns = map[string]struct{}{
+		"entity_id":     {},
+		"task_id":       {},
+		"object_id":     {},
+		"resource_id":   {},
+		"created_at":    {},
+		"updated_at":    {},
+		"deleted_at":    {},
+		"resource_type": {},
+	}
 )
 
 type cursorPageOpts struct {
@@ -36,6 +59,21 @@ type cursorPageEqFilter struct {
 func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (pgx.Rows, error) {
 	if opts.continuation && opts.cursor == nil {
 		return nil, nil
+	}
+
+	if _, ok := allowedSelectFrom[opts.selectFrom]; !ok {
+		return nil, fmt.Errorf("disallowed select clause in cursor pagination: %q", opts.selectFrom)
+	}
+	if _, ok := allowedColumns[opts.idColumn]; !ok {
+		return nil, fmt.Errorf("disallowed id column in cursor pagination: %q", opts.idColumn)
+	}
+	if _, ok := allowedColumns[opts.timeColumn]; !ok {
+		return nil, fmt.Errorf("disallowed time column in cursor pagination: %q", opts.timeColumn)
+	}
+	if opts.eqFilter != nil {
+		if _, ok := allowedColumns[opts.eqFilter.column]; !ok {
+			return nil, fmt.Errorf("disallowed filter column in cursor pagination: %q", opts.eqFilter.column)
+		}
 	}
 
 	var clauses []string
@@ -263,7 +301,7 @@ func queryDeletionsByType(
 	limit int,
 ) ([]DeletedResource, bool, error) {
 	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
-		selectFrom:         `SELECT resource_id, deleted_at FROM deletions`,
+		selectFrom:         deletionsSelectSQL,
 		idColumn:           "resource_id",
 		timeColumn:         "deleted_at",
 		since:              since,

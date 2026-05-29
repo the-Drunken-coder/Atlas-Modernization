@@ -396,3 +396,94 @@ func TestTask_GetProgress(t *testing.T) {
 		})
 	}
 }
+
+func TestTask_GetProgress_Precedence(t *testing.T) {
+	tests := []struct {
+		name          string
+		json          string
+		wantNil       bool
+		checkProgress float64
+	}{
+		{
+			name:          "components.progress.percent wins over legacy extra.progress",
+			json:          `{"components":{"progress":{"percent":42}},"extra":{"progress":7}}`,
+			checkProgress: 42,
+		},
+		{
+			name:          "falls back to legacy extra.progress when percent is null",
+			json:          `{"components":{"progress":{"percent":null}},"extra":{"progress":7}}`,
+			checkProgress: 7,
+		},
+		{
+			name:          "canonical components.progress.percent alone",
+			json:          `{"components":{"progress":{"percent":55.5}}}`,
+			checkProgress: 55.5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := taskWithJSON(tt.json).GetProgress()
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("GetProgress() = %v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("GetProgress() = nil, want non-nil")
+			}
+			if *got != tt.checkProgress {
+				t.Errorf("GetProgress() = %v, want %v", *got, tt.checkProgress)
+			}
+		})
+	}
+}
+
+func TestEntity_GetTelemetry_SpeedAliases(t *testing.T) {
+	tests := []struct {
+		name      string
+		json      string
+		wantSpeed *float64
+	}{
+		{
+			name:      "canonical speed_m_s",
+			json:      `{"components":{"telemetry":{"speed_m_s":9}}}`,
+			wantSpeed: ptrFloat(9),
+		},
+		{
+			name:      "legacy speed_ms alias is accepted",
+			json:      `{"components":{"telemetry":{"speed_ms":12.5}}}`,
+			wantSpeed: ptrFloat(12.5),
+		},
+		{
+			name:      "canonical takes precedence over legacy alias",
+			json:      `{"components":{"telemetry":{"speed_m_s":9,"speed_ms":12.5}}}`,
+			wantSpeed: ptrFloat(9),
+		},
+		{
+			name:      "no speed field",
+			json:      `{"components":{"telemetry":{"latitude":1.0}}}`,
+			wantSpeed: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := entityWithJSON(tt.json).GetTelemetry()
+			if got == nil {
+				t.Fatal("GetTelemetry() = nil, want non-nil")
+			}
+			switch {
+			case tt.wantSpeed == nil && got.SpeedMS != nil:
+				t.Errorf("SpeedMS = %v, want nil", *got.SpeedMS)
+			case tt.wantSpeed != nil && got.SpeedMS == nil:
+				t.Errorf("SpeedMS = nil, want %v", *tt.wantSpeed)
+			case tt.wantSpeed != nil && got.SpeedMS != nil && *got.SpeedMS != *tt.wantSpeed:
+				t.Errorf("SpeedMS = %v, want %v", *got.SpeedMS, *tt.wantSpeed)
+			}
+		})
+	}
+}
+
+func ptrFloat(f float64) *float64 { return &f }

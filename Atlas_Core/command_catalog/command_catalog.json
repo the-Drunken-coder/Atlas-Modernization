@@ -30,16 +30,20 @@
     {
       "id": "move_to_location",
       "name": "Move to Location",
-      "description": "Command an asset to move to a specific geographic location specified by latitude, longitude, and altitude.",
+      "description": "Move any 3D-capable asset (e.g. a drone) to a specific geographic location given by latitude, longitude, and altitude. For ground rovers that navigate in 2D, use 'goto' instead.",
       "parameters_schema": {
         "latitude": {
           "type": "number",
           "description": "Target latitude in decimal degrees (WGS84).",
+          "minimum": -90,
+          "maximum": 90,
           "required": true
         },
         "longitude": {
           "type": "number",
           "description": "Target longitude in decimal degrees (WGS84).",
+          "minimum": -180,
+          "maximum": 180,
           "required": true
         },
         "altitude": {
@@ -193,16 +197,20 @@
     {
       "id": "goto",
       "name": "Goto",
-      "description": "Command the rover asset to navigate toward a target GPS coordinate.",
+      "description": "Navigate a ground rover in 2D toward a target GPS coordinate (no altitude; stops within arrival_radius). For 3D assets that fly to a precise altitude, use 'move_to_location' instead.",
       "parameters_schema": {
         "lat": {
           "type": "number",
           "description": "Target latitude in decimal degrees (WGS84).",
+          "minimum": -90,
+          "maximum": 90,
           "required": true
         },
         "lon": {
           "type": "number",
           "description": "Target longitude in decimal degrees (WGS84).",
+          "minimum": -180,
+          "maximum": 180,
           "required": true
         },
         "arrival_radius": {

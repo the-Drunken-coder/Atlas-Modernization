@@ -2,8 +2,10 @@
 package middleware
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -78,6 +80,23 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 
 func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
+}
+
+// Flush forwards to the underlying writer so streaming handlers keep working
+// through the wrapper (also reachable via http.ResponseController + Unwrap).
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack forwards to the underlying writer so handlers that need the raw
+// connection (e.g. websockets) continue to function through the wrapper.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
 
 // APIKeyAuth returns middleware that validates API key authentication.

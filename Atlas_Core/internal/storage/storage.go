@@ -70,10 +70,14 @@ type Client struct {
 	bucket        string
 	endpoint      string
 	secure        bool
+	region        string
 }
 
 // NewClient creates a new storage client.
 func NewClient(cfg *config.Config) (*Client, error) {
+	if cfg == nil {
+		return nil, &StorageError{Message: "storage config is nil"}
+	}
 	if cfg.MinIOSecretKey == "" {
 		return nil, &StorageError{Message: "MinIO secret key not configured (set MINIO_SECRET_KEY or MINIO_SECRET_KEY_FILE)"}
 	}
@@ -122,6 +126,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 		bucket:        cfg.MinioBucket,
 		endpoint:      cfg.MinIOEndpoint,
 		secure:        cfg.MinIOSecure,
+		region:        cfg.MinIORegion,
 	}, nil
 }
 
@@ -157,7 +162,7 @@ func (c *Client) EnsureBucket(ctx context.Context) error {
 		return &StorageError{Message: "failed to check bucket existence", Err: err}
 	}
 	if !exists {
-		if err := c.client.MakeBucket(ctx, c.bucket, minio.MakeBucketOptions{}); err != nil {
+		if err := c.client.MakeBucket(ctx, c.bucket, minio.MakeBucketOptions{Region: c.region}); err != nil {
 			code := minio.ToErrorResponse(err).Code
 			if code == "BucketAlreadyOwnedByYou" || code == "BucketAlreadyExists" {
 				return nil

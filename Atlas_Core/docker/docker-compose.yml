@@ -7,7 +7,7 @@ services:
       target: development
     container_name: atlas_core_api
     environment:
-      DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:-atlas}@postgres:5432/atlas_core
+      DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/atlas_core
       MINIO_ENDPOINT: minio:9000
       MINIO_EXTERNAL_ENDPOINT: localhost:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-atlas}
@@ -44,15 +44,16 @@ services:
     environment:
       POSTGRES_DB: atlas_core
       POSTGRES_USER: atlas
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_INITDB_ARGS: "--auth-local=md5 --auth-host=md5"
+    # Bind to loopback only so Postgres is not exposed on all interfaces by default.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD:-atlas} pg_isready -U atlas -d atlas_core"]
+      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set} pg_isready -U atlas -d atlas_core"]
       interval: 10s
       timeout: 5s
       retries: 5

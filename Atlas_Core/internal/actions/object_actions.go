@@ -415,28 +415,28 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		Extra:       map[string]interface{}{"bucket": bucket},
 	}
 
-	if rowExists {
-		// Existing object: promote first so we do not commit metadata that points at a blob
-		// which never reached the live canonical key.
-		if err := a.storage.PromoteObjectPath(ctx, stagedPath, objectID); err != nil {
-			if cleanupErr := a.storage.DeleteObjectPath(ctx, stagedPath); cleanupErr != nil {
-				log.Error().Err(cleanupErr).Str("object_id", objectID).Str("staged_path", stagedPath).Msg("Failed to remove staged blob after object promote failure")
-			}
-			return nil, fmt.Errorf("failed to promote staged upload before update: %w", err)
-		}
-		out, err := a.Update(ctx, objectID, updateParams)
-		if err != nil {
-			return nil, err
-		}
-		return out, nil
-	}
-
-	// New object: promote to canonical storage first so we never commit a row until the live key exists.
+	// Promote the staged blob to its canonical key before any DB write so we never
+	// commit metadata that points at a blob which never reached the live key. Both
+	// the create and update paths rely on the canonical blob already being present.
 	if err := a.storage.PromoteObjectPath(ctx, stagedPath, objectID); err != nil {
 		if cleanupErr := a.storage.DeleteObjectPath(ctx, stagedPath); cleanupErr != nil {
 			log.Error().Err(cleanupErr).Str("object_id", objectID).Str("staged_path", stagedPath).Msg("Failed to remove staged blob after promote failure")
 		}
-		return nil, fmt.Errorf("failed to promote staged upload before create: %w", err)
+		return nil, fmt.Errorf("failed to promote staged upload: %w", err)
+	}
+
+	if rowExists {
+		out, err := a.Update(ctx, objectID, updateParams)
+		if err == nil {
+			return out, nil
+		}
+		// If the row was deleted concurrently between the existence check and the
+		// update, fall through to the create path below (the canonical blob is
+		// already in place). Any other error is surfaced.
+		var nf *NotFoundError
+		if !errors.As(err, &nf) || nf.ResourceType != "object" {
+			return nil, err
+		}
 	}
 
 	result, err := a.Create(ctx, CreateObjectParams{
@@ -463,12 +463,21 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	// If a row exists now, update metadata to match the promoted blob.
-	if _, gerr := a.Get(ctx, objectID); gerr == nil {
+	_, gerr := a.Get(ctx, objectID)
+	if gerr == nil {
 		out, updateErr := a.Update(ctx, objectID, updateParams)
 		if updateErr != nil {
 			return nil, updateErr
 		}
 		return out, nil
+	}
+
+	// Only remove the orphan canonical blob when we can confirm no DB row exists.
+	// A transient error from the existence check must not trigger a destructive
+	// delete of a blob whose row may still be present.
+	var nf *NotFoundError
+	if !errors.As(gerr, &nf) || nf.ResourceType != "object" {
+		return nil, fmt.Errorf("failed to create object: %w (object existence check failed: %v)", err, gerr)
 	}
 
 	// No DB row; remove orphan canonical blob after failed create.

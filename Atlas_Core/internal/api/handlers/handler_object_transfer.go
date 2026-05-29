@@ -105,9 +105,16 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := io.ReadAll(reader)
+	// Hard-cap the read: the size guard above relies on object metadata, which may
+	// understate the actual stored blob. Read at most maxViewSize+1 bytes so a
+	// larger-than-reported blob cannot be buffered unbounded into memory.
+	content, err := io.ReadAll(io.LimitReader(reader, maxViewSize+1))
 	if err != nil {
 		h.writeError(w, r, http.StatusInternalServerError, "Failed to read object content", "READ_ERROR")
+		return
+	}
+	if int64(len(content)) > maxViewSize {
+		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File is too large to view (maximum %dMB)", effectiveMaxViewSizeMB), "FILE_TOO_LARGE")
 		return
 	}
 

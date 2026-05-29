@@ -290,6 +290,8 @@ func optionalQueryString(q url.Values, key string) *string {
 }
 
 // parseListPagination reads limit and offset query params; writes a 400 response and returns ok=false on error.
+// The returned limit is already clamped to the standard list bounds (see actions.ClampListLimit),
+// so callers can use it directly for both the query and pagination headers.
 func (h *Handler) parseListPagination(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool) {
 	limit, err := parseNonNegativeIntQuery(r, "limit", 100)
 	if err != nil {
@@ -301,7 +303,7 @@ func (h *Handler) parseListPagination(w http.ResponseWriter, r *http.Request) (l
 		h.writeError(w, r, http.StatusBadRequest, "Invalid offset parameter", "VALIDATION_ERROR")
 		return 0, 0, false
 	}
-	return limit, offset, true
+	return actions.ClampListLimit(limit), offset, true
 }
 
 func parseFullDatasetLimits(r *http.Request) (*actions.FullDatasetLimits, string, error) {

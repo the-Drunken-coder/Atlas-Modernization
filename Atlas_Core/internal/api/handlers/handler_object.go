@@ -26,7 +26,7 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setPaginationHeaders(w, total, actions.ClampListLimit(limit), offset, len(objects))
+	setPaginationHeaders(w, total, limit, offset, len(objects))
 	writeJSON(w, http.StatusOK, serializers.SerializeObjectsForList(objects))
 }
 
@@ -168,7 +168,7 @@ func (h *Handler) GetObjectsByEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setPaginationHeaders(w, total, actions.ClampListLimit(limit), offset, len(objects))
+	setPaginationHeaders(w, total, limit, offset, len(objects))
 	writeJSON(w, http.StatusOK, serializers.SerializeObjectsForList(objects))
 }
 
@@ -186,6 +186,6 @@ func (h *Handler) GetObjectsByTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setPaginationHeaders(w, total, actions.ClampListLimit(limit), offset, len(objects))
+	setPaginationHeaders(w, total, limit, offset, len(objects))
 	writeJSON(w, http.StatusOK, serializers.SerializeObjectsForList(objects))
 }

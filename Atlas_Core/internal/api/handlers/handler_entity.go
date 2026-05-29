@@ -21,14 +21,13 @@ func (h *Handler) ListEntities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	effectiveLimit := actions.ClampListLimit(limit)
 	entities, total, err := h.entityActions.List(r.Context(), limit, offset)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, effectiveLimit, offset, len(entities))
+	setPaginationHeaders(w, total, limit, offset, len(entities))
 	writeJSON(w, http.StatusOK, entities)
 }
 
