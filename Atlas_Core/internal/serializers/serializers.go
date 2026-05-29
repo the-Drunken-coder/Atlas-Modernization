@@ -1,0 +1,210 @@
+// Package serializers provides serialization functions for database models.
+package serializers
+
+import (
+	"time"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+)
+
+// APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.
+const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
+
+// ObjectWeakETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
+// Name is historical; the value is suitable for If-Match (not a weak validator / "W/" prefix).
+func ObjectWeakETag(updatedAt time.Time) string {
+	s := updatedAt.UTC().Format(APIMetadataTimeLayout)
+	return `"` + s + `"`
+}
+
+// EntityResponse represents the serialized form of an Entity.
+type EntityResponse struct {
+	EntityID   string                 `json:"entity_id"`
+	EntityType string                 `json:"entity_type"`
+	Type       string                 `json:"type"`
+	Subtype    *string                `json:"subtype"`
+	Alias      *string                `json:"alias"`
+	Components map[string]interface{} `json:"components"`
+	Metadata   MetadataBlock          `json:"metadata"`
+	Extra      map[string]interface{} `json:"extra,omitempty"`
+}
+
+// TaskResponse represents the serialized form of a Task.
+type TaskResponse struct {
+	TaskID     string                 `json:"task_id"`
+	Status     string                 `json:"status"`
+	EntityID   *string                `json:"entity_id"`
+	Components map[string]interface{} `json:"components"`
+	Metadata   MetadataBlock          `json:"metadata"`
+	Extra      map[string]interface{} `json:"extra,omitempty"`
+}
+
+// ObjectResponse represents the serialized form of a MediaObject (full detail).
+type ObjectResponse struct {
+	ObjectID     string                   `json:"object_id"`
+	Path         *string                  `json:"path"`
+	ContentType  *string                  `json:"content_type"`
+	Type         *string                  `json:"type"`
+	SizeBytes    *int64                   `json:"size_bytes"`
+	UsageHints   []string                 `json:"usage_hints"`
+	ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
+	Bucket       *string                  `json:"bucket"`
+	Metadata     MetadataBlock            `json:"metadata"`
+	Payload      map[string]interface{}   `json:"payload,omitempty"`
+}
+
+// ObjectListResponse represents the serialized form of a MediaObject for list endpoints (without payload).
+type ObjectListResponse struct {
+	ObjectID    string        `json:"object_id"`
+	Path        *string       `json:"path"`
+	ContentType *string       `json:"content_type"`
+	Type        *string       `json:"type"`
+	SizeBytes   *int64        `json:"size_bytes"`
+	UsageHints  []string      `json:"usage_hints"`
+	Bucket      *string       `json:"bucket"`
+	Metadata    MetadataBlock `json:"metadata"`
+}
+
+// MetadataBlock contains timestamp metadata.
+type MetadataBlock struct {
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// SerializeEntity converts an Entity to its API response format.
+func SerializeEntity(e *models.Entity) *EntityResponse {
+	if e == nil {
+		return nil
+	}
+
+	components := e.GetComponents()
+	if components == nil {
+		components = make(map[string]interface{})
+	}
+
+	return &EntityResponse{
+		EntityID:   e.EntityID,
+		EntityType: e.Type,
+		Type:       e.Type,
+		Subtype:    e.Subtype,
+		Alias:      e.Alias,
+		Components: components,
+		Metadata: MetadataBlock{
+			CreatedAt: e.CreatedAt.UTC().Format(APIMetadataTimeLayout),
+			UpdatedAt: e.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+		},
+		Extra: e.GetExtra(),
+	}
+}
+
+// SerializeTask converts a Task to its API response format.
+func SerializeTask(t *models.Task) *TaskResponse {
+	if t == nil {
+		return nil
+	}
+
+	components := t.GetComponents()
+	if components == nil {
+		components = make(map[string]interface{})
+	}
+
+	return &TaskResponse{
+		TaskID:     t.TaskID,
+		Status:     t.Status,
+		EntityID:   t.EntityID,
+		Components: components,
+		Metadata: MetadataBlock{
+			CreatedAt: t.CreatedAt.UTC().Format(APIMetadataTimeLayout),
+			UpdatedAt: t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+		},
+		Extra: t.GetExtra(),
+	}
+}
+
+// SerializeObject converts a MediaObject to its API response format (with payload).
+func SerializeObject(o *models.MediaObject) *ObjectResponse {
+	if o == nil {
+		return nil
+	}
+
+	usageHints := o.GetUsageHints()
+	if usageHints == nil {
+		usageHints = []string{}
+	}
+	return &ObjectResponse{
+		ObjectID:     o.ObjectID,
+		Path:         o.Path,
+		ContentType:  o.ContentType,
+		Type:         o.Type,
+		SizeBytes:    o.GetSizeBytes(),
+		UsageHints:   usageHints,
+		ReferencedBy: o.GetReferencedBy(),
+		Bucket:       o.GetBucket(),
+		Metadata: MetadataBlock{
+			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
+			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+		},
+		Payload: o.GetPayload(),
+	}
+}
+
+// SerializeObjectForList converts a MediaObject to its API list response format (without payload).
+func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
+	if o == nil {
+		return nil
+	}
+
+	usageHints := o.GetUsageHints()
+	if usageHints == nil {
+		usageHints = []string{}
+	}
+	return &ObjectListResponse{
+		ObjectID:    o.ObjectID,
+		Path:        o.Path,
+		ContentType: o.ContentType,
+		Type:        o.Type,
+		SizeBytes:   o.GetSizeBytes(),
+		UsageHints:  usageHints,
+		Bucket:      o.GetBucket(),
+		Metadata: MetadataBlock{
+			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
+			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+		},
+	}
+}
+
+// SerializeEntities converts a slice of entities to their API response format.
+func SerializeEntities(entities []*models.Entity) []*EntityResponse {
+	result := make([]*EntityResponse, len(entities))
+	for i, e := range entities {
+		result[i] = SerializeEntity(e)
+	}
+	return result
+}
+
+// SerializeTasks converts a slice of tasks to their API response format.
+func SerializeTasks(tasks []*models.Task) []*TaskResponse {
+	result := make([]*TaskResponse, len(tasks))
+	for i, t := range tasks {
+		result[i] = SerializeTask(t)
+	}
+	return result
+}
+
+// SerializeObjects converts a slice of objects to their API response format (with payload).
+func SerializeObjects(objects []*models.MediaObject) []*ObjectResponse {
+	result := make([]*ObjectResponse, len(objects))
+	for i, o := range objects {
+		result[i] = SerializeObject(o)
+	}
+	return result
+}
+
+// SerializeObjectsForList converts a slice of objects to their API list response format (without payload).
+func SerializeObjectsForList(objects []*models.MediaObject) []*ObjectListResponse {
+	result := make([]*ObjectListResponse, len(objects))
+	for i, o := range objects {
+		result[i] = SerializeObjectForList(o)
+	}
+	return result
+}

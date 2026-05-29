@@ -1,0 +1,249 @@
+// Package database provides PostgreSQL database connectivity and operations.
+package database
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
+)
+
+// ErrNilDB is returned when Ping is called on a nil *DB receiver.
+var ErrNilDB = errors.New("database: nil DB")
+
+// ErrNilPool is returned when Ping is called but the connection pool was never initialized.
+var ErrNilPool = errors.New("database: nil pool")
+
+// DB wraps the connection pool and provides database operations.
+type DB struct {
+	Pool *pgxpool.Pool
+}
+
+func buildPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("nil config")
+	}
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse database URL: %w", err)
+	}
+
+	// Configure pool settings (capped to prevent int32 overflow); use int64 sums to avoid wraparound.
+	maxConns64 := int64(cfg.DatabasePoolSize) + int64(cfg.DatabaseMaxOverflow)
+	if maxConns64 < 0 {
+		maxConns64 = 0
+	}
+	if maxConns64 > 1000 {
+		maxConns64 = 1000
+	}
+	if maxConns64 < 1 {
+		maxConns64 = 1
+	}
+	minConns64 := int64(cfg.DatabasePoolSize)
+	if minConns64 < 0 {
+		minConns64 = 0
+	}
+	if minConns64 > 1000 {
+		minConns64 = 1000
+	}
+	if minConns64 > maxConns64 {
+		minConns64 = maxConns64
+	}
+	if maxConns64 >= 1 && minConns64 < 1 {
+		minConns64 = 1
+	}
+	poolConfig.MaxConns = int32(maxConns64) //nolint:gosec // capped above
+	poolConfig.MinConns = int32(minConns64) //nolint:gosec // capped above
+
+	recycleSec := cfg.DatabasePoolRecycle
+	if recycleSec < 0 {
+		recycleSec = 0
+	}
+	const maxDurSec = 86400 * 366 * 10 // ~10 years; avoids overflowed time.Duration from absurd env values
+	if recycleSec > maxDurSec {
+		recycleSec = maxDurSec
+	}
+	idleSec := cfg.DatabasePoolIdleTimeout
+	if idleSec < 0 {
+		idleSec = 0
+	}
+	if idleSec > maxDurSec {
+		idleSec = maxDurSec
+	}
+	poolConfig.MaxConnLifetime = time.Duration(recycleSec) * time.Second
+	poolConfig.MaxConnIdleTime = time.Duration(idleSec) * time.Second
+
+	// Health check configuration
+	if cfg.DatabasePoolPrePing {
+		poolConfig.HealthCheckPeriod = 30 * time.Second
+		prev := poolConfig.BeforeAcquire
+		poolConfig.BeforeAcquire = func(ctx context.Context, c *pgx.Conn) bool {
+			if err := c.Ping(ctx); err != nil {
+				return false
+			}
+			if prev != nil {
+				return prev(ctx, c)
+			}
+			return true
+		}
+	}
+
+	return poolConfig, nil
+}
+
+// New creates a new database connection pool.
+func New(cfg *config.Config) (*DB, error) {
+	poolConfig, err := buildPoolConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	poolTimeoutSec := cfg.DatabasePoolTimeout
+	if poolTimeoutSec <= 0 {
+		poolTimeoutSec = 10
+	}
+	if poolTimeoutSec > 300 {
+		poolTimeoutSec = 300
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(poolTimeoutSec)*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection pool: %w", err)
+	}
+
+	// Verify connection
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	return &DB{Pool: pool}, nil
+}
+
+// Close closes the database connection pool.
+func (db *DB) Close() {
+	if db == nil {
+		return
+	}
+	if db.Pool != nil {
+		db.Pool.Close()
+	}
+}
+
+// Ping verifies database connectivity.
+func (db *DB) Ping(ctx context.Context) error {
+	if db == nil {
+		return ErrNilDB
+	}
+	if db.Pool == nil {
+		return ErrNilPool
+	}
+	return db.Pool.Ping(ctx)
+}
+
+// EnsureTables creates all required database tables if they don't exist.
+// All DDL runs in a single transaction so a mid-flight failure does not leave a half-applied schema.
+func (db *DB) EnsureTables(ctx context.Context) error {
+	if db == nil {
+		return ErrNilDB
+	}
+	if db.Pool == nil {
+		return ErrNilPool
+	}
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin schema transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	entitiesDDL := []string{
+		`CREATE TABLE IF NOT EXISTS entities (
+			entity_id VARCHAR(50) PRIMARY KEY,
+			type VARCHAR(50) NOT NULL,
+			subtype VARCHAR(50),
+			alias VARCHAR(255),
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)`,
+		`CREATE INDEX IF NOT EXISTS idx_entities_subtype ON entities(subtype)`,
+		`CREATE INDEX IF NOT EXISTS idx_entities_alias ON entities(alias)`,
+	}
+	for _, stmt := range entitiesDDL {
+		if _, err = tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to create entities schema: %w", err)
+		}
+	}
+
+	tasksDDL := []string{
+		`CREATE TABLE IF NOT EXISTS tasks (
+			task_id VARCHAR(50) PRIMARY KEY,
+			status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			entity_id VARCHAR(50) REFERENCES entities(entity_id) ON DELETE SET NULL,
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_entity_id ON tasks(entity_id)`,
+	}
+	for _, stmt := range tasksDDL {
+		if _, err = tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to create tasks schema: %w", err)
+		}
+	}
+
+	objectsDDL := []string{
+		`CREATE TABLE IF NOT EXISTS objects (
+			object_id VARCHAR(50) PRIMARY KEY,
+			path VARCHAR(500) UNIQUE,
+			content_type VARCHAR(100),
+			type VARCHAR(50),
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_objects_content_type ON objects(content_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(type)`,
+		// Supports objects-by-entity / objects-by-task lookups, which filter with
+		// json->'referenced_by' @> $1::jsonb. Without this GIN index the containment
+		// query degrades to a sequential scan as the objects table grows.
+		`CREATE INDEX IF NOT EXISTS idx_objects_referenced_by ON objects USING GIN ((json->'referenced_by') jsonb_path_ops)`,
+	}
+	for _, stmt := range objectsDDL {
+		if _, err = tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to create objects schema: %w", err)
+		}
+	}
+
+	// Create deletions table for tracking hard-deleted resources.
+	// This allows the changed-since endpoint to return tombstones so
+	// clients can remove stale items from their caches.
+	deletionsDDL := []string{
+		`CREATE TABLE IF NOT EXISTS deletions (
+			id BIGSERIAL PRIMARY KEY,
+			resource_type VARCHAR(20) NOT NULL,
+			resource_id VARCHAR(50) NOT NULL,
+			deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_deletions_deleted_at ON deletions(deleted_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_deletions_resource_type ON deletions(resource_type)`,
+	}
+	for _, stmt := range deletionsDDL {
+		if _, err = tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to create deletions schema: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit schema transaction: %w", err)
+	}
+	return nil
+}

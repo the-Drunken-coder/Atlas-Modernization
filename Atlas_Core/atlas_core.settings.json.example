@@ -1,0 +1,9 @@
+{
+  "debug": false,
+  "log_level": "INFO",
+  "enable_api_auth": false,
+  "_api_auth_key_note": "Generate a strong random key and replace api_auth_key before setting enable_api_auth to true.",
+  "api_auth_key": "REPLACE_WITH_SECURE_KEY",
+  "max_upload_size_mb": 100,
+  "max_view_size_mb": 10
+}

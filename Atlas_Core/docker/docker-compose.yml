@@ -1,0 +1,130 @@
+services:
+  # ATLAS Core API (Go)
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: development
+    container_name: atlas_core_api
+    environment:
+      DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:-atlas}@postgres:5432/atlas_core
+      MINIO_ENDPOINT: minio:9000
+      MINIO_EXTERNAL_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-atlas}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_BUCKET: atlas-media
+      MINIO_SECURE: "false"
+      SERVER_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../cmd:/app/cmd
+      - ../internal:/app/internal
+      # Default to the committed example settings. Override by setting:
+      # ATLAS_CORE_SETTINGS_FILE=atlas_core.settings.json
+      - ../${ATLAS_CORE_SETTINGS_FILE:-atlas_core.settings.json.example}:/app/atlas_core.settings.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - atlas_core_network
+
+  # PostgreSQL with TimescaleDB extension
+  postgres:
+    image: timescale/timescaledb:2.14.2-pg15
+    container_name: atlas_core_postgres
+    environment:
+      POSTGRES_DB: atlas_core
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
+      POSTGRES_INITDB_ARGS: "--auth-local=md5 --auth-host=md5"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD:-atlas} pg_isready -U atlas -d atlas_core"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atlas_core_network
+
+  # MinIO for object/blob storage (S3-compatible)
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    container_name: atlas_core_minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-atlas}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+    # Bind to loopback only so MinIO is not exposed on all interfaces by default.
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - atlas_core_network
+
+  # MinIO bucket initialization (runs once and exits)
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-13T08-44-48Z
+    container_name: atlas_core_minio_init
+    restart: "no"
+    environment:
+      MC_HOST_myminio: http://${MINIO_ROOT_USER:-atlas}:${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}@minio:9000
+      # When "true", apply anonymous download on atlas-media (dev-only; not recommended on untrusted networks).
+      ENABLE_PUBLIC_MINIO: ${ENABLE_PUBLIC_MINIO:-false}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        mc mb --ignore-existing myminio/atlas-media
+        case "$$ENABLE_PUBLIC_MINIO" in true|1|yes|on) mc anonymous set download myminio/atlas-media ;; esac
+        echo 'MinIO bucket initialized successfully'
+    networks:
+      - atlas_core_network
+
+  # Cloudflare Tunnel for public HTTPS access
+  cloudflared:
+    image: cloudflare/cloudflared:2026.3.0
+    container_name: atlas_core_cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - atlas_core_network
+    profiles:
+      - tunnel
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  atlas_core_network:
+    driver: bridge

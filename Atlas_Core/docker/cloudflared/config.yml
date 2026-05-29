@@ -1,0 +1,13 @@
+tunnel: e78f8f73-0420-4465-bc43-f42ee1be3765
+credentials-file: /etc/cloudflared/credentials/atlas-core.json
+protocol: http2
+ingress:
+  - hostname: atlascommandapi.org
+    service: http://api:8000
+    originRequest:
+      connectTimeout: 10s
+  - hostname: command.atlascommandapi.org
+    service: http://api:8000
+    originRequest:
+      connectTimeout: 10s
+  - service: http_status:404
