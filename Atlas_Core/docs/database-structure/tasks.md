@@ -39,7 +39,7 @@ Typical `json` payload:
     },
     "progress": {
       "percent": 65,
-      "updated_at": "2030-12-23T10:00:00Z",
+      "updated_at": "2026-05-29T10:00:00Z",
       "status_detail": "En route to destination"
     }
   },

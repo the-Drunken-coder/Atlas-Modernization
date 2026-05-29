@@ -106,7 +106,7 @@ services:
     networks:
       - atlas_core_network
 
-  # Cloudflare Tunnel for public HTTPS access
+  # Cloudflare Tunnel for public HTTPS access (token-managed; see docker/cloudflared/README.md).
   cloudflared:
     image: cloudflare/cloudflared:2026.3.0
     container_name: atlas_core_cloudflared

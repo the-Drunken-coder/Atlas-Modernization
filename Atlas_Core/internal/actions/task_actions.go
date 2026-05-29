@@ -500,6 +500,18 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
 }
 
+// normalizeTaskProgressPercent clamps progress to the canonical 0–100 percent scale.
+// Values are not auto-scaled from 0–1; e.g. 1 means 1%, not 100%.
+func normalizeTaskProgressPercent(p float64) float64 {
+	if p < 0 {
+		return 0
+	}
+	if p > 100 {
+		return 100
+	}
+	return p
+}
+
 // TransitionStatus updates the task status and optional progress.
 func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*serializers.TaskResponse, error) {
 	var components map[string]interface{}
@@ -507,15 +519,7 @@ func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status strin
 	if progress != nil || message != nil {
 		components = make(map[string]interface{})
 		if progress != nil {
-			// progress is a percentage on a canonical 0–100 scale; clamp to bounds.
-			// (No 0–1 auto-scaling: a bare 1 is unambiguously 1%, not 100%.)
-			p := *progress
-			if p < 0 {
-				p = 0
-			}
-			if p > 100 {
-				p = 100
-			}
+			p := normalizeTaskProgressPercent(*progress)
 			components["progress"] = map[string]interface{}{"percent": p}
 		}
 		if message != nil {
