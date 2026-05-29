@@ -145,6 +145,9 @@ func effectiveLimit(requested, max int) int {
 }
 
 func trimToLimitWithMore[T any](items []T, limit int) ([]T, bool) {
+	if limit < 0 {
+		limit = 0
+	}
 	if len(items) > limit {
 		return items[:limit], true
 	}

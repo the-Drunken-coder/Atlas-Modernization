@@ -1,7 +1,6 @@
 package actions
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +14,7 @@ func TestObjectIfMatchOK_weakPrefix(t *testing.T) {
 	if !ObjectIfMatchOK(weak, ts) {
 		t.Fatalf("expected weak ETag to match, got %q vs %q", weak, want)
 	}
-	if !ObjectIfMatchOK(strings.TrimSpace(weak), ts) {
+	if !ObjectIfMatchOK("  "+weak+"  ", ts) {
 		t.Fatal("expected trimmed weak ETag to match")
 	}
 }

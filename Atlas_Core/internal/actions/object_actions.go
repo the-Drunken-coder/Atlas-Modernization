@@ -174,6 +174,7 @@ func (a *ObjectActions) List(ctx context.Context, limit, offset int) ([]*models.
 // UpdateObjectParams holds parameters for updating an object.
 type UpdateObjectParams struct {
 	Path         *string
+	Bucket       *string
 	ContentType  *string
 	Type         *string
 	SizeBytes    *int64
@@ -190,7 +191,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 	objectID = SanitizeID(objectID)
 
-	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
+	if params.Path == nil && params.Bucket == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
 		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 {
 		obj, err := a.Get(ctx, objectID)
 		if err != nil {
@@ -265,6 +266,9 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	// Update JSON fields
+	if params.Bucket != nil {
+		existingJSON["bucket"] = *params.Bucket
+	}
 	if params.SizeBytes != nil {
 		existingJSON["size_bytes"] = *params.SizeBytes
 	}
@@ -408,11 +412,11 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 	updateParams := UpdateObjectParams{
 		Path:        &finalPath,
+		Bucket:      &bucket,
 		ContentType: &contentType,
 		Type:        typePtr,
 		SizeBytes:   &stagedInfo.SizeBytes,
 		UsageHints:  usageHints,
-		Extra:       map[string]interface{}{"bucket": bucket},
 	}
 
 	// Promote the staged blob to its canonical key before any DB write so we never

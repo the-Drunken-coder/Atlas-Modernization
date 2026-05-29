@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -277,10 +279,21 @@ func (o *MediaObject) decodedJSON() map[string]interface{} {
 			Msg("Failed to unmarshal media object JSON - database corruption suspected")
 		return nil
 	}
-	// Reject trailing data after the top-level value. Unlike json.Unmarshal (used
-	// for entities/tasks), a streaming Decoder ignores anything after the first
-	// value, which would silently accept corrupt blobs like `{...}<garbage>`.
-	if decoder.More() {
+	// Reject trailing data after the top-level value. decoder.More() only reports
+	// whether another array/object element exists, not stray bytes after a single
+	// top-level object, so probe with a second Decode expecting EOF.
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != nil && !errors.Is(err, io.EOF) {
+		o.jsonErr = fmt.Errorf("unexpected trailing data after media object JSON: %w", err)
+		o.jsonInit = true
+		log.Error().
+			Err(o.jsonErr).
+			Str("object_id", o.ObjectID).
+			Str("json_meta", jsonLogMeta(o.JSON, o.ObjectID)).
+			Msg("Failed to unmarshal media object JSON - database corruption suspected")
+		return nil
+	}
+	if len(bytes.TrimSpace(trailing)) > 0 {
 		o.jsonErr = fmt.Errorf("unexpected trailing data after media object JSON")
 		o.jsonInit = true
 		log.Error().

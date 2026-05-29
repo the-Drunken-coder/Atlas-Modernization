@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"mime"
-	"strconv"
 	"strings"
 )
 
@@ -75,7 +74,7 @@ func getExtensionForContentType(contentType string) string {
 	return ""
 }
 
-// attachmentContentDisposition builds a safe Content-Disposition value for downloads.
+// attachmentContentDisposition builds an RFC 6266 Content-Disposition value for downloads.
 func attachmentContentDisposition(filename string) string {
-	return "attachment; filename=" + strconv.Quote(filename)
+	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
 }

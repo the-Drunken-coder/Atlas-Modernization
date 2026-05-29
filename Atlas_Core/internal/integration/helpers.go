@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 )
 
 const (
@@ -181,19 +183,22 @@ func ParseOptionalResponse(resp *http.Response, v interface{}) error {
 }
 
 func parseResponse(resp *http.Response, v interface{}, allowEmpty bool) error {
+	if resp == nil || resp.Body == nil {
+		return fmt.Errorf("nil HTTP response")
+	}
 	defer resp.Body.Close()
 
-	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
-		if allowEmpty && errors.Is(err, io.EOF) {
-			return nil
-		}
-		if errors.Is(err, io.EOF) {
-			return io.ErrUnexpectedEOF
-		}
-		return err
+	err := jsondecode.Decode(json.NewDecoder(resp.Body), v)
+	if err == nil {
+		return nil
 	}
-
-	return nil
+	if allowEmpty && errors.Is(err, io.EOF) {
+		return nil
+	}
+	if errors.Is(err, io.EOF) {
+		return io.ErrUnexpectedEOF
+	}
+	return err
 }
 
 // TestArtifactPrefix returns a short unique prefix for test artifact IDs (max 50 chars with suffixes).

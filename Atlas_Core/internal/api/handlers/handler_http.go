@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
@@ -279,6 +281,25 @@ func extractCheckinTaskFields(components map[string]interface{}) (string, map[st
 	}
 
 	return commandID, parameters
+}
+
+// decodeJSONRequestBody decodes one JSON value and rejects trailing data.
+// When allowEmpty is true, an empty body is accepted.
+func (h *Handler) decodeJSONRequestBody(w http.ResponseWriter, r *http.Request, v any, allowEmpty bool) bool {
+	err := jsondecode.Decode(json.NewDecoder(r.Body), v)
+	if err == nil {
+		return true
+	}
+	if allowEmpty && errors.Is(err, io.EOF) {
+		return true
+	}
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
+		return false
+	}
+	h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	return false
 }
 
 func optionalQueryString(q url.Values, key string) *string {

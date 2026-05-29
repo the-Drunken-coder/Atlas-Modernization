@@ -1,9 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -40,13 +37,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Extra      map[string]interface{} `json:"extra,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -96,13 +87,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		Extra      map[string]interface{} `json:"extra,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -174,13 +159,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		Result map[string]interface{} `json:"result,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
 
@@ -204,13 +183,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		Error map[string]interface{} `json:"error,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
 
@@ -236,13 +209,7 @@ func (h *Handler) TaskStatus(w http.ResponseWriter, r *http.Request) {
 		Message  *string  `json:"message,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
