@@ -479,10 +479,12 @@ func TestComplexScenario(t *testing.T) {
 			"entity_id": entityID,
 			"status":    "pending",
 			"components": map[string]interface{}{
-				"mission": map[string]interface{}{
-					"type":        "patrol",
-					"waypoint":    i + 1,
-					"description": fmt.Sprintf("Patrol waypoint %d", i+1),
+				"command": map[string]interface{}{
+					"type": "move_to",
+					"target": map[string]interface{}{
+						"latitude":  40.7128 + float64(i)*0.001,
+						"longitude": -74.0060 + float64(i)*0.001,
+					},
 				},
 			},
 		}
