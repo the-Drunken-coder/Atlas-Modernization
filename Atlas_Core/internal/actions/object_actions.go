@@ -477,7 +477,7 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	// delete of a blob whose row may still be present.
 	var nf *NotFoundError
 	if !errors.As(gerr, &nf) || nf.ResourceType != "object" {
-		return nil, fmt.Errorf("failed to create object: %w (object existence check failed: %v)", err, gerr)
+		return nil, fmt.Errorf("failed to create object: %w (object existence check failed: %w)", err, gerr)
 	}
 
 	// No DB row; remove orphan canonical blob after failed create.

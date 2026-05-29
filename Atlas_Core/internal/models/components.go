@@ -207,6 +207,9 @@ func (t *Task) GetResult() *TaskResult {
 	if !ok || resultData == nil {
 		return nil
 	}
+	if resultMap, ok := resultData.(map[string]interface{}); ok && len(resultMap) == 0 {
+		return nil
+	}
 
 	var result TaskResult
 	if !decodeJSONComponent(resultData, &result) {

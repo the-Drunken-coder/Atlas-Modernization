@@ -160,7 +160,9 @@ assert_status 200 "GET /queries/full" && \
   assert_json '.objects  | type == "array"' "GET /queries/full objects" && \
   assert_json '.entities | length >= 1'     "GET /queries/full entity count" && \
   assert_json '.tasks    | length >= 1'     "GET /queries/full task count" && \
+  # shellcheck disable=SC2016 # $e/$t are jq --arg variables, not shell expansions
   assert_jq "GET /queries/full contains ENTITY_ID" --arg e "$ENTITY_ID" 'any(.entities[]?; .entity_id == $e)' && \
+  # shellcheck disable=SC2016
   assert_jq "GET /queries/full contains TASK_ID" --arg t "$TASK_ID" 'any(.tasks[]?; .task_id == $t)' && \
   pass "GET /queries/full — returns expected data"
 

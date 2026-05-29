@@ -196,9 +196,9 @@ func parseResponse(resp *http.Response, v interface{}, allowEmpty bool) error {
 	return nil
 }
 
-// TestArtifactPrefix returns a prefix for test artifacts
+// TestArtifactPrefix returns a short unique prefix for test artifact IDs (max 50 chars with suffixes).
 func TestArtifactPrefix() string {
-	return fmt.Sprintf("integration-test-%d", time.Now().UnixNano())
+	return fmt.Sprintf("it%x", time.Now().UnixNano())
 }
 
 // requireHTTPStatus fails the test if the response status is not want, then closes the body.

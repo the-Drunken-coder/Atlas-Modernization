@@ -80,15 +80,15 @@ func buildPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
 	// Health check configuration
 	if cfg.DatabasePoolPrePing {
 		poolConfig.HealthCheckPeriod = 30 * time.Second
-		prev := poolConfig.BeforeAcquire
-		poolConfig.BeforeAcquire = func(ctx context.Context, c *pgx.Conn) bool {
+		prev := poolConfig.PrepareConn
+		poolConfig.PrepareConn = func(ctx context.Context, c *pgx.Conn) (bool, error) {
 			if err := c.Ping(ctx); err != nil {
-				return false
+				return false, nil
 			}
 			if prev != nil {
 				return prev(ctx, c)
 			}
-			return true
+			return true, nil
 		}
 	}
 
