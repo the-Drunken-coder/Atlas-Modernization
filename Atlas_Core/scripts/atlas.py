@@ -46,6 +46,11 @@ def ensure_minio_secrets():
     root_user = os.getenv("MINIO_ROOT_USER")
     access_key = os.getenv("MINIO_ACCESS_KEY")
 
+    if not root_user:
+        os.environ["MINIO_ROOT_USER"] = "atlas"
+        created.append("MINIO_ROOT_USER")
+        root_user = "atlas"
+
     if not root_password and not secret_key:
         generated = secrets.token_urlsafe(32)
         os.environ["MINIO_ROOT_PASSWORD"] = generated
@@ -256,95 +261,51 @@ def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-
     print("[OK] MinIO bucket initialization delegated to minio-init container!")
 
 
-def create_database_tables_docker(container_name="atlas_core_postgres"):
-    """Create database tables using docker exec.
-
-    Note: With the Go implementation, tables are created automatically by the
-    Go service on startup. This function is kept for compatibility but now
-    uses direct SQL instead of Python ORM.
-    """
+def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_retries=60, delay=2.0):
+    """Wait until the Go API has run EnsureTables (schema authority: internal/database/db.go)."""
+    print("[WAIT] Waiting for database schema (EnsureTables)...")
     password = os.getenv("POSTGRES_PASSWORD", "")
-    try:
-        print("[BUILD] Creating database tables via docker exec...")
+    check_sql = (
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'entities'"
+    )
 
-        # SQL for creating tables (matches Go implementation)
-        sql = """
--- Create entities table
-CREATE TABLE IF NOT EXISTS entities (
-    entity_id VARCHAR(50) PRIMARY KEY,
-    type VARCHAR(50) NOT NULL,
-    subtype VARCHAR(50),
-    alias VARCHAR(255),
-    json JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
-CREATE INDEX IF NOT EXISTS idx_entities_subtype ON entities(subtype);
-CREATE INDEX IF NOT EXISTS idx_entities_alias ON entities(alias);
+    for attempt in range(max_retries):
+        try:
+            cmd = ["docker", "exec"]
+            if password:
+                cmd.extend(["-e", f"PGPASSWORD={password}"])
+            cmd.extend(
+                [
+                    container_name,
+                    "psql",
+                    "-U",
+                    "atlas",
+                    "-d",
+                    "atlas_core",
+                    "-tAc",
+                    check_sql,
+                ]
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "1":
+                print("[OK] Database schema ready!")
+                return True
+        except subprocess.TimeoutExpired:
+            pass
 
--- Create tasks table
-CREATE TABLE IF NOT EXISTS tasks (
-    task_id VARCHAR(50) PRIMARY KEY,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    entity_id VARCHAR(50) REFERENCES entities(entity_id) ON DELETE SET NULL,
-    json JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_entity_id ON tasks(entity_id);
+        if attempt < max_retries - 1:
+            print(
+                f"[WAIT] Schema not ready (attempt {attempt + 1}/{max_retries}), retrying..."
+            )
+            time.sleep(delay)
 
--- Create objects table
-CREATE TABLE IF NOT EXISTS objects (
-    object_id VARCHAR(50) PRIMARY KEY,
-    path VARCHAR(500) UNIQUE,
-    content_type VARCHAR(100),
-    type VARCHAR(50),
-    json JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
--- NOTE: objects.path already has a UNIQUE constraint (implicit unique index),
--- so a separate idx_objects_path would be redundant and is intentionally omitted
--- to stay converged with internal/database/db.go (EnsureTables) — the schema authority.
-CREATE INDEX IF NOT EXISTS idx_objects_content_type ON objects(content_type);
-CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(type);
-CREATE INDEX IF NOT EXISTS idx_objects_referenced_by ON objects USING GIN ((json->'referenced_by') jsonb_path_ops);
-
--- Tombstones for changed-since (matches internal/database/db.go)
-CREATE TABLE IF NOT EXISTS deletions (
-    id BIGSERIAL PRIMARY KEY,
-    resource_type VARCHAR(20) NOT NULL,
-    resource_id VARCHAR(50) NOT NULL,
-    deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_deletions_deleted_at ON deletions(deleted_at);
-CREATE INDEX IF NOT EXISTS idx_deletions_resource_type ON deletions(resource_type);
-"""
-
-        cmd = ["docker", "exec"]
-        if password:
-            cmd.extend(["-e", f"PGPASSWORD={password}"])
-        cmd.extend(["-i", container_name, "psql", "-U", "atlas", "-d", "atlas_core"])
-
-        result = subprocess.run(
-            cmd,
-            input=sql,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            print(f"[ERROR] psql error: {result.stderr}")
-            raise Exception(f"Failed to create tables: {result.stderr}")
-
-        print("[OK] Database tables created successfully!")
-
-    except Exception as e:
-        print(f"[ERROR] Failed to create tables: {e}")
-        raise
+    raise Exception(f"Database schema not ready after {max_retries} attempts")
 
 
 def cleanup_containers(atlas_core_dir, remove_volumes=False):
@@ -477,13 +438,17 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
             print("[OK] All containers started successfully!")
 
         wait_for_database_docker()
-        create_database_tables_docker()
 
         if not db_only:
             wait_for_minio()
             ensure_minio_bucket_docker()
             cleanup_init_containers()
             wait_for_api()
+            wait_for_database_schema_docker()
+        else:
+            print(
+                "[INFO] --db-only: schema is created when the API starts (EnsureTables in db.go)"
+            )
 
         print("\n" + "=" * 60)
         print("ATLAS Core System - Connection Information")

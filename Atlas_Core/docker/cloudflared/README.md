@@ -39,6 +39,8 @@ dashboard for the tunnel — not via a local credentials file.
 
 - `config.yml` and `credentials/` are retained for reference or manual tunnel runs.
   They are **not** mounted by the current `docker-compose.yml` tunnel service.
+- For manual config-file runs, set `CLOUDFLARED_TUNNEL` to your tunnel UUID and render
+  the config: `envsubst '${CLOUDFLARED_TUNNEL}' < config.yml > /tmp/cloudflared-config.yml`
 - `atlas.py --tunnel` requires `CLOUDFLARE_TUNNEL_TOKEN`; it does not read
   `credentials/atlas-core.json`.
 

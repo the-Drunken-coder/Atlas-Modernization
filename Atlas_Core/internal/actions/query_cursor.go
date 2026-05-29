@@ -18,9 +18,9 @@ type rowCursor struct {
 // encodeRowCursor returns a URL-safe opaque string for (t, id) using descending sort
 // (created_at/updated_at/deleted_at, resource id). When upperBound is non-zero it is
 // embedded so later pages cap rows to the same snapshot.
-func encodeRowCursor(t time.Time, id string, upperBound time.Time) string {
+func encodeRowCursor(t time.Time, id string, upperBound time.Time) (string, error) {
 	if id == "" {
-		return ""
+		return "", nil
 	}
 	p := rowCursor{
 		TS: t.UTC().Format(time.RFC3339Nano),
@@ -31,9 +31,9 @@ func encodeRowCursor(t time.Time, id string, upperBound time.Time) string {
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("marshal row cursor: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // parseRFC3339WithNanoOrFallback parses RFC3339Nano with RFC3339 fallback and UTC normalization.

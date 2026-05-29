@@ -9,7 +9,10 @@ func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
 	ts := time.Date(2026, 3, 20, 12, 0, 0, 123456789, time.UTC)
 	id := "entity-abc"
 	ub := time.Date(2026, 3, 20, 15, 30, 0, 0, time.UTC)
-	enc := encodeRowCursor(ts, id, ub)
+	enc, err := encodeRowCursor(ts, id, ub)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
 	if enc == "" {
 		t.Fatal("expected non-empty cursor")
 	}
@@ -40,7 +43,10 @@ func TestDecodeRowCursor_specialChars(t *testing.T) {
 	id := "entity,with:chars+/=_-"
 	ub := time.Date(2026, 3, 20, 15, 30, 0, 0, time.UTC)
 
-	cursor := encodeRowCursor(ts, id, ub)
+	cursor, err := encodeRowCursor(ts, id, ub)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
 	gotTS, gotID, gotUB, err := decodeRowCursor(cursor)
 	if err != nil {
 		t.Fatalf("decode: %v", err)

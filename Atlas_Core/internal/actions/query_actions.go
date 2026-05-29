@@ -108,15 +108,27 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	}
 	if hasMoreEnt && len(entities) > 0 {
 		last := entities[len(entities)-1]
-		resp.NextEntityCursor = encodeRowCursor(last.CreatedAt, last.EntityID, snapshotUpperBound)
+		cur, err := encodeRowCursor(last.CreatedAt, last.EntityID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode entity cursor: %w", err)
+		}
+		resp.NextEntityCursor = cur
 	}
 	if hasMoreTasks && len(tasks) > 0 {
 		last := tasks[len(tasks)-1]
-		resp.NextTaskCursor = encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
+		cur, err := encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode task cursor: %w", err)
+		}
+		resp.NextTaskCursor = cur
 	}
 	if hasMoreObj && len(objects) > 0 {
 		last := objects[len(objects)-1]
-		resp.NextObjectCursor = encodeRowCursor(last.CreatedAt, last.ObjectID, snapshotUpperBound)
+		cur, err := encodeRowCursor(last.CreatedAt, last.ObjectID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode object cursor: %w", err)
+		}
+		resp.NextObjectCursor = cur
 	}
 	return resp, nil
 }
@@ -238,21 +250,38 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 	}
 	if hasMoreEnt && len(entities) > 0 {
 		last := entities[len(entities)-1]
-		resp.NextEntityCursor = encodeRowCursor(last.UpdatedAt, last.EntityID, snapshotUpperBound)
+		cur, err := encodeRowCursor(last.UpdatedAt, last.EntityID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode entity cursor: %w", err)
+		}
+		resp.NextEntityCursor = cur
 	}
 	if hasMoreTasks && len(tasks) > 0 {
 		last := tasks[len(tasks)-1]
-		resp.NextTaskCursor = encodeRowCursor(last.UpdatedAt, last.TaskID, snapshotUpperBound)
+		cur, err := encodeRowCursor(last.UpdatedAt, last.TaskID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode task cursor: %w", err)
+		}
+		resp.NextTaskCursor = cur
 	}
 	if hasMoreObj && len(objects) > 0 {
 		last := objects[len(objects)-1]
-		resp.NextObjectCursor = encodeRowCursor(last.UpdatedAt, last.ObjectID, snapshotUpperBound)
+		cur, err := encodeRowCursor(last.UpdatedAt, last.ObjectID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode object cursor: %w", err)
+		}
+		resp.NextObjectCursor = cur
 	}
 	if moreDE && len(deletedEntities) > 0 {
 		last := deletedEntities[len(deletedEntities)-1]
 		dt, err := parseDeletedAtCursor(last.DeletedAt)
 		if err == nil {
-			resp.NextDeletedEntityCursor = encodeRowCursor(dt, last.ID, snapshotUpperBound)
+			cur, encErr := encodeRowCursor(dt, last.ID, snapshotUpperBound)
+			if encErr != nil {
+				log.Warn().Err(encErr).Str("cursor_field", "next_deleted_entity_cursor").Msg("failed to encode deleted entity cursor")
+			} else {
+				resp.NextDeletedEntityCursor = cur
+			}
 		} else {
 			log.Warn().
 				Err(err).
@@ -266,7 +295,12 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 		last := deletedTasks[len(deletedTasks)-1]
 		dt, err := parseDeletedAtCursor(last.DeletedAt)
 		if err == nil {
-			resp.NextDeletedTaskCursor = encodeRowCursor(dt, last.ID, snapshotUpperBound)
+			cur, encErr := encodeRowCursor(dt, last.ID, snapshotUpperBound)
+			if encErr != nil {
+				log.Warn().Err(encErr).Str("cursor_field", "next_deleted_task_cursor").Msg("failed to encode deleted task cursor")
+			} else {
+				resp.NextDeletedTaskCursor = cur
+			}
 		} else {
 			log.Warn().
 				Err(err).
@@ -280,7 +314,12 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 		last := deletedObjects[len(deletedObjects)-1]
 		dt, err := parseDeletedAtCursor(last.DeletedAt)
 		if err == nil {
-			resp.NextDeletedObjectCursor = encodeRowCursor(dt, last.ID, snapshotUpperBound)
+			cur, encErr := encodeRowCursor(dt, last.ID, snapshotUpperBound)
+			if encErr != nil {
+				log.Warn().Err(encErr).Str("cursor_field", "next_deleted_object_cursor").Msg("failed to encode deleted object cursor")
+			} else {
+				resp.NextDeletedObjectCursor = cur
+			}
 		} else {
 			log.Warn().
 				Err(err).

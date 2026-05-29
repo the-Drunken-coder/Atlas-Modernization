@@ -110,11 +110,12 @@ func main() {
 	}))
 
 	// API key middleware must be registered before route handlers (chi requirement); health/readiness skip auth.
-	if cfg.EnableAPIAuth && apiKey != "" {
+	if cfg.EnableAPIAuth {
+		if apiKey == "" {
+			logger.Fatal().Msg("API auth is enabled but API_AUTH_KEY (or api_auth_key in settings) is empty — refusing to start without credentials")
+		}
 		logger.Info().Msg("API key authentication enabled via atlas_core.settings.json")
 		r.Use(custommiddleware.APIKeyAuth(apiKey))
-	} else if cfg.EnableAPIAuth {
-		logger.Fatal().Msg("API auth is enabled but API_AUTH_KEY (or api_auth_key in settings) is empty — refusing to start without credentials")
 	} else {
 		logger.Info().Msg("API key authentication disabled (set enable_api_auth=true in atlas_core.settings.json)")
 	}

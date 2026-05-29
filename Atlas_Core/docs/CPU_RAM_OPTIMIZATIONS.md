@@ -1,6 +1,6 @@
 # CPU and RAM Optimizations (Go Service)
 
-_Revision: 2026-02-13_
+_Revision: 2026-05-29_
 
 This document reflects the current Go implementation. Earlier Python-specific notes are no longer
 applicable to this repository layout.
