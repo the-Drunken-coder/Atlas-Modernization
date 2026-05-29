@@ -104,6 +104,7 @@ jobs:
 
       - name: Validate Docker Compose config
         env:
+          POSTGRES_PASSWORD: atlas-ci
           MINIO_ROOT_PASSWORD: atlas-ci
           CLOUDFLARE_TUNNEL_TOKEN: dummy
         run: docker compose -f docker/docker-compose.yml config --quiet
