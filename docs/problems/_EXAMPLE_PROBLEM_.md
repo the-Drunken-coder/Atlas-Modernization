@@ -20,7 +20,7 @@ Each entry under `docs/problems/` is a short-lived note for agent-to-agent refer
 ### What does not belong here
 
 - **Recurring agent confusion** → `AGENTS.md` (after you've seen the same gotcha more than once).
-- **Architectural decisions** → `docs/decisions/`.
+- **Architectural decisions** → `docs/design-decisions/`.
 - **How the system is supposed to work** → specs under the relevant package's docs (e.g. `Atlas_Core/docs/`).
 
 ### Severity Levels

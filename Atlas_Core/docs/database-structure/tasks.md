@@ -96,7 +96,7 @@ Current implementation note: status strings are not enum-validated globally in `
 | `/tasks/{task_id}/acknowledge` | `POST` | Set status to `acknowledged` |
 | `/tasks/{task_id}/complete` | `POST` | Set status to `completed`; optional `result` in request `extra` |
 | `/tasks/{task_id}/fail` | `POST` | Set status to `failed`; optional `error` in request `extra` |
-| `/tasks/{task_id}/status` | `POST` | Update status; optional `progress` (0–1 or 0–100) → `components.progress.percent`; optional `message` → `components.status_message` |
+| `/tasks/{task_id}/status` | `POST` | Update status; optional `progress` (percent, 0–100; clamped) → `components.progress.percent`; optional `message` → `components.status_message` |
 | `/entities/{entity_id}/tasks` | `GET` | List tasks for entity (paginated) |
 
 ## Limits

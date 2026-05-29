@@ -1,6 +1,6 @@
 # Design Decision Template
 
-Each entry under `docs/decisions/` records a durable architectural or implementation choice for the Atlas project as a whole — Atlas Core, Atlas Protocol, and any other package in this repo. Use this template to keep the format consistent:
+Each entry under `docs/design-decisions/` records a durable architectural or implementation choice for the Atlas project as a whole — Atlas Core, Atlas Protocol, and any other package in this repo. Use this template to keep the format consistent:
 
 1. **Time & Date:** [UTC timestamp or local time zone timestamp]
 2. **Name:** [One-line summary identifier]

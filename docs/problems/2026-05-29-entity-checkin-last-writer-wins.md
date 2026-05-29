@@ -10,4 +10,4 @@
 8. **Reproduction:**
    1. Issue two concurrent `POST /entities/{id}/checkin` with different `components.status`.
    2. Observe the later commit's value wins with no conflict signal.
-9. **Notes:** If last-writer-wins is intended for telemetry/heartbeat (likely), capture it as a short decision under `docs/decisions/` so the asymmetry with object `If-Match` is explicit. See `Atlas_Core/docs/ASSET_STATUS_SYSTEM.md`.
+9. **Notes:** If last-writer-wins is intended for telemetry/heartbeat (likely), capture it as a short decision under `docs/design-decisions/` so the asymmetry with object `If-Match` is explicit. See `Atlas_Core/docs/ASSET_STATUS_SYSTEM.md`.

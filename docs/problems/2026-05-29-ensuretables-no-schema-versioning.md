@@ -4,7 +4,7 @@
 2. **Name:** `EnsureTables` runs DDL every startup with no schema-version guard
 3. **Issue:** Schema bootstrap is `CREATE TABLE/INDEX IF NOT EXISTS` executed on every process start. It creates missing tables but never evolves existing ones, and there is no schema-version sentinel — so a binary expecting a newer shape will silently run against a drifted older database. The migration-free posture is intentional (see Design Decision `2026-05-29-schema-evolution-without-migrations.md`); this note tracks the missing guard rail, not the policy.
 4. **Severity:** S5 (Note) — accepted for now (greenfield, disposable DBs); becomes risky before any shared/long-lived environment.
-5. **Location:** `Atlas_Core/internal/database/db.go` (`EnsureTables`), `Atlas_Core/docs/DATABASE_WORKFLOW.md`, `docs/decisions/2026-05-29-schema-evolution-without-migrations.md`
+5. **Location:** `Atlas_Core/internal/database/db.go` (`EnsureTables`), `Atlas_Core/docs/DATABASE_WORKFLOW.md`, `docs/design-decisions/2026-05-29-schema-evolution-without-migrations.md`
 6. **Expected:** Either a startup schema-version assertion that fails fast on drift, or a documented/forced fresh-DB workflow that makes drift impossible to run against unnoticed.
 7. **Actual:** Drift between Go models and an existing DB runs without detection until a query fails at request time.
 8. **Reproduction:**

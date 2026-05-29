@@ -507,11 +507,9 @@ func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status strin
 	if progress != nil || message != nil {
 		components = make(map[string]interface{})
 		if progress != nil {
+			// progress is a percentage on a canonical 0–100 scale; clamp to bounds.
+			// (No 0–1 auto-scaling: a bare 1 is unambiguously 1%, not 100%.)
 			p := *progress
-			// Accept 0–1 or 0–100 for API convenience; store as progress.percent (0–100).
-			if p > 0 && p < 1 {
-				p *= 100
-			}
 			if p < 0 {
 				p = 0
 			}

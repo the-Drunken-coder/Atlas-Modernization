@@ -9,10 +9,10 @@ This is the single entry point for project documentation. Docs are split into **
 
 | Location | What it holds | Use it when… |
 | --- | --- | --- |
-| [`docs/decisions/`](decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, …). | "What did we decide, and why?" |
+| [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, …). | "What did we decide, and why?" |
 | [`docs/problems/`](problems/) | Short-lived agent-to-agent notes on active blockers (minutes to a day or two). Spans all packages. | "What is broken right now on this branch?" |
 
-Start templates: [`decisions/_EXAMPLE_DESIGN_DECISION_.md`](decisions/_EXAMPLE_DESIGN_DECISION_.md),
+Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisions/_EXAMPLE_DESIGN_DECISION_.md),
 [`problems/_EXAMPLE_PROBLEM_.md`](problems/_EXAMPLE_PROBLEM_.md).
 
 ## Packages

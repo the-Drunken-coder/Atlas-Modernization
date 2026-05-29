@@ -12,5 +12,5 @@ This workspace is focused on modernizing the ATLAS Core backend.
 
 - **`AGENTS.md`** — hard constraints, commands, and recurring gotchas for agents working in this repo.
 - **`docs/README.md`** — the documentation index (project-level + per-package).
-- **`docs/decisions/`** — durable architectural decisions across the project.
+- **`docs/design-decisions/`** — durable architectural decisions across the project.
 - **`docs/problems/`** — short-lived blockers between agent sessions (see `_EXAMPLE_PROBLEM_.md`).
