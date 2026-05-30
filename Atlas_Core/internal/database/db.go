@@ -174,27 +174,23 @@ func (db *DB) Ping(ctx context.Context) error {
 	return db.Pool.Ping(ctx)
 }
 
-// EnsureTables drops and recreates every table on every startup.
+// EnsureTables applies the Core schema. When recreateOnStartup is true (default),
+// it drops and recreates every table on each startup.
 //
 // Rationale (destroy-and-recreate, not IF NOT EXISTS):
 //
-//	CREATE TABLE IF NOT EXISTS is the worst of both worlds: it bootstraps
-//	a fresh database cleanly, but it silently skips tables that already exist.
-//	If you add a column to the Go model and the DDL, restart against an existing
-//	DB, and the column simply never appears — no error, no warning, just a
-//	runtime query failure later. That drift is hard to notice and harder to
-//	debug.
+//	CREATE TABLE IF NOT EXISTS bootstraps a fresh DB but silently skips tables
+//	that already exist. After a model/DDL change, restart against an old DB and
+//	new columns never appear — no startup error, only failing queries later.
 //
-//	We could add a schema-version hash to detect drift and only recreate when
-//	tables are stale, but this project is greenfield with no real data.
-//	Recreating every time adds zero complexity and makes drift structurally
-//	impossible. When data persistence eventually matters, the hash approach
-//	is a natural upgrade path (drop → recreate only if the schema hash changed).
+//	Drop-and-recreate on startup is the permanent product model: PostgreSQL holds
+//	operational state only for the lifetime of a running process. Row data is not
+//	preserved across restarts. There is no migration framework and no planned
+//	schema-version hash or persistence path.
 //
 //	DROP TABLE IF EXISTS … CASCADE handles foreign-key dependencies without
-//	needing a manually maintained drop order. All DDL runs in a single
-//	transaction so a mid-flight failure rolls back, leaving the database in
-//	whatever state it had before EnsureTables started.
+//	a manually maintained drop order. All DDL runs in one transaction so a
+//	mid-flight failure rolls back.
 func (db *DB) EnsureTables(ctx context.Context) error {
 	if db == nil {
 		return ErrNilDB

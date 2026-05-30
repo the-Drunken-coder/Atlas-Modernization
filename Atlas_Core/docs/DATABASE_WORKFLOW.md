@@ -6,9 +6,9 @@ The ATLAS Core System uses a **destroy-and-recreate workflow** by default. On st
 
 **Why destroy-and-recreate instead of `CREATE TABLE IF NOT EXISTS`?** The old `IF NOT EXISTS` approach created missing tables but silently skipped existing ones. If you added a column to the Go model and DDL, restarted against an existing DB, the column simply never appeared — no error, no warning, just a runtime query failure later. Destroy-and-recreate makes that class of bug impossible. The Go models and DDL are the single source of truth; the database is always an exact reflection of them.
 
-**Why not detect drift with a schema-version hash?** When data persistence doesn't matter, a hash check adds complexity with no benefit. Recreating every time is simpler and achieves the same invariant. When data eventually matters, the hash approach is a natural upgrade path (drop → recreate only if the schema hash changed).
+**Why no migrations or schema-version table?** Atlas Core does not treat PostgreSQL as a long-lived system of record. Ephemeral storage on restart is intentional for the life of the project — not a stepping stone to Alembic, golang-migrate, or hash-gated recreate. Clients that need history must retain it outside this database.
 
-This approach prioritizes development speed and simplicity over data persistence, making it ideal for rapid prototyping and single-developer workflows.
+`DATABASE_RECREATE_ON_STARTUP=false` skips drops and only verifies that core tables exist; it does not evolve schema and is not a production configuration.
 
 ## Database Architecture
 
