@@ -16,7 +16,7 @@ func assertValidationResult(t *testing.T, result *ValidationResult, wantErr bool
 			return
 		}
 		if errMsg != "" && !strings.Contains(result.Error(), errMsg) {
-			t.Errorf("expected error containing %q, got: %v", errMsg, result.Errors)
+			t.Errorf("expected error containing %q, got: %v", errMsg, result.Error())
 		}
 		return
 	}

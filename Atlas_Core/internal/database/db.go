@@ -18,9 +18,16 @@ var ErrNilDB = errors.New("database: nil DB")
 // ErrNilPool is returned when Ping is called but the connection pool was never initialized.
 var ErrNilPool = errors.New("database: nil pool")
 
+// ErrSchemaNotPresent is returned when DATABASE_RECREATE_ON_STARTUP is false and core tables are missing.
+var ErrSchemaNotPresent = errors.New("database: core schema tables are missing; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
+
+// coreSchemaTables are required when destructive recreate is disabled.
+var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions"}
+
 // DB wraps the connection pool and provides database operations.
 type DB struct {
-	Pool *pgxpool.Pool
+	Pool              *pgxpool.Pool
+	recreateOnStartup bool
 }
 
 func buildPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
@@ -124,7 +131,26 @@ func New(cfg *config.Config) (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &DB{Pool: pool}, nil
+	return &DB{
+		Pool:              pool,
+		recreateOnStartup: cfg.DatabaseRecreateOnStartup,
+	}, nil
+}
+
+// coreSchemaTablesPresent reports whether all core application tables exist.
+func coreSchemaTablesPresent(ctx context.Context, q interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}) (bool, error) {
+	const qSQL = `
+		SELECT COUNT(*) = $1
+		FROM information_schema.tables
+		WHERE table_schema = 'public'
+		  AND table_name = ANY($2::text[])`
+	var ok bool
+	if err := q.QueryRow(ctx, qSQL, len(coreSchemaTables), coreSchemaTables).Scan(&ok); err != nil {
+		return false, fmt.Errorf("failed to check core schema tables: %w", err)
+	}
+	return ok, nil
 }
 
 // Close closes the database connection pool.
@@ -176,6 +202,18 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 	if db.Pool == nil {
 		return ErrNilPool
 	}
+
+	if !db.recreateOnStartup {
+		present, err := coreSchemaTablesPresent(ctx, db.Pool)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return ErrSchemaNotPresent
+		}
+		return nil
+	}
+
 	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin schema transaction: %w", err)

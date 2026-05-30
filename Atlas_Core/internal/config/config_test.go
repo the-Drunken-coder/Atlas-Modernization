@@ -12,7 +12,7 @@ import (
 // Keys read by config.Load() and loadSettingsFile — cleared so tests are not affected by stray process env.
 var loadTestEnvKeys = []string{
 	"MINIO_SECRET_KEY", "MINIO_SECRET_KEY_FILE",
-	"DEBUG", "DATABASE_ECHO", "DATABASE_POOL_SIZE", "DATABASE_MAX_OVERFLOW",
+	"DEBUG", "DATABASE_RECREATE_ON_STARTUP", "DATABASE_ECHO", "DATABASE_POOL_SIZE", "DATABASE_MAX_OVERFLOW",
 	"DATABASE_POOL_RECYCLE", "DATABASE_POOL_TIMEOUT", "DATABASE_POOL_IDLE_TIMEOUT", "DATABASE_POOL_PRE_PING",
 	"MINIO_SECURE", "MINIO_HTTP_POOL_SIZE", "MINIO_HTTP_POOL_TIMEOUT",
 	"ENABLE_API_AUTH", "MAX_UPLOAD_SIZE_MB", "MAX_VIEW_SIZE_MB",
@@ -74,6 +74,25 @@ func TestLoadConfig(t *testing.T) {
 
 	if cfg.ServerPort != "8000" {
 		t.Errorf("Expected default ServerPort to be 8000, got %s", cfg.ServerPort)
+	}
+
+	if !cfg.DatabaseRecreateOnStartup {
+		t.Error("expected DATABASE_RECREATE_ON_STARTUP default true")
+	}
+}
+
+func TestLoadDatabaseRecreateOnStartupFalse(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
+	t.Setenv("DATABASE_RECREATE_ON_STARTUP", "false")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if cfg.DatabaseRecreateOnStartup {
+		t.Fatal("expected DATABASE_RECREATE_ON_STARTUP=false")
 	}
 }
 

@@ -120,3 +120,15 @@ func TestCloseHandlesNilPool(t *testing.T) {
 
 	db.Close()
 }
+
+func TestCoreSchemaTables(t *testing.T) {
+	want := []string{"entities", "tasks", "objects", "deletions"}
+	if len(coreSchemaTables) != len(want) {
+		t.Fatalf("expected %d core tables, got %d", len(want), len(coreSchemaTables))
+	}
+	for i, name := range want {
+		if coreSchemaTables[i] != name {
+			t.Fatalf("coreSchemaTables[%d] = %q, want %q", i, coreSchemaTables[i], name)
+		}
+	}
+}

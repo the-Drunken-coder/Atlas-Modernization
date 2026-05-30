@@ -10,7 +10,7 @@ func ClampListLimit(limit int) int {
 	return ClampLimit(limit, DefaultListLimit, MaxListLimit)
 }
 
-// ClampLimit clamps limit to [1, maxLimit], using defaultLimit when limit <= 0.
+// ClampLimit clamps limit to [defaultLimit, maxLimit], using defaultLimit when limit <= 0.
 func ClampLimit(limit, defaultLimit, maxLimit int) int {
 	if limit <= 0 {
 		return defaultLimit

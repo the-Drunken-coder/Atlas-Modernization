@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for ATLAS Core System (Go)
-# Builder/dev: golang:1.26.1-alpine (digest-pinned linux/amd64 manifest). Production: slim alpine:3.21 runtime image.
+# Production runtime: slim alpine:3.21. Go stages pin golang:1.26.1-alpine by digest (refresh when bumping Go in go.mod).
 
-# Build stage (keep digest aligned with Atlas_Core/go.mod `go` directive; refresh when bumping Go)
+# Build stage: multi-arch index digest for golang:1.26.1-alpine (not the per-platform manifest SHA).
 FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS builder
 
 # Alpine packages (base is alpine3.23); refresh versions when bumping the Go base image.
@@ -24,7 +24,7 @@ COPY internal/ ./internal/
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o atlas_core ./cmd/atlas_core
 
-# Development stage
+# Development stage: linux/amd64 manifest digest for the same tag (intentionally different from the builder index digest).
 FROM golang:1.26.1-alpine@sha256:d337ecb3075f0ec76d81652b3fa52af47c3eba6c8ba9f93b835752df7ce62946 AS development
 
 # Alpine packages (match builder stage).

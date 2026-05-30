@@ -137,9 +137,9 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 
 // effectiveLimit returns the requested limit capped to the provided max,
 // or max if the requested limit is zero or negative.
-func effectiveLimit(requested, max int) int {
-	if requested <= 0 || requested > max {
-		return max
+func effectiveLimit(requested, maxLimit int) int {
+	if requested <= 0 || requested > maxLimit {
+		return maxLimit
 	}
 	return requested
 }

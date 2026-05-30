@@ -19,14 +19,15 @@ type Config struct {
 	LogLevel   string
 
 	// Database settings
-	DatabaseURL             string
-	DatabaseEcho            bool
-	DatabasePoolSize        int
-	DatabaseMaxOverflow     int
-	DatabasePoolRecycle     int
-	DatabasePoolTimeout     int
-	DatabasePoolIdleTimeout int
-	DatabasePoolPrePing     bool
+	DatabaseURL               string
+	DatabaseRecreateOnStartup bool
+	DatabaseEcho              bool
+	DatabasePoolSize          int
+	DatabaseMaxOverflow       int
+	DatabasePoolRecycle       int
+	DatabasePoolTimeout       int
+	DatabasePoolIdleTimeout   int
+	DatabasePoolPrePing       bool
 
 	// MinIO/S3 settings
 	MinIOEndpoint         string
@@ -100,6 +101,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	dbRecreateOnStartup, err := getEnvBool("DATABASE_RECREATE_ON_STARTUP", true)
+	if err != nil {
+		return nil, err
+	}
 	dbEcho, err := getEnvBool("DATABASE_ECHO", false)
 	if err != nil {
 		return nil, err
@@ -170,17 +175,18 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		ServerPort:              getEnv("SERVER_PORT", "8000"),
-		Debug:                   debug,
-		LogLevel:                getEnv("LOG_LEVEL", "INFO"),
-		DatabaseURL:             getEnv("DATABASE_URL", "postgres://atlas@localhost:5432/atlas_core"),
-		DatabaseEcho:            dbEcho,
-		DatabasePoolSize:        dbPoolSize,
-		DatabaseMaxOverflow:     dbMaxOverflow,
-		DatabasePoolRecycle:     dbPoolRecycle,
-		DatabasePoolTimeout:     dbPoolTimeout,
-		DatabasePoolIdleTimeout: dbIdleTimeout,
-		DatabasePoolPrePing:     dbPrePing,
+		ServerPort:                getEnv("SERVER_PORT", "8000"),
+		Debug:                     debug,
+		LogLevel:                  getEnv("LOG_LEVEL", "INFO"),
+		DatabaseURL:               getEnv("DATABASE_URL", "postgres://atlas@localhost:5432/atlas_core"),
+		DatabaseRecreateOnStartup: dbRecreateOnStartup,
+		DatabaseEcho:              dbEcho,
+		DatabasePoolSize:          dbPoolSize,
+		DatabaseMaxOverflow:       dbMaxOverflow,
+		DatabasePoolRecycle:       dbPoolRecycle,
+		DatabasePoolTimeout:       dbPoolTimeout,
+		DatabasePoolIdleTimeout:   dbIdleTimeout,
+		DatabasePoolPrePing:       dbPrePing,
 
 		MinIOEndpoint:         getEnv("MINIO_ENDPOINT", "localhost:9000"),
 		MinIOExternalEndpoint: getEnv("MINIO_EXTERNAL_ENDPOINT", ""),

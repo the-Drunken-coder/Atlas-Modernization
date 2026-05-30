@@ -6,7 +6,10 @@ updates:
     schedule:
       interval: weekly
     groups:
-      go-modules:
+      go-modules-minor-patch:
+        update-types:
+          - minor
+          - patch
         patterns:
           - "*"
     open-pull-requests-limit: 5
@@ -16,7 +19,10 @@ updates:
     schedule:
       interval: weekly
     groups:
-      docker-images:
+      docker-images-minor-patch:
+        update-types:
+          - minor
+          - patch
         patterns:
           - "*"
     open-pull-requests-limit: 5
@@ -26,7 +32,10 @@ updates:
     schedule:
       interval: weekly
     groups:
-      github-actions:
+      github-actions-minor-patch:
+        update-types:
+          - minor
+          - patch
         patterns:
           - "*"
     open-pull-requests-limit: 5

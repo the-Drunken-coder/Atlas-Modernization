@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ATLAS Core System uses a **destroy-and-recreate workflow**. On every startup, `EnsureTables()` drops all tables and recreates them from the DDL defined in `internal/database/db.go`. The system **never uses migration tools like Alembic or golang-migrate**.
+The ATLAS Core System uses a **destroy-and-recreate workflow** by default. On startup, when `DATABASE_RECREATE_ON_STARTUP=true` (the default), `EnsureTables()` drops all tables and recreates them from the DDL defined in `internal/database/db.go`. Set `DATABASE_RECREATE_ON_STARTUP=false` when pointing at a shared or persistent database: startup skips drops and only verifies that core tables exist. The system **never uses migration tools like Alembic or golang-migrate**.
 
 **Why destroy-and-recreate instead of `CREATE TABLE IF NOT EXISTS`?** The old `IF NOT EXISTS` approach created missing tables but silently skipped existing ones. If you added a column to the Go model and DDL, restarted against an existing DB, the column simply never appeared — no error, no warning, just a runtime query failure later. Destroy-and-recreate makes that class of bug impossible. The Go models and DDL are the single source of truth; the database is always an exact reflection of them.
 
@@ -12,10 +12,11 @@ This approach prioritizes development speed and simplicity over data persistence
 
 ## Database Architecture
 
-- **Database**: PostgreSQL 15+ with TimescaleDB extension
+- **Database**: PostgreSQL 15+ (Docker Compose uses TimescaleDB-enabled Postgres)
+- **TimescaleDB**: The extension is created at cluster init in `docker/postgres/init.sql` (`CREATE EXTENSION IF NOT EXISTS timescaledb`). Go `EnsureTables()` does not create extensions or hypertables — only plain tables and indexes.
 - **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
 - **Models**: Located in `internal/models/models.go`
-- **Schema Creation**: Every startup via `EnsureTables()` in `internal/database/db.go` — drops all tables then recreates them
+- **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops all tables then recreates them; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
 
 ## Database Schema
 
