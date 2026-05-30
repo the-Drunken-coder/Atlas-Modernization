@@ -209,7 +209,7 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 		)`,
 		`CREATE INDEX idx_entities_type ON entities(type)`,
 		`CREATE INDEX idx_entities_subtype ON entities(subtype)`,
-		`CREATE INDEX idx_entities_alias ON entities(alias)`,
+		`CREATE UNIQUE INDEX idx_entities_alias_unique ON entities(alias) WHERE alias IS NOT NULL`,
 
 		`CREATE TABLE tasks (
 			task_id VARCHAR(50) PRIMARY KEY,

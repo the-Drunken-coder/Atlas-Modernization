@@ -96,6 +96,11 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*ser
 				return nil, NewTaskConflictError(taskID)
 			}
 		}
+		if entityID != nil {
+			if mapped := translateTaskEntityFK(err, *entityID); mapped != nil {
+				return nil, mapped
+			}
+		}
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 
@@ -427,6 +432,11 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		&task.JSON, &task.CreatedAt, &task.UpdatedAt,
 	)
 	if err != nil {
+		if newEntityID != nil {
+			if mapped := translateTaskEntityFK(err, *newEntityID); mapped != nil {
+				return nil, mapped
+			}
+		}
 		return nil, fmt.Errorf("failed to update task: %w", err)
 	}
 
@@ -435,6 +445,17 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	}
 
 	return serializers.SerializeTask(&task), nil
+}
+
+func translateTaskEntityFK(err error, entityID string) error {
+	if !isForeignKeyViolation(err) {
+		return nil
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.ConstraintName != "" && pgErr.ConstraintName != "tasks_entity_id_fkey" {
+		return nil
+	}
+	return NewEntityNotFoundError(entityID)
 }
 
 // Delete removes a task.

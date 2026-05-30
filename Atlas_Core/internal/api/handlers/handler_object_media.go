@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"mime"
+	"net/url"
 	"strings"
 )
 
@@ -76,5 +78,57 @@ func getExtensionForContentType(contentType string) string {
 
 // attachmentContentDisposition builds an RFC 6266 Content-Disposition value for downloads.
 func attachmentContentDisposition(filename string) string {
-	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+	if filename == "" {
+		return "attachment"
+	}
+	if cd := mime.FormatMediaType("attachment", map[string]string{"filename": filename}); cd != "" {
+		return cd
+	}
+
+	legacy := escapeRFC6266QuotedString(asciiFilenameFallback(filename))
+	cd := fmt.Sprintf(`attachment; filename="%s"`, legacy)
+	if filenameNeedsExtendedValue(filename) {
+		cd += fmt.Sprintf(`; filename*=UTF-8''%s`, url.PathEscape(filename))
+	}
+	return cd
+}
+
+func asciiFilenameFallback(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			continue
+		case r > 0x7e:
+			b.WriteByte('?')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "download"
+	}
+	return b.String()
+}
+
+func escapeRFC6266QuotedString(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '\\' || r == '"' {
+			b.WriteByte('\\')
+		}
+		if r >= 0x20 && r <= 0x7e {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func filenameNeedsExtendedValue(name string) bool {
+	for _, r := range name {
+		if r > 0x7e || r < 0x20 {
+			return true
+		}
+	}
+	return false
 }

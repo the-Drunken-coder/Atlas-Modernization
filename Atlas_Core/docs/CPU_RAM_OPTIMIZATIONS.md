@@ -31,7 +31,8 @@ List actions clamp pagination:
 
 - default limit: `100`
 - hard max limit: `500`
-- negative offset normalized to `0` in the action layer (HTTP list handlers reject negative offset/limit with 400 before actions run)
+- HTTP list handlers reject negative offset/limit with 400 Bad Request (`parseListPagination` / `parseNonNegativeIntQuery`)
+- returned limit is clamped via `actions.ClampListLimit` before list queries run
 
 Full dataset query also has an upper bound:
 
