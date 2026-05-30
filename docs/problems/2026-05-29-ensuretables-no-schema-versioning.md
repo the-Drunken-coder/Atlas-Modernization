@@ -11,4 +11,13 @@
    1. Create a DB with the current schema.
    2. Add a column to the Go model + `EnsureTables` DDL, rebuild, restart against the existing DB.
    3. Observe the column is not added and no startup error is raised.
-9. **Notes:** Lightweight options before production: a `schema_version` table checked at startup, a startup assertion of expected columns, or reviewed versioned SQL files. Deliberately deferred per the design decision.
+9. **Resolution (2026-05-29):**
+
+   Three options were on the table for the schema-drift problem:
+   - **(A) Migration framework** — overkill for greenfield, no real data, single developer.
+   - **(B) Schema-version hash/sentinel** to detect drift and fail fast — adds detection logic but doesn't prevent drift, and the extra complexity buys nothing when data doesn't matter.
+   - **(C) Destroy-and-recreate** — drop all tables and rebuild them from the DDL on every startup. Simplest possible thing. Zero drift by construction. No migrations, no version tracking, no detection code.
+
+   **Chose (C).** `EnsureTables` now runs `DROP TABLE IF EXISTS … CASCADE` to clear all tables, then recreates them with plain `CREATE TABLE` / `CREATE INDEX` (no `IF NOT EXISTS`). Every startup produces a database that exactly matches the current Go models and DDL. All existing data is lost on restart — intentional and acceptable for this project's use case. When data persistence eventually matters, the natural upgrade path is a schema-version hash: compute a hash of the DDL, store it in a `schema_version` row, and only drop-and-recreate when the stored hash differs from the current one.
+
+   Updated: `Atlas_Core/internal/database/db.go`, `Atlas_Core/docs/DATABASE_WORKFLOW.md`, `docs/design-decisions/2026-05-29-schema-evolution-without-migrations.md`.

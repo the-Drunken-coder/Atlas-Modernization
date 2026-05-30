@@ -148,8 +148,27 @@ func (db *DB) Ping(ctx context.Context) error {
 	return db.Pool.Ping(ctx)
 }
 
-// EnsureTables creates all required database tables if they don't exist.
-// All DDL runs in a single transaction so a mid-flight failure does not leave a half-applied schema.
+// EnsureTables drops and recreates every table on every startup.
+//
+// Rationale (destroy-and-recreate, not IF NOT EXISTS):
+//
+//	CREATE TABLE IF NOT EXISTS is the worst of both worlds: it bootstraps
+//	a fresh database cleanly, but it silently skips tables that already exist.
+//	If you add a column to the Go model and the DDL, restart against an existing
+//	DB, and the column simply never appears — no error, no warning, just a
+//	runtime query failure later. That drift is hard to notice and harder to
+//	debug.
+//
+//	We could add a schema-version hash to detect drift and only recreate when
+//	tables are stale, but this project is greenfield with no real data.
+//	Recreating every time adds zero complexity and makes drift structurally
+//	impossible. When data persistence eventually matters, the hash approach
+//	is a natural upgrade path (drop → recreate only if the schema hash changed).
+//
+//	DROP TABLE IF EXISTS … CASCADE handles foreign-key dependencies without
+//	needing a manually maintained drop order. All DDL runs in a single
+//	transaction so a mid-flight failure rolls back, leaving the database in
+//	whatever state it had before EnsureTables started.
 func (db *DB) EnsureTables(ctx context.Context) error {
 	if db == nil {
 		return ErrNilDB
@@ -163,8 +182,23 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	entitiesDDL := []string{
-		`CREATE TABLE IF NOT EXISTS entities (
+	// Drop order: tasks (depends on entities) first, then everything else.
+	// CASCADE is a safety net — it severs any FK the explicit order misses
+	// (e.g., a future table referencing tasks or entities).
+	dropDDL := []string{
+		`DROP TABLE IF EXISTS tasks CASCADE`,
+		`DROP TABLE IF EXISTS entities CASCADE`,
+		`DROP TABLE IF EXISTS objects CASCADE`,
+		`DROP TABLE IF EXISTS deletions CASCADE`,
+	}
+	for _, stmt := range dropDDL {
+		if _, err = tx.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to drop tables: %w", err)
+		}
+	}
+
+	createDDL := []string{
+		`CREATE TABLE entities (
 			entity_id VARCHAR(50) PRIMARY KEY,
 			type VARCHAR(50) NOT NULL,
 			subtype VARCHAR(50),
@@ -173,18 +207,11 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)`,
-		`CREATE INDEX IF NOT EXISTS idx_entities_subtype ON entities(subtype)`,
-		`CREATE INDEX IF NOT EXISTS idx_entities_alias ON entities(alias)`,
-	}
-	for _, stmt := range entitiesDDL {
-		if _, err = tx.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to create entities schema: %w", err)
-		}
-	}
+		`CREATE INDEX idx_entities_type ON entities(type)`,
+		`CREATE INDEX idx_entities_subtype ON entities(subtype)`,
+		`CREATE INDEX idx_entities_alias ON entities(alias)`,
 
-	tasksDDL := []string{
-		`CREATE TABLE IF NOT EXISTS tasks (
+		`CREATE TABLE tasks (
 			task_id VARCHAR(50) PRIMARY KEY,
 			status VARCHAR(50) NOT NULL DEFAULT 'pending',
 			entity_id VARCHAR(50) REFERENCES entities(entity_id) ON DELETE SET NULL,
@@ -192,17 +219,10 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_entity_id ON tasks(entity_id)`,
-	}
-	for _, stmt := range tasksDDL {
-		if _, err = tx.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to create tasks schema: %w", err)
-		}
-	}
+		`CREATE INDEX idx_tasks_status ON tasks(status)`,
+		`CREATE INDEX idx_tasks_entity_id ON tasks(entity_id)`,
 
-	objectsDDL := []string{
-		`CREATE TABLE IF NOT EXISTS objects (
+		`CREATE TABLE objects (
 			object_id VARCHAR(50) PRIMARY KEY,
 			path VARCHAR(500) UNIQUE,
 			content_type VARCHAR(100),
@@ -211,35 +231,24 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_objects_content_type ON objects(content_type)`,
-		`CREATE INDEX IF NOT EXISTS idx_objects_type ON objects(type)`,
-		// Supports objects-by-entity / objects-by-task lookups, which filter with
-		// json->'referenced_by' @> $1::jsonb. Without this GIN index the containment
-		// query degrades to a sequential scan as the objects table grows.
-		`CREATE INDEX IF NOT EXISTS idx_objects_referenced_by ON objects USING GIN ((json->'referenced_by') jsonb_path_ops)`,
-	}
-	for _, stmt := range objectsDDL {
-		if _, err = tx.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to create objects schema: %w", err)
-		}
-	}
+		`CREATE INDEX idx_objects_content_type ON objects(content_type)`,
+		`CREATE INDEX idx_objects_type ON objects(type)`,
+		`CREATE INDEX idx_objects_referenced_by ON objects USING GIN ((json->'referenced_by') jsonb_path_ops)`,
 
-	// Create deletions table for tracking hard-deleted resources.
-	// This allows the changed-since endpoint to return tombstones so
-	// clients can remove stale items from their caches.
-	deletionsDDL := []string{
-		`CREATE TABLE IF NOT EXISTS deletions (
+		// deletions table tracks hard-deleted resources so the changed-since
+		// endpoint can return tombstones for client cache eviction.
+		`CREATE TABLE deletions (
 			id BIGSERIAL PRIMARY KEY,
 			resource_type VARCHAR(20) NOT NULL,
 			resource_id VARCHAR(50) NOT NULL,
 			deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_deletions_deleted_at ON deletions(deleted_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_deletions_resource_type ON deletions(resource_type)`,
+		`CREATE INDEX idx_deletions_deleted_at ON deletions(deleted_at)`,
+		`CREATE INDEX idx_deletions_resource_type ON deletions(resource_type)`,
 	}
-	for _, stmt := range deletionsDDL {
+	for _, stmt := range createDDL {
 		if _, err = tx.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to create deletions schema: %w", err)
+			return fmt.Errorf("failed to create schema: %w", err)
 		}
 	}
 

@@ -2,16 +2,20 @@
 
 ## Overview
 
-The ATLAS Core System uses a **migration-free workflow**. Database tables are automatically created via `CREATE TABLE IF NOT EXISTS` statements executed by the Go application during startup. The system **never uses migration tools like Alembic or golang-migrate** — instead, it generates DDL directly in `internal/database/db.go` and executes it via the pgx connection pool.
+The ATLAS Core System uses a **destroy-and-recreate workflow**. On every startup, `EnsureTables()` drops all tables and recreates them from the DDL defined in `internal/database/db.go`. The system **never uses migration tools like Alembic or golang-migrate**.
 
-This approach prioritizes development speed and simplicity over versioned schema migrations, making it ideal for rapid prototyping and development environments.
+**Why destroy-and-recreate instead of `CREATE TABLE IF NOT EXISTS`?** The old `IF NOT EXISTS` approach created missing tables but silently skipped existing ones. If you added a column to the Go model and DDL, restarted against an existing DB, the column simply never appeared — no error, no warning, just a runtime query failure later. Destroy-and-recreate makes that class of bug impossible. The Go models and DDL are the single source of truth; the database is always an exact reflection of them.
+
+**Why not detect drift with a schema-version hash?** When data persistence doesn't matter, a hash check adds complexity with no benefit. Recreating every time is simpler and achieves the same invariant. When data eventually matters, the hash approach is a natural upgrade path (drop → recreate only if the schema hash changed).
+
+This approach prioritizes development speed and simplicity over data persistence, making it ideal for rapid prototyping and single-developer workflows.
 
 ## Database Architecture
 
 - **Database**: PostgreSQL 15+ with TimescaleDB extension
 - **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
 - **Models**: Located in `internal/models/models.go`
-- **Schema Creation**: Automatic via `EnsureTables()` in `internal/database/db.go` (no migrations)
+- **Schema Creation**: Every startup via `EnsureTables()` in `internal/database/db.go` — drops all tables then recreates them
 
 ## Database Schema
 
@@ -72,65 +76,57 @@ docker compose -f docker/docker-compose.yml down
 # 2. Edit the DDL in internal/database/db.go (EnsureTables function)
 #    and update Go structs in internal/models/models.go as needed
 
-# 3. Rebuild and restart services — new *tables* are created on startup; existing tables are not altered
+# 3. Rebuild and restart — all tables are dropped and recreated on startup
 go build -o atlas_core ./cmd/atlas_core
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-**Note**: `EnsureTables()` runs `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`. That creates missing tables but **does not add columns** to tables that already exist. For new columns on an existing database, run an explicit `ALTER TABLE` (or a one-off reviewed SQL script) against PostgreSQL, then keep `db.go` in sync so new environments get the full definition.
+**Note**: `EnsureTables()` drops all tables with `DROP TABLE IF EXISTS ... CASCADE` then recreates them with fresh `CREATE TABLE` statements. All existing data is lost on every restart. This is intentional — add any seed data you need to `docker/postgres/init.sql`.
 
 ### 2. What Happens on Startup
 
 When the application starts (via `go run ./cmd/atlas_core` or as a Docker container):
 
 1. **Database Connection**: pgx pool connects to PostgreSQL
-2. **Table Creation**: `EnsureTables()` executes `CREATE TABLE IF NOT EXISTS` for entities, tasks, objects, and deletions, and creates indexes with `CREATE INDEX IF NOT EXISTS`
-3. **Health Check**: Executes `pool.Ping()` to verify database connectivity
+2. **Table Drop**: `EnsureTables()` drops all existing tables with `DROP TABLE IF EXISTS ... CASCADE`
+3. **Table Creation**: `EnsureTables()` recreates all tables and indexes from the DDL in `db.go`
 4. **Service Ready**: Application begins serving traffic
 
-This automatic table creation ensures the database schema is always present without manual intervention.
+All DDL runs in a single transaction — a mid-flight failure rolls back, leaving the database in its prior state.
 
 ### How Tables Are Created
 
 The `internal/database/db.go` file contains `EnsureTables()` which:
 
-1. Executes raw SQL `CREATE TABLE IF NOT EXISTS` statements for each table
-2. Creates indexes with `CREATE INDEX IF NOT EXISTS`
+1. Drops tables in reverse-dependency order (tasks first, then entities, objects, deletions)
+2. Recreates tables and indexes with fresh `CREATE TABLE` / `CREATE INDEX` statements
 3. Runs inside the application process via the pgx connection pool
 
 This means:
 
 - **No migration files needed** — DDL in `db.go` is the single source of truth
-- **Safe to run multiple times** — Uses `IF NOT EXISTS`
-- **Automatic on startup** — Runs every time the application starts
+- **Every startup gets a clean database** — no schema drift possible
+- **All data is ephemeral** — add seed data to `docker/postgres/init.sql` if needed
 
 ### 3. Example: Adding a New Column
 
-1. **Existing databases:** apply a manual SQL schema change (no migration framework in-repo):
-
-```sql
-ALTER TABLE entities ADD COLUMN IF NOT EXISTS priority INTEGER;
-```
-
-1. **Keep `EnsureTables()` aligned** so fresh installs get the column inside `CREATE TABLE`:
+1. Add the column to the `CREATE TABLE` DDL in `db.go`:
 
 ```go
-// In internal/database/db.go, inside EnsureTables():
-_, err := db.Pool.Exec(ctx, `
-    CREATE TABLE IF NOT EXISTS entities (
-        entity_id VARCHAR(50) PRIMARY KEY,
-        type VARCHAR(50) NOT NULL,
-        subtype VARCHAR(50),
-        alias VARCHAR(255),
-        priority INTEGER,
-        json JSONB NOT NULL DEFAULT '{}',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-`)
+// In internal/database/db.go, inside EnsureTables() createDDL:
+`CREATE TABLE entities (
+    entity_id VARCHAR(50) PRIMARY KEY,
+    type VARCHAR(50) NOT NULL,
+    subtype VARCHAR(50),
+    alias VARCHAR(255),
+    priority INTEGER,
+    json JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`,
 ```
 
-1. Update the Go struct in `internal/models/models.go`:
+2. Update the Go struct in `internal/models/models.go`:
 
 ```go
 type Entity struct {
@@ -139,7 +135,7 @@ type Entity struct {
 }
 ```
 
-1. Rebuild and restart:
+3. Rebuild and restart:
 
 ```bash
 # Run from Atlas_Core/
@@ -149,39 +145,33 @@ go build -o atlas_core ./cmd/atlas_core && docker compose -f docker/docker-compo
 ### 4. Example: Adding a New Table
 
 ```go
-// In internal/database/db.go, add to EnsureTables():
-_, err = db.Pool.Exec(ctx, `
-    CREATE TABLE IF NOT EXISTS audit_logs (
-        id SERIAL PRIMARY KEY,
-        entity_id VARCHAR(50) REFERENCES entities(entity_id),
-        action VARCHAR(100) NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-`)
-if err != nil {
-    return fmt.Errorf("failed to create audit_logs table: %w", err)
-}
+// In internal/database/db.go, add to EnsureTables() createDDL:
+`CREATE TABLE audit_logs (
+    id SERIAL PRIMARY KEY,
+    entity_id VARCHAR(50) REFERENCES entities(entity_id),
+    action VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`,
 ```
 
 Then add the corresponding Go struct in `internal/models/models.go` and rebuild.
 
 ## Development Guidelines
 
-### ✅ **Advantages of the Migration-Free Approach**
+### Advantages of the Destroy-and-Recreate Approach
 
 - **Simplicity**: No migration files to manage or version control
 - **Speed**: Instant schema updates just by editing DDL and models
 - **Consistency**: Go structs + DDL in `db.go` are the single source of truth
-- **Safety**: `CREATE TABLE IF NOT EXISTS` prevents errors on restart
+- **No schema drift**: Database is always an exact match for the current models
 
-### ⚠️ **Important Notes**
+### Important Notes
 
+- **Data is ephemeral**: All data is lost on every restart. Seed data goes in `docker/postgres/init.sql`.
 - **Schema changes on restart**: Changes to DDL require an application restart to take effect
-- **Development data**: Use disposable databases when testing breaking changes (e.g., column renames)
-- **Column modifications**: `CREATE TABLE IF NOT EXISTS` only creates missing tables; it doesn't modify existing ones
-- **For production**: This repository does not use migration tooling. Use reviewed, versioned SQL changes and explicit manual schema-change procedures instead.
+- **Single-developer workflow**: Not suitable for shared databases or environments where data persistence matters
 
-### 🔄 **Daily Workflow**
+### Daily Workflow
 
 ```bash
 # Run from Atlas_Core/
@@ -202,44 +192,14 @@ docker compose -f docker/docker-compose.yml down
 
 ### What the Auto-Creation Handles
 
-- ✅ Creating new tables
-- ✅ Creating indexes and constraints
-- ✅ Idempotent execution (safe to run repeatedly)
+- Creating all tables and indexes fresh on every startup
+- Schema is always an exact match for the current DDL
+- All operations run in a single transaction
 
 ### What It Doesn't Handle
 
-- ❌ Renaming columns on existing tables: `CREATE TABLE IF NOT EXISTS` does not re-apply the table definition to an existing table, so it will not “rename by adding” a column — use `ALTER TABLE ... RENAME COLUMN` (or equivalent manual SQL)
-- ❌ Changing column types (requires manual ALTER TABLE)
-- ❌ Removing columns (old columns remain in database)
-- ❌ Data migrations or transformations
-- ❌ Adding columns to existing tables (CREATE TABLE IF NOT EXISTS skips existing tables)
-
-### When You Need Manual Intervention
-
-If you need to:
-
-- Rename a column: Write manual SQL to rename it
-- Change a column type: Write manual ALTER TABLE statement
-- Remove old columns: Write manual DROP COLUMN statement
-- Migrate existing data: Apply a one-off, reviewed SQL/data backfill (no migration framework)
-
-Execute manual SQL via:
-
-```bash
-# Run from Atlas_Core/. Use the Compose *service* name
-# (here: postgres) — not a specific container name — so it survives container renames.
-docker compose -f docker/docker-compose.yml exec -T postgres psql -U atlas -d atlas_core << EOF
-ALTER TABLE entities RENAME COLUMN old_name TO new_name;
-EOF
-```
-
-## Production Considerations
-
-For production deployments with existing data, this migration-free approach has limitations. Use manual, versioned SQL changes and explicit rollback plans rather than migration tools.
-
-- **Manual schema changes**: For breaking changes, write and test SQL scripts manually
-- **Database backups**: Always backup before schema changes
-- **Downtime**: Some schema changes may require brief downtime
+- Data persistence — all rows are lost on every restart
+- Selective schema changes — the entire schema is replaced, not evolved
 
 ## Troubleshooting
 
@@ -256,7 +216,6 @@ On Windows systems running Docker Desktop with WSL2 backend, `localhost` port fo
 **Root Cause:**
 
 Docker Desktop uses WSL2 for container networking. The port forwarding from Windows `localhost` to the WSL2 VM can be unreliable, especially when:
-
 - Multiple WSL distributions are running
 - The system has been sleeping/hibernating
 - Network configuration has changed
@@ -317,4 +276,4 @@ docker compose -f docker/docker-compose.yml up -d
 
 ---
 
-**Remember**: This migration-free approach keeps fresh installs simple: `EnsureTables()` creates missing tables for new databases. For **existing** databases, schema changes are **not** applied automatically—use a reviewed `ALTER TABLE` or one-off SQL, then update `db.go` and the Go models so new environments stay consistent.
+**Remember**: `EnsureTables()` drops and recreates everything on every startup. Edit `db.go` and the Go models, rebuild, restart — the database will match. No migrations, no drift, no stale columns.
