@@ -109,28 +109,28 @@ def _ensure_catalog_uploaded(api_base_url: str) -> bool:
     # Generate a unique boundary
     boundary = f"----AtlasCatalogBoundary{uuid.uuid4().hex}"
     crlf = b"\r\n"
-    
+
     # Build multipart form data body manually
     body_parts = []
-    
+
     # Add object_id field
     body_parts.append(f"--{boundary}".encode("utf-8"))
     body_parts.append(b'Content-Disposition: form-data; name="object_id"')
     body_parts.append(b"")
     body_parts.append(COMMAND_CATALOG_OBJECT_ID.encode("utf-8"))
-    
+
     # Add usage_hint field
     body_parts.append(f"--{boundary}".encode("utf-8"))
     body_parts.append(b'Content-Disposition: form-data; name="usage_hint"')
     body_parts.append(b"")
     body_parts.append(b"command_catalog")
-    
+
     # Add type field
     body_parts.append(f"--{boundary}".encode("utf-8"))
     body_parts.append(b'Content-Disposition: form-data; name="type"')
     body_parts.append(b"")
     body_parts.append(b"command_catalog")
-    
+
     # Add file field
     body_parts.append(f"--{boundary}".encode("utf-8"))
     body_parts.append(
@@ -139,13 +139,13 @@ def _ensure_catalog_uploaded(api_base_url: str) -> bool:
     body_parts.append(b"Content-Type: application/json")
     body_parts.append(b"")
     body_parts.append(catalog_bytes)
-    
+
     # Add closing boundary
     body_parts.append(f"--{boundary}--".encode("utf-8"))
-    
+
     # Join all parts with CRLF
     body_bytes = crlf.join(body_parts)
-    
+
     headers = {
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Content-Length": str(len(body_bytes)),
