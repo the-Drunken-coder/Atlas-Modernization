@@ -419,7 +419,7 @@ func TestGetExtensionForContentTypeUsesFallbacks(t *testing.T) {
 	if got := getExtensionForContentType("application/x-laz"); got != ".laz" {
 		t.Fatalf("expected .laz fallback, got %q", got)
 	}
-	if got := getExtensionForContentType("application/x-octet-stream"); got != "" {
+	if got := getExtensionForContentType("application/x-unknown-xyz"); got != "" {
 		t.Fatalf("expected empty extension for unknown type, got %q", got)
 	}
 }

@@ -231,6 +231,10 @@ func Load() (*Config, error) {
 		cfg.CORSOrigins = origins
 	}
 
+	if err := validateCORSOrigins(cfg.CORSOrigins); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 
@@ -403,7 +407,7 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 				result = append(result, trimmed)
 			}
 		}
-		return result, nil
+		return result, validateCORSOrigins(result)
 	}
 
 	parts := strings.Split(raw, ",")
@@ -413,5 +417,15 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 			result = append(result, trimmed)
 		}
 	}
-	return result, nil
+	return result, validateCORSOrigins(result)
+}
+
+// validateCORSOrigins rejects wildcard origins; Atlas Core enables AllowCredentials on CORS.
+func validateCORSOrigins(origins []string) error {
+	for _, o := range origins {
+		if o == "*" {
+			return fmt.Errorf("CORS origins: wildcard \"*\" is not allowed with AllowCredentials enabled")
+		}
+	}
+	return nil
 }

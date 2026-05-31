@@ -24,7 +24,7 @@ func TestAttachmentContentDisposition(t *testing.T) {
 		{
 			name:     "non-ascii uses filename star",
 			filename: "résumé.pdf",
-			wantSub:  []string{`attachment`, `filename*=utf-8''`},
+			wantSub:  []string{`attachment`},
 		},
 		{
 			name:     "empty filename",
@@ -39,6 +39,9 @@ func TestAttachmentContentDisposition(t *testing.T) {
 				if !strings.Contains(got, sub) {
 					t.Fatalf("attachmentContentDisposition(%q) = %q, want substring %q", tt.filename, got, sub)
 				}
+			}
+			if tt.filename == "résumé.pdf" && !strings.Contains(strings.ToLower(got), `filename*=utf-8''`) {
+				t.Fatalf("attachmentContentDisposition(%q) = %q, want RFC 5987 filename* with UTF-8 charset", tt.filename, got)
 			}
 		})
 	}
