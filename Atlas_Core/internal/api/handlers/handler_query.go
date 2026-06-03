@@ -12,9 +12,9 @@ type fullDatasetResponse struct {
 	Entities         []*serializers.EntityResponse `json:"entities"`
 	Tasks            []*serializers.TaskResponse   `json:"tasks"`
 	Objects          []*serializers.ObjectResponse `json:"objects"`
-	HasMoreEntities  bool                          `json:"has_more_entities,omitempty"`
-	HasMoreTasks     bool                          `json:"has_more_tasks,omitempty"`
-	HasMoreObjects   bool                          `json:"has_more_objects,omitempty"`
+	HasMoreEntities  bool                          `json:"has_more_entities"`
+	HasMoreTasks     bool                          `json:"has_more_tasks"`
+	HasMoreObjects   bool                          `json:"has_more_objects"`
 	NextEntityCursor string                        `json:"next_entity_cursor,omitempty"`
 	NextTaskCursor   string                        `json:"next_task_cursor,omitempty"`
 	NextObjectCursor string                        `json:"next_object_cursor,omitempty"`
@@ -33,12 +33,12 @@ type changedSinceResponse struct {
 	DeletedEntities         []deletedResourceResponse     `json:"deleted_entities,omitempty"`
 	DeletedTasks            []deletedResourceResponse     `json:"deleted_tasks,omitempty"`
 	DeletedObjects          []deletedResourceResponse     `json:"deleted_objects,omitempty"`
-	HasMoreEntities         bool                          `json:"has_more_entities,omitempty"`
-	HasMoreTasks            bool                          `json:"has_more_tasks,omitempty"`
-	HasMoreObjects          bool                          `json:"has_more_objects,omitempty"`
-	HasMoreDeletedEntities  bool                          `json:"has_more_deleted_entities,omitempty"`
-	HasMoreDeletedTasks     bool                          `json:"has_more_deleted_tasks,omitempty"`
-	HasMoreDeletedObjects   bool                          `json:"has_more_deleted_objects,omitempty"`
+	HasMoreEntities         bool                          `json:"has_more_entities"`
+	HasMoreTasks            bool                          `json:"has_more_tasks"`
+	HasMoreObjects          bool                          `json:"has_more_objects"`
+	HasMoreDeletedEntities  bool                          `json:"has_more_deleted_entities"`
+	HasMoreDeletedTasks     bool                          `json:"has_more_deleted_tasks"`
+	HasMoreDeletedObjects   bool                          `json:"has_more_deleted_objects"`
 	NextEntityCursor        string                        `json:"next_entity_cursor,omitempty"`
 	NextTaskCursor          string                        `json:"next_task_cursor,omitempty"`
 	NextObjectCursor        string                        `json:"next_object_cursor,omitempty"`

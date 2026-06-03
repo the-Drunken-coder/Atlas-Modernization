@@ -425,8 +425,8 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 // validateCORSOrigins rejects wildcard origins so production origins must be explicit.
 func validateCORSOrigins(origins []string) error {
 	for _, o := range origins {
-		if o == "*" {
-			return fmt.Errorf("CORS origins: wildcard \"*\" is not allowed; configure explicit origins")
+		if strings.Contains(o, "*") {
+			return fmt.Errorf("CORS origins: wildcard origin %q is not allowed; configure explicit origins", o)
 		}
 	}
 	return nil

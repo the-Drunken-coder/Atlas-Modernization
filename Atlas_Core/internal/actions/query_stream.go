@@ -91,10 +91,7 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 	}
 
 	if opts.cursor != nil {
-		cursorUpperBound := opts.cursor.upperBound
-		if cursorUpperBound.IsZero() {
-			cursorUpperBound = opts.snapshotUpperBound
-		}
+		cursorUpperBound := effectiveCursorUpperBound(opts.cursor, opts.snapshotUpperBound)
 		if !cursorUpperBound.IsZero() {
 			clauses = append(clauses, fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, addArg(cursorUpperBound)))
 		}

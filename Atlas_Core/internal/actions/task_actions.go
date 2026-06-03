@@ -296,10 +296,7 @@ func (a *TaskActions) GetByEntityFiltered(
 	}
 
 	if parsedCursor != nil {
-		cursorUpperBound := parsedCursor.upperBound
-		if cursorUpperBound.IsZero() {
-			cursorUpperBound = snapshotUpperBound
-		}
+		cursorUpperBound := effectiveCursorUpperBound(parsedCursor, snapshotUpperBound)
 		if !cursorUpperBound.IsZero() {
 			whereClauses = append(whereClauses, fmt.Sprintf("updated_at <= $%d::timestamptz", len(args)+1))
 			args = append(args, cursorUpperBound)

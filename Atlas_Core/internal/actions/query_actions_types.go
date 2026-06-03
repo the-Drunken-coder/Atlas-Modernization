@@ -132,7 +132,24 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 	if sharedUpperBound.IsZero() {
 		return currentSnapshot, true, nil
 	}
-	return sharedUpperBound, true, nil
+	return clampCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
+}
+
+func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound time.Time) time.Time {
+	if cursor == nil {
+		return snapshotUpperBound
+	}
+	return clampCursorUpperBound(cursor.upperBound, snapshotUpperBound)
+}
+
+func clampCursorUpperBound(candidate, ceiling time.Time) time.Time {
+	if candidate.IsZero() {
+		return ceiling
+	}
+	if ceiling.IsZero() || candidate.Before(ceiling) || candidate.Equal(ceiling) {
+		return candidate
+	}
+	return ceiling
 }
 
 // effectiveLimit returns the requested limit capped to the provided max,

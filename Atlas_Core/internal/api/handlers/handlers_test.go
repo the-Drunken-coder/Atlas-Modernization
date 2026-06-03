@@ -355,6 +355,54 @@ func TestGetChangedSinceRejectsInvalidTimestamp(t *testing.T) {
 	}
 }
 
+func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		resp interface{}
+		keys []string
+	}{
+		{
+			name: "full dataset",
+			resp: &fullDatasetResponse{},
+			keys: []string{"has_more_entities", "has_more_tasks", "has_more_objects"},
+		},
+		{
+			name: "changed since",
+			resp: &changedSinceResponse{Timestamp: "2026-03-20T12:00:00Z"},
+			keys: []string{
+				"has_more_entities",
+				"has_more_tasks",
+				"has_more_objects",
+				"has_more_deleted_entities",
+				"has_more_deleted_tasks",
+				"has_more_deleted_objects",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var body map[string]interface{}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			for _, key := range tt.keys {
+				got, ok := body[key]
+				if !ok {
+					t.Fatalf("expected %s to be present in %s", key, string(raw))
+				}
+				if got != false {
+					t.Fatalf("expected %s=false, got %#v", key, got)
+				}
+			}
+		})
+	}
+}
+
 func TestHandleActionErrorMapsKnownErrorTypes(t *testing.T) {
 	handler := newTestHandler()
 	req := httptest.NewRequest(http.MethodGet, "/entities/entity-1", nil)

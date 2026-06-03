@@ -4,7 +4,7 @@ _Revision: 2026-06-03_
 
 ## Overview
 
-Atlas Core uses keyset pagination for collection endpoints while keeping response bodies as JSON arrays. Pages are ordered by `(created_at DESC, id DESC)` and use opaque cursor tokens for continuation.
+Atlas Core uses keyset pagination for collection endpoints while keeping response bodies as JSON arrays. Standard list pages are ordered by `(created_at DESC, id DESC)` and use opaque cursor tokens for continuation. Check-in task pagination is the one endpoint-specific exception; it is described below.
 
 ## Query Parameters
 
@@ -19,20 +19,20 @@ The handler default is `limit=100`; the maximum standard page size is `500`.
 
 ### HTTP validation
 
-Before the action layer runs, handlers reject invalid pagination query params with **400** and `VALIDATION_ERROR`:
+Handlers reject invalid pagination query params with **400** and `VALIDATION_ERROR`:
 
 - Non-numeric `limit`
 - Negative `limit`
 - Any `offset` parameter
-- Malformed `cursor`
 
 ### Action-layer normalization
 
-After HTTP parsing, list actions normalize values:
+After HTTP parsing, list actions normalize and validate values:
 
 - `limit <= 0` becomes `100`
 - `limit > 500` is clamped to `500`
 - `cursor` is treated as an opaque continuation token
+- Malformed `cursor` is rejected with **400** and `VALIDATION_ERROR`
 
 Shared helper: `internal/actions/pagination.go` (`ClampListLimit`, etc.).
 

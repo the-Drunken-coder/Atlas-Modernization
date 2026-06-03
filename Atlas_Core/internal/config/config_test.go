@@ -142,20 +142,24 @@ func TestParseCORSOrigins(t *testing.T) {
 }
 
 func TestCORSOriginsRejectsWildcard(t *testing.T) {
-	chdirToTemp(t)
-	isolateLoadEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
-	t.Setenv("SERVER_PORT", "")
-	t.Setenv("MINIO_BUCKET", "")
-	t.Setenv("CORS_ORIGINS", "*")
-	t.Setenv("ALLOWED_ORIGINS", "")
+	for _, value := range []string{"*", "https://*.example.com", "https://*"} {
+		t.Run(value, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
+			t.Setenv("SERVER_PORT", "")
+			t.Setenv("MINIO_BUCKET", "")
+			t.Setenv("CORS_ORIGINS", value)
+			t.Setenv("ALLOWED_ORIGINS", "")
 
-	_, err := config.Load()
-	if err == nil {
-		t.Fatal("expected Load to reject CORS_ORIGINS=*")
-	}
-	if !strings.Contains(err.Error(), "wildcard") {
-		t.Fatalf("expected wildcard error, got: %v", err)
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected Load to reject CORS_ORIGINS=%q", value)
+			}
+			if !strings.Contains(err.Error(), "wildcard") {
+				t.Fatalf("expected wildcard error, got: %v", err)
+			}
+		})
 	}
 }
 
