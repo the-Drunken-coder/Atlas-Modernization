@@ -159,6 +159,14 @@ func TestCORSOriginsRejectsWildcard(t *testing.T) {
 	}
 }
 
+func TestDefaultCORSOriginsAreLocalOnly(t *testing.T) {
+	for _, origin := range config.DefaultCORSOrigins {
+		if !strings.HasPrefix(origin, "http://localhost:") && !strings.HasPrefix(origin, "http://127.0.0.1:") {
+			t.Fatalf("default CORS origin must be local-only, got %q", origin)
+		}
+	}
+}
+
 func TestConfigDefaults(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
@@ -251,7 +259,7 @@ func TestLoadInvalidBoolEnvFails(t *testing.T) {
 	}
 }
 
-func TestLoadRespectsExplicitEmptyAPIAuthKeyEnv(t *testing.T) {
+func TestLoadRejectsEnabledAPIAuthWithEmptyEnvKey(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
 	settings := config.SettingsFile{
@@ -268,11 +276,52 @@ func TestLoadRespectsExplicitEmptyAPIAuthKeyEnv(t *testing.T) {
 
 	t.Setenv("API_AUTH_KEY", "")
 
+	_, err = config.Load()
+	if err == nil {
+		t.Fatal("expected enabled API auth with empty API_AUTH_KEY to fail")
+	}
+	if !strings.Contains(err.Error(), "API_AUTH_KEY") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsEnabledAPIAuthWithEmptySettingsKey(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		EnableAPIAuth: true,
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	_, err = config.Load()
+	if err == nil {
+		t.Fatal("expected enabled API auth with empty settings key to fail")
+	}
+	if !strings.Contains(err.Error(), "API_AUTH_KEY") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadAllowsEnabledAPIAuthWithKey(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	t.Setenv("ENABLE_API_AUTH", "true")
+	t.Setenv("API_AUTH_KEY", "test-secret")
+
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.APIAuthKey != "" {
-		t.Fatalf("expected explicit empty API_AUTH_KEY env to win, got %q", cfg.APIAuthKey)
+	if !cfg.EnableAPIAuth {
+		t.Fatal("expected API auth to be enabled")
+	}
+	if cfg.APIAuthKey != "test-secret" {
+		t.Fatalf("expected API auth key from env, got %q", cfg.APIAuthKey)
 	}
 }

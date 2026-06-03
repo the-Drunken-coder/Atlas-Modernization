@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 // TaskActions handles task business logic.
@@ -35,7 +34,7 @@ type CreateTaskParams struct {
 }
 
 // Create creates a new task.
-func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*serializers.TaskResponse, error) {
+func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*models.Task, error) {
 	if err := ValidateTaskID(params.TaskID); err != nil {
 		return nil, err
 	}
@@ -104,11 +103,11 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*ser
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
 
-	return serializers.SerializeTask(&task), nil
+	return &task, nil
 }
 
 // Get retrieves a task by ID.
-func (a *TaskActions) Get(ctx context.Context, taskID string) (*serializers.TaskResponse, error) {
+func (a *TaskActions) Get(ctx context.Context, taskID string) (*models.Task, error) {
 	if err := ValidateTaskID(taskID); err != nil {
 		return nil, err
 	}
@@ -129,98 +128,112 @@ func (a *TaskActions) Get(ctx context.Context, taskID string) (*serializers.Task
 		return nil, fmt.Errorf("failed to get task: %w", err)
 	}
 
-	return serializers.SerializeTask(&task), nil
+	return &task, nil
 }
 
 // List retrieves tasks with pagination.
-func (a *TaskActions) List(ctx context.Context, limit, offset int) ([]*serializers.TaskResponse, int, error) {
+func (a *TaskActions) List(ctx context.Context, limit int, cursor string) (*ListPage[*models.Task], error) {
 	limit = ClampListLimit(limit)
-	if offset < 0 {
-		offset = 0
-	}
 
-	// Get tasks with total count using window function (single query)
-	rows, err := a.pool.Query(ctx, `
-		SELECT task_id, status, entity_id, json, created_at, updated_at,
-		       COUNT(*) OVER() as total_count
-		FROM tasks
-		ORDER BY created_at DESC, task_id DESC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list tasks: %w", err)
+		return nil, fmt.Errorf("begin task list transaction: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	var total int
-	var tasks []*models.Task
-	for rows.Next() {
-		var t models.Task
-		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt, &total); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan task: %w", err)
+	var txUpperBound time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
+		return nil, fmt.Errorf("read task list snapshot timestamp: %w", err)
+	}
+
+	parsedCursor, err := parseQueryCursor(cursor, "cursor")
+	if err != nil {
+		return nil, err
+	}
+	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
+	if err != nil {
+		return nil, err
+	}
+	tasks, hasMore, err := queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit task list transaction: %w", err)
+	}
+
+	page := &ListPage[*models.Task]{
+		Items:   tasks,
+		Limit:   limit,
+		HasMore: hasMore,
+	}
+	if hasMore && len(tasks) > 0 {
+		last := tasks[len(tasks)-1]
+		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode task cursor: %w", err)
 		}
-		tasks = append(tasks, &t)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("failed to iterate tasks: %w", err)
-	}
-
-	if len(tasks) == 0 {
-		if err := a.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tasks`).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
-		}
-	}
-
-	return serializers.SerializeTasks(tasks), total, nil
+	return page, nil
 }
 
 // GetByEntity retrieves tasks for a specific entity.
-func (a *TaskActions) GetByEntity(ctx context.Context, entityID string, limit, offset int) ([]*serializers.TaskResponse, int, error) {
+func (a *TaskActions) GetByEntity(ctx context.Context, entityID string, limit int, cursor string) (*ListPage[*models.Task], error) {
 	if err := ValidateEntityID(entityID); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	entityID = SanitizeID(entityID)
 
 	limit = ClampListLimit(limit)
-	if offset < 0 {
-		offset = 0
-	}
 
-	// Get tasks with total count using window function (single query)
-	rows, err := a.pool.Query(ctx, `
-		SELECT task_id, status, entity_id, json, created_at, updated_at,
-		       COUNT(*) OVER() as total_count
-		FROM tasks WHERE entity_id = $1
-		ORDER BY created_at DESC, task_id DESC
-		LIMIT $2 OFFSET $3
-	`, entityID, limit, offset)
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list tasks: %w", err)
+		return nil, fmt.Errorf("begin entity task list transaction: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	var total int
-	var tasks []*models.Task
-	for rows.Next() {
-		var t models.Task
-		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt, &total); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan task: %w", err)
+	var txUpperBound time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
+		return nil, fmt.Errorf("read entity task list snapshot timestamp: %w", err)
+	}
+
+	parsedCursor, err := parseQueryCursor(cursor, "cursor")
+	if err != nil {
+		return nil, err
+	}
+	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
+	if err != nil {
+		return nil, err
+	}
+	tasks, hasMore, err := queryTasksByEntity(ctx, tx, entityID, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit entity task list transaction: %w", err)
+	}
+
+	page := &ListPage[*models.Task]{
+		Items:   tasks,
+		Limit:   limit,
+		HasMore: hasMore,
+	}
+	if hasMore && len(tasks) > 0 {
+		last := tasks[len(tasks)-1]
+		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode entity task cursor: %w", err)
 		}
-		tasks = append(tasks, &t)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("failed to iterate tasks: %w", err)
-	}
-
-	if len(tasks) == 0 {
-		if err := a.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tasks WHERE entity_id = $1`, entityID).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count tasks: %w", err)
-		}
-	}
-
-	return serializers.SerializeTasks(tasks), total, nil
+	return page, nil
 }
 
 // GetByEntityFiltered retrieves entity tasks filtered by status and updated-since timestamp.
@@ -229,16 +242,37 @@ func (a *TaskActions) GetByEntityFiltered(
 	entityID string,
 	statusList []string,
 	since *time.Time,
-	limit, offset int,
-) ([]*serializers.TaskResponse, error) {
+	limit int,
+	cursor string,
+) (*ListPage[*models.Task], error) {
 	if err := ValidateEntityID(entityID); err != nil {
 		return nil, err
 	}
 	entityID = SanitizeID(entityID)
 
 	limit = ClampLimit(limit, 10, MaxListLimit)
-	if offset < 0 {
-		offset = 0
+
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("begin filtered entity task list transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var txUpperBound time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
+		return nil, fmt.Errorf("read filtered entity task list snapshot timestamp: %w", err)
+	}
+
+	parsedCursor, err := parseQueryCursor(cursor, "task_cursor")
+	if err != nil {
+		return nil, err
+	}
+	snapshotUpperBound, _, err := continuationUpperBound(txUpperBound, parsedCursor)
+	if err != nil {
+		return nil, err
 	}
 
 	whereClauses := []string{"entity_id = $1"}
@@ -261,20 +295,34 @@ func (a *TaskActions) GetByEntityFiltered(
 		args = append(args, *since)
 	}
 
+	if parsedCursor != nil {
+		cursorUpperBound := parsedCursor.upperBound
+		if cursorUpperBound.IsZero() {
+			cursorUpperBound = snapshotUpperBound
+		}
+		if !cursorUpperBound.IsZero() {
+			whereClauses = append(whereClauses, fmt.Sprintf("updated_at <= $%d::timestamptz", len(args)+1))
+			args = append(args, cursorUpperBound)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("(updated_at, task_id) < ($%d::timestamptz, $%d::varchar)", len(args)+1, len(args)+2))
+		args = append(args, parsedCursor.timestamp, parsedCursor.id)
+	} else {
+		whereClauses = append(whereClauses, fmt.Sprintf("updated_at <= $%d::timestamptz", len(args)+1))
+		args = append(args, snapshotUpperBound)
+	}
+
 	limitPos := len(args) + 1
-	args = append(args, limit)
-	offsetPos := len(args) + 1
-	args = append(args, offset)
+	args = append(args, limit+1)
 
 	query := fmt.Sprintf(`
 		SELECT task_id, status, entity_id, json, created_at, updated_at
 		FROM tasks
 		WHERE %s
 		ORDER BY updated_at DESC, task_id DESC
-		LIMIT $%d OFFSET $%d
-	`, strings.Join(whereClauses, " AND "), limitPos, offsetPos)
+		LIMIT $%d
+	`, strings.Join(whereClauses, " AND "), limitPos)
 
-	rows, err := a.pool.Query(ctx, query, args...)
+	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
@@ -293,7 +341,25 @@ func (a *TaskActions) GetByEntityFiltered(
 		return nil, fmt.Errorf("failed to iterate tasks: %w", err)
 	}
 
-	return serializers.SerializeTasks(tasks), nil
+	tasks, hasMore := trimToLimitWithMore(tasks, limit)
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit filtered entity task list transaction: %w", err)
+	}
+
+	page := &ListPage[*models.Task]{
+		Items:   tasks,
+		Limit:   limit,
+		HasMore: hasMore,
+	}
+	if hasMore && len(tasks) > 0 {
+		last := tasks[len(tasks)-1]
+		page.NextCursor, err = encodeRowCursor(last.UpdatedAt, last.TaskID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode filtered entity task cursor: %w", err)
+		}
+	}
+	return page, nil
 }
 
 // UpdateTaskParams holds parameters for updating a task.
@@ -318,7 +384,7 @@ func isNoOpTaskUpdate(params UpdateTaskParams) bool {
 }
 
 // Update updates a task.
-func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTaskParams) (*serializers.TaskResponse, error) {
+func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTaskParams) (*models.Task, error) {
 	if err := ValidateTaskID(taskID); err != nil {
 		return nil, err
 	}
@@ -444,7 +510,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return serializers.SerializeTask(&task), nil
+	return &task, nil
 }
 
 func translateTaskEntityFK(err error, entityID string) error {
@@ -496,13 +562,13 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 }
 
 // Acknowledge marks a task as acknowledged.
-func (a *TaskActions) Acknowledge(ctx context.Context, taskID string) (*serializers.TaskResponse, error) {
+func (a *TaskActions) Acknowledge(ctx context.Context, taskID string) (*models.Task, error) {
 	status := "acknowledged"
 	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status})
 }
 
 // Complete marks a task as completed with optional result.
-func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}) (*serializers.TaskResponse, error) {
+func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}) (*models.Task, error) {
 	status := "completed"
 	var extra map[string]interface{}
 	if result != nil {
@@ -512,7 +578,7 @@ func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[st
 }
 
 // Fail marks a task as failed with optional error details.
-func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}) (*serializers.TaskResponse, error) {
+func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}) (*models.Task, error) {
 	status := "failed"
 	var extra map[string]interface{}
 	if errorDetails != nil {
@@ -534,7 +600,7 @@ func normalizeTaskProgressPercent(p float64) float64 {
 }
 
 // TransitionStatus updates the task status and optional progress.
-func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*serializers.TaskResponse, error) {
+func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*models.Task, error) {
 	var components map[string]interface{}
 	var extra map[string]interface{}
 	if progress != nil || message != nil {

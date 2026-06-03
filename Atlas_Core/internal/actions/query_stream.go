@@ -261,6 +261,37 @@ func queryTasks(
 	return out, more, nil
 }
 
+func queryTasksByEntity(
+	ctx context.Context,
+	tx pgx.Tx,
+	entityID, timeColumn string,
+	since, snapshotUpper time.Time,
+	continuation bool,
+	cursor *parsedQueryCursor,
+	limit int,
+) ([]*models.Task, bool, error) {
+	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
+		selectFrom:         taskSelectSQL,
+		idColumn:           "task_id",
+		timeColumn:         timeColumn,
+		since:              since,
+		snapshotUpperBound: snapshotUpper,
+		continuation:       continuation,
+		cursor:             cursor,
+		fetchLimit:         limit + 1,
+		eqFilter:           &cursorPageEqFilter{column: "entity_id", value: entityID},
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query tasks by entity: %w", err)
+	}
+	items, err := collectTasks(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	out, more := trimToLimitWithMore(items, limit)
+	return out, more, nil
+}
+
 func queryObjects(
 	ctx context.Context,
 	tx pgx.Tx,

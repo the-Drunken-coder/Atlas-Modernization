@@ -321,8 +321,11 @@ func TestTrackEntitySignalSubtype(t *testing.T) {
 	if fetched["entity_id"] != entityID {
 		t.Errorf("Expected entity_id %s, got %v", entityID, fetched["entity_id"])
 	}
-	if fetched["type"] != "track" {
-		t.Errorf("Expected type track, got %v", fetched["type"])
+	if fetched["entity_type"] != "track" {
+		t.Errorf("Expected entity_type track, got %v", fetched["entity_type"])
+	}
+	if _, ok := fetched["type"]; ok {
+		t.Errorf("Did not expect duplicate type field in entity response: %#v", fetched["type"])
 	}
 	if fetched["subtype"] != "signal" {
 		t.Errorf("Expected subtype signal, got %v", fetched["subtype"])
@@ -587,7 +590,7 @@ func TestEntityListPagination(t *testing.T) {
 	client := NewAPIClient()
 	ctx := context.Background()
 
-	resp, err := client.Get(ctx, "/entities?limit=10&offset=0")
+	resp, err := client.Get(ctx, "/entities?limit=10")
 	if err != nil {
 		t.Fatalf("Failed to list entities: %v", err)
 	}
@@ -597,23 +600,26 @@ func TestEntityListPagination(t *testing.T) {
 		t.Fatalf("Expected 200, got %d", resp.StatusCode)
 	}
 
-	// Check pagination headers
-	totalCount := resp.Header.Get("X-Total-Count")
-	if totalCount == "" {
-		t.Error("Expected X-Total-Count header")
-	}
-
 	limit := resp.Header.Get("X-Limit")
 	if limit != "10" {
 		t.Errorf("Expected X-Limit '10', got '%s'", limit)
 	}
 
-	offset := resp.Header.Get("X-Offset")
-	if offset != "0" {
-		t.Errorf("Expected X-Offset '0', got '%s'", offset)
+	returnedCount := resp.Header.Get("X-Returned-Count")
+	if returnedCount == "" {
+		t.Error("Expected X-Returned-Count header")
 	}
 
-	t.Logf("Entity list pagination: total=%s, limit=%s, offset=%s", totalCount, limit, offset)
+	hasMore := resp.Header.Get("X-Has-More")
+	if hasMore != "true" && hasMore != "false" {
+		t.Errorf("Expected X-Has-More to be true/false, got '%s'", hasMore)
+	}
+
+	if resp.Header.Get("X-Total-Count") != "" || resp.Header.Get("X-Offset") != "" {
+		t.Errorf("Old offset pagination headers should not be present: %#v", resp.Header)
+	}
+
+	t.Logf("Entity list pagination: limit=%s, returned=%s, has_more=%s, next_cursor=%s", limit, returnedCount, hasMore, resp.Header.Get("X-Next-Cursor"))
 }
 
 // TestEntityByAlias tests getting an entity by alias

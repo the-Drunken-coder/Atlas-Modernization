@@ -5,22 +5,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 // ListTasks handles GET /tasks.
 func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
-	limit, offset, ok := h.parseListPagination(w, r)
+	limit, cursor, ok := h.parseListPagination(w, r)
 	if !ok {
 		return
 	}
 
-	tasks, total, err := h.taskActions.List(r.Context(), limit, offset)
+	page, err := h.taskActions.List(r.Context(), limit, cursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, limit, offset, len(tasks))
+	tasks := serializers.SerializeTasks(page.Items)
+	setPaginationHeaders(w, page.Limit, len(tasks), page.HasMore, page.NextCursor)
 	writeJSON(w, http.StatusOK, tasks)
 }
 
@@ -57,7 +59,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, task)
+	writeJSON(w, http.StatusCreated, serializers.SerializeTask(task))
 }
 
 // GetTask handles GET /tasks/{task_id}.
@@ -70,7 +72,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // UpdateTask handles PATCH /tasks/{task_id}.
@@ -102,7 +104,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // DeleteTask handles DELETE /tasks/{task_id}.
@@ -120,18 +122,19 @@ func (h *Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 // GetTasksByEntity handles GET /entities/{entity_id}/tasks.
 func (h *Handler) GetTasksByEntity(w http.ResponseWriter, r *http.Request) {
 	entityID := chi.URLParam(r, "entity_id")
-	limit, offset, ok := h.parseListPagination(w, r)
+	limit, cursor, ok := h.parseListPagination(w, r)
 	if !ok {
 		return
 	}
 
-	tasks, total, err := h.taskActions.GetByEntity(r.Context(), entityID, limit, offset)
+	page, err := h.taskActions.GetByEntity(r.Context(), entityID, limit, cursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, limit, offset, len(tasks))
+	tasks := serializers.SerializeTasks(page.Items)
+	setPaginationHeaders(w, page.Limit, len(tasks), page.HasMore, page.NextCursor)
 	writeJSON(w, http.StatusOK, tasks)
 }
 
@@ -145,7 +148,7 @@ func (h *Handler) AcknowledgeTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // CompleteTask handles POST /tasks/{task_id}/complete.
@@ -169,7 +172,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // FailTask handles POST /tasks/{task_id}/fail.
@@ -193,7 +196,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // TaskStatus handles POST /tasks/{task_id}/status.
@@ -224,5 +227,5 @@ func (h *Handler) TaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }

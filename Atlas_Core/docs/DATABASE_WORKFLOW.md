@@ -2,11 +2,11 @@
 
 ## Overview
 
-The ATLAS Core System uses a **destroy-and-recreate workflow** by default. On startup, when `DATABASE_RECREATE_ON_STARTUP=true` (the default), `EnsureTables()` drops all tables and recreates them from the DDL defined in `internal/database/db.go`. Set `DATABASE_RECREATE_ON_STARTUP=false` when pointing at a shared or persistent database: startup skips drops and only verifies that core tables exist. The system **never uses migration tools like Alembic or golang-migrate**.
+The ATLAS Core System uses a **destroy-and-recreate workflow** by default. On startup, when `DATABASE_RECREATE_ON_STARTUP=true` (the default), `EnsureTables()` drops all tables and recreates them from the DDL defined in `internal/database/db.go`; after storage initialization, Atlas Core also empties the configured MinIO bucket. Set `DATABASE_RECREATE_ON_STARTUP=false` when pointing at a shared or persistent database: startup skips drops and does not clear object storage. The system **never uses migration tools like Alembic or golang-migrate**.
 
 **Why destroy-and-recreate instead of `CREATE TABLE IF NOT EXISTS`?** The old `IF NOT EXISTS` approach created missing tables but silently skipped existing ones. If you added a column to the Go model and DDL, restarted against an existing DB, the column simply never appeared — no error, no warning, just a runtime query failure later. Destroy-and-recreate makes that class of bug impossible. The Go models and DDL are the single source of truth; the database is always an exact reflection of them.
 
-**Why no migrations or schema-version table?** Atlas Core does not treat PostgreSQL as a long-lived system of record. Ephemeral storage on restart is intentional for the life of the project — not a stepping stone to Alembic, golang-migrate, or hash-gated recreate. Clients that need history must retain it outside this database.
+**Why no migrations or schema-version table?** Atlas Core does not treat PostgreSQL or its configured MinIO bucket as long-lived systems of record. Ephemeral storage on restart is intentional for the life of the project — not a stepping stone to Alembic, golang-migrate, or hash-gated recreate. Clients that need history must retain it outside Atlas Core runtime storage.
 
 `DATABASE_RECREATE_ON_STARTUP=false` skips drops and only verifies that core tables exist; it does not evolve schema and is not a production configuration.
 
@@ -17,6 +17,7 @@ The ATLAS Core System uses a **destroy-and-recreate workflow** by default. On st
 - **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
 - **Models**: Located in `internal/models/models.go`
 - **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops all tables then recreates them; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
+- **Object Storage Lifecycle**: `storage.Client.EmptyBucket()` in `internal/storage/storage.go` — by default clears the configured MinIO bucket after the bucket is ensured
 
 ## Database Schema
 
@@ -91,9 +92,11 @@ When the application starts (via `go run ./cmd/atlas_core` or as a Docker contai
 1. **Database Connection**: pgx pool connects to PostgreSQL
 2. **Table Drop**: `EnsureTables()` drops all existing tables with `DROP TABLE IF EXISTS ... CASCADE`
 3. **Table Creation**: `EnsureTables()` recreates all tables and indexes from the DDL in `db.go`
-4. **Service Ready**: Application begins serving traffic
+4. **Storage Initialization**: Atlas Core initializes MinIO, ensures the configured bucket exists, then clears every object in that bucket when recreate mode is enabled
+5. **Service Ready**: Application begins serving traffic
 
 All DDL runs in a single transaction — a mid-flight failure rolls back, leaving the database in its prior state.
+Bucket clearing failures are startup-fatal in recreate mode; serving with a fresh database and stale blobs is invalid.
 
 ### How Tables Are Created
 
@@ -106,8 +109,8 @@ The `internal/database/db.go` file contains `EnsureTables()` which:
 This means:
 
 - **No migration files needed** — DDL in `db.go` is the single source of truth
-- **Every startup gets a clean database** — no schema drift possible
-- **All data is ephemeral** — add seed data to `docker/postgres/init.sql` if needed
+- **Every startup gets a clean database and bucket** — no schema/blob drift possible under recreate mode
+- **All runtime data is ephemeral** — add seed data to `docker/postgres/init.sql` if needed
 
 ### 3. Example: Adding a New Column
 
@@ -168,7 +171,7 @@ Then add the corresponding Go struct in `internal/models/models.go` and rebuild.
 
 ### Important Notes
 
-- **Data is ephemeral**: All data is lost on every restart. Seed data goes in `docker/postgres/init.sql`.
+- **Data is ephemeral**: PostgreSQL rows and MinIO blobs are lost on every recreate-mode restart. Seed data goes in `docker/postgres/init.sql`.
 - **Schema changes on restart**: Changes to DDL require an application restart to take effect
 - **Single-developer workflow**: Not suitable for shared databases or environments where data persistence matters
 

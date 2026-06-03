@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 // QueryActions handles query operations across multiple resource types.
@@ -30,7 +29,7 @@ func NewQueryActions(pool *pgxpool.Pool, safetyLag time.Duration) *QueryActions 
 }
 
 // GetFullDataset retrieves all entities, tasks, and objects (up to limit each).
-func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLimits) (*FullDatasetResponse, error) {
+func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLimits) (*FullDatasetResult, error) {
 	entityLimit := MaxFullQueryLimit
 	taskLimit := MaxFullQueryLimit
 	objectLimit := MaxFullQueryLimit
@@ -98,10 +97,10 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	resp := &FullDatasetResponse{
-		Entities:        serializers.SerializeEntities(entities),
-		Tasks:           serializers.SerializeTasks(tasks),
-		Objects:         serializers.SerializeObjects(objects),
+	resp := &FullDatasetResult{
+		Entities:        entities,
+		Tasks:           tasks,
+		Objects:         objects,
 		HasMoreEntities: hasMoreEnt,
 		HasMoreTasks:    hasMoreTasks,
 		HasMoreObjects:  hasMoreObj,
@@ -135,7 +134,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 
 // GetDataChangedSince retrieves resources modified since the given timestamp.
 // Optional cursors continue pagination for each stream (same since, updated_at DESC, id DESC).
-func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time, limitPerType int, cursors *ChangedSinceCursors) (*ChangedSinceResponse, error) {
+func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time, limitPerType int, cursors *ChangedSinceCursors) (*ChangedSinceResult, error) {
 	limit := effectiveLimit(limitPerType, MaxChangedSinceLimit)
 
 	var entCurRaw, taskCurRaw, objCurRaw, delEntCurRaw, delTaskCurRaw, delObjCurRaw string
@@ -233,10 +232,10 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	resp := &ChangedSinceResponse{
-		Entities:               serializers.SerializeEntities(entities),
-		Tasks:                  serializers.SerializeTasks(tasks),
-		Objects:                serializers.SerializeObjects(objects),
+	resp := &ChangedSinceResult{
+		Entities:               entities,
+		Tasks:                  tasks,
+		Objects:                objects,
 		DeletedEntities:        deletedEntities,
 		DeletedTasks:           deletedTasks,
 		DeletedObjects:         deletedObjects,

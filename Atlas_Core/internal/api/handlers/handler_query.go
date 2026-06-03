@@ -5,7 +5,104 @@ import (
 	"net/http"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
+
+type fullDatasetResponse struct {
+	Entities         []*serializers.EntityResponse `json:"entities"`
+	Tasks            []*serializers.TaskResponse   `json:"tasks"`
+	Objects          []*serializers.ObjectResponse `json:"objects"`
+	HasMoreEntities  bool                          `json:"has_more_entities,omitempty"`
+	HasMoreTasks     bool                          `json:"has_more_tasks,omitempty"`
+	HasMoreObjects   bool                          `json:"has_more_objects,omitempty"`
+	NextEntityCursor string                        `json:"next_entity_cursor,omitempty"`
+	NextTaskCursor   string                        `json:"next_task_cursor,omitempty"`
+	NextObjectCursor string                        `json:"next_object_cursor,omitempty"`
+}
+
+type deletedResourceResponse struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	DeletedAt string `json:"deleted_at,omitempty"`
+}
+
+type changedSinceResponse struct {
+	Entities                []*serializers.EntityResponse `json:"entities"`
+	Tasks                   []*serializers.TaskResponse   `json:"tasks"`
+	Objects                 []*serializers.ObjectResponse `json:"objects"`
+	DeletedEntities         []deletedResourceResponse     `json:"deleted_entities,omitempty"`
+	DeletedTasks            []deletedResourceResponse     `json:"deleted_tasks,omitempty"`
+	DeletedObjects          []deletedResourceResponse     `json:"deleted_objects,omitempty"`
+	HasMoreEntities         bool                          `json:"has_more_entities,omitempty"`
+	HasMoreTasks            bool                          `json:"has_more_tasks,omitempty"`
+	HasMoreObjects          bool                          `json:"has_more_objects,omitempty"`
+	HasMoreDeletedEntities  bool                          `json:"has_more_deleted_entities,omitempty"`
+	HasMoreDeletedTasks     bool                          `json:"has_more_deleted_tasks,omitempty"`
+	HasMoreDeletedObjects   bool                          `json:"has_more_deleted_objects,omitempty"`
+	NextEntityCursor        string                        `json:"next_entity_cursor,omitempty"`
+	NextTaskCursor          string                        `json:"next_task_cursor,omitempty"`
+	NextObjectCursor        string                        `json:"next_object_cursor,omitempty"`
+	NextDeletedEntityCursor string                        `json:"next_deleted_entity_cursor,omitempty"`
+	NextDeletedTaskCursor   string                        `json:"next_deleted_task_cursor,omitempty"`
+	NextDeletedObjectCursor string                        `json:"next_deleted_object_cursor,omitempty"`
+	Timestamp               string                        `json:"timestamp"`
+}
+
+func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetResponse {
+	if result == nil {
+		return nil
+	}
+	return &fullDatasetResponse{
+		Entities:         serializers.SerializeEntities(result.Entities),
+		Tasks:            serializers.SerializeTasks(result.Tasks),
+		Objects:          serializers.SerializeObjects(result.Objects),
+		HasMoreEntities:  result.HasMoreEntities,
+		HasMoreTasks:     result.HasMoreTasks,
+		HasMoreObjects:   result.HasMoreObjects,
+		NextEntityCursor: result.NextEntityCursor,
+		NextTaskCursor:   result.NextTaskCursor,
+		NextObjectCursor: result.NextObjectCursor,
+	}
+}
+
+func serializeChangedSinceResult(result *actions.ChangedSinceResult) *changedSinceResponse {
+	if result == nil {
+		return nil
+	}
+	return &changedSinceResponse{
+		Entities:                serializers.SerializeEntities(result.Entities),
+		Tasks:                   serializers.SerializeTasks(result.Tasks),
+		Objects:                 serializers.SerializeObjects(result.Objects),
+		DeletedEntities:         serializeDeletedResources(result.DeletedEntities),
+		DeletedTasks:            serializeDeletedResources(result.DeletedTasks),
+		DeletedObjects:          serializeDeletedResources(result.DeletedObjects),
+		HasMoreEntities:         result.HasMoreEntities,
+		HasMoreTasks:            result.HasMoreTasks,
+		HasMoreObjects:          result.HasMoreObjects,
+		HasMoreDeletedEntities:  result.HasMoreDeletedEntities,
+		HasMoreDeletedTasks:     result.HasMoreDeletedTasks,
+		HasMoreDeletedObjects:   result.HasMoreDeletedObjects,
+		NextEntityCursor:        result.NextEntityCursor,
+		NextTaskCursor:          result.NextTaskCursor,
+		NextObjectCursor:        result.NextObjectCursor,
+		NextDeletedEntityCursor: result.NextDeletedEntityCursor,
+		NextDeletedTaskCursor:   result.NextDeletedTaskCursor,
+		NextDeletedObjectCursor: result.NextDeletedObjectCursor,
+		Timestamp:               result.Timestamp,
+	}
+}
+
+func serializeDeletedResources(resources []actions.DeletedResource) []deletedResourceResponse {
+	result := make([]deletedResourceResponse, len(resources))
+	for i, resource := range resources {
+		result[i] = deletedResourceResponse{
+			ID:        resource.ID,
+			Type:      resource.Type,
+			DeletedAt: resource.DeletedAt,
+		}
+	}
+	return result
+}
 
 // GetFullDataset handles GET /queries/full.
 func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +118,7 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, data)
+	writeJSON(w, http.StatusOK, serializeFullDatasetResult(data))
 }
 
 // GetChangedSince handles GET /queries/changed-since.
@@ -57,5 +154,5 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, data)
+	writeJSON(w, http.StatusOK, serializeChangedSinceResult(data))
 }
