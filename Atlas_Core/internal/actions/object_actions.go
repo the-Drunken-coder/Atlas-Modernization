@@ -2,8 +2,6 @@ package actions
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -378,19 +376,14 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	return nil
 }
 
-func objectUploadLockKeys(objectID string) (int32, int32) {
-	sum := sha256.Sum256([]byte("atlas-core-object-upload:" + objectID))
-	return int32(binary.BigEndian.Uint32(sum[0:4])), int32(binary.BigEndian.Uint32(sum[4:8]))
-}
-
 func (a *ObjectActions) beginObjectUploadTx(ctx context.Context, objectID string) (pgx.Tx, error) {
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin upload transaction: %w", err)
 	}
 
-	key1, key2 := objectUploadLockKeys(objectID)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, key1, key2); err != nil {
+	lockKey := "atlas-core-object-upload:" + objectID
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, fmt.Errorf("failed to lock object upload: %w", err)
 	}
@@ -457,7 +450,7 @@ func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, obj
 		return cause
 	}
 	if err := a.storage.DeleteObjectPath(ctx, objectPath); err != nil {
-		return fmt.Errorf("%w (also failed to remove uploaded object %q for %s: %v)", cause, objectPath, objectID, err)
+		return fmt.Errorf("%w (also failed to remove uploaded object %q for %s: %w)", cause, objectPath, objectID, err)
 	}
 	return cause
 }
