@@ -12,11 +12,9 @@ func isViewableContentType(contentType string) bool {
 	viewableTypes := []string{
 		"text/plain",
 		"text/css",
-		"text/xml",
 		"text/csv",
 		"text/markdown",
 		"application/json",
-		"application/xml",
 		"application/ld+json",
 	}
 

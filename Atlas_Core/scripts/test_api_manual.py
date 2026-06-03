@@ -26,6 +26,15 @@ API_BASE_URL = "http://localhost:8000"
 REMOTE_API_URL = "https://atlascommandapi.org"
 
 
+def confirm_remote_writes() -> bool:
+    """Require explicit consent before writing to the shared deployment."""
+    print()
+    print("[WARNING] Remote API writes are enabled.")
+    print(f"[WARNING] Target: {API_BASE_URL}")
+    answer = input("Type 'yes' to create test data against this remote API: ").strip()
+    return answer == "yes"
+
+
 def check_health():
     """Check if the API is healthy."""
     try:
@@ -390,6 +399,12 @@ def main():
     if not check_health():
         print("\nAPI is not available. Exiting.")
         return
+
+    remote_target = API_BASE_URL.rstrip("/") == REMOTE_API_URL.rstrip("/")
+    if remote_enabled or remote_target:
+        if not confirm_remote_writes():
+            print("\nRemote write confirmation declined. Exiting.")
+            return
 
     print("\n" + "=" * 60)
     print("Creating Entities")

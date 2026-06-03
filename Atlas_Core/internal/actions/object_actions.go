@@ -2,6 +2,8 @@ package actions
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,14 +18,22 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
+type objectStorage interface {
+	Bucket() string
+	DeleteObjectPath(ctx context.Context, path string) error
+	NewObjectPath(objectID string) string
+	StreamObjectPath(ctx context.Context, objectID, path string) (io.ReadCloser, *storage.ObjectInfo, error)
+	UploadObjectFromReaderToPath(ctx context.Context, objectID, path string, reader io.Reader, size int64, contentType string) (*storage.ObjectInfo, error)
+}
+
 // ObjectActions handles object business logic.
 type ObjectActions struct {
 	pool    *pgxpool.Pool
-	storage *storage.Client
+	storage objectStorage
 }
 
 // NewObjectActions creates a new ObjectActions instance.
-func NewObjectActions(pool *pgxpool.Pool, storageClient *storage.Client) *ObjectActions {
+func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectActions {
 	return &ObjectActions{pool: pool, storage: storageClient}
 }
 
@@ -340,13 +350,13 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
-	result, err := tx.Exec(ctx, "DELETE FROM objects WHERE object_id = $1", objectID)
+	var objectPath *string
+	err = tx.QueryRow(ctx, "DELETE FROM objects WHERE object_id = $1 RETURNING path", objectID).Scan(&objectPath)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return NewObjectNotFoundError(objectID)
+		}
 		return fmt.Errorf("failed to delete object: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return NewObjectNotFoundError(objectID)
 	}
 
 	// Record tombstone so changed-since can notify clients
@@ -359,13 +369,97 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		return fmt.Errorf("failed to commit delete transaction: %w", err)
 	}
 
-	if a.storage != nil {
-		if err := a.storage.DeleteObject(ctx, objectID); err != nil {
-			log.Error().Err(err).Str("object_id", objectID).Msg("Object deleted from database but storage delete failed; reconcile storage manually if needed")
+	if a.storage != nil && objectPath != nil && strings.TrimSpace(*objectPath) != "" {
+		if err := a.storage.DeleteObjectPath(ctx, *objectPath); err != nil {
+			log.Error().Err(err).Str("object_id", objectID).Str("path", *objectPath).Msg("Object deleted from database but storage delete failed; reconcile storage manually if needed")
 		}
 	}
 
 	return nil
+}
+
+func objectUploadLockKeys(objectID string) (int32, int32) {
+	sum := sha256.Sum256([]byte("atlas-core-object-upload:" + objectID))
+	return int32(binary.BigEndian.Uint32(sum[0:4])), int32(binary.BigEndian.Uint32(sum[4:8]))
+}
+
+func (a *ObjectActions) beginObjectUploadTx(ctx context.Context, objectID string) (pgx.Tx, error) {
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin upload transaction: %w", err)
+	}
+
+	key1, key2 := objectUploadLockKeys(objectID)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, key1, key2); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("failed to lock object upload: %w", err)
+	}
+
+	return tx, nil
+}
+
+func currentObjectPathForUpdate(ctx context.Context, tx pgx.Tx, objectID string) (*string, error) {
+	var objectPath *string
+	err := tx.QueryRow(ctx, `SELECT path FROM objects WHERE object_id = $1 FOR UPDATE`, objectID).Scan(&objectPath)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
+	}
+	return objectPath, nil
+}
+
+func uploadObjectJSON(bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {
+	jsonData := map[string]interface{}{
+		"bucket":     bucket,
+		"size_bytes": sizeBytes,
+	}
+	if usageHints != nil {
+		jsonData["usage_hints"] = usageHints
+	}
+	return json.Marshal(jsonData)
+}
+
+func upsertUploadedObjectMetadata(
+	ctx context.Context,
+	tx pgx.Tx,
+	objectID, objectPath, contentType string,
+	objType *string,
+	jsonBytes []byte,
+) (*models.MediaObject, error) {
+	var out models.MediaObject
+	err := tx.QueryRow(ctx, `
+		INSERT INTO objects (object_id, path, content_type, type, json)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (object_id) DO UPDATE SET
+			path = EXCLUDED.path,
+			content_type = EXCLUDED.content_type,
+			type = EXCLUDED.type,
+			json = objects.json || EXCLUDED.json,
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at
+	`, objectID, objectPath, contentType, objType, jsonBytes).Scan(
+		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
+		&out.JSON, &out.CreatedAt, &out.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, NewObjectPathConflictError()
+		}
+		return nil, fmt.Errorf("failed to persist uploaded object metadata: %w", err)
+	}
+	return &out, nil
+}
+
+func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, objectID, objectPath string, cause error) error {
+	if objectPath == "" {
+		return cause
+	}
+	if err := a.storage.DeleteObjectPath(ctx, objectPath); err != nil {
+		return fmt.Errorf("%w (also failed to remove uploaded object %q for %s: %v)", cause, objectPath, objectID, err)
+	}
+	return cause
 }
 
 // Upload uploads a file and creates/updates the object record.
@@ -379,25 +473,11 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, &storage.StorageError{Message: "storage not configured"}
 	}
 
-	rowExists := false
-	if _, getErr := a.Get(ctx, objectID); getErr == nil {
-		rowExists = true
-	} else {
-		var nf *NotFoundError
-		if errors.As(getErr, &nf) && nf.ResourceType == "object" {
-			rowExists = false
-		} else {
-			return nil, fmt.Errorf("failed to check existing object: %w", getErr)
-		}
-	}
-
-	// Stage uploads under a temporary key so failed metadata writes cannot clobber the live blob.
-	stagedInfo, err := a.storage.UploadObjectFromReaderStaged(ctx, objectID, reader, size, contentType)
+	objectPath := a.storage.NewObjectPath(objectID)
+	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload to storage: %w", err)
 	}
-	stagedPath := stagedInfo.Path
-	finalPath := a.storage.ObjectPath(objectID)
 
 	var usageHints []string
 	if usageHint != nil && *usageHint != "" {
@@ -410,86 +490,39 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	if objType != "" {
 		typePtr = &objType
 	}
-	updateParams := UpdateObjectParams{
-		Path:        &finalPath,
-		Bucket:      &bucket,
-		ContentType: &contentType,
-		Type:        typePtr,
-		SizeBytes:   &stagedInfo.SizeBytes,
-		UsageHints:  usageHints,
+
+	jsonBytes, err := uploadObjectJSON(bucket, uploadedInfo.SizeBytes, usageHints)
+	if err != nil {
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, fmt.Errorf("failed to marshal object metadata JSON: %w", err))
 	}
 
-	// Promote the staged blob to its canonical key before any DB write so we never
-	// commit metadata that points at a blob which never reached the live key. Both
-	// the create and update paths rely on the canonical blob already being present.
-	if err := a.storage.PromoteObjectPath(ctx, stagedPath, objectID); err != nil {
-		if cleanupErr := a.storage.DeleteObjectPath(ctx, stagedPath); cleanupErr != nil {
-			log.Error().Err(cleanupErr).Str("object_id", objectID).Str("staged_path", stagedPath).Msg("Failed to remove staged blob after promote failure")
+	tx, err := a.beginObjectUploadTx(ctx, objectID)
+	if err != nil {
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	oldPath, err := currentObjectPathForUpdate(ctx, tx, objectID)
+	if err != nil {
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+	}
+
+	out, err := upsertUploadedObjectMetadata(ctx, tx, objectID, objectPath, contentType, typePtr, jsonBytes)
+	if err != nil {
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit upload metadata transaction: %w", err)
+	}
+
+	if oldPath != nil && strings.TrimSpace(*oldPath) != "" && *oldPath != objectPath {
+		if err := a.storage.DeleteObjectPath(ctx, *oldPath); err != nil {
+			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", *oldPath).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
 		}
-		return nil, fmt.Errorf("failed to promote staged upload: %w", err)
 	}
 
-	if rowExists {
-		out, err := a.Update(ctx, objectID, updateParams)
-		if err == nil {
-			return out, nil
-		}
-		// If the row was deleted concurrently between the existence check and the
-		// update, fall through to the create path below (the canonical blob is
-		// already in place). Any other error is surfaced.
-		var nf *NotFoundError
-		if !errors.As(err, &nf) || nf.ResourceType != "object" {
-			return nil, err
-		}
-	}
-
-	result, err := a.Create(ctx, CreateObjectParams{
-		ObjectID:    objectID,
-		Path:        &finalPath,
-		Bucket:      &bucket,
-		SizeBytes:   &stagedInfo.SizeBytes,
-		ContentType: &contentType,
-		Type:        typePtr,
-		UsageHints:  usageHints,
-	})
-	if err == nil {
-		return result, nil
-	}
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		// Row appeared concurrently; blob is already at the canonical key from PromoteObjectPath above.
-		out, updateErr := a.Update(ctx, objectID, updateParams)
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		return out, nil
-	}
-
-	// If a row exists now, update metadata to match the promoted blob.
-	_, gerr := a.Get(ctx, objectID)
-	if gerr == nil {
-		out, updateErr := a.Update(ctx, objectID, updateParams)
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		return out, nil
-	}
-
-	// Only remove the orphan canonical blob when we can confirm no DB row exists.
-	// A transient error from the existence check must not trigger a destructive
-	// delete of a blob whose row may still be present.
-	var nf *NotFoundError
-	if !errors.As(gerr, &nf) || nf.ResourceType != "object" {
-		return nil, fmt.Errorf("failed to create object: %w (object existence check failed: %w)", err, gerr)
-	}
-
-	// No DB row; remove orphan canonical blob after failed create.
-	if delErr := a.storage.DeleteObject(ctx, objectID); delErr != nil {
-		log.Error().Err(delErr).Str("object_id", objectID).Msg("Failed to remove canonical blob after create failure")
-	}
-
-	return nil, fmt.Errorf("failed to create object: %w", err)
+	return out, nil
 }
 
 // Download returns the object data and content type.
@@ -503,11 +536,15 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 		return nil, "", 0, &storage.StorageError{Message: "storage not configured"}
 	}
 
-	if _, err := a.Get(ctx, objectID); err != nil {
+	obj, err := a.Get(ctx, objectID)
+	if err != nil {
 		return nil, "", 0, err
 	}
+	if obj.Path == nil || strings.TrimSpace(*obj.Path) == "" {
+		return nil, "", 0, &storage.ObjectNotFoundError{Bucket: a.storage.Bucket(), ObjectName: objectID}
+	}
 
-	reader, info, err := a.storage.StreamObject(ctx, objectID)
+	reader, info, err := a.storage.StreamObjectPath(ctx, objectID, *obj.Path)
 	if err != nil {
 		return nil, "", 0, err
 	}

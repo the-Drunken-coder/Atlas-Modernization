@@ -410,6 +410,12 @@ func TestIsViewableContentTypeSupportsParameterizedTypes(t *testing.T) {
 	if !isViewableContentType("application/json; charset=utf-8") {
 		t.Fatal("expected JSON with charset to be viewable")
 	}
+	if isViewableContentType("text/xml") {
+		t.Fatal("expected text/xml to be non-viewable")
+	}
+	if isViewableContentType("application/xml; charset=utf-8") {
+		t.Fatal("expected application/xml with charset to be non-viewable")
+	}
 	if isViewableContentType("image/png") {
 		t.Fatal("expected image/png to be non-viewable")
 	}

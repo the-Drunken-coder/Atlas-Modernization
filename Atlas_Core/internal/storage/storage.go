@@ -198,8 +198,17 @@ func (c *Client) buildPath(objectID string) string {
 	return "objects/" + objectID
 }
 
+func (c *Client) buildVersionedPath(objectID string) string {
+	return fmt.Sprintf("objects/%s/%d", objectID, time.Now().UTC().UnixNano())
+}
+
 func (c *Client) buildStagingPath(objectID string) string {
 	return fmt.Sprintf("staging/objects/%s/%d", objectID, time.Now().UTC().UnixNano())
+}
+
+// NewObjectPath returns a durable unique storage path for a new object blob version.
+func (c *Client) NewObjectPath(objectID string) string {
+	return c.buildVersionedPath(objectID)
 }
 
 func (c *Client) putObject(ctx context.Context, objectID, path string, reader io.Reader, size int64, contentType string) (*ObjectInfo, error) {
@@ -324,8 +333,11 @@ func (c *Client) DownloadObject(ctx context.Context, objectID string) ([]byte, e
 
 // StreamObject returns an io.ReadCloser for streaming an object.
 func (c *Client) StreamObject(ctx context.Context, objectID string) (io.ReadCloser, *ObjectInfo, error) {
-	path := c.buildPath(objectID)
+	return c.StreamObjectPath(ctx, objectID, c.buildPath(objectID))
+}
 
+// StreamObjectPath returns an io.ReadCloser for streaming an object from an explicit storage path.
+func (c *Client) StreamObjectPath(ctx context.Context, objectID, path string) (io.ReadCloser, *ObjectInfo, error) {
 	obj, err := c.client.GetObject(ctx, c.bucket, path, minio.GetObjectOptions{})
 	if err != nil {
 		switch minio.ToErrorResponse(err).Code {
