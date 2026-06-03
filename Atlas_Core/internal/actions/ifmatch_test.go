@@ -3,7 +3,20 @@ package actions
 import (
 	"testing"
 	"time"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
+
+func TestObjectIfMatchETagMatchesSerializedObjectETag(t *testing.T) {
+	ts := time.Date(2026, 3, 21, 12, 34, 56, 123456000, time.UTC)
+
+	if objectIfMatchTimeLayout != serializers.APIMetadataTimeLayout {
+		t.Fatalf("If-Match layout %q must match serialized object ETag layout %q", objectIfMatchTimeLayout, serializers.APIMetadataTimeLayout)
+	}
+	if got, want := objectIfMatchETag(ts), serializers.ObjectWeakETag(ts); got != want {
+		t.Fatalf("If-Match ETag %q must match serialized object ETag %q", got, want)
+	}
+}
 
 func TestObjectIfMatchOK_weakPrefix(t *testing.T) {
 	ts := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)

@@ -40,7 +40,7 @@ When `CORS_ORIGINS` or `ALLOWED_ORIGINS` is **explicitly set to empty**, no orig
 
 - `AllowCredentials` is disabled.
 - Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
-- Exposed headers: `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
+- Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
 Operators must still choose safe origins and use explicit hosts over wildcards.
 
