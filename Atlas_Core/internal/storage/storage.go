@@ -78,7 +78,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	if cfg == nil {
 		return nil, &StorageError{Message: "storage config is nil"}
 	}
-	if cfg.MinIOSecretKey == "" {
+	if strings.TrimSpace(cfg.MinIOSecretKey) == "" {
 		return nil, &StorageError{Message: "MinIO secret key not configured (set MINIO_SECRET_KEY or MINIO_SECRET_KEY_FILE)"}
 	}
 	if strings.TrimSpace(cfg.MinIOAccessKey) == "" {

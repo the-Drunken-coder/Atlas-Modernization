@@ -49,7 +49,11 @@ func joinURL(baseURL, path string) (string, error) {
 		path = "/" + path
 	}
 	for _, segment := range strings.Split(path, "/") {
-		if segment == ".." {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			return "", fmt.Errorf("invalid path segment %q: %w", segment, err)
+		}
+		if decoded == ".." {
 			return "", fmt.Errorf("invalid path %q: parent traversal is not allowed", path)
 		}
 	}

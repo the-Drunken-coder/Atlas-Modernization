@@ -187,7 +187,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if header.Size > maxUploadSize {
-		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File size exceeds maximum allowed (%dMB)", effectiveMaxUploadSizeMB), "FILE_TOO_LARGE")
+		h.writeError(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("File size exceeds maximum allowed (%dMB)", effectiveMaxUploadSizeMB), "FILE_TOO_LARGE")
 		return
 	}
 

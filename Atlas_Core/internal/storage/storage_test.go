@@ -90,6 +90,28 @@ func TestNewClientRequiresSecretKey(t *testing.T) {
 	}
 }
 
+func TestNewClientRejectsWhitespaceSecretKey(t *testing.T) {
+	cfg := &config.Config{
+		MinIOEndpoint:  "localhost:9000",
+		MinIOAccessKey: "atlas",
+		MinIOSecretKey: "   ",
+		MinioBucket:    "atlas-media",
+	}
+
+	client, err := NewClient(cfg)
+	if err == nil {
+		t.Fatalf("expected whitespace secret key to fail, got client %#v", client)
+	}
+
+	storageErr, ok := err.(*StorageError)
+	if !ok {
+		t.Fatalf("expected StorageError, got %T", err)
+	}
+	if !strings.Contains(storageErr.Message, "MinIO secret key not configured") {
+		t.Fatalf("unexpected error message: %q", storageErr.Message)
+	}
+}
+
 func TestNewClientRequiresEndpoint(t *testing.T) {
 	cfg := &config.Config{
 		MinIOAccessKey: "atlas",

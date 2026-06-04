@@ -72,6 +72,22 @@ func TestJoinURL_rejectsParentTraversal(t *testing.T) {
 	}
 }
 
+func TestJoinURL_rejectsEncodedParentTraversal(t *testing.T) {
+	t.Parallel()
+	_, err := joinURL("http://localhost:8000/atlas-core", "/%2e%2e/health")
+	if err == nil {
+		t.Fatal("expected error for encoded parent traversal in path")
+	}
+}
+
+func TestJoinURL_rejectsInvalidEscapedPath(t *testing.T) {
+	t.Parallel()
+	_, err := joinURL("http://localhost:8000/atlas-core", "/entities/%zz")
+	if err == nil {
+		t.Fatal("expected error for invalid escaped path segment")
+	}
+}
+
 func TestParseOptionalResponseAllowsEmptyBody(t *testing.T) {
 	t.Parallel()
 
