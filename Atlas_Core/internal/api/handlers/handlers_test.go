@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +42,32 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]interfa
 func routeRequest(method, target, body string) *http.Request {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func multipartUploadRequest(t *testing.T, fields map[string]string, fileSize int) *http.Request {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write field %q: %v", key, err)
+		}
+	}
+	file, err := writer.CreateFormFile("file", "upload.bin")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := file.Write(bytes.Repeat([]byte("a"), fileSize)); err != nil {
+		t.Fatalf("write file body: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/objects/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
 }
 
@@ -556,6 +584,42 @@ func TestUploadObjectRequiresConfiguredStorage(t *testing.T) {
 	body := decodeBody(t, rec)
 	if body["error_code"] != "STORAGE_UNAVAILABLE" {
 		t.Fatalf("expected STORAGE_UNAVAILABLE, got %v", body["error_code"])
+	}
+}
+
+func TestUploadObjectAllowsMultipartOverheadAtFileLimit(t *testing.T) {
+	handler := newTestHandler()
+	handler.storage = &storage.Client{}
+	handler.config.MaxUploadSizeMB = 1
+	rec := httptest.NewRecorder()
+	req := multipartUploadRequest(t, map[string]string{}, 1024*1024)
+
+	handler.UploadObject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected request to parse and fail validation with 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR after parsing multipart body, got %v", body["error_code"])
+	}
+}
+
+func TestUploadObjectRejectsFileOverLimitWith413(t *testing.T) {
+	handler := newTestHandler()
+	handler.storage = &storage.Client{}
+	handler.config.MaxUploadSizeMB = 1
+	rec := httptest.NewRecorder()
+	req := multipartUploadRequest(t, map[string]string{"object_id": "object-1"}, 1024*1024+1)
+
+	handler.UploadObject(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "FILE_TOO_LARGE" {
+		t.Fatalf("expected FILE_TOO_LARGE, got %v", body["error_code"])
 	}
 }
 

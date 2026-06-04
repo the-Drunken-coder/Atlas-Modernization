@@ -149,7 +149,8 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 		effectiveMaxUploadSizeMB = 100
 	}
 	maxUploadSize := int64(effectiveMaxUploadSizeMB) * 1024 * 1024
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	const maxMultipartOverhead = 1 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+maxMultipartOverhead)
 	const maxMultipartMemory = 32 * 1024 * 1024
 	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
