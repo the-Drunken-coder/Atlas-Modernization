@@ -119,6 +119,33 @@ func TestGeometryValidation(t *testing.T) {
 	}
 }
 
+func TestGeneratedJSONSchemaConstraints(t *testing.T) {
+	root := moduleRoot(t)
+
+	geometrySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "geometry.schema.json"))
+	geometryDefs := schemaObject(t, geometrySchema["$defs"])
+	geoJSONPosition := schemaObject(t, geometryDefs["#GeoJSONPosition"])
+	assertSchemaNumber(t, geoJSONPosition, "minItems", 2)
+	assertSchemaMissing(t, geoJSONPosition, "minLength")
+
+	atlasPosition := schemaObject(t, geometryDefs["#AtlasPosition"])
+	assertSchemaNumber(t, atlasPosition, "minItems", 2)
+	assertSchemaNumber(t, atlasPosition, "maxItems", 2)
+	assertSchemaMissing(t, atlasPosition, "minLength")
+	assertSchemaMissing(t, atlasPosition, "maxLength")
+
+	atlasGeometry := schemaObject(t, geometryDefs["#AtlasGeometry"])
+	assertSchemaNumber(t, atlasGeometry, "minProperties", 1)
+
+	objectReferenceSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "object-reference.schema.json"))
+	assertSchemaNumber(t, objectReferenceSchema, "minProperties", 1)
+
+	objectSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "object.schema.json"))
+	objectDefs := schemaObject(t, objectSchema["$defs"])
+	objectReferenceDef := schemaObject(t, objectDefs["#ObjectReference"])
+	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
+}
+
 func TestEntityComponentPayloadValidation(t *testing.T) {
 	valid := map[string]any{
 		"task_catalog": map[string]any{
@@ -213,6 +240,7 @@ func TestTaskValidation(t *testing.T) {
 		{name: "unknown key", components: map[string]any{"unknown": true}, contains: "Unknown component 'unknown'"},
 		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: "missing required field 'type'"},
 		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: "command.type: must be non-empty"},
+		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: "parameters.latitude"},
 		{name: "bad target latitude", components: map[string]any{"target": map[string]any{"latitude": 91.0}}, contains: "target.latitude"},
 		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: "progress.percent"},
 		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: "progress.updated_at"},
@@ -293,6 +321,46 @@ func assertExamplesValidate(t *testing.T, dir string, validate func(any) []strin
 				t.Fatalf("validate() errors = %v", errors)
 			}
 		})
+	}
+}
+
+func readSchema(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	return schema
+}
+
+func schemaObject(t *testing.T, value any) map[string]any {
+	t.Helper()
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected schema object, got %T", value)
+	}
+	return object
+}
+
+func assertSchemaNumber(t *testing.T, schema map[string]any, key string, want float64) {
+	t.Helper()
+	got, ok := schema[key].(float64)
+	if !ok {
+		t.Fatalf("schema[%q] = %T, want number", key, schema[key])
+	}
+	if got != want {
+		t.Fatalf("schema[%q] = %v, want %v", key, got, want)
+	}
+}
+
+func assertSchemaMissing(t *testing.T, schema map[string]any, key string) {
+	t.Helper()
+	if _, ok := schema[key]; ok {
+		t.Fatalf("schema[%q] should be absent, got %v", key, schema[key])
 	}
 }
 

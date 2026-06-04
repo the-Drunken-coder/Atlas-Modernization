@@ -829,7 +829,7 @@ func validateGeoJSONFormat(geometry map[string]any, geoType string, coordinates 
 		errors = append(errors, validateGeoJSONPoint(coordsArray)...)
 	case "LineString":
 		if len(coordsArray) > MaxGeometryPositions {
-			return append(errors, "geometry.coordinates: exceeds maximum of 10,000 points")
+			return append(errors, fmt.Sprintf("geometry.coordinates: exceeds maximum of %d points", MaxGeometryPositions))
 		}
 		errors = append(errors, validateGeoJSONLineString(coordsArray)...)
 	case "Polygon":
@@ -875,7 +875,7 @@ func validateGeoJSONPolygon(coords []any) []string {
 		}
 	}
 	if totalPositions > MaxGeometryPositions {
-		return []string{"geometry.coordinates: exceeds maximum of 10,000 total positions across all rings"}
+		return []string{fmt.Sprintf("geometry.coordinates: exceeds maximum of %d total positions across all rings", MaxGeometryPositions)}
 	}
 
 	var errors []string
@@ -1018,7 +1018,7 @@ func validateAtlasPolygon(value any) []string {
 		errors = append(errors, fmt.Sprintf("geometry.polygon: requires at least 3 points, got %d", len(polygonArray)))
 	}
 	if len(polygonArray) > MaxGeometryPositions {
-		errors = append(errors, "geometry.polygon: exceeds maximum of 10,000 points")
+		errors = append(errors, fmt.Sprintf("geometry.polygon: exceeds maximum of %d points", MaxGeometryPositions))
 	}
 	for i, point := range polygonArray {
 		pointArray, ok := point.([]any)
@@ -1042,7 +1042,7 @@ func validateAtlasLine(value any) []string {
 		errors = append(errors, fmt.Sprintf("geometry.line: requires at least 2 points, got %d", len(lineArray)))
 	}
 	if len(lineArray) > MaxGeometryPositions {
-		errors = append(errors, "geometry.line: exceeds maximum of 10,000 points")
+		errors = append(errors, fmt.Sprintf("geometry.line: exceeds maximum of %d points", MaxGeometryPositions))
 	}
 	for i, point := range lineArray {
 		pointArray, ok := point.([]any)

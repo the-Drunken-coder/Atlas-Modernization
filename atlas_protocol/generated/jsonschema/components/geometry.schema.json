@@ -3,53 +3,7 @@
   "$defs": {
     "#AtlasGeometry": {
       "additionalProperties": false,
-      "anyOf": [
-        {
-          "properties": {
-            "point_lat": true
-          },
-          "required": [
-            "point_lat"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "point_lng": true
-          },
-          "required": [
-            "point_lng"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "radius_m": true
-          },
-          "required": [
-            "radius_m"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "line": true
-          },
-          "required": [
-            "line"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "polygon": true
-          },
-          "required": [
-            "polygon"
-          ],
-          "type": "object"
-        }
-      ],
+      "minProperties": 1,
       "properties": {
         "line": {
           "$ref": "#/$defs/%23NonEmptyLine"
@@ -80,8 +34,8 @@
       "type": "array"
     },
     "#AtlasPosition": {
-      "maxLength": 2,
-      "minLength": 2,
+      "maxItems": 2,
+      "minItems": 2,
       "prefixItems": [
         {
           "$ref": "#/$defs/%23Latitude"
@@ -160,7 +114,7 @@
       "items": {
         "$ref": "#/$defs/%23FiniteNumber"
       },
-      "minLength": 2,
+      "minItems": 2,
       "prefixItems": [
         {
           "$ref": "#/$defs/%23Longitude"

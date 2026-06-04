@@ -38,6 +38,7 @@
     },
     "#ObjectReference": {
       "additionalProperties": false,
+      "minProperties": 1,
       "properties": {
         "entity_id": {
           "$ref": "#/$defs/%23NonEmptyString"

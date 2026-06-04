@@ -2,6 +2,7 @@ package components
 
 import (
 	"list"
+	"struct"
 
 	shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 )
@@ -19,6 +20,7 @@ import (
 #GeoJSONPolygon: close({
 	type!:        "Polygon"
 	coordinates!: [...([...shared.#GeoJSONPosition] & list.MinItems(4))] & list.MinItems(1)
+	_positions:   list.Concat(coordinates) & list.MaxItems(shared.#PositionLimit)
 })
 
 #AtlasGeometry: close({
@@ -27,16 +29,6 @@ import (
 	radius_m?:  shared.#FiniteNumber & >0
 	line?:      shared.#NonEmptyLine
 	polygon?:   shared.#AtlasPolygon
-}) & ({
-	point_lat!: _
-} | {
-	point_lng!: _
-} | {
-	radius_m!: _
-} | {
-	line!: _
-} | {
-	polygon!: _
-})
+}) & struct.MinFields(1)
 
 #GeometryComponent: #GeoJSONPoint | #GeoJSONLineString | #GeoJSONPolygon | #AtlasGeometry
