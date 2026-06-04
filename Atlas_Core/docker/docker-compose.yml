@@ -2,8 +2,8 @@ services:
   # ATLAS Core API (Go)
   api:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: ../..
+      dockerfile: Atlas_Core/docker/Dockerfile
       target: development
     container_name: atlas_core_api
     environment:
@@ -21,6 +21,7 @@ services:
     volumes:
       - ../cmd:/app/cmd
       - ../internal:/app/internal
+      - ../../atlas_protocol:/atlas_protocol:ro
       # Default to the committed example settings. Override by setting:
       # ATLAS_CORE_SETTINGS_FILE=atlas_core.settings.json
       - ../${ATLAS_CORE_SETTINGS_FILE:-atlas_core.settings.json.example}:/app/atlas_core.settings.json:ro

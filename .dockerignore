@@ -1,0 +1,7 @@
+# Docker builds use the repository root as context so Atlas_Core can import the
+# sibling atlas_protocol module. Keep the context narrow.
+*
+!Atlas_Core/
+!Atlas_Core/**
+!atlas_protocol/
+!atlas_protocol/**

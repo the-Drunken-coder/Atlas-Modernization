@@ -13,13 +13,16 @@ WORKDIR /app
 # Allow automatic toolchain download when go.mod requires a newer Go than the base image.
 ENV GOTOOLCHAIN=auto
 
-# Copy go mod files first for better caching
-COPY go.mod go.sum ./
+# Copy go mod files first for better caching. The Docker build context is the
+# repository root so Atlas Core can use the sibling atlas_protocol module.
+COPY Atlas_Core/go.mod Atlas_Core/go.sum ./
+COPY atlas_protocol/go.mod /atlas_protocol/go.mod
 RUN go mod download
 
 # Copy source code
-COPY cmd/ ./cmd/
-COPY internal/ ./internal/
+COPY atlas_protocol/ /atlas_protocol/
+COPY Atlas_Core/cmd/ ./cmd/
+COPY Atlas_Core/internal/ ./internal/
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o atlas_core ./cmd/atlas_core
@@ -39,15 +42,17 @@ WORKDIR /app
 ENV GOTOOLCHAIN=auto
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY Atlas_Core/go.mod Atlas_Core/go.sum ./
+COPY atlas_protocol/go.mod /atlas_protocol/go.mod
 RUN go mod download
 
 # Copy source code (for hot reload in development)
-COPY cmd/ ./cmd/
-COPY internal/ ./internal/
+COPY atlas_protocol/ /atlas_protocol/
+COPY Atlas_Core/cmd/ ./cmd/
+COPY Atlas_Core/internal/ ./internal/
 # Use the committed example settings in containers; local overrides should be
 # mounted at runtime (e.g., via docker compose override / bind mount).
-COPY atlas_core.settings.json.example ./atlas_core.settings.json
+COPY Atlas_Core/atlas_core.settings.json.example ./atlas_core.settings.json
 
 # Change ownership to app user
 RUN chown -R atlas:atlas /app
@@ -75,7 +80,7 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/atlas_core .
-COPY atlas_core.settings.json.example ./atlas_core.settings.json
+COPY Atlas_Core/atlas_core.settings.json.example ./atlas_core.settings.json
 
 # Change ownership to app user
 RUN chown -R atlas:atlas /app

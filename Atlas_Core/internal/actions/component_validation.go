@@ -10,9 +10,6 @@ import (
 // knownEntityComponents is the set of valid component keys for entities
 var knownEntityComponents = protocol.EntityComponentKeySet()
 
-// knownTaskComponents is the set of valid component keys for tasks
-var knownTaskComponents = protocol.TaskComponentKeySet()
-
 // ValidationResult holds multiple validation errors
 type ValidationResult struct {
 	Errors []string
