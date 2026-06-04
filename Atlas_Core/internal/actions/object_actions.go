@@ -438,6 +438,9 @@ func uploadObjectJSON(bucket string, sizeBytes int64, usageHints []string) ([]by
 	if usageHints != nil {
 		jsonData["usage_hints"] = usageHints
 	}
+	if err := ValidateObjectBlob(jsonData); err != nil {
+		return nil, err
+	}
 	return json.Marshal(jsonData)
 }
 

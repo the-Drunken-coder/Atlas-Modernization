@@ -18,9 +18,11 @@ import (
 })
 
 #GeoJSONPolygon: close({
-	type!:        "Polygon"
-	coordinates!: [...([...shared.#GeoJSONPosition] & list.MinItems(4))] & list.MinItems(1)
-	_positions:   list.Concat(coordinates) & list.MaxItems(shared.#PositionLimit)
+	type!:          "Polygon"
+	coordinates!:   [...([...shared.#GeoJSONPosition] & list.MinItems(4))] & list.MinItems(1)
+	_positions:     list.Concat(coordinates) & list.MaxItems(shared.#PositionLimit)
+	_closedRings:   [for ring in coordinates {ring[0] == ring[len(ring)-1]}]
+	_closedRingsOK: list.MatchN(_closedRings, len(coordinates), true) & true
 })
 
 #AtlasGeometry: close({

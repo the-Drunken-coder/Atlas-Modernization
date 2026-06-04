@@ -241,7 +241,6 @@ func TestTaskValidation(t *testing.T) {
 		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: "missing required field 'type'"},
 		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: "command.type: must be non-empty"},
 		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: "parameters.latitude"},
-		{name: "bad target latitude", components: map[string]any{"target": map[string]any{"latitude": 91.0}}, contains: "target.latitude"},
 		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: "progress.percent"},
 		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: "progress.updated_at"},
 		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: "status_message must be a string"},

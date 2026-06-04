@@ -106,38 +106,6 @@ func ValidateTaskComponents(components map[string]interface{}) error {
 	return nil
 }
 
-// toFloat64 converts various numeric types to float64
-func toFloat64(v interface{}) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case float32:
-		return float64(n), true
-	case int:
-		return float64(n), true
-	case int8:
-		return float64(n), true
-	case int16:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case uint:
-		return float64(n), true
-	case uint8:
-		return float64(n), true
-	case uint16:
-		return float64(n), true
-	case uint32:
-		return float64(n), true
-	case uint64:
-		return float64(n), true
-	default:
-		return 0, false
-	}
-}
-
 // ValidateStatusComponent validates the status component
 func ValidateStatusComponent(status map[string]interface{}) *ValidationResult {
 	return validationResultFromErrors(protocol.ValidateStatusComponent(status))
