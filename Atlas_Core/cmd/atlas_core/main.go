@@ -113,7 +113,7 @@ func main() {
 	r := chi.NewRouter()
 
 	// Add middleware
-	r.Use(middleware.RealIP)
+	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.RequestID)
 	r.Use(custommiddleware.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
