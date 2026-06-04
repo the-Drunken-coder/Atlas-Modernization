@@ -31,6 +31,17 @@ import (
 	radius_m?:  shared.#FiniteNumber & >0
 	line?:      shared.#NonEmptyLine
 	polygon?:   shared.#AtlasPolygon
+
+	if point_lat != _|_ {
+		point_lng!: shared.#Longitude
+	}
+	if point_lng != _|_ {
+		point_lat!: shared.#Latitude
+	}
+	if radius_m != _|_ {
+		point_lat!: shared.#Latitude
+		point_lng!: shared.#Longitude
+	}
 }) & struct.MinFields(1)
 
 #GeometryComponent: #GeoJSONPoint | #GeoJSONLineString | #GeoJSONPolygon | #AtlasGeometry

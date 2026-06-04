@@ -456,6 +456,11 @@ func TestEntity_GetTelemetry_CanonicalSpeed(t *testing.T) {
 			json:      `{"components":{"telemetry":{"latitude":1.0}}}`,
 			wantSpeed: nil,
 		},
+		{
+			name:      "legacy speed_ms ignored",
+			json:      `{"components":{"telemetry":{"speed_ms":9}}}`,
+			wantSpeed: nil,
+		},
 	}
 
 	for _, tt := range tests {

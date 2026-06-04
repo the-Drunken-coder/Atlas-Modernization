@@ -57,8 +57,11 @@ func Generate(root string, write bool) ([]string, error) {
 
 		current, err := os.ReadFile(path)
 		if err != nil {
-			drift = append(drift, artifact.Path)
-			continue
+			if os.IsNotExist(err) {
+				drift = append(drift, artifact.Path)
+				continue
+			}
+			return nil, fmt.Errorf("read existing artifact %s: %w", artifact.Path, err)
 		}
 		if !bytes.Equal(current, artifact.Content) {
 			drift = append(drift, artifact.Path)
@@ -302,6 +305,9 @@ func injectMinProperties(value any) {
 				node["minProperties"] = 1
 			}
 		}
+		if isAtlasGeometrySchema(node) {
+			injectAtlasGeometryDependencies(node)
+		}
 		for _, child := range node {
 			injectMinProperties(child)
 		}
@@ -331,6 +337,17 @@ func isAtlasGeometrySchema(node map[string]any) bool {
 		props["radius_m"] != nil &&
 		props["line"] != nil &&
 		props["polygon"] != nil
+}
+
+func injectAtlasGeometryDependencies(node map[string]any) {
+	if _, exists := node["dependentRequired"]; exists {
+		return
+	}
+	node["dependentRequired"] = map[string]any{
+		"point_lat": []any{"point_lng"},
+		"point_lng": []any{"point_lat"},
+		"radius_m":  []any{"point_lat", "point_lng"},
+	}
 }
 
 func schemaType(node map[string]any) string {
@@ -887,7 +904,7 @@ func ValidateTaskComponents(value any) []string {
 			errors = append(errors, "target component must be an object")
 		}
 	}
-	if rawMessage, exists := components[TaskComponentStatusMessage]; exists && rawMessage != nil {
+	if rawMessage, exists := components[TaskComponentStatusMessage]; exists {
 		if _, ok := rawMessage.(string); !ok {
 			errors = append(errors, "status_message must be a string")
 		}
@@ -1032,7 +1049,7 @@ func ValidateMilViewComponent(value any) []string {
 
 	var errors []string
 	errors = append(errors, validateKnownFields(milView, "mil_view", "classification", "last_seen")...)
-	if classification, exists := milView["classification"]; exists && classification != nil {
+	if classification, exists := milView["classification"]; exists {
 		str, ok := classification.(string)
 		if !ok {
 			errors = append(errors, "mil_view.classification: expected string")
@@ -1040,7 +1057,7 @@ func ValidateMilViewComponent(value any) []string {
 			errors = append(errors, "mil_view.classification: must be one of friendly, hostile, neutral, unknown, civilian")
 		}
 	}
-	if lastSeen, exists := milView["last_seen"]; exists && lastSeen != nil {
+	if lastSeen, exists := milView["last_seen"]; exists {
 		str, ok := lastSeen.(string)
 		if !ok {
 			errors = append(errors, "mil_view.last_seen: expected string (RFC3339 timestamp)")
@@ -1059,7 +1076,7 @@ func ValidateHealthComponent(value any) []string {
 
 	var errors []string
 	errors = append(errors, validateKnownFields(health, "health", "battery_percent")...)
-	if battery, exists := health["battery_percent"]; exists && battery != nil {
+	if battery, exists := health["battery_percent"]; exists {
 		errors = append(errors, validateNumberRange(battery, "health.battery_percent", 0, 100, true, true)...)
 	}
 	return errors
@@ -1105,7 +1122,7 @@ func ValidateSensorRefsComponent(value any) []string {
 		}
 
 		for _, field := range []string{"horizontal_fov", "vertical_fov", "horizontal_orientation", "vertical_orientation"} {
-			if val, exists := refMap[field]; exists && val != nil {
+			if val, exists := refMap[field]; exists {
 				errors = append(errors, validateFiniteNumber(val, prefix+"."+field)...)
 			}
 		}
@@ -1121,7 +1138,7 @@ func ValidateCommunicationsComponent(value any) []string {
 
 	var errors []string
 	errors = append(errors, validateKnownFields(comms, "communications", "link_state")...)
-	if linkState, exists := comms["link_state"]; exists && linkState != nil {
+	if linkState, exists := comms["link_state"]; exists {
 		str, ok := linkState.(string)
 		if !ok {
 			errors = append(errors, "communications.link_state: expected string")
@@ -1148,7 +1165,7 @@ func ValidateTaskQueueComponent(value any) []string {
 			errors = append(errors, "task_queue.current_task_id: must be non-empty when provided")
 		}
 	}
-	if queued, exists := queue["queued_task_ids"]; exists && queued != nil {
+	if queued, exists := queue["queued_task_ids"]; exists {
 		errors = append(errors, validateStringArray(queued, "task_queue.queued_task_ids", true)...)
 	}
 	return errors

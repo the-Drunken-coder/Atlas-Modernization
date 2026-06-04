@@ -3,6 +3,18 @@
   "$defs": {
     "#AtlasGeometry": {
       "additionalProperties": false,
+      "dependentRequired": {
+        "point_lat": [
+          "point_lng"
+        ],
+        "point_lng": [
+          "point_lat"
+        ],
+        "radius_m": [
+          "point_lat",
+          "point_lng"
+        ]
+      },
       "minProperties": 1,
       "properties": {
         "line": {

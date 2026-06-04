@@ -418,26 +418,39 @@ func (a *ObjectActions) beginObjectUploadTx(ctx context.Context, objectID string
 	return tx, nil
 }
 
-func currentObjectPathForUpdate(ctx context.Context, tx pgx.Tx, objectID string) (*string, error) {
+func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string) (*string, map[string]interface{}, error) {
 	var objectPath *string
-	err := tx.QueryRow(ctx, `SELECT path FROM objects WHERE object_id = $1 FOR UPDATE`, objectID).Scan(&objectPath)
+	var objectJSON json.RawMessage
+	err := tx.QueryRow(ctx, `SELECT path, json FROM objects WHERE object_id = $1 FOR UPDATE`, objectID).Scan(&objectPath, &objectJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			return nil, make(map[string]interface{}), nil
 		}
-		return nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
+		return nil, nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
 	}
-	return objectPath, nil
+	existingJSON := make(map[string]interface{})
+	if objectJSON != nil {
+		if err := json.Unmarshal(objectJSON, &existingJSON); err != nil {
+			return nil, nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
+		}
+		if existingJSON == nil {
+			existingJSON = make(map[string]interface{})
+		}
+	}
+	return objectPath, existingJSON, nil
 }
 
-func uploadObjectJSON(bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {
-	jsonData := map[string]interface{}{
-		"bucket":     bucket,
-		"size_bytes": sizeBytes,
+func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {
+	jsonData := make(map[string]interface{}, len(existingJSON)+3)
+	for key, value := range existingJSON {
+		jsonData[key] = value
 	}
+	jsonData["bucket"] = bucket
+	jsonData["size_bytes"] = sizeBytes
 	if usageHints != nil {
 		jsonData["usage_hints"] = usageHints
 	}
+
 	if err := ValidateObjectBlob(jsonData); err != nil {
 		return nil, err
 	}
@@ -459,7 +472,7 @@ func upsertUploadedObjectMetadata(
 			path = EXCLUDED.path,
 			content_type = EXCLUDED.content_type,
 			type = EXCLUDED.type,
-			json = objects.json || EXCLUDED.json,
+			json = EXCLUDED.json,
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at
 	`, objectID, objectPath, contentType, objType, jsonBytes).Scan(
@@ -514,20 +527,20 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		typePtr = &objType
 	}
 
-	jsonBytes, err := uploadObjectJSON(bucket, uploadedInfo.SizeBytes, usageHints)
-	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, fmt.Errorf("failed to marshal object metadata JSON: %w", err))
-	}
-
 	tx, err := a.beginObjectUploadTx(ctx, objectID)
 	if err != nil {
 		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	oldPath, err := currentObjectPathForUpdate(ctx, tx, objectID)
+	oldPath, existingJSON, err := currentObjectStateForUpload(ctx, tx, objectID)
 	if err != nil {
 		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+	}
+
+	jsonBytes, err := uploadObjectJSON(existingJSON, bucket, uploadedInfo.SizeBytes, usageHints)
+	if err != nil {
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, fmt.Errorf("failed to marshal object metadata JSON: %w", err))
 	}
 
 	out, err := upsertUploadedObjectMetadata(ctx, tx, objectID, objectPath, contentType, typePtr, jsonBytes)

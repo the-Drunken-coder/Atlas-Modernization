@@ -107,6 +107,8 @@ func TestGeometryValidation(t *testing.T) {
 		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: "longitude"},
 		{name: "non finite", geometry: map[string]any{"type": "Point", "coordinates": []any{math.Inf(1), 40.0}}, contains: "must be finite"},
 		{name: "bad radius", geometry: map[string]any{"point_lat": 40.0, "point_lng": -73.0, "radius_m": 0.0}, contains: "must be positive"},
+		{name: "point latitude requires longitude", geometry: map[string]any{"point_lat": 40.0}, contains: "point_lat and point_lng must be provided together"},
+		{name: "radius requires point coordinates", geometry: map[string]any{"radius_m": 25.0}, contains: "radius_m requires both point_lat and point_lng"},
 		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: "requires 'coordinates'"},
 		{name: "empty", geometry: map[string]any{}, contains: "component cannot be empty"},
 		{name: "unclosed polygon", geometry: map[string]any{"type": "Polygon", "coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}}}, contains: "closed"},
@@ -136,6 +138,9 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 
 	atlasGeometry := schemaObject(t, geometryDefs["#AtlasGeometry"])
 	assertSchemaNumber(t, atlasGeometry, "minProperties", 1)
+	assertDependentRequired(t, atlasGeometry, "point_lat", "point_lng")
+	assertDependentRequired(t, atlasGeometry, "point_lng", "point_lat")
+	assertDependentRequired(t, atlasGeometry, "radius_m", "point_lat", "point_lng")
 
 	objectReferenceSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "object-reference.schema.json"))
 	assertSchemaNumber(t, objectReferenceSchema, "minProperties", 1)
@@ -197,13 +202,19 @@ func TestEntityComponentPayloadValidation(t *testing.T) {
 	}{
 		{name: "bad task catalog", components: map[string]any{"task_catalog": map[string]any{"supported_tasks": []any{"move", ""}}}, contains: "task_catalog.supported_tasks[1]: must be non-empty"},
 		{name: "bad health", components: map[string]any{"health": map[string]any{"battery_percent": 101.0}}, contains: "health.battery_percent"},
+		{name: "null health battery", components: map[string]any{"health": map[string]any{"battery_percent": nil}}, contains: "health.battery_percent: expected number"},
 		{name: "bad classification", components: map[string]any{"mil_view": map[string]any{"classification": "enemy"}}, contains: "mil_view.classification"},
+		{name: "null classification", components: map[string]any{"mil_view": map[string]any{"classification": nil}}, contains: "mil_view.classification: expected string"},
+		{name: "null last seen", components: map[string]any{"mil_view": map[string]any{"last_seen": nil}}, contains: "mil_view.last_seen: expected string"},
 		{name: "bad link state", components: map[string]any{"communications": map[string]any{"link_state": "offline"}}, contains: "communications.link_state"},
+		{name: "null link state", components: map[string]any{"communications": map[string]any{"link_state": nil}}, contains: "communications.link_state: expected string"},
 		{name: "bad queue id", components: map[string]any{"task_queue": map[string]any{"current_task_id": " "}}, contains: "task_queue.current_task_id"},
+		{name: "null queued task ids", components: map[string]any{"task_queue": map[string]any{"queued_task_ids": nil}}, contains: "task_queue.queued_task_ids: expected array"},
 		{name: "bad status", components: map[string]any{"status": map[string]any{"value": ""}}, contains: "status.value"},
 		{name: "bad heartbeat", components: map[string]any{"heartbeat": map[string]any{}}, contains: "heartbeat.last_seen"},
 		{name: "bad media role", components: map[string]any{"media_refs": []any{map[string]any{"object_id": "obj-1", "role": "bad"}}}, contains: "media_refs[0].role"},
 		{name: "legacy sensor alias rejected", components: map[string]any{"sensor_refs": []any{map[string]any{"sensor_id": "sensor-1", "type": "radar", "fov_horizontal": 90.0}}}, contains: "unknown field 'fov_horizontal'"},
+		{name: "null sensor number", components: map[string]any{"sensor_refs": []any{map[string]any{"sensor_id": "sensor-1", "type": "radar", "horizontal_fov": nil}}}, contains: "sensor_refs[0].horizontal_fov: expected number"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -244,6 +255,7 @@ func TestTaskValidation(t *testing.T) {
 		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: "progress.percent"},
 		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: "progress.updated_at"},
 		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: "status_message must be a string"},
+		{name: "null status message", components: map[string]any{"status_message": nil}, contains: "status_message must be a string"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -360,6 +372,24 @@ func assertSchemaMissing(t *testing.T, schema map[string]any, key string) {
 	t.Helper()
 	if _, ok := schema[key]; ok {
 		t.Fatalf("schema[%q] should be absent, got %v", key, schema[key])
+	}
+}
+
+func assertDependentRequired(t *testing.T, schema map[string]any, key string, want ...string) {
+	t.Helper()
+	dependencies := schemaObject(t, schema["dependentRequired"])
+	rawItems, ok := dependencies[key].([]any)
+	if !ok {
+		t.Fatalf("dependentRequired[%q] = %T, want array", key, dependencies[key])
+	}
+	if len(rawItems) != len(want) {
+		t.Fatalf("dependentRequired[%q] = %v, want %v", key, rawItems, want)
+	}
+	for i, rawItem := range rawItems {
+		item, ok := rawItem.(string)
+		if !ok || item != want[i] {
+			t.Fatalf("dependentRequired[%q][%d] = %v, want %q", key, i, rawItem, want[i])
+		}
 	}
 }
 
