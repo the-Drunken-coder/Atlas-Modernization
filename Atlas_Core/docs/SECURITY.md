@@ -23,12 +23,8 @@ If no override is provided, the service allows:
 - `http://127.0.0.1:5173`
 - `http://127.0.0.1:5175`
 - `http://127.0.0.1:4173`
-- additional pre-release hosted origins (see `DefaultCORSOrigins` in `internal/config/config.go`)
 
-**Production with credentials:** `AllowCredentials` is enabled in Atlas Core. Do **not** use wildcard
-subdomain patterns in CORS when browsers send credentials — use a tight explicit allowlist of
-origins (list each hostname explicitly, e.g. `https://app.example.com`).
-Wildcard patterns are only appropriate for non-credentialed public API scenarios.
+Production origins are not compiled into defaults. Configure each hosted origin explicitly through env/settings.
 
 ### Overrides
 
@@ -42,12 +38,12 @@ When `CORS_ORIGINS` or `ALLOWED_ORIGINS` is **explicitly set to empty**, no orig
 
 ### Current Middleware Behavior
 
-- `AllowCredentials` is enabled.
+- `AllowCredentials` is disabled.
 - Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
-- Exposed headers: `X-Total-Count`, `X-Limit`, `X-Offset`, `X-Returned-Count`, `Content-Length`
+- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID`
+- Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
-Operators must still choose safe origins: with `AllowCredentials: true`, prefer explicit hosts
-over wildcards (see above).
+Operators must still choose safe origins and use explicit hosts over wildcards.
 
 ## API Authentication
 

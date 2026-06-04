@@ -40,9 +40,6 @@ func TestSerializeEntity(t *testing.T) {
 	if result.EntityID != "entity-1" {
 		t.Errorf("Expected EntityID entity-1, got %s", result.EntityID)
 	}
-	if result.Type != "asset" {
-		t.Errorf("Expected Type asset, got %s", result.Type)
-	}
 	if result.EntityType != "asset" {
 		t.Errorf("Expected EntityType asset, got %s", result.EntityType)
 	}
@@ -224,9 +221,6 @@ func TestSerializeEntityWithNilJSON(t *testing.T) {
 	if result.EntityID != "entity-nil-json" {
 		t.Errorf("Expected EntityID entity-nil-json, got %s", result.EntityID)
 	}
-	if result.Type != "asset" {
-		t.Errorf("Expected Type asset, got %s", result.Type)
-	}
 	if result.EntityType != "asset" {
 		t.Errorf("Expected EntityType asset, got %s", result.EntityType)
 	}
@@ -235,6 +229,33 @@ func TestSerializeEntityWithNilJSON(t *testing.T) {
 	}
 	if result.Alias != nil {
 		t.Error("Expected Alias to be nil")
+	}
+}
+
+func TestSerializeEntityDoesNotEmitDuplicateTypeField(t *testing.T) {
+	now := time.Now().UTC()
+	entity := &models.Entity{
+		EntityID:  "entity-no-duplicate-type",
+		Type:      "asset",
+		JSON:      []byte("{}"),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	encoded, err := json.Marshal(serializers.SerializeEntity(entity))
+	if err != nil {
+		t.Fatalf("marshal entity response: %v", err)
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		t.Fatalf("decode entity response: %v", err)
+	}
+	if response["entity_type"] != "asset" {
+		t.Fatalf("expected entity_type asset, got %#v", response["entity_type"])
+	}
+	if _, ok := response["type"]; ok {
+		t.Fatalf("entity response should not include duplicate type field: %s", string(encoded))
 	}
 }
 

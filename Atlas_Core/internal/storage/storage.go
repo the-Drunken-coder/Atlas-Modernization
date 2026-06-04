@@ -188,6 +188,31 @@ func (c *Client) BucketExists(ctx context.Context) (bool, error) {
 	return c.client.BucketExists(ctx, c.bucket)
 }
 
+// EmptyBucket removes every object in the configured bucket without deleting the bucket or bucket policy.
+func (c *Client) EmptyBucket(ctx context.Context) error {
+	objects := c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{Recursive: true})
+	for object := range objects {
+		if object.Err != nil {
+			code := minio.ToErrorResponse(object.Err).Code
+			if code == "NoSuchBucket" {
+				return &BucketNotFoundError{Bucket: c.bucket}
+			}
+			return &StorageError{Message: "failed to list bucket objects", Err: object.Err}
+		}
+		if err := c.client.RemoveObject(ctx, c.bucket, object.Key, minio.RemoveObjectOptions{}); err != nil {
+			code := minio.ToErrorResponse(err).Code
+			if code == "NoSuchKey" {
+				continue
+			}
+			if code == "NoSuchBucket" {
+				return &BucketNotFoundError{Bucket: c.bucket}
+			}
+			return &StorageError{Message: "failed to empty bucket", Err: err}
+		}
+	}
+	return nil
+}
+
 // Bucket returns the configured bucket name.
 func (c *Client) Bucket() string {
 	return c.bucket

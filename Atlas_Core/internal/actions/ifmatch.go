@@ -3,13 +3,17 @@ package actions
 import (
 	"strings"
 	"time"
-
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
+
+const objectIfMatchTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
+
+func objectIfMatchETag(updatedAt time.Time) string {
+	return `"` + updatedAt.UTC().Format(objectIfMatchTimeLayout) + `"`
+}
 
 // normalizeIfMatchToken trims space, strips an optional weak-validator "W/" prefix,
 // and trims a single layer of surrounding double-quotes so comparisons line up
-// with serializers.ObjectWeakETag (quoted RFC3339-style service metadata timestamps).
+// with object response ETags (quoted RFC3339-style service metadata timestamps).
 func normalizeIfMatchToken(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(strings.ToUpper(s), "W/") {
@@ -27,7 +31,7 @@ func ObjectIfMatchOK(ifMatch string, updatedAt time.Time) bool {
 	if ifMatch == "" || ifMatch == "*" {
 		return true
 	}
-	want := serializers.ObjectWeakETag(updatedAt)
+	want := objectIfMatchETag(updatedAt)
 	wantNorm := normalizeIfMatchToken(want)
 	for _, part := range strings.Split(ifMatch, ",") {
 		p := strings.TrimSpace(part)

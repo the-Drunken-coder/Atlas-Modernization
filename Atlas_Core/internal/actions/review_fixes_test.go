@@ -25,7 +25,7 @@ func TestNormalizeLegacyEntityComponents(t *testing.T) {
 
 func TestContinuationUpperBound(t *testing.T) {
 	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	upper := time.Date(2026, 3, 21, 12, 5, 0, 0, time.UTC)
+	upper := time.Date(2026, 3, 21, 11, 55, 0, 0, time.UTC)
 
 	got, continuation, err := continuationUpperBound(
 		now,

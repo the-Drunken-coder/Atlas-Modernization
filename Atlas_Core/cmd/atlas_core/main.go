@@ -22,6 +22,17 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
+func atlasCORSOptions(allowedOrigins []string) cors.Options {
+	return cors.Options{
+		AllowedOrigins:   allowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "X-API-Key", "X-Request-ID"},
+		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}
+}
+
 func main() {
 	// Load configuration
 	cfg, err := config.Load()
@@ -81,6 +92,15 @@ func main() {
 				logger.Warn().Err(err).Msg("Failed to ensure storage bucket exists")
 			}
 			cancel()
+			if cfg.DatabaseRecreateOnStartup {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				if err := storageClient.EmptyBucket(ctx); err != nil {
+					cancel()
+					logger.Fatal().Err(err).Str("bucket", storageClient.Bucket()).Msg("Failed to clear storage bucket while DATABASE_RECREATE_ON_STARTUP=true")
+				}
+				cancel()
+				logger.Info().Str("bucket", storageClient.Bucket()).Msg("Cleared storage bucket because DATABASE_RECREATE_ON_STARTUP=true")
+			}
 		}
 	} else {
 		logger.Warn().Msg("MinIO secret key not configured, storage features disabled")
@@ -100,14 +120,7 @@ func main() {
 	r.Use(middleware.Compress(5))
 
 	// Add CORS
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Total-Count", "X-Limit", "X-Offset", "X-Returned-Count", "Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	r.Use(cors.Handler(atlasCORSOptions(cfg.CORSOrigins)))
 
 	// API key middleware must be registered before route handlers (chi requirement); health/readiness skip auth.
 	if cfg.EnableAPIAuth {

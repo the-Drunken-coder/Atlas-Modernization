@@ -22,11 +22,11 @@ func TestJoinURL_preservesBasePath(t *testing.T) {
 
 func TestJoinURL_splitsQueryFromPath(t *testing.T) {
 	t.Parallel()
-	got, err := joinURL("http://localhost:8000/atlas-core", "/entities/foo?limit=1&offset=2")
+	got, err := joinURL("http://localhost:8000/atlas-core", "/entities/foo?limit=1&cursor=abc")
 	if err != nil {
 		t.Fatalf("joinURL: %v", err)
 	}
-	want := "http://localhost:8000/atlas-core/entities/foo?limit=1&offset=2"
+	want := "http://localhost:8000/atlas-core/entities/foo?limit=1&cursor=abc"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -41,11 +41,11 @@ func TestJoinURL_trailingSlashBase(t *testing.T) {
 	if want := "http://localhost:8000/atlas-core/entities"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	got, err = joinURL("http://localhost:8000/atlas-core/", "/entities/foo?limit=1&offset=2")
+	got, err = joinURL("http://localhost:8000/atlas-core/", "/entities/foo?limit=1&cursor=abc")
 	if err != nil {
 		t.Fatalf("joinURL: %v", err)
 	}
-	if want := "http://localhost:8000/atlas-core/entities/foo?limit=1&offset=2"; got != want {
+	if want := "http://localhost:8000/atlas-core/entities/foo?limit=1&cursor=abc"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

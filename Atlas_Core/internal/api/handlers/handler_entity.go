@@ -1,33 +1,32 @@
 package handlers
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 // --- Entity Handlers ---
 
 // ListEntities handles GET /entities.
 func (h *Handler) ListEntities(w http.ResponseWriter, r *http.Request) {
-	limit, offset, ok := h.parseListPagination(w, r)
+	limit, cursor, ok := h.parseListPagination(w, r)
 	if !ok {
 		return
 	}
 
-	entities, total, err := h.entityActions.List(r.Context(), limit, offset)
+	page, err := h.entityActions.List(r.Context(), limit, cursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, limit, offset, len(entities))
+	entities := serializers.SerializeEntities(page.Items)
+	setPaginationHeaders(w, page.Limit, len(entities), page.HasMore, page.NextCursor)
 	writeJSON(w, http.StatusOK, entities)
 }
 
@@ -47,17 +46,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 		Extra       map[string]interface{} `json:"extra,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		if errors.Is(err, io.EOF) {
-			h.writeError(w, r, http.StatusBadRequest, "Empty request body", "INVALID_JSON")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -76,7 +65,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, entity)
+	writeJSON(w, http.StatusCreated, serializers.SerializeEntity(entity))
 }
 
 // GetEntity handles GET /entities/{entity_id}.
@@ -89,7 +78,7 @@ func (h *Handler) GetEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entity)
+	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // GetEntityByAlias handles GET /entities/alias/{alias}.
@@ -102,7 +91,7 @@ func (h *Handler) GetEntityByAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entity)
+	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // UpdateEntity handles PATCH /entities/{entity_id}.
@@ -120,13 +109,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		Extra      map[string]interface{} `json:"extra,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -142,7 +125,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entity)
+	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // DeleteEntity handles DELETE /entities/{entity_id}.
@@ -172,13 +155,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 		HeadingDeg *float64 `json:"heading_deg,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -213,7 +190,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, entity)
+	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // EntityCheckin handles POST /entities/{entity_id}/checkin.
@@ -234,11 +211,11 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	offset, err := parseNonNegativeIntQuery(r, "offset", 0)
-	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid offset parameter", "VALIDATION_ERROR")
+	if _, exists := r.URL.Query()["offset"]; exists {
+		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use task_cursor", "VALIDATION_ERROR")
 		return
 	}
+	taskCursor := strings.TrimSpace(r.URL.Query().Get("task_cursor"))
 
 	fields := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("fields")))
 	sinceStr := strings.TrimSpace(r.URL.Query().Get("since"))
@@ -265,16 +242,8 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		Components map[string]interface{} `json:"components,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		if !errors.Is(err, io.EOF) {
-			h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
-			return
-		}
+	if !h.decodeJSONRequestBody(w, r, &req, true) {
+		return
 	}
 
 	// Build components update (single timestamp for all touched components)
@@ -328,21 +297,27 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	statuses := parseStatusFilter(statusFilter)
-	tasks, err := h.taskActions.GetByEntityFiltered(r.Context(), entityID, statuses, since, limit, offset)
+	taskPage, err := h.taskActions.GetByEntityFiltered(r.Context(), entityID, statuses, since, limit, taskCursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	var taskPayload interface{} = tasks
+	serializedTasks := serializers.SerializeTasks(taskPage.Items)
+	var taskPayload interface{} = serializedTasks
 	if fields == "minimal" {
-		taskPayload = serializeCheckinTasksMinimal(tasks)
+		taskPayload = serializeCheckinTasksMinimal(serializedTasks)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"entity":     entity,
-		"tasks":      taskPayload,
-		"task_count": len(tasks),
-		"task_limit": limit,
-	})
+	response := map[string]interface{}{
+		"entity":         serializers.SerializeEntity(entity),
+		"tasks":          taskPayload,
+		"task_count":     len(serializedTasks),
+		"task_limit":     taskPage.Limit,
+		"has_more_tasks": taskPage.HasMore,
+	}
+	if taskPage.NextCursor != "" {
+		response["next_task_cursor"] = taskPage.NextCursor
+	}
+	writeJSON(w, http.StatusOK, response)
 }

@@ -2,6 +2,8 @@
 package serializers
 
 import (
+	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -21,7 +23,6 @@ func ObjectWeakETag(updatedAt time.Time) string {
 type EntityResponse struct {
 	EntityID   string                 `json:"entity_id"`
 	EntityType string                 `json:"entity_type"`
-	Type       string                 `json:"type"`
 	Subtype    *string                `json:"subtype"`
 	Alias      *string                `json:"alias"`
 	Components map[string]interface{} `json:"components"`
@@ -77,7 +78,8 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 		return nil
 	}
 
-	components := e.GetComponents()
+	data := e.DecodedJSON()
+	components := mapField(data, "components")
 	if components == nil {
 		components = make(map[string]interface{})
 	}
@@ -85,7 +87,6 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 	return &EntityResponse{
 		EntityID:   e.EntityID,
 		EntityType: e.Type,
-		Type:       e.Type,
 		Subtype:    e.Subtype,
 		Alias:      e.Alias,
 		Components: components,
@@ -93,7 +94,7 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 			CreatedAt: e.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: e.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 		},
-		Extra: e.GetExtra(),
+		Extra: entityExtra(data),
 	}
 }
 
@@ -103,7 +104,8 @@ func SerializeTask(t *models.Task) *TaskResponse {
 		return nil
 	}
 
-	components := t.GetComponents()
+	data := t.DecodedJSON()
+	components := mapField(data, "components")
 	if components == nil {
 		components = make(map[string]interface{})
 	}
@@ -117,7 +119,7 @@ func SerializeTask(t *models.Task) *TaskResponse {
 			CreatedAt: t.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 		},
-		Extra: t.GetExtra(),
+		Extra: taskExtra(data),
 	}
 }
 
@@ -127,7 +129,8 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 		return nil
 	}
 
-	usageHints := o.GetUsageHints()
+	data := o.DecodedJSON()
+	usageHints := objectUsageHints(data)
 	if usageHints == nil {
 		usageHints = []string{}
 	}
@@ -136,15 +139,15 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 		Path:         o.Path,
 		ContentType:  o.ContentType,
 		Type:         o.Type,
-		SizeBytes:    o.GetSizeBytes(),
+		SizeBytes:    objectSizeBytes(data),
 		UsageHints:   usageHints,
-		ReferencedBy: o.GetReferencedBy(),
-		Bucket:       o.GetBucket(),
+		ReferencedBy: objectReferencedBy(data),
+		Bucket:       objectBucket(data),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 		},
-		Payload: o.GetPayload(),
+		Payload: objectPayload(data),
 	}
 }
 
@@ -154,7 +157,8 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 		return nil
 	}
 
-	usageHints := o.GetUsageHints()
+	data := o.DecodedJSON()
+	usageHints := objectUsageHints(data)
 	if usageHints == nil {
 		usageHints = []string{}
 	}
@@ -163,14 +167,137 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 		Path:        o.Path,
 		ContentType: o.ContentType,
 		Type:        o.Type,
-		SizeBytes:   o.GetSizeBytes(),
+		SizeBytes:   objectSizeBytes(data),
 		UsageHints:  usageHints,
-		Bucket:      o.GetBucket(),
+		Bucket:      objectBucket(data),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 		},
 	}
+}
+
+func mapField(data map[string]interface{}, key string) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	if value, ok := data[key].(map[string]interface{}); ok {
+		return value
+	}
+	return nil
+}
+
+func entityExtra(data map[string]interface{}) map[string]interface{} {
+	return extraWithout(data, map[string]struct{}{
+		"components": {}, "type": {}, "subtype": {}, "alias": {},
+		"entity_id": {}, "task_id": {}, "object_id": {}, "created_at": {}, "updated_at": {},
+	})
+}
+
+func taskExtra(data map[string]interface{}) map[string]interface{} {
+	return extraWithout(data, map[string]struct{}{
+		"components": {}, "status": {}, "entity_id": {}, "task_id": {},
+		"object_id": {}, "created_at": {}, "updated_at": {},
+	})
+}
+
+func objectPayload(data map[string]interface{}) map[string]interface{} {
+	return extraWithout(data, map[string]struct{}{
+		"path": {}, "content_type": {}, "type": {}, "size_bytes": {}, "usage_hints": {}, "bucket": {}, "referenced_by": {},
+		"object_id": {}, "created_at": {}, "updated_at": {},
+	})
+}
+
+func extraWithout(data map[string]interface{}, excluded map[string]struct{}) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	extra := make(map[string]interface{})
+	for key, value := range data {
+		if _, skip := excluded[key]; !skip {
+			extra[key] = value
+		}
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
+}
+
+func objectSizeBytes(data map[string]interface{}) *int64 {
+	if data == nil {
+		return nil
+	}
+	size, ok := data["size_bytes"].(json.Number)
+	if !ok {
+		return nil
+	}
+	i, err := size.Int64()
+	if err == nil {
+		if i < 0 {
+			return nil
+		}
+		return &i
+	}
+	f, err := size.Float64()
+	if err != nil {
+		return nil
+	}
+	intpart, frac := math.Modf(f)
+	if frac != 0 {
+		return nil
+	}
+	const maxInt64Plus1 = float64(uint64(1) << 63)
+	if intpart < 0 || intpart >= maxInt64Plus1 {
+		return nil
+	}
+	s := int64(intpart)
+	return &s
+}
+
+func objectUsageHints(data map[string]interface{}) []string {
+	if data == nil {
+		return nil
+	}
+	hints, ok := data["usage_hints"].([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		if s, ok := hint.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+func objectBucket(data map[string]interface{}) *string {
+	if data == nil {
+		return nil
+	}
+	bucket, ok := data["bucket"].(string)
+	if !ok {
+		return nil
+	}
+	return &bucket
+}
+
+func objectReferencedBy(data map[string]interface{}) []map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	refs, ok := data["referenced_by"].([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]interface{}, 0, len(refs))
+	for _, ref := range refs {
+		if refMap, ok := ref.(map[string]interface{}); ok {
+			result = append(result, refMap)
+		}
+	}
+	return result
 }
 
 // SerializeEntities converts a slice of entities to their API response format.
