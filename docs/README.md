@@ -1,6 +1,6 @@
 # Atlas Modernization — documentation index
 
-_Revision: 2026-05-29_
+_Revision: 2026-06-04_
 
 This is the single entry point for project documentation. Docs are split into **project-level**
 (this `docs/` tree, spanning every package) and **package-level** (each package's own `docs/`).
@@ -20,7 +20,7 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 | Package | Docs | What it is |
 | --- | --- | --- |
 | `Atlas_Core/` | [`Atlas_Core/docs/`](../Atlas_Core/docs/README.md) | The Go HTTP API: handlers, actions, database, storage. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
-| `Atlas Protocol/` | [`Atlas Protocol/index.html`](../Atlas%20Protocol/index.html) | Foundational contract layer (direction, not yet built): one definition of the data model + verification, projected into Go/TS/DB. |
+| `Atlas_Protocol/` | [`Atlas_Protocol/index.html`](../Atlas_Protocol/index.html) | Foundational contract layer (direction, not yet built): one definition of the data model + verification, projected into Go/TS/DB. |
 
 Use **`Atlas_Core/docs/`** when the question is "how does this API behave?"
 

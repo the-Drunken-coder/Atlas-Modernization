@@ -69,7 +69,7 @@
   <h2><span class="n">01</span>Why this exists</h2>
   <p>
     The shape of an entity, task, or object, and the rules for a valid component (telemetry, geometry,
-    <code>media_refs</code> roles, RFC3339 timestamps, command-as-object-or-string) currently has no single home.
+    <code>media_refs</code> roles, RFC3339 timestamps, task commands) currently has no single home.
     It is re-stated in Go validation code, in the model layer, in serializers, in <code>database-structure</code> docs,
     and in example files. Each restatement is a chance to drift, and downstream consumers — notably the frontend —
     get no contract at all and are left guessing at our JSON shapes.
@@ -97,9 +97,9 @@
        checks), so integrity no longer depends on every writer going through one Go code path.</p>
   </div>
   <div class="goal">
-    <h3>Carry a version</h3>
-    <p>A versioned protocol gives us the schema-version guard the startup bootstrap lacks today: protocol version
-       &rarr; expected schema &rarr; fail fast on drift.</p>
+    <h3>Prove generated output is current</h3>
+    <p>Development uses full replacement instead of version branches. Drift checks answer whether generated files
+       came from the current protocol source.</p>
   </div>
 
   <h2><span class="n">03</span>The boundary that keeps it clean</h2>
@@ -113,7 +113,7 @@
         <li>Valid component keys &amp; enums</li>
         <li>Constraints (ranges, formats, required)</li>
         <li>Cross-language type generation</li>
-        <li>The version of the contract</li>
+        <li>Generated validators &amp; drift checks</li>
       </ul>
     </div>
     <div class="boundary no">
@@ -133,18 +133,17 @@
   <ul>
     <li>Start by generating Core's <em>validators and typed structs</em> — the parts that drift from docs today.</li>
     <li>Keep behavior (merge logic, lifecycle, transactions) handwritten in Core for now.</li>
-    <li>Add the TypeScript projection once the Go side proves the model.</li>
-    <li>Consider the database-level validation and the version guard after the contract has settled.</li>
+    <li>Add TypeScript types and Ajv validators from the same schema artifacts.</li>
+    <li>Consider database-level validation only after the generated contract has settled.</li>
   </ul>
 
   <h2><span class="n">05</span>Open questions</h2>
   <ul>
-    <li><strong>Schema language:</strong> something that models <em>open / extensible</em> JSON well
-        (our <code>extra</code>, <code>custom_</code> components, free-form payloads rule out rigid IDLs).
-        CUE and JSON Schema are the leading candidates.</li>
+    <li><strong>Schema language:</strong> CUE is the source of truth; JSON Schema is generated for consumers.</li>
     <li><strong>Generated-code workflow:</strong> output is checked in and never hand-edited — we need the discipline
         for that before we lean on codegen.</li>
-    <li><strong>How much to generate vs. keep handwritten</strong>, and where exactly the first cut lands.</li>
+    <li><strong>First cut:</strong> inventory first, then shared primitives plus entity geometry, telemetry, status,
+        and heartbeat.</li>
   </ul>
 
   <div class="note">
@@ -154,7 +153,7 @@
   </div>
 
   <footer>
-    Atlas Protocol &middot; goals &amp; direction &middot; revised 2026-05-29
+    Atlas Protocol &middot; goals &amp; direction &middot; revised 2026-06-04
   </footer>
 </main>
 </body>

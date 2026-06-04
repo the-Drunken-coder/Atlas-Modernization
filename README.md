@@ -5,7 +5,7 @@ This workspace is focused on modernizing the ATLAS Core backend.
 ## What lives here
 
 - **`Atlas_Core/`** — the core backend: the Go HTTP API, database layer, Docker setup, and command catalog.
-- **`Atlas Protocol/`** — foundational contract layer (direction, not yet built): one definition of the data model and its verification, meant to be projected into Go, TypeScript, and the database. See [`Atlas Protocol/index.html`](Atlas%20Protocol/index.html).
+- **`Atlas_Protocol/`** — foundational contract layer (direction, not yet built): one definition of the data model and its verification, meant to be projected into Go, TypeScript, and the database. See [`Atlas_Protocol/index.html`](Atlas_Protocol/index.html).
 - **`docs/`** — project-level documentation that spans packages.
 
 ## Agent guidance
