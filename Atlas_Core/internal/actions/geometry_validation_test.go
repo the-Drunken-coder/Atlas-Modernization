@@ -323,7 +323,7 @@ func TestValidateGeometry_GeoJSON_Polygon(t *testing.T) {
 				}(),
 			},
 			wantError: true,
-			errMsg:    "exceeds maximum of 10,000 total positions across all rings",
+			errMsg:    "exceeds maximum of 10000 total positions across all rings",
 		},
 	}
 

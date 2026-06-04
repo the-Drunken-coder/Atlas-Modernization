@@ -350,11 +350,12 @@ func TestValidateTaskComponents_TypeChecking(t *testing.T) {
 		errMsg     string
 	}{
 		{
-			name: "command is string (legacy)",
+			name: "command is string",
 			components: map[string]interface{}{
 				"command": "not an object",
 			},
-			wantErr: false,
+			wantErr: true,
+			errMsg:  "command component must be an object",
 		},
 		{
 			name: "parameters is array",

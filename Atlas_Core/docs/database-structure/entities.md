@@ -115,7 +115,7 @@ The JSON blob may contain fields outside `components`:
 - **media_refs**: Array of references to objects in MinIO. Each entry has `object_id` (required) and `role` (required). Valid roles: `camera_feed`, `thumbnail`, `heatmap_data`.
 - **mil_view**: Tacsight classification plus the last observed timestamp. `classification` must be one of: `friendly`, `hostile`, `neutral`, `unknown`, `civilian`.
 - **health**: Vitals such as `battery_percent` (0–100).
-- **sensor_refs**: Array of upstream sensors with FOV/orientation metadata. See [Sensor Refs Dual Naming](#sensor-refs-dual-naming) below.
+- **sensor_refs**: Array of upstream sensors with canonical FOV/orientation metadata. See [Sensor Refs Fields](#sensor-refs-fields) below.
 - **communications**: Network link hints. `link_state` must be one of: `connected`, `disconnected`, `degraded`, `unknown`.
 - **task_queue**: Current and queued work items.
   - `current_task_id` (string \| null): must be `null` or a non-blank string (reject empty or whitespace-only values; no additional canonical-format validation is performed).
@@ -157,19 +157,18 @@ Alternative format using explicit fields:
 
 Also supports `polygon` (array of `[lat, lng]` pairs, minimum 3 points) and `line` (array of `[lat, lng]` pairs, minimum 2 points).
 
-## Sensor Refs Dual Naming
+## Sensor Refs Fields
 
-The validation layer accepts both legacy and current field names for sensor FOV and orientation:
+The validation layer accepts canonical sensor FOV and orientation field names:
 
-| Documented Name | Legacy Alias | Description |
-| --- | --- | --- |
-| `horizontal_fov` | `fov_horizontal` | Horizontal field-of-view (degrees) |
-| `vertical_fov` | `fov_vertical` | Vertical field-of-view (degrees) |
-| `horizontal_orientation` | `orientation_yaw` | Yaw / horizontal orientation (degrees) |
-| `vertical_orientation` | `orientation_pitch` | Pitch / vertical orientation (degrees) |
-| — | `orientation_roll` | Roll (degrees) |
+| Field | Description |
+| --- | --- |
+| `horizontal_fov` | Horizontal field-of-view (degrees) |
+| `vertical_fov` | Vertical field-of-view (degrees) |
+| `horizontal_orientation` | Yaw / horizontal orientation (degrees) |
+| `vertical_orientation` | Pitch / vertical orientation (degrees) |
 
-Both naming conventions are accepted; all numeric fields must be finite.
+Legacy aliases such as `fov_horizontal` and `orientation_yaw` are not part of Atlas Protocol. All numeric fields must be finite.
 
 ## Component Applicability Matrix
 

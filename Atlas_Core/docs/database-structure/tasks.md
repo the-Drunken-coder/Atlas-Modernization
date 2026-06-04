@@ -62,8 +62,9 @@ Known task components:
 
 Validation highlights:
 
-- `command.type`: required non-empty string (legacy string-only `command` values also accepted)
-- `command.target`: optional string field on command object
+- `command.type`: required non-empty string; `command` must be an object
+- `command.target`: optional arbitrary JSON value on command object
+- `command.parameters`: optional arbitrary JSON value on command object
 - `parameters.latitude` / `target.latitude`: finite number in `[-90, 90]` if provided
 - `parameters.longitude` / `target.longitude`: finite number in `[-180, 180]` if provided
 - `progress.percent`: finite number in `[0, 100]` if provided

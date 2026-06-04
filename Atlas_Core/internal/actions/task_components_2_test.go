@@ -117,14 +117,15 @@ func TestValidateTaskComponents(t *testing.T) {
 			wantError:  false,
 		},
 		{
-			name: "legacy string command with target",
+			name: "string command is rejected",
 			components: map[string]interface{}{
 				"command": "legacy-cmd-id",
 				"target": map[string]interface{}{
 					"latitude": 40.0,
 				},
 			},
-			wantError: false,
+			wantError: true,
+			errMsg:    "command component must be an object",
 		},
 		{
 			name: "unknown task component key",
@@ -193,44 +194,6 @@ func TestValidateTaskComponents(t *testing.T) {
 				if err != nil {
 					t.Errorf("ValidateTaskComponents() expected no error but got: %v", err)
 				}
-			}
-		})
-	}
-}
-
-// TestToFloat64 tests the toFloat64 helper function
-func TestToFloat64(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    interface{}
-		expected float64
-		ok       bool
-	}{
-		{"float64", float64(3.5), 3.5, true},
-		{"float32", float32(2.5), 2.5, true},
-		{"int", int(42), 42.0, true},
-		{"int8", int8(42), 42.0, true},
-		{"int16", int16(42), 42.0, true},
-		{"int32", int32(42), 42.0, true},
-		{"int64", int64(42), 42.0, true},
-		{"uint", uint(42), 42.0, true},
-		{"uint8", uint8(42), 42.0, true},
-		{"uint16", uint16(42), 42.0, true},
-		{"uint32", uint32(42), 42.0, true},
-		{"uint64", uint64(42), 42.0, true},
-		{"string", "42", 0, false},
-		{"bool", true, 0, false},
-		{"nil", nil, 0, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, ok := toFloat64(tt.input)
-			if ok != tt.ok {
-				t.Errorf("toFloat64(%v) ok = %v, want %v", tt.input, ok, tt.ok)
-			}
-			if ok && result != tt.expected {
-				t.Errorf("toFloat64(%v) = %v, want %v", tt.input, result, tt.expected)
 			}
 		})
 	}

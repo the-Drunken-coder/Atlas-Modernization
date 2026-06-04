@@ -1,6 +1,6 @@
 # Atlas Protocol Implementation Prep
 
-Status: ready to start the first build slice.
+Status: implemented for the bootstrap slice and extended through task, object, and documented entity-component blob validation in `../atlas_protocol/`.
 
 This document pins the decisions that must be true before Atlas Protocol becomes generated code. It narrows the first implementation pass to a small, useful slice while keeping the larger contract shape visible.
 
@@ -71,19 +71,22 @@ go run ./tools/check
 
 Start with the storage/blob contract, not the full HTTP API contract.
 
-The first generated slice owns:
+The generated protocol slices now own:
 
 - Shared primitive constraints used by Atlas data.
 - Entity JSON blob shape.
 - Entity component key rules.
 - `components.telemetry`.
 - `components.geometry`.
-- Example validation for existing entity JSON examples.
-- Generated JSON Schema for that slice.
-- Generated Go types/validators for that slice.
+- Documented entity component payloads for task catalog, media refs, mil view, health, sensor refs, communications, task queue, status, and heartbeat.
+- Task JSON blob shape and task components.
+- Object JSON blob shape and object references.
+- Example validation for checked-in entity, task, and object JSON examples.
+- Generated JSON Schema for implemented slices.
+- Generated Go types/validators for implemented slices.
 - A drift check proving generated files came from the current CUE source.
 
-The first slice does not own:
+The current generated slices do not own:
 
 - HTTP handlers, routes, auth, pagination, request body size limits, or error response shape.
 - Database DDL, table lifecycle, transactions, row locking, or storage wiring.
@@ -171,17 +174,20 @@ The first Core integration should replace behavior in a narrow order:
 2. Generate telemetry and geometry validators.
 3. Add Core adapter tests that compare generated validation behavior to the intended first-slice contract.
 4. Replace `ValidateTelemetryComponent` and `ValidateGeometryComponent` with adapters that call the generated validators.
-5. Keep handwritten validators for task, object, and non-slice entity components until their protocol slices exist.
+5. Keep handwritten validators only for behavior that is still outside Atlas Protocol's implemented blob/component slices.
 
 Do not replace every Core model or validator in the first implementation pass.
 
 ## Generated Artifacts
 
-Initial generated outputs:
+Generated outputs:
 
 - `atlas_protocol/generated/jsonschema/entity.schema.json`
+- `atlas_protocol/generated/jsonschema/task.schema.json`
+- `atlas_protocol/generated/jsonschema/object.schema.json`
 - `atlas_protocol/generated/jsonschema/components/telemetry.schema.json`
 - `atlas_protocol/generated/jsonschema/components/geometry.schema.json`
+- `atlas_protocol/generated/jsonschema/components/*.schema.json`
 - `atlas_protocol/generated/go/atlasprotocol/`
 
 TypeScript output remains part of the target system, but it should be generated after the CUE-to-JSON-Schema and Go-validator path is stable.
@@ -194,16 +200,16 @@ The first build slice is complete when:
 
 - `go run ./tools/check` succeeds from `atlas_protocol/`.
 - `go run ./tools/generate` followed by `go run ./tools/check` leaves no diff.
-- Every checked-in entity example validates against CUE.
-- Generated JSON Schema exists for entity, telemetry, and geometry.
-- Generated Go validators are consumed by Atlas Core for telemetry and geometry.
+- Every checked-in entity, task, and object example validates against CUE.
+- Generated JSON Schema exists for implemented blob and component slices.
+- Generated Go validators are consumed by Atlas Core for implemented blob and component slices.
 - `go test ./...` succeeds from `Atlas_Core/`.
 - `git diff --check` reports no whitespace errors.
 
 ## Deferred Work
 
-- Task envelope, task status, task components, and task helper endpoint payloads.
-- Object envelope, object metadata, `referenced_by`, and media reference conventions.
+- Task helper endpoint payloads.
+- Object media upload/download behavior.
 - TypeScript types and validators.
 - OpenAPI schema fragments.
 - Postgres JSON validation artifacts.

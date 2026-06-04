@@ -10,7 +10,10 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/minio/minio-go/v7 v7.2.0
 	github.com/rs/zerolog v1.35.1
+	github.com/the-drunken-coder/atlas/atlas_protocol v0.0.0
 )
+
+replace github.com/the-drunken-coder/atlas/atlas_protocol => ../atlas_protocol
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
