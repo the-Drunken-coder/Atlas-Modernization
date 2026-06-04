@@ -169,17 +169,17 @@ Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_pe
 
 ### Check-in query params
 
-`POST /entities/{entity_id}/checkin` supports: `status_filter` (default `pending,acknowledged`), `limit` (1–20, default 10), `offset`, `fields=minimal`, `since` (RFC3339).
+`POST /entities/{entity_id}/checkin` supports: `status_filter` (default `pending,acknowledged`), `limit` (1–20, default 10), `task_cursor`, `fields=minimal`, `since` (RFC3339).
 
 ## Pagination and Limits
 
-List endpoints use `limit` and `offset` query params with defaults and clamping in the action layer.
+List endpoints use `limit` and opaque `cursor` query params with defaults and clamping in the action layer. `offset` is rejected with `400 VALIDATION_ERROR`.
 Pagination metadata is returned in headers:
 
-- `X-Total-Count`
 - `X-Limit`
-- `X-Offset`
 - `X-Returned-Count`
+- `X-Has-More`
+- `X-Next-Cursor` (only when another page exists)
 
 Object reference links are stored in object metadata (`referenced_by`) via `POST /objects` and
 `PATCH /objects/{object_id}`. There is no `/objects/{object_id}/references` route in the current

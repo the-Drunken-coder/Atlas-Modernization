@@ -4,6 +4,8 @@ If you ever encounter something in the project that surprises you, please alert 
 
 The Go service module lives under **`Atlas_Core/`** (run `go test ./...` and `go run ./cmd/atlas_core` from that directory).
 
+Codex-created worktrees may not be checked out on the PR branch even when they are inside this repository. If the local tree looks unexpectedly small or detached, run `git worktree list` and inspect the branch checkout before deciding the PR contents are missing.
+
 `Atlas_Protocol/` is currently a planning/documentation package, not an implemented module. If you turn it into generated code that Atlas Core imports, keep Protocol as the source of truth and decide the module/import boundary first; the repository currently has only `Atlas_Core/go.mod`.
 
 This project is super greenfield. It has no users and no real data yet. You can remove things, add things, and reshape the codebase without worrying about backwards compatibility, migrations for existing deployments, or preserving old behavior for callers that do not exist yet. Prefer breaking changes over compatibility shims: backwards compatibility in early development tends to accumulate technical debt and bloat.

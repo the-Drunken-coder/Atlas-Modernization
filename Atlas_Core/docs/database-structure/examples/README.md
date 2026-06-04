@@ -39,7 +39,7 @@ Entities are stored in the `entities` table and represent things that appear on 
 - **Tasks**: `task_id`, `status`, `entity_id` are columns — do **not** put them in the JSON blob.
 - **Objects**: `object_id`, `path`, `content_type`, `type` are columns — do **not** put them in the JSON blob.
 
-**API vs storage:** HTTP create/update uses `entity_type` in the request body; the database column is `type`. API responses expose both `entity_type` and `type`, with timestamps under `metadata.created_at` / `metadata.updated_at`.
+**API vs storage:** HTTP create/update uses `entity_type` in the request body; the database column is `type`. API responses expose `entity_type`, with timestamps under `metadata.created_at` / `metadata.updated_at`.
 
 ### Task Examples (`tasks/`)
 

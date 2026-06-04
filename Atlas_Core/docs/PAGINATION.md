@@ -1,36 +1,38 @@
 # Pagination Contract
 
-_Revision: 2026-05-29_
+_Revision: 2026-06-03_
 
 ## Overview
 
-Atlas Core uses offset-based pagination for collection endpoints while keeping response bodies as
-JSON arrays for backward compatibility.
+Atlas Core uses keyset pagination for collection endpoints while keeping response bodies as JSON arrays. Standard list pages are ordered by `(created_at DESC, id DESC)` and use opaque cursor tokens for continuation. Check-in task pagination is the one endpoint-specific exception; it is described below.
 
 ## Query Parameters
 
-All list endpoints accept:
+All standard list endpoints accept:
 
 - `limit`
-- `offset`
+- `cursor`
 
-The handler defaults are `limit=100` and `offset=0`.
+The handler default is `limit=100`; the maximum standard page size is `500`.
+
+`offset` is no longer supported. Any request that includes an `offset` query parameter returns **400** with `VALIDATION_ERROR`.
 
 ### HTTP validation
 
-Before the action layer runs, handlers reject invalid pagination query params with **400** and
-`VALIDATION_ERROR`:
+Handlers reject invalid pagination query params with **400** and `VALIDATION_ERROR`:
 
-- Non-numeric `limit` or `offset`
-- Negative `limit` or `offset`
+- Non-numeric `limit`
+- Negative `limit`
+- Any `offset` parameter
 
 ### Action-layer normalization
 
-After HTTP parsing, list actions normalize values:
+After HTTP parsing, list actions normalize and validate values:
 
 - `limit <= 0` becomes `100`
 - `limit > 500` is clamped to `500`
-- `offset < 0` becomes `0` (only reachable from internal callers; HTTP rejects negative offset)
+- `cursor` is treated as an opaque continuation token
+- Malformed `cursor` is rejected with **400** and `VALIDATION_ERROR`
 
 Shared helper: `internal/actions/pagination.go` (`ClampListLimit`, etc.).
 
@@ -38,13 +40,12 @@ Shared helper: `internal/actions/pagination.go` (`ClampListLimit`, etc.).
 
 Paginated responses include these headers:
 
-- `X-Total-Count`
 - `X-Limit`
-- `X-Offset`
 - `X-Returned-Count`
+- `X-Has-More`
+- `X-Next-Cursor` when another page exists
 
-No additional pagination headers are currently emitted (for example, there is no `X-Has-More` or
-`X-Next-Offset` header in the current implementation).
+Follow-up requests pass `X-Next-Cursor` back as the `cursor` query parameter. Clients must not parse or construct cursor values.
 
 ## Covered Endpoints
 
@@ -55,17 +56,24 @@ No additional pagination headers are currently emitted (for example, there is no
 - `GET /entities/{entity_id}/objects`
 - `GET /tasks/{task_id}/objects`
 
-### Check-in task pagination (different limits)
+### Check-in task pagination
 
 `POST /entities/{entity_id}/checkin` returns tasks inline (not via pagination headers). Query params:
 
 - `limit` — default **10**, range **1–20** (invalid values return 400)
-- `offset` — default **0** (negative values return 400)
+- `task_cursor` — opaque continuation cursor from `next_task_cursor`
 - `status_filter`, `fields`, `since` — see entity status docs
+
+The response includes:
+
+- `has_more_tasks`
+- `next_task_cursor` when another task page exists
+
+Check-in task pages are ordered by `(updated_at DESC, task_id DESC)`.
 
 ## Query endpoints (`/queries/full`, `/queries/changed-since`)
 
-These endpoints use per-type **limits** (not offset pagination). When a stream is truncated, the response includes `has_more_*` booleans and opaque **`next_*_cursor`** strings. Pass them back on the **next request** as query parameters to continue **without skipping rows**:
+These endpoints use per-type **limits** and opaque cursors. When a stream is truncated, the response includes `has_more_*` booleans and opaque **`next_*_cursor`** strings. Pass them back on the **next request** as query parameters to continue **without skipping rows**:
 
 | Response field | Query parameter (next request) |
 | --- | --- |
@@ -76,7 +84,7 @@ These endpoints use per-type **limits** (not offset pagination). When a stream i
 | `next_deleted_task_cursor` | `deleted_task_cursor` |
 | `next_deleted_object_cursor` | `deleted_object_cursor` |
 
-For **`GET /queries/changed-since`**, keep the same **`since`** timestamp while following cursors. Treat each cursor as an **opaque** token: do not parse or construct it—pass back the `next_*_cursor` value from the previous response unchanged as the matching `*_cursor` query parameter on the next request.
+For **`GET /queries/changed-since`**, keep the same **`since`** timestamp while following cursors. Treat each cursor as an **opaque** token: do not parse or construct it; pass back the `next_*_cursor` value from the previous response unchanged as the matching `*_cursor` query parameter on the next request.
 
 ### Per-type caps
 

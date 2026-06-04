@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 func isPromotedEntityExtraKey(key string) bool {
@@ -194,7 +193,7 @@ type CreateEntityParams struct {
 }
 
 // Create creates a new entity.
-func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (*serializers.EntityResponse, error) {
+func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (*models.Entity, error) {
 	// Validate entity ID
 	if err := ValidateEntityID(params.EntityID); err != nil {
 		return nil, err
@@ -275,11 +274,11 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		return nil, fmt.Errorf("failed to create entity: %w", err)
 	}
 
-	return serializers.SerializeEntity(&entity), nil
+	return &entity, nil
 }
 
 // Get retrieves an entity by ID.
-func (a *EntityActions) Get(ctx context.Context, entityID string) (*serializers.EntityResponse, error) {
+func (a *EntityActions) Get(ctx context.Context, entityID string) (*models.Entity, error) {
 	if err := ValidateEntityID(entityID); err != nil {
 		return nil, err
 	}
@@ -300,11 +299,11 @@ func (a *EntityActions) Get(ctx context.Context, entityID string) (*serializers.
 		return nil, fmt.Errorf("failed to get entity: %w", err)
 	}
 
-	return serializers.SerializeEntity(&entity), nil
+	return &entity, nil
 }
 
 // GetByAlias retrieves an entity by alias.
-func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*serializers.EntityResponse, error) {
+func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*models.Entity, error) {
 	normalized, err := NormalizeAlias(alias)
 	if err != nil {
 		return nil, err
@@ -328,50 +327,57 @@ func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*serializ
 		return nil, fmt.Errorf("failed to get entity by alias: %w", err)
 	}
 
-	return serializers.SerializeEntity(&entity), nil
+	return &entity, nil
 }
 
 // List retrieves entities with pagination.
-func (a *EntityActions) List(ctx context.Context, limit, offset int) ([]*serializers.EntityResponse, int, error) {
+func (a *EntityActions) List(ctx context.Context, limit int, cursor string) (*ListPage[*models.Entity], error) {
 	limit = ClampListLimit(limit)
-	if offset < 0 {
-		offset = 0
-	}
 
-	// Get entities with total count using window function (single query)
-	rows, err := a.pool.Query(ctx, `
-		SELECT entity_id, type, subtype, alias, json, created_at, updated_at,
-		       COUNT(*) OVER() as total_count
-		FROM entities
-		ORDER BY created_at DESC, entity_id DESC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list entities: %w", err)
+		return nil, fmt.Errorf("begin entity list transaction: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	var total int
-	var entities []*models.Entity
-	for rows.Next() {
-		var e models.Entity
-		if err := rows.Scan(&e.EntityID, &e.Type, &e.Subtype, &e.Alias, &e.JSON, &e.CreatedAt, &e.UpdatedAt, &total); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan entity: %w", err)
+	var txUpperBound time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
+		return nil, fmt.Errorf("read entity list snapshot timestamp: %w", err)
+	}
+
+	parsedCursor, err := parseQueryCursor(cursor, "cursor")
+	if err != nil {
+		return nil, err
+	}
+	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
+	if err != nil {
+		return nil, err
+	}
+	entities, hasMore, err := queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit entity list transaction: %w", err)
+	}
+
+	page := &ListPage[*models.Entity]{
+		Items:   entities,
+		Limit:   limit,
+		HasMore: hasMore,
+	}
+	if hasMore && len(entities) > 0 {
+		last := entities[len(entities)-1]
+		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.EntityID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode entity cursor: %w", err)
 		}
-		entities = append(entities, &e)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("failed to iterate entities: %w", err)
-	}
-
-	if len(entities) == 0 {
-		if err := a.pool.QueryRow(ctx, `SELECT COUNT(*) FROM entities`).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count entities: %w", err)
-		}
-	}
-
-	return serializers.SerializeEntities(entities), total, nil
+	return page, nil
 }
 
 // UpdateEntityParams holds parameters for updating an entity.
@@ -391,7 +397,7 @@ func (p UpdateEntityParams) IsEmpty() bool {
 }
 
 // Update updates an entity.
-func (a *EntityActions) Update(ctx context.Context, entityID string, params UpdateEntityParams) (*serializers.EntityResponse, error) {
+func (a *EntityActions) Update(ctx context.Context, entityID string, params UpdateEntityParams) (*models.Entity, error) {
 	if err := ValidateEntityID(entityID); err != nil {
 		return nil, err
 	}
@@ -534,7 +540,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return serializers.SerializeEntity(&out), nil
+	return &out, nil
 }
 
 // mergeJSONValue deep-merges nested map[string]interface{} values (recursive key merge).

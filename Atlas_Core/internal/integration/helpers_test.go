@@ -22,11 +22,11 @@ func TestJoinURL_preservesBasePath(t *testing.T) {
 
 func TestJoinURL_splitsQueryFromPath(t *testing.T) {
 	t.Parallel()
-	got, err := joinURL("http://localhost:8000/atlas-core", "/entities/foo?limit=1&offset=2")
+	got, err := joinURL("http://localhost:8000/atlas-core", "/entities/foo?limit=1&cursor=abc")
 	if err != nil {
 		t.Fatalf("joinURL: %v", err)
 	}
-	want := "http://localhost:8000/atlas-core/entities/foo?limit=1&offset=2"
+	want := "http://localhost:8000/atlas-core/entities/foo?limit=1&cursor=abc"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -41,11 +41,11 @@ func TestJoinURL_trailingSlashBase(t *testing.T) {
 	if want := "http://localhost:8000/atlas-core/entities"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	got, err = joinURL("http://localhost:8000/atlas-core/", "/entities/foo?limit=1&offset=2")
+	got, err = joinURL("http://localhost:8000/atlas-core/", "/entities/foo?limit=1&cursor=abc")
 	if err != nil {
 		t.Fatalf("joinURL: %v", err)
 	}
-	if want := "http://localhost:8000/atlas-core/entities/foo?limit=1&offset=2"; got != want {
+	if want := "http://localhost:8000/atlas-core/entities/foo?limit=1&cursor=abc"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -69,6 +69,22 @@ func TestJoinURL_rejectsParentTraversal(t *testing.T) {
 	_, err := joinURL("http://localhost:8000/atlas-core", "/../health")
 	if err == nil {
 		t.Fatal("expected error for parent traversal in path")
+	}
+}
+
+func TestJoinURL_rejectsEncodedParentTraversal(t *testing.T) {
+	t.Parallel()
+	_, err := joinURL("http://localhost:8000/atlas-core", "/%2e%2e/health")
+	if err == nil {
+		t.Fatal("expected error for encoded parent traversal in path")
+	}
+}
+
+func TestJoinURL_rejectsInvalidEscapedPath(t *testing.T) {
+	t.Parallel()
+	_, err := joinURL("http://localhost:8000/atlas-core", "/entities/%zz")
+	if err == nil {
+		t.Fatal("expected error for invalid escaped path segment")
 	}
 }
 

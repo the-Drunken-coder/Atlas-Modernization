@@ -7,8 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/rs/zerolog/log"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 // QueryActions handles query operations across multiple resource types.
@@ -30,7 +28,7 @@ func NewQueryActions(pool *pgxpool.Pool, safetyLag time.Duration) *QueryActions 
 }
 
 // GetFullDataset retrieves all entities, tasks, and objects (up to limit each).
-func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLimits) (*FullDatasetResponse, error) {
+func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLimits) (*FullDatasetResult, error) {
 	entityLimit := MaxFullQueryLimit
 	taskLimit := MaxFullQueryLimit
 	objectLimit := MaxFullQueryLimit
@@ -98,10 +96,10 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	resp := &FullDatasetResponse{
-		Entities:        serializers.SerializeEntities(entities),
-		Tasks:           serializers.SerializeTasks(tasks),
-		Objects:         serializers.SerializeObjects(objects),
+	resp := &FullDatasetResult{
+		Entities:        entities,
+		Tasks:           tasks,
+		Objects:         objects,
 		HasMoreEntities: hasMoreEnt,
 		HasMoreTasks:    hasMoreTasks,
 		HasMoreObjects:  hasMoreObj,
@@ -135,7 +133,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 
 // GetDataChangedSince retrieves resources modified since the given timestamp.
 // Optional cursors continue pagination for each stream (same since, updated_at DESC, id DESC).
-func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time, limitPerType int, cursors *ChangedSinceCursors) (*ChangedSinceResponse, error) {
+func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time, limitPerType int, cursors *ChangedSinceCursors) (*ChangedSinceResult, error) {
 	limit := effectiveLimit(limitPerType, MaxChangedSinceLimit)
 
 	var entCurRaw, taskCurRaw, objCurRaw, delEntCurRaw, delTaskCurRaw, delObjCurRaw string
@@ -233,10 +231,10 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	resp := &ChangedSinceResponse{
-		Entities:               serializers.SerializeEntities(entities),
-		Tasks:                  serializers.SerializeTasks(tasks),
-		Objects:                serializers.SerializeObjects(objects),
+	resp := &ChangedSinceResult{
+		Entities:               entities,
+		Tasks:                  tasks,
+		Objects:                objects,
 		DeletedEntities:        deletedEntities,
 		DeletedTasks:           deletedTasks,
 		DeletedObjects:         deletedObjects,
@@ -274,62 +272,41 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 	}
 	if moreDE && len(deletedEntities) > 0 {
 		last := deletedEntities[len(deletedEntities)-1]
-		dt, err := parseDeletedAtCursor(last.DeletedAt)
-		if err == nil {
-			cur, encErr := encodeRowCursor(dt, last.ID, snapshotUpperBound)
-			if encErr != nil {
-				log.Warn().Err(encErr).Str("cursor_field", "next_deleted_entity_cursor").Msg("failed to encode deleted entity cursor")
-			} else {
-				resp.NextDeletedEntityCursor = cur
-			}
-		} else {
-			log.Warn().
-				Err(err).
-				Str("cursor_field", "next_deleted_entity_cursor").
-				Str("resource_id", last.ID).
-				Str("deleted_at", last.DeletedAt).
-				Msg("failed to parse deleted entity cursor timestamp")
+		cur, err := encodeDeletedCursor(last, snapshotUpperBound, "next_deleted_entity_cursor")
+		if err != nil {
+			return nil, err
 		}
+		resp.NextDeletedEntityCursor = cur
 	}
 	if moreDT && len(deletedTasks) > 0 {
 		last := deletedTasks[len(deletedTasks)-1]
-		dt, err := parseDeletedAtCursor(last.DeletedAt)
-		if err == nil {
-			cur, encErr := encodeRowCursor(dt, last.ID, snapshotUpperBound)
-			if encErr != nil {
-				log.Warn().Err(encErr).Str("cursor_field", "next_deleted_task_cursor").Msg("failed to encode deleted task cursor")
-			} else {
-				resp.NextDeletedTaskCursor = cur
-			}
-		} else {
-			log.Warn().
-				Err(err).
-				Str("cursor_field", "next_deleted_task_cursor").
-				Str("resource_id", last.ID).
-				Str("deleted_at", last.DeletedAt).
-				Msg("failed to parse deleted task cursor timestamp")
+		cur, err := encodeDeletedCursor(last, snapshotUpperBound, "next_deleted_task_cursor")
+		if err != nil {
+			return nil, err
 		}
+		resp.NextDeletedTaskCursor = cur
 	}
 	if moreDO && len(deletedObjects) > 0 {
 		last := deletedObjects[len(deletedObjects)-1]
-		dt, err := parseDeletedAtCursor(last.DeletedAt)
-		if err == nil {
-			cur, encErr := encodeRowCursor(dt, last.ID, snapshotUpperBound)
-			if encErr != nil {
-				log.Warn().Err(encErr).Str("cursor_field", "next_deleted_object_cursor").Msg("failed to encode deleted object cursor")
-			} else {
-				resp.NextDeletedObjectCursor = cur
-			}
-		} else {
-			log.Warn().
-				Err(err).
-				Str("cursor_field", "next_deleted_object_cursor").
-				Str("resource_id", last.ID).
-				Str("deleted_at", last.DeletedAt).
-				Msg("failed to parse deleted object cursor timestamp")
+		cur, err := encodeDeletedCursor(last, snapshotUpperBound, "next_deleted_object_cursor")
+		if err != nil {
+			return nil, err
 		}
+		resp.NextDeletedObjectCursor = cur
 	}
 	return resp, nil
+}
+
+func encodeDeletedCursor(resource DeletedResource, snapshotUpperBound time.Time, cursorField string) (string, error) {
+	deletedAt, err := parseDeletedAtCursor(resource.DeletedAt)
+	if err != nil {
+		return "", fmt.Errorf("build %s: %w", cursorField, err)
+	}
+	cursor, err := encodeRowCursor(deletedAt, resource.ID, snapshotUpperBound)
+	if err != nil {
+		return "", fmt.Errorf("build %s: %w", cursorField, err)
+	}
+	return cursor, nil
 }
 
 // getDeletionsSince queries the deletions table for tombstones after the given timestamp.

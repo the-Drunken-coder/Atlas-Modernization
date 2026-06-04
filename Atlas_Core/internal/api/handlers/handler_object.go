@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -15,19 +13,20 @@ import (
 
 // ListObjects handles GET /objects.
 func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
-	limit, offset, ok := h.parseListPagination(w, r)
+	limit, cursor, ok := h.parseListPagination(w, r)
 	if !ok {
 		return
 	}
 
-	objects, total, err := h.objectActions.List(r.Context(), limit, offset)
+	page, err := h.objectActions.List(r.Context(), limit, cursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, limit, offset, len(objects))
-	writeJSON(w, http.StatusOK, serializers.SerializeObjectsForList(objects))
+	objects := serializers.SerializeObjectsForList(page.Items)
+	setPaginationHeaders(w, page.Limit, len(objects), page.HasMore, page.NextCursor)
+	writeJSON(w, http.StatusOK, objects)
 }
 
 // CreateObject handles POST /objects.
@@ -47,13 +46,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 		Extra        map[string]interface{}   `json:"extra,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -108,13 +101,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 		Extra        map[string]interface{}   `json:"extra,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
-			return
-		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
@@ -157,35 +144,37 @@ func (h *Handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 // GetObjectsByEntity handles GET /entities/{entity_id}/objects.
 func (h *Handler) GetObjectsByEntity(w http.ResponseWriter, r *http.Request) {
 	entityID := chi.URLParam(r, "entity_id")
-	limit, offset, ok := h.parseListPagination(w, r)
+	limit, cursor, ok := h.parseListPagination(w, r)
 	if !ok {
 		return
 	}
 
-	objects, total, err := h.objectActions.GetByEntity(r.Context(), entityID, limit, offset)
+	page, err := h.objectActions.GetByEntity(r.Context(), entityID, limit, cursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, limit, offset, len(objects))
-	writeJSON(w, http.StatusOK, serializers.SerializeObjectsForList(objects))
+	objects := serializers.SerializeObjectsForList(page.Items)
+	setPaginationHeaders(w, page.Limit, len(objects), page.HasMore, page.NextCursor)
+	writeJSON(w, http.StatusOK, objects)
 }
 
 // GetObjectsByTask handles GET /tasks/{task_id}/objects.
 func (h *Handler) GetObjectsByTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
-	limit, offset, ok := h.parseListPagination(w, r)
+	limit, cursor, ok := h.parseListPagination(w, r)
 	if !ok {
 		return
 	}
 
-	objects, total, err := h.objectActions.GetByTask(r.Context(), taskID, limit, offset)
+	page, err := h.objectActions.GetByTask(r.Context(), taskID, limit, cursor)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	setPaginationHeaders(w, total, limit, offset, len(objects))
-	writeJSON(w, http.StatusOK, serializers.SerializeObjectsForList(objects))
+	objects := serializers.SerializeObjectsForList(page.Items)
+	setPaginationHeaders(w, page.Limit, len(objects), page.HasMore, page.NextCursor)
+	writeJSON(w, http.StatusOK, objects)
 }

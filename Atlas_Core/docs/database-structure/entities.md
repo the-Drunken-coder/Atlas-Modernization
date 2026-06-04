@@ -89,7 +89,7 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
 | Entity type | `entity_type` on POST/PATCH | Column `type` |
 | Timestamps | `metadata.created_at`, `metadata.updated_at` | Columns `created_at`, `updated_at` |
 | Extra blob fields | `extra` map on POST/PATCH | Keys in `json` outside `components` |
-| Response | `entity_type` and duplicate `type` field | — |
+| Response | `entity_type` | — |
 
 ### Additional entity endpoints
 

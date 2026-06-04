@@ -112,6 +112,11 @@ func (e *Entity) decodedJSON() map[string]interface{} {
 	return deepCopyMap(e.jsonData)
 }
 
+// DecodedJSON returns a deep copy of the entity JSON blob.
+func (e *Entity) DecodedJSON() map[string]interface{} {
+	return e.decodedJSON()
+}
+
 // GetComponents returns the components from the JSON blob.
 func (e *Entity) GetComponents() map[string]interface{} {
 	data := e.decodedJSON()
@@ -193,6 +198,11 @@ func (t *Task) decodedJSON() map[string]interface{} {
 	t.jsonData = data
 	t.jsonInit = true
 	return deepCopyMap(t.jsonData)
+}
+
+// DecodedJSON returns a deep copy of the task JSON blob.
+func (t *Task) DecodedJSON() map[string]interface{} {
+	return t.decodedJSON()
 }
 
 // GetComponents returns the components from the JSON blob.
@@ -306,6 +316,11 @@ func (o *MediaObject) decodedJSON() map[string]interface{} {
 	o.jsonData = data
 	o.jsonInit = true
 	return deepCopyMap(o.jsonData)
+}
+
+// DecodedJSON returns a deep copy of the media object JSON blob.
+func (o *MediaObject) DecodedJSON() map[string]interface{} {
+	return o.decodedJSON()
 }
 
 // GetSizeBytes returns the size_bytes from the JSON blob.

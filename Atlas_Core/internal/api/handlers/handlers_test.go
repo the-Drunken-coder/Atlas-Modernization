@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +42,32 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]interfa
 func routeRequest(method, target, body string) *http.Request {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func multipartUploadRequest(t *testing.T, fields map[string]string, fileSize int) *http.Request {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("write field %q: %v", key, err)
+		}
+	}
+	file, err := writer.CreateFormFile("file", "upload.bin")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := file.Write(bytes.Repeat([]byte("a"), fileSize)); err != nil {
+		t.Fatalf("write file body: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/objects/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
 }
 
@@ -152,6 +180,23 @@ func TestCreateEntityRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestCreateEntityRejectsTrailingJSON(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := routeRequest(http.MethodPost, "/entities", `{"entity_id":"entity-1","entity_type":"asset"}{"extra":true}`)
+
+	handler.CreateEntity(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "INVALID_JSON" {
+		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
+	}
+}
+
 func TestCreateEntityRejectsOversizedBody(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -168,6 +213,23 @@ func TestCreateEntityRejectsOversizedBody(t *testing.T) {
 	body := decodeBody(t, rec)
 	if body["error_code"] != "BODY_TOO_LARGE" {
 		t.Fatalf("expected BODY_TOO_LARGE, got %v", body["error_code"])
+	}
+}
+
+func TestCreateObjectRejectsTrailingJSON(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := routeRequest(http.MethodPost, "/objects", `{"object_id":"object-1"}{"extra":true}`)
+
+	handler.CreateObject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "INVALID_JSON" {
+		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
 	}
 }
 
@@ -191,10 +253,81 @@ func TestUpdateEntityTelemetryRequiresAtLeastOneField(t *testing.T) {
 	}
 }
 
+func TestParseListPaginationRejectsOffset(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities?limit=10&offset=0", nil)
+
+	_, _, ok := handler.parseListPagination(rec, req)
+
+	if ok {
+		t.Fatal("expected offset pagination to be rejected")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+}
+
+func TestParseListPaginationReadsCursorAndSetsCursorHeaders(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/entities?limit=10&cursor=abc123", nil)
+
+	limit, cursor, ok := handler.parseListPagination(rec, req)
+
+	if !ok {
+		t.Fatal("expected cursor pagination to parse")
+	}
+	if limit != 10 {
+		t.Fatalf("expected limit 10, got %d", limit)
+	}
+	if cursor != "abc123" {
+		t.Fatalf("expected cursor abc123, got %q", cursor)
+	}
+
+	setPaginationHeaders(rec, limit, 10, true, "next456")
+	if rec.Header().Get("X-Limit") != "10" {
+		t.Fatalf("expected X-Limit 10, got %q", rec.Header().Get("X-Limit"))
+	}
+	if rec.Header().Get("X-Returned-Count") != "10" {
+		t.Fatalf("expected X-Returned-Count 10, got %q", rec.Header().Get("X-Returned-Count"))
+	}
+	if rec.Header().Get("X-Has-More") != "true" {
+		t.Fatalf("expected X-Has-More true, got %q", rec.Header().Get("X-Has-More"))
+	}
+	if rec.Header().Get("X-Next-Cursor") != "next456" {
+		t.Fatalf("expected X-Next-Cursor next456, got %q", rec.Header().Get("X-Next-Cursor"))
+	}
+	if rec.Header().Get("X-Total-Count") != "" || rec.Header().Get("X-Offset") != "" {
+		t.Fatalf("old offset pagination headers should not be set: %#v", rec.Header())
+	}
+}
+
 func TestEntityCheckinRejectsOutOfRangeLimit(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
 	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?limit=25", `{}`), "entity_id", "entity-1")
+
+	handler.EntityCheckin(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+}
+
+func TestEntityCheckinRejectsOffset(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?offset=0", `{}`), "entity_id", "entity-1")
 
 	handler.EntityCheckin(rec, req)
 
@@ -247,6 +380,54 @@ func TestGetChangedSinceRejectsInvalidTimestamp(t *testing.T) {
 	errs, _ := details["errors"].([]interface{})
 	if len(errs) == 0 {
 		t.Fatalf("expected details.errors for invalid since")
+	}
+}
+
+func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		resp interface{}
+		keys []string
+	}{
+		{
+			name: "full dataset",
+			resp: &fullDatasetResponse{},
+			keys: []string{"has_more_entities", "has_more_tasks", "has_more_objects"},
+		},
+		{
+			name: "changed since",
+			resp: &changedSinceResponse{Timestamp: "2026-03-20T12:00:00Z"},
+			keys: []string{
+				"has_more_entities",
+				"has_more_tasks",
+				"has_more_objects",
+				"has_more_deleted_entities",
+				"has_more_deleted_tasks",
+				"has_more_deleted_objects",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := json.Marshal(tt.resp)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var body map[string]interface{}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			for _, key := range tt.keys {
+				got, ok := body[key]
+				if !ok {
+					t.Fatalf("expected %s to be present in %s", key, string(raw))
+				}
+				if got != false {
+					t.Fatalf("expected %s=false, got %#v", key, got)
+				}
+			}
+		})
 	}
 }
 
@@ -403,6 +584,42 @@ func TestUploadObjectRequiresConfiguredStorage(t *testing.T) {
 	body := decodeBody(t, rec)
 	if body["error_code"] != "STORAGE_UNAVAILABLE" {
 		t.Fatalf("expected STORAGE_UNAVAILABLE, got %v", body["error_code"])
+	}
+}
+
+func TestUploadObjectAllowsMultipartOverheadAtFileLimit(t *testing.T) {
+	handler := newTestHandler()
+	handler.storage = &storage.Client{}
+	handler.config.MaxUploadSizeMB = 1
+	rec := httptest.NewRecorder()
+	req := multipartUploadRequest(t, map[string]string{}, 1024*1024)
+
+	handler.UploadObject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected request to parse and fail validation with 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR after parsing multipart body, got %v", body["error_code"])
+	}
+}
+
+func TestUploadObjectRejectsFileOverLimitWith413(t *testing.T) {
+	handler := newTestHandler()
+	handler.storage = &storage.Client{}
+	handler.config.MaxUploadSizeMB = 1
+	rec := httptest.NewRecorder()
+	req := multipartUploadRequest(t, map[string]string{"object_id": "object-1"}, 1024*1024+1)
+
+	handler.UploadObject(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "FILE_TOO_LARGE" {
+		t.Fatalf("expected FILE_TOO_LARGE, got %v", body["error_code"])
 	}
 }
 

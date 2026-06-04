@@ -91,10 +91,7 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 	}
 
 	if opts.cursor != nil {
-		cursorUpperBound := opts.cursor.upperBound
-		if cursorUpperBound.IsZero() {
-			cursorUpperBound = opts.snapshotUpperBound
-		}
+		cursorUpperBound := effectiveCursorUpperBound(opts.cursor, opts.snapshotUpperBound)
 		if !cursorUpperBound.IsZero() {
 			clauses = append(clauses, fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, addArg(cursorUpperBound)))
 		}
@@ -252,6 +249,37 @@ func queryTasks(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query tasks: %w", err)
+	}
+	items, err := collectTasks(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	out, more := trimToLimitWithMore(items, limit)
+	return out, more, nil
+}
+
+func queryTasksByEntity(
+	ctx context.Context,
+	tx pgx.Tx,
+	entityID, timeColumn string,
+	since, snapshotUpper time.Time,
+	continuation bool,
+	cursor *parsedQueryCursor,
+	limit int,
+) ([]*models.Task, bool, error) {
+	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
+		selectFrom:         taskSelectSQL,
+		idColumn:           "task_id",
+		timeColumn:         timeColumn,
+		since:              since,
+		snapshotUpperBound: snapshotUpper,
+		continuation:       continuation,
+		cursor:             cursor,
+		fetchLimit:         limit + 1,
+		eqFilter:           &cursorPageEqFilter{column: "entity_id", value: entityID},
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query tasks by entity: %w", err)
 	}
 	items, err := collectTasks(rows)
 	if err != nil {

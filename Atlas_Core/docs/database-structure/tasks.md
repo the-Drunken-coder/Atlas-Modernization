@@ -102,4 +102,4 @@ Current implementation note: status strings are not enum-validated globally in `
 ## Limits
 
 - Task create/update/status/complete/fail handler bodies are capped at `512 KB`.
-- Pagination defaults to `limit=100`, `offset=0`; limit is clamped to max `500`.
+- Pagination defaults to `limit=100`; `cursor` continues keyset pages; limit is clamped to max `500`.

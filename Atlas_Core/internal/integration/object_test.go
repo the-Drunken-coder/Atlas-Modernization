@@ -371,7 +371,7 @@ func TestObjectListPagination(t *testing.T) {
 	client := NewAPIClient()
 	ctx := context.Background()
 
-	resp, err := client.Get(ctx, "/objects?limit=10&offset=0")
+	resp, err := client.Get(ctx, "/objects?limit=10")
 	if err != nil {
 		t.Fatalf("Failed to list objects: %v", err)
 	}
@@ -381,13 +381,20 @@ func TestObjectListPagination(t *testing.T) {
 		t.Fatalf("Expected 200, got %d", resp.StatusCode)
 	}
 
-	// Check pagination headers
-	totalCount := resp.Header.Get("X-Total-Count")
-	if totalCount == "" {
-		t.Error("Expected X-Total-Count header")
+	if resp.Header.Get("X-Limit") != "10" {
+		t.Errorf("Expected X-Limit '10', got '%s'", resp.Header.Get("X-Limit"))
+	}
+	if resp.Header.Get("X-Returned-Count") == "" {
+		t.Error("Expected X-Returned-Count header")
+	}
+	if hasMore := resp.Header.Get("X-Has-More"); hasMore != "true" && hasMore != "false" {
+		t.Errorf("Expected X-Has-More true/false, got '%s'", hasMore)
+	}
+	if resp.Header.Get("X-Total-Count") != "" || resp.Header.Get("X-Offset") != "" {
+		t.Errorf("Old offset pagination headers should not be present: %#v", resp.Header)
 	}
 
-	t.Logf("Object list pagination: total=%s", totalCount)
+	t.Logf("Object list pagination: limit=%s, returned=%s, has_more=%s, next_cursor=%s", resp.Header.Get("X-Limit"), resp.Header.Get("X-Returned-Count"), resp.Header.Get("X-Has-More"), resp.Header.Get("X-Next-Cursor"))
 }
 
 // TestObjectNotFound tests 404 response for non-existent object

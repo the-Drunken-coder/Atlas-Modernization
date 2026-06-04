@@ -149,7 +149,8 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 		effectiveMaxUploadSizeMB = 100
 	}
 	maxUploadSize := int64(effectiveMaxUploadSizeMB) * 1024 * 1024
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	const maxMultipartOverhead = 1 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+maxMultipartOverhead)
 	const maxMultipartMemory = 32 * 1024 * 1024
 	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -187,7 +188,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if header.Size > maxUploadSize {
-		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File size exceeds maximum allowed (%dMB)", effectiveMaxUploadSizeMB), "FILE_TOO_LARGE")
+		h.writeError(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("File size exceeds maximum allowed (%dMB)", effectiveMaxUploadSizeMB), "FILE_TOO_LARGE")
 		return
 	}
 

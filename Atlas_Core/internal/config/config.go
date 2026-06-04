@@ -85,8 +85,6 @@ var DefaultCORSOrigins = []string{
 	"http://127.0.0.1:5173",
 	"http://127.0.0.1:5175",
 	"http://127.0.0.1:4173",
-	"https://atlas-je0.pages.dev",
-	"https://atlasinterface.com",
 }
 
 // Load loads configuration from environment variables and settings file.
@@ -233,6 +231,10 @@ func Load() (*Config, error) {
 
 	if err := validateCORSOrigins(cfg.CORSOrigins); err != nil {
 		return nil, err
+	}
+
+	if cfg.EnableAPIAuth && strings.TrimSpace(cfg.APIAuthKey) == "" {
+		return nil, fmt.Errorf("ENABLE_API_AUTH is true but API_AUTH_KEY is empty")
 	}
 
 	return cfg, nil
@@ -420,11 +422,11 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 	return result, validateCORSOrigins(result)
 }
 
-// validateCORSOrigins rejects wildcard origins; Atlas Core enables AllowCredentials on CORS.
+// validateCORSOrigins rejects wildcard origins so production origins must be explicit.
 func validateCORSOrigins(origins []string) error {
 	for _, o := range origins {
-		if o == "*" {
-			return fmt.Errorf("CORS origins: wildcard \"*\" is not allowed with AllowCredentials enabled")
+		if strings.Contains(o, "*") {
+			return fmt.Errorf("CORS origins: wildcard origin %q is not allowed; configure explicit origins", o)
 		}
 	}
 	return nil

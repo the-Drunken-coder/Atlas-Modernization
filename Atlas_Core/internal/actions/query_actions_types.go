@@ -5,55 +5,55 @@ import (
 	"strings"
 	"time"
 
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
-// FullDatasetResponse contains all entities, tasks, and objects.
+// FullDatasetResult contains all entities, tasks, and objects returned by the action layer.
 // If any HasMore* field is true, that stream hit its cap and more rows exist in the database.
 // Pass the corresponding next_*_cursor value as entity_cursor / task_cursor / object_cursor on the next request to continue.
-type FullDatasetResponse struct {
-	Entities         []*serializers.EntityResponse `json:"entities"`
-	Tasks            []*serializers.TaskResponse   `json:"tasks"`
-	Objects          []*serializers.ObjectResponse `json:"objects"`
-	HasMoreEntities  bool                          `json:"has_more_entities,omitempty"`
-	HasMoreTasks     bool                          `json:"has_more_tasks,omitempty"`
-	HasMoreObjects   bool                          `json:"has_more_objects,omitempty"`
-	NextEntityCursor string                        `json:"next_entity_cursor,omitempty"`
-	NextTaskCursor   string                        `json:"next_task_cursor,omitempty"`
-	NextObjectCursor string                        `json:"next_object_cursor,omitempty"`
+type FullDatasetResult struct {
+	Entities         []*models.Entity
+	Tasks            []*models.Task
+	Objects          []*models.MediaObject
+	HasMoreEntities  bool
+	HasMoreTasks     bool
+	HasMoreObjects   bool
+	NextEntityCursor string
+	NextTaskCursor   string
+	NextObjectCursor string
 }
 
 // DeletedResource represents a tombstone for a deleted resource.
 // Type is always "entity", "task", or "object" (redundant with which response array it appears in, but uniform for clients).
 type DeletedResource struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	DeletedAt string `json:"deleted_at,omitempty"`
+	ID        string
+	Type      string
+	DeletedAt string
 }
 
-// ChangedSinceResponse contains resources modified since a given timestamp.
+// ChangedSinceResult contains resources modified since a given timestamp.
 // If any HasMore* field is true, pass the matching next_*_cursor on the next request (with the same `since`)
 // to fetch the remaining rows for that stream without skipping data.
-type ChangedSinceResponse struct {
-	Entities                []*serializers.EntityResponse `json:"entities"`
-	Tasks                   []*serializers.TaskResponse   `json:"tasks"`
-	Objects                 []*serializers.ObjectResponse `json:"objects"`
-	DeletedEntities         []DeletedResource             `json:"deleted_entities,omitempty"`
-	DeletedTasks            []DeletedResource             `json:"deleted_tasks,omitempty"`
-	DeletedObjects          []DeletedResource             `json:"deleted_objects,omitempty"`
-	HasMoreEntities         bool                          `json:"has_more_entities,omitempty"`
-	HasMoreTasks            bool                          `json:"has_more_tasks,omitempty"`
-	HasMoreObjects          bool                          `json:"has_more_objects,omitempty"`
-	HasMoreDeletedEntities  bool                          `json:"has_more_deleted_entities,omitempty"`
-	HasMoreDeletedTasks     bool                          `json:"has_more_deleted_tasks,omitempty"`
-	HasMoreDeletedObjects   bool                          `json:"has_more_deleted_objects,omitempty"`
-	NextEntityCursor        string                        `json:"next_entity_cursor,omitempty"`
-	NextTaskCursor          string                        `json:"next_task_cursor,omitempty"`
-	NextObjectCursor        string                        `json:"next_object_cursor,omitempty"`
-	NextDeletedEntityCursor string                        `json:"next_deleted_entity_cursor,omitempty"`
-	NextDeletedTaskCursor   string                        `json:"next_deleted_task_cursor,omitempty"`
-	NextDeletedObjectCursor string                        `json:"next_deleted_object_cursor,omitempty"`
-	Timestamp               string                        `json:"timestamp"`
+type ChangedSinceResult struct {
+	Entities                []*models.Entity
+	Tasks                   []*models.Task
+	Objects                 []*models.MediaObject
+	DeletedEntities         []DeletedResource
+	DeletedTasks            []DeletedResource
+	DeletedObjects          []DeletedResource
+	HasMoreEntities         bool
+	HasMoreTasks            bool
+	HasMoreObjects          bool
+	HasMoreDeletedEntities  bool
+	HasMoreDeletedTasks     bool
+	HasMoreDeletedObjects   bool
+	NextEntityCursor        string
+	NextTaskCursor          string
+	NextObjectCursor        string
+	NextDeletedEntityCursor string
+	NextDeletedTaskCursor   string
+	NextDeletedObjectCursor string
+	Timestamp               string
 }
 
 // MaxFullQueryLimit is the maximum number of records per type returned by GetFullDataset.
@@ -132,7 +132,24 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 	if sharedUpperBound.IsZero() {
 		return currentSnapshot, true, nil
 	}
-	return sharedUpperBound, true, nil
+	return clampCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
+}
+
+func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound time.Time) time.Time {
+	if cursor == nil {
+		return snapshotUpperBound
+	}
+	return clampCursorUpperBound(cursor.upperBound, snapshotUpperBound)
+}
+
+func clampCursorUpperBound(candidate, ceiling time.Time) time.Time {
+	if candidate.IsZero() {
+		return ceiling
+	}
+	if ceiling.IsZero() || candidate.Before(ceiling) || candidate.Equal(ceiling) {
+		return candidate
+	}
+	return ceiling
 }
 
 // effectiveLimit returns the requested limit capped to the provided max,

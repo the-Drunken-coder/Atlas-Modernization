@@ -168,12 +168,14 @@ func (h *Handler) handleActionError(w http.ResponseWriter, r *http.Request, err 
 	h.writeErrorWithCause(w, r, http.StatusInternalServerError, "Internal server error", "INTERNAL_SERVER_ERROR", err)
 }
 
-// setPaginationHeaders sets pagination headers on the response.
-func setPaginationHeaders(w http.ResponseWriter, total, limit, offset, count int) {
-	w.Header().Set("X-Total-Count", strconv.Itoa(total))
+// setPaginationHeaders sets cursor pagination headers on the response.
+func setPaginationHeaders(w http.ResponseWriter, limit, count int, hasMore bool, nextCursor string) {
 	w.Header().Set("X-Limit", strconv.Itoa(limit))
-	w.Header().Set("X-Offset", strconv.Itoa(offset))
 	w.Header().Set("X-Returned-Count", strconv.Itoa(count))
+	w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
+	if nextCursor != "" {
+		w.Header().Set("X-Next-Cursor", nextCursor)
+	}
 }
 
 // parseNonNegativeIntQuery parses a query parameter as a non-negative integer; empty uses defaultVal.
@@ -310,21 +312,20 @@ func optionalQueryString(q url.Values, key string) *string {
 	return &v
 }
 
-// parseListPagination reads limit and offset query params; writes a 400 response and returns ok=false on error.
+// parseListPagination reads limit and cursor query params; writes a 400 response and returns ok=false on error.
 // The returned limit is already clamped to the standard list bounds (see actions.ClampListLimit),
 // so callers can use it directly for both the query and pagination headers.
-func (h *Handler) parseListPagination(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool) {
+func (h *Handler) parseListPagination(w http.ResponseWriter, r *http.Request) (limit int, cursor string, ok bool) {
+	if _, exists := r.URL.Query()["offset"]; exists {
+		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use cursor", "VALIDATION_ERROR")
+		return 0, "", false
+	}
 	limit, err := parseNonNegativeIntQuery(r, "limit", 100)
 	if err != nil {
 		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", "VALIDATION_ERROR")
-		return 0, 0, false
+		return 0, "", false
 	}
-	offset, err = parseNonNegativeIntQuery(r, "offset", 0)
-	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid offset parameter", "VALIDATION_ERROR")
-		return 0, 0, false
-	}
-	return actions.ClampListLimit(limit), offset, true
+	return actions.ClampListLimit(limit), strings.TrimSpace(r.URL.Query().Get("cursor")), true
 }
 
 func parseFullDatasetLimits(r *http.Request) (*actions.FullDatasetLimits, string, error) {

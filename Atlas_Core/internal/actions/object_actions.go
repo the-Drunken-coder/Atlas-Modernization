@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -137,46 +138,53 @@ func (a *ObjectActions) Get(ctx context.Context, objectID string) (*models.Media
 }
 
 // List retrieves objects with pagination.
-func (a *ObjectActions) List(ctx context.Context, limit, offset int) ([]*models.MediaObject, int, error) {
+func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*ListPage[*models.MediaObject], error) {
 	limit = ClampListLimit(limit)
-	if offset < 0 {
-		offset = 0
-	}
 
-	// Get objects with total count using window function (single query)
-	rows, err := a.pool.Query(ctx, `
-		SELECT object_id, path, content_type, type, json, created_at, updated_at,
-		       COUNT(*) OVER() as total_count
-		FROM objects
-		ORDER BY created_at DESC, object_id DESC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list objects: %w", err)
+		return nil, fmt.Errorf("begin object list transaction: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	var total int
-	var objects []*models.MediaObject
-	for rows.Next() {
-		var o models.MediaObject
-		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt, &total); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan object: %w", err)
+	var txUpperBound time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
+		return nil, fmt.Errorf("read object list snapshot timestamp: %w", err)
+	}
+
+	parsedCursor, err := parseQueryCursor(cursor, "cursor")
+	if err != nil {
+		return nil, err
+	}
+	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
+	if err != nil {
+		return nil, err
+	}
+	objects, hasMore, err := queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit object list transaction: %w", err)
+	}
+
+	page := &ListPage[*models.MediaObject]{
+		Items:   objects,
+		Limit:   limit,
+		HasMore: hasMore,
+	}
+	if hasMore && len(objects) > 0 {
+		last := objects[len(objects)-1]
+		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.ObjectID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode object cursor: %w", err)
 		}
-		objects = append(objects, &o)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("failed to iterate objects: %w", err)
-	}
-
-	if len(objects) == 0 {
-		if err := a.pool.QueryRow(ctx, `SELECT COUNT(*) FROM objects`).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count objects: %w", err)
-		}
-	}
-
-	return objects, total, nil
+	return page, nil
 }
 
 // UpdateObjectParams holds parameters for updating an object.
@@ -546,77 +554,125 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 }
 
 // GetByEntity retrieves objects referenced by an entity.
-func (a *ObjectActions) GetByEntity(ctx context.Context, entityID string, limit, offset int) ([]*models.MediaObject, int, error) {
-	return a.getObjectsByJSONReference(ctx, "entity_id", entityID, ValidateEntityID, limit, offset)
+func (a *ObjectActions) GetByEntity(ctx context.Context, entityID string, limit int, cursor string) (*ListPage[*models.MediaObject], error) {
+	return a.getObjectsByJSONReference(ctx, "entity_id", entityID, ValidateEntityID, limit, cursor)
 }
 
 // GetByTask retrieves objects referenced by a task.
-func (a *ObjectActions) GetByTask(ctx context.Context, taskID string, limit, offset int) ([]*models.MediaObject, int, error) {
-	return a.getObjectsByJSONReference(ctx, "task_id", taskID, ValidateTaskID, limit, offset)
+func (a *ObjectActions) GetByTask(ctx context.Context, taskID string, limit int, cursor string) (*ListPage[*models.MediaObject], error) {
+	return a.getObjectsByJSONReference(ctx, "task_id", taskID, ValidateTaskID, limit, cursor)
 }
 
 func (a *ObjectActions) getObjectsByJSONReference(
 	ctx context.Context,
 	refKey, id string,
 	validate func(string) error,
-	limit, offset int,
-) ([]*models.MediaObject, int, error) {
+	limit int,
+	cursor string,
+) (*ListPage[*models.MediaObject], error) {
 	if err := validate(id); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	id = SanitizeID(id)
 
 	limit = ClampListLimit(limit)
-	if offset < 0 {
-		offset = 0
-	}
 
 	refData := []map[string]string{{refKey: id}}
 	refJSONBytes, err := json.Marshal(refData)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to marshal reference JSON: %w", err)
+		return nil, fmt.Errorf("failed to marshal reference JSON: %w", err)
 	}
 	refJSON := string(refJSONBytes)
 
-	query := `
-		SELECT object_id, path, content_type, type, json, created_at, updated_at,
-		       COUNT(*) OVER() as total_count
-		FROM objects
-		WHERE json->'referenced_by' @> $1::jsonb
-		ORDER BY created_at DESC, object_id DESC
-		LIMIT $2 OFFSET $3
-	`
-
-	rows, err := a.pool.Query(ctx, query, refJSON, limit, offset)
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query objects: %w", err)
+		return nil, fmt.Errorf("begin object reference list transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var txUpperBound time.Time
+	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
+		return nil, fmt.Errorf("read object reference list snapshot timestamp: %w", err)
+	}
+
+	parsedCursor, err := parseQueryCursor(cursor, "cursor")
+	if err != nil {
+		return nil, err
+	}
+	snapshotUpperBound, _, err := continuationUpperBound(txUpperBound, parsedCursor)
+	if err != nil {
+		return nil, err
+	}
+
+	whereClauses := []string{"json->'referenced_by' @> $1::jsonb"}
+	args := []interface{}{refJSON}
+	if parsedCursor != nil {
+		cursorUpperBound := parsedCursor.upperBound
+		if cursorUpperBound.IsZero() {
+			cursorUpperBound = snapshotUpperBound
+		}
+		if !cursorUpperBound.IsZero() {
+			whereClauses = append(whereClauses, fmt.Sprintf("created_at <= $%d::timestamptz", len(args)+1))
+			args = append(args, cursorUpperBound)
+		}
+		whereClauses = append(whereClauses, fmt.Sprintf("(created_at, object_id) < ($%d::timestamptz, $%d::varchar)", len(args)+1, len(args)+2))
+		args = append(args, parsedCursor.timestamp, parsedCursor.id)
+	} else {
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at <= $%d::timestamptz", len(args)+1))
+		args = append(args, snapshotUpperBound)
+	}
+
+	limitPos := len(args) + 1
+	args = append(args, limit+1)
+	query := fmt.Sprintf(`
+		SELECT object_id, path, content_type, type, json, created_at, updated_at
+		FROM objects
+		WHERE %s
+		ORDER BY created_at DESC, object_id DESC
+		LIMIT $%d
+	`, strings.Join(whereClauses, " AND "), limitPos)
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query objects: %w", err)
 	}
 	defer rows.Close()
 
-	var total int
 	var objects []*models.MediaObject
 	for rows.Next() {
 		var o models.MediaObject
-		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt, &total); err != nil {
-			return nil, 0, fmt.Errorf("failed to scan object: %w", err)
+		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan object: %w", err)
 		}
 		objects = append(objects, &o)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("failed to iterate objects: %w", err)
+		return nil, fmt.Errorf("failed to iterate objects: %w", err)
 	}
 
-	if len(objects) == 0 {
-		if err := a.pool.QueryRow(ctx, `
-			SELECT COUNT(*) FROM objects
-			WHERE json->'referenced_by' @> $1::jsonb
-		`, refJSON).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("failed to count objects: %w", err)
+	objects, hasMore := trimToLimitWithMore(objects, limit)
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit object reference list transaction: %w", err)
+	}
+
+	page := &ListPage[*models.MediaObject]{
+		Items:   objects,
+		Limit:   limit,
+		HasMore: hasMore,
+	}
+	if hasMore && len(objects) > 0 {
+		last := objects[len(objects)-1]
+		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.ObjectID, snapshotUpperBound)
+		if err != nil {
+			return nil, fmt.Errorf("encode object reference cursor: %w", err)
 		}
 	}
-
-	return objects, total, nil
+	return page, nil
 }
 
 // Count returns the total number of objects.
