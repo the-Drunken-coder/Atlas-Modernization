@@ -9,22 +9,29 @@ import (
 
 // isViewableContentType checks if a content type can be safely displayed inline in a browser or API response.
 func isViewableContentType(contentType string) bool {
-	viewableTypes := []string{
-		"text/plain",
-		"text/css",
-		"text/csv",
-		"text/markdown",
-		"application/json",
-		"application/ld+json",
+	switch normalizedContentMediaType(contentType) {
+	case "text/plain", "text/css", "text/csv", "text/markdown", "application/json", "application/ld+json":
+		return true
+	default:
+		return false
 	}
+}
 
-	// Check exact match or prefix (e.g., "text/plain; charset=utf-8" should match "text/plain")
-	for _, viewable := range viewableTypes {
-		if contentType == viewable || strings.HasPrefix(contentType, viewable+";") {
-			return true
-		}
+func isUnsafeInlineContentType(contentType string) bool {
+	switch normalizedContentMediaType(contentType) {
+	case "text/html", "text/javascript":
+		return true
+	default:
+		return false
 	}
-	return false
+}
+
+func normalizedContentMediaType(contentType string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		mediaType = strings.TrimSpace(contentType)
+	}
+	return strings.ToLower(mediaType)
 }
 
 // getExtensionForContentType returns a file extension (including the dot) for a given MIME type.

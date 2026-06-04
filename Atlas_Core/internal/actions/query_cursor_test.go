@@ -32,6 +32,13 @@ func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
 	}
 }
 
+func TestEncodeRowCursorRejectsEmptyID(t *testing.T) {
+	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	if cursor, err := encodeRowCursor(ts, "", time.Time{}); err == nil || cursor != "" {
+		t.Fatalf("encodeRowCursor empty id = %q, %v; want empty cursor and error", cursor, err)
+	}
+}
+
 func TestDecodeRowCursor_rejectsEmpty(t *testing.T) {
 	_, _, _, err := decodeRowCursor("")
 	if err == nil {

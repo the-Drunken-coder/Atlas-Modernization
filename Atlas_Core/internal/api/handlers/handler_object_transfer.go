@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -75,9 +74,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = reader.Close() }()
 
 	if !isViewableContentType(contentType) {
-		unsafeInline := contentType == "text/html" || strings.HasPrefix(contentType, "text/html;") ||
-			contentType == "text/javascript" || strings.HasPrefix(contentType, "text/javascript;")
-		if !unsafeInline {
+		if !isUnsafeInlineContentType(contentType) {
 			h.writeError(w, r, http.StatusBadRequest, "Content type is not viewable (only safe text-based formats are supported)", "CONTENT_TYPE_NOT_VIEWABLE")
 			return
 		}

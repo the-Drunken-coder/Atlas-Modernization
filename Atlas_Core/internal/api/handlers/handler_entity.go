@@ -159,24 +159,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Build telemetry component update
-	telemetry := make(map[string]interface{})
-	if req.Latitude != nil {
-		telemetry["latitude"] = *req.Latitude
-	}
-	if req.Longitude != nil {
-		telemetry["longitude"] = *req.Longitude
-	}
-	if req.AltitudeM != nil {
-		telemetry["altitude_m"] = *req.AltitudeM
-	}
-	if req.SpeedMS != nil {
-		telemetry["speed_m_s"] = *req.SpeedMS
-	}
-	if req.HeadingDeg != nil {
-		telemetry["heading_deg"] = *req.HeadingDeg
-	}
-
+	telemetry := buildTelemetryComponent(req.Latitude, req.Longitude, req.AltitudeM, req.SpeedMS, req.HeadingDeg, nil)
 	if len(telemetry) == 0 {
 		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", "VALIDATION_ERROR")
 		return
@@ -261,25 +244,8 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Add telemetry component if any telemetry fields provided
-	telemetry := make(map[string]interface{})
-	if req.Latitude != nil {
-		telemetry["latitude"] = *req.Latitude
-	}
-	if req.Longitude != nil {
-		telemetry["longitude"] = *req.Longitude
-	}
-	if req.AltitudeM != nil {
-		telemetry["altitude_m"] = *req.AltitudeM
-	}
-	if req.SpeedMS != nil {
-		telemetry["speed_m_s"] = *req.SpeedMS
-	}
-	if req.HeadingDeg != nil {
-		telemetry["heading_deg"] = *req.HeadingDeg
-	}
+	telemetry := buildTelemetryComponent(req.Latitude, req.Longitude, req.AltitudeM, req.SpeedMS, req.HeadingDeg, &now)
 	if len(telemetry) > 0 {
-		telemetry["last_update"] = now
 		components["telemetry"] = telemetry
 	}
 
@@ -320,4 +286,27 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		response["next_task_cursor"] = taskPage.NextCursor
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func buildTelemetryComponent(latitude, longitude, altitudeM, speedMS, headingDeg *float64, lastUpdate *string) map[string]interface{} {
+	telemetry := make(map[string]interface{})
+	if latitude != nil {
+		telemetry["latitude"] = *latitude
+	}
+	if longitude != nil {
+		telemetry["longitude"] = *longitude
+	}
+	if altitudeM != nil {
+		telemetry["altitude_m"] = *altitudeM
+	}
+	if speedMS != nil {
+		telemetry["speed_m_s"] = *speedMS
+	}
+	if headingDeg != nil {
+		telemetry["heading_deg"] = *headingDeg
+	}
+	if lastUpdate != nil && len(telemetry) > 0 {
+		telemetry["last_update"] = *lastUpdate
+	}
+	return telemetry
 }

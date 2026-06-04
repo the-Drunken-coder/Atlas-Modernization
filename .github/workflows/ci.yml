@@ -97,10 +97,20 @@ jobs:
             -print0 | xargs -0 -n1 jq empty
 
       - name: Compile Python scripts
-        run: python3 -m py_compile scripts/*.py
+        run: |
+          if compgen -G "scripts/*.py" > /dev/null; then
+            python3 -m py_compile scripts/*.py
+          else
+            echo "No Python scripts found under scripts/; skipping."
+          fi
 
       - name: Run ShellCheck
-        run: shellcheck scripts/*.sh
+        run: |
+          if compgen -G "scripts/*.sh" > /dev/null; then
+            shellcheck scripts/*.sh
+          else
+            echo "No shell scripts found under scripts/; skipping."
+          fi
 
       - name: Validate Docker Compose config
         env:

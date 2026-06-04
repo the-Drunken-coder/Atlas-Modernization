@@ -28,7 +28,7 @@ func TestTaskLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create entity: %v", err)
 	}
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (task lifecycle)")
-	_ = resp.Body.Close()
+	drainClose(resp)
 
 	// Create task
 	taskID := fmt.Sprintf("%s-task-lifecycle", prefix)
@@ -128,10 +128,10 @@ func TestTaskStatusTransitions(t *testing.T) {
 		t.Fatalf("Failed to create entity: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
-		resp.Body.Close()
+		drainClose(resp)
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	drainClose(resp)
 
 	// Create task
 	taskID := fmt.Sprintf("%s-status-transitions", prefix)
@@ -146,7 +146,7 @@ func TestTaskStatusTransitions(t *testing.T) {
 		t.Fatalf("Failed to create task: %v", err)
 	}
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (status transitions)")
-	_ = resp.Body.Close()
+	drainClose(resp)
 
 	// Acknowledge task
 	resp, err = client.Post(ctx, "/tasks/"+taskID+"/acknowledge", nil)
@@ -187,10 +187,10 @@ func TestTaskComplete(t *testing.T) {
 		t.Fatalf("Failed to create task: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
-		resp.Body.Close()
+		drainClose(resp)
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	drainClose(resp)
 
 	// Complete task with result
 	completePayload := map[string]interface{}{
@@ -238,10 +238,10 @@ func TestTaskFail(t *testing.T) {
 		t.Fatalf("Failed to create task: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
-		resp.Body.Close()
+		drainClose(resp)
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	drainClose(resp)
 
 	// Fail task with error
 	failPayload := map[string]interface{}{
@@ -290,9 +290,7 @@ func TestTasksByEntity(t *testing.T) {
 		t.Fatalf("Failed to create entity: %v", err)
 	}
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (tasks by entity)")
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close body: %v", err)
-	}
+	drainClose(resp)
 
 	// Create multiple tasks for entity
 	var createdIDs []string
@@ -310,9 +308,7 @@ func TestTasksByEntity(t *testing.T) {
 			t.Fatalf("Failed to create task %d: %v", i, err)
 		}
 		requireHTTPStatus(t, resp, http.StatusCreated, fmt.Sprintf("POST /tasks task %d", i))
-		if err := resp.Body.Close(); err != nil {
-			t.Fatalf("close body: %v", err)
-		}
+		drainClose(resp)
 	}
 
 	// Get tasks by entity
@@ -322,7 +318,7 @@ func TestTasksByEntity(t *testing.T) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		drainClose(resp)
 		t.Fatalf("Expected 200, got %d", resp.StatusCode)
 	}
 
@@ -401,7 +397,7 @@ func TestTaskNotFound(t *testing.T) {
 		t.Fatalf("Failed to call API: %v", err)
 	}
 	if resp.StatusCode != http.StatusNotFound {
-		resp.Body.Close()
+		drainClose(resp)
 		t.Fatalf("Expected 404, got %d", resp.StatusCode)
 	}
 

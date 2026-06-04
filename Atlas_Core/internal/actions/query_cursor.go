@@ -20,7 +20,7 @@ type rowCursor struct {
 // embedded so later pages cap rows to the same snapshot.
 func encodeRowCursor(t time.Time, id string, upperBound time.Time) (string, error) {
 	if id == "" {
-		return "", nil
+		return "", fmt.Errorf("marshal row cursor: empty id")
 	}
 	p := rowCursor{
 		TS: t.UTC().Format(time.RFC3339Nano),

@@ -46,3 +46,27 @@ func TestAttachmentContentDisposition(t *testing.T) {
 		})
 	}
 }
+
+func TestIsViewableContentTypeNormalizesMediaType(t *testing.T) {
+	if !isViewableContentType("Application/JSON; charset=utf-8") {
+		t.Fatal("expected case-insensitive JSON with charset to be viewable")
+	}
+	if !isViewableContentType(" Text/Plain ") {
+		t.Fatal("expected trimmed text/plain to be viewable")
+	}
+	if isViewableContentType("Text/HTML; charset=utf-8") {
+		t.Fatal("expected HTML to remain non-viewable")
+	}
+}
+
+func TestIsUnsafeInlineContentTypeNormalizesMediaType(t *testing.T) {
+	if !isUnsafeInlineContentType("Text/HTML; charset=utf-8") {
+		t.Fatal("expected case-insensitive HTML with charset to be unsafe inline")
+	}
+	if !isUnsafeInlineContentType("TEXT/JAVASCRIPT") {
+		t.Fatal("expected case-insensitive text/javascript to be unsafe inline")
+	}
+	if isUnsafeInlineContentType("application/json") {
+		t.Fatal("expected application/json not to be unsafe inline")
+	}
+}

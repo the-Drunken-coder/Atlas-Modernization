@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -18,15 +19,26 @@ func TestObjectIfMatchETagMatchesSerializedObjectETag(t *testing.T) {
 	}
 }
 
-func TestObjectIfMatchOK_weakPrefix(t *testing.T) {
+func TestObjectIfMatchOK_rejectsWeakPrefix(t *testing.T) {
 	ts := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
 	want := objectIfMatchETag(ts)
 	weak := "W/" + want
-	if !ObjectIfMatchOK(weak, ts) {
-		t.Fatalf("expected weak ETag to match, got %q vs %q", weak, want)
+	if ObjectIfMatchOK(weak, ts) {
+		t.Fatalf("expected weak ETag to be rejected, got %q vs %q", weak, want)
 	}
-	if !ObjectIfMatchOK("  "+weak+"  ", ts) {
-		t.Fatal("expected trimmed weak ETag to match")
+	if ObjectIfMatchOK("  "+weak+"  ", ts) {
+		t.Fatal("expected trimmed weak ETag to be rejected")
+	}
+}
+
+func TestObjectIfMatchOK_acceptsStrongQuotedOrUnquoted(t *testing.T) {
+	ts := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	want := objectIfMatchETag(ts)
+	if !ObjectIfMatchOK(want, ts) {
+		t.Fatalf("expected quoted strong ETag to match")
+	}
+	if !ObjectIfMatchOK(strings.Trim(want, `"`), ts) {
+		t.Fatalf("expected unquoted strong ETag to match")
 	}
 }
 

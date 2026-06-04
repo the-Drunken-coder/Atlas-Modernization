@@ -250,7 +250,10 @@ func (a *TaskActions) GetByEntityFiltered(
 	}
 	entityID = SanitizeID(entityID)
 
-	limit = ClampLimit(limit, 10, MaxListLimit)
+	limit, err := normalizeCheckinTaskLimit(limit)
+	if err != nil {
+		return nil, err
+	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -357,6 +360,20 @@ func (a *TaskActions) GetByEntityFiltered(
 		}
 	}
 	return page, nil
+}
+
+func normalizeCheckinTaskLimit(limit int) (int, error) {
+	const (
+		defaultLimit = 10
+		maxLimit     = 20
+	)
+	if limit == 0 {
+		return defaultLimit, nil
+	}
+	if limit < 1 || limit > maxLimit {
+		return 0, NewValidationError(fmt.Sprintf("limit must be between 1 and %d for check-in task pagination", maxLimit))
+	}
+	return limit, nil
 }
 
 // UpdateTaskParams holds parameters for updating a task.

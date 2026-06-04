@@ -56,6 +56,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, err
 	}
 	objectID := SanitizeID(params.ObjectID)
+	normalizedType := normalizeOptionalObjectString(params.Type)
 
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
@@ -92,7 +93,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		INSERT INTO objects (object_id, path, content_type, type, json)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at
-	`, objectID, params.Path, params.ContentType, params.Type, jsonBytes).Scan(
+	`, objectID, params.Path, params.ContentType, normalizedType, jsonBytes).Scan(
 		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
 		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt,
 	)
@@ -114,6 +115,17 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	}
 
 	return &obj, nil
+}
+
+func normalizeOptionalObjectString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // Get retrieves an object by ID.

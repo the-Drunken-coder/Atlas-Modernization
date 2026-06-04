@@ -11,18 +11,18 @@ func objectIfMatchETag(updatedAt time.Time) string {
 	return `"` + updatedAt.UTC().Format(objectIfMatchTimeLayout) + `"`
 }
 
-// normalizeIfMatchToken trims space, strips an optional weak-validator "W/" prefix,
-// and trims a single layer of surrounding double-quotes so comparisons line up
-// with object response ETags (quoted RFC3339-style service metadata timestamps).
+// normalizeIfMatchToken trims space and a single layer of surrounding double-quotes
+// so strong If-Match tokens line up with object response ETags.
 func normalizeIfMatchToken(s string) string {
 	s = strings.TrimSpace(s)
-	if strings.HasPrefix(strings.ToUpper(s), "W/") {
-		s = strings.TrimSpace(s[2:])
-	}
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
 		s = s[1 : len(s)-1]
 	}
 	return s
+}
+
+func isWeakIfMatchToken(s string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "W/")
 }
 
 // ObjectIfMatchOK returns true when If-Match allows the request for the given updated_at.
@@ -37,6 +37,9 @@ func ObjectIfMatchOK(ifMatch string, updatedAt time.Time) bool {
 		p := strings.TrimSpace(part)
 		if p == "*" {
 			return true
+		}
+		if isWeakIfMatchToken(p) {
+			continue
 		}
 		if normalizeIfMatchToken(p) == wantNorm {
 			return true
