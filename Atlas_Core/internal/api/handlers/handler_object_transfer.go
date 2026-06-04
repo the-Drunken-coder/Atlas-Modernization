@@ -9,8 +9,16 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
+
+func requestClientIP(r *http.Request) string {
+	if clientIP := chimiddleware.GetClientIP(r.Context()); clientIP != "" {
+		return clientIP
+	}
+	return r.RemoteAddr
+}
 
 // DownloadObject handles GET /objects/{object_id}/download.
 func (h *Handler) DownloadObject(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +50,7 @@ func (h *Handler) DownloadObject(w http.ResponseWriter, r *http.Request) {
 			Str("object_id", objectID).
 			Int64("bytes_written", written).
 			Int64("bytes_expected", size).
+			Str("client_ip", requestClientIP(r)).
 			Str("remote_addr", r.RemoteAddr).
 			Msg("Failed to stream object to client")
 	}
@@ -88,6 +97,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 				Str("ext", ext).
 				Int64("bytes_written", written).
 				Int64("bytes_expected", size).
+				Str("client_ip", requestClientIP(r)).
 				Str("remote_addr", r.RemoteAddr).
 				Msg("Failed to stream object to client")
 		}
@@ -131,6 +141,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 			Str("object_id", objectID).
 			Int("bytes_written", n).
 			Int64("bytes_expected", int64(len(content))).
+			Str("client_ip", requestClientIP(r)).
 			Str("remote_addr", r.RemoteAddr).
 			Msg("Failed to write object content to client")
 	}
