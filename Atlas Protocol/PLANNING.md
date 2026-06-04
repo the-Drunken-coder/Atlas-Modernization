@@ -1,6 +1,6 @@
 # Atlas Protocol Planning
 
-Status: planning first, implementation later.
+Status: implementation prep complete for the first bootstrap slice. Build work should start from `IMPLEMENTATION_PREP.md`.
 
 Atlas Protocol will be the standalone contract package for Atlas data. It should define what valid Atlas data is, generate reusable types and validators for multiple systems, and stay independent from Atlas Core service behavior.
 
@@ -18,6 +18,8 @@ Planned flow:
 2. Validate checked-in examples against CUE.
 3. Generate JSON Schema from CUE.
 4. Generate Go and TypeScript types/validators from the protocol artifacts.
+
+The first build should pin CUE through Go tooling instead of assuming a global `cue` binary. The prep pass verified `go run cuelang.org/go/cmd/cue@v0.16.1 version`.
 
 ### Scope
 
@@ -118,12 +120,12 @@ Extraction should distinguish contract from behavior. For example, a component f
 
 ## Proposed Package Shape
 
-Target structure:
+Target implementation structure:
 
 ```text
-Atlas Protocol/
-  PLANNING.md
-  index.html
+atlas_protocol/
+  README.md
+  go.mod
   cue.mod/
   schema/
     entity.cue
@@ -144,38 +146,41 @@ Atlas Protocol/
     check/
 ```
 
-The exact structure can change during design, but the package should keep source definitions, examples, generated artifacts, and tooling visibly separated.
+The current `Atlas Protocol/` directory remains planning and reference documentation. Buildable Go packages should not live under a path with a space in its name.
 
-## Planning Work Before Build
+## Build-Readiness Decisions
 
-1. Inventory Atlas Core data shapes.
-2. List every entity, task, object, and component field currently accepted.
-3. Identify which fields are required, optional, extensible, or legacy.
-4. Define extension rules for `extra`, `custom_*`, and free-form payloads.
-5. Decide the exact generated artifact locations.
-6. Decide how Atlas Core will consume generated Go types and validators.
-7. Define the check command that proves generated artifacts are current.
-8. Define example validation and add representative examples.
-9. Decide what existing Core validators get replaced first.
+- First build slice: entity JSON blob plus `telemetry` and `geometry` components.
+- First contract surface: storage/blob data shape, not the full HTTP API request/response surface.
+- Module boundary: `atlas_protocol/` with module path `github.com/the-drunken-coder/atlas/atlas_protocol`.
+- Core consumption: local `replace` from `Atlas_Core/go.mod` to `../atlas_protocol` during development.
+- Canonical names only: do not encode Core's legacy aliases into the protocol source.
+- Extension rules: component keys must be known or prefixed with `custom_`; custom component payloads and extra blob fields remain free-form JSON for the first slice.
+- Generated artifacts: JSON Schema and Go validators first; TypeScript after the CUE-to-JSON-Schema and Go-validator path is stable.
+- Drift gate: `go run ./tools/check` from `atlas_protocol/` must validate examples and fail on stale generated artifacts.
+- First Core validator replacements: `ValidateTelemetryComponent` and `ValidateGeometryComponent`.
+
+See `IMPLEMENTATION_PREP.md` for the inventory and acceptance criteria.
 
 ## First Implementation Slice
 
-After planning is complete, start with the smallest useful vertical slice:
+Start with the smallest useful vertical slice:
 
-1. Add CUE definitions for shared primitives and the entity envelope.
-2. Add one or two core components, such as geometry and telemetry.
-3. Validate existing entity examples against CUE.
-4. Generate JSON Schema for that slice.
-5. Generate Go types/validators for that slice.
-6. Wire Atlas Core to consume only that generated slice.
-7. Add a check command that fails when generated files drift from source.
+1. Create the `atlas_protocol/` module skeleton.
+2. Add CUE definitions for shared primitives and the entity blob envelope.
+3. Add `telemetry` and `geometry` component definitions.
+4. Copy or reference existing entity examples and validate them against CUE.
+5. Generate JSON Schema for that slice.
+6. Generate Go types/validators for that slice.
+7. Wire Atlas Core to consume only the generated telemetry and geometry validators.
+8. Add a check command that fails when generated files drift from source.
 
 Do not attempt to replace every Core model and validator in the first slice.
 
-## Open Questions
+## Deferred Decisions
 
-- Which Core validators should be replaced first after the entity slice proves the workflow?
-- Should TypeScript validators be generated directly, or should frontend consumers validate against generated JSON Schema?
-- Should command catalog schemas live inside Atlas Protocol or remain a sibling artifact consumed by it?
-- Should Postgres JSON checks be generated during development, or deferred until the model settles?
-- Should the current `Atlas Protocol/index.html` be updated to remove language about protocol versioning and align with the full-replacement policy?
+- Task and object protocol slices remain after the entity bootstrap.
+- TypeScript validators should wait until JSON Schema generation is stable; TypeScript types may still be generated earlier if low-friction.
+- Command catalog schemas remain a sibling artifact for now; Atlas Protocol can reference command identifiers as strings until command ownership is revisited.
+- Postgres JSON checks are deferred until the protocol model settles.
+- HTTP request/response envelope schemas are deferred until blob/component validation proves the workflow.
