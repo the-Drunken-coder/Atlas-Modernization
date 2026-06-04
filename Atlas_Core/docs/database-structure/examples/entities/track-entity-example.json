@@ -1,0 +1,32 @@
+{
+  "components": {
+    "telemetry": {
+      "latitude": 40.7128,
+      "longitude": -74.0060,
+      "altitude_m": 120,
+      "speed_m_s": 8.2,
+      "heading_deg": 165
+    },
+    "mil_view": {
+      "classification": "unknown",
+      "last_seen": "2026-05-29T10:05:00Z"
+    },
+    "sensor_refs": [
+      {
+        "sensor_id": "radar-1",
+        "type": "radar",
+        "vertical_fov": 60,
+        "horizontal_fov": 90,
+        "vertical_orientation": 10,
+        "horizontal_orientation": 45
+      }
+    ],
+    "media_refs": [
+      {
+        "object_id": "obj-789",
+        "role": "thumbnail"
+      }
+    ]
+  },
+  "published_at": "2026-05-29T10:00:00Z"
+}

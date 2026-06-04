@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION_FILE: Atlas_Core/go.mod
+  GO_SUM_FILE: Atlas_Core/go.sum
+  WORKING_DIRECTORY: Atlas_Core
+
+jobs:
+  go-quality:
+    name: go-quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: ${{ env.GO_SUM_FILE }}
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Check Go formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf 'gofmt is required for:\n%s\n' "$files"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9
+        with:
+          version: v2.12.2
+          working-directory: ${{ env.WORKING_DIRECTORY }}
+
+      - name: Run Go tests with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: ${{ env.GO_SUM_FILE }}
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq shellcheck
+
+      - name: Build Atlas Core
+        run: go build ./cmd/atlas_core
+
+      - name: Validate JSON files
+        run: |
+          find . \
+            -name '*.json' \
+            -not -path './vendor/*' \
+            -not -path './.git/*' \
+            -print0 | xargs -0 -n1 jq empty
+
+      - name: Compile Python scripts
+        run: python3 -m py_compile scripts/*.py
+
+      - name: Run ShellCheck
+        run: shellcheck scripts/*.sh
+
+      - name: Validate Docker Compose config
+        env:
+          POSTGRES_PASSWORD: atlas-ci
+          MINIO_ROOT_USER: atlas
+          MINIO_ROOT_PASSWORD: atlas-ci
+          CLOUDFLARE_TUNNEL_TOKEN: dummy
+        run: docker compose -f docker/docker-compose.yml config --quiet
+
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Build development image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: Atlas_Core
+          file: Atlas_Core/docker/Dockerfile
+          target: development
+          push: false
+
+      - name: Build production image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: Atlas_Core
+          file: Atlas_Core/docker/Dockerfile
+          target: production
+          push: false

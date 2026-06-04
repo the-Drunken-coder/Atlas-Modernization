@@ -1,0 +1,224 @@
+{
+  "type": "command_catalog",
+  "name": "Atlas Command Catalog",
+  "description": "Preset catalog that describes the commands available to Atlas assets.",
+  "commands": [
+    {
+      "id": "adsb_monitoring",
+      "name": "ADSB Monitoring",
+      "description": "Monitor a geographic area for ADS-B traffic using a geofeature entity (polygon or circle shape).",
+      "parameters_schema": {
+        "geofeature_id": {
+          "type": "string",
+          "description": "The identifier of the geofeature entity to monitor. The geofeature must be a polygon or circle shape, not a point or line.",
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "ais_monitoring",
+      "name": "AIS Monitoring",
+      "description": "Monitor a maritime region for AIS traffic using a specified geofeature.",
+      "parameters_schema": {
+        "geofeature_id": {
+          "type": "string",
+          "description": "The identifier of the maritime geofeature entity to monitor. The geofeature should represent a sea area.",
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "move_to_location",
+      "name": "Move to Location",
+      "description": "Move any 3D-capable asset (e.g. a drone) to a specific geographic location given by latitude, longitude, and altitude. For ground rovers that navigate in 2D, use 'goto' instead.",
+      "parameters_schema": {
+        "latitude": {
+          "type": "number",
+          "description": "Target latitude in decimal degrees (WGS84).",
+          "minimum": -90,
+          "maximum": 90,
+          "required": true
+        },
+        "longitude": {
+          "type": "number",
+          "description": "Target longitude in decimal degrees (WGS84).",
+          "minimum": -180,
+          "maximum": 180,
+          "required": true
+        },
+        "altitude": {
+          "type": "number",
+          "description": "Target altitude in meters above sea level.",
+          "required": true
+        }
+      }
+    },
+    {
+      "id": "get_signal_strength",
+      "name": "Get Signal Strength",
+      "description": "Read the current RF signal strength from the antenna and create a track entity at the projected point ahead of the asset's heading.",
+      "parameters_schema": {}
+    },
+    {
+      "id": "rf_calibrate",
+      "name": "RF Calibrate",
+      "description": "Capture and store a new RF baseline sample on the transceiver-attached asset.",
+      "parameters_schema": {
+        "tag": {
+          "type": "string",
+          "description": "Optional operator tag for the baseline capture, such as an angle, location, or scenario label.",
+          "required": false
+        },
+        "freq": {
+          "type": "number",
+          "description": "Optional center frequency in Hz. Defaults to the scanner's configured frequency.",
+          "required": false
+        },
+        "rate": {
+          "type": "number",
+          "description": "Optional sample rate in samples per second. Defaults to the scanner's configured rate.",
+          "required": false
+        },
+        "gain": {
+          "type": "number",
+          "description": "Optional RF gain value. Defaults to the scanner's configured gain.",
+          "required": false
+        },
+        "ant": {
+          "type": "string",
+          "description": "Optional antenna selection, for example RX2. Defaults to the scanner's configured antenna.",
+          "required": false
+        },
+        "duration": {
+          "type": "number",
+          "description": "Optional capture duration in seconds. Defaults to the scanner's configured duration.",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "rf_scan",
+      "name": "RF Scan",
+      "description": "Capture a live RF sample, compare it to the stored baseline, and return the scan result.",
+      "parameters_schema": {
+        "tag": {
+          "type": "string",
+          "description": "Optional operator tag for the scan, such as an angle, location, or scenario label.",
+          "required": false
+        },
+        "freq": {
+          "type": "number",
+          "description": "Optional center frequency in Hz. Defaults to the scanner's configured frequency.",
+          "required": false
+        },
+        "rate": {
+          "type": "number",
+          "description": "Optional sample rate in samples per second. Defaults to the scanner's configured rate.",
+          "required": false
+        },
+        "gain": {
+          "type": "number",
+          "description": "Optional RF gain value. Defaults to the scanner's configured gain.",
+          "required": false
+        },
+        "ant": {
+          "type": "string",
+          "description": "Optional antenna selection, for example RX2. Defaults to the scanner's configured antenna.",
+          "required": false
+        },
+        "duration": {
+          "type": "number",
+          "description": "Optional capture duration in seconds. Defaults to the scanner's configured duration.",
+          "required": false
+        },
+        "band_hz": {
+          "type": "number",
+          "description": "Optional analysis bandwidth in Hz for the IQ comparison step.",
+          "required": false
+        },
+        "mean_abs_db": {
+          "type": "number",
+          "description": "Optional mean absolute PSD delta threshold in dB.",
+          "required": false
+        },
+        "corr_thresh": {
+          "type": "number",
+          "description": "Optional PSD correlation threshold.",
+          "required": false
+        },
+        "peak_delta_db": {
+          "type": "number",
+          "description": "Optional peak delta threshold in dB.",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "arm_test",
+      "name": "Arm Test",
+      "description": "Run a rover arm/disarm test sequence on the target asset.",
+      "parameters_schema": {}
+    },
+    {
+      "id": "motor_test",
+      "name": "Motor Test",
+      "description": "Briefly pulse rover throttle to confirm the drive motor responds, then return to neutral and disarm.",
+      "parameters_schema": {
+        "duration_s": {
+          "type": "number",
+          "description": "Optional throttle pulse duration in seconds. Default is 1.0.",
+          "required": false
+        },
+        "throttle_pwm": {
+          "type": "number",
+          "description": "Optional throttle PWM override to send during the pulse. Default is 1600.",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "emergency_disarm",
+      "name": "Emergency Disarm",
+      "description": "Immediately attempt to disarm the rover using the direct recovery path.",
+      "parameters_schema": {}
+    },
+    {
+      "id": "hold_position",
+      "name": "Hold Position",
+      "description": "Command the rover asset to stop and hold its current position.",
+      "parameters_schema": {}
+    },
+    {
+      "id": "return_to_home",
+      "name": "Return to Home",
+      "description": "Command the rover asset to return to its recorded home point using RTL.",
+      "parameters_schema": {}
+    },
+    {
+      "id": "goto",
+      "name": "Goto",
+      "description": "Navigate a ground rover in 2D toward a target GPS coordinate (no altitude; stops within arrival_radius). For 3D assets that fly to a precise altitude, use 'move_to_location' instead.",
+      "parameters_schema": {
+        "lat": {
+          "type": "number",
+          "description": "Target latitude in decimal degrees (WGS84).",
+          "minimum": -90,
+          "maximum": 90,
+          "required": true
+        },
+        "lon": {
+          "type": "number",
+          "description": "Target longitude in decimal degrees (WGS84).",
+          "minimum": -180,
+          "maximum": 180,
+          "required": true
+        },
+        "arrival_radius": {
+          "type": "number",
+          "description": "Optional arrival radius in meters. Default is 2.5.",
+          "required": false
+        }
+      }
+    }
+  ]
+}
