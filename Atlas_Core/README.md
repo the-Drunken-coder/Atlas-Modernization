@@ -192,7 +192,7 @@ Structured `zerolog` logs include request method/path/status/duration and error 
 
 ## More Docs
 
-- `Atlas_Core/docs/README.md`
-- `Atlas_Core/docs/PAGINATION.md`
-- `Atlas_Core/docs/ERROR_HANDLING.md`
-- `Atlas_Core/docs/SECURITY.md`
+- `docs/README.md`
+- `docs/PAGINATION.md`
+- `docs/ERROR_HANDLING.md`
+- `docs/SECURITY.md`

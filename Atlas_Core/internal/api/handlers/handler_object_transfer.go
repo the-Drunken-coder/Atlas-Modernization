@@ -75,7 +75,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 
 	if !isViewableContentType(contentType) {
 		if !isUnsafeInlineContentType(contentType) {
-			h.writeError(w, r, http.StatusBadRequest, "Content type is not viewable (only safe text-based formats are supported)", "CONTENT_TYPE_NOT_VIEWABLE")
+			h.writeError(w, r, http.StatusUnsupportedMediaType, "Content type is not viewable (only safe text-based formats are supported)", "CONTENT_TYPE_NOT_VIEWABLE")
 			return
 		}
 

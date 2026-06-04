@@ -45,7 +45,7 @@ Entities are stored in the `entities` table and represent things that appear on 
 
 Tasks are stored in the `tasks` table and represent work items dispatched to assets:
 
-- **task-example.json**: Example task with command, parameters, and progress tracking (blob-only fields; no promoted `task_id` / `status` / timestamps)
+- **task-example.json**: Example task with command, parameters, and progress tracking (blob-only fields; no promoted `task_id` / `status` / `entity_id` / timestamps)
 
 ### Object Examples (`objects/`)
 

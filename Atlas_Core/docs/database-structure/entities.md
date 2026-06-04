@@ -180,7 +180,7 @@ Not all components are meaningful for every entity type. The table below shows t
 | geometry | — | — | ✔ |
 | task_catalog | ✔ | — | — |
 | media_refs | ✔ | ✔ | ✔ |
-| mil_view | ✔ | ✔ | — |
+| mil_view | ✔ | ✔ | ✔ |
 | health | ✔ | — | — |
 | sensor_refs | ✔ | ✔ | — |
 | communications | ✔ | — | — |
