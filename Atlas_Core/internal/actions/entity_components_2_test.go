@@ -16,14 +16,15 @@ func TestValidateSensorRefsComponent(t *testing.T) {
 			name: "valid sensor_refs",
 			sensorRefs: []interface{}{
 				map[string]interface{}{"sensor_id": "sensor-1", "type": "camera"},
-				map[string]interface{}{"sensor_id": "sensor-2", "type": "lidar", "fov_horizontal": 90.0},
+				map[string]interface{}{"sensor_id": "sensor-2", "type": "lidar", "horizontal_fov": 90.0},
 			},
 			wantErr: false,
 		},
 		{
 			name:       "nil sensor_refs",
 			sensorRefs: nil,
-			wantErr:    false,
+			wantErr:    true,
+			errMsg:     "sensor_refs: expected array",
 		},
 		{
 			name:       "empty sensor_refs",
@@ -87,10 +88,18 @@ func TestValidateSensorRefsComponent(t *testing.T) {
 		{
 			name: "sensor_refs invalid fov field",
 			sensorRefs: []interface{}{
-				map[string]interface{}{"sensor_id": "sensor-1", "type": "camera", "fov_horizontal": "90"},
+				map[string]interface{}{"sensor_id": "sensor-1", "type": "camera", "horizontal_fov": "90"},
 			},
 			wantErr: true,
-			errMsg:  "sensor_refs[0].fov_horizontal: expected number",
+			errMsg:  "sensor_refs[0].horizontal_fov: expected number",
+		},
+		{
+			name: "sensor_refs legacy fov alias rejected",
+			sensorRefs: []interface{}{
+				map[string]interface{}{"sensor_id": "sensor-1", "type": "camera", "fov_horizontal": 90.0},
+			},
+			wantErr: true,
+			errMsg:  "sensor_refs[0]: unknown field 'fov_horizontal'",
 		},
 	}
 

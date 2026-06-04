@@ -117,14 +117,15 @@ func TestValidateTaskComponents(t *testing.T) {
 			wantError:  false,
 		},
 		{
-			name: "legacy string command with target",
+			name: "string command is rejected",
 			components: map[string]interface{}{
 				"command": "legacy-cmd-id",
 				"target": map[string]interface{}{
 					"latitude": 40.0,
 				},
 			},
-			wantError: false,
+			wantError: true,
+			errMsg:    "command component must be an object",
 		},
 		{
 			name: "unknown task component key",

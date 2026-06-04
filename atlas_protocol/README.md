@@ -1,7 +1,33 @@
-# Atlas Protocol Implementation Root
+# Atlas Protocol
 
-This directory is reserved for the buildable Atlas Protocol module.
+This is the buildable Atlas Protocol module. It owns reusable data-shape contracts and generated validation artifacts for Atlas data. Planning and reference docs remain in `../Atlas Protocol/`.
 
-Planning and prep docs currently live in `../Atlas Protocol/`. The first implementation pass should create the CUE module, generated artifact directories, and tool wrappers described in `../Atlas Protocol/IMPLEMENTATION_PREP.md`.
+The implemented protocol slice covers entity, task, and object JSON blobs; entity and task component keys; generated validators for documented entity components; task components; object references; `telemetry`; and `geometry`.
 
-Do not put generated Go packages under `Atlas_Core/internal/` as the source of truth. Atlas Core should consume this module as a sibling dependency.
+## Workflow
+
+Regenerate checked-in artifacts:
+
+```sh
+go run ./tools/generate
+```
+
+Check examples and generated artifact freshness without rewriting files:
+
+```sh
+go run ./tools/check
+```
+
+Run protocol tests:
+
+```sh
+go test ./...
+```
+
+The wrappers use the pinned CUE toolchain `cuelang.org/go/cmd/cue@v0.16.1`; they do not require a global `cue` binary.
+
+## Boundary
+
+Generated Go lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Atlas Core consumes this module through a local `replace` during development, but generated protocol artifacts should not move under `Atlas_Core/internal/`.
+
+Generated files are checked in and marked `DO NOT EDIT`; update CUE source and rerun `go run ./tools/generate` instead.

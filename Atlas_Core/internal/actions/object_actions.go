@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 type objectStorage interface {
@@ -76,6 +77,9 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 				jsonData[k] = v
 			}
 		}
+	}
+	if err := ValidateObjectBlob(jsonData); err != nil {
+		return nil, err
 	}
 
 	jsonBytes, err := json.Marshal(jsonData)
@@ -301,6 +305,9 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 			}
 		}
 	}
+	if err := ValidateObjectBlob(existingJSON); err != nil {
+		return nil, err
+	}
 
 	jsonBytes, err := json.Marshal(existingJSON)
 	if err != nil {
@@ -339,6 +346,18 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	return &out, nil
+}
+
+// ValidateObjectBlob validates storage-facing object metadata.
+func ValidateObjectBlob(blob map[string]interface{}) error {
+	result := validationResultFromErrors(protocol.ValidateObjectBlob(blob))
+	if !result.HasErrors() {
+		return nil
+	}
+	return NewValidationErrorWithDetails(
+		fmt.Sprintf("Object validation failed (%d errors)", len(result.Errors)),
+		result.Errors,
+	)
 }
 
 // Delete removes an object and its storage.

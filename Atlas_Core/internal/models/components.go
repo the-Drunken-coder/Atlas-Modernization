@@ -17,34 +17,6 @@ type TelemetryComponent struct {
 	LastUpdate *time.Time `json:"last_update,omitempty"`
 }
 
-// UnmarshalJSON accepts both the canonical speed_m_s key and the legacy speed_ms alias.
-func (t *TelemetryComponent) UnmarshalJSON(data []byte) error {
-	type telemetryAlias TelemetryComponent
-
-	var decoded telemetryAlias
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	if _, hasCanonical := raw["speed_m_s"]; !hasCanonical {
-		if legacy, ok := raw["speed_ms"]; ok {
-			var speed *float64
-			if err := json.Unmarshal(legacy, &speed); err != nil {
-				return err
-			}
-			decoded.SpeedMS = speed
-		}
-	}
-
-	*t = TelemetryComponent(decoded)
-	return nil
-}
-
 // StatusComponent represents status data for an entity.
 type StatusComponent struct {
 	Value      string     `json:"value"`

@@ -440,7 +440,7 @@ func TestTask_GetProgress_Precedence(t *testing.T) {
 	}
 }
 
-func TestEntity_GetTelemetry_SpeedAliases(t *testing.T) {
+func TestEntity_GetTelemetry_CanonicalSpeed(t *testing.T) {
 	tests := []struct {
 		name      string
 		json      string
@@ -449,16 +449,6 @@ func TestEntity_GetTelemetry_SpeedAliases(t *testing.T) {
 		{
 			name:      "canonical speed_m_s",
 			json:      `{"components":{"telemetry":{"speed_m_s":9}}}`,
-			wantSpeed: ptrFloat(9),
-		},
-		{
-			name:      "legacy speed_ms alias is accepted",
-			json:      `{"components":{"telemetry":{"speed_ms":12.5}}}`,
-			wantSpeed: ptrFloat(12.5),
-		},
-		{
-			name:      "canonical takes precedence over legacy alias",
-			json:      `{"components":{"telemetry":{"speed_m_s":9,"speed_ms":12.5}}}`,
 			wantSpeed: ptrFloat(9),
 		},
 		{

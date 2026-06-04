@@ -20,6 +20,7 @@ func TestValidateTelemetryComponent(t *testing.T) {
 				"altitude_m":  100.0,
 				"speed_m_s":   5.5,
 				"heading_deg": 90.0,
+				"last_update": "2030-01-01T12:00:00Z",
 			},
 			wantError: false,
 		},
@@ -89,7 +90,32 @@ func TestValidateTelemetryComponent(t *testing.T) {
 			telemetry: map[string]interface{}{
 				"latitude": nil,
 			},
-			wantError: false,
+			wantError: true,
+			errMsg:    "telemetry.latitude: expected number",
+		},
+		{
+			name: "last_update not string",
+			telemetry: map[string]interface{}{
+				"last_update": 12345,
+			},
+			wantError: true,
+			errMsg:    "telemetry.last_update: expected string",
+		},
+		{
+			name: "last_update invalid RFC3339",
+			telemetry: map[string]interface{}{
+				"last_update": "not-a-date",
+			},
+			wantError: true,
+			errMsg:    "telemetry.last_update: invalid RFC3339",
+		},
+		{
+			name: "legacy speed alias is rejected",
+			telemetry: map[string]interface{}{
+				"speed_ms": 12.5,
+			},
+			wantError: true,
+			errMsg:    "telemetry: unknown field 'speed_ms'",
 		},
 		{
 			name:      "latitude NaN",
@@ -350,7 +376,8 @@ func TestValidateMediaRefsComponent(t *testing.T) {
 		{
 			name:      "nil media_refs",
 			mediaRefs: nil,
-			wantErr:   false,
+			wantErr:   true,
+			errMsg:    "media_refs: expected array",
 		},
 		{
 			name:      "empty media_refs",

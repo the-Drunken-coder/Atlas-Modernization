@@ -1,6 +1,6 @@
 # Atlas Protocol Planning
 
-Status: implementation prep complete for the first bootstrap slice. Build work should start from `IMPLEMENTATION_PREP.md`.
+Status: bootstrap, task, object, and documented entity-component protocol slices are implemented in `../atlas_protocol/`. Future work should continue from the generated module and keep this directory as planning/reference material.
 
 Atlas Protocol will be the standalone contract package for Atlas data. It should define what valid Atlas data is, generate reusable types and validators for multiple systems, and stay independent from Atlas Core service behavior.
 
@@ -179,7 +179,6 @@ Do not attempt to replace every Core model and validator in the first slice.
 
 ## Deferred Decisions
 
-- Task and object protocol slices remain after the entity bootstrap.
 - TypeScript validators should wait until JSON Schema generation is stable; TypeScript types may still be generated earlier if low-friction.
 - Command catalog schemas remain a sibling artifact for now; Atlas Protocol can reference command identifiers as strings until command ownership is revisited.
 - Postgres JSON checks are deferred until the protocol model settles.
