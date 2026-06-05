@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
 // QueryActions handles query operations across multiple resource types.
@@ -74,22 +75,36 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	if err != nil {
 		return nil, err
 	}
-	snapshotUpperBound, _, err := continuationUpperBound(txUpperBound, entCur, taskCur, objCur)
+	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, entCur, taskCur, objCur)
 	if err != nil {
 		return nil, err
 	}
 
-	entities, hasMoreEnt, err := queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, entCur != nil, entCur, entityLimit)
-	if err != nil {
-		return nil, err
+	var entities []*models.Entity
+	var hasMoreEnt bool
+	if !skipCursorStream(continuation, entCur) {
+		entities, hasMoreEnt, err = queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, entCur != nil, entCur, entityLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
-	tasks, hasMoreTasks, err := queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, taskCur != nil, taskCur, taskLimit)
-	if err != nil {
-		return nil, err
+
+	var tasks []*models.Task
+	var hasMoreTasks bool
+	if !skipCursorStream(continuation, taskCur) {
+		tasks, hasMoreTasks, err = queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, taskCur != nil, taskCur, taskLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
-	objects, hasMoreObj, err := queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, objCur != nil, objCur, objectLimit)
-	if err != nil {
-		return nil, err
+
+	var objects []*models.MediaObject
+	var hasMoreObj bool
+	if !skipCursorStream(continuation, objCur) {
+		objects, hasMoreObj, err = queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, objCur != nil, objCur, objectLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -207,17 +222,31 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 	watermark := snapshotUpperBound.Add(-a.changedSinceSafetyLag)
 	responseTimestamp := watermark.UTC().Format(time.RFC3339)
 
-	entities, hasMoreEnt, err := queryEntities(ctx, tx, "updated_at", since, snapshotUpperBound, entCur != nil, entCur, limit)
-	if err != nil {
-		return nil, err
+	var entities []*models.Entity
+	var hasMoreEnt bool
+	if !skipCursorStream(continuation, entCur) {
+		entities, hasMoreEnt, err = queryEntities(ctx, tx, "updated_at", since, snapshotUpperBound, entCur != nil, entCur, limit)
+		if err != nil {
+			return nil, err
+		}
 	}
-	tasks, hasMoreTasks, err := queryTasks(ctx, tx, "updated_at", since, snapshotUpperBound, taskCur != nil, taskCur, limit)
-	if err != nil {
-		return nil, err
+
+	var tasks []*models.Task
+	var hasMoreTasks bool
+	if !skipCursorStream(continuation, taskCur) {
+		tasks, hasMoreTasks, err = queryTasks(ctx, tx, "updated_at", since, snapshotUpperBound, taskCur != nil, taskCur, limit)
+		if err != nil {
+			return nil, err
+		}
 	}
-	objects, hasMoreObj, err := queryObjects(ctx, tx, "updated_at", since, snapshotUpperBound, objCur != nil, objCur, limit)
-	if err != nil {
-		return nil, err
+
+	var objects []*models.MediaObject
+	var hasMoreObj bool
+	if !skipCursorStream(continuation, objCur) {
+		objects, hasMoreObj, err = queryObjects(ctx, tx, "updated_at", since, snapshotUpperBound, objCur != nil, objCur, limit)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	deletedEntities, deletedTasks, deletedObjects, moreDE, moreDT, moreDO, err := a.getDeletionsSince(
@@ -309,21 +338,38 @@ func encodeDeletedCursor(resource DeletedResource, snapshotUpperBound time.Time,
 	return cursor, nil
 }
 
+func skipCursorStream(continuation bool, cursor *parsedQueryCursor) bool {
+	return continuation && cursor == nil
+}
+
 // getDeletionsSince queries the deletions table for tombstones after the given timestamp.
 func (a *QueryActions) getDeletionsSince(ctx context.Context, tx pgx.Tx, since, snapshotUpper time.Time, limitPerType int, continuation bool, cursorEntity, cursorTask, cursorObject *parsedQueryCursor) ([]DeletedResource, []DeletedResource, []DeletedResource, bool, bool, bool, error) {
-	deletedEntities, moreE, err := queryDeletionsByType(ctx, tx, "entity", since, snapshotUpper, continuation && cursorEntity != nil, cursorEntity, limitPerType)
-	if err != nil {
-		return nil, nil, nil, false, false, false, err
+	var deletedEntities []DeletedResource
+	var moreE bool
+	var err error
+	if !skipCursorStream(continuation, cursorEntity) {
+		deletedEntities, moreE, err = queryDeletionsByType(ctx, tx, "entity", since, snapshotUpper, cursorEntity != nil, cursorEntity, limitPerType)
+		if err != nil {
+			return nil, nil, nil, false, false, false, err
+		}
 	}
 
-	deletedTasks, moreT, err := queryDeletionsByType(ctx, tx, "task", since, snapshotUpper, continuation && cursorTask != nil, cursorTask, limitPerType)
-	if err != nil {
-		return nil, nil, nil, false, false, false, err
+	var deletedTasks []DeletedResource
+	var moreT bool
+	if !skipCursorStream(continuation, cursorTask) {
+		deletedTasks, moreT, err = queryDeletionsByType(ctx, tx, "task", since, snapshotUpper, cursorTask != nil, cursorTask, limitPerType)
+		if err != nil {
+			return nil, nil, nil, false, false, false, err
+		}
 	}
 
-	deletedObjects, moreO, err := queryDeletionsByType(ctx, tx, "object", since, snapshotUpper, continuation && cursorObject != nil, cursorObject, limitPerType)
-	if err != nil {
-		return nil, nil, nil, false, false, false, err
+	var deletedObjects []DeletedResource
+	var moreO bool
+	if !skipCursorStream(continuation, cursorObject) {
+		deletedObjects, moreO, err = queryDeletionsByType(ctx, tx, "object", since, snapshotUpper, cursorObject != nil, cursorObject, limitPerType)
+		if err != nil {
+			return nil, nil, nil, false, false, false, err
+		}
 	}
 
 	return deletedEntities, deletedTasks, deletedObjects, moreE, moreT, moreO, nil
