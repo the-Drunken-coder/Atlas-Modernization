@@ -75,7 +75,7 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 	}
 	if params.Extra != nil {
 		for k, v := range params.Extra {
-			if k != "status" && k != "entity_id" && k != "components" {
+			if k != "status" && k != "entity_id" && k != "components" && k != "version" {
 				jsonData[k] = v
 			}
 		}
@@ -513,7 +513,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	// Merge extra; nil values remove keys (used to clear legacy fields).
 	if params.Extra != nil {
 		for k, v := range params.Extra {
-			if k != "components" && k != "status" && k != "entity_id" {
+			if k != "components" && k != "status" && k != "entity_id" && k != "version" {
 				if v == nil {
 					delete(existingJSON, k)
 					continue

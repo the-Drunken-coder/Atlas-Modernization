@@ -17,7 +17,7 @@ import (
 
 func isPromotedEntityExtraKey(key string) bool {
 	switch key {
-	case "type", "subtype", "alias", "components":
+	case "type", "subtype", "alias", "components", "version":
 		return true
 	default:
 		return false

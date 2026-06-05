@@ -191,21 +191,21 @@ func mapField(data map[string]interface{}, key string) map[string]interface{} {
 func entityExtra(data map[string]interface{}) map[string]interface{} {
 	return extraWithout(data, map[string]struct{}{
 		"components": {}, "type": {}, "subtype": {}, "alias": {},
-		"entity_id": {}, "task_id": {}, "object_id": {}, "created_at": {}, "updated_at": {},
+		"entity_id": {}, "task_id": {}, "object_id": {}, "created_at": {}, "updated_at": {}, "version": {},
 	})
 }
 
 func taskExtra(data map[string]interface{}) map[string]interface{} {
 	return extraWithout(data, map[string]struct{}{
 		"components": {}, "status": {}, "entity_id": {}, "task_id": {},
-		"object_id": {}, "created_at": {}, "updated_at": {},
+		"object_id": {}, "created_at": {}, "updated_at": {}, "version": {},
 	})
 }
 
 func objectPayload(data map[string]interface{}) map[string]interface{} {
 	return extraWithout(data, map[string]struct{}{
 		"path": {}, "content_type": {}, "type": {}, "size_bytes": {}, "usage_hints": {}, "bucket": {}, "referenced_by": {},
-		"object_id": {}, "created_at": {}, "updated_at": {},
+		"object_id": {}, "created_at": {}, "updated_at": {}, "version": {},
 	})
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
@@ -127,7 +128,7 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 
 // GetChangedSince handles GET /queries/changed-since.
 func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("since_version") == "" {
+	if strings.TrimSpace(r.URL.Query().Get("since_version")) == "" {
 		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", "VALIDATION_ERROR")
 		return
 	}

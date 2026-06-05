@@ -76,7 +76,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	}
 	if params.Extra != nil {
 		for k, v := range params.Extra {
-			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" {
+			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" && k != "version" {
 				jsonData[k] = v
 			}
 		}
@@ -333,7 +333,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 	if params.Extra != nil {
 		for k, v := range params.Extra {
-			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" {
+			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" && k != "version" {
 				existingJSON[k] = v
 			}
 		}

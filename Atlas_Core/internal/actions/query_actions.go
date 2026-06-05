@@ -320,16 +320,12 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
 	var version int64
 	err := tx.QueryRow(ctx, `
-		SELECT COALESCE(MAX(version), 0)
-		FROM (
-			SELECT version FROM entities
-			UNION ALL
-			SELECT version FROM tasks
-			UNION ALL
-			SELECT version FROM objects
-			UNION ALL
-			SELECT version FROM deletions
-		) AS visible_changes
+		SELECT GREATEST(
+			COALESCE((SELECT MAX(version) FROM entities), 0),
+			COALESCE((SELECT MAX(version) FROM tasks), 0),
+			COALESCE((SELECT MAX(version) FROM objects), 0),
+			COALESCE((SELECT MAX(version) FROM deletions), 0)
+		)
 	`).Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("read snapshot version: %w", err)

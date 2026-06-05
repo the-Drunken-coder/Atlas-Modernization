@@ -94,12 +94,13 @@ func encodeVersionCursor(version int64, id string, upperBound int64) (string, er
 	if id == "" {
 		return "", fmt.Errorf("marshal version cursor: empty id")
 	}
+	if upperBound <= 0 {
+		return "", fmt.Errorf("marshal version cursor: upper bound version must be positive")
+	}
 	p := versionCursor{
 		V:  version,
 		ID: id,
-	}
-	if upperBound > 0 {
-		p.UV = upperBound
+		UV: upperBound,
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -126,8 +127,8 @@ func decodeVersionCursor(s string) (int64, string, int64, error) {
 	if p.V <= 0 {
 		return 0, "", 0, fmt.Errorf("cursor version must be positive")
 	}
-	if p.UV < 0 {
-		return 0, "", 0, fmt.Errorf("cursor upper bound version must not be negative")
+	if p.UV <= 0 {
+		return 0, "", 0, fmt.Errorf("cursor upper bound version must be positive")
 	}
 	return p.V, p.ID, p.UV, nil
 }

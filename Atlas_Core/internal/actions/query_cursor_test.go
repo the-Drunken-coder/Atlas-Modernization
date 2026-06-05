@@ -1,6 +1,8 @@
 package actions
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -181,6 +183,33 @@ func TestEncodeVersionCursorRoundTrip(t *testing.T) {
 	}
 	if gotUpperBound != 99 {
 		t.Fatalf("upper bound: got %d want 99", gotUpperBound)
+	}
+}
+
+func TestEncodeVersionCursorRejectsMissingUpperBound(t *testing.T) {
+	cursor, err := encodeVersionCursor(42, "entity-abc", 0)
+	if err == nil {
+		t.Fatal("expected missing upper bound to fail")
+	}
+	if cursor != "" {
+		t.Fatalf("expected empty cursor on error, got %q", cursor)
+	}
+	if !strings.Contains(err.Error(), "upper bound") {
+		t.Fatalf("expected upper bound error, got %v", err)
+	}
+}
+
+func TestDecodeVersionCursorRejectsMissingUpperBound(t *testing.T) {
+	raw, err := json.Marshal(versionCursor{V: 42, ID: "entity-abc"})
+	if err != nil {
+		t.Fatalf("marshal version cursor: %v", err)
+	}
+	cursor := base64.RawURLEncoding.EncodeToString(raw)
+
+	if _, _, _, err := decodeVersionCursor(cursor); err == nil {
+		t.Fatal("expected missing upper bound to fail")
+	} else if !strings.Contains(err.Error(), "upper bound") {
+		t.Fatalf("expected upper bound error, got %v", err)
 	}
 }
 
