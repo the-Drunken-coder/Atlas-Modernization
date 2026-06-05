@@ -240,49 +240,48 @@ func serializeCheckinTasksMinimal(tasks []*serializers.TaskResponse) []map[strin
 	return minimal
 }
 
+// extractCheckinTaskFields returns compact task fields for entity check-ins.
+// command_id priority is command_id, command.id, command.type, then legacy string command.
+// parameters priority is top-level parameters, top-level target, command.parameters, then command.target.
 func extractCheckinTaskFields(components map[string]interface{}) (string, map[string]interface{}) {
 	if components == nil {
 		return "", nil
 	}
 
-	commandID := ""
-	var parameters map[string]interface{}
-
-	if v, ok := components["command_id"].(string); ok && strings.TrimSpace(v) != "" {
-		commandID = strings.TrimSpace(v)
-	}
-
-	if commandID == "" {
-		if v, ok := components["command"].(string); ok && strings.TrimSpace(v) != "" {
-			commandID = strings.TrimSpace(v)
-		}
-	}
-
-	if p, ok := components["parameters"].(map[string]interface{}); ok {
-		parameters = p
-	} else if target, ok := components["target"].(map[string]interface{}); ok {
-		parameters = target
-	}
-
+	commandID := firstNonEmptyString(components["command_id"])
+	parameters := firstMap(components["parameters"], components["target"])
 	if command, ok := components["command"].(map[string]interface{}); ok {
 		if commandID == "" {
-			if id, ok := command["id"].(string); ok && strings.TrimSpace(id) != "" {
-				commandID = strings.TrimSpace(id)
-			} else if commandType, ok := command["type"].(string); ok && strings.TrimSpace(commandType) != "" {
-				commandID = strings.TrimSpace(commandType)
-			}
+			commandID = firstNonEmptyString(command["id"], command["type"])
 		}
-
 		if parameters == nil {
-			if p, ok := command["parameters"].(map[string]interface{}); ok {
-				parameters = p
-			} else if target, ok := command["target"].(map[string]interface{}); ok {
-				parameters = target
-			}
+			parameters = firstMap(command["parameters"], command["target"])
 		}
+	} else if commandID == "" {
+		commandID = firstNonEmptyString(components["command"])
 	}
 
 	return commandID, parameters
+}
+
+func firstNonEmptyString(values ...interface{}) string {
+	for _, value := range values {
+		if s, ok := value.(string); ok {
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func firstMap(values ...interface{}) map[string]interface{} {
+	for _, value := range values {
+		if m, ok := value.(map[string]interface{}); ok {
+			return m
+		}
+	}
+	return nil
 }
 
 // decodeJSONRequestBody decodes one JSON value and rejects trailing data.

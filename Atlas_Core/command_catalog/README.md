@@ -20,7 +20,9 @@ The command catalog is stored in [`command_catalog.json`](command_catalog.json) 
         "parameter_name": {
           "type": "<string|number|boolean|object|array>",
           "description": "Description of what this parameter does.",
-          "required": <true|false>
+          "required": <true|false>,
+          "minimum": <number>,
+          "maximum": <number>
         }
       }
     }
@@ -49,6 +51,8 @@ The `parameters_schema` object defines the parameters that the command accepts:
 - **`type`** (string): The data type of the parameter. It can be: `string`, `number`, `boolean`, `object`, or `array`.
 - **`description`** (string): Description of what this parameter does and how it affects command execution.
 - **`required`** (boolean): Whether this parameter is required (`true`) or optional (`false`).
+- **`minimum`** (number, optional): Inclusive lower bound for numeric parameters such as latitude or longitude.
+- **`maximum`** (number, optional): Inclusive upper bound for numeric parameters such as latitude or longitude.
 
 ### Example Command
 

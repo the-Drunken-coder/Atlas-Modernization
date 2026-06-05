@@ -14,7 +14,7 @@ func TestObjectIfMatchETagMatchesSerializedObjectETag(t *testing.T) {
 	if objectIfMatchTimeLayout != serializers.APIMetadataTimeLayout {
 		t.Fatalf("If-Match layout %q must match serialized object ETag layout %q", objectIfMatchTimeLayout, serializers.APIMetadataTimeLayout)
 	}
-	if got, want := objectIfMatchETag(ts), serializers.ObjectWeakETag(ts); got != want {
+	if got, want := objectIfMatchETag(ts), serializers.ObjectStrongETag(ts); got != want {
 		t.Fatalf("If-Match ETag %q must match serialized object ETag %q", got, want)
 	}
 }

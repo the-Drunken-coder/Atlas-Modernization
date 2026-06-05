@@ -26,8 +26,29 @@ func decodeJSONBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]int
 	return body
 }
 
+func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
+	tests := map[string]bool{
+		"/health":      true,
+		"/health/":     true,
+		"/health///":   true,
+		"/readiness":   true,
+		"/readiness/":  true,
+		"/":            false,
+		"/entities/":   false,
+		"/health/live": false,
+	}
+
+	for path, want := range tests {
+		t.Run(path, func(t *testing.T) {
+			if got := middleware.IsPublicUnauthenticatedPath(path); got != want {
+				t.Fatalf("IsPublicUnauthenticatedPath(%q) = %v, want %v", path, got, want)
+			}
+		})
+	}
+}
+
 func TestRequestLoggerSkipsHealthAndReadiness(t *testing.T) {
-	tests := []string{"/health", "/readiness"}
+	tests := []string{"/health", "/health/", "/readiness", "/readiness/"}
 
 	for _, path := range tests {
 		t.Run(path, func(t *testing.T) {
@@ -194,7 +215,7 @@ func TestAPIKeyAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
 }
 
 func TestAPIKeyAuthSkipsHealthAndReadiness(t *testing.T) {
-	tests := []string{"/health", "/readiness"}
+	tests := []string{"/health", "/health/", "/readiness", "/readiness/"}
 
 	for _, path := range tests {
 		t.Run(path, func(t *testing.T) {
@@ -257,7 +278,7 @@ func TestAPIKeyAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 }
 
 func TestAPIKeyAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
-	for _, path := range []string{"/health", "/readiness"} {
+	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/"} {
 		t.Run(path, func(t *testing.T) {
 			called := false
 			handler := middleware.APIKeyAuth("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

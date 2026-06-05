@@ -58,7 +58,7 @@ type cursorPageEqFilter struct {
 
 func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (pgx.Rows, error) {
 	if opts.continuation && opts.cursor == nil {
-		return nil, nil
+		return nil, fmt.Errorf("cursor pagination continuation requires a cursor")
 	}
 
 	if _, ok := allowedSelectFrom[opts.selectFrom]; !ok {

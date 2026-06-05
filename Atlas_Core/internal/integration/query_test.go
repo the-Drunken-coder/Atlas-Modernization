@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -299,7 +300,10 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 		t.Fatalf("expected continuation cursors on page 1, got entity=%q task=%q object=%q", entityCursor, taskCursor, objectCursor)
 	}
 
-	resp, err = client.Get(ctx, "/queries/full?entity_limit=1&entity_cursor="+entityCursor)
+	q := url.Values{}
+	q.Set("entity_limit", "1")
+	q.Set("entity_cursor", entityCursor)
+	resp, err = client.Get(ctx, "/queries/full?"+q.Encode())
 	if err != nil {
 		t.Fatalf("Failed to query full dataset entity continuation: %v", err)
 	}
@@ -324,7 +328,14 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 		t.Fatalf("expected entity continuation to advance past %s", firstEntityID)
 	}
 
-	resp, err = client.Get(ctx, "/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor="+entityCursor+"&task_cursor="+taskCursor+"&object_cursor="+objectCursor)
+	q = url.Values{}
+	q.Set("entity_limit", "1")
+	q.Set("task_limit", "1")
+	q.Set("object_limit", "1")
+	q.Set("entity_cursor", entityCursor)
+	q.Set("task_cursor", taskCursor)
+	q.Set("object_cursor", objectCursor)
+	resp, err = client.Get(ctx, "/queries/full?"+q.Encode())
 	if err != nil {
 		t.Fatalf("Failed to query full dataset full continuation: %v", err)
 	}
@@ -366,7 +377,10 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 	objectID := fmt.Sprintf("%s-changed-page-object", prefix)
 	createQueryTestObject(ctx, t, client, objectID, entityIDs[0], taskID)
 
-	resp, err := client.Get(ctx, "/queries/changed-since?since="+sinceTime+"&limit_per_type=1")
+	q := url.Values{}
+	q.Set("since", sinceTime)
+	q.Set("limit_per_type", "1")
+	resp, err := client.Get(ctx, "/queries/changed-since?"+q.Encode())
 	if err != nil {
 		t.Fatalf("Failed to query changed-since page 1: %v", err)
 	}
@@ -393,7 +407,11 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 		t.Fatal("expected first changed-since page to include the new object")
 	}
 
-	resp, err = client.Get(ctx, "/queries/changed-since?since="+sinceTime+"&limit_per_type=1&entity_cursor="+entityCursor)
+	q = url.Values{}
+	q.Set("since", sinceTime)
+	q.Set("limit_per_type", "1")
+	q.Set("entity_cursor", entityCursor)
+	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
 	if err != nil {
 		t.Fatalf("Failed to query changed-since entity continuation: %v", err)
 	}

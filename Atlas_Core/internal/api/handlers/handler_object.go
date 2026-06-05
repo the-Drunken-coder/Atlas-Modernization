@@ -66,7 +66,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectWeakETag(obj.UpdatedAt))
+	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.UpdatedAt))
 	writeJSON(w, http.StatusCreated, serializers.SerializeObject(obj))
 }
 
@@ -80,7 +80,7 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectWeakETag(obj.UpdatedAt))
+	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.UpdatedAt))
 	writeJSON(w, http.StatusOK, serializers.SerializeObject(obj))
 }
 
@@ -125,7 +125,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectWeakETag(obj.UpdatedAt))
+	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.UpdatedAt))
 	writeJSON(w, http.StatusOK, serializers.SerializeObject(obj))
 }
 

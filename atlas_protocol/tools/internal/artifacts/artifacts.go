@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"text/template"
@@ -176,6 +177,23 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	entitySchema, err = hydrateEntityComponentDefs(
+		entitySchema,
+		telemetrySchema,
+		geometrySchema,
+		taskCatalogSchema,
+		mediaRefsSchema,
+		milViewSchema,
+		healthSchema,
+		sensorRefsSchema,
+		communicationsSchema,
+		taskQueueSchema,
+		statusSchema,
+		heartbeatSchema,
+	)
+	if err != nil {
+		return nil, err
+	}
 	taskSchema, err := jsonSchema(root, "#TaskBlob")
 	if err != nil {
 		return nil, err
@@ -250,6 +268,73 @@ func markGeneratedJSONSchema(schema []byte) ([]byte, error) {
 		return nil, err
 	}
 	return append(out, '\n'), nil
+}
+
+func hydrateEntityComponentDefs(entitySchema []byte, componentSchemas ...[]byte) ([]byte, error) {
+	var entityRoot map[string]any
+	if err := json.Unmarshal(entitySchema, &entityRoot); err != nil {
+		return nil, fmt.Errorf("parse entity schema: %w", err)
+	}
+	entityDefs, err := schemaDefs(entityRoot, "entity schema")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, componentSchema := range componentSchemas {
+		var componentRoot map[string]any
+		if err := json.Unmarshal(componentSchema, &componentRoot); err != nil {
+			return nil, fmt.Errorf("parse component schema: %w", err)
+		}
+		componentDefs, err := schemaDefs(componentRoot, "component schema")
+		if err != nil {
+			return nil, err
+		}
+
+		for key, value := range componentDefs {
+			existing, exists := entityDefs[key]
+			if !exists {
+				entityDefs[key] = value
+				continue
+			}
+			if isSelfRefDef(key, existing) {
+				if isSelfRefDef(key, value) {
+					return nil, fmt.Errorf("component schema definition %s is still self-referential", key)
+				}
+				entityDefs[key] = value
+				continue
+			}
+			if !reflect.DeepEqual(existing, value) {
+				return nil, fmt.Errorf("conflicting JSON schema definition %s", key)
+			}
+		}
+	}
+
+	patchGeneratedJSONSchema(entityRoot)
+	out, err := json.MarshalIndent(entityRoot, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(out, '\n'), nil
+}
+
+func schemaDefs(root map[string]any, name string) (map[string]any, error) {
+	defs, ok := root["$defs"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s has no $defs object", name)
+	}
+	return defs, nil
+}
+
+func isSelfRefDef(key string, value any) bool {
+	node, ok := value.(map[string]any)
+	if !ok || len(node) != 1 {
+		return false
+	}
+	ref, ok := node["$ref"].(string)
+	if !ok {
+		return false
+	}
+	return ref == "#/$defs/%23"+strings.TrimPrefix(key, "#")
 }
 
 func patchGeneratedJSONSchema(root map[string]any) {

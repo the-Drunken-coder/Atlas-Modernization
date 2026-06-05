@@ -196,7 +196,7 @@ func Load() (*Config, error) {
 		MinIOHTTPPoolSize:     minioHTTPPoolSize,
 		MinIOHTTPPoolTimeout:  minioHTTPPoolTimeout,
 
-		CORSOrigins: DefaultCORSOrigins,
+		CORSOrigins: append([]string(nil), DefaultCORSOrigins...),
 
 		EnableAPIAuth: enableAPIAuth,
 		APIAuthKey:    getEnv("API_AUTH_KEY", ""),

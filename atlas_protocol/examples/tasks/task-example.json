@@ -15,7 +15,5 @@
       "status_detail": "En route to destination"
     }
   },
-  "spec_version": "1.0",
-  "created_by": "controller-001",
-  "updated_by": "controller-001"
+  "created_by": "controller-001"
 }

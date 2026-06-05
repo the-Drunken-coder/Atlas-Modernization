@@ -25,6 +25,13 @@ type Handler struct {
 
 // NewHandler creates a new Handler.
 func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config) *Handler {
+	if cfg == nil {
+		panic("handlers.NewHandler: config is required")
+	}
+	if db == nil || db.Pool == nil {
+		panic("handlers.NewHandler: db with initialized pool is required")
+	}
+
 	return &Handler{
 		db:            db,
 		storage:       storageClient,

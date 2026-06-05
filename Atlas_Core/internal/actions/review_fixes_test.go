@@ -1,6 +1,8 @@
 package actions
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,5 +54,18 @@ func TestContinuationUpperBoundRejectsMixedSnapshots(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected mismatched upper bounds to be rejected")
+	}
+}
+
+func TestOpenCursorPagedRowsRequiresCursorForContinuation(t *testing.T) {
+	rows, err := openCursorPagedRows(context.Background(), nil, cursorPageOpts{continuation: true})
+	if err == nil {
+		t.Fatal("expected missing continuation cursor to fail")
+	}
+	if rows != nil {
+		t.Fatalf("expected no rows, got %v", rows)
+	}
+	if !strings.Contains(err.Error(), "requires a cursor") {
+		t.Fatalf("expected cursor error, got %v", err)
 	}
 }

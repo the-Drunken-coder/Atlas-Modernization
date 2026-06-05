@@ -12,9 +12,8 @@ import (
 // APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.
 const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
 
-// ObjectWeakETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
-// Name is historical; the value is suitable for If-Match (not a weak validator / "W/" prefix).
-func ObjectWeakETag(updatedAt time.Time) string {
+// ObjectStrongETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
+func ObjectStrongETag(updatedAt time.Time) string {
 	s := updatedAt.UTC().Format(APIMetadataTimeLayout)
 	return `"` + s + `"`
 }

@@ -15,7 +15,12 @@ import (
 
 // IsPublicUnauthenticatedPath returns true for routes that skip request logging and API-key auth.
 func IsPublicUnauthenticatedPath(path string) bool {
-	switch path {
+	normalized := strings.TrimRight(path, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+
+	switch normalized {
 	case "/health", "/readiness":
 		return true
 	default:

@@ -149,6 +149,21 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 	objectDefs := schemaObject(t, objectSchema["$defs"])
 	objectReferenceDef := schemaObject(t, objectDefs["#ObjectReference"])
 	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
+
+	entitySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "entity.schema.json"))
+	entityDefs := schemaObject(t, entitySchema["$defs"])
+	telemetryDef := schemaObject(t, entityDefs["#TelemetryComponent"])
+	assertSchemaMissing(t, telemetryDef, "$ref")
+	telemetryProps := schemaObject(t, telemetryDef["properties"])
+	latitude := schemaObject(t, telemetryProps["latitude"])
+	if got, want := latitude["$ref"], "#/$defs/%23Latitude"; got != want {
+		t.Fatalf("telemetry latitude ref = %v, want %s", got, want)
+	}
+	healthDef := schemaObject(t, entityDefs["#HealthComponent"])
+	assertSchemaMissing(t, healthDef, "$ref")
+	healthProps := schemaObject(t, healthDef["properties"])
+	batteryPercent := schemaObject(t, healthProps["battery_percent"])
+	assertSchemaNumber(t, batteryPercent, "maximum", 100)
 }
 
 func TestEntityComponentPayloadValidation(t *testing.T) {

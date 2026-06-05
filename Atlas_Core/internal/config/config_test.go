@@ -219,6 +219,26 @@ func TestConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadCopiesDefaultCORSOrigins(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+	if len(cfg.CORSOrigins) == 0 {
+		t.Fatal("expected default CORS origins")
+	}
+
+	originalDefault := config.DefaultCORSOrigins[0]
+	cfg.CORSOrigins[0] = "http://mutated.example"
+
+	if config.DefaultCORSOrigins[0] != originalDefault {
+		t.Fatalf("mutating loaded config changed DefaultCORSOrigins: got %q", config.DefaultCORSOrigins[0])
+	}
+}
+
 func TestLoadAllowedOriginsWhenCORSMissing(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)

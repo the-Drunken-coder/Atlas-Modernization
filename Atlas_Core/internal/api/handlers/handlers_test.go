@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
@@ -27,6 +29,36 @@ func newTestHandler() *Handler {
 			MaxUploadSizeMB: 100,
 		},
 	}
+}
+
+func TestNewHandlerRequiresConfig(t *testing.T) {
+	assertPanicContains(t, "config is required", func() {
+		NewHandler(nil, nil, zerolog.Nop(), nil)
+	})
+}
+
+func TestNewHandlerRequiresInitializedDBPool(t *testing.T) {
+	cfg := &config.Config{}
+	assertPanicContains(t, "initialized pool is required", func() {
+		NewHandler(nil, nil, zerolog.Nop(), cfg)
+	})
+	assertPanicContains(t, "initialized pool is required", func() {
+		NewHandler(&database.DB{}, nil, zerolog.Nop(), cfg)
+	})
+}
+
+func assertPanicContains(t *testing.T, want string, fn func()) {
+	t.Helper()
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatalf("expected panic containing %q", want)
+		}
+		if !strings.Contains(fmt.Sprint(recovered), want) {
+			t.Fatalf("panic = %v, want substring %q", recovered, want)
+		}
+	}()
+	fn()
 }
 
 func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]interface{} {
