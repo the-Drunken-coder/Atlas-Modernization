@@ -37,6 +37,8 @@ func normalizedContentMediaType(contentType string) string {
 // getExtensionForContentType returns a file extension (including the dot) for a given MIME type.
 // Falls back to common mappings if the standard library doesn't have a mapping.
 func getExtensionForContentType(contentType string) string {
+	normalized := normalizedContentMediaType(contentType)
+
 	// Try standard library first
 	exts, err := mime.ExtensionsByType(contentType)
 	if err == nil && len(exts) > 0 {
@@ -74,7 +76,7 @@ func getExtensionForContentType(contentType string) string {
 		"image/vnd.tiff":          ".tif",
 	}
 
-	if ext, ok := fallbacks[contentType]; ok {
+	if ext, ok := fallbacks[normalized]; ok {
 		return ext
 	}
 

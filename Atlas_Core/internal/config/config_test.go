@@ -333,6 +333,41 @@ func TestLoadRejectsEnabledAPIAuthWithEmptySettingsKey(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsDoesNotOverrideExplicitEmptyEnv(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		LogLevel:        "DEBUG",
+		MaxUploadSizeMB: 250,
+		MaxViewSizeMB:   25,
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("MAX_UPLOAD_SIZE_MB", "")
+	t.Setenv("MAX_VIEW_SIZE_MB", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LogLevel != "INFO" {
+		t.Fatalf("expected explicit empty LOG_LEVEL to keep env default INFO, got %q", cfg.LogLevel)
+	}
+	if cfg.MaxUploadSizeMB != 100 {
+		t.Fatalf("expected explicit empty MAX_UPLOAD_SIZE_MB to keep env default 100, got %d", cfg.MaxUploadSizeMB)
+	}
+	if cfg.MaxViewSizeMB != 10 {
+		t.Fatalf("expected explicit empty MAX_VIEW_SIZE_MB to keep env default 10, got %d", cfg.MaxViewSizeMB)
+	}
+}
+
 func TestLoadAllowsEnabledAPIAuthWithKey(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)

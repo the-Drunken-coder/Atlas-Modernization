@@ -81,9 +81,10 @@ Common statuses used by API helpers are:
 - `acknowledged`
 - `completed`
 - `failed`
+- `cancelled`
 
-Current implementation note: status strings are not enum-validated globally in `Create`/`Update`.
-`POST /tasks/{task_id}/acknowledge|complete|fail` set the values above by convention.
+`Create`, `Update`, and `/tasks/{task_id}/status` trim and lowercase status values,
+then reject anything outside the list above.
 
 ## Task Endpoints
 

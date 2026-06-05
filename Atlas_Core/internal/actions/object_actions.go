@@ -454,12 +454,11 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 	}
 	existingJSON := make(map[string]interface{})
 	if objectJSON != nil {
-		if err := json.Unmarshal(objectJSON, &existingJSON); err != nil {
+		decoded, err := decodeObjectJSONForPatch(objectJSON)
+		if err != nil {
 			return nil, nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
 		}
-		if existingJSON == nil {
-			existingJSON = make(map[string]interface{})
-		}
+		existingJSON = decoded
 	}
 	return objectPath, existingJSON, nil
 }

@@ -312,7 +312,7 @@ def cleanup_containers(atlas_core_dir, remove_volumes=False):
     """Stop containers and optionally delete related volumes/images."""
     print("[STOP] Stopping existing containers...")
     docker_dir = os.path.join(atlas_core_dir, "docker")
-    cmd = ["docker", "compose", "down"]
+    cmd = ["docker", "compose", "down", "--remove-orphans"]
     if remove_volumes:
         print("[STOP] Removing container volumes and local images...")
         cmd.extend(["--volumes", "--rmi", "local"])
@@ -423,7 +423,17 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         elif tunnel:
             print("[START] Starting all containers with Cloudflare tunnel...")
             subprocess.run(
-                ["docker", "compose", "--profile", "tunnel", "up", "-d", "--build"],
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    "docker-compose.tunnel.yml",
+                    "up",
+                    "-d",
+                    "--build",
+                ],
                 check=True,
                 cwd=docker_dir,
             )

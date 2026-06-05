@@ -115,20 +115,6 @@ services:
     networks:
       - atlas_core_network
 
-  # Cloudflare Tunnel for public HTTPS access (token-managed; see docker/cloudflared/README.md).
-  cloudflared:
-    image: cloudflare/cloudflared:2026.3.0
-    container_name: atlas_core_cloudflared
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN must be set}
-    depends_on:
-      api:
-        condition: service_healthy
-    networks:
-      - atlas_core_network
-    profiles:
-      - tunnel
-
 volumes:
   postgres_data:
     driver: local

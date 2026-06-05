@@ -24,6 +24,18 @@ func NewTaskActions(pool *pgxpool.Pool) *TaskActions {
 	return &TaskActions{pool: pool}
 }
 
+func normalizeTaskStatus(raw string) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "pending", "acknowledged", "completed", "failed", "cancelled":
+		return status, nil
+	case "":
+		return "", NewValidationError("status must not be empty")
+	default:
+		return "", NewValidationError("invalid status")
+	}
+}
+
 // CreateTaskParams holds parameters for creating a task.
 type CreateTaskParams struct {
 	TaskID     string
@@ -40,9 +52,13 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 	}
 	taskID := SanitizeID(params.TaskID)
 
-	status := strings.TrimSpace(params.Status)
-	if status == "" {
-		status = "pending"
+	status := "pending"
+	if strings.TrimSpace(params.Status) != "" {
+		normalized, err := normalizeTaskStatus(params.Status)
+		if err != nil {
+			return nil, err
+		}
+		status = normalized
 	}
 
 	// Validate components
@@ -448,11 +464,11 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	// Update status if provided
 	newStatus := task.Status
 	if params.Status != nil {
-		trimmed := strings.TrimSpace(*params.Status)
-		if trimmed == "" {
-			return nil, NewValidationError("status must not be empty")
+		normalized, err := normalizeTaskStatus(*params.Status)
+		if err != nil {
+			return nil, err
 		}
-		newStatus = trimmed
+		newStatus = normalized
 	}
 
 	// Update entity_id if provided

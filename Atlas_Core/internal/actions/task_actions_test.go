@@ -2,6 +2,45 @@ package actions
 
 import "testing"
 
+func TestNormalizeTaskStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "pending", in: "pending", want: "pending"},
+		{name: "trim and lowercase", in: " ACKNOWLEDGED ", want: "acknowledged"},
+		{name: "completed", in: "completed", want: "completed"},
+		{name: "failed", in: "failed", want: "failed"},
+		{name: "cancelled", in: "cancelled", want: "cancelled"},
+		{name: "empty rejected", in: " \t ", wantErr: true},
+		{name: "unknown rejected", in: "running", wantErr: true},
+		{name: "american spelling rejected", in: "canceled", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeTaskStatus(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected validation error")
+				}
+				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+					t.Fatalf("expected validation error, got %T %v", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeTaskStatus: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeTaskStatus(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeTaskProgressPercent(t *testing.T) {
 	tests := []struct {
 		name string

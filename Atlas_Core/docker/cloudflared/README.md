@@ -22,7 +22,10 @@ proxies public HTTPS traffic to the local ATLAS Core API.
    or via Docker Compose directly:
 
    ```bash
-   docker compose -f Atlas_Core/docker/docker-compose.yml --profile tunnel up -d
+   docker compose \
+     -f Atlas_Core/docker/docker-compose.yml \
+     -f Atlas_Core/docker/docker-compose.tunnel.yml \
+     up -d
    ```
 
 The `cloudflared` service runs:
@@ -30,6 +33,9 @@ The `cloudflared` service runs:
 ```text
 cloudflared tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 ```
+
+The tunnel service is kept in `docker-compose.tunnel.yml` so normal non-tunnel
+Compose runs do not require or expand `CLOUDFLARE_TUNNEL_TOKEN`.
 
 It joins the same `atlas_core_network` bridge as the API service and forwards traffic to
 `http://api:8000` inside Compose. Hostname routing is configured in the Cloudflare
@@ -48,4 +54,4 @@ dashboard for the tunnel — not via a local credentials file.
 
 - Confirm the API container is healthy before starting the tunnel profile.
 - Verify the token is set in the shell or `.env` used by Compose.
-- Check tunnel logs: `docker compose -f Atlas_Core/docker/docker-compose.yml logs cloudflared`
+- Check tunnel logs: `docker compose -f Atlas_Core/docker/docker-compose.yml -f Atlas_Core/docker/docker-compose.tunnel.yml logs cloudflared`

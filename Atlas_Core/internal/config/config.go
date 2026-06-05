@@ -276,7 +276,7 @@ func (c *Config) loadSettingsFile() error {
 	}
 
 	// Apply settings (env vars take precedence, so only set if not already set via env)
-	if os.Getenv("LOG_LEVEL") == "" && settings.LogLevel != "" {
+	if _, ok := os.LookupEnv("LOG_LEVEL"); !ok && settings.LogLevel != "" {
 		c.LogLevel = settings.LogLevel
 	}
 	if _, ok := os.LookupEnv("DEBUG"); !ok {
@@ -297,10 +297,10 @@ func (c *Config) loadSettingsFile() error {
 	}
 
 	// Load upload limits from settings (env vars take precedence)
-	if os.Getenv("MAX_UPLOAD_SIZE_MB") == "" && settings.MaxUploadSizeMB > 0 {
+	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && settings.MaxUploadSizeMB > 0 {
 		c.MaxUploadSizeMB = settings.MaxUploadSizeMB
 	}
-	if os.Getenv("MAX_VIEW_SIZE_MB") == "" && settings.MaxViewSizeMB > 0 {
+	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && settings.MaxViewSizeMB > 0 {
 		c.MaxViewSizeMB = settings.MaxViewSizeMB
 	}
 
