@@ -1,0 +1,25 @@
+{
+  "components": {
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-74.0060, 40.7128],
+          [-74.0070, 40.7128],
+          [-74.0070, 40.7130],
+          [-74.0060, 40.7130],
+          [-74.0060, 40.7128]
+        ]
+      ]
+    },
+    "mil_view": {
+      "classification": "neutral",
+      "last_seen": "2026-05-29T10:00:00Z"
+    },
+    "custom_zone_type": {
+      "restriction_level": "medium",
+      "description": "Survey area"
+    }
+  },
+  "published_at": "2026-05-29T10:00:00Z"
+}

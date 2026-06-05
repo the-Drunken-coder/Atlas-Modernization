@@ -1,0 +1,49 @@
+{
+  "components": {
+    "telemetry": {
+      "latitude": 40.7128,
+      "longitude": -74.0060,
+      "altitude_m": 120,
+      "speed_m_s": 8.2,
+      "heading_deg": 165
+    },
+    "task_catalog": {
+      "supported_tasks": ["move_to_location", "survey_grid"]
+    },
+    "health": {
+      "battery_percent": 76
+    },
+    "communications": {
+      "link_state": "connected"
+    },
+    "task_queue": {
+      "current_task_id": null,
+      "queued_task_ids": []
+    },
+    "media_refs": [
+      {
+        "object_id": "obj-123",
+        "role": "camera_feed"
+      },
+      {
+        "object_id": "obj-456",
+        "role": "thumbnail"
+      }
+    ],
+    "sensor_refs": [
+      {
+        "sensor_id": "radar-1",
+        "type": "radar",
+        "vertical_fov": 60,
+        "horizontal_fov": 90,
+        "vertical_orientation": 10,
+        "horizontal_orientation": 45
+      }
+    ],
+    "mil_view": {
+      "classification": "friendly",
+      "last_seen": "2026-05-29T10:05:00Z"
+    }
+  },
+  "published_at": "2026-05-29T10:00:00Z"
+}

@@ -1,0 +1,90 @@
+# golangci-lint v2 schema — https://golangci-lint.run/usage/configuration/
+version: "2"
+
+run:
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - errorlint
+    - bodyclose
+    - gosec
+    - nilerr
+    - gocritic
+    - revive
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Writer).Write
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - io.Copy
+        - fmt.Fprintf
+        - fmt.Printf
+    errorlint:
+      errorf: true
+      asserts: false
+      comparison: true
+    gosec:
+      severity: medium
+      confidence: medium
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-tags:
+        - style
+      disabled-checks:
+        - hugeParam
+        - deferInLoop
+        - sprintfQuotedString
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: var-naming
+        - name: package-comments
+          disabled: true
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+    staticcheck:
+      checks:
+        - all
+        - -SA9003
+        - -SA4023
+  exclusions:
+    rules:
+      - path: internal/integration/.*\.go
+        linters:
+          - errcheck
+      - path: internal/integration/.*_test\.go
+        linters:
+          - gosec
+          - gocritic
+      - path: internal/integration/helpers\.go
+        linters:
+          - gosec
+          - errcheck
+          - gocritic
+
+formatters:
+  exclusions:
+    generated: lax

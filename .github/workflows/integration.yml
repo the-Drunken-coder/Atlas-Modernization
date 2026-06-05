@@ -1,0 +1,76 @@
+name: Integration
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION_FILE: Atlas_Core/go.mod
+  GO_SUM_FILE: Atlas_Core/go.sum
+  WORKING_DIRECTORY: Atlas_Core
+  ATLAS_CORE_API_URL: http://localhost:8000
+  MINIO_ROOT_PASSWORD: atlas-ci
+  POSTGRES_PASSWORD: atlas
+  MINIO_ROOT_USER: atlas
+  CLOUDFLARE_TUNNEL_TOKEN: dummy
+
+jobs:
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: ${{ env.GO_SUM_FILE }}
+
+      - name: Start Atlas Core stack
+        run: docker compose -f docker/docker-compose.yml up -d --build
+
+      - name: Wait for health endpoints
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS "$ATLAS_CORE_API_URL/health" >/dev/null &&
+               curl -fsS "$ATLAS_CORE_API_URL/readiness" >/dev/null; then
+              exit 0
+            fi
+            echo "Waiting for Atlas Core stack (${i}/60)..."
+            sleep 2
+          done
+          docker compose -f docker/docker-compose.yml ps
+          docker compose -f docker/docker-compose.yml logs --no-color
+          exit 1
+
+      - name: Run shell API integration tests
+        run: ./scripts/run_integration_tests.sh
+
+      - name: Run full Go test suite against live stack
+        run: go test -count=1 ./...
+
+      - name: Collect Compose logs
+        if: failure()
+        run: docker compose -f docker/docker-compose.yml logs --no-color
+
+      - name: Tear down Atlas Core stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v --remove-orphans

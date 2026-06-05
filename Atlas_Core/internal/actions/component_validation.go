@@ -1,0 +1,114 @@
+package actions
+
+import (
+	"fmt"
+	"strings"
+
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
+)
+
+// knownEntityComponents is the set of valid component keys for entities
+var knownEntityComponents = protocol.EntityComponentKeySet()
+
+// ValidationResult holds multiple validation errors
+type ValidationResult struct {
+	Errors []string
+}
+
+func (vr *ValidationResult) AddError(err string) {
+	vr.Errors = append(vr.Errors, err)
+}
+
+func (vr *ValidationResult) HasErrors() bool {
+	return len(vr.Errors) > 0
+}
+
+func (vr *ValidationResult) Error() string {
+	if !vr.HasErrors() {
+		return ""
+	}
+	if len(vr.Errors) == 1 {
+		return vr.Errors[0]
+	}
+	return fmt.Sprintf("Component validation failed (%d errors): %s", len(vr.Errors), strings.Join(vr.Errors, "; "))
+}
+
+func validationResultFromErrors(errors []string) *ValidationResult {
+	result := &ValidationResult{}
+	result.Errors = append(result.Errors, errors...)
+	return result
+}
+
+// NewValidationErrorWithDetails creates a validation error with multiple error details.
+func NewValidationErrorWithDetails(message string, details []string) *ValidationError {
+	return &ValidationError{
+		ActionError: ActionError{
+			Message: message,
+			Code:    "VALIDATION_ERROR",
+		},
+		Details: details,
+	}
+}
+
+// ValidateComponentKeys validates that all component keys are known or custom
+func ValidateComponentKeys(components map[string]interface{}, knownKeys map[string]bool) *ValidationResult {
+	result := &ValidationResult{}
+
+	for key := range components {
+		if knownKeys[key] {
+			continue
+		}
+		if strings.HasPrefix(key, "custom_") {
+			continue
+		}
+		result.AddError(fmt.Sprintf("Unknown component '%s'", key))
+	}
+
+	return result
+}
+
+// ValidateEntityComponents validates all components for an entity
+func ValidateEntityComponents(components map[string]interface{}) error {
+	if components == nil {
+		return nil
+	}
+
+	result := validationResultFromErrors(protocol.ValidateEntityComponents(components))
+
+	if result.HasErrors() {
+		return NewValidationErrorWithDetails(
+			fmt.Sprintf("Component validation failed (%d errors)", len(result.Errors)),
+			result.Errors,
+		)
+	}
+
+	return nil
+}
+
+// ValidateTaskComponents validates all components for a task
+func ValidateTaskComponents(components map[string]interface{}) error {
+	if components == nil {
+		return nil
+	}
+
+	result := validationResultFromErrors(protocol.ValidateTaskComponents(components))
+
+	if result.HasErrors() {
+		return NewValidationErrorWithDetails(
+			fmt.Sprintf("Component validation failed (%d errors)", len(result.Errors)),
+			result.Errors,
+		)
+	}
+
+	return nil
+}
+
+// ValidateStatusComponent validates the status component
+func ValidateStatusComponent(status map[string]interface{}) *ValidationResult {
+	return validationResultFromErrors(protocol.ValidateStatusComponent(status))
+}
+
+// ValidateHeartbeatComponent validates the heartbeat component
+func ValidateHeartbeatComponent(heartbeat map[string]interface{}) *ValidationResult {
+	return validationResultFromErrors(protocol.ValidateHeartbeatComponent(heartbeat))
+}
