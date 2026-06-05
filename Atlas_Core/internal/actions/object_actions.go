@@ -398,9 +398,9 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	}
 	objectID = SanitizeID(objectID)
 
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := a.beginLockedObjectTx(ctx, objectID, "delete")
 	if err != nil {
-		return fmt.Errorf("failed to begin delete transaction: %w", err)
+		return err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
@@ -434,40 +434,68 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	return nil
 }
 
-func (a *ObjectActions) beginObjectUploadTx(ctx context.Context, objectID string) (pgx.Tx, error) {
+func objectUploadLockKey(objectID string) string {
+	return "atlas-core-object-upload:" + objectID
+}
+
+func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, operation string) (pgx.Tx, error) {
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin upload transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin %s transaction: %w", operation, err)
 	}
 
-	lockKey := "atlas-core-object-upload:" + objectID
+	lockKey := objectUploadLockKey(objectID)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
 		_ = tx.Rollback(ctx)
-		return nil, fmt.Errorf("failed to lock object upload: %w", err)
+		return nil, fmt.Errorf("failed to lock object for %s: %w", operation, err)
 	}
 
 	return tx, nil
 }
 
-func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string) (*string, map[string]interface{}, error) {
+type objectUploadState struct {
+	path          *string
+	json          map[string]interface{}
+	rowExists     bool
+	maxDeletionID int64
+}
+
+func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string) (*objectUploadState, error) {
+	state := &objectUploadState{
+		json: make(map[string]interface{}),
+	}
+
 	var objectPath *string
 	var objectJSON json.RawMessage
 	err := tx.QueryRow(ctx, `SELECT path, json FROM objects WHERE object_id = $1 FOR UPDATE`, objectID).Scan(&objectPath, &objectJSON)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, make(map[string]interface{}), nil
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
 		}
-		return nil, nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
-	}
-	existingJSON := make(map[string]interface{})
-	if objectJSON != nil {
+	} else {
+		state.path = objectPath
+		state.rowExists = true
+
 		decoded, err := decodeObjectJSONForPatch(objectJSON)
 		if err != nil {
-			return nil, nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
+			return nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
 		}
-		existingJSON = decoded
+		state.json = decoded
 	}
-	return objectPath, existingJSON, nil
+
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(MAX(id), 0)
+		FROM deletions
+		WHERE resource_type = 'object' AND resource_id = $1
+	`, objectID).Scan(&state.maxDeletionID); err != nil {
+		return nil, fmt.Errorf("failed to read object deletion state: %w", err)
+	}
+
+	return state, nil
+}
+
+func objectDeletedAfterUploadPreflight(preflight, current *objectUploadState) bool {
+	return preflight.rowExists && current.maxDeletionID > preflight.maxDeletionID
 }
 
 func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {
@@ -539,12 +567,6 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, &storage.StorageError{Message: "storage not configured"}
 	}
 
-	objectPath := a.storage.NewObjectPath(objectID)
-	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to upload to storage: %w", err)
-	}
-
 	var usageHints []string
 	if usageHint != nil && *usageHint != "" {
 		usageHints = []string{*usageHint}
@@ -557,18 +579,41 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		typePtr = &objType
 	}
 
-	tx, err := a.beginObjectUploadTx(ctx, objectID)
+	tx, err := a.beginLockedObjectTx(ctx, objectID, "upload")
+	if err != nil {
+		return nil, err
+	}
+
+	preflightState, err := currentObjectStateForUpload(ctx, tx, objectID)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit upload preflight transaction: %w", err)
+	}
+
+	objectPath := a.storage.NewObjectPath(objectID)
+	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload to storage: %w", err)
+	}
+
+	tx, err = a.beginLockedObjectTx(ctx, objectID, "upload metadata")
 	if err != nil {
 		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	oldPath, existingJSON, err := currentObjectStateForUpload(ctx, tx, objectID)
+	currentState, err := currentObjectStateForUpload(ctx, tx, objectID)
 	if err != nil {
 		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
 	}
+	if objectDeletedAfterUploadPreflight(preflightState, currentState) {
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, NewObjectNotFoundError(objectID))
+	}
 
-	jsonBytes, err := uploadObjectJSON(existingJSON, bucket, uploadedInfo.SizeBytes, usageHints)
+	jsonBytes, err := uploadObjectJSON(currentState.json, bucket, uploadedInfo.SizeBytes, usageHints)
 	if err != nil {
 		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, fmt.Errorf("failed to marshal object metadata JSON: %w", err))
 	}
@@ -587,9 +632,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		)
 	}
 
-	if oldPath != nil && strings.TrimSpace(*oldPath) != "" && *oldPath != objectPath {
-		if err := a.storage.DeleteObjectPath(ctx, *oldPath); err != nil {
-			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", *oldPath).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
+	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
+		if err := a.storage.DeleteObjectPath(ctx, *currentState.path); err != nil {
+			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", *currentState.path).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
 		}
 	}
 
