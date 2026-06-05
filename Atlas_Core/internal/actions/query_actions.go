@@ -74,20 +74,20 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	if err != nil {
 		return nil, err
 	}
-	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, entCur, taskCur, objCur)
+	snapshotUpperBound, _, err := continuationUpperBound(txUpperBound, entCur, taskCur, objCur)
 	if err != nil {
 		return nil, err
 	}
 
-	entities, hasMoreEnt, err := queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, entCur, entityLimit)
+	entities, hasMoreEnt, err := queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, entCur != nil, entCur, entityLimit)
 	if err != nil {
 		return nil, err
 	}
-	tasks, hasMoreTasks, err := queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, taskCur, taskLimit)
+	tasks, hasMoreTasks, err := queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, taskCur != nil, taskCur, taskLimit)
 	if err != nil {
 		return nil, err
 	}
-	objects, hasMoreObj, err := queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, objCur, objectLimit)
+	objects, hasMoreObj, err := queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, objCur != nil, objCur, objectLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -207,15 +207,15 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 	watermark := snapshotUpperBound.Add(-a.changedSinceSafetyLag)
 	responseTimestamp := watermark.UTC().Format(time.RFC3339)
 
-	entities, hasMoreEnt, err := queryEntities(ctx, tx, "updated_at", since, snapshotUpperBound, continuation, entCur, limit)
+	entities, hasMoreEnt, err := queryEntities(ctx, tx, "updated_at", since, snapshotUpperBound, entCur != nil, entCur, limit)
 	if err != nil {
 		return nil, err
 	}
-	tasks, hasMoreTasks, err := queryTasks(ctx, tx, "updated_at", since, snapshotUpperBound, continuation, taskCur, limit)
+	tasks, hasMoreTasks, err := queryTasks(ctx, tx, "updated_at", since, snapshotUpperBound, taskCur != nil, taskCur, limit)
 	if err != nil {
 		return nil, err
 	}
-	objects, hasMoreObj, err := queryObjects(ctx, tx, "updated_at", since, snapshotUpperBound, continuation, objCur, limit)
+	objects, hasMoreObj, err := queryObjects(ctx, tx, "updated_at", since, snapshotUpperBound, objCur != nil, objCur, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -311,17 +311,17 @@ func encodeDeletedCursor(resource DeletedResource, snapshotUpperBound time.Time,
 
 // getDeletionsSince queries the deletions table for tombstones after the given timestamp.
 func (a *QueryActions) getDeletionsSince(ctx context.Context, tx pgx.Tx, since, snapshotUpper time.Time, limitPerType int, continuation bool, cursorEntity, cursorTask, cursorObject *parsedQueryCursor) ([]DeletedResource, []DeletedResource, []DeletedResource, bool, bool, bool, error) {
-	deletedEntities, moreE, err := queryDeletionsByType(ctx, tx, "entity", since, snapshotUpper, continuation, cursorEntity, limitPerType)
+	deletedEntities, moreE, err := queryDeletionsByType(ctx, tx, "entity", since, snapshotUpper, continuation && cursorEntity != nil, cursorEntity, limitPerType)
 	if err != nil {
 		return nil, nil, nil, false, false, false, err
 	}
 
-	deletedTasks, moreT, err := queryDeletionsByType(ctx, tx, "task", since, snapshotUpper, continuation, cursorTask, limitPerType)
+	deletedTasks, moreT, err := queryDeletionsByType(ctx, tx, "task", since, snapshotUpper, continuation && cursorTask != nil, cursorTask, limitPerType)
 	if err != nil {
 		return nil, nil, nil, false, false, false, err
 	}
 
-	deletedObjects, moreO, err := queryDeletionsByType(ctx, tx, "object", since, snapshotUpper, continuation, cursorObject, limitPerType)
+	deletedObjects, moreO, err := queryDeletionsByType(ctx, tx, "object", since, snapshotUpper, continuation && cursorObject != nil, cursorObject, limitPerType)
 	if err != nil {
 		return nil, nil, nil, false, false, false, err
 	}
