@@ -51,11 +51,8 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "patternProperties": {
-    "": {
-      "$ref": "#/$defs/%23JSONValue"
-    }
+  "additionalProperties": {
+    "$ref": "#/$defs/%23JSONValue"
   },
   "properties": {
     "bucket": {
