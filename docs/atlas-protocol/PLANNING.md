@@ -1,6 +1,6 @@
 # Atlas Protocol Planning
 
-Status: bootstrap, task, object, and documented entity-component protocol slices are implemented in `../atlas_protocol/`. Future work should continue from the generated module and keep this directory as planning/reference material.
+Status: bootstrap, task, object, and documented entity-component protocol slices are implemented in `../../atlas_protocol/`. Future work should continue from the generated module and keep this directory as planning/reference material.
 
 Atlas Protocol will be the standalone contract package for Atlas data. It should define what valid Atlas data is, generate reusable types and validators for multiple systems, and stay independent from Atlas Core service behavior.
 
@@ -146,7 +146,7 @@ atlas_protocol/
     check/
 ```
 
-The current `Atlas Protocol/` directory remains planning and reference documentation. Buildable Go packages should not live under a path with a space in its name.
+Planning and reference documentation live under `docs/atlas-protocol/`. Buildable Go packages should stay in the root `atlas_protocol/` module, not under `docs/`.
 
 ## Build-Readiness Decisions
 

@@ -1,6 +1,6 @@
 # Atlas Protocol
 
-This is the buildable Atlas Protocol module. It owns reusable data-shape contracts and generated validation artifacts for Atlas data. Planning and reference docs remain in `../Atlas Protocol/`.
+This is the buildable Atlas Protocol module. It owns reusable data-shape contracts and generated validation artifacts for Atlas data. Planning and reference docs live in `../docs/atlas-protocol/`.
 
 The implemented protocol slice covers entity, task, and object JSON blobs; entity and task component keys; generated validators for documented entity components; task components; object references; `telemetry`; and `geometry`.
 

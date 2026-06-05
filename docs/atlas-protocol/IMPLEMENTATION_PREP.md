@@ -1,6 +1,6 @@
 # Atlas Protocol Implementation Prep
 
-Status: implemented for the bootstrap slice and extended through task, object, and documented entity-component blob validation in `../atlas_protocol/`.
+Status: implemented for the bootstrap slice and extended through task, object, and documented entity-component blob validation in `../../atlas_protocol/`.
 
 This document pins the decisions that must be true before Atlas Protocol becomes generated code. It narrows the first implementation pass to a small, useful slice while keeping the larger contract shape visible.
 
@@ -31,7 +31,7 @@ atlas_protocol/
     check/
 ```
 
-The current `Atlas Protocol/` directory remains planning and reference documentation. Do not put Go packages that Atlas Core imports under the directory with a space in its name.
+Planning and reference documentation live under `docs/atlas-protocol/`. Do not recreate a root-level `Atlas Protocol/` directory, and do not put Go packages that Atlas Core imports under `docs/`.
 
 The Go module path for the protocol module should be:
 

@@ -27,7 +27,7 @@ services:
     volumes:
       - ../cmd:/app/cmd
       - ../internal:/app/internal
-      # Mount the buildable protocol module; "Atlas Protocol/" is planning docs.
+      # Mount the buildable protocol module; planning docs live under docs/atlas-protocol/.
       - ../../atlas_protocol:/atlas_protocol:ro
       # Default to the committed example settings. Override by setting:
       # ATLAS_CORE_SETTINGS_FILE=atlas_core.settings.json
