@@ -127,10 +127,10 @@ func main() {
 
 	// API key middleware must be registered before route handlers (chi requirement); health/readiness skip auth.
 	if cfg.EnableAPIAuth {
-		logger.Info().Msg("API key authentication enabled via atlas_core.settings.json")
+		logger.Info().Msg("API key authentication enabled")
 		r.Use(custommiddleware.APIKeyAuth(apiKey))
 	} else {
-		logger.Info().Msg("API key authentication disabled (set enable_api_auth=true in atlas_core.settings.json)")
+		logger.Info().Msg("API key authentication disabled (set ENABLE_API_AUTH=true or enable_api_auth=true in atlas_core.settings.json)")
 	}
 
 	// Public health endpoints (no API key — middleware skips these paths)

@@ -146,6 +146,56 @@ func TestObjectDeletedAfterUploadPreflight(t *testing.T) {
 	}
 }
 
+func TestApplyConfiguredObjectBucketOverwritesExistingBucket(t *testing.T) {
+	blob := map[string]interface{}{
+		"bucket":   "client-selected-bucket",
+		"checksum": "sha256:test",
+	}
+
+	applyConfiguredObjectBucket(blob, &recordingObjectStorage{})
+
+	if blob["bucket"] != "atlas-media" {
+		t.Fatalf("bucket = %v, want configured bucket atlas-media", blob["bucket"])
+	}
+	if blob["checksum"] != "sha256:test" {
+		t.Fatalf("checksum = %v, want preserved checksum", blob["checksum"])
+	}
+}
+
+func TestApplyConfiguredObjectBucketLeavesBlobWithoutStorage(t *testing.T) {
+	tests := []struct {
+		name string
+		blob map[string]interface{}
+	}{
+		{
+			name: "no bucket added",
+			blob: map[string]interface{}{
+				"checksum": "sha256:test",
+			},
+		},
+		{
+			name: "stale bucket removed",
+			blob: map[string]interface{}{
+				"bucket":   "legacy-bucket",
+				"checksum": "sha256:test",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyConfiguredObjectBucket(tt.blob, nil)
+
+			if _, ok := tt.blob["bucket"]; ok {
+				t.Fatalf("bucket should not be set without configured storage: %#v", tt.blob)
+			}
+			if tt.blob["checksum"] != "sha256:test" {
+				t.Fatalf("checksum = %v, want preserved checksum", tt.blob["checksum"])
+			}
+		})
+	}
+}
+
 func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {

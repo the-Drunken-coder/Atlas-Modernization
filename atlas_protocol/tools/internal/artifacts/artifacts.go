@@ -339,7 +339,27 @@ func isSelfRefDef(key string, value any) bool {
 
 func patchGeneratedJSONSchema(root map[string]any) {
 	normalizeArrayLengthKeywords(root)
+	normalizeWildcardPatternProperties(root)
 	injectMinProperties(root)
+}
+
+func normalizeWildcardPatternProperties(value any) {
+	switch node := value.(type) {
+	case map[string]any:
+		if patternProperties, ok := node["patternProperties"].(map[string]any); ok && len(patternProperties) == 1 {
+			if wildcard, exists := patternProperties[""]; exists {
+				node["additionalProperties"] = wildcard
+				delete(node, "patternProperties")
+			}
+		}
+		for _, child := range node {
+			normalizeWildcardPatternProperties(child)
+		}
+	case []any:
+		for _, child := range node {
+			normalizeWildcardPatternProperties(child)
+		}
+	}
 }
 
 func normalizeArrayLengthKeywords(value any) {
