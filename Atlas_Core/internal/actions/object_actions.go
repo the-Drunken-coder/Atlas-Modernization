@@ -368,6 +368,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 
 func applyConfiguredObjectBucket(blob map[string]interface{}, storageClient objectStorage) {
 	if storageClient == nil {
+		delete(blob, "bucket")
 		return
 	}
 	bucket := strings.TrimSpace(storageClient.Bucket())

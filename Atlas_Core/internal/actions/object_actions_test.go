@@ -111,14 +111,36 @@ func TestApplyConfiguredObjectBucketOverwritesExistingBucket(t *testing.T) {
 }
 
 func TestApplyConfiguredObjectBucketLeavesBlobWithoutStorage(t *testing.T) {
-	blob := map[string]interface{}{
-		"checksum": "sha256:test",
+	tests := []struct {
+		name string
+		blob map[string]interface{}
+	}{
+		{
+			name: "no bucket added",
+			blob: map[string]interface{}{
+				"checksum": "sha256:test",
+			},
+		},
+		{
+			name: "stale bucket removed",
+			blob: map[string]interface{}{
+				"bucket":   "legacy-bucket",
+				"checksum": "sha256:test",
+			},
+		},
 	}
 
-	applyConfiguredObjectBucket(blob, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyConfiguredObjectBucket(tt.blob, nil)
 
-	if _, ok := blob["bucket"]; ok {
-		t.Fatalf("bucket should not be set without configured storage: %#v", blob)
+			if _, ok := tt.blob["bucket"]; ok {
+				t.Fatalf("bucket should not be set without configured storage: %#v", tt.blob)
+			}
+			if tt.blob["checksum"] != "sha256:test" {
+				t.Fatalf("checksum = %v, want preserved checksum", tt.blob["checksum"])
+			}
+		})
 	}
 }
 
