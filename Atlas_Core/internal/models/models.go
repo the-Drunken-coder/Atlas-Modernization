@@ -77,6 +77,7 @@ type Entity struct {
 	JSON      json.RawMessage `json:"-" db:"json"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	Version   int64           `json:"version" db:"version"`
 
 	jsonMu   sync.Mutex
 	jsonInit bool
@@ -165,6 +166,7 @@ type Task struct {
 	JSON      json.RawMessage `json:"-" db:"json"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	Version   int64           `json:"version" db:"version"`
 
 	jsonMu   sync.Mutex
 	jsonInit bool
@@ -254,6 +256,7 @@ type MediaObject struct {
 	JSON        json.RawMessage `json:"-" db:"json"`
 	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
+	Version     int64           `json:"version" db:"version"`
 
 	jsonMu   sync.Mutex
 	jsonInit bool

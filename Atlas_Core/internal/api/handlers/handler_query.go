@@ -24,6 +24,7 @@ type deletedResourceResponse struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`
 	DeletedAt string `json:"deleted_at,omitempty"`
+	Version   int64  `json:"version,omitempty"`
 }
 
 type changedSinceResponse struct {
@@ -45,6 +46,7 @@ type changedSinceResponse struct {
 	NextDeletedEntityCursor string                        `json:"next_deleted_entity_cursor,omitempty"`
 	NextDeletedTaskCursor   string                        `json:"next_deleted_task_cursor,omitempty"`
 	NextDeletedObjectCursor string                        `json:"next_deleted_object_cursor,omitempty"`
+	Version                 int64                         `json:"version"`
 	Timestamp               string                        `json:"timestamp"`
 }
 
@@ -88,6 +90,7 @@ func serializeChangedSinceResult(result *actions.ChangedSinceResult) *changedSin
 		NextDeletedEntityCursor: result.NextDeletedEntityCursor,
 		NextDeletedTaskCursor:   result.NextDeletedTaskCursor,
 		NextDeletedObjectCursor: result.NextDeletedObjectCursor,
+		Version:                 result.Version,
 		Timestamp:               result.Timestamp,
 	}
 }
@@ -99,6 +102,7 @@ func serializeDeletedResources(resources []actions.DeletedResource) []deletedRes
 			ID:        resource.ID,
 			Type:      resource.Type,
 			DeletedAt: resource.DeletedAt,
+			Version:   resource.Version,
 		}
 	}
 	return result
@@ -123,20 +127,19 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 
 // GetChangedSince handles GET /queries/changed-since.
 func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
-	sinceStr := r.URL.Query().Get("since")
-	if sinceStr == "" {
-		h.writeError(w, r, http.StatusBadRequest, "since parameter is required", "VALIDATION_ERROR")
+	if r.URL.Query().Get("since_version") == "" {
+		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", "VALIDATION_ERROR")
 		return
 	}
 
-	since, err := parseRFC3339Timestamp(sinceStr)
+	sinceVersion, err := parseNonNegativeInt64Query(r, "since_version", 0)
 	if err != nil {
 		h.writeValidationError(w, r, &actions.ValidationError{
 			ActionError: actions.ActionError{
-				Message: "Invalid since timestamp format (use RFC3339)",
+				Message: "Invalid since_version format (use non-negative integer)",
 				Code:    "VALIDATION_ERROR",
 			},
-			Details: []string{fmt.Sprintf("since: %v", err)},
+			Details: []string{fmt.Sprintf("since_version: %v", err)},
 		})
 		return
 	}
@@ -148,7 +151,7 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cursors := changedSinceCursorsFromQuery(r.URL.Query())
-	data, err := h.queryActions.GetDataChangedSince(r.Context(), since, limitPerType, &cursors)
+	data, err := h.queryActions.GetDataChangedSince(r.Context(), sinceVersion, limitPerType, &cursors)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return

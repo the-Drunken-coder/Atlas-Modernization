@@ -84,7 +84,7 @@ These endpoints use per-type **limits** and opaque cursors. When a stream is tru
 | `next_deleted_task_cursor` | `deleted_task_cursor` |
 | `next_deleted_object_cursor` | `deleted_object_cursor` |
 
-For **`GET /queries/changed-since`**, keep the same **`since`** timestamp while following cursors. Treat each cursor as an **opaque** token: do not parse or construct it; pass back the `next_*_cursor` value from the previous response unchanged as the matching `*_cursor` query parameter on the next request.
+For **`GET /queries/changed-since`**, use **`since_version`** as the incremental boundary. The response includes a monotonic **`version`** watermark; pass that value as `since_version` on the next poll after all pages for the current response are consumed. While following cursors for a truncated response, keep the same `since_version` and pass back the `next_*_cursor` value unchanged as the matching `*_cursor` query parameter. Treat every cursor as opaque: do not parse or construct it.
 
 ### Per-type caps
 

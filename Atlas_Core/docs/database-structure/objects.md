@@ -22,6 +22,7 @@ Implementation references:
 - `json` (`JSONB`, not null, default `{}`)
 - `created_at` (`TIMESTAMPTZ`, not null)
 - `updated_at` (`TIMESTAMPTZ`, not null)
+- `version` (`BIGINT`, not null): monotonic change version used for sync ordering, `metadata.version`, and object ETags
 
 ## JSON Blob Fields
 
@@ -54,7 +55,7 @@ Note: there is no dedicated `/objects/{object_id}/references` endpoint in the cu
 links are updated by writing `referenced_by` on `POST /objects`, `PATCH /objects/{object_id}`, or
 after `POST /objects/upload` via a follow-up `PATCH`.
 
-`GET /objects` list responses omit `referenced_by` for compactness; `GET /objects/{object_id}` returns full metadata including `referenced_by`. `PATCH /objects/{object_id}` supports optimistic concurrency via `If-Match` / ETag from `GET`.
+`GET /objects` list responses omit `referenced_by` for compactness; `GET /objects/{object_id}` returns full metadata including `referenced_by`. `PATCH /objects/{object_id}` supports optimistic concurrency via `If-Match` / ETag from `GET`; object ETags are based on the monotonic object `version`.
 
 ## Heatmap Convention
 

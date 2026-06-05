@@ -95,14 +95,20 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 		entityID = &trimmed
 	}
 
+	tx, err := beginChangeTx(ctx, a.pool, "task create")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var task models.Task
-	err = a.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO tasks (task_id, status, entity_id, json)
 		VALUES ($1, $2, $3, $4)
-		RETURNING task_id, status, entity_id, json, created_at, updated_at
+		RETURNING task_id, status, entity_id, json, created_at, updated_at, version
 	`, taskID, status, entityID, jsonBytes).Scan(
 		&task.TaskID, &task.Status, &task.EntityID,
-		&task.JSON, &task.CreatedAt, &task.UpdatedAt,
+		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -118,6 +124,9 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 		}
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit task create transaction: %w", err)
+	}
 
 	return &task, nil
 }
@@ -131,11 +140,11 @@ func (a *TaskActions) Get(ctx context.Context, taskID string) (*models.Task, err
 
 	var task models.Task
 	err := a.pool.QueryRow(ctx, `
-		SELECT task_id, status, entity_id, json, created_at, updated_at
+		SELECT task_id, status, entity_id, json, created_at, updated_at, version
 		FROM tasks WHERE task_id = $1
 	`, taskID).Scan(
 		&task.TaskID, &task.Status, &task.EntityID,
-		&task.JSON, &task.CreatedAt, &task.UpdatedAt,
+		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -331,7 +340,7 @@ func (a *TaskActions) GetByEntityFiltered(
 	args = append(args, limit+1)
 
 	query := fmt.Sprintf(`
-		SELECT task_id, status, entity_id, json, created_at, updated_at
+		SELECT task_id, status, entity_id, json, created_at, updated_at, version
 		FROM tasks
 		WHERE %s
 		ORDER BY updated_at DESC, task_id DESC
@@ -347,7 +356,7 @@ func (a *TaskActions) GetByEntityFiltered(
 	var tasks []*models.Task
 	for rows.Next() {
 		var t models.Task
-		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt, &t.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
 		tasks = append(tasks, &t)
@@ -424,22 +433,22 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		return a.Get(ctx, taskID)
 	}
 
-	// Begin transaction for atomic read-modify-write
-	tx, err := a.pool.Begin(ctx)
+	// Begin transaction for atomic read-modify-write.
+	tx, err := beginChangeTx(ctx, a.pool, "task update")
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Fetch existing task with row lock
 	var task models.Task
 	err = tx.QueryRow(ctx, `
-		SELECT task_id, status, entity_id, json, created_at, updated_at
+		SELECT task_id, status, entity_id, json, created_at, updated_at, version
 		FROM tasks WHERE task_id = $1
 		FOR UPDATE
 	`, taskID).Scan(
 		&task.TaskID, &task.Status, &task.EntityID,
-		&task.JSON, &task.CreatedAt, &task.UpdatedAt,
+		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -520,12 +529,15 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	}
 
 	err = tx.QueryRow(ctx, `
-		UPDATE tasks SET status = $1, entity_id = $2, json = $3, updated_at = CURRENT_TIMESTAMP
+		UPDATE tasks
+		SET status = $1, entity_id = $2, json = $3,
+			updated_at = clock_timestamp(),
+			version = nextval('atlas_change_version_seq')
 		WHERE task_id = $4
-		RETURNING task_id, status, entity_id, json, created_at, updated_at
+		RETURNING task_id, status, entity_id, json, created_at, updated_at, version
 	`, newStatus, newEntityID, jsonBytes, taskID).Scan(
 		&task.TaskID, &task.Status, &task.EntityID,
-		&task.JSON, &task.CreatedAt, &task.UpdatedAt,
+		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
 	)
 	if err != nil {
 		if newEntityID != nil {
@@ -561,9 +573,9 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 	}
 	taskID = SanitizeID(taskID)
 
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := beginChangeTx(ctx, a.pool, "task delete")
 	if err != nil {
-		return fmt.Errorf("failed to begin delete transaction: %w", err)
+		return err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)

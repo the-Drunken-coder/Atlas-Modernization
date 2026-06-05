@@ -1,14 +1,12 @@
 package actions
 
 import (
+	"fmt"
 	"strings"
-	"time"
 )
 
-const objectIfMatchTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
-
-func objectIfMatchETag(updatedAt time.Time) string {
-	return `"` + updatedAt.UTC().Format(objectIfMatchTimeLayout) + `"`
+func objectIfMatchETag(version int64) string {
+	return fmt.Sprintf(`"v%d"`, version)
 }
 
 // normalizeIfMatchToken trims space and a single layer of surrounding double-quotes
@@ -25,13 +23,13 @@ func isWeakIfMatchToken(s string) bool {
 	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "W/")
 }
 
-// ObjectIfMatchOK returns true when If-Match allows the request for the given updated_at.
-func ObjectIfMatchOK(ifMatch string, updatedAt time.Time) bool {
+// ObjectIfMatchOK returns true when If-Match allows the request for the given object version.
+func ObjectIfMatchOK(ifMatch string, version int64) bool {
 	ifMatch = strings.TrimSpace(ifMatch)
 	if ifMatch == "" || ifMatch == "*" {
 		return true
 	}
-	want := objectIfMatchETag(updatedAt)
+	want := objectIfMatchETag(version)
 	wantNorm := normalizeIfMatchToken(want)
 	for _, part := range strings.Split(ifMatch, ",") {
 		p := strings.TrimSpace(part)

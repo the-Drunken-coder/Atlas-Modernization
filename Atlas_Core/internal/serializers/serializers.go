@@ -2,7 +2,7 @@
 package serializers
 
 import (
-	"time"
+	"fmt"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
@@ -11,9 +11,8 @@ import (
 const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
 
 // ObjectStrongETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
-func ObjectStrongETag(updatedAt time.Time) string {
-	s := updatedAt.UTC().Format(APIMetadataTimeLayout)
-	return `"` + s + `"`
+func ObjectStrongETag(version int64) string {
+	return fmt.Sprintf(`"v%d"`, version)
 }
 
 // EntityResponse represents the serialized form of an Entity.
@@ -63,10 +62,11 @@ type ObjectListResponse struct {
 	Metadata    MetadataBlock `json:"metadata"`
 }
 
-// MetadataBlock contains timestamp metadata.
+// MetadataBlock contains storage metadata exposed on API resources.
 type MetadataBlock struct {
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+	Version   int64  `json:"version,omitempty"`
 }
 
 // SerializeEntity converts an Entity to its API response format.
@@ -90,6 +90,7 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 		Metadata: MetadataBlock{
 			CreatedAt: e.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: e.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+			Version:   e.Version,
 		},
 		Extra: entityExtra(data),
 	}
@@ -115,6 +116,7 @@ func SerializeTask(t *models.Task) *TaskResponse {
 		Metadata: MetadataBlock{
 			CreatedAt: t.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+			Version:   t.Version,
 		},
 		Extra: taskExtra(data),
 	}
@@ -143,6 +145,7 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+			Version:   o.Version,
 		},
 		Payload: objectPayload(data),
 	}
@@ -170,6 +173,7 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+			Version:   o.Version,
 		},
 	}
 }

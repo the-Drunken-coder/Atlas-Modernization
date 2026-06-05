@@ -15,6 +15,12 @@ type rowCursor struct {
 	UB string `json:"ub,omitempty"` // upper bound snapshot time (RFC3339Nano UTC)
 }
 
+type versionCursor struct {
+	V  int64  `json:"v"`
+	ID string `json:"id"`
+	UV int64  `json:"uv,omitempty"` // upper bound snapshot version
+}
+
 // encodeRowCursor returns a URL-safe opaque string for (t, id) using descending sort
 // (created_at/updated_at/deleted_at, resource id). When upperBound is non-zero it is
 // embedded so later pages cap rows to the same snapshot.
@@ -51,11 +57,6 @@ func parseRFC3339WithNanoOrFallback(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// parseDeletedAtCursor parses tombstone timestamps (RFC3339 or RFC3339Nano).
-func parseDeletedAtCursor(s string) (time.Time, error) {
-	return parseRFC3339WithNanoOrFallback(s)
-}
-
 // decodeRowCursor parses encodeRowCursor output. upperBound is zero when absent (legacy cursors).
 func decodeRowCursor(s string) (time.Time, string, time.Time, error) {
 	if s == "" {
@@ -84,4 +85,49 @@ func decodeRowCursor(s string) (time.Time, string, time.Time, error) {
 		}
 	}
 	return tt, p.ID, upperBound, nil
+}
+
+func encodeVersionCursor(version int64, id string, upperBound int64) (string, error) {
+	if version <= 0 {
+		return "", fmt.Errorf("marshal version cursor: version must be positive")
+	}
+	if id == "" {
+		return "", fmt.Errorf("marshal version cursor: empty id")
+	}
+	p := versionCursor{
+		V:  version,
+		ID: id,
+	}
+	if upperBound > 0 {
+		p.UV = upperBound
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("marshal version cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func decodeVersionCursor(s string) (int64, string, int64, error) {
+	if s == "" {
+		return 0, "", 0, fmt.Errorf("empty cursor")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return 0, "", 0, fmt.Errorf("decode cursor: %w", err)
+	}
+	var p versionCursor
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return 0, "", 0, fmt.Errorf("parse cursor json: %w", err)
+	}
+	if p.ID == "" {
+		return 0, "", 0, fmt.Errorf("cursor missing id")
+	}
+	if p.V <= 0 {
+		return 0, "", 0, fmt.Errorf("cursor version must be positive")
+	}
+	if p.UV < 0 {
+		return 0, "", 0, fmt.Errorf("cursor upper bound version must not be negative")
+	}
+	return p.V, p.ID, p.UV, nil
 }
