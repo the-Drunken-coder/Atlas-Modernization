@@ -92,9 +92,15 @@ type parsedQueryCursor struct {
 }
 
 type parsedVersionCursor struct {
-	version    int64
-	id         string
-	upperBound int64
+	version      int64
+	id           string
+	upperBound   int64
+	sinceVersion int64
+}
+
+type labeledVersionCursor struct {
+	label  string
+	cursor *parsedVersionCursor
 }
 
 func parseQueryCursor(raw, label string) (*parsedQueryCursor, error) {
@@ -116,14 +122,15 @@ func parseVersionQueryCursor(raw, label string) (*parsedVersionCursor, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	version, id, upperBound, err := decodeVersionCursor(raw)
+	version, id, upperBound, sinceVersion, err := decodeVersionCursor(raw)
 	if err != nil {
 		return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{fmt.Sprintf("invalid %s: %v", label, err)})
 	}
 	return &parsedVersionCursor{
-		version:    version,
-		id:         id,
-		upperBound: upperBound,
+		version:      version,
+		id:           id,
+		upperBound:   upperBound,
+		sinceVersion: sinceVersion,
 	}, nil
 }
 
@@ -194,6 +201,21 @@ func continuationVersionUpperBound(currentSnapshot int64, cursors ...*parsedVers
 		return currentSnapshot, true, nil
 	}
 	return clampVersionCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
+}
+
+func validateVersionCursorsSinceVersion(sinceVersion int64, cursors ...labeledVersionCursor) error {
+	for _, item := range cursors {
+		if item.cursor == nil {
+			continue
+		}
+		if item.cursor.sinceVersion != sinceVersion {
+			return NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{fmt.Sprintf("%s was created for since_version %d, got %d", item.label, item.cursor.sinceVersion, sinceVersion)},
+			)
+		}
+	}
+	return nil
 }
 
 func effectiveVersionCursorUpperBound(cursor *parsedVersionCursor, snapshotUpperBound int64) int64 {

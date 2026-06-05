@@ -207,6 +207,17 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	if err != nil {
 		return nil, err
 	}
+	if err := validateVersionCursorsSinceVersion(
+		sinceVersion,
+		labeledVersionCursor{label: "entity_cursor", cursor: entCur},
+		labeledVersionCursor{label: "task_cursor", cursor: taskCur},
+		labeledVersionCursor{label: "object_cursor", cursor: objCur},
+		labeledVersionCursor{label: "deleted_entity_cursor", cursor: delEntCur},
+		labeledVersionCursor{label: "deleted_task_cursor", cursor: delTaskCur},
+		labeledVersionCursor{label: "deleted_object_cursor", cursor: delObjCur},
+	); err != nil {
+		return nil, err
+	}
 	snapshotUpperVersion, continuation, err := continuationVersionUpperBound(snapshotVersion, entCur, taskCur, objCur, delEntCur, delTaskCur, delObjCur)
 	if err != nil {
 		return nil, err
@@ -268,7 +279,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	if hasMoreEnt && len(entities) > 0 {
 		last := entities[len(entities)-1]
-		cur, err := encodeVersionCursor(last.Version, last.EntityID, snapshotUpperVersion)
+		cur, err := encodeVersionCursor(last.Version, last.EntityID, snapshotUpperVersion, sinceVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode entity cursor: %w", err)
 		}
@@ -276,7 +287,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	if hasMoreTasks && len(tasks) > 0 {
 		last := tasks[len(tasks)-1]
-		cur, err := encodeVersionCursor(last.Version, last.TaskID, snapshotUpperVersion)
+		cur, err := encodeVersionCursor(last.Version, last.TaskID, snapshotUpperVersion, sinceVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode task cursor: %w", err)
 		}
@@ -284,7 +295,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	if hasMoreObj && len(objects) > 0 {
 		last := objects[len(objects)-1]
-		cur, err := encodeVersionCursor(last.Version, last.ObjectID, snapshotUpperVersion)
+		cur, err := encodeVersionCursor(last.Version, last.ObjectID, snapshotUpperVersion, sinceVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode object cursor: %w", err)
 		}
@@ -292,7 +303,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	if moreDE && len(deletedEntities) > 0 {
 		last := deletedEntities[len(deletedEntities)-1]
-		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, "next_deleted_entity_cursor")
+		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_entity_cursor")
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +311,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	if moreDT && len(deletedTasks) > 0 {
 		last := deletedTasks[len(deletedTasks)-1]
-		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, "next_deleted_task_cursor")
+		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_task_cursor")
 		if err != nil {
 			return nil, err
 		}
@@ -308,7 +319,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	if moreDO && len(deletedObjects) > 0 {
 		last := deletedObjects[len(deletedObjects)-1]
-		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, "next_deleted_object_cursor")
+		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_object_cursor")
 		if err != nil {
 			return nil, err
 		}
@@ -333,8 +344,8 @@ func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
 	return version, nil
 }
 
-func encodeDeletedCursor(resource DeletedResource, snapshotUpperVersion int64, cursorField string) (string, error) {
-	cursor, err := encodeVersionCursor(resource.Version, resource.ID, snapshotUpperVersion)
+func encodeDeletedCursor(resource DeletedResource, snapshotUpperVersion, sinceVersion int64, cursorField string) (string, error) {
+	cursor, err := encodeVersionCursor(resource.Version, resource.ID, snapshotUpperVersion, sinceVersion)
 	if err != nil {
 		return "", fmt.Errorf("build %s: %w", cursorField, err)
 	}
