@@ -117,7 +117,6 @@ def create_task(
 def create_object(
     object_id: str,
     path: Optional[str] = None,
-    bucket: str = "atlas-media",
     content_type: Optional[str] = None,
     object_type: Optional[str] = None,
     size_bytes: Optional[int] = None,
@@ -130,8 +129,6 @@ def create_object(
     }
     if path:
         payload["path"] = path
-    if bucket:
-        payload["bucket"] = bucket
     if content_type:
         payload["content_type"] = content_type
     if object_type:
@@ -517,7 +514,6 @@ def main():
         {
             "object_id": f"OBJ-{timestamp}-001",
             "path": f"images/drone_mission_{timestamp}.jpg",
-            "bucket": "atlas-media",
             "content_type": "image/jpeg",
             "object_type": "image",
             "size_bytes": 245760,
@@ -526,7 +522,6 @@ def main():
         {
             "object_id": f"OBJ-{timestamp}-002",
             "path": f"data/rover_telemetry_{timestamp}.json",
-            "bucket": "atlas-media",
             "content_type": "application/json",
             "object_type": "telemetry",
             "size_bytes": 1024,
@@ -535,7 +530,6 @@ def main():
         {
             "object_id": f"OBJ-{timestamp}-003",
             "path": f"videos/security_feed_{timestamp}.mp4",
-            "bucket": "atlas-media",
             "content_type": "video/mp4",
             "object_type": "video",
             "size_bytes": 15728640,
@@ -544,7 +538,6 @@ def main():
         {
             "object_id": f"OBJ-{timestamp}-004",
             "path": f"maps/nyc_mission_area_{timestamp}.geojson",
-            "bucket": "atlas-media",
             "content_type": "application/geo+json",
             "object_type": "geospatial",
             "size_bytes": 5120,
