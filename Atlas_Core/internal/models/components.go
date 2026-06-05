@@ -167,6 +167,21 @@ func taskExtraField(extra map[string]interface{}, key string) (interface{}, bool
 	return nil, false
 }
 
+func float64FromJSONNumber(value interface{}) (*float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return &typed, true
+	case json.Number:
+		f, err := typed.Float64()
+		if err != nil {
+			return nil, false
+		}
+		return &f, true
+	default:
+		return nil, false
+	}
+}
+
 // GetResult returns the result from the task's extra fields.
 // Returns nil if the result is missing or has an invalid format.
 func (t *Task) GetResult() *TaskResult {
@@ -238,10 +253,10 @@ func (t *Task) GetProgress() *float64 {
 		return nil
 	}
 
-	progress, ok := progressData.(float64)
+	progress, ok := float64FromJSONNumber(progressData)
 	if !ok {
 		return nil
 	}
 
-	return &progress
+	return progress
 }

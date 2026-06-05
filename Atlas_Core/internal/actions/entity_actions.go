@@ -609,6 +609,10 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
+	if _, err := tx.Exec(ctx, "UPDATE tasks SET updated_at = CURRENT_TIMESTAMP WHERE entity_id = $1", entityID); err != nil {
+		return fmt.Errorf("failed to mark entity tasks changed before deletion: %w", err)
+	}
+
 	result, err := tx.Exec(ctx, "DELETE FROM entities WHERE entity_id = $1", entityID)
 	if err != nil {
 		return fmt.Errorf("failed to delete entity: %w", err)

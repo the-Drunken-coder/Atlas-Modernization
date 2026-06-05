@@ -22,7 +22,11 @@ func (h *Handler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	// Check database health
 	dbStatus := "healthy"
 	dbMessage := ""
-	if err := h.db.Ping(ctx); err != nil {
+	if h.db == nil || h.db.Pool == nil {
+		dbStatus = "unhealthy"
+		h.logger.Warn().Msg("health check: database not configured")
+		dbMessage = "database not configured"
+	} else if err := h.db.Ping(ctx); err != nil {
 		dbStatus = "unhealthy"
 		h.logger.Warn().Err(err).Msg("health check: database ping failed")
 		dbMessage = "database error"
@@ -55,7 +59,7 @@ func (h *Handler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	if dbStatus == "unhealthy" || storageStatus == "unhealthy" {
 		overallStatus = "unhealthy"
 		httpStatus = http.StatusServiceUnavailable
-	} else if dbStatus == "degraded" || storageStatus == "degraded" || storageStatus == "unconfigured" {
+	} else if storageStatus == "degraded" || storageStatus == "unconfigured" {
 		overallStatus = "degraded"
 	}
 

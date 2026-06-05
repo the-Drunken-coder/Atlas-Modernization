@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -128,6 +130,23 @@ func normalizeOptionalObjectString(value *string) *string {
 	return &trimmed
 }
 
+func decodeObjectJSONForPatch(raw json.RawMessage) (map[string]interface{}, error) {
+	if raw == nil {
+		return make(map[string]interface{}), nil
+	}
+
+	var data map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := jsondecode.Decode(decoder, &data); err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return make(map[string]interface{}), nil
+	}
+	return data, nil
+}
+
 // Get retrieves an object by ID.
 func (a *ObjectActions) Get(ctx context.Context, objectID string) (*models.MediaObject, error) {
 	if err := ValidateObjectID(objectID); err != nil {
@@ -213,7 +232,7 @@ type UpdateObjectParams struct {
 	UsageHints   []string
 	ReferencedBy []map[string]interface{}
 	Extra        map[string]interface{}
-	IfMatch      *string // optional If-Match (weak ETag from GET /objects/{id})
+	IfMatch      *string // optional If-Match (strong ETag from GET /objects/{id})
 }
 
 // Update updates an object.
@@ -264,16 +283,9 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	// Parse existing JSON
-	var existingJSON map[string]interface{}
-	if obj.JSON != nil {
-		if err := json.Unmarshal(obj.JSON, &existingJSON); err != nil {
-			return nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
-		}
-		if existingJSON == nil {
-			existingJSON = make(map[string]interface{})
-		}
-	} else {
-		existingJSON = make(map[string]interface{})
+	existingJSON, err := decodeObjectJSONForPatch(obj.JSON)
+	if err != nil {
+		return nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
 	}
 
 	// Update columns if provided
@@ -561,7 +573,12 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit upload metadata transaction: %w", err)
+		return nil, a.cleanupUploadedPathAfterFailure(
+			ctx,
+			objectID,
+			objectPath,
+			fmt.Errorf("failed to commit upload metadata transaction: %w", err),
+		)
 	}
 
 	if oldPath != nil && strings.TrimSpace(*oldPath) != "" && *oldPath != objectPath {

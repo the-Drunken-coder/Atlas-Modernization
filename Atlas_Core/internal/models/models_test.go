@@ -360,6 +360,39 @@ func TestEntityDecodedJSONInvalidatesWhenJSONChanges(t *testing.T) {
 	}
 }
 
+func TestEntityDecodedJSONRejectsTrailingData(t *testing.T) {
+	entity := &models.Entity{
+		EntityID: "entity-trailing",
+		Type:     "asset",
+		JSON:     json.RawMessage(`{"components":{}}{"unexpected":true}`),
+	}
+
+	if got := entity.DecodedJSON(); got != nil {
+		t.Fatalf("expected nil for entity JSON with trailing data, got %#v", got)
+	}
+}
+
+func TestEntityDecodedJSONPreservesNumbers(t *testing.T) {
+	entity := &models.Entity{
+		EntityID: "entity-number",
+		Type:     "asset",
+		JSON:     json.RawMessage(`{"large":9007199254740993}`),
+	}
+
+	data := entity.DecodedJSON()
+	large, ok := data["large"].(json.Number)
+	if !ok {
+		t.Fatalf("large type = %T, want json.Number", data["large"])
+	}
+	got, err := large.Int64()
+	if err != nil {
+		t.Fatalf("large Int64: %v", err)
+	}
+	if got != 9007199254740993 {
+		t.Fatalf("large = %d, want exact large integer", got)
+	}
+}
+
 func TestTaskDecodedJSONInvalidatesWhenJSONChanges(t *testing.T) {
 	task := &models.Task{
 		TaskID: "task-cache",
@@ -376,6 +409,18 @@ func TestTaskDecodedJSONInvalidatesWhenJSONChanges(t *testing.T) {
 	second := task.GetExtra()
 	if second["priority"] != "high" {
 		t.Fatalf("expected updated priority after JSON reassignment, got %#v", second)
+	}
+}
+
+func TestTaskDecodedJSONRejectsTrailingData(t *testing.T) {
+	task := &models.Task{
+		TaskID: "task-trailing",
+		Status: "pending",
+		JSON:   json.RawMessage(`{"priority":"low"}{"unexpected":true}`),
+	}
+
+	if got := task.DecodedJSON(); got != nil {
+		t.Fatalf("expected nil for task JSON with trailing data, got %#v", got)
 	}
 }
 

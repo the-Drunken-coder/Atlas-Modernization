@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 )
 
 // TestHealthEndpoint tests the /health endpoint
@@ -681,7 +680,7 @@ func TestEntityNotFound(t *testing.T) {
 	client := NewAPIClient()
 	ctx := context.Background()
 
-	resp, err := client.Get(ctx, "/entities/non-existent-entity-"+time.Now().Format("20060102150405"))
+	resp, err := client.Get(ctx, "/entities/non-existent-entity-"+TestArtifactPrefix())
 	if err != nil {
 		t.Fatalf("Failed to call API: %v", err)
 	}

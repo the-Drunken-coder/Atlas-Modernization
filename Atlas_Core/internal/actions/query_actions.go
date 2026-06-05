@@ -220,7 +220,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, since time.Time,
 	// after it gets re-offered on a later poll (bounded duplicate) rather than being
 	// permanently skipped once `since` advances past it.
 	watermark := snapshotUpperBound.Add(-a.changedSinceSafetyLag)
-	responseTimestamp := watermark.UTC().Format(time.RFC3339)
+	responseTimestamp := watermark.UTC().Format(time.RFC3339Nano)
 
 	var entities []*models.Entity
 	var hasMoreEnt bool

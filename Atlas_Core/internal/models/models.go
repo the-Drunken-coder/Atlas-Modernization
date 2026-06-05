@@ -6,9 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	"sync"
 	"time"
@@ -22,6 +20,7 @@ import (
 	// conditions. See cmd/atlas_core/main.go for the primary logging
 	// configuration.
 	"github.com/rs/zerolog/log"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 )
 
 // jsonLogMeta returns non-sensitive metadata for logs (length + short hash).
@@ -57,6 +56,16 @@ func deepCopyMap(src map[string]interface{}) map[string]interface{} {
 		out[k] = deepCopyValue(v)
 	}
 	return out
+}
+
+func decodeStoredJSON(raw []byte) (map[string]interface{}, error) {
+	var data map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := jsondecode.Decode(decoder, &data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // Entity represents an entity in the system (asset, track, geofeature, etc.).
@@ -96,8 +105,8 @@ func (e *Entity) decodedJSON() map[string]interface{} {
 		return nil
 	}
 
-	var data map[string]interface{}
-	if err := json.Unmarshal(e.JSON, &data); err != nil {
+	data, err := decodeStoredJSON(e.JSON)
+	if err != nil {
 		e.jsonErr = err
 		e.jsonInit = true
 		log.Error().
@@ -184,8 +193,8 @@ func (t *Task) decodedJSON() map[string]interface{} {
 		return nil
 	}
 
-	var data map[string]interface{}
-	if err := json.Unmarshal(t.JSON, &data); err != nil {
+	data, err := decodeStoredJSON(t.JSON)
+	if err != nil {
 		t.jsonErr = err
 		t.jsonInit = true
 		log.Error().
@@ -273,41 +282,12 @@ func (o *MediaObject) decodedJSON() map[string]interface{} {
 		return nil
 	}
 
-	// UseNumber keeps numeric values as json.Number instead of float64 so large
-	// integer fields such as size_bytes round-trip exactly above 2^53. See
-	// GetSizeBytes and docs/problems/2026-05-29-size-bytes-precision-loss.md.
-	var data map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(o.JSON))
-	decoder.UseNumber()
-	if err := decoder.Decode(&data); err != nil {
+	data, err := decodeStoredJSON(o.JSON)
+	if err != nil {
 		o.jsonErr = err
 		o.jsonInit = true
 		log.Error().
 			Err(err).
-			Str("object_id", o.ObjectID).
-			Str("json_meta", jsonLogMeta(o.JSON, o.ObjectID)).
-			Msg("Failed to unmarshal media object JSON - database corruption suspected")
-		return nil
-	}
-	// Reject trailing data after the top-level value. decoder.More() only reports
-	// whether another array/object element exists, not stray bytes after a single
-	// top-level object, so probe with a second Decode expecting EOF.
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != nil && !errors.Is(err, io.EOF) {
-		o.jsonErr = fmt.Errorf("unexpected trailing data after media object JSON: %w", err)
-		o.jsonInit = true
-		log.Error().
-			Err(o.jsonErr).
-			Str("object_id", o.ObjectID).
-			Str("json_meta", jsonLogMeta(o.JSON, o.ObjectID)).
-			Msg("Failed to unmarshal media object JSON - database corruption suspected")
-		return nil
-	}
-	if len(bytes.TrimSpace(trailing)) > 0 {
-		o.jsonErr = fmt.Errorf("unexpected trailing data after media object JSON")
-		o.jsonInit = true
-		log.Error().
-			Err(o.jsonErr).
 			Str("object_id", o.ObjectID).
 			Str("json_meta", jsonLogMeta(o.JSON, o.ObjectID)).
 			Msg("Failed to unmarshal media object JSON - database corruption suspected")

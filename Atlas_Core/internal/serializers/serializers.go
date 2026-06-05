@@ -2,8 +2,6 @@
 package serializers
 
 import (
-	"encoding/json"
-	"math"
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -138,7 +136,7 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 		Path:         o.Path,
 		ContentType:  o.ContentType,
 		Type:         o.Type,
-		SizeBytes:    objectSizeBytes(data),
+		SizeBytes:    o.GetSizeBytes(),
 		UsageHints:   usageHints,
 		ReferencedBy: objectReferencedBy(data),
 		Bucket:       objectBucket(data),
@@ -166,7 +164,7 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 		Path:        o.Path,
 		ContentType: o.ContentType,
 		Type:        o.Type,
-		SizeBytes:   objectSizeBytes(data),
+		SizeBytes:   o.GetSizeBytes(),
 		UsageHints:  usageHints,
 		Bucket:      objectBucket(data),
 		Metadata: MetadataBlock{
@@ -221,37 +219,6 @@ func extraWithout(data map[string]interface{}, excluded map[string]struct{}) map
 		return nil
 	}
 	return extra
-}
-
-func objectSizeBytes(data map[string]interface{}) *int64 {
-	if data == nil {
-		return nil
-	}
-	size, ok := data["size_bytes"].(json.Number)
-	if !ok {
-		return nil
-	}
-	i, err := size.Int64()
-	if err == nil {
-		if i < 0 {
-			return nil
-		}
-		return &i
-	}
-	f, err := size.Float64()
-	if err != nil {
-		return nil
-	}
-	intpart, frac := math.Modf(f)
-	if frac != 0 {
-		return nil
-	}
-	const maxInt64Plus1 = float64(uint64(1) << 63)
-	if intpart < 0 || intpart >= maxInt64Plus1 {
-		return nil
-	}
-	s := int64(intpart)
-	return &s
 }
 
 func objectUsageHints(data map[string]interface{}) []string {

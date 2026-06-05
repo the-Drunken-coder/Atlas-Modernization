@@ -192,6 +192,26 @@ func TestSerializeObject(t *testing.T) {
 	}
 }
 
+func TestSerializeObjectUsesModelSizeParsing(t *testing.T) {
+	now := time.Now().UTC()
+	obj := &models.MediaObject{
+		ObjectID:  "obj-large",
+		JSON:      json.RawMessage(`{"size_bytes":9007199254740993}`),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	detail := serializers.SerializeObject(obj)
+	if detail.SizeBytes == nil || *detail.SizeBytes != 9007199254740993 {
+		t.Fatalf("detail size_bytes = %v, want exact large integer", detail.SizeBytes)
+	}
+
+	list := serializers.SerializeObjectForList(obj)
+	if list.SizeBytes == nil || *list.SizeBytes != 9007199254740993 {
+		t.Fatalf("list size_bytes = %v, want exact large integer", list.SizeBytes)
+	}
+}
+
 func TestSerializeNil(t *testing.T) {
 	if serializers.SerializeEntity(nil) != nil {
 		t.Error("Expected nil for nil entity")
