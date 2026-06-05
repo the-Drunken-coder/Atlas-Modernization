@@ -51,16 +51,7 @@ type Config struct {
 	MaxUploadSizeMB int64 // Maximum file upload size in megabytes
 	MaxViewSizeMB   int64 // Maximum file size for inline viewing in megabytes
 
-	// ChangedSinceSafetyLagMS lags the watermark returned by /queries/changed-since
-	// behind the read snapshot. It must exceed the longest gap between a writer
-	// stamping updated_at and that write becoming visible (commit), so the
-	// incremental sync stream cannot skip a row whose commit lands after a
-	// poller's snapshot. See docs/problems/2026-05-29-changed-since-lost-update.md.
-	ChangedSinceSafetyLagMS int
 }
-
-// MaxChangedSinceSafetyLagMS caps the configured safety lag to a sane upper bound.
-const MaxChangedSinceSafetyLagMS = 60000
 
 // SettingsFile represents the atlas_core.settings.json file structure.
 type SettingsFile struct {
@@ -161,17 +152,6 @@ func Load() (*Config, error) {
 	if maxViewMB < 0 {
 		return nil, fmt.Errorf("invalid MAX_VIEW_SIZE_MB: %d", maxViewMB)
 	}
-	changedSinceLagMS, err := getEnvInt("CHANGED_SINCE_SAFETY_LAG_MS", 2000)
-	if err != nil {
-		return nil, err
-	}
-	if changedSinceLagMS < 0 {
-		return nil, fmt.Errorf("invalid CHANGED_SINCE_SAFETY_LAG_MS: %d", changedSinceLagMS)
-	}
-	if changedSinceLagMS > MaxChangedSinceSafetyLagMS {
-		changedSinceLagMS = MaxChangedSinceSafetyLagMS
-	}
-
 	cfg := &Config{
 		ServerPort:                getEnv("SERVER_PORT", "8000"),
 		Debug:                     debug,
@@ -203,8 +183,6 @@ func Load() (*Config, error) {
 
 		MaxUploadSizeMB: maxUploadMB,
 		MaxViewSizeMB:   maxViewMB,
-
-		ChangedSinceSafetyLagMS: changedSinceLagMS,
 	}
 
 	// Load settings file if it exists

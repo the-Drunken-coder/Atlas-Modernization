@@ -119,7 +119,6 @@ Key environment variables:
 - `API_AUTH_KEY` (required when auth enabled; required and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`)
 - `MAX_VIEW_SIZE_MB` (default `10`)
-- `CHANGED_SINCE_SAFETY_LAG_MS` (default `2000`, max `60000`)
 
 ## API Surface
 
@@ -169,9 +168,9 @@ Key environment variables:
 ### Queries
 
 - `GET /queries/full`
-- `GET /queries/changed-since?since=<RFC3339>`
+- `GET /queries/changed-since?since_version=<version>`
 
-Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. See `docs/PAGINATION.md`.
+Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. `changed-since` returns a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
 
 ### Check-in query params
 

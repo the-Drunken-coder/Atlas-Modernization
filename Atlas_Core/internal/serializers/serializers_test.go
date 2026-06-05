@@ -22,6 +22,7 @@ func TestSerializeEntity(t *testing.T) {
 			},
 		},
 		"extra_field": "extra_value",
+		"version":     999,
 	}
 	jsonBytes, _ := json.Marshal(jsonData)
 
@@ -33,6 +34,7 @@ func TestSerializeEntity(t *testing.T) {
 		JSON:      jsonBytes,
 		CreatedAt: now,
 		UpdatedAt: now,
+		Version:   77,
 	}
 
 	result := serializers.SerializeEntity(entity)
@@ -61,8 +63,14 @@ func TestSerializeEntity(t *testing.T) {
 	if result.Extra == nil {
 		t.Error("Expected Extra to be set")
 	}
+	if result.Extra["version"] != nil {
+		t.Error("Expected blob version to be excluded from Extra")
+	}
 	if result.Metadata.CreatedAt == "" {
 		t.Error("Expected CreatedAt to be set")
+	}
+	if result.Metadata.Version != 77 {
+		t.Errorf("Expected metadata version 77, got %d", result.Metadata.Version)
 	}
 }
 
@@ -97,6 +105,8 @@ func TestSerializeTask(t *testing.T) {
 				"type": "move_to",
 			},
 		},
+		"priority": "high",
+		"version":  999,
 	}
 	jsonBytes, _ := json.Marshal(jsonData)
 
@@ -107,6 +117,7 @@ func TestSerializeTask(t *testing.T) {
 		JSON:      jsonBytes,
 		CreatedAt: now,
 		UpdatedAt: now,
+		Version:   88,
 	}
 
 	result := serializers.SerializeTask(task)
@@ -126,6 +137,15 @@ func TestSerializeTask(t *testing.T) {
 	if result.Components == nil {
 		t.Error("Expected Components to be set")
 	}
+	if result.Extra == nil || result.Extra["priority"] != "high" {
+		t.Errorf("Expected Extra priority high, got %#v", result.Extra)
+	}
+	if result.Extra["version"] != nil {
+		t.Error("Expected blob version to be excluded from Extra")
+	}
+	if result.Metadata.Version != 88 {
+		t.Errorf("Expected metadata version 88, got %d", result.Metadata.Version)
+	}
 }
 
 func TestSerializeObject(t *testing.T) {
@@ -142,6 +162,8 @@ func TestSerializeObject(t *testing.T) {
 			map[string]interface{}{"entity_id": "entity-1"},
 			map[string]interface{}{"task_id": "task-1"},
 		},
+		"custom":  "value",
+		"version": 999,
 	}
 	jsonBytes, _ := json.Marshal(jsonData)
 
@@ -153,6 +175,7 @@ func TestSerializeObject(t *testing.T) {
 		JSON:        jsonBytes,
 		CreatedAt:   now,
 		UpdatedAt:   now,
+		Version:     99,
 	}
 
 	result := serializers.SerializeObject(obj)
@@ -189,6 +212,15 @@ func TestSerializeObject(t *testing.T) {
 	}
 	if result.ReferencedBy[1]["task_id"] != "task-1" {
 		t.Errorf("Expected second referenced_by task_id task-1, got %v", result.ReferencedBy[1]["task_id"])
+	}
+	if result.Payload == nil || result.Payload["custom"] != "value" {
+		t.Errorf("Expected Payload custom value, got %#v", result.Payload)
+	}
+	if result.Payload["version"] != nil {
+		t.Error("Expected blob version to be excluded from Payload")
+	}
+	if result.Metadata.Version != 99 {
+		t.Errorf("Expected metadata version 99, got %d", result.Metadata.Version)
 	}
 }
 

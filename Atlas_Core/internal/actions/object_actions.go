@@ -72,7 +72,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	}
 	if params.Extra != nil {
 		for k, v := range params.Extra {
-			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" {
+			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" && k != "version" {
 				jsonData[k] = v
 			}
 		}
@@ -87,14 +87,20 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	tx, err := beginChangeTx(ctx, a.pool, "object create")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var obj models.MediaObject
-	err = a.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO objects (object_id, path, content_type, type, json)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING object_id, path, content_type, type, json, created_at, updated_at
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
 	`, objectID, params.Path, params.ContentType, normalizedType, jsonBytes).Scan(
 		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt,
+		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -111,6 +117,9 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 			}
 		}
 		return nil, fmt.Errorf("failed to create object: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit object create transaction: %w", err)
 	}
 
 	return &obj, nil
@@ -153,11 +162,11 @@ func (a *ObjectActions) Get(ctx context.Context, objectID string) (*models.Media
 
 	var obj models.MediaObject
 	err := a.pool.QueryRow(ctx, `
-		SELECT object_id, path, content_type, type, json, created_at, updated_at
+		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects WHERE object_id = $1
 	`, objectID).Scan(
 		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt,
+		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -244,28 +253,28 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		if err != nil {
 			return nil, err
 		}
-		if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.UpdatedAt) {
+		if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.Version) {
 			return nil, NewObjectPreconditionFailedError()
 		}
 		return obj, nil
 	}
 
-	// Begin transaction for atomic read-modify-write
-	tx, err := a.pool.Begin(ctx)
+	// Begin transaction for atomic read-modify-write.
+	tx, err := beginChangeTx(ctx, a.pool, "object update")
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Fetch existing object with row lock
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
-		SELECT object_id, path, content_type, type, json, created_at, updated_at
+		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects WHERE object_id = $1
 		FOR UPDATE
 	`, objectID).Scan(
 		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
-		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt,
+		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -274,7 +283,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.UpdatedAt) {
+	if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.Version) {
 		return nil, NewObjectPreconditionFailedError()
 	}
 
@@ -317,7 +326,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 	if params.Extra != nil {
 		for k, v := range params.Extra {
-			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" {
+			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" && k != "version" {
 				existingJSON[k] = v
 			}
 		}
@@ -334,12 +343,15 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 
 	var out models.MediaObject
 	err = tx.QueryRow(ctx, `
-		UPDATE objects SET path = $1, content_type = $2, type = $3, json = $4, updated_at = CURRENT_TIMESTAMP
+		UPDATE objects
+		SET path = $1, content_type = $2, type = $3, json = $4,
+			updated_at = clock_timestamp(),
+			version = nextval('atlas_change_version_seq')
 		WHERE object_id = $5
-		RETURNING object_id, path, content_type, type, json, created_at, updated_at
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
 	`, newPath, newContentType, newType, jsonBytes, objectID).Scan(
 		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
-		&out.JSON, &out.CreatedAt, &out.UpdatedAt,
+		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -444,6 +456,11 @@ func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, opera
 		return nil, fmt.Errorf("failed to begin %s transaction: %w", operation, err)
 	}
 
+	if err := lockChangeVersion(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("failed to lock %s change version: %w", operation, err)
+	}
+
 	lockKey := objectUploadLockKey(objectID)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
 		_ = tx.Rollback(ctx)
@@ -531,11 +548,12 @@ func upsertUploadedObjectMetadata(
 			content_type = EXCLUDED.content_type,
 			type = EXCLUDED.type,
 			json = EXCLUDED.json,
-			updated_at = CURRENT_TIMESTAMP
-		RETURNING object_id, path, content_type, type, json, created_at, updated_at
+			updated_at = clock_timestamp(),
+			version = nextval('atlas_change_version_seq')
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
 	`, objectID, objectPath, contentType, objType, jsonBytes).Scan(
 		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
-		&out.JSON, &out.CreatedAt, &out.UpdatedAt,
+		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -743,7 +761,7 @@ func (a *ObjectActions) getObjectsByJSONReference(
 	limitPos := len(args) + 1
 	args = append(args, limit+1)
 	query := fmt.Sprintf(`
-		SELECT object_id, path, content_type, type, json, created_at, updated_at
+		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
 		FROM objects
 		WHERE %s
 		ORDER BY created_at DESC, object_id DESC
@@ -759,7 +777,7 @@ func (a *ObjectActions) getObjectsByJSONReference(
 	var objects []*models.MediaObject
 	for rows.Next() {
 		var o models.MediaObject
-		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt, &o.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan object: %w", err)
 		}
 		objects = append(objects, &o)

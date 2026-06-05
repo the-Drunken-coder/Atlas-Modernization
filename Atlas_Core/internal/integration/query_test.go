@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestQueryFullDataset tests the /queries/full endpoint
@@ -110,9 +109,6 @@ func TestQueryChangedSince(t *testing.T) {
 	ctx := context.Background()
 	prefix := TestArtifactPrefix()
 
-	// Wide look-back avoids host/API clock skew missing the new row.
-	sinceTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-
 	// Create some test data
 	entityID := fmt.Sprintf("%s-changed-since-entity", prefix)
 	entityPayload := map[string]interface{}{
@@ -131,7 +127,7 @@ func TestQueryChangedSince(t *testing.T) {
 	}
 
 	// Query changed since
-	resp, err = client.Get(ctx, "/queries/changed-since?since="+sinceTime)
+	resp, err = client.Get(ctx, "/queries/changed-since?since_version=0")
 	if err != nil {
 		t.Fatalf("Failed to query changed-since: %v", err)
 	}
@@ -159,6 +155,9 @@ func TestQueryChangedSince(t *testing.T) {
 	if result["timestamp"] == nil {
 		t.Error("Expected 'timestamp' in response")
 	}
+	if result["version"] == nil {
+		t.Error("Expected 'version' in response")
+	}
 
 	entities, ok := result["entities"].([]interface{})
 	if !ok {
@@ -174,7 +173,7 @@ func TestQueryChangedSince(t *testing.T) {
 		t.Fatalf("expected entity_id %s in /queries/changed-since entities", entityID)
 	}
 
-	t.Logf("Changed-since query returned: %d entities changed since %s", len(entities), sinceTime)
+	t.Logf("Changed-since query returned: %d entities changed after version 0", len(entities))
 	t.Logf("Entity %s left as artifact", entityID)
 }
 
@@ -214,10 +213,7 @@ func TestQueryChangedSinceIncludesTasksAffectedByDeletedEntity(t *testing.T) {
 	if !ok {
 		t.Fatalf("created task missing metadata: %#v", createdTask)
 	}
-	sinceTime, ok := metadata["updated_at"].(string)
-	if !ok || sinceTime == "" {
-		t.Fatalf("created task missing metadata.updated_at: %#v", metadata)
-	}
+	sinceVersion := mustVersionFromMetadata(t, metadata)
 
 	resp, err = client.Delete(ctx, "/entities/"+entityID)
 	if err != nil {
@@ -227,7 +223,7 @@ func TestQueryChangedSinceIncludesTasksAffectedByDeletedEntity(t *testing.T) {
 	drainClose(resp)
 
 	q := url.Values{}
-	q.Set("since", sinceTime)
+	q.Set("since_version", fmt.Sprintf("%d", sinceVersion))
 	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
 	if err != nil {
 		t.Fatalf("Failed to query changed-since after entity delete: %v", err)
@@ -297,14 +293,14 @@ func TestQueryChangedSinceMissingParam(t *testing.T) {
 	}
 }
 
-// TestQueryChangedSinceInvalidFormat tests error handling for invalid timestamp
+// TestQueryChangedSinceInvalidFormat tests error handling for invalid version
 func TestQueryChangedSinceInvalidFormat(t *testing.T) {
 	SkipIfSystemNotAvailable(t)
 
 	client := NewAPIClient()
 	ctx := context.Background()
 
-	resp, err := client.Get(ctx, "/queries/changed-since?since=invalid-timestamp")
+	resp, err := client.Get(ctx, "/queries/changed-since?since_version=invalid-version")
 	if err != nil {
 		t.Fatalf("Failed to call API: %v", err)
 	}
@@ -324,11 +320,11 @@ func TestQueryChangedSinceInvalidFormat(t *testing.T) {
 	details, _ := result["details"].(map[string]interface{})
 	errs, _ := details["errors"].([]interface{})
 	if len(errs) == 0 {
-		t.Errorf("Expected validation details.errors for invalid since")
+		t.Errorf("Expected validation details.errors for invalid since_version")
 	} else {
 		first, ok := errs[0].(string)
-		if !ok || !strings.Contains(strings.ToLower(first), "since") {
-			t.Errorf("Expected an error mentioning since, got %v", errs[0])
+		if !ok || !strings.Contains(strings.ToLower(first), "since_version") {
+			t.Errorf("Expected an error mentioning since_version, got %v", errs[0])
 		}
 	}
 }
@@ -455,8 +451,6 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 	client := NewAPIClient()
 	ctx := context.Background()
 	prefix := TestArtifactPrefix()
-	sinceTime := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-
 	entityIDs := []string{
 		fmt.Sprintf("%s-changed-page-entity-1", prefix),
 		fmt.Sprintf("%s-changed-page-entity-2", prefix),
@@ -470,7 +464,7 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 	createQueryTestObject(ctx, t, client, objectID, entityIDs[0], taskID)
 
 	q := url.Values{}
-	q.Set("since", sinceTime)
+	q.Set("since_version", "0")
 	q.Set("limit_per_type", "1")
 	resp, err := client.Get(ctx, "/queries/changed-since?"+q.Encode())
 	if err != nil {
@@ -484,10 +478,10 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 		t.Fatalf("Failed to parse changed-since page 1: %v", err)
 	}
 
-	firstTimestamp, _ := firstPage["timestamp"].(string)
+	firstVersion, ok := firstPage["version"].(float64)
 	entityCursor, _ := firstPage["next_entity_cursor"].(string)
-	if firstTimestamp == "" || entityCursor == "" {
-		t.Fatalf("expected timestamp and next_entity_cursor, got timestamp=%q cursor=%q", firstTimestamp, entityCursor)
+	if !ok || firstVersion <= 0 || entityCursor == "" {
+		t.Fatalf("expected version and next_entity_cursor, got version=%v cursor=%q", firstPage["version"], entityCursor)
 	}
 	if firstPage["has_more_entities"] != true {
 		t.Fatalf("expected has_more_entities on changed-since page 1, got %+v", firstPage)
@@ -500,7 +494,7 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 	}
 
 	q = url.Values{}
-	q.Set("since", sinceTime)
+	q.Set("since_version", "0")
 	q.Set("limit_per_type", "1")
 	q.Set("entity_cursor", entityCursor)
 	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
@@ -515,9 +509,9 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 		t.Fatalf("Failed to parse changed-since continuation: %v", err)
 	}
 
-	secondTimestamp, _ := secondPage["timestamp"].(string)
-	if secondTimestamp != firstTimestamp {
-		t.Fatalf("expected continuation timestamp %q, got %q", firstTimestamp, secondTimestamp)
+	secondVersion, ok := secondPage["version"].(float64)
+	if !ok || int64(secondVersion) != int64(firstVersion) {
+		t.Fatalf("expected continuation version %v, got %v", firstVersion, secondPage["version"])
 	}
 	if len(mustInterfaceSlice(t, secondPage["entities"], "entities")) != 1 {
 		t.Fatal("expected one entity on changed-since continuation")
@@ -849,4 +843,13 @@ func mustStringField(t *testing.T, raw interface{}, field string) string {
 		t.Fatalf("expected string field %s, got %T", field, item[field])
 	}
 	return value
+}
+
+func mustVersionFromMetadata(t *testing.T, metadata map[string]interface{}) int64 {
+	t.Helper()
+	raw, ok := metadata["version"].(float64)
+	if !ok || raw <= 0 {
+		t.Fatalf("expected positive metadata.version, got %#v", metadata["version"])
+	}
+	return int64(raw)
 }

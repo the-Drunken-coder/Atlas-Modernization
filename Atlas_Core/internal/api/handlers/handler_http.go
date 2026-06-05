@@ -191,6 +191,18 @@ func parseNonNegativeIntQuery(r *http.Request, key string, defaultVal int) (int,
 	return i, nil
 }
 
+func parseNonNegativeInt64Query(r *http.Request, key string, defaultVal int64) (int64, error) {
+	s := strings.TrimSpace(r.URL.Query().Get(key))
+	if s == "" {
+		return defaultVal, nil
+	}
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || i < 0 {
+		return 0, fmt.Errorf("invalid %s", key)
+	}
+	return i, nil
+}
+
 func parseStatusFilter(filter string) []string {
 	rawStatuses := strings.Split(filter, ",")
 	result := make([]string, 0, len(rawStatuses))

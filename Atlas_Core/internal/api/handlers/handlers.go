@@ -2,8 +2,6 @@
 package handlers
 
 import (
-	"time"
-
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
@@ -40,6 +38,6 @@ func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.L
 		entityActions: actions.NewEntityActions(db.Pool),
 		taskActions:   actions.NewTaskActions(db.Pool),
 		objectActions: actions.NewObjectActions(db.Pool, storageClient),
-		queryActions:  actions.NewQueryActions(db.Pool, time.Duration(cfg.ChangedSinceSafetyLagMS)*time.Millisecond),
+		queryActions:  actions.NewQueryActions(db.Pool),
 	}
 }

@@ -20,6 +20,7 @@ Implementation references:
 - `json` (`JSONB`, not null, default `{}`)
 - `created_at` (`TIMESTAMPTZ`, not null)
 - `updated_at` (`TIMESTAMPTZ`, not null)
+- `version` (`BIGINT`, not null): monotonic change version used for sync ordering and `metadata.version`
 
 ## JSON Blob Shape
 

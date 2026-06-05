@@ -13,6 +13,7 @@ Atlas Core keeps entity records as single JSON blobs so integrations can add or 
 - **json** (JSONB, NOT NULL, default `{}`): Contains components and metadata (does NOT include `type`, `subtype`, or `alias`)
 - **created_at** (TIMESTAMPTZ, NOT NULL): Timestamp when entity was created
 - **updated_at** (TIMESTAMPTZ, NOT NULL): Timestamp when entity was last updated
+- **version** (BIGINT, NOT NULL): Monotonic change version used for sync ordering and `metadata.version`
 
 ## Example Payload (JSON Blob Structure)
 
@@ -87,7 +88,7 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
 | Concern | HTTP API | Database / blob |
 | --- | --- | --- |
 | Entity type | `entity_type` on POST/PATCH | Column `type` |
-| Timestamps | `metadata.created_at`, `metadata.updated_at` | Columns `created_at`, `updated_at` |
+| Metadata | `metadata.created_at`, `metadata.updated_at`, `metadata.version` | Columns `created_at`, `updated_at`, `version` |
 | Extra blob fields | `extra` map on POST/PATCH | Keys in `json` outside `components` |
 | Response | `entity_type` | — |
 

@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	entitySelectSQL    = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at FROM entities`
-	taskSelectSQL      = `SELECT task_id, status, entity_id, json, created_at, updated_at FROM tasks`
-	objectSelectSQL    = `SELECT object_id, path, content_type, type, json, created_at, updated_at FROM objects`
-	deletionsSelectSQL = `SELECT resource_id, deleted_at FROM deletions`
+	entitySelectSQL    = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version FROM entities`
+	taskSelectSQL      = `SELECT task_id, status, entity_id, json, created_at, updated_at, version FROM tasks`
+	objectSelectSQL    = `SELECT object_id, path, content_type, type, json, created_at, updated_at, version FROM objects`
+	deletionsSelectSQL = `SELECT resource_id, deleted_at, version FROM deletions`
 )
 
 // Allowlists for the identifiers interpolated into cursor-paged SQL. Every value
@@ -35,6 +35,7 @@ var (
 		"created_at":    {},
 		"updated_at":    {},
 		"deleted_at":    {},
+		"version":       {},
 		"resource_type": {},
 	}
 )
@@ -54,6 +55,17 @@ type cursorPageOpts struct {
 type cursorPageEqFilter struct {
 	column string
 	value  string
+}
+
+type versionCursorPageOpts struct {
+	selectFrom           string
+	idColumn             string
+	sinceVersion         int64
+	snapshotUpperVersion int64
+	continuation         bool
+	cursor               *parsedVersionCursor
+	fetchLimit           int
+	eqFilter             *cursorPageEqFilter
 }
 
 func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (pgx.Rows, error) {
@@ -113,6 +125,63 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 	return tx.Query(ctx, query, args...)
 }
 
+func openVersionCursorPagedRows(ctx context.Context, tx pgx.Tx, opts versionCursorPageOpts) (pgx.Rows, error) {
+	if opts.continuation && opts.cursor == nil {
+		return nil, fmt.Errorf("version cursor pagination continuation requires a cursor")
+	}
+
+	if _, ok := allowedSelectFrom[opts.selectFrom]; !ok {
+		return nil, fmt.Errorf("disallowed select clause in version cursor pagination: %q", opts.selectFrom)
+	}
+	if _, ok := allowedColumns[opts.idColumn]; !ok {
+		return nil, fmt.Errorf("disallowed id column in version cursor pagination: %q", opts.idColumn)
+	}
+	if opts.eqFilter != nil {
+		if _, ok := allowedColumns[opts.eqFilter.column]; !ok {
+			return nil, fmt.Errorf("disallowed filter column in version cursor pagination: %q", opts.eqFilter.column)
+		}
+	}
+
+	var clauses []string
+	var args []any
+	addArg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	if opts.eqFilter != nil {
+		clauses = append(clauses, fmt.Sprintf("%s = %s", opts.eqFilter.column, addArg(opts.eqFilter.value)))
+	}
+	if opts.sinceVersion > 0 {
+		clauses = append(clauses, fmt.Sprintf("version > %s::bigint", addArg(opts.sinceVersion)))
+	}
+
+	if opts.cursor != nil {
+		cursorUpperBound := effectiveVersionCursorUpperBound(opts.cursor, opts.snapshotUpperVersion)
+		if cursorUpperBound > 0 {
+			clauses = append(clauses, fmt.Sprintf("version <= %s::bigint", addArg(cursorUpperBound)))
+		}
+		clauses = append(clauses, fmt.Sprintf("(version, %s) < (%s::bigint, %s::varchar)",
+			opts.idColumn,
+			addArg(opts.cursor.version), addArg(opts.cursor.id),
+		))
+	} else if opts.snapshotUpperVersion > 0 {
+		clauses = append(clauses, fmt.Sprintf("version <= %s::bigint", addArg(opts.snapshotUpperVersion)))
+	}
+
+	if len(clauses) == 0 {
+		clauses = append(clauses, "TRUE")
+	}
+
+	query := fmt.Sprintf("%s WHERE %s ORDER BY version DESC, %s DESC LIMIT %s",
+		opts.selectFrom,
+		strings.Join(clauses, " AND "),
+		opts.idColumn,
+		addArg(opts.fetchLimit),
+	)
+	return tx.Query(ctx, query, args...)
+}
+
 func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
 	if rows == nil {
 		return nil, nil
@@ -122,7 +191,7 @@ func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
 	var out []*models.Entity
 	for rows.Next() {
 		var e models.Entity
-		if err := rows.Scan(&e.EntityID, &e.Type, &e.Subtype, &e.Alias, &e.JSON, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.EntityID, &e.Type, &e.Subtype, &e.Alias, &e.JSON, &e.CreatedAt, &e.UpdatedAt, &e.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan entity: %w", err)
 		}
 		out = append(out, &e)
@@ -142,7 +211,7 @@ func collectTasks(rows pgx.Rows) ([]*models.Task, error) {
 	var out []*models.Task
 	for rows.Next() {
 		var t models.Task
-		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt, &t.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan task: %w", err)
 		}
 		out = append(out, &t)
@@ -162,7 +231,7 @@ func collectObjects(rows pgx.Rows) ([]*models.MediaObject, error) {
 	var out []*models.MediaObject
 	for rows.Next() {
 		var o models.MediaObject
-		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		if err := rows.Scan(&o.ObjectID, &o.Path, &o.ContentType, &o.Type, &o.JSON, &o.CreatedAt, &o.UpdatedAt, &o.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan object: %w", err)
 		}
 		out = append(out, &o)
@@ -183,13 +252,15 @@ func collectDeletedResources(rows pgx.Rows, resourceType string) ([]DeletedResou
 	for rows.Next() {
 		var resourceID string
 		var deletedAt time.Time
-		if err := rows.Scan(&resourceID, &deletedAt); err != nil {
+		var version int64
+		if err := rows.Scan(&resourceID, &deletedAt, &version); err != nil {
 			return nil, err
 		}
 		out = append(out, DeletedResource{
 			ID:        resourceID,
 			Type:      resourceType,
 			DeletedAt: deletedAt.UTC().Format(time.RFC3339Nano),
+			Version:   version,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -319,25 +390,108 @@ func queryObjects(
 	return out, more, nil
 }
 
-func queryDeletionsByType(
+func queryEntitiesByVersion(
+	ctx context.Context,
+	tx pgx.Tx,
+	sinceVersion, snapshotUpperVersion int64,
+	continuation bool,
+	cursor *parsedVersionCursor,
+	limit int,
+) ([]*models.Entity, bool, error) {
+	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
+		selectFrom:           entitySelectSQL,
+		idColumn:             "entity_id",
+		sinceVersion:         sinceVersion,
+		snapshotUpperVersion: snapshotUpperVersion,
+		continuation:         continuation,
+		cursor:               cursor,
+		fetchLimit:           limit + 1,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query versioned entities: %w", err)
+	}
+	items, err := collectEntities(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	out, more := trimToLimitWithMore(items, limit)
+	return out, more, nil
+}
+
+func queryTasksByVersion(
+	ctx context.Context,
+	tx pgx.Tx,
+	sinceVersion, snapshotUpperVersion int64,
+	continuation bool,
+	cursor *parsedVersionCursor,
+	limit int,
+) ([]*models.Task, bool, error) {
+	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
+		selectFrom:           taskSelectSQL,
+		idColumn:             "task_id",
+		sinceVersion:         sinceVersion,
+		snapshotUpperVersion: snapshotUpperVersion,
+		continuation:         continuation,
+		cursor:               cursor,
+		fetchLimit:           limit + 1,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query versioned tasks: %w", err)
+	}
+	items, err := collectTasks(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	out, more := trimToLimitWithMore(items, limit)
+	return out, more, nil
+}
+
+func queryObjectsByVersion(
+	ctx context.Context,
+	tx pgx.Tx,
+	sinceVersion, snapshotUpperVersion int64,
+	continuation bool,
+	cursor *parsedVersionCursor,
+	limit int,
+) ([]*models.MediaObject, bool, error) {
+	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
+		selectFrom:           objectSelectSQL,
+		idColumn:             "object_id",
+		sinceVersion:         sinceVersion,
+		snapshotUpperVersion: snapshotUpperVersion,
+		continuation:         continuation,
+		cursor:               cursor,
+		fetchLimit:           limit + 1,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to query versioned objects: %w", err)
+	}
+	items, err := collectObjects(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	out, more := trimToLimitWithMore(items, limit)
+	return out, more, nil
+}
+
+func queryDeletionsByTypeAndVersion(
 	ctx context.Context,
 	tx pgx.Tx,
 	resourceType string,
-	since, snapshotUpper time.Time,
+	sinceVersion, snapshotUpperVersion int64,
 	continuation bool,
-	cursor *parsedQueryCursor,
+	cursor *parsedVersionCursor,
 	limit int,
 ) ([]DeletedResource, bool, error) {
-	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
-		selectFrom:         deletionsSelectSQL,
-		idColumn:           "resource_id",
-		timeColumn:         "deleted_at",
-		since:              since,
-		snapshotUpperBound: snapshotUpper,
-		continuation:       continuation,
-		cursor:             cursor,
-		fetchLimit:         limit + 1,
-		eqFilter:           &cursorPageEqFilter{column: "resource_type", value: resourceType},
+	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
+		selectFrom:           deletionsSelectSQL,
+		idColumn:             "resource_id",
+		sinceVersion:         sinceVersion,
+		snapshotUpperVersion: snapshotUpperVersion,
+		continuation:         continuation,
+		cursor:               cursor,
+		fetchLimit:           limit + 1,
+		eqFilter:             &cursorPageEqFilter{column: "resource_type", value: resourceType},
 	})
 	if err != nil {
 		return nil, false, err

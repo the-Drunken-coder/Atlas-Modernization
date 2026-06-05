@@ -17,7 +17,7 @@ import (
 
 func isPromotedEntityExtraKey(key string) bool {
 	switch key {
-	case "type", "subtype", "alias", "components":
+	case "type", "subtype", "alias", "components", "version":
 		return true
 	default:
 		return false
@@ -254,14 +254,20 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		alias = &trimmed
 	}
 
+	tx, err := beginChangeTx(ctx, a.pool, "entity create")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var entity models.Entity
-	err = a.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO entities (entity_id, type, subtype, alias, json)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at
+		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
 	`, entityID, entityType, subtype, alias, jsonBytes).Scan(
 		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -272,6 +278,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 			return nil, NewEntityUniqueConstraintError()
 		}
 		return nil, fmt.Errorf("failed to create entity: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit entity create transaction: %w", err)
 	}
 
 	return &entity, nil
@@ -286,11 +295,11 @@ func (a *EntityActions) Get(ctx context.Context, entityID string) (*models.Entit
 
 	var entity models.Entity
 	err := a.pool.QueryRow(ctx, `
-		SELECT entity_id, type, subtype, alias, json, created_at, updated_at
+		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE entity_id = $1
 	`, entityID).Scan(
 		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -314,11 +323,11 @@ func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*models.E
 
 	var entity models.Entity
 	err = a.pool.QueryRow(ctx, `
-		SELECT entity_id, type, subtype, alias, json, created_at, updated_at
+		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE alias = $1
 	`, normalized).Scan(
 		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -407,22 +416,22 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return a.Get(ctx, entityID)
 	}
 
-	// Begin transaction for atomic read-modify-write
-	tx, err := a.pool.Begin(ctx)
+	// Begin transaction for atomic read-modify-write.
+	tx, err := beginChangeTx(ctx, a.pool, "entity update")
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Fetch existing entity with row lock
 	var entity models.Entity
 	err = tx.QueryRow(ctx, `
-		SELECT entity_id, type, subtype, alias, json, created_at, updated_at
+		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
 		FROM entities WHERE entity_id = $1
 		FOR UPDATE
 	`, entityID).Scan(
 		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
-		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -522,12 +531,15 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 
 	var out models.Entity
 	err = tx.QueryRow(ctx, `
-		UPDATE entities SET type = $1, subtype = $2, alias = $3, json = $4, updated_at = CURRENT_TIMESTAMP
+		UPDATE entities
+		SET type = $1, subtype = $2, alias = $3, json = $4,
+			updated_at = clock_timestamp(),
+			version = nextval('atlas_change_version_seq')
 		WHERE entity_id = $5
-		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at
+		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
 	`, newType, newSubtype, newAlias, jsonBytes, entityID).Scan(
 		&out.EntityID, &out.Type, &out.Subtype, &out.Alias,
-		&out.JSON, &out.CreatedAt, &out.UpdatedAt,
+		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -601,15 +613,20 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 	}
 	entityID = SanitizeID(entityID)
 
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := beginChangeTx(ctx, a.pool, "entity delete")
 	if err != nil {
-		return fmt.Errorf("failed to begin delete transaction: %w", err)
+		return err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
 
-	if _, err := tx.Exec(ctx, "UPDATE tasks SET updated_at = CURRENT_TIMESTAMP WHERE entity_id = $1", entityID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE tasks
+		SET updated_at = clock_timestamp(),
+			version = nextval('atlas_change_version_seq')
+		WHERE entity_id = $1
+	`, entityID); err != nil {
 		return fmt.Errorf("failed to mark entity tasks changed before deletion: %w", err)
 	}
 

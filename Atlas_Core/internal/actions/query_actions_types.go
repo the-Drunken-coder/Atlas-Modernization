@@ -29,10 +29,11 @@ type DeletedResource struct {
 	ID        string
 	Type      string
 	DeletedAt string
+	Version   int64
 }
 
-// ChangedSinceResult contains resources modified since a given timestamp.
-// If any HasMore* field is true, pass the matching next_*_cursor on the next request (with the same `since`)
+// ChangedSinceResult contains resources modified after a given change version.
+// If any HasMore* field is true, pass the matching next_*_cursor on the next request (with the same `since_version`)
 // to fetch the remaining rows for that stream without skipping data.
 type ChangedSinceResult struct {
 	Entities                []*models.Entity
@@ -53,6 +54,7 @@ type ChangedSinceResult struct {
 	NextDeletedEntityCursor string
 	NextDeletedTaskCursor   string
 	NextDeletedObjectCursor string
+	Version                 int64
 	Timestamp               string
 }
 
@@ -73,7 +75,7 @@ type FullDatasetLimits struct {
 	ObjectCursor *string
 }
 
-// ChangedSinceCursors continues per-type streams for GetDataChangedSince (same `since`, updated_at DESC order).
+// ChangedSinceCursors continues per-type streams for GetDataChangedSince (same `since_version`, version DESC order).
 type ChangedSinceCursors struct {
 	EntityCursor        *string
 	TaskCursor          *string
@@ -89,6 +91,18 @@ type parsedQueryCursor struct {
 	upperBound time.Time
 }
 
+type parsedVersionCursor struct {
+	version      int64
+	id           string
+	upperBound   int64
+	sinceVersion int64
+}
+
+type labeledVersionCursor struct {
+	label  string
+	cursor *parsedVersionCursor
+}
+
 func parseQueryCursor(raw, label string) (*parsedQueryCursor, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -101,6 +115,22 @@ func parseQueryCursor(raw, label string) (*parsedQueryCursor, error) {
 		timestamp:  ts,
 		id:         id,
 		upperBound: upperBound,
+	}, nil
+}
+
+func parseVersionQueryCursor(raw, label string) (*parsedVersionCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	version, id, upperBound, sinceVersion, err := decodeVersionCursor(raw)
+	if err != nil {
+		return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{fmt.Sprintf("invalid %s: %v", label, err)})
+	}
+	return &parsedVersionCursor{
+		version:      version,
+		id:           id,
+		upperBound:   upperBound,
+		sinceVersion: sinceVersion,
 	}, nil
 }
 
@@ -140,6 +170,69 @@ func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound tim
 		return snapshotUpperBound
 	}
 	return clampCursorUpperBound(cursor.upperBound, snapshotUpperBound)
+}
+
+func continuationVersionUpperBound(currentSnapshot int64, cursors ...*parsedVersionCursor) (int64, bool, error) {
+	continuation := false
+	var sharedUpperBound int64
+	for _, cursor := range cursors {
+		if cursor == nil {
+			continue
+		}
+		continuation = true
+		if cursor.upperBound == 0 {
+			continue
+		}
+		if sharedUpperBound == 0 {
+			sharedUpperBound = cursor.upperBound
+			continue
+		}
+		if sharedUpperBound != cursor.upperBound {
+			return 0, false, NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{"query cursors must come from the same snapshot"},
+			)
+		}
+	}
+	if !continuation {
+		return currentSnapshot, false, nil
+	}
+	if sharedUpperBound == 0 {
+		return currentSnapshot, true, nil
+	}
+	return clampVersionCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
+}
+
+func validateVersionCursorsSinceVersion(sinceVersion int64, cursors ...labeledVersionCursor) error {
+	for _, item := range cursors {
+		if item.cursor == nil {
+			continue
+		}
+		if item.cursor.sinceVersion != sinceVersion {
+			return NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{fmt.Sprintf("%s was created for since_version %d, got %d", item.label, item.cursor.sinceVersion, sinceVersion)},
+			)
+		}
+	}
+	return nil
+}
+
+func effectiveVersionCursorUpperBound(cursor *parsedVersionCursor, snapshotUpperBound int64) int64 {
+	if cursor == nil {
+		return snapshotUpperBound
+	}
+	return clampVersionCursorUpperBound(cursor.upperBound, snapshotUpperBound)
+}
+
+func clampVersionCursorUpperBound(candidate, ceiling int64) int64 {
+	if candidate <= 0 {
+		return ceiling
+	}
+	if ceiling <= 0 || candidate <= ceiling {
+		return candidate
+	}
+	return ceiling
 }
 
 func clampCursorUpperBound(candidate, ceiling time.Time) time.Time {

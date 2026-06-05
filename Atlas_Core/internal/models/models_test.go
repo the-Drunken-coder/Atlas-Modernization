@@ -68,6 +68,7 @@ func TestEntityGetExtra(t *testing.T) {
 		"components":  map[string]interface{}{},
 		"extra_field": "extra_value",
 		"another":     123,
+		"version":     999,
 	}
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
@@ -89,6 +90,9 @@ func TestEntityGetExtra(t *testing.T) {
 	}
 	if extra["components"] != nil {
 		t.Error("components should be excluded from extra")
+	}
+	if extra["version"] != nil {
+		t.Error("version should be excluded from extra")
 	}
 }
 
@@ -145,6 +149,7 @@ func TestTaskGetExtra(t *testing.T) {
 	jsonData := map[string]interface{}{
 		"components": map[string]interface{}{},
 		"priority":   "high",
+		"version":    999,
 	}
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
@@ -163,6 +168,9 @@ func TestTaskGetExtra(t *testing.T) {
 	}
 	if extra["priority"] != "high" {
 		t.Errorf("Expected priority 'high', got %v", extra["priority"])
+	}
+	if extra["version"] != nil {
+		t.Error("version should be excluded from extra")
 	}
 }
 
@@ -276,6 +284,7 @@ func TestMediaObjectGetPayload(t *testing.T) {
 		"usage_hints": []interface{}{"thumbnail"},
 		"bucket":      "atlas-media",
 		"custom":      "value",
+		"version":     999,
 	}
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
@@ -297,6 +306,9 @@ func TestMediaObjectGetPayload(t *testing.T) {
 	// Promoted fields should be excluded
 	if payload["size_bytes"] != nil {
 		t.Error("size_bytes should be excluded from payload")
+	}
+	if payload["version"] != nil {
+		t.Error("version should be excluded from payload")
 	}
 }
 

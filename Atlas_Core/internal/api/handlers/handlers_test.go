@@ -428,15 +428,35 @@ func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
 	if body["error_code"] != "VALIDATION_ERROR" {
 		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
 	}
-	if body["message"] != "since parameter is required" {
+	if body["message"] != "since_version parameter is required" {
 		t.Fatalf("unexpected message: %v", body["message"])
 	}
 }
 
-func TestGetChangedSinceRejectsInvalidTimestamp(t *testing.T) {
+func TestGetChangedSinceRejectsBlankParam(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since=not-a-date", nil)
+	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since_version=%20%20", nil)
+
+	handler.GetChangedSince(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if body["message"] != "since_version parameter is required" {
+		t.Fatalf("unexpected message: %v", body["message"])
+	}
+}
+
+func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since_version=not-a-version", nil)
 
 	handler.GetChangedSince(rec, req)
 
@@ -468,7 +488,7 @@ func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
 		},
 		{
 			name: "changed since",
-			resp: &changedSinceResponse{Timestamp: "2026-03-20T12:00:00Z"},
+			resp: &changedSinceResponse{Version: 1, Timestamp: "2026-03-20T12:00:00Z"},
 			keys: []string{
 				"has_more_entities",
 				"has_more_tasks",

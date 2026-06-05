@@ -3,50 +3,45 @@ package actions
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
 func TestObjectIfMatchETagMatchesSerializedObjectETag(t *testing.T) {
-	ts := time.Date(2026, 3, 21, 12, 34, 56, 123456000, time.UTC)
-
-	if objectIfMatchTimeLayout != serializers.APIMetadataTimeLayout {
-		t.Fatalf("If-Match layout %q must match serialized object ETag layout %q", objectIfMatchTimeLayout, serializers.APIMetadataTimeLayout)
-	}
-	if got, want := objectIfMatchETag(ts), serializers.ObjectStrongETag(ts); got != want {
+	version := int64(42)
+	if got, want := objectIfMatchETag(version), serializers.ObjectStrongETag(version); got != want {
 		t.Fatalf("If-Match ETag %q must match serialized object ETag %q", got, want)
 	}
 }
 
 func TestObjectIfMatchOK_rejectsWeakPrefix(t *testing.T) {
-	ts := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	want := objectIfMatchETag(ts)
+	version := int64(42)
+	want := objectIfMatchETag(version)
 	weak := "W/" + want
-	if ObjectIfMatchOK(weak, ts) {
+	if ObjectIfMatchOK(weak, version) {
 		t.Fatalf("expected weak ETag to be rejected, got %q vs %q", weak, want)
 	}
-	if ObjectIfMatchOK("  "+weak+"  ", ts) {
+	if ObjectIfMatchOK("  "+weak+"  ", version) {
 		t.Fatal("expected trimmed weak ETag to be rejected")
 	}
 }
 
 func TestObjectIfMatchOK_acceptsStrongQuotedOrUnquoted(t *testing.T) {
-	ts := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	want := objectIfMatchETag(ts)
-	if !ObjectIfMatchOK(want, ts) {
+	version := int64(42)
+	want := objectIfMatchETag(version)
+	if !ObjectIfMatchOK(want, version) {
 		t.Fatalf("expected quoted strong ETag to match")
 	}
-	if !ObjectIfMatchOK(strings.Trim(want, `"`), ts) {
+	if !ObjectIfMatchOK(strings.Trim(want, `"`), version) {
 		t.Fatalf("expected unquoted strong ETag to match")
 	}
 }
 
 func TestObjectIfMatchOK_commaSeparated(t *testing.T) {
-	ts := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
-	want := objectIfMatchETag(ts)
+	version := int64(42)
+	want := objectIfMatchETag(version)
 	other := `"other"`
-	if !ObjectIfMatchOK(other+", "+want, ts) {
+	if !ObjectIfMatchOK(other+", "+want, version) {
 		t.Fatalf("expected second token to match")
 	}
 }

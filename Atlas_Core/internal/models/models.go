@@ -77,6 +77,7 @@ type Entity struct {
 	JSON      json.RawMessage `json:"-" db:"json"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	Version   int64           `json:"version" db:"version"`
 
 	jsonMu   sync.Mutex
 	jsonInit bool
@@ -147,7 +148,7 @@ func (e *Entity) GetExtra() map[string]interface{} {
 	extra := make(map[string]interface{})
 	for k, v := range data {
 		if k != "components" && k != "type" && k != "subtype" && k != "alias" &&
-			k != "entity_id" && k != "task_id" && k != "object_id" && k != "created_at" && k != "updated_at" {
+			k != "entity_id" && k != "task_id" && k != "object_id" && k != "created_at" && k != "updated_at" && k != "version" {
 			extra[k] = v
 		}
 	}
@@ -165,6 +166,7 @@ type Task struct {
 	JSON      json.RawMessage `json:"-" db:"json"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	Version   int64           `json:"version" db:"version"`
 
 	jsonMu   sync.Mutex
 	jsonInit bool
@@ -235,7 +237,7 @@ func (t *Task) GetExtra() map[string]interface{} {
 	extra := make(map[string]interface{})
 	for k, v := range data {
 		if k != "components" && k != "status" && k != "entity_id" && k != "task_id" &&
-			k != "object_id" && k != "created_at" && k != "updated_at" {
+			k != "object_id" && k != "created_at" && k != "updated_at" && k != "version" {
 			extra[k] = v
 		}
 	}
@@ -254,6 +256,7 @@ type MediaObject struct {
 	JSON        json.RawMessage `json:"-" db:"json"`
 	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
+	Version     int64           `json:"version" db:"version"`
 
 	jsonMu   sync.Mutex
 	jsonInit bool
@@ -379,7 +382,7 @@ func (o *MediaObject) GetPayload() map[string]interface{} {
 	payload := make(map[string]interface{})
 	for k, v := range data {
 		if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" &&
-			k != "object_id" && k != "created_at" && k != "updated_at" {
+			k != "object_id" && k != "created_at" && k != "updated_at" && k != "version" {
 			payload[k] = v
 		}
 	}

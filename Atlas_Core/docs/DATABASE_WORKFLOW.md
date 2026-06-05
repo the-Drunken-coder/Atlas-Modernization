@@ -129,8 +129,9 @@ This means:
     alias VARCHAR(255),
     priority INTEGER,
     json JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
 )`,
 ```
 
@@ -158,7 +159,7 @@ go build -o atlas_core ./cmd/atlas_core && docker compose -f docker/docker-compo
     id SERIAL PRIMARY KEY,
     entity_id VARCHAR(50) REFERENCES entities(entity_id),
     action VARCHAR(100) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 )`,
 ```
 
