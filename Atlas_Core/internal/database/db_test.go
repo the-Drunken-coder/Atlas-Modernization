@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +130,27 @@ func TestCoreSchemaTables(t *testing.T) {
 	for i, name := range want {
 		if coreSchemaTables[i] != name {
 			t.Fatalf("coreSchemaTables[%d] = %q, want %q", i, coreSchemaTables[i], name)
+		}
+	}
+}
+
+func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
+	ddl := strings.Join(coreSchemaCreateDDL(), "\n")
+	want := []string{
+		"CREATE INDEX idx_entities_created_cursor ON entities(created_at DESC, entity_id DESC)",
+		"CREATE INDEX idx_entities_updated_cursor ON entities(updated_at DESC, entity_id DESC)",
+		"CREATE INDEX idx_tasks_created_cursor ON tasks(created_at DESC, task_id DESC)",
+		"CREATE INDEX idx_tasks_updated_cursor ON tasks(updated_at DESC, task_id DESC)",
+		"CREATE INDEX idx_tasks_entity_created_cursor ON tasks(entity_id, created_at DESC, task_id DESC)",
+		"CREATE INDEX idx_tasks_entity_updated_cursor ON tasks(entity_id, updated_at DESC, task_id DESC)",
+		"CREATE INDEX idx_objects_created_cursor ON objects(created_at DESC, object_id DESC)",
+		"CREATE INDEX idx_objects_updated_cursor ON objects(updated_at DESC, object_id DESC)",
+		"CREATE INDEX idx_deletions_type_deleted_cursor ON deletions(resource_type, deleted_at DESC, resource_id DESC)",
+	}
+
+	for _, stmt := range want {
+		if !strings.Contains(ddl, stmt) {
+			t.Fatalf("expected core schema DDL to include %q", stmt)
 		}
 	}
 }

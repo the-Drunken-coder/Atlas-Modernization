@@ -29,6 +29,7 @@ Atlas Core persists operational data in PostgreSQL. Go structs in `internal/mode
 
 - Primary key: `entity_id` (`VARCHAR(50)`)
 - Columns: `type` (NOT NULL, indexed), `subtype` (nullable, indexed), `alias` (nullable, indexed)
+- Cursor indexes: `(created_at DESC, entity_id DESC)`, `(updated_at DESC, entity_id DESC)`
 - Stores JSONB blob with components and metadata (telemetry, geometry, task_catalog, media_refs, etc.)
 - Represents assets, tracks, geofeatures, and other map entities
 
@@ -36,6 +37,7 @@ Atlas Core persists operational data in PostgreSQL. Go structs in `internal/mode
 
 - Primary key: `task_id` (`VARCHAR(50)`)
 - Columns: `status` (NOT NULL, indexed, default: `pending`), `entity_id` (nullable, indexed, foreign key → `entities.entity_id` ON DELETE SET NULL)
+- Cursor indexes: `(created_at DESC, task_id DESC)`, `(updated_at DESC, task_id DESC)`, plus entity-scoped variants with leading `entity_id`
 - Stores JSONB blob with task specification, parameters, and progress
 - Status values: `pending`, `acknowledged`, `completed`, `failed`, `cancelled`
 
@@ -43,6 +45,7 @@ Atlas Core persists operational data in PostgreSQL. Go structs in `internal/mode
 
 - Primary key: `object_id` (`VARCHAR(50)`)
 - Promoted columns: `path` (unique, indexed), `content_type` (indexed), `type` (indexed)
+- Cursor indexes: `(created_at DESC, object_id DESC)`, `(updated_at DESC, object_id DESC)`
 - Stores JSONB blob with additional metadata (bucket, size_bytes, usage_hints, referenced_by, checksum, expiry_time, etc.)
 - Catalogs binary objects (media files, models, etc.) referenced by entities and tasks via MinIO or other object storage
 
@@ -50,6 +53,7 @@ Atlas Core persists operational data in PostgreSQL. Go structs in `internal/mode
 
 - Primary key: `id` (`BIGSERIAL`)
 - Columns: `resource_type` (`VARCHAR(20)`, indexed), `resource_id` (`VARCHAR(50)`), `deleted_at` (`TIMESTAMPTZ`, indexed)
+- Cursor index: `(resource_type, deleted_at DESC, resource_id DESC)`
 - Records hard-deleted entity/task/object ids so `GET /queries/changed-since` can return tombstones for client cache eviction
 - Created by `EnsureTables()` alongside the core tables
 

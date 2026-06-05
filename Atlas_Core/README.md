@@ -49,6 +49,12 @@ cd Atlas_Core/docker
 docker compose up -d
 ```
 
+The Compose stack builds the development image and bind-mounts
+`atlas_core.settings.json.example`, which intentionally keeps API auth disabled
+for loopback-only local development. The production Docker target does not ship
+that settings file and refuses to start unless `ENABLE_API_AUTH=true` and
+`API_AUTH_KEY` is set to a real, non-placeholder secret.
+
 ### Local Go Run
 
 With Postgres and MinIO already reachable (e.g. after `docker compose up -d` without the `api` service, or with API stopped to avoid port 8000 conflict), from `Atlas_Core/`: ensure `DATABASE_URL` points at your DB and `MINIO_SECRET_KEY` / `MINIO_ACCESS_KEY` match your MinIO credentials (defaults in `internal/config/config.go` assume `localhost:9000` and access key `atlas`).
@@ -109,8 +115,8 @@ Key environment variables:
 - `MINIO_HTTP_POOL_SIZE` (default `10`)
 - `MINIO_HTTP_POOL_TIMEOUT` (default `30`)
 - `CORS_ORIGINS` or `ALLOWED_ORIGINS` (legacy alias; empty string denies all origins)
-- `ENABLE_API_AUTH` (default `false`)
-- `API_AUTH_KEY` (required when auth enabled)
+- `ENABLE_API_AUTH` (default `false` for local/dev runs; required as `true` in the production Docker image)
+- `API_AUTH_KEY` (required when auth enabled; required and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`)
 - `MAX_VIEW_SIZE_MB` (default `10`)
 

@@ -24,6 +24,76 @@ var ErrSchemaNotPresent = errors.New("database: core schema tables are missing; 
 // coreSchemaTables are required when destructive recreate is disabled.
 var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions"}
 
+func coreSchemaCreateDDL() []string {
+	return []string{
+		`CREATE SEQUENCE atlas_change_version_seq`,
+		`CREATE TABLE entities (
+			entity_id VARCHAR(50) PRIMARY KEY,
+			type VARCHAR(50) NOT NULL,
+			subtype VARCHAR(50),
+			alias VARCHAR(255),
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+		)`,
+		`CREATE INDEX idx_entities_type ON entities(type)`,
+		`CREATE INDEX idx_entities_subtype ON entities(subtype)`,
+		`CREATE UNIQUE INDEX idx_entities_alias_unique ON entities(alias) WHERE alias IS NOT NULL`,
+		`CREATE INDEX idx_entities_created_cursor ON entities(created_at DESC, entity_id DESC)`,
+		`CREATE INDEX idx_entities_updated_cursor ON entities(updated_at DESC, entity_id DESC)`,
+		`CREATE INDEX idx_entities_version ON entities(version DESC, entity_id DESC)`,
+
+		`CREATE TABLE tasks (
+			task_id VARCHAR(50) PRIMARY KEY,
+			status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			entity_id VARCHAR(50) REFERENCES entities(entity_id) ON DELETE SET NULL,
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+		)`,
+		`CREATE INDEX idx_tasks_status ON tasks(status)`,
+		`CREATE INDEX idx_tasks_entity_id ON tasks(entity_id)`,
+		`CREATE INDEX idx_tasks_created_cursor ON tasks(created_at DESC, task_id DESC)`,
+		`CREATE INDEX idx_tasks_updated_cursor ON tasks(updated_at DESC, task_id DESC)`,
+		`CREATE INDEX idx_tasks_entity_created_cursor ON tasks(entity_id, created_at DESC, task_id DESC)`,
+		`CREATE INDEX idx_tasks_entity_updated_cursor ON tasks(entity_id, updated_at DESC, task_id DESC)`,
+		`CREATE INDEX idx_tasks_version ON tasks(version DESC, task_id DESC)`,
+
+		`CREATE TABLE objects (
+			object_id VARCHAR(50) PRIMARY KEY,
+			path VARCHAR(500) UNIQUE,
+			content_type VARCHAR(100),
+			type VARCHAR(50),
+			json JSONB NOT NULL DEFAULT '{}',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+		)`,
+		`CREATE INDEX idx_objects_content_type ON objects(content_type)`,
+		`CREATE INDEX idx_objects_type ON objects(type)`,
+		`CREATE INDEX idx_objects_referenced_by ON objects USING GIN ((json->'referenced_by') jsonb_path_ops)`,
+		`CREATE INDEX idx_objects_created_cursor ON objects(created_at DESC, object_id DESC)`,
+		`CREATE INDEX idx_objects_updated_cursor ON objects(updated_at DESC, object_id DESC)`,
+		`CREATE INDEX idx_objects_version ON objects(version DESC, object_id DESC)`,
+
+		// deletions table tracks hard-deleted resources so the changed-since
+		// endpoint can return tombstones for client cache eviction.
+		`CREATE TABLE deletions (
+			id BIGSERIAL PRIMARY KEY,
+			resource_type VARCHAR(20) NOT NULL,
+			resource_id VARCHAR(50) NOT NULL,
+			deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+		)`,
+		`CREATE INDEX idx_deletions_deleted_at ON deletions(deleted_at)`,
+		`CREATE INDEX idx_deletions_resource_type ON deletions(resource_type)`,
+		`CREATE INDEX idx_deletions_type_deleted_cursor ON deletions(resource_type, deleted_at DESC, resource_id DESC)`,
+		`CREATE INDEX idx_deletions_version ON deletions(resource_type, version DESC, resource_id DESC)`,
+	}
+}
+
 // DB wraps the connection pool and provides database operations.
 type DB struct {
 	Pool              *pgxpool.Pool
@@ -232,64 +302,7 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 		}
 	}
 
-	createDDL := []string{
-		`CREATE SEQUENCE atlas_change_version_seq`,
-		`CREATE TABLE entities (
-			entity_id VARCHAR(50) PRIMARY KEY,
-			type VARCHAR(50) NOT NULL,
-			subtype VARCHAR(50),
-			alias VARCHAR(255),
-			json JSONB NOT NULL DEFAULT '{}',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
-		)`,
-		`CREATE INDEX idx_entities_type ON entities(type)`,
-		`CREATE INDEX idx_entities_subtype ON entities(subtype)`,
-		`CREATE UNIQUE INDEX idx_entities_alias_unique ON entities(alias) WHERE alias IS NOT NULL`,
-		`CREATE INDEX idx_entities_version ON entities(version DESC, entity_id DESC)`,
-
-		`CREATE TABLE tasks (
-			task_id VARCHAR(50) PRIMARY KEY,
-			status VARCHAR(50) NOT NULL DEFAULT 'pending',
-			entity_id VARCHAR(50) REFERENCES entities(entity_id) ON DELETE SET NULL,
-			json JSONB NOT NULL DEFAULT '{}',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
-		)`,
-		`CREATE INDEX idx_tasks_status ON tasks(status)`,
-		`CREATE INDEX idx_tasks_entity_id ON tasks(entity_id)`,
-		`CREATE INDEX idx_tasks_version ON tasks(version DESC, task_id DESC)`,
-
-		`CREATE TABLE objects (
-			object_id VARCHAR(50) PRIMARY KEY,
-			path VARCHAR(500) UNIQUE,
-			content_type VARCHAR(100),
-			type VARCHAR(50),
-			json JSONB NOT NULL DEFAULT '{}',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
-		)`,
-		`CREATE INDEX idx_objects_content_type ON objects(content_type)`,
-		`CREATE INDEX idx_objects_type ON objects(type)`,
-		`CREATE INDEX idx_objects_referenced_by ON objects USING GIN ((json->'referenced_by') jsonb_path_ops)`,
-		`CREATE INDEX idx_objects_version ON objects(version DESC, object_id DESC)`,
-
-		// deletions table tracks hard-deleted resources so the changed-since
-		// endpoint can return tombstones for client cache eviction.
-		`CREATE TABLE deletions (
-			id BIGSERIAL PRIMARY KEY,
-			resource_type VARCHAR(20) NOT NULL,
-			resource_id VARCHAR(50) NOT NULL,
-			deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
-		)`,
-		`CREATE INDEX idx_deletions_deleted_at ON deletions(deleted_at)`,
-		`CREATE INDEX idx_deletions_resource_type ON deletions(resource_type)`,
-		`CREATE INDEX idx_deletions_version ON deletions(resource_type, version DESC, resource_id DESC)`,
-	}
+	createDDL := coreSchemaCreateDDL()
 	for _, stmt := range createDDL {
 		if _, err = tx.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("failed to create schema: %w", err)

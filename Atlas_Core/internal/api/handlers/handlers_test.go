@@ -265,6 +265,46 @@ func TestCreateObjectRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestCreateObjectRejectsBucketInput(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := routeRequest(http.MethodPost, "/objects", `{"object_id":"object-1","bucket":"client-bucket"}`)
+
+	handler.CreateObject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if !strings.Contains(body["message"].(string), "server-generated") {
+		t.Fatalf("expected server-generated bucket message, got %v", body["message"])
+	}
+}
+
+func TestUpdateObjectRejectsBucketInput(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := withURLParam(routeRequest(http.MethodPatch, "/objects/object-1", `{"bucket":"client-bucket"}`), "object_id", "object-1")
+
+	handler.UpdateObject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if !strings.Contains(body["message"].(string), "server-generated") {
+		t.Fatalf("expected server-generated bucket message, got %v", body["message"])
+	}
+}
+
 func TestUpdateEntityTelemetryRequiresAtLeastOneField(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

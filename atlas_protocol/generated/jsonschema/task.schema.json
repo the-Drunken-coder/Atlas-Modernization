@@ -100,11 +100,8 @@
       "type": "object"
     },
     "#TaskParametersComponent": {
-      "additionalProperties": false,
-      "patternProperties": {
-        "": {
-          "$ref": "#/$defs/%23JSONValue"
-        }
+      "additionalProperties": {
+        "$ref": "#/$defs/%23JSONValue"
       },
       "properties": {
         "latitude": {
@@ -117,11 +114,8 @@
       "type": "object"
     },
     "#TaskProgressComponent": {
-      "additionalProperties": false,
-      "patternProperties": {
-        "": {
-          "$ref": "#/$defs/%23JSONValue"
-        }
+      "additionalProperties": {
+        "$ref": "#/$defs/%23JSONValue"
       },
       "properties": {
         "percent": {
@@ -138,11 +132,8 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "patternProperties": {
-    "": {
-      "$ref": "#/$defs/%23JSONValue"
-    }
+  "additionalProperties": {
+    "$ref": "#/$defs/%23JSONValue"
   },
   "properties": {
     "components": {
