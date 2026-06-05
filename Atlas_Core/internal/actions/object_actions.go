@@ -43,7 +43,6 @@ func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectAc
 type CreateObjectParams struct {
 	ObjectID     string
 	Path         *string
-	Bucket       *string
 	SizeBytes    *int64
 	ContentType  *string
 	Type         *string
@@ -62,9 +61,6 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
-	if params.Bucket != nil {
-		jsonData["bucket"] = *params.Bucket
-	}
 	if params.SizeBytes != nil {
 		jsonData["size_bytes"] = *params.SizeBytes
 	}
@@ -81,6 +77,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 			}
 		}
 	}
+	applyConfiguredObjectBucket(jsonData, a.storage)
 	if err := ValidateObjectBlob(jsonData); err != nil {
 		return nil, err
 	}
@@ -225,7 +222,6 @@ func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*Li
 // UpdateObjectParams holds parameters for updating an object.
 type UpdateObjectParams struct {
 	Path         *string
-	Bucket       *string
 	ContentType  *string
 	Type         *string
 	SizeBytes    *int64
@@ -242,7 +238,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 	objectID = SanitizeID(objectID)
 
-	if params.Path == nil && params.Bucket == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
+	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
 		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 {
 		obj, err := a.Get(ctx, objectID)
 		if err != nil {
@@ -310,9 +306,6 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	// Update JSON fields
-	if params.Bucket != nil {
-		existingJSON["bucket"] = *params.Bucket
-	}
 	if params.SizeBytes != nil {
 		existingJSON["size_bytes"] = *params.SizeBytes
 	}
@@ -329,6 +322,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 			}
 		}
 	}
+	applyConfiguredObjectBucket(existingJSON, a.storage)
 	if err := ValidateObjectBlob(existingJSON); err != nil {
 		return nil, err
 	}
@@ -370,6 +364,18 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	return &out, nil
+}
+
+func applyConfiguredObjectBucket(blob map[string]interface{}, storageClient objectStorage) {
+	if storageClient == nil {
+		return
+	}
+	bucket := strings.TrimSpace(storageClient.Bucket())
+	if bucket == "" {
+		delete(blob, "bucket")
+		return
+	}
+	blob["bucket"] = bucket
 }
 
 // ValidateObjectBlob validates storage-facing object metadata.

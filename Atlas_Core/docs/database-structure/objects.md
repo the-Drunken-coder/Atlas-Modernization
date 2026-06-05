@@ -27,7 +27,7 @@ Implementation references:
 
 Common keys in `json`:
 
-- `bucket` (string)
+- `bucket` (string, server-generated from the configured storage bucket; read-only in API create/update bodies)
 - `size_bytes` (number)
 - `usage_hints` (array of strings)
 - `referenced_by` (array of objects, each with `entity_id` and/or `task_id`)
@@ -55,6 +55,10 @@ links are updated by writing `referenced_by` on `POST /objects`, `PATCH /objects
 after `POST /objects/upload` via a follow-up `PATCH`.
 
 `GET /objects` list responses omit `referenced_by` for compactness; `GET /objects/{object_id}` returns full metadata including `referenced_by`. `PATCH /objects/{object_id}` supports optimistic concurrency via `If-Match` / ETag from `GET`.
+
+`bucket` is returned as storage metadata, but clients must not send it in `POST /objects` or
+`PATCH /objects/{object_id}`. Downloads always use Atlas Core's configured storage bucket and the
+stored object path, so the server generates `bucket` metadata from that configured bucket.
 
 ## Heatmap Convention
 

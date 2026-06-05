@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -37,7 +38,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ObjectID     string                   `json:"object_id"`
 		Path         *string                  `json:"path,omitempty"`
-		Bucket       *string                  `json:"bucket,omitempty"`
+		Bucket       json.RawMessage          `json:"bucket,omitempty"`
 		SizeBytes    *int64                   `json:"size_bytes,omitempty"`
 		ContentType  *string                  `json:"content_type,omitempty"`
 		Type         *string                  `json:"type,omitempty"`
@@ -49,11 +50,14 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
+	if len(req.Bucket) > 0 {
+		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", "VALIDATION_ERROR")
+		return
+	}
 
 	obj, err := h.objectActions.Create(r.Context(), actions.CreateObjectParams{
 		ObjectID:     req.ObjectID,
 		Path:         req.Path,
-		Bucket:       req.Bucket,
 		SizeBytes:    req.SizeBytes,
 		ContentType:  req.ContentType,
 		Type:         req.Type,
@@ -93,6 +97,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Path         *string                  `json:"path,omitempty"`
+		Bucket       json.RawMessage          `json:"bucket,omitempty"`
 		ContentType  *string                  `json:"content_type,omitempty"`
 		Type         *string                  `json:"type,omitempty"`
 		SizeBytes    *int64                   `json:"size_bytes,omitempty"`
@@ -102,6 +107,10 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
+		return
+	}
+	if len(req.Bucket) > 0 {
+		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", "VALIDATION_ERROR")
 		return
 	}
 

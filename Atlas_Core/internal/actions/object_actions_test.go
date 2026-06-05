@@ -94,6 +94,34 @@ func TestCleanupUploadedPathAfterFailureReportsDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestApplyConfiguredObjectBucketOverwritesExistingBucket(t *testing.T) {
+	blob := map[string]interface{}{
+		"bucket":   "client-selected-bucket",
+		"checksum": "sha256:test",
+	}
+
+	applyConfiguredObjectBucket(blob, &recordingObjectStorage{})
+
+	if blob["bucket"] != "atlas-media" {
+		t.Fatalf("bucket = %v, want configured bucket atlas-media", blob["bucket"])
+	}
+	if blob["checksum"] != "sha256:test" {
+		t.Fatalf("checksum = %v, want preserved checksum", blob["checksum"])
+	}
+}
+
+func TestApplyConfiguredObjectBucketLeavesBlobWithoutStorage(t *testing.T) {
+	blob := map[string]interface{}{
+		"checksum": "sha256:test",
+	}
+
+	applyConfiguredObjectBucket(blob, nil)
+
+	if _, ok := blob["bucket"]; ok {
+		t.Fatalf("bucket should not be set without configured storage: %#v", blob)
+	}
+}
+
 func ptrString(value string) *string {
 	return &value
 }
