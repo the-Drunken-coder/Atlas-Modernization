@@ -94,6 +94,14 @@ func TestCleanupUploadedPathAfterFailureReportsDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestObjectUploadLockKey(t *testing.T) {
+	got := objectUploadLockKey("foo")
+	want := "atlas-core-object-upload:foo"
+	if got != want {
+		t.Fatalf("objectUploadLockKey() = %q, want %q", got, want)
+	}
+}
+
 func ptrString(value string) *string {
 	return &value
 }

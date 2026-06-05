@@ -391,9 +391,9 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	}
 	objectID = SanitizeID(objectID)
 
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := a.beginLockedObjectTx(ctx, objectID, "delete")
 	if err != nil {
-		return fmt.Errorf("failed to begin delete transaction: %w", err)
+		return err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
@@ -427,16 +427,20 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	return nil
 }
 
-func (a *ObjectActions) beginObjectUploadTx(ctx context.Context, objectID string) (pgx.Tx, error) {
+func objectUploadLockKey(objectID string) string {
+	return "atlas-core-object-upload:" + objectID
+}
+
+func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, operation string) (pgx.Tx, error) {
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin upload transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin %s transaction: %w", operation, err)
 	}
 
-	lockKey := "atlas-core-object-upload:" + objectID
+	lockKey := objectUploadLockKey(objectID)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
 		_ = tx.Rollback(ctx)
-		return nil, fmt.Errorf("failed to lock object upload: %w", err)
+		return nil, fmt.Errorf("failed to lock object for %s: %w", operation, err)
 	}
 
 	return tx, nil
@@ -532,12 +536,6 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, &storage.StorageError{Message: "storage not configured"}
 	}
 
-	objectPath := a.storage.NewObjectPath(objectID)
-	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to upload to storage: %w", err)
-	}
-
 	var usageHints []string
 	if usageHint != nil && *usageHint != "" {
 		usageHints = []string{*usageHint}
@@ -550,15 +548,21 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		typePtr = &objType
 	}
 
-	tx, err := a.beginObjectUploadTx(ctx, objectID)
+	tx, err := a.beginLockedObjectTx(ctx, objectID, "upload")
 	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	oldPath, existingJSON, err := currentObjectStateForUpload(ctx, tx, objectID)
 	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+		return nil, err
+	}
+
+	objectPath := a.storage.NewObjectPath(objectID)
+	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload to storage: %w", err)
 	}
 
 	jsonBytes, err := uploadObjectJSON(existingJSON, bucket, uploadedInfo.SizeBytes, usageHints)
