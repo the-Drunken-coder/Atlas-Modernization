@@ -1,4 +1,4 @@
-package command_catalog
+package commandcatalog
 
 import (
 	"encoding/json"
