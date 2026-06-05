@@ -50,8 +50,9 @@ RUN go mod download
 COPY atlas_protocol/ /atlas_protocol/
 COPY Atlas_Core/cmd/ ./cmd/
 COPY Atlas_Core/internal/ ./internal/
-# Use the committed example settings in containers; local overrides should be
-# mounted at runtime (e.g., via docker compose override / bind mount).
+# Use the committed example settings only in development containers; local
+# overrides should be mounted at runtime (e.g., via docker compose override /
+# bind mount).
 COPY Atlas_Core/atlas_core.settings.json.example ./atlas_core.settings.json
 
 # Change ownership to app user
@@ -80,10 +81,10 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/atlas_core .
-COPY Atlas_Core/atlas_core.settings.json.example ./atlas_core.settings.json
+COPY Atlas_Core/docker/production-entrypoint.sh ./production-entrypoint.sh
 
 # Change ownership to app user
-RUN chown -R atlas:atlas /app
+RUN chown -R atlas:atlas /app && chmod 0500 /app/production-entrypoint.sh
 USER atlas
 
 # Expose port
@@ -93,4 +94,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
+ENTRYPOINT ["./production-entrypoint.sh"]
 CMD ["./atlas_core"]

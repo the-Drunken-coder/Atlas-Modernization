@@ -55,6 +55,14 @@ Optional API key auth is controlled by:
 If enabled, middleware requires a valid API key (`X-API-Key` or `Authorization: Bearer ...`)
 before serving protected routes.
 
+### Production Docker image
+
+The production Docker target does not copy `atlas_core.settings.json.example`
+into the image. Its entrypoint refuses to start unless `ENABLE_API_AUTH=true`
+and `API_AUTH_KEY` is set to a non-empty value other than
+`REPLACE_WITH_SECURE_KEY`. The auth-disabled example settings file is kept only
+for the development image / loopback-only Compose workflow.
+
 ### Startup fail-fast
 
 The process refuses to start when:
@@ -71,5 +79,5 @@ The process refuses to start when:
 - [ ] Rotate database and MinIO credentials per environment.
 - [ ] Restrict network ingress to trusted operators.
 - [ ] Set explicit `CORS_ORIGINS` for production.
-- [ ] Enable API key auth for non-public deployments.
+- [ ] Set `ENABLE_API_AUTH=true` and a real `API_AUTH_KEY` for production.
 - [ ] Audit environment variables and settings file before release.
