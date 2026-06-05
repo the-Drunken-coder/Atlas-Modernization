@@ -73,7 +73,7 @@ The `parameters_schema` object defines the parameters that the command accepts:
 
 ## Validation
 
-The command catalog JSON is validated when seeding via `scripts/seed_command_catalog.py` (structure, required fields, unique IDs). There is no dedicated Go test file for the catalog in this module yet — run `go test ./...` for general module health after editing `command_catalog.json`.
+The command catalog JSON is validated when seeding via `scripts/seed_command_catalog.py` (structure, required fields, unique IDs). A focused Go test also guards protocol-sensitive schema details such as `move_to_location` using `altitude_m` — run `go test ./...` for general module health after editing `command_catalog.json`.
 
 ## Usage
 

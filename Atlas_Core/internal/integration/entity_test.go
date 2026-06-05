@@ -457,9 +457,9 @@ func TestEntityCheckin(t *testing.T) {
 				"type": "move_to_location",
 			},
 			"parameters": map[string]interface{}{
-				"latitude":  40.73061,
-				"longitude": -73.935242,
-				"altitude":  50,
+				"latitude":   40.73061,
+				"longitude":  -73.935242,
+				"altitude_m": 50,
 			},
 		},
 	}

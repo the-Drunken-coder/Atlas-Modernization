@@ -46,7 +46,7 @@
           "maximum": 180,
           "required": true
         },
-        "altitude": {
+        "altitude_m": {
           "type": "number",
           "description": "Target altitude in meters above sea level.",
           "required": true

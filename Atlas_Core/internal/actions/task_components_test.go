@@ -60,9 +60,9 @@ func TestValidateTaskParametersComponent(t *testing.T) {
 		{
 			name: "valid parameters",
 			params: map[string]interface{}{
-				"latitude":  40.7,
-				"longitude": -73.9,
-				"altitude":  100.0,
+				"latitude":   40.7,
+				"longitude":  -73.9,
+				"altitude_m": 100.0,
 			},
 			wantErr: false,
 		},
