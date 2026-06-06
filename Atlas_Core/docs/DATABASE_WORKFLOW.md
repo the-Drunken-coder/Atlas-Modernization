@@ -227,7 +227,7 @@ docker compose -f docker/docker-compose.yml down
 
 ### What the Auto-Creation Handles
 
-- Creating all tables and indexes fresh on every startup
+- Creating all tables and indexes fresh on every recreate-mode startup
 - Schema is always an exact match for the current DDL
 - All operations run in a single transaction
 
@@ -311,4 +311,4 @@ docker compose -f docker/docker-compose.yml up -d
 
 ---
 
-**Remember**: the Atlas Core database and configured bucket are disposable. `EnsureTables()` drops and recreates everything on every startup. Edit `db.go` and the Go models, rebuild, restart — the runtime store will match. No migrations, no drift, no stale columns, and no expectation that old rows survive.
+**Remember**: the Atlas Core database and configured bucket are disposable. With recreate mode enabled (default), `EnsureTables()` drops and recreates everything on startup; set `DATABASE_RECREATE_ON_STARTUP=false` only when you intentionally want to keep the current scratch store. Edit `db.go` and the Go models, rebuild, restart — the runtime store will match. No migrations, no drift, no stale columns, and no expectation that old rows survive.

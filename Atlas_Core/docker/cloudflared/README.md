@@ -43,6 +43,10 @@ Tunnel mode also forces `ENABLE_API_AUTH=true` for the API service and requires
 keeps auth disabled for local development, but public tunnel traffic must not
 use that development default.
 
+Note: Atlas Core's PostgreSQL database and configured MinIO bucket are
+disposable runtime scratch storage. Default startup drops and recreates them
+intentionally; they are not durable systems of record for operators.
+
 It joins the same `atlas_core_network` bridge as the API service and forwards traffic to
 `http://api:8000` inside Compose. Hostname routing is configured in the Cloudflare
 dashboard for the tunnel — not via a local credentials file.
