@@ -26,6 +26,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
+
 
 def print_banner():
     """Print the ATLAS banner."""
@@ -346,6 +348,20 @@ def ensure_tunnel_token():
     return False
 
 
+def ensure_tunnel_api_auth():
+    """Ensure public tunnel mode cannot start with development auth defaults."""
+    api_auth_key = os.getenv("API_AUTH_KEY", "").strip()
+    if not api_auth_key:
+        print("[ERROR] Tunnel mode requires API_AUTH_KEY to be set.")
+        return False
+    if api_auth_key == API_AUTH_KEY_PLACEHOLDER:
+        print("[ERROR] Tunnel mode requires a real API_AUTH_KEY, not the example placeholder.")
+        return False
+
+    os.environ["ENABLE_API_AUTH"] = "true"
+    return True
+
+
 def verify_tunnel_connection(
     public_url="https://atlascommandapi.org/health", max_retries=10, delay=2.0
 ):
@@ -406,6 +422,8 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
 
         if tunnel:
             if not ensure_tunnel_token():
+                sys.exit(1)
+            if not ensure_tunnel_api_auth():
                 sys.exit(1)
 
         cleanup_containers(atlas_core_dir, remove_volumes=reset_volumes)

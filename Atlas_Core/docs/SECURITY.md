@@ -76,7 +76,7 @@ The process refuses to start when:
 
 ## Configuration Checklist
 
-- [ ] Rotate database and MinIO credentials per environment.
+- [ ] Rotate database and MinIO credentials per environment, even though Atlas Core treats that storage as disposable runtime state.
 - [ ] Restrict network ingress to trusted operators.
 - [ ] Set explicit `CORS_ORIGINS` for production.
 - [ ] Set `ENABLE_API_AUTH=true` and a real `API_AUTH_KEY` for production.

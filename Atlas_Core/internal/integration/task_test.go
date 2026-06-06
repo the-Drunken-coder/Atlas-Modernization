@@ -179,7 +179,6 @@ func TestTaskComplete(t *testing.T) {
 	taskID := fmt.Sprintf("%s-task-complete", prefix)
 	createPayload := map[string]interface{}{
 		"task_id": taskID,
-		"status":  "acknowledged",
 	}
 
 	resp, err := client.Post(ctx, "/tasks", createPayload)
@@ -230,7 +229,6 @@ func TestTaskFail(t *testing.T) {
 	taskID := fmt.Sprintf("%s-task-fail", prefix)
 	createPayload := map[string]interface{}{
 		"task_id": taskID,
-		"status":  "acknowledged",
 	}
 
 	resp, err := client.Post(ctx, "/tasks", createPayload)

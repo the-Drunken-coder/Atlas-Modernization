@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/handlers"
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
@@ -30,6 +31,27 @@ func atlasCORSOptions(allowedOrigins []string) cors.Options {
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
 		AllowCredentials: false,
 		MaxAge:           300,
+	}
+}
+
+func runStorageDeletionReconciler(ctx context.Context, logger zerolog.Logger, objectActions *actions.ObjectActions, interval time.Duration, limit int) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			deleted, err := objectActions.ReconcileStorageDeletions(ctx, limit)
+			if err != nil {
+				logger.Warn().Err(err).Msg("Storage deletion reconciliation failed")
+				continue
+			}
+			if deleted > 0 {
+				logger.Info().Int("deleted", deleted).Msg("Reconciled queued storage deletions")
+			}
+		}
 	}
 }
 
@@ -107,6 +129,18 @@ func main() {
 		}
 	} else {
 		logger.Warn().Msg("MinIO secret key not configured, storage features disabled")
+	}
+
+	reconcilerCtx, stopReconciler := context.WithCancel(context.Background())
+	defer stopReconciler()
+	if storageClient != nil {
+		go runStorageDeletionReconciler(
+			reconcilerCtx,
+			logger,
+			actions.NewObjectActions(db.Pool, storageClient),
+			time.Minute,
+			100,
+		)
 	}
 
 	// Create handler
@@ -202,6 +236,7 @@ func main() {
 	<-quit
 
 	logger.Info().Msg("ATLAS Core API shutting down...")
+	stopReconciler()
 
 	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)

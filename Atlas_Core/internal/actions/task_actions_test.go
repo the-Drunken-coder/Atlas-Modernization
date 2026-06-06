@@ -41,6 +41,43 @@ func TestNormalizeTaskStatus(t *testing.T) {
 	}
 }
 
+func TestNormalizeInitialTaskStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty defaults pending", in: "", want: "pending"},
+		{name: "whitespace defaults pending", in: " \t ", want: "pending"},
+		{name: "pending accepted", in: " PENDING ", want: "pending"},
+		{name: "acknowledged rejected", in: "acknowledged", wantErr: true},
+		{name: "completed rejected", in: "completed", wantErr: true},
+		{name: "unknown rejected", in: "running", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeInitialTaskStatus(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected validation error")
+				}
+				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+					t.Fatalf("expected validation error, got %T %v", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeInitialTaskStatus: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeInitialTaskStatus(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeTaskProgressPercent(t *testing.T) {
 	tests := []struct {
 		name string
@@ -57,6 +94,44 @@ func TestNormalizeTaskProgressPercent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := normalizeTaskProgressPercent(tt.in); got != tt.want {
 				t.Fatalf("normalizeTaskProgressPercent(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateTaskStatusTransition(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		next    string
+		wantErr bool
+	}{
+		{name: "same status", current: "pending", next: "pending"},
+		{name: "pending to acknowledged", current: "pending", next: "acknowledged"},
+		{name: "pending may finish immediately", current: "pending", next: "completed"},
+		{name: "acknowledged to failed", current: "acknowledged", next: "failed"},
+		{name: "acknowledged to cancelled", current: "acknowledged", next: "cancelled"},
+		{name: "completed is terminal", current: "completed", next: "pending", wantErr: true},
+		{name: "failed is terminal", current: "failed", next: "acknowledged", wantErr: true},
+		{name: "cancelled is terminal", current: "cancelled", next: "acknowledged", wantErr: true},
+		{name: "cannot unacknowledge", current: "acknowledged", next: "pending", wantErr: true},
+		{name: "unknown current status", current: "running", next: "pending", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTaskStatusTransition(tt.current, tt.next)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected validation error")
+				}
+				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+					t.Fatalf("expected validation error, got %T %v", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateTaskStatusTransition: %v", err)
 			}
 		})
 	}

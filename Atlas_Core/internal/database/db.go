@@ -22,7 +22,7 @@ var ErrNilPool = errors.New("database: nil pool")
 var ErrSchemaNotPresent = errors.New("database: core schema tables are missing; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
 
 // coreSchemaTables are required when destructive recreate is disabled.
-var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions"}
+var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
 
 func coreSchemaCreateDDL() []string {
 	return []string{
@@ -91,6 +91,22 @@ func coreSchemaCreateDDL() []string {
 		`CREATE INDEX idx_deletions_resource_type ON deletions(resource_type)`,
 		`CREATE INDEX idx_deletions_type_deleted_cursor ON deletions(resource_type, deleted_at DESC, resource_id DESC)`,
 		`CREATE INDEX idx_deletions_version ON deletions(resource_type, version DESC, resource_id DESC)`,
+
+		// storage_deletion_outbox keeps blob deletion retries durable after
+		// object metadata and tombstones have committed.
+		`CREATE TABLE storage_deletion_outbox (
+			id BIGSERIAL PRIMARY KEY,
+			bucket VARCHAR(255) NOT NULL,
+			path VARCHAR(500) NOT NULL,
+			object_id VARCHAR(50),
+			attempts INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT,
+			next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			UNIQUE (bucket, path)
+		)`,
+		`CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)`,
 	}
 }
 
@@ -290,6 +306,7 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 	// CASCADE is a safety net — it severs any FK the explicit order misses
 	// (e.g., a future table referencing tasks or entities).
 	dropDDL := []string{
+		`DROP TABLE IF EXISTS storage_deletion_outbox CASCADE`,
 		`DROP TABLE IF EXISTS tasks CASCADE`,
 		`DROP TABLE IF EXISTS entities CASCADE`,
 		`DROP TABLE IF EXISTS objects CASCADE`,

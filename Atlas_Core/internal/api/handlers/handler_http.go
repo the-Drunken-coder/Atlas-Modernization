@@ -299,7 +299,9 @@ func firstMap(values ...interface{}) map[string]interface{} {
 // decodeJSONRequestBody decodes one JSON value and rejects trailing data.
 // When allowEmpty is true, an empty body is accepted.
 func (h *Handler) decodeJSONRequestBody(w http.ResponseWriter, r *http.Request, v any, allowEmpty bool) bool {
-	err := jsondecode.Decode(json.NewDecoder(r.Body), v)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	err := jsondecode.Decode(decoder, v)
 	if err == nil {
 		return true
 	}

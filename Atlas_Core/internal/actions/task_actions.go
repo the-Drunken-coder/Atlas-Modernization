@@ -36,6 +36,51 @@ func normalizeTaskStatus(raw string) (string, error) {
 	}
 }
 
+func normalizeInitialTaskStatus(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "pending", nil
+	}
+	status, err := normalizeTaskStatus(raw)
+	if err != nil {
+		return "", err
+	}
+	if status != "pending" {
+		return "", NewValidationError("new tasks must start as pending")
+	}
+	return status, nil
+}
+
+var allowedTaskStatusTransitions = map[string]map[string]struct{}{
+	"pending": {
+		"acknowledged": {},
+		"completed":    {},
+		"failed":       {},
+		"cancelled":    {},
+	},
+	"acknowledged": {
+		"completed": {},
+		"failed":    {},
+		"cancelled": {},
+	},
+	"completed": {},
+	"failed":    {},
+	"cancelled": {},
+}
+
+func validateTaskStatusTransition(current, next string) error {
+	if current == next {
+		return nil
+	}
+	allowed, ok := allowedTaskStatusTransitions[current]
+	if !ok {
+		return NewValidationError(fmt.Sprintf("unknown current task status %q", current))
+	}
+	if _, ok := allowed[next]; ok {
+		return nil
+	}
+	return NewValidationError(fmt.Sprintf("invalid task status transition from %q to %q", current, next))
+}
+
 // CreateTaskParams holds parameters for creating a task.
 type CreateTaskParams struct {
 	TaskID     string
@@ -52,13 +97,9 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 	}
 	taskID := SanitizeID(params.TaskID)
 
-	status := "pending"
-	if strings.TrimSpace(params.Status) != "" {
-		normalized, err := normalizeTaskStatus(params.Status)
-		if err != nil {
-			return nil, err
-		}
-		status = normalized
+	status, err := normalizeInitialTaskStatus(params.Status)
+	if err != nil {
+		return nil, err
 	}
 
 	// Validate components
@@ -475,6 +516,9 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	if params.Status != nil {
 		normalized, err := normalizeTaskStatus(*params.Status)
 		if err != nil {
+			return nil, err
+		}
+		if err := validateTaskStatusTransition(task.Status, normalized); err != nil {
 			return nil, err
 		}
 		newStatus = normalized

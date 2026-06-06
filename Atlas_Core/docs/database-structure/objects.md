@@ -61,6 +61,12 @@ after `POST /objects/upload` via a follow-up `PATCH`.
 `PATCH /objects/{object_id}`. Downloads always use Atlas Core's configured storage bucket and the
 stored object path, so the server generates `bucket` metadata from that configured bucket.
 
+When `DELETE /objects/{object_id}` removes metadata for an object with a stored
+blob path, Atlas Core also records that blob path in `storage_deletion_outbox`
+inside the same database transaction as the object tombstone. The service then
+attempts immediate blob deletion. If storage deletion fails, the queued row
+remains and the background reconciler retries until the path is deleted.
+
 ## Heatmap Convention
 
 Heatmap data is modeled as a standard media object convention:

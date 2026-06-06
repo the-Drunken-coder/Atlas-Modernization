@@ -12,7 +12,7 @@ This directory contains operational docs for the Go-based Atlas Core service.
 | --- | --- | --- |
 | Entity Status | `ASSET_STATUS_SYSTEM.md` | Entity types, status tracking, and telemetry updates. |
 | Pagination | `PAGINATION.md` | `limit`/`cursor` behavior and pagination headers. |
-| Database Workflow | `DATABASE_WORKFLOW.md` | Schema bootstrap model and developer workflow. |
+| Database Workflow | `DATABASE_WORKFLOW.md` | Disposable runtime-store model, schema bootstrap, and developer workflow. |
 | Entities | `database-structure/entities.md` | Entity JSON blob structure and component guidance. |
 | Tasks | `database-structure/tasks.md` | Task blob schema and lifecycle endpoint notes. |
 | Objects | `database-structure/objects.md` | Object metadata schema and storage endpoint notes. |

@@ -2,6 +2,12 @@
 
 Go-based control-plane service for Atlas entities, tasks, objects, and query snapshots.
 
+PostgreSQL and MinIO are **disposable runtime storage** for Atlas Core. They are
+not systems of record, and operators should not expect rows or blobs to survive
+service restarts. The default startup path recreates the database schema and
+clears the configured object bucket so local runtime state always matches the
+current code.
+
 ## Stack
 
 - Go 1.26.1+
@@ -98,6 +104,7 @@ Key environment variables:
 - `LOG_LEVEL` (default `INFO`)
 - `DEBUG` (default `false`)
 - `DATABASE_URL` (default `postgres://atlas@localhost:5432/atlas_core`)
+- `DATABASE_RECREATE_ON_STARTUP` (default `true`; keep true for the intended disposable runtime-store workflow)
 - `DATABASE_ECHO` (default `false`)
 - `DATABASE_POOL_SIZE` (default `5`)
 - `DATABASE_MAX_OVERFLOW` (default `10`)

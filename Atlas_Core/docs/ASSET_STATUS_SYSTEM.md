@@ -43,7 +43,9 @@ Valid `link_state` values:
 
 ## Database Storage
 
-Entities are stored in the `entities` table. Schema is created via `CREATE TABLE IF NOT EXISTS` in `internal/database/db.go`:
+Entities are stored in the disposable runtime `entities` table. On normal startup,
+Atlas Core drops and recreates this schema from the DDL in `internal/database/db.go`;
+do not treat existing rows as durable history.
 
 ```go
 // Entity represents an entity in the system (asset, track, geofeature, etc.).
