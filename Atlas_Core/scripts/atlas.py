@@ -98,6 +98,59 @@ def resolve_atlas_core_dir():
     raise FileNotFoundError("Atlas_Core directory not found")
 
 
+def parse_compose_env_file(env_path):
+    """Parse the simple KEY=VALUE entries used by Docker Compose .env files."""
+    values = {}
+    if not os.path.exists(env_path):
+        return values
+
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+
+            if "=" in line:
+                key, value = line.split("=", 1)
+            elif ":" in line:
+                key, value = line.split(":", 1)
+            else:
+                continue
+
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            else:
+                comment_index = value.find(" #")
+                if comment_index != -1:
+                    value = value[:comment_index].rstrip()
+
+            values[key] = value
+
+    return values
+
+
+def load_compose_dotenv(docker_dir):
+    """Load Compose's default .env values without overriding shell variables."""
+    env_path = os.path.join(docker_dir, ".env")
+    values = parse_compose_env_file(env_path)
+    loaded = []
+    for key, value in values.items():
+        if key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+
+    if loaded:
+        loaded_keys = ", ".join(sorted(loaded))
+        print(f"[INFO] Loaded Docker Compose defaults from {env_path}: {loaded_keys}")
+
+
 def wait_for_database_docker(container_name="atlas_core_postgres", max_retries=30, delay=1.0):
     """Wait for PostgreSQL to be ready using docker exec pg_isready."""
     print("[WAIT] Waiting for PostgreSQL to be ready...")
@@ -417,6 +470,8 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
 
     try:
         atlas_core_dir = resolve_atlas_core_dir()
+        docker_dir = os.path.join(atlas_core_dir, "docker")
+        load_compose_dotenv(docker_dir)
         ensure_minio_secrets()
         ensure_postgres_password()
 
@@ -427,8 +482,6 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
                 sys.exit(1)
 
         cleanup_containers(atlas_core_dir, remove_volumes=reset_volumes)
-
-        docker_dir = os.path.join(atlas_core_dir, "docker")
 
         if db_only:
             print("[START] Starting PostgreSQL container...")

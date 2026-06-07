@@ -7,7 +7,8 @@ proxies public HTTPS traffic to the local ATLAS Core API.
 
 1. Create a Cloudflare tunnel in the Cloudflare dashboard and copy its **run token**.
 
-2. Export the token and a real API key before starting Compose:
+2. Export the token and a real API key before starting Compose, or put them in
+   `Atlas_Core/docker/.env`:
 
    ```bash
    export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
@@ -57,12 +58,13 @@ dashboard for the tunnel — not via a local credentials file.
   They are **not** mounted by the current `docker-compose.yml` tunnel service.
 - For manual config-file runs, set `CLOUDFLARED_TUNNEL` to your tunnel UUID and render
   the config: `envsubst '${CLOUDFLARED_TUNNEL}' < config.yml > /tmp/cloudflared-config.yml`
-- `atlas.py --tunnel` requires `CLOUDFLARE_TUNNEL_TOKEN` and `API_AUTH_KEY`;
-  it does not read `credentials/atlas-core.json`.
+- `atlas.py --tunnel` requires `CLOUDFLARE_TUNNEL_TOKEN` and `API_AUTH_KEY` from
+  the shell or `Atlas_Core/docker/.env`; it does not read
+  `credentials/atlas-core.json`.
 
 ## Troubleshooting
 
 - Confirm the API container is healthy before starting the tunnel profile.
-- For `atlas.py --tunnel`, verify the token and API key are exported in the shell.
-  For direct Docker Compose runs, the shell or `docker/.env` can provide them.
+- For `atlas.py --tunnel`, verify the token and API key are exported in the shell
+  or present in `Atlas_Core/docker/.env`.
 - Check tunnel logs: `docker compose -f Atlas_Core/docker/docker-compose.yml -f Atlas_Core/docker/docker-compose.tunnel.yml logs cloudflared`

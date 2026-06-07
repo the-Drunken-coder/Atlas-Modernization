@@ -506,7 +506,7 @@ func (a *ObjectActions) claimQueuedStorageDeletions(ctx context.Context, limit i
 		SELECT id, bucket, path, attempts
 		FROM storage_deletion_outbox
 		WHERE next_attempt_at <= clock_timestamp()
-		ORDER BY id
+		ORDER BY next_attempt_at, id
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
 	`, limit)
