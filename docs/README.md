@@ -20,7 +20,7 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 
 | Package | Docs | What it is |
 | --- | --- | --- |
-| `Atlas_Core/` | [`Atlas_Core/docs/`](../Atlas_Core/docs/README.md) | The Go HTTP API: handlers, actions, database, storage. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
+| `Atlas_Core/` | [`Atlas_Core/docs/`](../Atlas_Core/docs/README.md) | The Go HTTP API: handlers, actions, disposable runtime database/storage. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
 | `atlas_protocol/` | [`atlas_protocol/README.md`](../atlas_protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: CUE source, generated contracts, validators, examples, tooling, and planning/reference docs. |
 
 Use **`Atlas_Core/docs/`** when the question is "how does this API behave?"

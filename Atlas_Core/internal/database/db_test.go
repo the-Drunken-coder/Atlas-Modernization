@@ -123,7 +123,7 @@ func TestCloseHandlesNilPool(t *testing.T) {
 }
 
 func TestCoreSchemaTables(t *testing.T) {
-	want := []string{"entities", "tasks", "objects", "deletions"}
+	want := []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
 	if len(coreSchemaTables) != len(want) {
 		t.Fatalf("expected %d core tables, got %d", len(want), len(coreSchemaTables))
 	}
@@ -146,6 +146,9 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 		"CREATE INDEX idx_objects_created_cursor ON objects(created_at DESC, object_id DESC)",
 		"CREATE INDEX idx_objects_updated_cursor ON objects(updated_at DESC, object_id DESC)",
 		"CREATE INDEX idx_deletions_type_deleted_cursor ON deletions(resource_type, deleted_at DESC, resource_id DESC)",
+		"CREATE TABLE storage_deletion_outbox",
+		"UNIQUE (bucket, path)",
+		"CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)",
 	}
 
 	for _, stmt := range want {

@@ -74,7 +74,9 @@ Validation highlights:
 
 ## Status Semantics
 
-The service defaults new tasks to `pending` when status is omitted.
+The service defaults new tasks to `pending` when status is omitted. New tasks
+must start as `pending`; `POST /tasks` rejects `acknowledged`, `completed`,
+`failed`, and `cancelled` as initial statuses.
 
 Common statuses used by API helpers are:
 
@@ -86,6 +88,14 @@ Common statuses used by API helpers are:
 
 `Create`, `Update`, and `/tasks/{task_id}/status` trim and lowercase status values,
 then reject anything outside the list above.
+
+Allowed transitions:
+
+- `pending` -> `acknowledged`, `completed`, `failed`, or `cancelled`
+- `acknowledged` -> `completed`, `failed`, or `cancelled`
+- `completed`, `failed`, and `cancelled` are terminal states
+
+Sending the current status again is treated as a no-op status transition.
 
 ## Task Endpoints
 

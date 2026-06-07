@@ -473,10 +473,11 @@ func TestEntityCheckin(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	completedTaskID := fmt.Sprintf("%s-checkin-completed", prefix)
 	completedTaskPayload := map[string]interface{}{
-		"task_id":   fmt.Sprintf("%s-checkin-completed", prefix),
+		"task_id":   completedTaskID,
 		"entity_id": entityID,
-		"status":    "completed",
+		"status":    "pending",
 	}
 	resp, err = client.Post(ctx, "/tasks", completedTaskPayload)
 	if err != nil {
@@ -486,6 +487,12 @@ func TestEntityCheckin(t *testing.T) {
 		_ = resp.Body.Close()
 		t.Fatalf("Expected 201 creating completed task, got %d", resp.StatusCode)
 	}
+	resp.Body.Close()
+	resp, err = client.Post(ctx, "/tasks/"+completedTaskID+"/complete", nil)
+	if err != nil {
+		t.Fatalf("Failed to complete checkin task: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete (checkin fixture)")
 	resp.Body.Close()
 
 	otherEntityID := fmt.Sprintf("%s-checkin-other", prefix)

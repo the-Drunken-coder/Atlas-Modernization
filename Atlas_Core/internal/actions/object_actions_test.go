@@ -196,6 +196,94 @@ func TestApplyConfiguredObjectBucketLeavesBlobWithoutStorage(t *testing.T) {
 	}
 }
 
+func TestStorageDeletionRetryDelay(t *testing.T) {
+	tests := []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{attempts: 0, want: time.Minute},
+		{attempts: 1, want: time.Minute},
+		{attempts: 2, want: 2 * time.Minute},
+		{attempts: 3, want: 4 * time.Minute},
+		{attempts: 99, want: 64 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("attempts_%d", tt.attempts), func(t *testing.T) {
+			if got := storageDeletionRetryDelay(tt.attempts); got != tt.want {
+				t.Fatalf("storageDeletionRetryDelay(%d) = %s, want %s", tt.attempts, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
+	dbURL, explicitDBURL := actionsTestDatabaseURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		if explicitDBURL {
+			t.Fatalf("ping test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("outbox-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-media', $1, $2)
+	`, path, objectID); err != nil {
+		t.Fatalf("insert outbox row: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{}
+	actions := NewObjectActions(pool, storageClient)
+	deleted, err := actions.ReconcileStorageDeletions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ReconcileStorageDeletions: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+	if len(storageClient.deletedPaths) != 1 || storageClient.deletedPaths[0] != path {
+		t.Fatalf("deleted paths = %#v, want %q", storageClient.deletedPaths, path)
+	}
+
+	var rowExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM storage_deletion_outbox
+			WHERE bucket = 'atlas-media' AND path = $1
+		)
+	`, path).Scan(&rowExists); err != nil {
+		t.Fatalf("check outbox row: %v", err)
+	}
+	if rowExists {
+		t.Fatal("outbox row still exists after successful reconciliation")
+	}
+}
+
 func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
@@ -437,6 +525,7 @@ func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool
 	err := pool.QueryRow(ctx, `
 		SELECT to_regclass('public.objects') IS NOT NULL
 			AND to_regclass('public.deletions') IS NOT NULL
+			AND to_regclass('public.storage_deletion_outbox') IS NOT NULL
 	`).Scan(&ok)
 	return ok, err
 }
@@ -444,4 +533,5 @@ func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool
 func cleanupObjectRaceTestRows(ctx context.Context, pool *pgxpool.Pool, objectID string) {
 	_, _ = pool.Exec(ctx, `DELETE FROM objects WHERE object_id = $1`, objectID)
 	_, _ = pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'object' AND resource_id = $1`, objectID)
+	_, _ = pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE object_id = $1`, objectID)
 }

@@ -4,7 +4,7 @@ This workspace is focused on modernizing the ATLAS Core backend.
 
 ## What lives here
 
-- **`Atlas_Core/`** — the core backend: the Go HTTP API, database layer, Docker setup, and command catalog.
+- **`Atlas_Core/`** — the core backend: the Go HTTP API, disposable runtime database/object-store layer, Docker setup, and command catalog.
 - **`atlas_protocol/`** — the buildable Atlas Protocol module: CUE source, generated contracts, validators, examples, and protocol tooling.
 - **`docs/`** — project-level documentation that spans packages, including Atlas Protocol planning/reference docs in [`docs/atlas-protocol/`](docs/atlas-protocol/).
 
@@ -14,3 +14,11 @@ This workspace is focused on modernizing the ATLAS Core backend.
 - **`docs/README.md`** — the documentation index (project-level + per-package).
 - **`docs/design-decisions/`** — durable architectural decisions across the project.
 - **`docs/problems/`** — short-lived blockers between agent sessions (see `_EXAMPLE_PROBLEM_.md`).
+
+## Runtime storage posture
+
+Atlas Core treats PostgreSQL and its configured MinIO bucket as scratch runtime
+state. They are useful while the service is running, but they are not systems of
+record and are not meant to be kept around. By default, startup drops and
+recreates the database schema and clears the configured object bucket so the
+running service always matches the current code.

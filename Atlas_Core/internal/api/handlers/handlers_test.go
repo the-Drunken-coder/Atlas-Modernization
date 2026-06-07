@@ -229,6 +229,23 @@ func TestCreateEntityRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestCreateEntityRejectsUnknownField(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := routeRequest(http.MethodPost, "/entities", `{"entity_id":"entity-1","entity_type":"asset","entity_typo":"vehicle"}`)
+
+	handler.CreateEntity(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "INVALID_JSON" {
+		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
+	}
+}
+
 func TestCreateEntityRejectsOversizedBody(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

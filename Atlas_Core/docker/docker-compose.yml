@@ -48,7 +48,7 @@ services:
 
   # PostgreSQL with TimescaleDB extension
   postgres:
-    image: timescale/timescaledb:2.14.2-pg15
+    image: timescale/timescaledb:2.27.2-pg15@sha256:aa2ae35ec3fc8769b3a645e364f00a0049f0f6822dd519b90225c649ad91ed6b
     container_name: atlas_core_postgres
     environment:
       POSTGRES_DB: atlas_core
@@ -71,7 +71,7 @@ services:
 
   # MinIO for object/blob storage (S3-compatible)
   minio:
-    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    image: minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc
     container_name: atlas_core_minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
@@ -94,7 +94,7 @@ services:
 
   # MinIO bucket initialization (runs once and exits)
   minio-init:
-    image: minio/mc:RELEASE.2024-01-13T08-44-48Z
+    image: minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2
     container_name: atlas_core_minio_init
     restart: "no"
     environment:

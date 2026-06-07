@@ -28,6 +28,13 @@ type objectStorage interface {
 	UploadObjectFromReaderToPath(ctx context.Context, objectID, path string, reader io.Reader, size int64, contentType string) (*storage.ObjectInfo, error)
 }
 
+type queuedStorageDeletion struct {
+	id       int64
+	bucket   string
+	path     string
+	attempts int
+}
+
 // ObjectActions handles object business logic.
 type ObjectActions struct {
 	pool    *pgxpool.Pool
@@ -403,6 +410,214 @@ func ValidateObjectBlob(blob map[string]interface{}) error {
 	)
 }
 
+func storageDeletionRetryDelay(attempts int) time.Duration {
+	if attempts <= 1 {
+		return time.Minute
+	}
+	if attempts > 7 {
+		attempts = 7
+	}
+	return time.Duration(1<<(attempts-1)) * time.Minute
+}
+
+const storageDeletionClaimLease = 5 * time.Minute
+
+func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID string) error {
+	bucket = strings.TrimSpace(bucket)
+	path = strings.TrimSpace(path)
+	objectID = strings.TrimSpace(objectID)
+	if bucket == "" || path == "" {
+		return nil
+	}
+
+	var objectIDArg interface{}
+	if objectID != "" {
+		objectIDArg = objectID
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (bucket, path) DO UPDATE
+		SET object_id = EXCLUDED.object_id,
+			updated_at = clock_timestamp()
+	`, bucket, path, objectIDArg)
+	if err != nil {
+		return fmt.Errorf("failed to queue storage deletion: %w", err)
+	}
+	return nil
+}
+
+func (a *ObjectActions) clearQueuedStorageDeletion(ctx context.Context, bucket, path string) error {
+	if a.pool == nil {
+		return nil
+	}
+	_, err := a.pool.Exec(ctx, `
+		DELETE FROM storage_deletion_outbox
+		WHERE bucket = $1 AND path = $2
+	`, strings.TrimSpace(bucket), strings.TrimSpace(path))
+	if err != nil {
+		return fmt.Errorf("failed to clear storage deletion retry: %w", err)
+	}
+	return nil
+}
+
+func (a *ObjectActions) recordQueuedStorageDeletionFailure(ctx context.Context, bucket, path string, deleteErr error) error {
+	if a.pool == nil {
+		return nil
+	}
+	errText := ""
+	if deleteErr != nil {
+		errText = deleteErr.Error()
+	}
+
+	var attempts int
+	err := a.pool.QueryRow(ctx, `
+		UPDATE storage_deletion_outbox
+		SET attempts = attempts + 1,
+			last_error = $3,
+			updated_at = clock_timestamp()
+		WHERE bucket = $1 AND path = $2
+		RETURNING attempts
+	`, strings.TrimSpace(bucket), strings.TrimSpace(path), errText).Scan(&attempts)
+	if err != nil {
+		return fmt.Errorf("failed to record storage deletion retry: %w", err)
+	}
+
+	nextAttempt := time.Now().UTC().Add(storageDeletionRetryDelay(attempts))
+	if _, err := a.pool.Exec(ctx, `
+		UPDATE storage_deletion_outbox
+		SET next_attempt_at = $3,
+			updated_at = clock_timestamp()
+		WHERE bucket = $1 AND path = $2
+	`, strings.TrimSpace(bucket), strings.TrimSpace(path), nextAttempt); err != nil {
+		return fmt.Errorf("failed to schedule storage deletion retry: %w", err)
+	}
+	return nil
+}
+
+func (a *ObjectActions) claimQueuedStorageDeletions(ctx context.Context, limit int) ([]queuedStorageDeletion, error) {
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin storage deletion claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT id, bucket, path, attempts
+		FROM storage_deletion_outbox
+		WHERE next_attempt_at <= clock_timestamp()
+		ORDER BY next_attempt_at, id
+		LIMIT $1
+		FOR UPDATE SKIP LOCKED
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query storage deletion outbox: %w", err)
+	}
+
+	var queued []queuedStorageDeletion
+	for rows.Next() {
+		var item queuedStorageDeletion
+		if err := rows.Scan(&item.id, &item.bucket, &item.path, &item.attempts); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan storage deletion outbox: %w", err)
+		}
+		queued = append(queued, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate storage deletion outbox: %w", err)
+	}
+	rows.Close()
+
+	leaseUntil := time.Now().UTC().Add(storageDeletionClaimLease)
+	for _, item := range queued {
+		if _, err := tx.Exec(ctx, `
+			UPDATE storage_deletion_outbox
+			SET next_attempt_at = $2,
+				updated_at = clock_timestamp()
+			WHERE id = $1
+		`, item.id, leaseUntil); err != nil {
+			return nil, fmt.Errorf("claim storage deletion outbox row: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit storage deletion claim: %w", err)
+	}
+	return queued, nil
+}
+
+func (a *ObjectActions) recordQueuedStorageDeletionFailureByID(ctx context.Context, id int64, attempts int, errText string) error {
+	if a.pool == nil {
+		return nil
+	}
+	nextAttempt := time.Now().UTC().Add(storageDeletionRetryDelay(attempts + 1))
+	if _, err := a.pool.Exec(ctx, `
+		UPDATE storage_deletion_outbox
+		SET attempts = attempts + 1,
+			last_error = $2,
+			next_attempt_at = $3,
+			updated_at = clock_timestamp()
+		WHERE id = $1
+	`, id, errText, nextAttempt); err != nil {
+		return fmt.Errorf("record storage deletion failure: %w", err)
+	}
+	return nil
+}
+
+func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id int64) error {
+	if a.pool == nil {
+		return nil
+	}
+	if _, err := a.pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("clear storage deletion outbox row: %w", err)
+	}
+	return nil
+}
+
+// ReconcileStorageDeletions retries queued storage deletions and clears successful rows.
+func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int) (int, error) {
+	if a.storage == nil {
+		return 0, &storage.StorageError{Message: "storage not configured"}
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	queued, err := a.claimQueuedStorageDeletions(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted := 0
+	configuredBucket := strings.TrimSpace(a.storage.Bucket())
+	for _, item := range queued {
+		if strings.TrimSpace(item.bucket) != configuredBucket {
+			if err := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, "configured storage bucket does not match queued deletion bucket"); err != nil {
+				return deleted, fmt.Errorf("record storage deletion bucket mismatch: %w", err)
+			}
+			continue
+		}
+
+		if err := a.storage.DeleteObjectPath(ctx, item.path); err != nil {
+			if updateErr := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, err.Error()); updateErr != nil {
+				return deleted, fmt.Errorf("record storage deletion failure: %w", updateErr)
+			}
+			continue
+		}
+
+		if err := a.clearQueuedStorageDeletionByID(ctx, item.id); err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+
+	return deleted, nil
+}
+
 // Delete removes an object and its storage.
 func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	if err := ValidateObjectID(objectID); err != nil {
@@ -433,13 +648,27 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		return fmt.Errorf("failed to record object deletion tombstone: %w", err)
 	}
 
+	var queuedBucket, queuedPath string
+	if a.storage != nil && objectPath != nil && strings.TrimSpace(*objectPath) != "" {
+		queuedBucket = strings.TrimSpace(a.storage.Bucket())
+		queuedPath = strings.TrimSpace(*objectPath)
+		if err := a.queueStorageDeletionTx(ctx, tx, queuedBucket, queuedPath, objectID); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit delete transaction: %w", err)
 	}
 
-	if a.storage != nil && objectPath != nil && strings.TrimSpace(*objectPath) != "" {
-		if err := a.storage.DeleteObjectPath(ctx, *objectPath); err != nil {
-			log.Error().Err(err).Str("object_id", objectID).Str("path", *objectPath).Msg("Object deleted from database but storage delete failed; reconcile storage manually if needed")
+	if queuedPath != "" {
+		if err := a.storage.DeleteObjectPath(ctx, queuedPath); err != nil {
+			if recordErr := a.recordQueuedStorageDeletionFailure(ctx, queuedBucket, queuedPath, err); recordErr != nil {
+				log.Error().Err(recordErr).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion failed and retry metadata could not be updated")
+			}
+			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Object deleted from database but storage delete failed; queued retry")
+		} else if err := a.clearQueuedStorageDeletion(ctx, queuedBucket, queuedPath); err != nil {
+			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but queued retry could not be cleared")
 		}
 	}
 

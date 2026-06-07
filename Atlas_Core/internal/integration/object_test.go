@@ -295,7 +295,7 @@ func TestObjectsByTask(t *testing.T) {
 	taskID := fmt.Sprintf("%s-objects-by-task", prefix)
 	taskPayload := map[string]interface{}{
 		"task_id": taskID,
-		"status":  "completed",
+		"status":  "pending",
 	}
 
 	resp, err := client.Post(ctx, "/tasks", taskPayload)
@@ -306,6 +306,12 @@ func TestObjectsByTask(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("Expected 201 creating task, got %d", resp.StatusCode)
 	}
+	resp.Body.Close()
+	resp, err = client.Post(ctx, "/tasks/"+taskID+"/complete", nil)
+	if err != nil {
+		t.Fatalf("Failed to complete task: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete (objects fixture)")
 	resp.Body.Close()
 
 	// Create objects referencing the task

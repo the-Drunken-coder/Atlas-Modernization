@@ -26,6 +26,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
+
 
 def print_banner():
     """Print the ATLAS banner."""
@@ -94,6 +96,115 @@ def resolve_atlas_core_dir():
             break
         search_dir = parent
     raise FileNotFoundError("Atlas_Core directory not found")
+
+
+def parse_compose_env_file(env_path):
+    """Parse the simple KEY=VALUE entries used by Docker Compose .env files."""
+    values = {}
+    if not os.path.exists(env_path):
+        return values
+
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+
+            if "=" in line:
+                key, value = line.split("=", 1)
+            elif ":" in line:
+                key, value = line.split(":", 1)
+            else:
+                continue
+
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+
+            value = normalize_compose_env_value(value)
+
+            values[key] = value
+
+    return values
+
+
+def find_closing_quote(value, quote):
+    """Return the closing quote index, ignoring escaped quotes."""
+    escaped = False
+    for index in range(1, len(value)):
+        char = value[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == quote:
+            return index
+    return -1
+
+
+def normalize_compose_env_value(value):
+    """Normalize one Compose .env value enough for atlas.py preflight checks."""
+    value = value.strip()
+    if not value:
+        return value
+
+    if value[0] in {"'", '"'}:
+        quote = value[0]
+        closing_quote = find_closing_quote(value, quote)
+        if closing_quote != -1:
+            trailing = value[closing_quote + 1 :].strip()
+            if not trailing or trailing.startswith("#"):
+                return value[1:closing_quote]
+
+    comment_index = value.find(" #")
+    if comment_index != -1:
+        value = value[:comment_index].rstrip()
+
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def load_compose_dotenv(docker_dir):
+    """Load Compose's default .env values without overriding shell variables."""
+    env_path = os.path.join(docker_dir, ".env")
+    values = parse_compose_env_file(env_path)
+    loaded = []
+    for key, value in values.items():
+        if key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+
+    if loaded:
+        loaded_keys = ", ".join(sorted(loaded))
+        print(f"[INFO] Loaded Docker Compose defaults from {env_path}: {loaded_keys}")
+
+
+def database_recreate_on_startup_enabled():
+    """Return whether startup will use recreate mode by default."""
+    raw = os.getenv("DATABASE_RECREATE_ON_STARTUP", "true").strip().lower()
+    return raw not in {"false", "0", "no", "off"}
+
+
+def print_disposable_storage_notice(db_only=False):
+    """Print Atlas Core's runtime-storage posture before startup."""
+    if db_only:
+        return
+    if database_recreate_on_startup_enabled():
+        print(
+            "[WARN] Atlas Core runtime storage is disposable: startup drops and "
+            "recreates PostgreSQL tables and clears the configured MinIO bucket."
+        )
+        return
+    print(
+        "[INFO] DATABASE_RECREATE_ON_STARTUP=false; PostgreSQL and the configured "
+        "MinIO bucket remain scratch runtime storage, not durable systems of record."
+    )
 
 
 def wait_for_database_docker(container_name="atlas_core_postgres", max_retries=30, delay=1.0):
@@ -346,6 +457,20 @@ def ensure_tunnel_token():
     return False
 
 
+def ensure_tunnel_api_auth():
+    """Ensure public tunnel mode cannot start with development auth defaults."""
+    api_auth_key = os.getenv("API_AUTH_KEY", "").strip()
+    if not api_auth_key:
+        print("[ERROR] Tunnel mode requires API_AUTH_KEY to be set.")
+        return False
+    if api_auth_key == API_AUTH_KEY_PLACEHOLDER:
+        print("[ERROR] Tunnel mode requires a real API_AUTH_KEY, not the example placeholder.")
+        return False
+
+    os.environ["ENABLE_API_AUTH"] = "true"
+    return True
+
+
 def verify_tunnel_connection(
     public_url="https://atlascommandapi.org/health", max_retries=10, delay=2.0
 ):
@@ -401,16 +526,19 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
 
     try:
         atlas_core_dir = resolve_atlas_core_dir()
+        docker_dir = os.path.join(atlas_core_dir, "docker")
+        load_compose_dotenv(docker_dir)
         ensure_minio_secrets()
         ensure_postgres_password()
+        print_disposable_storage_notice(db_only=db_only)
 
         if tunnel:
             if not ensure_tunnel_token():
                 sys.exit(1)
+            if not ensure_tunnel_api_auth():
+                sys.exit(1)
 
         cleanup_containers(atlas_core_dir, remove_volumes=reset_volumes)
-
-        docker_dir = os.path.join(atlas_core_dir, "docker")
 
         if db_only:
             print("[START] Starting PostgreSQL container...")
