@@ -56,23 +56,22 @@
   <header>
     <h1>Atlas Protocol</h1>
     <p class="tagline">The foundational contract layer for Atlas — one definition of what the data <em>is</em>.</p>
-    <span class="status">Direction &middot; implementation prep complete</span>
+    <span class="status">Direction &middot; implemented slices active</span>
   </header>
 
   <p class="lead">
     Atlas Protocol is a central, foundational package that lives <strong>outside</strong> Atlas&nbsp;Core
-    and above it. It owns the data structures and the rules for verifying them. Today that knowledge is
-    spread by hand across validators, model accessors, serializers, docs, and example JSON — and those copies
-    drift. The protocol collapses all of it into a single source of truth that every other package projects from.
+    and above it. It owns the data structures and the rules for verifying them. The implemented slices have moved
+    those rules out of handwritten Core-only copies and into a generated source of truth that other packages can
+    project from.
   </p>
 
   <h2><span class="n">01</span>Why this exists</h2>
   <p>
     The shape of an entity, task, or object, and the rules for a valid component (telemetry, geometry,
-    <code>media_refs</code> roles, RFC3339 timestamps, command-as-object-or-string) currently has no single home.
-    It is re-stated in Go validation code, in the model layer, in serializers, in <code>database-structure</code> docs,
-    and in example files. Each restatement is a chance to drift, and downstream consumers — notably the frontend —
-    get no contract at all and are left guessing at our JSON shapes.
+    <code>media_refs</code> roles, RFC3339 timestamps, command objects) now have a protocol home for the implemented
+    slices. Remaining handwritten docs and future projections still need to stay aligned so downstream consumers —
+    notably the frontend — can rely on the same JSON shapes.
   </p>
 
   <h2><span class="n">02</span>What we want it to do</h2>
@@ -128,31 +127,33 @@
     </div>
   </div>
 
-  <h2><span class="n">04</span>How we'd grow into it</h2>
-  <p>Incrementally, lowest-risk first — this is a direction, not a big-bang rewrite:</p>
+  <h2><span class="n">04</span>How we're growing into it</h2>
+  <p>Incrementally, lowest-risk first — this is a sliced implementation, not a big-bang rewrite:</p>
   <ul>
-    <li>Start by generating Core's <em>validators and typed structs</em> — the parts that drift from docs today.</li>
-    <li>Keep behavior (merge logic, lifecycle, transactions) handwritten in Core for now.</li>
-    <li>Add the TypeScript projection once the Go side proves the model.</li>
+    <li>Generate Core-facing validators and checked-in JSON Schema from the protocol definitions.</li>
+    <li>Keep behavior (merge logic, lifecycle, transactions) handwritten in Core.</li>
+    <li>Add the TypeScript projection after the Go validator path stays stable.</li>
     <li>Consider database-level validation after the contract has settled.</li>
   </ul>
 
-  <h2><span class="n">05</span>Readiness decisions</h2>
+  <h2><span class="n">05</span>Current status</h2>
   <ul>
-    <li><strong>First slice:</strong> entity blob plus <code>telemetry</code> and <code>geometry</code> components.</li>
+    <li><strong>Implemented slices:</strong> entity, task, and object blobs; entity and task components;
+        object references; <code>telemetry</code>; and <code>geometry</code>.</li>
     <li><strong>Generated-code workflow:</strong> output is checked in and never hand-edited; the protocol check
         command fails when artifacts drift from CUE.</li>
-    <li><strong>Later slices:</strong> task, object, TypeScript validators, OpenAPI fragments, and database checks.</li>
+    <li><strong>Deferred work:</strong> TypeScript validators, OpenAPI fragments, database checks, and HTTP
+        request/response envelope contracts.</li>
   </ul>
 
   <div class="note">
-    Scope note: as Atlas Protocol becomes real, project-level decisions and blockers move with it. Design decisions
+    Scope note: as Atlas Protocol grows, project-level decisions and blockers move with it. Design decisions
     and problems now live at the project root (<code>docs/design-decisions/</code>, <code>docs/problems/</code>) precisely
     because they span Atlas&nbsp;Core, Atlas&nbsp;Protocol, and whatever comes next — they are no longer Core-only.
   </div>
 
   <footer>
-    Atlas Protocol &middot; goals &amp; direction &middot; revised 2026-06-04
+    Atlas Protocol &middot; goals &amp; direction &middot; revised 2026-06-07
   </footer>
 </main>
 </body>
