@@ -136,10 +136,28 @@ func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, obj
 	if objectPath == "" {
 		return cause
 	}
-	if err := a.storage.DeleteObjectPath(ctx, objectPath); err != nil {
-		return fmt.Errorf("%w (also failed to remove uploaded object %q for %s: %w)", cause, objectPath, objectID, err)
+	if err := a.deleteObjectPathOrQueueRetry(ctx, objectID, objectPath); err != nil {
+		return fmt.Errorf("%w (also %w)", cause, err)
 	}
 	return cause
+}
+
+func (a *ObjectActions) deleteObjectPathOrQueueRetry(ctx context.Context, objectID, objectPath string) error {
+	objectPath = strings.TrimSpace(objectPath)
+	if objectPath == "" {
+		return nil
+	}
+
+	if err := a.storage.DeleteObjectPath(ctx, objectPath); err != nil {
+		if a.pool == nil {
+			return fmt.Errorf("failed to remove uploaded object %q for %s: %w", objectPath, objectID, err)
+		}
+		if queueErr := a.queueStorageDeletionAfterFailure(ctx, a.storage.Bucket(), objectPath, objectID, err); queueErr != nil {
+			return fmt.Errorf("failed to remove uploaded object %q for %s: %w (also failed to queue storage deletion retry: %w)", objectPath, objectID, err, queueErr)
+		}
+		return fmt.Errorf("failed to remove uploaded object %q for %s: %w (queued storage deletion retry)", objectPath, objectID, err)
+	}
+	return nil
 }
 
 // Upload uploads a file and creates/updates the object record.
@@ -190,23 +208,27 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	cleanupMetadataFailure := func(cause error) (*models.MediaObject, error) {
+		_ = tx.Rollback(ctx)
+		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, cause)
+	}
 
 	currentState, err := currentObjectStateForUpload(ctx, tx, objectID)
 	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+		return cleanupMetadataFailure(err)
 	}
 	if objectDeletedAfterUploadPreflight(preflightState, currentState) {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, NewObjectNotFoundError(objectID))
+		return cleanupMetadataFailure(NewObjectNotFoundError(objectID))
 	}
 
 	jsonBytes, err := uploadObjectJSON(currentState.json, bucket, uploadedInfo.SizeBytes, usageHints)
 	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, fmt.Errorf("failed to marshal object metadata JSON: %w", err))
+		return cleanupMetadataFailure(fmt.Errorf("failed to marshal object metadata JSON: %w", err))
 	}
 
 	out, err := upsertUploadedObjectMetadata(ctx, tx, objectID, objectPath, contentType, typePtr, jsonBytes)
 	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+		return cleanupMetadataFailure(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -219,7 +241,7 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
-		if err := a.storage.DeleteObjectPath(ctx, *currentState.path); err != nil {
+		if err := a.deleteObjectPathOrQueueRetry(ctx, objectID, *currentState.path); err != nil {
 			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", *currentState.path).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
 		}
 	}

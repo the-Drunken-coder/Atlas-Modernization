@@ -19,6 +19,14 @@ type queuedStorageDeletion struct {
 
 const storageDeletionClaimLease = 5 * time.Minute
 
+const queueStorageDeletionSQL = `
+	INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+	VALUES ($1, $2, $3)
+	ON CONFLICT (bucket, path) DO UPDATE
+	SET object_id = EXCLUDED.object_id,
+		updated_at = clock_timestamp()
+`
+
 func storageDeletionRetryDelay(attempts int) time.Duration {
 	if attempts <= 1 {
 		return time.Minute
@@ -29,29 +37,54 @@ func storageDeletionRetryDelay(attempts int) time.Duration {
 	return time.Duration(1<<(attempts-1)) * time.Minute
 }
 
-func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID string) error {
+func normalizeStorageDeletion(bucket, path, objectID string) (string, string, any, bool) {
 	bucket = strings.TrimSpace(bucket)
 	path = strings.TrimSpace(path)
 	objectID = strings.TrimSpace(objectID)
 	if bucket == "" || path == "" {
-		return nil
+		return "", "", nil, false
 	}
 
-	var objectIDArg interface{}
+	var objectIDArg any
 	if objectID != "" {
 		objectIDArg = objectID
 	}
-	_, err := tx.Exec(ctx, `
-		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (bucket, path) DO UPDATE
-		SET object_id = EXCLUDED.object_id,
-			updated_at = clock_timestamp()
-	`, bucket, path, objectIDArg)
+	return bucket, path, objectIDArg, true
+}
+
+func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID string) error {
+	bucket, path, objectIDArg, ok := normalizeStorageDeletion(bucket, path, objectID)
+	if !ok {
+		return nil
+	}
+
+	_, err := tx.Exec(ctx, queueStorageDeletionSQL, bucket, path, objectIDArg)
 	if err != nil {
 		return fmt.Errorf("failed to queue storage deletion: %w", err)
 	}
 	return nil
+}
+
+func (a *ObjectActions) queueStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
+	if a.pool == nil {
+		return nil
+	}
+	bucket, path, objectIDArg, ok := normalizeStorageDeletion(bucket, path, objectID)
+	if !ok {
+		return nil
+	}
+
+	if _, err := a.pool.Exec(ctx, queueStorageDeletionSQL, bucket, path, objectIDArg); err != nil {
+		return fmt.Errorf("failed to queue storage deletion: %w", err)
+	}
+	return nil
+}
+
+func (a *ObjectActions) queueStorageDeletionAfterFailure(ctx context.Context, bucket, path, objectID string, deleteErr error) error {
+	if err := a.queueStorageDeletion(ctx, bucket, path, objectID); err != nil {
+		return err
+	}
+	return a.recordQueuedStorageDeletionFailure(ctx, bucket, path, deleteErr)
 }
 
 func (a *ObjectActions) clearQueuedStorageDeletion(ctx context.Context, bucket, path string) error {

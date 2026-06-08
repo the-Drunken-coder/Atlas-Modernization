@@ -101,6 +101,72 @@ func TestCleanupUploadedPathAfterFailureReportsDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
+	dbURL, explicitDBURL := actionsTestDatabaseURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		if explicitDBURL {
+			t.Fatalf("ping test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("cleanup-retry-%d", time.Now().UTC().UnixNano())
+	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+
+	storageClient := &recordingObjectStorage{deleteErr: errors.New("delete failed")}
+	actions := NewObjectActions(pool, storageClient)
+	cause := errors.New("commit failed")
+
+	err = actions.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, cause)
+
+	if !errors.Is(err, cause) || !errors.Is(err, storageClient.deleteErr) {
+		t.Fatalf("cleanupUploadedPathAfterFailure error = %v, want cause and delete error", err)
+	}
+	if !strings.Contains(err.Error(), "queued storage deletion retry") {
+		t.Fatalf("cleanup error should mention queued retry, got %q", err.Error())
+	}
+
+	var storedObjectID, lastError string
+	var attempts int
+	if err := pool.QueryRow(ctx, `
+		SELECT object_id, attempts, last_error
+		FROM storage_deletion_outbox
+		WHERE bucket = 'atlas-media' AND path = $1
+	`, objectPath).Scan(&storedObjectID, &attempts, &lastError); err != nil {
+		t.Fatalf("query outbox row: %v", err)
+	}
+	if storedObjectID != objectID {
+		t.Fatalf("queued object_id = %q, want %q", storedObjectID, objectID)
+	}
+	if attempts != 1 {
+		t.Fatalf("queued attempts = %d, want 1", attempts)
+	}
+	if !strings.Contains(lastError, "delete failed") {
+		t.Fatalf("queued last_error = %q, want delete failure", lastError)
+	}
+}
+
 func TestObjectUploadLockKey(t *testing.T) {
 	got := objectUploadLockKey("foo")
 	want := "atlas-core-object-upload:foo"
