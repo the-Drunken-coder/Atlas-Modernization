@@ -20,8 +20,10 @@ import sys
 import time
 
 try:
+    from .compose_env import load_compose_dotenv
     from .seed_command_catalog import publish_command_catalog
 except ImportError:
+    from compose_env import load_compose_dotenv
     from seed_command_catalog import publish_command_catalog
 
 logger = logging.getLogger(__name__)
@@ -96,93 +98,6 @@ def resolve_atlas_core_dir():
             break
         search_dir = parent
     raise FileNotFoundError("Atlas_Core directory not found")
-
-
-def parse_compose_env_file(env_path):
-    """Parse the simple KEY=VALUE entries used by Docker Compose .env files."""
-    values = {}
-    if not os.path.exists(env_path):
-        return values
-
-    with open(env_path, "r", encoding="utf-8") as env_file:
-        for raw_line in env_file:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[len("export ") :].strip()
-
-            if "=" in line:
-                key, value = line.split("=", 1)
-            elif ":" in line:
-                key, value = line.split(":", 1)
-            else:
-                continue
-
-            key = key.strip()
-            value = value.strip()
-            if not key:
-                continue
-
-            value = normalize_compose_env_value(value)
-
-            values[key] = value
-
-    return values
-
-
-def find_closing_quote(value, quote):
-    """Return the closing quote index, ignoring escaped quotes."""
-    escaped = False
-    for index in range(1, len(value)):
-        char = value[index]
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
-        if char == quote:
-            return index
-    return -1
-
-
-def normalize_compose_env_value(value):
-    """Normalize one Compose .env value enough for atlas.py preflight checks."""
-    value = value.strip()
-    if not value:
-        return value
-
-    if value[0] in {"'", '"'}:
-        quote = value[0]
-        closing_quote = find_closing_quote(value, quote)
-        if closing_quote != -1:
-            trailing = value[closing_quote + 1 :].strip()
-            if not trailing or trailing.startswith("#"):
-                return value[1:closing_quote]
-
-    comment_index = value.find(" #")
-    if comment_index != -1:
-        value = value[:comment_index].rstrip()
-
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
-def load_compose_dotenv(docker_dir):
-    """Load Compose's default .env values without overriding shell variables."""
-    env_path = os.path.join(docker_dir, ".env")
-    values = parse_compose_env_file(env_path)
-    loaded = []
-    for key, value in values.items():
-        if key not in os.environ:
-            os.environ[key] = value
-            loaded.append(key)
-
-    if loaded:
-        loaded_keys = ", ".join(sorted(loaded))
-        print(f"[INFO] Loaded Docker Compose defaults from {env_path}: {loaded_keys}")
 
 
 def database_recreate_on_startup_enabled():

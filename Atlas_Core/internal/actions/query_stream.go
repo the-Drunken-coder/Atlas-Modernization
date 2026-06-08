@@ -68,19 +68,38 @@ type versionCursorPageOpts struct {
 	eqFilter             *cursorPageEqFilter
 }
 
-func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (pgx.Rows, error) {
-	if opts.continuation && opts.cursor == nil {
-		return nil, fmt.Errorf("cursor pagination continuation requires a cursor")
-	}
+type orderedCursorPageOpts struct {
+	selectFrom  string
+	idColumn    string
+	orderColumn string
+	fetchLimit  int
+	eqFilter    *cursorPageEqFilter
+	addBounds   func(*cursorPageWhere)
+}
 
+type cursorPageWhere struct {
+	clauses []string
+	args    []any
+}
+
+func (w *cursorPageWhere) addArg(v any) string {
+	w.args = append(w.args, v)
+	return fmt.Sprintf("$%d", len(w.args))
+}
+
+func (w *cursorPageWhere) addClause(clause string) {
+	w.clauses = append(w.clauses, clause)
+}
+
+func openOrderedCursorPagedRows(ctx context.Context, tx pgx.Tx, opts orderedCursorPageOpts) (pgx.Rows, error) {
 	if _, ok := allowedSelectFrom[opts.selectFrom]; !ok {
 		return nil, fmt.Errorf("disallowed select clause in cursor pagination: %q", opts.selectFrom)
 	}
 	if _, ok := allowedColumns[opts.idColumn]; !ok {
 		return nil, fmt.Errorf("disallowed id column in cursor pagination: %q", opts.idColumn)
 	}
-	if _, ok := allowedColumns[opts.timeColumn]; !ok {
-		return nil, fmt.Errorf("disallowed time column in cursor pagination: %q", opts.timeColumn)
+	if _, ok := allowedColumns[opts.orderColumn]; !ok {
+		return nil, fmt.Errorf("disallowed order column in cursor pagination: %q", opts.orderColumn)
 	}
 	if opts.eqFilter != nil {
 		if _, ok := allowedColumns[opts.eqFilter.column]; !ok {
@@ -88,41 +107,58 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 		}
 	}
 
-	var clauses []string
-	var args []any
-	addArg := func(v any) string {
-		args = append(args, v)
-		return fmt.Sprintf("$%d", len(args))
-	}
+	where := &cursorPageWhere{}
 
 	if opts.eqFilter != nil {
-		clauses = append(clauses, fmt.Sprintf("%s = %s", opts.eqFilter.column, addArg(opts.eqFilter.value)))
+		where.addClause(fmt.Sprintf("%s = %s", opts.eqFilter.column, where.addArg(opts.eqFilter.value)))
 	}
-	if !opts.since.IsZero() {
-		clauses = append(clauses, fmt.Sprintf("%s > %s", opts.timeColumn, addArg(opts.since)))
+	if opts.addBounds != nil {
+		opts.addBounds(where)
 	}
-
-	if opts.cursor != nil {
-		cursorUpperBound := effectiveCursorUpperBound(opts.cursor, opts.snapshotUpperBound)
-		if !cursorUpperBound.IsZero() {
-			clauses = append(clauses, fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, addArg(cursorUpperBound)))
-		}
-		clauses = append(clauses, fmt.Sprintf("(%s, %s) < (%s::timestamptz, %s::varchar)",
-			opts.timeColumn, opts.idColumn,
-			addArg(opts.cursor.timestamp), addArg(opts.cursor.id),
-		))
-	} else {
-		clauses = append(clauses, fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, addArg(opts.snapshotUpperBound)))
+	if len(where.clauses) == 0 {
+		where.addClause("TRUE")
 	}
 
 	query := fmt.Sprintf("%s WHERE %s ORDER BY %s DESC, %s DESC LIMIT %s",
 		opts.selectFrom,
-		strings.Join(clauses, " AND "),
-		opts.timeColumn,
+		strings.Join(where.clauses, " AND "),
+		opts.orderColumn,
 		opts.idColumn,
-		addArg(opts.fetchLimit),
+		where.addArg(opts.fetchLimit),
 	)
-	return tx.Query(ctx, query, args...)
+	return tx.Query(ctx, query, where.args...)
+}
+
+func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (pgx.Rows, error) {
+	if opts.continuation && opts.cursor == nil {
+		return nil, fmt.Errorf("cursor pagination continuation requires a cursor")
+	}
+
+	return openOrderedCursorPagedRows(ctx, tx, orderedCursorPageOpts{
+		selectFrom:  opts.selectFrom,
+		idColumn:    opts.idColumn,
+		orderColumn: opts.timeColumn,
+		fetchLimit:  opts.fetchLimit,
+		eqFilter:    opts.eqFilter,
+		addBounds: func(where *cursorPageWhere) {
+			if !opts.since.IsZero() {
+				where.addClause(fmt.Sprintf("%s > %s", opts.timeColumn, where.addArg(opts.since)))
+			}
+
+			if opts.cursor != nil {
+				cursorUpperBound := effectiveCursorUpperBound(opts.cursor, opts.snapshotUpperBound)
+				if !cursorUpperBound.IsZero() {
+					where.addClause(fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, where.addArg(cursorUpperBound)))
+				}
+				where.addClause(fmt.Sprintf("(%s, %s) < (%s::timestamptz, %s::varchar)",
+					opts.timeColumn, opts.idColumn,
+					where.addArg(opts.cursor.timestamp), where.addArg(opts.cursor.id),
+				))
+			} else {
+				where.addClause(fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, where.addArg(opts.snapshotUpperBound)))
+			}
+		},
+	})
 }
 
 func openVersionCursorPagedRows(ctx context.Context, tx pgx.Tx, opts versionCursorPageOpts) (pgx.Rows, error) {
@@ -130,56 +166,31 @@ func openVersionCursorPagedRows(ctx context.Context, tx pgx.Tx, opts versionCurs
 		return nil, fmt.Errorf("version cursor pagination continuation requires a cursor")
 	}
 
-	if _, ok := allowedSelectFrom[opts.selectFrom]; !ok {
-		return nil, fmt.Errorf("disallowed select clause in version cursor pagination: %q", opts.selectFrom)
-	}
-	if _, ok := allowedColumns[opts.idColumn]; !ok {
-		return nil, fmt.Errorf("disallowed id column in version cursor pagination: %q", opts.idColumn)
-	}
-	if opts.eqFilter != nil {
-		if _, ok := allowedColumns[opts.eqFilter.column]; !ok {
-			return nil, fmt.Errorf("disallowed filter column in version cursor pagination: %q", opts.eqFilter.column)
-		}
-	}
+	return openOrderedCursorPagedRows(ctx, tx, orderedCursorPageOpts{
+		selectFrom:  opts.selectFrom,
+		idColumn:    opts.idColumn,
+		orderColumn: "version",
+		fetchLimit:  opts.fetchLimit,
+		eqFilter:    opts.eqFilter,
+		addBounds: func(where *cursorPageWhere) {
+			if opts.sinceVersion > 0 {
+				where.addClause(fmt.Sprintf("version > %s::bigint", where.addArg(opts.sinceVersion)))
+			}
 
-	var clauses []string
-	var args []any
-	addArg := func(v any) string {
-		args = append(args, v)
-		return fmt.Sprintf("$%d", len(args))
-	}
-
-	if opts.eqFilter != nil {
-		clauses = append(clauses, fmt.Sprintf("%s = %s", opts.eqFilter.column, addArg(opts.eqFilter.value)))
-	}
-	if opts.sinceVersion > 0 {
-		clauses = append(clauses, fmt.Sprintf("version > %s::bigint", addArg(opts.sinceVersion)))
-	}
-
-	if opts.cursor != nil {
-		cursorUpperBound := effectiveVersionCursorUpperBound(opts.cursor, opts.snapshotUpperVersion)
-		if cursorUpperBound > 0 {
-			clauses = append(clauses, fmt.Sprintf("version <= %s::bigint", addArg(cursorUpperBound)))
-		}
-		clauses = append(clauses, fmt.Sprintf("(version, %s) < (%s::bigint, %s::varchar)",
-			opts.idColumn,
-			addArg(opts.cursor.version), addArg(opts.cursor.id),
-		))
-	} else if opts.snapshotUpperVersion > 0 {
-		clauses = append(clauses, fmt.Sprintf("version <= %s::bigint", addArg(opts.snapshotUpperVersion)))
-	}
-
-	if len(clauses) == 0 {
-		clauses = append(clauses, "TRUE")
-	}
-
-	query := fmt.Sprintf("%s WHERE %s ORDER BY version DESC, %s DESC LIMIT %s",
-		opts.selectFrom,
-		strings.Join(clauses, " AND "),
-		opts.idColumn,
-		addArg(opts.fetchLimit),
-	)
-	return tx.Query(ctx, query, args...)
+			if opts.cursor != nil {
+				cursorUpperBound := effectiveVersionCursorUpperBound(opts.cursor, opts.snapshotUpperVersion)
+				if cursorUpperBound > 0 {
+					where.addClause(fmt.Sprintf("version <= %s::bigint", where.addArg(cursorUpperBound)))
+				}
+				where.addClause(fmt.Sprintf("(version, %s) < (%s::bigint, %s::varchar)",
+					opts.idColumn,
+					where.addArg(opts.cursor.version), where.addArg(opts.cursor.id),
+				))
+			} else if opts.snapshotUpperVersion > 0 {
+				where.addClause(fmt.Sprintf("version <= %s::bigint", where.addArg(opts.snapshotUpperVersion)))
+			}
+		},
+	})
 }
 
 func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
