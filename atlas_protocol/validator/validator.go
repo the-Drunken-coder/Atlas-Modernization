@@ -32,6 +32,11 @@ var compiled struct {
 	err    error
 }
 
+// evalMu serializes CUE evaluation. The CUE evaluator lazily mutates shared
+// state inside cue.Value, so concurrent Unify/Validate calls against the
+// shared compiled schema race without it.
+var evalMu sync.Mutex
+
 func ValidateEntityBlob(value any) []string {
 	return validate("#EntityBlob", value)
 }
@@ -125,6 +130,9 @@ func validate(definition string, value any) []string {
 	if err := path.Err(); err != nil {
 		return []string{fmt.Sprintf("invalid protocol schema path %q: %v", definition, err)}
 	}
+
+	evalMu.Lock()
+	defer evalMu.Unlock()
 	def := schema.root.LookupPath(path)
 	if err := def.Err(); err != nil {
 		return []string{fmt.Sprintf("protocol schema definition %s not found: %v", definition, err)}
