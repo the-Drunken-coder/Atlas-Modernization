@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
@@ -1366,9 +1367,7 @@ func objectBlobToMap(blob ObjectBlob) map[string]any {
 
 func objectFromJSON(data []byte) (map[string]any, bool) {
 	var decoded map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&decoded); err != nil {
+	if !decodeSingleJSONValue(data, &decoded) {
 		return nil, false
 	}
 	return decoded, decoded != nil
@@ -1376,12 +1375,21 @@ func objectFromJSON(data []byte) (map[string]any, bool) {
 
 func arrayFromJSON(data []byte) ([]any, bool) {
 	var decoded []any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&decoded); err != nil {
+	if !decodeSingleJSONValue(data, &decoded) {
 		return nil, false
 	}
 	return decoded, decoded != nil
+}
+
+func decodeSingleJSONValue(data []byte, out any) bool {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(out); err != nil {
+		return false
+	}
+
+	var trailing any
+	return decoder.Decode(&trailing) == io.EOF
 }
 
 func integerFromValue(value any) (int64, bool) {

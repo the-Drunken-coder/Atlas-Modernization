@@ -99,6 +99,55 @@ func TestNormalizeTaskProgressPercent(t *testing.T) {
 	}
 }
 
+func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
+	progress := 62.5
+	message := "survey running"
+
+	params := taskStatusTransitionUpdate("acknowledged", &progress, &message)
+	if params.Status == nil || *params.Status != "acknowledged" {
+		t.Fatalf("Status = %v, want acknowledged", params.Status)
+	}
+	if len(params.RemoveExtraKeys) != len(legacyTaskTransitionExtraKeys) {
+		t.Fatalf("RemoveExtraKeys = %v, want %v", params.RemoveExtraKeys, legacyTaskTransitionExtraKeys)
+	}
+
+	components := params.Components
+	progressComponent, ok := components["progress"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("progress component = %T, want map[string]interface{}", components["progress"])
+	}
+	if got := progressComponent["percent"]; got != 62.5 {
+		t.Fatalf("progress percent = %v, want 62.5", got)
+	}
+	if got := components["status_message"]; got != "survey running" {
+		t.Fatalf("status_message = %v, want survey running", got)
+	}
+
+	existing := map[string]interface{}{
+		"components":     map[string]interface{}{},
+		"status":         "pending",
+		"progress":       0.5,
+		"status_message": "legacy",
+		"message":        "legacy message",
+		"result":         map[string]interface{}{"ok": true},
+	}
+	removeTaskExtraKeys(existing, params.RemoveExtraKeys...)
+	for _, key := range legacyTaskTransitionExtraKeys {
+		if _, ok := existing[key]; ok {
+			t.Fatalf("legacy extra key %q was not removed: %#v", key, existing)
+		}
+	}
+	if _, ok := existing["components"]; !ok {
+		t.Fatal("components should not be removed")
+	}
+	if _, ok := existing["status"]; !ok {
+		t.Fatal("status should not be removed")
+	}
+	if _, ok := existing["result"]; !ok {
+		t.Fatal("unrelated extra should not be removed")
+	}
+}
+
 func TestValidateTaskStatusTransition(t *testing.T) {
 	tests := []struct {
 		name    string

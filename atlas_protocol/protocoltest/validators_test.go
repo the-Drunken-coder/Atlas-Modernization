@@ -324,6 +324,46 @@ func TestObjectValidation(t *testing.T) {
 	}
 }
 
+func TestRawJSONValidatorsRejectTrailingValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      json.RawMessage
+		validate func(any) []string
+		contains string
+	}{
+		{
+			name:     "entity",
+			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
+			validate: protocol.ValidateEntityBlob,
+			contains: "entity blob must be an object",
+		},
+		{
+			name:     "task",
+			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
+			validate: protocol.ValidateTaskBlob,
+			contains: "task blob must be an object",
+		},
+		{
+			name:     "object",
+			raw:      json.RawMessage(`{"size_bytes":1}{"bad":true}`),
+			validate: protocol.ValidateObjectBlob,
+			contains: "object blob must be an object",
+		},
+		{
+			name:     "array component",
+			raw:      json.RawMessage(`[{"object_id":"object-1","role":"thumbnail"}][]`),
+			validate: protocol.ValidateMediaRefsComponent,
+			contains: "media_refs: expected array",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertErrorContains(t, tt.validate(tt.raw), tt.contains)
+		})
+	}
+}
+
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

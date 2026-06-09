@@ -444,10 +444,11 @@ func normalizeCheckinTaskLimit(limit int) (int, error) {
 
 // UpdateTaskParams holds parameters for updating a task.
 type UpdateTaskParams struct {
-	Status     *string
-	EntityID   *string
-	Components map[string]interface{}
-	Extra      map[string]interface{}
+	Status          *string
+	EntityID        *string
+	Components      map[string]interface{}
+	Extra           map[string]interface{}
+	RemoveExtraKeys []string
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -458,6 +459,9 @@ func isNoOpTaskUpdate(params UpdateTaskParams) bool {
 		return false
 	}
 	if len(params.Extra) > 0 {
+		return false
+	}
+	if len(params.RemoveExtraKeys) > 0 {
 		return false
 	}
 	return true
@@ -553,6 +557,8 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		}
 		existingJSON["components"] = existingComponents
 	}
+
+	removeTaskExtraKeys(existingJSON, params.RemoveExtraKeys...)
 
 	// Merge extra.
 	if params.Extra != nil {
@@ -669,6 +675,42 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
 }
 
+var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
+
+func removeTaskExtraKeys(jsonData map[string]interface{}, keys ...string) {
+	for _, key := range keys {
+		switch key {
+		case "components", "status", "entity_id", "version":
+			continue
+		default:
+			delete(jsonData, key)
+		}
+	}
+}
+
+func taskStatusTransitionUpdate(status string, progress *float64, message *string) UpdateTaskParams {
+	var components map[string]interface{}
+	if progress != nil || message != nil {
+		components = make(map[string]interface{})
+		if progress != nil {
+			p := normalizeTaskProgressPercent(*progress)
+			components["progress"] = map[string]interface{}{"percent": p}
+		}
+		if message != nil {
+			components["status_message"] = *message
+		}
+	}
+
+	removeExtraKeys := make([]string, len(legacyTaskTransitionExtraKeys))
+	copy(removeExtraKeys, legacyTaskTransitionExtraKeys)
+
+	return UpdateTaskParams{
+		Status:          &status,
+		Components:      components,
+		RemoveExtraKeys: removeExtraKeys,
+	}
+}
+
 // normalizeTaskProgressPercent clamps progress to the canonical 0–100 percent scale.
 // Values are not auto-scaled from 0–1; e.g. 1 means 1%, not 100%.
 func normalizeTaskProgressPercent(p float64) float64 {
@@ -683,18 +725,7 @@ func normalizeTaskProgressPercent(p float64) float64 {
 
 // TransitionStatus updates the task status and optional progress.
 func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*models.Task, error) {
-	var components map[string]interface{}
-	if progress != nil || message != nil {
-		components = make(map[string]interface{})
-		if progress != nil {
-			p := normalizeTaskProgressPercent(*progress)
-			components["progress"] = map[string]interface{}{"percent": p}
-		}
-		if message != nil {
-			components["status_message"] = *message
-		}
-	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Components: components})
+	return a.Update(ctx, taskID, taskStatusTransitionUpdate(status, progress, message))
 }
 
 // Count returns the total number of tasks.
