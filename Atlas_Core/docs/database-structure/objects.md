@@ -29,7 +29,7 @@ Implementation references:
 Common keys in `json`:
 
 - `bucket` (string, server-generated from the configured storage bucket; read-only in API create/update bodies)
-- `size_bytes` (number)
+- `size_bytes` (non-negative integer)
 - `usage_hints` (array of strings)
 - `referenced_by` (array of objects, each with `entity_id` and/or `task_id`)
 - additional metadata in extra keys

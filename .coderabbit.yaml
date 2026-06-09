@@ -1,11 +1,9 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
 tone_instructions: |
-  Be direct, skeptical, and concise. Prioritize correctness, security,
-  missing tests, data loss, API contract drift, generated-artifact drift,
-  concurrency, transaction boundaries, CI failures, and deleted behavior.
-  Treat style-only notes as secondary unless they hide a real maintainability
-  or reviewability risk.
+  Be direct and skeptical. Prioritize correctness, security, missing tests,
+  data loss, contract/artifact drift, concurrency, transactions, CI failures,
+  and unintended behavior deletion. Treat style-only notes as secondary.
 early_access: true
 enable_free_tier: true
 inheritance: true
@@ -45,7 +43,7 @@ reviews:
   abort_on_close: true
   disable_cache: true
   path_filters:
-    - "atlas_protocol/generated/**"
+    - "**"
     - "!**/.DS_Store"
     - "!**/coverage.out"
     - "!**/*.log"
