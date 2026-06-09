@@ -13,6 +13,7 @@ proxies public HTTPS traffic to the local ATLAS Core API.
    ```bash
    export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
    export API_AUTH_KEY='your-secure-api-key'
+   export ATLAS_TUNNEL_HOSTNAME='atlascommandapi.org'
    ```
 
 3. From the **repository root**, start the tunnel profile:
@@ -50,7 +51,9 @@ intentionally; they are not durable systems of record for operators.
 
 It joins the same `atlas_core_network` bridge as the API service and forwards traffic to
 `http://api:8000` inside Compose. Hostname routing is configured in the Cloudflare
-dashboard for the tunnel — not via a local credentials file.
+dashboard for the tunnel, not via a local credentials file. `ATLAS_TUNNEL_HOSTNAME`
+only controls the public health URL that `atlas.py --tunnel` verifies after
+startup.
 
 ## Local files
 

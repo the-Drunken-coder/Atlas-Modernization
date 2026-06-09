@@ -19,6 +19,7 @@ env:
   GO_VERSION_FILE: Atlas_Core/go.mod
   GO_SUM_FILE: Atlas_Core/go.sum
   PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
+  PROTOCOL_GO_SUM_FILE: atlas_protocol/go.sum
   PROTOCOL_WORKING_DIRECTORY: atlas_protocol
   WORKING_DIRECTORY: Atlas_Core
 
@@ -80,7 +81,27 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: ${{ env.PROTOCOL_GO_VERSION_FILE }}
-          cache-dependency-path: ${{ env.PROTOCOL_GO_VERSION_FILE }}
+          cache-dependency-path: ${{ env.PROTOCOL_GO_SUM_FILE }}
+
+      - name: Download Atlas Protocol Go modules
+        run: go mod download
+
+      - name: Check Atlas Protocol Go formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf 'gofmt is required for:\n%s\n' "$files"
+            exit 1
+          fi
+
+      - name: Run Atlas Protocol go vet
+        run: go vet ./...
+
+      - name: Run Atlas Protocol golangci-lint
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9
+        with:
+          version: v2.12.2
+          working-directory: ${{ env.PROTOCOL_WORKING_DIRECTORY }}
 
       - name: Check Atlas Protocol artifacts
         run: go run ./tools/check
@@ -142,6 +163,9 @@ jobs:
             echo "No Python scripts found under scripts/; skipping."
           fi
 
+      - name: Test Compose env parser
+        run: python3 scripts/test_compose_env.py
+
       - name: Run ShellCheck
         run: |
           if compgen -G "scripts/*.sh" > /dev/null; then
@@ -156,7 +180,10 @@ jobs:
           MINIO_ROOT_USER: atlas
           MINIO_ROOT_PASSWORD: atlas-ci
           CLOUDFLARE_TUNNEL_TOKEN: dummy
-        run: docker compose -f docker/docker-compose.yml config --quiet
+          API_AUTH_KEY: atlas-ci-key
+        run: |
+          docker compose -f docker/docker-compose.yml config --quiet
+          docker compose -f docker/docker-compose.yml -f docker/docker-compose.tunnel.yml config --quiet
 
   docker-build:
     name: docker-build

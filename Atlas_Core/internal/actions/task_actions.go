@@ -121,6 +121,9 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 			}
 		}
 	}
+	if err := ValidateTaskBlob(jsonData); err != nil {
+		return nil, err
+	}
 
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
@@ -444,10 +447,11 @@ func normalizeCheckinTaskLimit(limit int) (int, error) {
 
 // UpdateTaskParams holds parameters for updating a task.
 type UpdateTaskParams struct {
-	Status     *string
-	EntityID   *string
-	Components map[string]interface{}
-	Extra      map[string]interface{}
+	Status          *string
+	EntityID        *string
+	Components      map[string]interface{}
+	Extra           map[string]interface{}
+	ExpectedVersion *int64
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -471,7 +475,14 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	taskID = SanitizeID(taskID)
 
 	if isNoOpTaskUpdate(params) {
-		return a.Get(ctx, taskID)
+		task, err := a.Get(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if !ExpectedVersionMatches(params.ExpectedVersion, task.Version) {
+			return nil, NewPreconditionFailedError("task")
+		}
+		return task, nil
 	}
 
 	// Begin transaction for atomic read-modify-write.
@@ -496,6 +507,9 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 			return nil, NewTaskNotFoundError(taskID)
 		}
 		return nil, fmt.Errorf("failed to get task: %w", err)
+	}
+	if !ExpectedVersionMatches(params.ExpectedVersion, task.Version) {
+		return nil, NewPreconditionFailedError("task")
 	}
 
 	// Parse existing JSON
@@ -565,6 +579,9 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 				existingJSON[k] = v
 			}
 		}
+	}
+	if err := ValidateTaskBlob(existingJSON); err != nil {
+		return nil, err
 	}
 
 	jsonBytes, err := json.Marshal(existingJSON)
@@ -648,29 +665,29 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 }
 
 // Acknowledge marks a task as acknowledged.
-func (a *TaskActions) Acknowledge(ctx context.Context, taskID string) (*models.Task, error) {
+func (a *TaskActions) Acknowledge(ctx context.Context, taskID string, expectedVersion *int64) (*models.Task, error) {
 	status := "acknowledged"
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: expectedVersion})
 }
 
 // Complete marks a task as completed with optional result.
-func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}) (*models.Task, error) {
+func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}, expectedVersion *int64) (*models.Task, error) {
 	status := "completed"
 	var extra map[string]interface{}
 	if result != nil {
 		extra = map[string]interface{}{"result": result}
 	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
 }
 
 // Fail marks a task as failed with optional error details.
-func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}) (*models.Task, error) {
+func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}, expectedVersion *int64) (*models.Task, error) {
 	status := "failed"
 	var extra map[string]interface{}
 	if errorDetails != nil {
 		extra = map[string]interface{}{"error": errorDetails}
 	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
 }
 
 // normalizeTaskProgressPercent clamps progress to the canonical 0–100 percent scale.
@@ -686,7 +703,7 @@ func normalizeTaskProgressPercent(p float64) float64 {
 }
 
 // TransitionStatus updates the task status and optional progress.
-func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*models.Task, error) {
+func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string, expectedVersion *int64) (*models.Task, error) {
 	var components map[string]interface{}
 	var extra map[string]interface{}
 	if progress != nil || message != nil {
@@ -704,7 +721,7 @@ func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status strin
 			"status_message": nil,
 		}
 	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Components: components, Extra: extra})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Components: components, Extra: extra, ExpectedVersion: expectedVersion})
 }
 
 // Count returns the total number of tasks.

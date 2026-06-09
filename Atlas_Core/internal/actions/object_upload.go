@@ -197,6 +197,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, fmt.Errorf("failed to commit upload preflight transaction: %w", err)
 	}
 
+	// The storage bucket is disposable runtime scratch. If the blob write
+	// succeeds but metadata never commits, the orphan is acceptable until the
+	// bucket is cleared/reset by the normal startup path.
 	objectPath := a.storage.NewObjectPath(objectID)
 	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
 	if err != nil {
@@ -231,6 +234,18 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return cleanupMetadataFailure(err)
 	}
 
+	var queuedOldBucket, queuedOldPath string
+	if currentState.path != nil {
+		oldPath := strings.TrimSpace(*currentState.path)
+		if oldPath != "" && oldPath != objectPath {
+			queuedOldBucket = strings.TrimSpace(bucket)
+			queuedOldPath = oldPath
+			if err := a.queueStorageDeletionTx(ctx, tx, queuedOldBucket, queuedOldPath, objectID); err != nil {
+				return cleanupMetadataFailure(err)
+			}
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, a.cleanupUploadedPathAfterFailure(
 			ctx,
@@ -240,9 +255,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		)
 	}
 
-	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
-		if err := a.deleteObjectPathOrQueueRetry(ctx, objectID, *currentState.path); err != nil {
-			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", *currentState.path).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
+	if queuedOldPath != "" {
+		if err := a.attemptQueuedStorageDeletion(ctx, queuedOldBucket, queuedOldPath, objectID); err != nil {
+			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", queuedOldPath).Msg("Uploaded object metadata now points to a new blob, but queued old blob cleanup did not complete")
 		}
 	}
 

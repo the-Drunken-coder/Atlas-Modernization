@@ -30,17 +30,13 @@ request() {
   local method="$1" path="$2"
   shift 2
   local response
-  local retry_args=()
+  local curl_args=(-sS --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME")
   if [ "$method" = "GET" ] || [ "$method" = "HEAD" ]; then
-    retry_args=(--retry 2 --retry-delay 1)
+    curl_args+=(--retry 2 --retry-delay 1)
   fi
+  curl_args+=(-w "\n%{http_code}" -X "$method" "${API_URL}${path}" "$@")
   set +e
-  response=$(curl -sS \
-    --connect-timeout "$CONNECT_TIMEOUT" \
-    --max-time "$MAX_TIME" \
-    "${retry_args[@]}" \
-    -w "\n%{http_code}" \
-    -X "$method" "${API_URL}${path}" "$@" 2>&1)
+  response=$(curl "${curl_args[@]}" 2>&1)
   local curl_exit=$?
   set -e
   if [ "$curl_exit" -ne 0 ]; then

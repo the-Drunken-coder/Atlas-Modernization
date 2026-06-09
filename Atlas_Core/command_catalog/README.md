@@ -112,4 +112,4 @@ python scripts/seed_command_catalog.py --api-url http://localhost:8000
 
 This uploads the catalog to the Atlas Core API and makes it available for command validation and discovery.
 
-Go `*_test.go` tests cover the Go module; catalog JSON checks are performed by the seed script unless a dedicated catalog test is added later.
+Go `*_test.go` tests cover protocol-sensitive catalog details; full catalog JSON checks run in `scripts/seed_command_catalog.py` before upload.

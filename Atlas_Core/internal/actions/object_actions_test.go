@@ -283,6 +283,76 @@ func TestStorageDeletionRetryDelay(t *testing.T) {
 	}
 }
 
+func TestQueueStorageDeletionResetsDuplicateRetryState(t *testing.T) {
+	dbURL, explicitDBURL := actionsTestDatabaseURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		if explicitDBURL {
+			t.Fatalf("ping test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("outbox-reset-%d", time.Now().UTC().UnixNano())
+	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id, attempts, last_error, next_attempt_at)
+		VALUES ('atlas-media', $1, $2, 4, 'old failure', clock_timestamp() + interval '1 hour')
+	`, objectPath, objectID); err != nil {
+		t.Fatalf("insert outbox row: %v", err)
+	}
+
+	actions := NewObjectActions(pool, &recordingObjectStorage{})
+	if err := actions.queueStorageDeletion(ctx, "atlas-media", objectPath, objectID+"-new"); err != nil {
+		t.Fatalf("queueStorageDeletion: %v", err)
+	}
+
+	var storedObjectID string
+	var attempts int
+	var lastError *string
+	var dueNow bool
+	if err := pool.QueryRow(ctx, `
+		SELECT object_id, attempts, last_error, next_attempt_at <= clock_timestamp()
+		FROM storage_deletion_outbox
+		WHERE bucket = 'atlas-media' AND path = $1
+	`, objectPath).Scan(&storedObjectID, &attempts, &lastError, &dueNow); err != nil {
+		t.Fatalf("query outbox row: %v", err)
+	}
+	if storedObjectID != objectID+"-new" {
+		t.Fatalf("object_id = %q, want refreshed id", storedObjectID)
+	}
+	if attempts != 0 {
+		t.Fatalf("attempts = %d, want reset to 0", attempts)
+	}
+	if lastError != nil {
+		t.Fatalf("last_error = %q, want nil", *lastError)
+	}
+	if !dueNow {
+		t.Fatal("next_attempt_at should be due immediately after duplicate queue")
+	}
+}
+
 func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
@@ -589,7 +659,9 @@ func actionsTestDatabaseURL() (string, bool) {
 func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	var ok bool
 	err := pool.QueryRow(ctx, `
-		SELECT to_regclass('public.objects') IS NOT NULL
+		SELECT to_regclass('public.entities') IS NOT NULL
+			AND to_regclass('public.tasks') IS NOT NULL
+			AND to_regclass('public.objects') IS NOT NULL
 			AND to_regclass('public.deletions') IS NOT NULL
 			AND to_regclass('public.storage_deletion_outbox') IS NOT NULL
 	`).Scan(&ok)

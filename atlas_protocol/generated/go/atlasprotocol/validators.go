@@ -1,0 +1,79 @@
+package atlasprotocol
+
+import "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
+
+func ValidateEntityBlob(value any) []string {
+	return validator.ValidateEntityBlob(value)
+}
+
+func ValidateTaskBlob(value any) []string {
+	return validator.ValidateTaskBlob(value)
+}
+
+func ValidateObjectBlob(value any) []string {
+	return validator.ValidateObjectBlob(value)
+}
+
+func ValidateEntityComponents(value any) []string {
+	return validator.ValidateEntityComponents(value)
+}
+
+func ValidateTaskComponents(value any) []string {
+	return validator.ValidateTaskComponents(value)
+}
+
+func ValidateCommandComponent(value any) []string {
+	return validator.ValidateCommandComponent(value)
+}
+
+func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {
+	return validator.ValidateTaskParametersComponent(value, fieldPrefix)
+}
+
+func ValidateTaskProgressComponent(value any) []string {
+	return validator.ValidateTaskProgressComponent(value)
+}
+
+func ValidateTaskCatalogComponent(value any) []string {
+	return validator.ValidateTaskCatalogComponent(value)
+}
+
+func ValidateMediaRefsComponent(value any) []string {
+	return validator.ValidateMediaRefsComponent(value)
+}
+
+func ValidateMilViewComponent(value any) []string {
+	return validator.ValidateMilViewComponent(value)
+}
+
+func ValidateHealthComponent(value any) []string {
+	return validator.ValidateHealthComponent(value)
+}
+
+func ValidateSensorRefsComponent(value any) []string {
+	return validator.ValidateSensorRefsComponent(value)
+}
+
+func ValidateCommunicationsComponent(value any) []string {
+	return validator.ValidateCommunicationsComponent(value)
+}
+
+func ValidateTaskQueueComponent(value any) []string {
+	return validator.ValidateTaskQueueComponent(value)
+}
+
+func ValidateStatusComponent(value any) []string {
+	return validator.ValidateStatusComponent(value)
+}
+
+func ValidateHeartbeatComponent(value any) []string {
+	return validator.ValidateHeartbeatComponent(value)
+}
+
+func ValidateTelemetryComponent(value any) []string {
+	return validator.ValidateTelemetryComponent(value)
+}
+
+func ValidateGeometryComponent(value any) []string {
+	return validator.ValidateGeometryComponent(value)
+}

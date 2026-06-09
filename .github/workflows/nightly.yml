@@ -44,11 +44,21 @@ jobs:
         working-directory: .
         run: docker build --target production -t atlas-core:nightly -f Atlas_Core/docker/Dockerfile .
 
-      - name: Scan repository filesystem
+      - name: Scan Core filesystem
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: Atlas_Core
+          trivy-config: ""
+          version: ${{ env.TRIVY_VERSION }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Scan Atlas Protocol filesystem
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: atlas_protocol
           trivy-config: ""
           version: ${{ env.TRIVY_VERSION }}
           severity: HIGH,CRITICAL

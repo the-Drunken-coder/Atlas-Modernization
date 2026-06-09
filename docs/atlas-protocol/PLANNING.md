@@ -112,7 +112,7 @@ Primary references:
 - `Atlas_Core/internal/actions/validation.go`
 - `Atlas_Core/internal/serializers/`
 - `Atlas_Core/docs/database-structure/`
-- `Atlas_Core/docs/database-structure/examples/`
+- `atlas_protocol/examples/`
 - `Atlas_Core/command_catalog/`
 - `Atlas_Core/internal/database/db.go`
 

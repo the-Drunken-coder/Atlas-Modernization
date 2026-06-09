@@ -230,14 +230,14 @@ func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*Li
 
 // UpdateObjectParams holds parameters for updating an object.
 type UpdateObjectParams struct {
-	Path         *string
-	ContentType  *string
-	Type         *string
-	SizeBytes    *int64
-	UsageHints   []string
-	ReferencedBy []map[string]interface{}
-	Extra        map[string]interface{}
-	IfMatch      *string // optional If-Match (strong ETag from GET /objects/{id})
+	Path            *string
+	ContentType     *string
+	Type            *string
+	SizeBytes       *int64
+	UsageHints      []string
+	ReferencedBy    []map[string]interface{}
+	Extra           map[string]interface{}
+	ExpectedVersion *int64
 }
 
 // Update updates an object.
@@ -253,7 +253,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		if err != nil {
 			return nil, err
 		}
-		if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.Version) {
+		if !ExpectedVersionMatches(params.ExpectedVersion, obj.Version) {
 			return nil, NewObjectPreconditionFailedError()
 		}
 		return obj, nil
@@ -283,7 +283,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.Version) {
+	if !ExpectedVersionMatches(params.ExpectedVersion, obj.Version) {
 		return nil, NewObjectPreconditionFailedError()
 	}
 
@@ -447,13 +447,8 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	}
 
 	if queuedPath != "" {
-		if err := a.storage.DeleteObjectPath(ctx, queuedPath); err != nil {
-			if recordErr := a.recordQueuedStorageDeletionFailure(ctx, queuedBucket, queuedPath, err); recordErr != nil {
-				log.Error().Err(recordErr).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion failed and retry metadata could not be updated")
-			}
-			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Object deleted from database but storage delete failed; queued retry")
-		} else if err := a.clearQueuedStorageDeletion(ctx, queuedBucket, queuedPath); err != nil {
-			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but queued retry could not be cleared")
+		if err := a.attemptQueuedStorageDeletion(ctx, queuedBucket, queuedPath, objectID); err != nil {
+			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Object deleted from database but queued storage cleanup did not complete")
 		}
 	}
 

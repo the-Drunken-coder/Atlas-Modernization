@@ -178,6 +178,19 @@ func setPaginationHeaders(w http.ResponseWriter, limit, count int, hasMore bool,
 	}
 }
 
+func setResourceETag(w http.ResponseWriter, version int64) {
+	w.Header().Set("ETag", serializers.StrongETag(version))
+}
+
+func (h *Handler) parseIfMatchExpectedVersion(w http.ResponseWriter, r *http.Request, resourceType string) (*int64, bool) {
+	expectedVersion, err := actions.ParseIfMatchExpectedVersion(r.Header.Get("If-Match"))
+	if err != nil {
+		h.handleActionError(w, r, actions.NewPreconditionFailedError(resourceType))
+		return nil, false
+	}
+	return expectedVersion, true
+}
+
 // parseNonNegativeIntQuery parses a query parameter as a non-negative integer; empty uses defaultVal.
 func parseNonNegativeIntQuery(r *http.Request, key string, defaultVal int) (int, error) {
 	s := strings.TrimSpace(r.URL.Query().Get(key))

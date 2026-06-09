@@ -24,6 +24,9 @@ const queueStorageDeletionSQL = `
 	VALUES ($1, $2, $3)
 	ON CONFLICT (bucket, path) DO UPDATE
 	SET object_id = EXCLUDED.object_id,
+		attempts = 0,
+		last_error = NULL,
+		next_attempt_at = clock_timestamp(),
 		updated_at = clock_timestamp()
 `
 
@@ -211,6 +214,22 @@ func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id i
 	}
 	if _, err := a.pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("clear storage deletion outbox row: %w", err)
+	}
+	return nil
+}
+
+func (a *ObjectActions) attemptQueuedStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
+	if a.storage == nil {
+		return &storage.StorageError{Message: "storage not configured"}
+	}
+	if err := a.storage.DeleteObjectPath(ctx, path); err != nil {
+		if recordErr := a.recordQueuedStorageDeletionFailure(ctx, bucket, path, err); recordErr != nil {
+			return fmt.Errorf("storage delete failed and retry metadata could not be updated: %w", recordErr)
+		}
+		return fmt.Errorf("storage delete failed for object %s path %s: %w", objectID, path, err)
+	}
+	if err := a.clearQueuedStorageDeletion(ctx, bucket, path); err != nil {
+		return err
 	}
 	return nil
 }

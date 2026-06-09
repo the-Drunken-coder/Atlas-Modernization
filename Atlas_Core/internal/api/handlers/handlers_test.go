@@ -569,6 +569,12 @@ func TestHandleActionErrorMapsKnownErrorTypes(t *testing.T) {
 			wantCode:   "ENTITY_ALREADY_EXISTS",
 		},
 		{
+			name:       "precondition failed",
+			err:        actions.NewPreconditionFailedError("entity"),
+			wantStatus: http.StatusPreconditionFailed,
+			wantCode:   "PRECONDITION_FAILED",
+		},
+		{
 			name:       "storage error",
 			err:        &storage.StorageError{Message: "storage down"},
 			wantStatus: http.StatusServiceUnavailable,

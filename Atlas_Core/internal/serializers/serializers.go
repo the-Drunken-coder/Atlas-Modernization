@@ -10,9 +10,14 @@ import (
 // APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.
 const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
 
+// StrongETag returns a strong quoted ETag for resource-version concurrency (If-Match).
+func StrongETag(version int64) string {
+	return fmt.Sprintf(`"v%d"`, version)
+}
+
 // ObjectStrongETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
 func ObjectStrongETag(version int64) string {
-	return fmt.Sprintf(`"v%d"`, version)
+	return StrongETag(version)
 }
 
 // EntityResponse represents the serialized form of an Entity.
@@ -92,7 +97,7 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 			UpdatedAt: e.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 			Version:   e.Version,
 		},
-		Extra: entityExtra(data),
+		Extra: models.EntityExtra(data),
 	}
 }
 
@@ -118,7 +123,7 @@ func SerializeTask(t *models.Task) *TaskResponse {
 			UpdatedAt: t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 			Version:   t.Version,
 		},
-		Extra: taskExtra(data),
+		Extra: models.TaskExtra(data),
 	}
 }
 
@@ -147,7 +152,7 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 			Version:   o.Version,
 		},
-		Payload: objectPayload(data),
+		Payload: models.MediaObjectPayload(data),
 	}
 }
 
@@ -186,43 +191,6 @@ func mapField(data map[string]interface{}, key string) map[string]interface{} {
 		return value
 	}
 	return nil
-}
-
-func entityExtra(data map[string]interface{}) map[string]interface{} {
-	return extraWithout(data, map[string]struct{}{
-		"components": {}, "type": {}, "subtype": {}, "alias": {},
-		"entity_id": {}, "task_id": {}, "object_id": {}, "created_at": {}, "updated_at": {}, "version": {},
-	})
-}
-
-func taskExtra(data map[string]interface{}) map[string]interface{} {
-	return extraWithout(data, map[string]struct{}{
-		"components": {}, "status": {}, "entity_id": {}, "task_id": {},
-		"object_id": {}, "created_at": {}, "updated_at": {}, "version": {},
-	})
-}
-
-func objectPayload(data map[string]interface{}) map[string]interface{} {
-	return extraWithout(data, map[string]struct{}{
-		"path": {}, "content_type": {}, "type": {}, "size_bytes": {}, "usage_hints": {}, "bucket": {}, "referenced_by": {},
-		"object_id": {}, "created_at": {}, "updated_at": {}, "version": {},
-	})
-}
-
-func extraWithout(data map[string]interface{}, excluded map[string]struct{}) map[string]interface{} {
-	if data == nil {
-		return nil
-	}
-	extra := make(map[string]interface{})
-	for key, value := range data {
-		if _, skip := excluded[key]; !skip {
-			extra[key] = value
-		}
-	}
-	if len(extra) == 0 {
-		return nil
-	}
-	return extra
 }
 
 func objectUsageHints(data map[string]interface{}) []string {

@@ -23,12 +23,12 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            // This workflow prunes all completed workflow runs across all workflows.
-            // By design, there are no filtering options - any completed workflow run
-            // is eligible for removal. This ensures consistent cleanup behavior
-            // without requiring manual configuration.
+            // This workflow prunes completed workflow runs older than the
+            // retention window across all workflows.
             const allowedStatuses = new Set(['completed']);
+            const retentionDays = 14;
             const perPage = 100;
+            const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
             const runsToDelete = [];
 
@@ -50,6 +50,10 @@ jobs:
                   return;
                 }
 
+                if (new Date(run.created_at) >= cutoff) {
+                  return;
+                }
+
                 // Skip the current run because GitHub cannot delete it while it is running.
                 if (run.id === context.runId) {
                   return;
@@ -60,7 +64,7 @@ jobs:
             }
 
             if (!runsToDelete.length) {
-              core.info('No completed workflow runs found to delete.');
+              core.info(`No completed workflow runs older than ${retentionDays} days found to delete.`);
               return;
             }
 

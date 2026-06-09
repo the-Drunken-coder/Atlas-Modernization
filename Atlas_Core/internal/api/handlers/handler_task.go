@@ -59,6 +59,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusCreated, serializers.SerializeTask(task))
 }
 
@@ -72,6 +73,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
@@ -92,18 +94,24 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")
+	if !ok {
+		return
+	}
 
 	task, err := h.taskActions.Update(r.Context(), taskID, actions.UpdateTaskParams{
-		Status:     req.Status,
-		EntityID:   req.EntityID,
-		Components: req.Components,
-		Extra:      req.Extra,
+		Status:          req.Status,
+		EntityID:        req.EntityID,
+		Components:      req.Components,
+		Extra:           req.Extra,
+		ExpectedVersion: expectedVersion,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
@@ -141,13 +149,18 @@ func (h *Handler) GetTasksByEntity(w http.ResponseWriter, r *http.Request) {
 // AcknowledgeTask handles POST /tasks/{task_id}/acknowledge.
 func (h *Handler) AcknowledgeTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")
+	if !ok {
+		return
+	}
 
-	task, err := h.taskActions.Acknowledge(r.Context(), taskID)
+	task, err := h.taskActions.Acknowledge(r.Context(), taskID, expectedVersion)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
@@ -165,13 +178,18 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")
+	if !ok {
+		return
+	}
 
-	task, err := h.taskActions.Complete(r.Context(), taskID, req.Result)
+	task, err := h.taskActions.Complete(r.Context(), taskID, req.Result, expectedVersion)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
@@ -189,13 +207,18 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")
+	if !ok {
+		return
+	}
 
-	task, err := h.taskActions.Fail(r.Context(), taskID, req.Error)
+	task, err := h.taskActions.Fail(r.Context(), taskID, req.Error, expectedVersion)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }
 
@@ -220,12 +243,17 @@ func (h *Handler) TaskStatus(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusBadRequest, "status is required", "VALIDATION_ERROR")
 		return
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")
+	if !ok {
+		return
+	}
 
-	task, err := h.taskActions.TransitionStatus(r.Context(), taskID, req.Status, req.Progress, req.Message)
+	task, err := h.taskActions.TransitionStatus(r.Context(), taskID, req.Status, req.Progress, req.Message, expectedVersion)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, task.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
 }

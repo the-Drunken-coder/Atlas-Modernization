@@ -1,47 +1,37 @@
 package actions
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
-func TestObjectIfMatchETagMatchesSerializedObjectETag(t *testing.T) {
-	version := int64(42)
-	if got, want := objectIfMatchETag(version), serializers.ObjectStrongETag(version); got != want {
-		t.Fatalf("If-Match ETag %q must match serialized object ETag %q", got, want)
+func TestParseIfMatchExpectedVersion(t *testing.T) {
+	expected, err := ParseIfMatchExpectedVersion(`"v42"`)
+	if err != nil {
+		t.Fatalf("ParseIfMatchExpectedVersion() unexpected error: %v", err)
+	}
+	if expected == nil || *expected != 42 {
+		t.Fatalf("expected version 42, got %v", expected)
 	}
 }
 
-func TestObjectIfMatchOK_rejectsWeakPrefix(t *testing.T) {
-	version := int64(42)
-	want := objectIfMatchETag(version)
-	weak := "W/" + want
-	if ObjectIfMatchOK(weak, version) {
-		t.Fatalf("expected weak ETag to be rejected, got %q vs %q", weak, want)
+func TestParseIfMatchExpectedVersionWildcard(t *testing.T) {
+	expected, err := ParseIfMatchExpectedVersion("*")
+	if err != nil {
+		t.Fatalf("ParseIfMatchExpectedVersion(*) unexpected error: %v", err)
 	}
-	if ObjectIfMatchOK("  "+weak+"  ", version) {
-		t.Fatal("expected trimmed weak ETag to be rejected")
+	if expected != nil {
+		t.Fatalf("wildcard expected nil version, got %v", *expected)
 	}
 }
 
-func TestObjectIfMatchOK_acceptsStrongQuotedOrUnquoted(t *testing.T) {
-	version := int64(42)
-	want := objectIfMatchETag(version)
-	if !ObjectIfMatchOK(want, version) {
-		t.Fatalf("expected quoted strong ETag to match")
-	}
-	if !ObjectIfMatchOK(strings.Trim(want, `"`), version) {
-		t.Fatalf("expected unquoted strong ETag to match")
+func TestParseIfMatchExpectedVersionRejectsWeak(t *testing.T) {
+	if _, err := ParseIfMatchExpectedVersion(`W/"v42"`); err == nil {
+		t.Fatal("expected weak If-Match token to be rejected")
 	}
 }
 
-func TestObjectIfMatchOK_commaSeparated(t *testing.T) {
-	version := int64(42)
-	want := objectIfMatchETag(version)
-	other := `"other"`
-	if !ObjectIfMatchOK(other+", "+want, version) {
-		t.Fatalf("expected second token to match")
+func TestParseIfMatchExpectedVersionRejectsMultipleVersions(t *testing.T) {
+	if _, err := ParseIfMatchExpectedVersion(`"v41", "v42"`); err == nil {
+		t.Fatal("expected multiple strong versions to be rejected")
 	}
 }

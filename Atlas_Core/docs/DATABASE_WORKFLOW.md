@@ -25,8 +25,8 @@ is not a production configuration.
 
 ## Database Architecture
 
-- **Database**: PostgreSQL 15+ (Docker Compose uses TimescaleDB-enabled Postgres)
-- **TimescaleDB**: The extension is created at cluster init in `docker/postgres/init.sql` (`CREATE EXTENSION IF NOT EXISTS timescaledb`). Go `EnsureTables()` does not create extensions or hypertables — only plain tables and indexes.
+- **Database**: PostgreSQL 15+ (Docker Compose uses a digest-pinned plain `postgres` image)
+- **Extensions**: `docker/postgres/init.sql` creates only lightweight bootstrap extensions (`uuid-ossp`, `pgcrypto`). Go `EnsureTables()` owns application tables and indexes.
 - **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
 - **Models**: Located in `internal/models/models.go`
 - **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops all tables then recreates them; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
@@ -275,7 +275,7 @@ postgresql://atlas:atlas@172.26.39.116:5432/atlas_core
 - Port: `5432`
 - Database: `atlas_core`
 - User: `atlas`
-- Password: `atlas` (matches Compose default `POSTGRES_PASSWORD`)
+- Password: the value of `POSTGRES_PASSWORD` in your shell or `docker/.env`; `atlas.py` generates and persists one when missing
 
 ### Database Connection Issues
 

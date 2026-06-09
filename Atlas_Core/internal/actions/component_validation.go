@@ -7,9 +7,6 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-// knownEntityComponents is the set of valid component keys for entities
-var knownEntityComponents = protocol.EntityComponentKeySet()
-
 // ValidationResult holds multiple validation errors
 type ValidationResult struct {
 	Errors []string
@@ -50,21 +47,28 @@ func NewValidationErrorWithDetails(message string, details []string) *Validation
 	}
 }
 
-// ValidateComponentKeys validates that all component keys are known or custom
-func ValidateComponentKeys(components map[string]interface{}, knownKeys map[string]bool) *ValidationResult {
-	result := &ValidationResult{}
-
-	for key := range components {
-		if knownKeys[key] {
-			continue
-		}
-		if strings.HasPrefix(key, "custom_") {
-			continue
-		}
-		result.AddError(fmt.Sprintf("Unknown component '%s'", key))
+// ValidateEntityBlob validates a complete entity JSON payload.
+func ValidateEntityBlob(blob map[string]interface{}) error {
+	result := validationResultFromErrors(protocol.ValidateEntityBlob(blob))
+	if result.HasErrors() {
+		return NewValidationErrorWithDetails(
+			fmt.Sprintf("Entity validation failed (%d errors)", len(result.Errors)),
+			result.Errors,
+		)
 	}
+	return nil
+}
 
-	return result
+// ValidateTaskBlob validates a complete task JSON payload.
+func ValidateTaskBlob(blob map[string]interface{}) error {
+	result := validationResultFromErrors(protocol.ValidateTaskBlob(blob))
+	if result.HasErrors() {
+		return NewValidationErrorWithDetails(
+			fmt.Sprintf("Task validation failed (%d errors)", len(result.Errors)),
+			result.Errors,
+		)
+	}
+	return nil
 }
 
 // ValidateEntityComponents validates all components for an entity

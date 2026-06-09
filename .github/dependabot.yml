@@ -14,6 +14,19 @@ updates:
           - "*"
     open-pull-requests-limit: 5
 
+  - package-ecosystem: gomod
+    directory: /atlas_protocol
+    schedule:
+      interval: weekly
+    groups:
+      go-modules-minor-patch:
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+
   - package-ecosystem: docker
     directory: /Atlas_Core/docker
     schedule:
