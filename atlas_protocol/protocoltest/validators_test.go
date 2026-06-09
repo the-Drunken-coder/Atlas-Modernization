@@ -149,6 +149,11 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 	objectDefs := schemaObject(t, objectSchema["$defs"])
 	objectReferenceDef := schemaObject(t, objectDefs["#ObjectReference"])
 	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
+	objectProps := schemaObject(t, objectSchema["properties"])
+	sizeBytes := schemaObject(t, objectProps["size_bytes"])
+	if got, want := sizeBytes["type"], "integer"; got != want {
+		t.Fatalf("object size_bytes type = %v, want %s", got, want)
+	}
 
 	entitySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "entity.schema.json"))
 	entityDefs := schemaObject(t, entitySchema["$defs"])
@@ -304,6 +309,7 @@ func TestObjectValidation(t *testing.T) {
 		contains string
 	}{
 		{name: "bad size", blob: map[string]any{"size_bytes": -1}, contains: "object.size_bytes"},
+		{name: "fractional size", blob: map[string]any{"size_bytes": 1.5}, contains: "expected non-negative integer"},
 		{name: "usage hints not array", blob: map[string]any{"usage_hints": "camera_feed"}, contains: "expected array of strings"},
 		{name: "empty usage hint", blob: map[string]any{"usage_hints": []any{""}}, contains: "object.usage_hints[0]: must be non-empty"},
 		{name: "references not array", blob: map[string]any{"referenced_by": "entity-1"}, contains: "expected array"},

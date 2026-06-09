@@ -48,3 +48,24 @@ func TestNormalizeWildcardPatternPropertiesPreservesSpecificPatterns(t *testing.
 		t.Fatalf("additionalProperties = %#v, want false", got)
 	}
 }
+
+func TestNormalizeIntegerAllOf(t *testing.T) {
+	root := map[string]any{
+		"allOf": []any{
+			map[string]any{"type": "number"},
+			map[string]any{"type": "integer", "minimum": float64(0)},
+		},
+	}
+
+	normalizeIntegerAllOf(root)
+
+	if _, exists := root["allOf"]; exists {
+		t.Fatalf("allOf = %#v, want removed", root["allOf"])
+	}
+	if got := root["type"]; got != "integer" {
+		t.Fatalf("type = %#v, want integer", got)
+	}
+	if got := root["minimum"]; got != float64(0) {
+		t.Fatalf("minimum = %#v, want 0", got)
+	}
+}

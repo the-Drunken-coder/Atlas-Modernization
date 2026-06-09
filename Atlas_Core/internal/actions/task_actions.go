@@ -554,14 +554,10 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		existingJSON["components"] = existingComponents
 	}
 
-	// Merge extra; nil values remove keys (used to clear legacy fields).
+	// Merge extra.
 	if params.Extra != nil {
 		for k, v := range params.Extra {
 			if k != "components" && k != "status" && k != "entity_id" && k != "version" {
-				if v == nil {
-					delete(existingJSON, k)
-					continue
-				}
 				existingJSON[k] = v
 			}
 		}
@@ -688,7 +684,6 @@ func normalizeTaskProgressPercent(p float64) float64 {
 // TransitionStatus updates the task status and optional progress.
 func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*models.Task, error) {
 	var components map[string]interface{}
-	var extra map[string]interface{}
 	if progress != nil || message != nil {
 		components = make(map[string]interface{})
 		if progress != nil {
@@ -698,13 +693,8 @@ func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status strin
 		if message != nil {
 			components["status_message"] = *message
 		}
-		extra = map[string]interface{}{
-			"progress":       nil,
-			"message":        nil,
-			"status_message": nil,
-		}
 	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Components: components, Extra: extra})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Components: components})
 }
 
 // Count returns the total number of tasks.

@@ -246,13 +246,13 @@ func TestTask_GetResult(t *testing.T) {
 	}{
 		{
 			name:         "valid result",
-			json:         `{"extra":{"result":{"success":true,"description":"Operation completed"}}}`,
+			json:         `{"result":{"success":true,"description":"Operation completed"}}`,
 			wantNil:      false,
 			checkSuccess: true,
 		},
 		{
 			name:    "missing result",
-			json:    `{"extra":{"error":{"code":"ERR001"}}}`,
+			json:    `{"error":{"code":"ERR001"}}`,
 			wantNil: true,
 		},
 		{
@@ -296,13 +296,13 @@ func TestTask_GetError(t *testing.T) {
 	}{
 		{
 			name:      "valid error",
-			json:      `{"extra":{"error":{"code":"ERR001","message":"Something went wrong"}}}`,
+			json:      `{"error":{"code":"ERR001","message":"Something went wrong"}}`,
 			wantNil:   false,
 			checkCode: "ERR001",
 		},
 		{
 			name:    "missing error",
-			json:    `{"extra":{"result":{"success":true}}}`,
+			json:    `{"result":{"success":true}}`,
 			wantNil: true,
 		},
 		{
@@ -317,7 +317,7 @@ func TestTask_GetError(t *testing.T) {
 		},
 		{
 			name:    "error object with empty code and message",
-			json:    `{"extra":{"error":{"code":"","message":""}}}`,
+			json:    `{"error":{"code":"","message":""}}`,
 			wantNil: true,
 		},
 	}
@@ -351,13 +351,13 @@ func TestTask_GetProgress(t *testing.T) {
 	}{
 		{
 			name:          "valid progress",
-			json:          `{"extra":{"progress":0.75}}`,
+			json:          `{"components":{"progress":{"percent":75}}}`,
 			wantNil:       false,
-			checkProgress: 0.75,
+			checkProgress: 75,
 		},
 		{
 			name:    "missing progress",
-			json:    `{"extra":{"result":{"success":true}}}`,
+			json:    `{"result":{"success":true}}`,
 			wantNil: true,
 		},
 		{
@@ -372,7 +372,7 @@ func TestTask_GetProgress(t *testing.T) {
 		},
 		{
 			name:    "invalid progress type",
-			json:    `{"extra":{"progress":"not a number"}}`,
+			json:    `{"components":{"progress":"not an object"}}`,
 			wantNil: true,
 		},
 	}
@@ -397,7 +397,7 @@ func TestTask_GetProgress(t *testing.T) {
 	}
 }
 
-func TestTask_GetProgress_Precedence(t *testing.T) {
+func TestTask_GetProgress_IgnoresLegacyExtraProgress(t *testing.T) {
 	tests := []struct {
 		name          string
 		json          string
@@ -405,14 +405,14 @@ func TestTask_GetProgress_Precedence(t *testing.T) {
 		checkProgress float64
 	}{
 		{
-			name:          "components.progress.percent wins over legacy extra.progress",
-			json:          `{"components":{"progress":{"percent":42}},"extra":{"progress":7}}`,
+			name:          "components.progress.percent is used",
+			json:          `{"components":{"progress":{"percent":42}},"progress":7}`,
 			checkProgress: 42,
 		},
 		{
-			name:          "falls back to legacy extra.progress when percent is null",
-			json:          `{"components":{"progress":{"percent":null}},"extra":{"progress":7}}`,
-			checkProgress: 7,
+			name:    "top-level progress is ignored",
+			json:    `{"progress":7}`,
+			wantNil: true,
 		},
 		{
 			name:          "canonical components.progress.percent alone",

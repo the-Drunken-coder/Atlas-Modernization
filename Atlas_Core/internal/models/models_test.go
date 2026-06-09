@@ -232,6 +232,16 @@ func TestMediaObjectGetSizeBytesRejectsNegative(t *testing.T) {
 	}
 }
 
+func TestMediaObjectGetSizeBytesRejectsFractional(t *testing.T) {
+	obj := &models.MediaObject{
+		ObjectID: "test-obj",
+		JSON:     json.RawMessage(`{"size_bytes":1.5}`),
+	}
+	if obj.GetSizeBytes() != nil {
+		t.Fatal("expected nil for fractional size_bytes")
+	}
+}
+
 func TestMediaObjectGetUsageHints(t *testing.T) {
 	jsonData := map[string]interface{}{
 		"usage_hints": []interface{}{"thumbnail", "preview"},
