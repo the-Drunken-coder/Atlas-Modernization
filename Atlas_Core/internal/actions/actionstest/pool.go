@@ -39,6 +39,10 @@ func DatabaseURL() (string, bool) {
 func OpenPool(t *testing.T) (*pgxpool.Pool, context.Context, context.CancelFunc) {
 	t.Helper()
 
+	if os.Getenv("ATLAS_CORE_API_URL") != "" {
+		t.Skip("skipping DB-backed action tests against the shared integration stack database")
+	}
+
 	dbURL, explicitDBURL := DatabaseURL()
 	if dbURL == "" {
 		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
