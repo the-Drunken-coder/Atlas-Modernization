@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"math"
@@ -138,7 +139,7 @@ func validate(definition string, value any) []string {
 		return []string{fmt.Sprintf("protocol schema definition %s not found: %v", definition, err)}
 	}
 
-	input := schema.ctx.Encode(value)
+	input := schema.ctx.Encode(normalizeForCUE(value))
 	if err := input.Err(); err != nil {
 		return []string{fmt.Sprintf("input cannot be encoded as CUE: %v", err)}
 	}
@@ -254,6 +255,37 @@ func prefixErrors(errors []string, fieldPrefix string) []string {
 		prefixed = append(prefixed, fieldPrefix+"."+message)
 	}
 	return prefixed
+}
+
+// normalizeForCUE converts Go JSON decode artifacts into values CUE can unify.
+// encoding/json with UseNumber leaves numeric fields as json.Number, which CUE
+// encodes as strings and then rejects against number fields like size_bytes.
+func normalizeForCUE(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		if i, err := typed.Int64(); err == nil {
+			return float64(i)
+		}
+		f, err := typed.Float64()
+		if err != nil {
+			return typed.String()
+		}
+		return f
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeForCUE(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeForCUE(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func firstNonFinitePath(value any, path string) (string, bool) {

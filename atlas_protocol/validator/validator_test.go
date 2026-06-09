@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -159,6 +160,19 @@ func TestMultipleViolationsAreSorted(t *testing.T) {
 	}
 	assertAnyContains(t, errors, "latitude")
 	assertAnyContains(t, errors, "longitude")
+}
+
+func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
+	blob := map[string]any{
+		"bucket":     "atlas-media",
+		"size_bytes": json.Number("7966"),
+		"usage_hints": []any{
+			"command_catalog",
+		},
+	}
+	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
+		t.Fatalf("ValidateObjectBlob(json.Number size_bytes) errors = %v", errors)
+	}
 }
 
 func TestUnencodableInputReturnsError(t *testing.T) {
