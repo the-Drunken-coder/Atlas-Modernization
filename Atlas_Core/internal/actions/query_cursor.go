@@ -22,10 +22,10 @@ type versionCursor struct {
 	SV *int64 `json:"sv"` // original since_version; pointer distinguishes missing from valid zero
 }
 
-// encodeRowCursor returns a URL-safe opaque string for (t, id) using descending sort
+// EncodeRowCursor returns a URL-safe opaque string for (t, id) using descending sort
 // (created_at/updated_at/deleted_at, resource id). When upperBound is non-zero it is
 // embedded so later pages cap rows to the same snapshot.
-func encodeRowCursor(t time.Time, id string, upperBound time.Time) (string, error) {
+func EncodeRowCursor(t time.Time, id string, upperBound time.Time) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("marshal row cursor: empty id")
 	}
@@ -58,7 +58,7 @@ func parseRFC3339WithNanoOrFallback(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// decodeRowCursor parses encodeRowCursor output. upperBound is zero when absent (legacy cursors).
+// decodeRowCursor parses EncodeRowCursor output. upperBound is zero when absent (legacy cursors).
 func decodeRowCursor(s string) (time.Time, string, time.Time, error) {
 	if s == "" {
 		return time.Time{}, "", time.Time{}, fmt.Errorf("empty cursor")
@@ -88,7 +88,9 @@ func decodeRowCursor(s string) (time.Time, string, time.Time, error) {
 	return tt, p.ID, upperBound, nil
 }
 
-func encodeVersionCursor(version int64, id string, upperBound int64, sinceVersion int64) (string, error) {
+// EncodeVersionCursor returns a URL-safe opaque continuation token for
+// version-ordered streams (version DESC, id DESC).
+func EncodeVersionCursor(version int64, id string, upperBound int64, sinceVersion int64) (string, error) {
 	if version <= 0 {
 		return "", fmt.Errorf("marshal version cursor: version must be positive")
 	}
@@ -143,4 +145,14 @@ func decodeVersionCursor(s string) (int64, string, int64, int64, error) {
 		return 0, "", 0, 0, fmt.Errorf("cursor since_version must be non-negative")
 	}
 	return p.V, p.ID, p.UV, *p.SV, nil
+}
+
+// EncodeDeletedCursor builds the continuation cursor for a deleted-resource
+// stream, labelling errors with the response field being built.
+func EncodeDeletedCursor(resource DeletedResource, snapshotUpperVersion, sinceVersion int64, cursorField string) (string, error) {
+	cursor, err := EncodeVersionCursor(resource.Version, resource.ID, snapshotUpperVersion, sinceVersion)
+	if err != nil {
+		return "", fmt.Errorf("build %s: %w", cursorField, err)
+	}
+	return cursor, nil
 }

@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/objectactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
@@ -54,7 +54,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obj, err := h.objectActions.Create(r.Context(), actions.CreateObjectParams{
+	obj, err := h.objectActions.Create(r.Context(), objectactions.CreateParams{
 		ObjectID:     req.ObjectID,
 		Path:         req.Path,
 		SizeBytes:    req.SizeBytes,
@@ -118,7 +118,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obj, err := h.objectActions.Update(r.Context(), objectID, actions.UpdateObjectParams{
+	obj, err := h.objectActions.Update(r.Context(), objectID, objectactions.UpdateParams{
 		Path:            req.Path,
 		ContentType:     req.ContentType,
 		Type:            req.Type,

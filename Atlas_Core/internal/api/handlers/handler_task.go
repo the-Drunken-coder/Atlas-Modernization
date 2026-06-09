@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/taskactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
@@ -47,7 +47,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		req.Status = "pending"
 	}
 
-	task, err := h.taskActions.Create(r.Context(), actions.CreateTaskParams{
+	task, err := h.taskActions.Create(r.Context(), taskactions.CreateParams{
 		TaskID:     req.TaskID,
 		Status:     req.Status,
 		EntityID:   req.EntityID,
@@ -99,7 +99,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskActions.Update(r.Context(), taskID, actions.UpdateTaskParams{
+	task, err := h.taskActions.Update(r.Context(), taskID, taskactions.UpdateParams{
 		Status:          req.Status,
 		EntityID:        req.EntityID,
 		Components:      req.Components,

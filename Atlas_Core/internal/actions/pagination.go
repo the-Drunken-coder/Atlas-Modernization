@@ -28,3 +28,15 @@ func ClampLimit(limit, defaultLimit, maxLimit int) int {
 	}
 	return limit
 }
+
+// TrimToLimitWithMore trims a fetch-limit+1 result set to limit and reports
+// whether more rows exist beyond the page.
+func TrimToLimitWithMore[T any](items []T, limit int) ([]T, bool) {
+	if limit < 0 {
+		limit = 0
+	}
+	if len(items) > limit {
+		return items[:limit], true
+	}
+	return items, false
+}

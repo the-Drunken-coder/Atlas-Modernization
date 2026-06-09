@@ -1,4 +1,4 @@
-package actions
+package actions_test
 
 import (
 	"context"
@@ -8,10 +8,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/actionstest"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/entityactions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/objectactions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/taskactions"
 )
 
 func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
-	pool, ctx, cancel := openActionsTestPool(t)
+	pool, ctx, cancel := actionstest.OpenPool(t)
 	defer cancel()
 	defer pool.Close()
 
@@ -21,11 +26,11 @@ func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
 	objectID := fmt.Sprintf("ifmatch-object-%d", runID)
 	defer cleanupIfMatchTestRows(context.Background(), pool, entityID, taskID, objectID)
 
-	entityActions := NewEntityActions(pool)
-	taskActions := NewTaskActions(pool)
-	objectActions := NewObjectActions(pool, nil)
+	entityActions := entityactions.New(pool)
+	taskActions := taskactions.New(pool)
+	objectActions := objectactions.New(pool, nil)
 
-	entity, err := entityActions.Create(ctx, CreateEntityParams{
+	entity, err := entityActions.Create(ctx, entityactions.CreateParams{
 		EntityID:   entityID,
 		EntityType: "asset",
 		Subtype:    "drone",
@@ -33,14 +38,14 @@ func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create entity: %v", err)
 	}
-	task, err := taskActions.Create(ctx, CreateTaskParams{
+	task, err := taskActions.Create(ctx, taskactions.CreateParams{
 		TaskID:   taskID,
 		EntityID: &entityID,
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	object, err := objectActions.Create(ctx, CreateObjectParams{
+	object, err := objectActions.Create(ctx, objectactions.CreateParams{
 		ObjectID: objectID,
 	})
 	if err != nil {
@@ -54,7 +59,7 @@ func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
 		{
 			name: "entity",
 			run: func(expectedVersion *int64) error {
-				_, err := entityActions.Update(ctx, entityID, UpdateEntityParams{
+				_, err := entityActions.Update(ctx, entityID, entityactions.UpdateParams{
 					Components: map[string]interface{}{
 						"telemetry": map[string]interface{}{
 							"latitude":  40.0,
@@ -70,7 +75,7 @@ func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
 			name: "task",
 			run: func(expectedVersion *int64) error {
 				status := "acknowledged"
-				_, err := taskActions.Update(ctx, taskID, UpdateTaskParams{
+				_, err := taskActions.Update(ctx, taskID, taskactions.UpdateParams{
 					Status:          &status,
 					ExpectedVersion: expectedVersion,
 				})
@@ -81,7 +86,7 @@ func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
 			name: "object",
 			run: func(expectedVersion *int64) error {
 				objectType := "image"
-				_, err := objectActions.Update(ctx, objectID, UpdateObjectParams{
+				_, err := objectActions.Update(ctx, objectID, objectactions.UpdateParams{
 					Type:            &objectType,
 					ExpectedVersion: expectedVersion,
 				})
@@ -99,49 +104,12 @@ func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			staleVersion := versions[tt.name] + 1
 			err := tt.run(&staleVersion)
-			var preconditionErr *PreconditionFailedError
+			var preconditionErr *actions.PreconditionFailedError
 			if !errors.As(err, &preconditionErr) {
 				t.Fatalf("expected PreconditionFailedError, got %T %v", err, err)
 			}
 		})
 	}
-}
-
-func openActionsTestPool(t *testing.T) (*pgxpool.Pool, context.Context, context.CancelFunc) {
-	t.Helper()
-
-	dbURL, explicitDBURL := actionsTestDatabaseURL()
-	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		cancel()
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		t.Skipf("test database unavailable: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		cancel()
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		t.Skipf("test database unavailable: %v", err)
-	}
-	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
-		pool.Close()
-		cancel()
-		t.Fatalf("check core schema: %v", err)
-	} else if !ok {
-		pool.Close()
-		cancel()
-		t.Skip("core schema is not present in test database")
-	}
-	return pool, ctx, cancel
 }
 
 func cleanupIfMatchTestRows(ctx context.Context, pool *pgxpool.Pool, entityID, taskID, objectID string) {

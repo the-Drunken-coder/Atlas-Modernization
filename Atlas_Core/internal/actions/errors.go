@@ -1,3 +1,8 @@
+// Package actions holds the shared building blocks for Atlas Core's action
+// layer: error types, validation wrappers, cursor pagination, and write
+// transaction helpers. Resource-specific business logic lives in the
+// entityactions, taskactions, objectactions, and syncactions subpackages,
+// which depend only on this package.
 package actions
 
 import (
@@ -34,6 +39,14 @@ type NotFoundError struct {
 func NewValidationError(message string) *ValidationError {
 	return &ValidationError{
 		ActionError: ActionError{Message: message, Code: "VALIDATION_ERROR"},
+	}
+}
+
+// NewValidationErrorWithDetails creates a validation error with multiple error details.
+func NewValidationErrorWithDetails(message string, details []string) *ValidationError {
+	return &ValidationError{
+		ActionError: ActionError{Message: message, Code: "VALIDATION_ERROR"},
+		Details:     details,
 	}
 }
 
@@ -148,12 +161,14 @@ func NewObjectPathConflictError() *ConflictError {
 	}
 }
 
-func isUniqueViolation(err error) bool {
+// IsUniqueViolation reports whether err is a PostgreSQL unique-constraint violation.
+func IsUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-func isForeignKeyViolation(err error) bool {
+// IsForeignKeyViolation reports whether err is a PostgreSQL foreign-key violation.
+func IsForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }

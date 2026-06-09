@@ -10,19 +10,22 @@ import (
 
 const changeVersionLockKey = "atlas-core-change-version"
 
-func beginChangeTx(ctx context.Context, pool *pgxpool.Pool, label string) (pgx.Tx, error) {
+// BeginChangeTx starts a write transaction holding the global change-version
+// advisory lock so resource versions are assigned in commit order.
+func BeginChangeTx(ctx context.Context, pool *pgxpool.Pool, label string) (pgx.Tx, error) {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin %s transaction: %w", label, err)
 	}
-	if err := lockChangeVersion(ctx, tx); err != nil {
+	if err := LockChangeVersion(ctx, tx); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, fmt.Errorf("failed to lock %s change version: %w", label, err)
 	}
 	return tx, nil
 }
 
-func lockChangeVersion(ctx context.Context, tx pgx.Tx) error {
+// LockChangeVersion takes the global change-version advisory lock inside tx.
+func LockChangeVersion(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, changeVersionLockKey)
 	return err
 }

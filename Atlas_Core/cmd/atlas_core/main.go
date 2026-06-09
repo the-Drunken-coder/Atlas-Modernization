@@ -15,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/objectactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/handlers"
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
@@ -34,7 +34,7 @@ func atlasCORSOptions(allowedOrigins []string) cors.Options {
 	}
 }
 
-func runStorageDeletionReconciler(ctx context.Context, logger zerolog.Logger, objectActions *actions.ObjectActions, interval time.Duration, limit int) {
+func runStorageDeletionReconciler(ctx context.Context, logger zerolog.Logger, objectActions *objectactions.Actions, interval time.Duration, limit int) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -137,7 +137,7 @@ func main() {
 		go runStorageDeletionReconciler(
 			reconcilerCtx,
 			logger,
-			actions.NewObjectActions(db.Pool, storageClient),
+			objectactions.New(db.Pool, storageClient),
 			time.Minute,
 			100,
 		)

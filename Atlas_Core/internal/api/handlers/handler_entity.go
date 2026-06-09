@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/entityactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
@@ -50,7 +50,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := h.entityActions.Create(r.Context(), actions.CreateEntityParams{
+	entity, err := h.entityActions.Create(r.Context(), entityactions.CreateParams{
 		EntityID:    req.EntityID,
 		EntityType:  req.EntityType,
 		Subtype:     req.Subtype,
@@ -120,7 +120,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
+	entity, err := h.entityActions.Update(r.Context(), entityID, entityactions.UpdateParams{
 		EntityType:      req.EntityType,
 		Subtype:         req.Subtype,
 		Alias:           req.Alias,
@@ -178,7 +178,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
+	entity, err := h.entityActions.Update(r.Context(), entityID, entityactions.UpdateParams{
 		Components:      map[string]interface{}{"telemetry": telemetry},
 		ExpectedVersion: expectedVersion,
 	})
@@ -273,7 +273,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
+	entity, err := h.entityActions.Update(r.Context(), entityID, entityactions.UpdateParams{
 		Components:      components,
 		ExpectedVersion: expectedVersion,
 	})

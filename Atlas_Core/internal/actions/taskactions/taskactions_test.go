@@ -1,6 +1,10 @@
-package actions
+package taskactions
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+)
 
 func TestNormalizeTaskStatus(t *testing.T) {
 	tests := []struct {
@@ -26,7 +30,7 @@ func TestNormalizeTaskStatus(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected validation error")
 				}
-				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+				if validationErr, ok := err.(*actions.ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
 					t.Fatalf("expected validation error, got %T %v", err, err)
 				}
 				return
@@ -63,7 +67,7 @@ func TestNormalizeInitialTaskStatus(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected validation error")
 				}
-				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+				if validationErr, ok := err.(*actions.ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
 					t.Fatalf("expected validation error, got %T %v", err, err)
 				}
 				return
@@ -125,7 +129,7 @@ func TestValidateTaskStatusTransition(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected validation error")
 				}
-				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+				if validationErr, ok := err.(*actions.ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
 					t.Fatalf("expected validation error, got %T %v", err, err)
 				}
 				return
@@ -158,7 +162,7 @@ func TestNormalizeCheckinTaskLimit(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected validation error")
 				}
-				if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+				if validationErr, ok := err.(*actions.ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
 					t.Fatalf("expected validation error, got %T %v", err, err)
 				}
 				return

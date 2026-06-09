@@ -3,7 +3,10 @@ package handlers
 
 import (
 	"github.com/rs/zerolog"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/entityactions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/objectactions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/syncactions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/taskactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
@@ -15,10 +18,10 @@ type Handler struct {
 	storage       *storage.Client
 	logger        zerolog.Logger
 	config        *config.Config
-	entityActions *actions.EntityActions
-	taskActions   *actions.TaskActions
-	objectActions *actions.ObjectActions
-	queryActions  *actions.QueryActions
+	entityActions *entityactions.Actions
+	taskActions   *taskactions.Actions
+	objectActions *objectactions.Actions
+	queryActions  *syncactions.Actions
 }
 
 // NewHandler creates a new Handler.
@@ -35,9 +38,9 @@ func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.L
 		storage:       storageClient,
 		logger:        logger,
 		config:        cfg,
-		entityActions: actions.NewEntityActions(db.Pool),
-		taskActions:   actions.NewTaskActions(db.Pool),
-		objectActions: actions.NewObjectActions(db.Pool, storageClient),
-		queryActions:  actions.NewQueryActions(db.Pool),
+		entityActions: entityactions.New(db.Pool),
+		taskActions:   taskactions.New(db.Pool),
+		objectActions: objectactions.New(db.Pool, storageClient),
+		queryActions:  syncactions.New(db.Pool),
 	}
 }

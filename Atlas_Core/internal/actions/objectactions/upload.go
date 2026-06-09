@@ -1,4 +1,4 @@
-package actions
+package objectactions
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
@@ -18,13 +19,13 @@ func objectUploadLockKey(objectID string) string {
 	return "atlas-core-object-upload:" + objectID
 }
 
-func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, operation string) (pgx.Tx, error) {
+func (a *Actions) beginLockedObjectTx(ctx context.Context, objectID, operation string) (pgx.Tx, error) {
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin %s transaction: %w", operation, err)
 	}
 
-	if err := lockChangeVersion(ctx, tx); err != nil {
+	if err := actions.LockChangeVersion(ctx, tx); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, fmt.Errorf("failed to lock %s change version: %w", operation, err)
 	}
@@ -94,7 +95,7 @@ func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBy
 		jsonData["usage_hints"] = usageHints
 	}
 
-	if err := ValidateObjectBlob(jsonData); err != nil {
+	if err := actions.ValidateObjectBlob(jsonData); err != nil {
 		return nil, err
 	}
 	return json.Marshal(jsonData)
@@ -124,15 +125,15 @@ func upsertUploadedObjectMetadata(
 		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
-			return nil, NewObjectPathConflictError()
+		if actions.IsUniqueViolation(err) {
+			return nil, actions.NewObjectPathConflictError()
 		}
 		return nil, fmt.Errorf("failed to persist uploaded object metadata: %w", err)
 	}
 	return &out, nil
 }
 
-func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, objectID, objectPath string, cause error) error {
+func (a *Actions) cleanupUploadedPathAfterFailure(ctx context.Context, objectID, objectPath string, cause error) error {
 	if objectPath == "" {
 		return cause
 	}
@@ -142,7 +143,7 @@ func (a *ObjectActions) cleanupUploadedPathAfterFailure(ctx context.Context, obj
 	return cause
 }
 
-func (a *ObjectActions) deleteObjectPathOrQueueRetry(ctx context.Context, objectID, objectPath string) error {
+func (a *Actions) deleteObjectPathOrQueueRetry(ctx context.Context, objectID, objectPath string) error {
 	objectPath = strings.TrimSpace(objectPath)
 	if objectPath == "" {
 		return nil
@@ -161,11 +162,11 @@ func (a *ObjectActions) deleteObjectPathOrQueueRetry(ctx context.Context, object
 }
 
 // Upload uploads a file and creates/updates the object record.
-func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.Reader, size int64, contentType, objType string, usageHint *string) (*models.MediaObject, error) {
-	if err := ValidateObjectID(objectID); err != nil {
+func (a *Actions) Upload(ctx context.Context, objectID string, reader io.Reader, size int64, contentType, objType string, usageHint *string) (*models.MediaObject, error) {
+	if err := actions.ValidateObjectID(objectID); err != nil {
 		return nil, err
 	}
-	objectID = SanitizeID(objectID)
+	objectID = actions.SanitizeID(objectID)
 
 	if a.storage == nil {
 		return nil, &storage.StorageError{Message: "storage not configured"}
@@ -221,7 +222,7 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return cleanupMetadataFailure(err)
 	}
 	if objectDeletedAfterUploadPreflight(preflightState, currentState) {
-		return cleanupMetadataFailure(NewObjectNotFoundError(objectID))
+		return cleanupMetadataFailure(actions.NewObjectNotFoundError(objectID))
 	}
 
 	jsonBytes, err := uploadObjectJSON(currentState.json, bucket, uploadedInfo.SizeBytes, usageHints)

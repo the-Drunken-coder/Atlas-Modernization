@@ -12,7 +12,7 @@ func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
 	ts := time.Date(2026, 3, 20, 12, 0, 0, 123456789, time.UTC)
 	id := "entity-abc"
 	ub := time.Date(2026, 3, 20, 15, 30, 0, 0, time.UTC)
-	enc, err := encodeRowCursor(ts, id, ub)
+	enc, err := EncodeRowCursor(ts, id, ub)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if gotID != id {
-		t.Fatalf("id: got %q want %q", gotID, id)
+		t.Fatalf("ID: got %q want %q", gotID, id)
 	}
 	if !gotTS.Equal(ts) {
 		t.Fatalf("time: got %v want %v", gotTS, ts)
@@ -36,7 +36,7 @@ func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
 
 func TestEncodeRowCursorRejectsEmptyID(t *testing.T) {
 	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	if cursor, err := encodeRowCursor(ts, "", time.Time{}); err == nil || cursor != "" {
+	if cursor, err := EncodeRowCursor(ts, "", time.Time{}); err == nil || cursor != "" {
 		t.Fatalf("encodeRowCursor empty id = %q, %v; want empty cursor and error", cursor, err)
 	}
 }
@@ -53,7 +53,7 @@ func TestDecodeRowCursor_specialChars(t *testing.T) {
 	id := "entity,with:chars+/=_-"
 	ub := time.Date(2026, 3, 20, 15, 30, 0, 0, time.UTC)
 
-	cursor, err := encodeRowCursor(ts, id, ub)
+	cursor, err := EncodeRowCursor(ts, id, ub)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestDecodeRowCursor_specialChars(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if gotID != id {
-		t.Fatalf("id: got %q want %q", gotID, id)
+		t.Fatalf("ID: got %q want %q", gotID, id)
 	}
 	if !gotTS.Equal(ts) {
 		t.Fatalf("time: got %v want %v", gotTS, ts)
@@ -90,7 +90,7 @@ func TestDecodeRowCursor_malformedTruncated(t *testing.T) {
 }
 
 func TestParseQueryCursorReturnsValidationError(t *testing.T) {
-	_, err := parseQueryCursor("not-base64", "cursor")
+	_, err := ParseQueryCursor("not-base64", "cursor")
 	if err == nil {
 		t.Fatal("expected invalid cursor to fail")
 	}
@@ -101,18 +101,18 @@ func TestParseQueryCursorReturnsValidationError(t *testing.T) {
 
 func TestContinuationUpperBoundMixedSnapshotsReturnsValidationError(t *testing.T) {
 	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	first := &parsedQueryCursor{
-		timestamp:  ts,
-		id:         "a",
-		upperBound: ts.Add(time.Minute),
+	first := &ParsedQueryCursor{
+		Timestamp:  ts,
+		ID:         "a",
+		UpperBound: ts.Add(time.Minute),
 	}
-	second := &parsedQueryCursor{
-		timestamp:  ts,
-		id:         "b",
-		upperBound: ts.Add(2 * time.Minute),
+	second := &ParsedQueryCursor{
+		Timestamp:  ts,
+		ID:         "b",
+		UpperBound: ts.Add(2 * time.Minute),
 	}
 
-	_, _, err := continuationUpperBound(time.Now().UTC(), first, second)
+	_, _, err := ContinuationUpperBound(time.Now().UTC(), first, second)
 	if err == nil {
 		t.Fatal("expected mixed cursor snapshots to fail")
 	}
@@ -123,13 +123,13 @@ func TestContinuationUpperBoundMixedSnapshotsReturnsValidationError(t *testing.T
 
 func TestContinuationUpperBoundClampsFutureCursorSnapshot(t *testing.T) {
 	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	cursor := &parsedQueryCursor{
-		timestamp:  current.Add(-time.Minute),
-		id:         "task-1",
-		upperBound: current.Add(time.Hour),
+	cursor := &ParsedQueryCursor{
+		Timestamp:  current.Add(-time.Minute),
+		ID:         "task-1",
+		UpperBound: current.Add(time.Hour),
 	}
 
-	got, continuation, err := continuationUpperBound(current, cursor)
+	got, continuation, err := ContinuationUpperBound(current, cursor)
 	if err != nil {
 		t.Fatalf("continuationUpperBound: %v", err)
 	}
@@ -144,29 +144,29 @@ func TestContinuationUpperBoundClampsFutureCursorSnapshot(t *testing.T) {
 func TestEffectiveCursorUpperBoundClampsAndDefaults(t *testing.T) {
 	snapshot := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 
-	if got := effectiveCursorUpperBound(nil, snapshot); !got.Equal(snapshot) {
+	if got := EffectiveCursorUpperBound(nil, snapshot); !got.Equal(snapshot) {
 		t.Fatalf("expected nil cursor to use snapshot %v, got %v", snapshot, got)
 	}
 
-	legacy := &parsedQueryCursor{timestamp: snapshot.Add(-time.Minute), id: "task-1"}
-	if got := effectiveCursorUpperBound(legacy, snapshot); !got.Equal(snapshot) {
+	legacy := &ParsedQueryCursor{Timestamp: snapshot.Add(-time.Minute), ID: "task-1"}
+	if got := EffectiveCursorUpperBound(legacy, snapshot); !got.Equal(snapshot) {
 		t.Fatalf("expected legacy cursor to use snapshot %v, got %v", snapshot, got)
 	}
 
 	older := snapshot.Add(-time.Hour)
-	oldCursor := &parsedQueryCursor{timestamp: snapshot.Add(-time.Minute), id: "task-1", upperBound: older}
-	if got := effectiveCursorUpperBound(oldCursor, snapshot); !got.Equal(older) {
+	oldCursor := &ParsedQueryCursor{Timestamp: snapshot.Add(-time.Minute), ID: "task-1", UpperBound: older}
+	if got := EffectiveCursorUpperBound(oldCursor, snapshot); !got.Equal(older) {
 		t.Fatalf("expected older cursor upper bound %v, got %v", older, got)
 	}
 
-	futureCursor := &parsedQueryCursor{timestamp: snapshot.Add(-time.Minute), id: "task-1", upperBound: snapshot.Add(time.Hour)}
-	if got := effectiveCursorUpperBound(futureCursor, snapshot); !got.Equal(snapshot) {
+	futureCursor := &ParsedQueryCursor{Timestamp: snapshot.Add(-time.Minute), ID: "task-1", UpperBound: snapshot.Add(time.Hour)}
+	if got := EffectiveCursorUpperBound(futureCursor, snapshot); !got.Equal(snapshot) {
 		t.Fatalf("expected future cursor upper bound to clamp to %v, got %v", snapshot, got)
 	}
 }
 
 func TestEncodeVersionCursorRoundTrip(t *testing.T) {
-	cursor, err := encodeVersionCursor(42, "entity-abc", 99, 7)
+	cursor, err := EncodeVersionCursor(42, "entity-abc", 99, 7)
 	if err != nil {
 		t.Fatalf("encodeVersionCursor: %v", err)
 	}
@@ -176,21 +176,21 @@ func TestEncodeVersionCursorRoundTrip(t *testing.T) {
 		t.Fatalf("decodeVersionCursor: %v", err)
 	}
 	if gotVersion != 42 {
-		t.Fatalf("version: got %d want 42", gotVersion)
+		t.Fatalf("Version: got %d want 42", gotVersion)
 	}
 	if gotID != "entity-abc" {
-		t.Fatalf("id: got %q want entity-abc", gotID)
+		t.Fatalf("ID: got %q want entity-abc", gotID)
 	}
 	if gotUpperBound != 99 {
 		t.Fatalf("upper bound: got %d want 99", gotUpperBound)
 	}
 	if gotSinceVersion != 7 {
-		t.Fatalf("since version: got %d want 7", gotSinceVersion)
+		t.Fatalf("since Version: got %d want 7", gotSinceVersion)
 	}
 }
 
 func TestEncodeVersionCursorAllowsZeroSinceVersion(t *testing.T) {
-	cursor, err := encodeVersionCursor(42, "entity-abc", 99, 0)
+	cursor, err := EncodeVersionCursor(42, "entity-abc", 99, 0)
 	if err != nil {
 		t.Fatalf("encodeVersionCursor: %v", err)
 	}
@@ -200,12 +200,12 @@ func TestEncodeVersionCursorAllowsZeroSinceVersion(t *testing.T) {
 		t.Fatalf("decodeVersionCursor: %v", err)
 	}
 	if gotSinceVersion != 0 {
-		t.Fatalf("since version: got %d want 0", gotSinceVersion)
+		t.Fatalf("since Version: got %d want 0", gotSinceVersion)
 	}
 }
 
 func TestEncodeVersionCursorRejectsMissingUpperBound(t *testing.T) {
-	cursor, err := encodeVersionCursor(42, "entity-abc", 0, 7)
+	cursor, err := EncodeVersionCursor(42, "entity-abc", 0, 7)
 	if err == nil {
 		t.Fatal("expected missing upper bound to fail")
 	}
@@ -218,7 +218,7 @@ func TestEncodeVersionCursorRejectsMissingUpperBound(t *testing.T) {
 }
 
 func TestEncodeVersionCursorRejectsNegativeSinceVersion(t *testing.T) {
-	cursor, err := encodeVersionCursor(42, "entity-abc", 99, -1)
+	cursor, err := EncodeVersionCursor(42, "entity-abc", 99, -1)
 	if err == nil {
 		t.Fatal("expected negative since_version to fail")
 	}
@@ -233,7 +233,7 @@ func TestEncodeVersionCursorRejectsNegativeSinceVersion(t *testing.T) {
 func TestDecodeVersionCursorRejectsMissingUpperBound(t *testing.T) {
 	raw, err := json.Marshal(versionCursor{V: 42, ID: "entity-abc"})
 	if err != nil {
-		t.Fatalf("marshal version cursor: %v", err)
+		t.Fatalf("marshal version Cursor: %v", err)
 	}
 	cursor := base64.RawURLEncoding.EncodeToString(raw)
 
@@ -247,7 +247,7 @@ func TestDecodeVersionCursorRejectsMissingUpperBound(t *testing.T) {
 func TestDecodeVersionCursorRejectsMissingSinceVersion(t *testing.T) {
 	raw, err := json.Marshal(versionCursor{V: 42, ID: "entity-abc", UV: 99})
 	if err != nil {
-		t.Fatalf("marshal version cursor: %v", err)
+		t.Fatalf("marshal version Cursor: %v", err)
 	}
 	cursor := base64.RawURLEncoding.EncodeToString(raw)
 
@@ -259,7 +259,7 @@ func TestDecodeVersionCursorRejectsMissingSinceVersion(t *testing.T) {
 }
 
 func TestDecodeVersionCursorRejectsTimeCursor(t *testing.T) {
-	timeCursor, err := encodeRowCursor(time.Now().UTC(), "entity-abc", time.Now().UTC())
+	timeCursor, err := EncodeRowCursor(time.Now().UTC(), "entity-abc", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("encodeRowCursor: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestDecodeVersionCursorRejectsTimeCursor(t *testing.T) {
 }
 
 func TestEncodeDeletedCursorRejectsMissingVersion(t *testing.T) {
-	_, err := encodeDeletedCursor(
+	_, err := EncodeDeletedCursor(
 		DeletedResource{ID: "deleted-entity-1", Type: "entity"},
 		100,
 		7,
@@ -286,7 +286,7 @@ func TestEncodeDeletedCursorRejectsMissingVersion(t *testing.T) {
 func TestEncodeDeletedCursorRoundTrip(t *testing.T) {
 	snapshotVersion := int64(100)
 
-	cursor, err := encodeDeletedCursor(
+	cursor, err := EncodeDeletedCursor(
 		DeletedResource{ID: "deleted-task-1", Type: "task", Version: 42},
 		snapshotVersion,
 		7,
@@ -301,29 +301,29 @@ func TestEncodeDeletedCursorRoundTrip(t *testing.T) {
 		t.Fatalf("decodeVersionCursor: %v", err)
 	}
 	if gotID != "deleted-task-1" {
-		t.Fatalf("id: got %q want %q", gotID, "deleted-task-1")
+		t.Fatalf("ID: got %q want %q", gotID, "deleted-task-1")
 	}
 	if gotVersion != 42 {
-		t.Fatalf("version: got %d want 42", gotVersion)
+		t.Fatalf("Version: got %d want 42", gotVersion)
 	}
 	if gotSnapshotVersion != snapshotVersion {
 		t.Fatalf("snapshot: got %d want %d", gotSnapshotVersion, snapshotVersion)
 	}
 	if gotSinceVersion != 7 {
-		t.Fatalf("since version: got %d want 7", gotSinceVersion)
+		t.Fatalf("since Version: got %d want 7", gotSinceVersion)
 	}
 }
 
 func TestValidateVersionCursorsSinceVersionRejectsMismatch(t *testing.T) {
-	err := validateVersionCursorsSinceVersion(
+	err := ValidateVersionCursorsSinceVersion(
 		8,
-		labeledVersionCursor{
-			label: "entity_cursor",
-			cursor: &parsedVersionCursor{
-				version:      42,
-				id:           "entity-abc",
-				upperBound:   99,
-				sinceVersion: 7,
+		LabeledVersionCursor{
+			Label: "entity_cursor",
+			Cursor: &ParsedVersionCursor{
+				Version:      42,
+				ID:           "entity-abc",
+				UpperBound:   99,
+				SinceVersion: 7,
 			},
 		},
 	)

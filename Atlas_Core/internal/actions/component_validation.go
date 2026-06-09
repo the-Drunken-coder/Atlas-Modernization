@@ -36,17 +36,6 @@ func validationResultFromErrors(errors []string) *ValidationResult {
 	return result
 }
 
-// NewValidationErrorWithDetails creates a validation error with multiple error details.
-func NewValidationErrorWithDetails(message string, details []string) *ValidationError {
-	return &ValidationError{
-		ActionError: ActionError{
-			Message: message,
-			Code:    "VALIDATION_ERROR",
-		},
-		Details: details,
-	}
-}
-
 // ValidateEntityBlob validates a complete entity JSON payload.
 func ValidateEntityBlob(blob map[string]interface{}) error {
 	result := validationResultFromErrors(protocol.ValidateEntityBlob(blob))
@@ -69,6 +58,18 @@ func ValidateTaskBlob(blob map[string]interface{}) error {
 		)
 	}
 	return nil
+}
+
+// ValidateObjectBlob validates storage-facing object metadata.
+func ValidateObjectBlob(blob map[string]interface{}) error {
+	result := validationResultFromErrors(protocol.ValidateObjectBlob(blob))
+	if !result.HasErrors() {
+		return nil
+	}
+	return NewValidationErrorWithDetails(
+		fmt.Sprintf("Object validation failed (%d errors)", len(result.Errors)),
+		result.Errors,
+	)
 }
 
 // ValidateEntityComponents validates all components for an entity

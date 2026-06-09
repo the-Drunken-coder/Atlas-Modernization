@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/syncactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
@@ -51,7 +52,7 @@ type changedSinceResponse struct {
 	Timestamp               string                        `json:"timestamp"`
 }
 
-func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetResponse {
+func serializeFullDatasetResult(result *syncactions.FullDatasetResult) *fullDatasetResponse {
 	if result == nil {
 		return nil
 	}
@@ -68,7 +69,7 @@ func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetR
 	}
 }
 
-func serializeChangedSinceResult(result *actions.ChangedSinceResult) *changedSinceResponse {
+func serializeChangedSinceResult(result *syncactions.ChangedSinceResult) *changedSinceResponse {
 	if result == nil {
 		return nil
 	}

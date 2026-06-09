@@ -1,4 +1,4 @@
-package actions
+package objectactions
 
 import (
 	"context"
@@ -55,7 +55,7 @@ func normalizeStorageDeletion(bucket, path, objectID string) (string, string, an
 	return bucket, path, objectIDArg, true
 }
 
-func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID string) error {
+func (a *Actions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID string) error {
 	bucket, path, objectIDArg, ok := normalizeStorageDeletion(bucket, path, objectID)
 	if !ok {
 		return nil
@@ -68,7 +68,7 @@ func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, b
 	return nil
 }
 
-func (a *ObjectActions) queueStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
+func (a *Actions) queueStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
 	if a.pool == nil {
 		return nil
 	}
@@ -83,14 +83,14 @@ func (a *ObjectActions) queueStorageDeletion(ctx context.Context, bucket, path, 
 	return nil
 }
 
-func (a *ObjectActions) queueStorageDeletionAfterFailure(ctx context.Context, bucket, path, objectID string, deleteErr error) error {
+func (a *Actions) queueStorageDeletionAfterFailure(ctx context.Context, bucket, path, objectID string, deleteErr error) error {
 	if err := a.queueStorageDeletion(ctx, bucket, path, objectID); err != nil {
 		return err
 	}
 	return a.recordQueuedStorageDeletionFailure(ctx, bucket, path, deleteErr)
 }
 
-func (a *ObjectActions) clearQueuedStorageDeletion(ctx context.Context, bucket, path string) error {
+func (a *Actions) clearQueuedStorageDeletion(ctx context.Context, bucket, path string) error {
 	if a.pool == nil {
 		return nil
 	}
@@ -104,7 +104,7 @@ func (a *ObjectActions) clearQueuedStorageDeletion(ctx context.Context, bucket, 
 	return nil
 }
 
-func (a *ObjectActions) recordQueuedStorageDeletionFailure(ctx context.Context, bucket, path string, deleteErr error) error {
+func (a *Actions) recordQueuedStorageDeletionFailure(ctx context.Context, bucket, path string, deleteErr error) error {
 	if a.pool == nil {
 		return nil
 	}
@@ -138,7 +138,7 @@ func (a *ObjectActions) recordQueuedStorageDeletionFailure(ctx context.Context, 
 	return nil
 }
 
-func (a *ObjectActions) claimQueuedStorageDeletions(ctx context.Context, limit int) ([]queuedStorageDeletion, error) {
+func (a *Actions) claimQueuedStorageDeletions(ctx context.Context, limit int) ([]queuedStorageDeletion, error) {
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin storage deletion claim: %w", err)
@@ -190,7 +190,7 @@ func (a *ObjectActions) claimQueuedStorageDeletions(ctx context.Context, limit i
 	return queued, nil
 }
 
-func (a *ObjectActions) recordQueuedStorageDeletionFailureByID(ctx context.Context, id int64, attempts int, errText string) error {
+func (a *Actions) recordQueuedStorageDeletionFailureByID(ctx context.Context, id int64, attempts int, errText string) error {
 	if a.pool == nil {
 		return nil
 	}
@@ -208,7 +208,7 @@ func (a *ObjectActions) recordQueuedStorageDeletionFailureByID(ctx context.Conte
 	return nil
 }
 
-func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id int64) error {
+func (a *Actions) clearQueuedStorageDeletionByID(ctx context.Context, id int64) error {
 	if a.pool == nil {
 		return nil
 	}
@@ -218,7 +218,7 @@ func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id i
 	return nil
 }
 
-func (a *ObjectActions) attemptQueuedStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
+func (a *Actions) attemptQueuedStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
 	if a.storage == nil {
 		return &storage.StorageError{Message: "storage not configured"}
 	}
@@ -235,7 +235,7 @@ func (a *ObjectActions) attemptQueuedStorageDeletion(ctx context.Context, bucket
 }
 
 // ReconcileStorageDeletions retries queued storage deletions and clears successful rows.
-func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int) (int, error) {
+func (a *Actions) ReconcileStorageDeletions(ctx context.Context, limit int) (int, error) {
 	if a.storage == nil {
 		return 0, &storage.StorageError{Message: "storage not configured"}
 	}

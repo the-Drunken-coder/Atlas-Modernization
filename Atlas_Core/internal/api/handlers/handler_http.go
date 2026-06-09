@@ -15,6 +15,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/syncactions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
@@ -354,7 +355,7 @@ func (h *Handler) parseListPagination(w http.ResponseWriter, r *http.Request) (l
 	return actions.ClampListLimit(limit), strings.TrimSpace(r.URL.Query().Get("cursor")), true
 }
 
-func parseFullDatasetLimits(r *http.Request) (*actions.FullDatasetLimits, string, error) {
+func parseFullDatasetLimits(r *http.Request) (*syncactions.FullDatasetLimits, string, error) {
 	el, err := parseNonNegativeIntQuery(r, "entity_limit", 0)
 	if err != nil {
 		return nil, "entity_limit", err
@@ -368,7 +369,7 @@ func parseFullDatasetLimits(r *http.Request) (*actions.FullDatasetLimits, string
 		return nil, "object_limit", err
 	}
 	q := r.URL.Query()
-	return &actions.FullDatasetLimits{
+	return &syncactions.FullDatasetLimits{
 		EntityLimit:  el,
 		TaskLimit:    tl,
 		ObjectLimit:  ol,
@@ -378,8 +379,8 @@ func parseFullDatasetLimits(r *http.Request) (*actions.FullDatasetLimits, string
 	}, "", nil
 }
 
-func changedSinceCursorsFromQuery(q url.Values) actions.ChangedSinceCursors {
-	return actions.ChangedSinceCursors{
+func changedSinceCursorsFromQuery(q url.Values) syncactions.ChangedSinceCursors {
+	return syncactions.ChangedSinceCursors{
 		EntityCursor:        optionalQueryString(q, "entity_cursor"),
 		TaskCursor:          optionalQueryString(q, "task_cursor"),
 		ObjectCursor:        optionalQueryString(q, "object_cursor"),
