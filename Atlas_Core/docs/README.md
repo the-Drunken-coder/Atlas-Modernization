@@ -1,6 +1,6 @@
 # Documentation Index
 
-_Revision: 2026-05-29_
+_Revision: 2026-06-10_
 
 ## Overview
 
@@ -16,7 +16,7 @@ This directory contains operational docs for the Go-based Atlas Core service.
 | Entities | `database-structure/entities.md` | Entity JSON blob structure and component guidance. |
 | Tasks | `database-structure/tasks.md` | Task blob schema and lifecycle endpoint notes. |
 | Objects | `database-structure/objects.md` | Object metadata schema and storage endpoint notes. |
-| Examples | `../../atlas_protocol/examples/` | JSON examples for entities, tasks, and objects. |
+| Examples | [`atlas_protocol/examples/`](../../atlas_protocol/examples/) | JSON examples for entities, tasks, and objects. |
 | Errors | `ERROR_HANDLING.md` | Error taxonomy and HTTP envelope mapping. |
 | Security | `SECURITY.md` | CORS/API key auth behavior and hardening checklist. |
 

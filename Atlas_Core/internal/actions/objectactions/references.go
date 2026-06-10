@@ -79,10 +79,10 @@ func (a *Actions) getObjectsByJSONReference(
 	limit int,
 	cursor string,
 ) (*actions.ListPage[*models.MediaObject], error) {
+	id = actions.SanitizeID(id)
 	if err := validate(id); err != nil {
 		return nil, err
 	}
-	id = actions.SanitizeID(id)
 
 	limit = actions.ClampListLimit(limit)
 

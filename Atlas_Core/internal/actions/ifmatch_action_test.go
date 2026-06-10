@@ -15,7 +15,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions/taskactions"
 )
 
-func TestResourceUpdatesRejectStaleExpectedVersion(t *testing.T) {
+func TestResourceUpdatesRejectMismatchedExpectedVersion(t *testing.T) {
 	pool, ctx, cancel := actionstest.OpenPool(t)
 	defer cancel()
 	defer pool.Close()
