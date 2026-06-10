@@ -122,6 +122,9 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 			}
 		}
 	}
+	if err := ValidateTaskBlob(jsonData); err != nil {
+		return nil, err
+	}
 
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
@@ -556,6 +559,9 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 				existingJSON[k] = v
 			}
 		}
+	}
+	if err := ValidateTaskBlob(existingJSON); err != nil {
+		return nil, err
 	}
 
 	jsonBytes, err := json.Marshal(existingJSON)

@@ -65,6 +65,18 @@ func ValidateEntityComponents(components map[string]interface{}) error {
 	return nil
 }
 
+// ValidateEntityBlob validates the full entity JSON blob that will be stored.
+func ValidateEntityBlob(blob map[string]interface{}) error {
+	result := validationResultFromErrors(protocol.ValidateEntityBlob(blob))
+	if !result.HasErrors() {
+		return nil
+	}
+	return NewValidationErrorWithDetails(
+		fmt.Sprintf("Entity validation failed (%d errors)", len(result.Errors)),
+		result.Errors,
+	)
+}
+
 // ValidateTaskComponents validates all components for a task
 func ValidateTaskComponents(components map[string]interface{}) error {
 	if components == nil {
@@ -81,4 +93,16 @@ func ValidateTaskComponents(components map[string]interface{}) error {
 	}
 
 	return nil
+}
+
+// ValidateTaskBlob validates the full task JSON blob that will be stored.
+func ValidateTaskBlob(blob map[string]interface{}) error {
+	result := validationResultFromErrors(protocol.ValidateTaskBlob(blob))
+	if !result.HasErrors() {
+		return nil
+	}
+	return NewValidationErrorWithDetails(
+		fmt.Sprintf("Task validation failed (%d errors)", len(result.Errors)),
+		result.Errors,
+	)
 }

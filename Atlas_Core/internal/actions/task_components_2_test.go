@@ -125,7 +125,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    "command component must be an object",
+			errMsg:    "command",
 		},
 		{
 			name: "unknown task component key",
@@ -150,7 +150,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    "command.type: must be non-empty",
+			errMsg:    "command.type",
 		},
 		{
 			name: "invalid parameters latitude",

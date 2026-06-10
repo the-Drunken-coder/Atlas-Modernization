@@ -239,6 +239,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	if params.UpdatedAt != nil {
 		jsonData["updated_at"] = params.UpdatedAt.Format(time.RFC3339)
 	}
+	if err := ValidateEntityBlob(jsonData); err != nil {
+		return nil, err
+	}
 
 	jsonBytes, err := json.Marshal(jsonData)
 	if err != nil {
@@ -521,6 +524,9 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 				existingJSON[k] = v
 			}
 		}
+	}
+	if err := ValidateEntityBlob(existingJSON); err != nil {
+		return nil, err
 	}
 
 	jsonBytes, err := json.Marshal(existingJSON)

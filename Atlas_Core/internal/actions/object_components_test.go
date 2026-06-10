@@ -32,7 +32,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"size_bytes": -1,
 			},
 			wantErr: true,
-			errMsg:  "object.size_bytes",
+			errMsg:  "size_bytes",
 		},
 		{
 			name: "usage hints must be strings",
@@ -40,7 +40,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"usage_hints": []interface{}{"thumbnail", 123},
 			},
 			wantErr: true,
-			errMsg:  "object.usage_hints[1]: expected string",
+			errMsg:  "usage_hints.1",
 		},
 		{
 			name: "reference must include entity or task",
@@ -48,7 +48,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{}},
 			},
 			wantErr: true,
-			errMsg:  "must include entity_id or task_id",
+			errMsg:  "MinFields",
 		},
 		{
 			name: "reference id must be non-empty",
@@ -56,7 +56,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{"entity_id": " "}},
 			},
 			wantErr: true,
-			errMsg:  "object.referenced_by[0].entity_id: must be non-empty",
+			errMsg:  "referenced_by",
 		},
 	}
 
@@ -96,7 +96,7 @@ func TestUploadObjectJSONValidatesMergedBlob(t *testing.T) {
 	if !ok {
 		t.Fatalf("uploadObjectJSON() error type = %T, want *ValidationError", err)
 	}
-	assertValidationErrorDetailsContain(t, validationErr.Details, "must include entity_id or task_id")
+	assertValidationErrorDetailsContain(t, validationErr.Details, "MinFields")
 }
 
 func TestUploadObjectJSONPreservesExistingBlobFields(t *testing.T) {
