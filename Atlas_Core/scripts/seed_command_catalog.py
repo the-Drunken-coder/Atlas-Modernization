@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -25,6 +27,12 @@ CATALOG_UPLOAD_FILENAME = "command_catalog"
 
 logger = logging.getLogger(__name__)
 
+SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+CATALOG_TOP_LEVEL_FIELDS = {"type", "name", "description", "commands"}
+COMMAND_FIELDS = {"id", "name", "description", "parameters_schema"}
+PARAMETER_FIELDS = {"type", "description", "required", "minimum", "maximum"}
+PARAMETER_TYPES = {"string", "number", "boolean", "object", "array"}
+
 
 def _validate_http_url(url: str) -> str:
     parsed = urlparse(url)
@@ -41,6 +49,153 @@ def _validate_http_url(url: str) -> str:
     return url
 
 
+def _is_nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _is_finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
+def _require_object(value: Any, path: str, errors: list[str]) -> Optional[dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+    errors.append(f"{path} must be an object")
+    return None
+
+
+def _reject_unknown_fields(
+    value: dict[str, Any],
+    *,
+    allowed: set[str],
+    path: str,
+    label: str,
+    errors: list[str],
+) -> None:
+    for field in sorted(set(value) - allowed):
+        errors.append(f"{path}.{field}: unknown {label} field")
+
+
+def _validate_finite_numbers(value: Any, path: str, errors: list[str]) -> None:
+    if isinstance(value, bool):
+        return
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            errors.append(f"{path} must be a finite number")
+        return
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _validate_finite_numbers(child, f"{path}.{key}", errors)
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_finite_numbers(child, f"{path}[{index}]", errors)
+
+
+def _validate_parameter_schema(value: Any, path: str, errors: list[str]) -> None:
+    parameters = _require_object(value, path, errors)
+    if parameters is None:
+        return
+
+    for parameter_name, parameter_value in parameters.items():
+        parameter_path = f"{path}.{parameter_name}"
+        if not isinstance(parameter_name, str) or not SNAKE_CASE_PATTERN.fullmatch(parameter_name):
+            errors.append(f"{parameter_path}: parameter name must be lowercase snake_case")
+        parameter = _require_object(parameter_value, parameter_path, errors)
+        if parameter is None:
+            continue
+
+        _reject_unknown_fields(
+            parameter,
+            allowed=PARAMETER_FIELDS,
+            path=parameter_path,
+            label="parameter",
+            errors=errors,
+        )
+
+        parameter_type = parameter.get("type")
+        if parameter_type not in PARAMETER_TYPES:
+            allowed = ", ".join(sorted(PARAMETER_TYPES))
+            errors.append(f"{parameter_path}.type must be one of: {allowed}")
+        if not _is_nonempty_string(parameter.get("description")):
+            errors.append(f"{parameter_path}.description must be a non-empty string")
+        if not isinstance(parameter.get("required"), bool):
+            errors.append(f"{parameter_path}.required must be a boolean")
+
+        for bound_name in ("minimum", "maximum"):
+            if bound_name in parameter and not _is_finite_number(parameter[bound_name]):
+                errors.append(f"{parameter_path}.{bound_name} must be a finite number")
+
+        if parameter_type != "number" and ("minimum" in parameter or "maximum" in parameter):
+            errors.append(f"{parameter_path}: minimum and maximum are only valid for number parameters")
+        if (
+            _is_finite_number(parameter.get("minimum"))
+            and _is_finite_number(parameter.get("maximum"))
+            and float(parameter["minimum"]) > float(parameter["maximum"])
+        ):
+            errors.append(f"{parameter_path}: minimum must be <= maximum")
+
+
+def _validate_command_catalog_data(catalog_data: dict[str, Any]) -> None:
+    errors: list[str] = []
+    _reject_unknown_fields(
+        catalog_data,
+        allowed=CATALOG_TOP_LEVEL_FIELDS,
+        path="$",
+        label="catalog",
+        errors=errors,
+    )
+    _validate_finite_numbers(catalog_data, "$", errors)
+
+    if catalog_data.get("type") != "command_catalog":
+        errors.append("$.type must be 'command_catalog'")
+    if not _is_nonempty_string(catalog_data.get("name")):
+        errors.append("$.name must be a non-empty string")
+    if not _is_nonempty_string(catalog_data.get("description")):
+        errors.append("$.description must be a non-empty string")
+
+    commands = catalog_data.get("commands")
+    if not isinstance(commands, list) or not commands:
+        errors.append("$.commands must be a non-empty array")
+        commands = []
+
+    seen_ids: set[str] = set()
+    for index, command_value in enumerate(commands):
+        command_path = f"$.commands[{index}]"
+        command = _require_object(command_value, command_path, errors)
+        if command is None:
+            continue
+
+        _reject_unknown_fields(
+            command,
+            allowed=COMMAND_FIELDS,
+            path=command_path,
+            label="command",
+            errors=errors,
+        )
+
+        command_id = command.get("id")
+        if not isinstance(command_id, str) or not SNAKE_CASE_PATTERN.fullmatch(command_id):
+            errors.append(f"{command_path}.id must be lowercase snake_case")
+        elif command_id in seen_ids:
+            errors.append(f"{command_path}.id {command_id!r} is duplicated")
+        else:
+            seen_ids.add(command_id)
+
+        if not _is_nonempty_string(command.get("name")):
+            errors.append(f"{command_path}.name must be a non-empty string")
+        if not _is_nonempty_string(command.get("description")):
+            errors.append(f"{command_path}.description must be a non-empty string")
+        _validate_parameter_schema(
+            command.get("parameters_schema"),
+            f"{command_path}.parameters_schema",
+            errors,
+        )
+
+    if errors:
+        raise ValueError("command catalog validation failed:\n  - " + "\n  - ".join(errors))
+
+
 def _load_command_catalog_data() -> Optional[dict[str, Any]]:
     """Load the preset catalog from disk."""
     if not COMMAND_CATALOG_FILE.exists():
@@ -52,6 +207,7 @@ def _load_command_catalog_data() -> Optional[dict[str, Any]]:
             catalog_data = json.load(catalog_stream)
             if not isinstance(catalog_data, dict):
                 raise ValueError("command catalog must be a JSON object")
+            _validate_command_catalog_data(catalog_data)
             return catalog_data
     except Exception as exc:
         print(f"[CATALOG] Failed to read command catalog file: {exc}")

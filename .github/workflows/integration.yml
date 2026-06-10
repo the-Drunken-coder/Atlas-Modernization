@@ -61,6 +61,9 @@ jobs:
           docker compose -f docker/docker-compose.yml logs --no-color
           exit 1
 
+      - name: Seed command catalog
+        run: python scripts/seed_command_catalog.py --api-url "$ATLAS_CORE_API_URL"
+
       - name: Run shell API integration tests
         run: ./scripts/run_integration_tests.sh
 
