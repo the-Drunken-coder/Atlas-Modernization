@@ -24,6 +24,9 @@ const queueStorageDeletionSQL = `
 	VALUES ($1, $2, $3)
 	ON CONFLICT (bucket, path) DO UPDATE
 	SET object_id = EXCLUDED.object_id,
+		attempts = 0,
+		last_error = NULL,
+		next_attempt_at = clock_timestamp(),
 		updated_at = clock_timestamp()
 `
 
