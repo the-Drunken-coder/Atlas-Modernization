@@ -543,20 +543,8 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		}
 	}
 
-	// Validate and merge components
-	if params.Components != nil {
-		if err := ValidateTaskComponents(params.Components); err != nil {
-			return nil, err
-		}
-
-		existingComponents, ok := existingJSON["components"].(map[string]interface{})
-		if !ok {
-			existingComponents = make(map[string]interface{})
-		}
-		for k, v := range params.Components {
-			existingComponents[k] = mergeJSONValue(existingComponents[k], v)
-		}
-		existingJSON["components"] = existingComponents
+	if err := mergeTaskComponents(existingJSON, params.Components); err != nil {
+		return nil, err
 	}
 
 	removeTaskExtraKeys(existingJSON, params.RemoveExtraKeys...)
@@ -677,6 +665,35 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 }
 
 var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
+
+func mergeTaskComponents(existingJSON map[string]interface{}, components map[string]interface{}) error {
+	if components == nil {
+		return nil
+	}
+	if err := ValidateTaskComponents(components); err != nil {
+		return err
+	}
+
+	var existingComponents map[string]interface{}
+	rawStored, hadStored := existingJSON["components"]
+	if hadStored && rawStored != nil {
+		storedMap, ok := rawStored.(map[string]interface{})
+		if !ok {
+			return NewValidationError("stored task components must be an object or null")
+		}
+		existingComponents = storedMap
+	} else {
+		existingComponents = make(map[string]interface{})
+	}
+	for k, v := range components {
+		existingComponents[k] = mergeJSONValue(existingComponents[k], v)
+	}
+	if err := ValidateTaskComponents(existingComponents); err != nil {
+		return err
+	}
+	existingJSON["components"] = existingComponents
+	return nil
+}
 
 func removeTaskExtraKeys(jsonData map[string]interface{}, keys ...string) {
 	for _, key := range keys {
