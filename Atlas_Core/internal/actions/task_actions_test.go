@@ -1,6 +1,10 @@
 package actions
 
-import "testing"
+import (
+	"reflect"
+	"sort"
+	"testing"
+)
 
 func TestNormalizeTaskStatus(t *testing.T) {
 	tests := []struct {
@@ -107,8 +111,17 @@ func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
 	if params.Status == nil || *params.Status != "acknowledged" {
 		t.Fatalf("Status = %v, want acknowledged", params.Status)
 	}
-	if len(params.RemoveExtraKeys) != len(legacyTaskTransitionExtraKeys) {
-		t.Fatalf("RemoveExtraKeys = %v, want %v", params.RemoveExtraKeys, legacyTaskTransitionExtraKeys)
+	gotRemoveKeys := append([]string(nil), params.RemoveExtraKeys...)
+	wantRemoveKeys := append([]string(nil), legacyTaskTransitionExtraKeys...)
+	sort.Strings(gotRemoveKeys)
+	sort.Strings(wantRemoveKeys)
+	if !reflect.DeepEqual(gotRemoveKeys, wantRemoveKeys) {
+		t.Fatalf("RemoveExtraKeys (sorted) = %v, want %v", gotRemoveKeys, wantRemoveKeys)
+	}
+	aliasParams := taskStatusTransitionUpdate("acknowledged", &progress, &message)
+	aliasParams.RemoveExtraKeys[0] = "mutated"
+	if legacyTaskTransitionExtraKeys[0] == "mutated" {
+		t.Fatal("RemoveExtraKeys aliases legacyTaskTransitionExtraKeys")
 	}
 
 	components := params.Components

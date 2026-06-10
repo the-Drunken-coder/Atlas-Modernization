@@ -233,7 +233,7 @@ func injectMinProperties(value any) {
 
 func isObjectReferenceSchema(node map[string]any) bool {
 	props, ok := node["properties"].(map[string]any)
-	if !ok || len(props) != 2 {
+	if !ok {
 		return false
 	}
 	return schemaType(node) == "object" && props["entity_id"] != nil && props["task_id"] != nil
@@ -241,7 +241,7 @@ func isObjectReferenceSchema(node map[string]any) bool {
 
 func isAtlasGeometrySchema(node map[string]any) bool {
 	props, ok := node["properties"].(map[string]any)
-	if !ok || len(props) != 5 {
+	if !ok {
 		return false
 	}
 	return schemaType(node) == "object" &&

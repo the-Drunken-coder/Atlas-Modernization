@@ -2,15 +2,18 @@ package artifacts
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const cueVersion = "v0.16.1"
+const cueCommandTimeout = 2 * time.Minute
 
 func ValidateExamples(root string) error {
 	if err := validateExampleSet(root, "entities", "#EntityBlob"); err != nil {
@@ -79,7 +82,10 @@ func jsonSchema(root, expr string) ([]byte, error) {
 
 func runCue(root string, args ...string) ([]byte, error) {
 	goArgs := append([]string{"run", "cuelang.org/go/cmd/cue@" + cueVersion}, args...)
-	cmd := exec.Command("go", goArgs...)
+	ctx, cancel := context.WithTimeout(context.Background(), cueCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "go", goArgs...)
 	cmd.Dir = root
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

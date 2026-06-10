@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -290,6 +291,15 @@ func ValidateObjectBlob(value any) []string {
 	return errors
 }
 
+func sortedKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func ValidateEntityComponents(value any) []string {
 	components, ok := objectFromValue(value)
 	if !ok {
@@ -297,7 +307,7 @@ func ValidateEntityComponents(value any) []string {
 	}
 
 	var errors []string
-	for key := range components {
+	for _, key := range sortedKeys(components) {
 		if IsKnownEntityComponent(key) || IsCustomEntityComponent(key) {
 			continue
 		}
@@ -385,7 +395,7 @@ func ValidateTaskComponents(value any) []string {
 	}
 
 	var errors []string
-	for key := range components {
+	for _, key := range sortedKeys(components) {
 		if IsKnownTaskComponent(key) || IsCustomTaskComponent(key) {
 			continue
 		}
@@ -873,6 +883,9 @@ func validateGeoJSONPolygon(coords []any) []string {
 	totalPositions := 0
 	for _, ring := range coords {
 		if ringArray, ok := ring.([]any); ok {
+			if len(ringArray) > math.MaxInt-totalPositions {
+				return []string{"geometry.coordinates: total position count overflow"}
+			}
 			totalPositions += len(ringArray)
 		}
 	}

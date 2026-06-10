@@ -127,11 +127,13 @@ func quotedArray(values []string) string {
 
 func goIdentifier(value string) string {
 	parts := strings.Split(value, "_")
-	for i, part := range parts {
+	var out strings.Builder
+	for _, part := range parts {
 		if part == "" {
+			out.WriteString("Underscore")
 			continue
 		}
-		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		out.WriteString(strings.ToUpper(part[:1]) + part[1:])
 	}
-	return strings.Join(parts, "")
+	return out.String()
 }

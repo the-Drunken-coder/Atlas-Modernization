@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -44,6 +45,28 @@ func TestEntityComponentKeys(t *testing.T) {
 		},
 	}
 	assertErrorContains(t, protocol.ValidateEntityBlob(invalid), "Unknown component 'geomtry'")
+}
+
+func TestComponentValidationUnknownKeysAreSorted(t *testing.T) {
+	entityErrors := protocol.ValidateEntityComponents(map[string]any{
+		"z_unknown":   true,
+		"a_unknown":   true,
+		"custom_free": true,
+	})
+	wantEntityErrors := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	if !reflect.DeepEqual(entityErrors, wantEntityErrors) {
+		t.Fatalf("ValidateEntityComponents unknown errors = %v, want %v", entityErrors, wantEntityErrors)
+	}
+
+	taskErrors := protocol.ValidateTaskComponents(map[string]any{
+		"z_unknown":   true,
+		"a_unknown":   true,
+		"custom_free": true,
+	})
+	wantTaskErrors := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	if !reflect.DeepEqual(taskErrors, wantTaskErrors) {
+		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", taskErrors, wantTaskErrors)
+	}
 }
 
 func TestTelemetryValidation(t *testing.T) {

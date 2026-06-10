@@ -701,13 +701,10 @@ func taskStatusTransitionUpdate(status string, progress *float64, message *strin
 		}
 	}
 
-	removeExtraKeys := make([]string, len(legacyTaskTransitionExtraKeys))
-	copy(removeExtraKeys, legacyTaskTransitionExtraKeys)
-
 	return UpdateTaskParams{
 		Status:          &status,
 		Components:      components,
-		RemoveExtraKeys: removeExtraKeys,
+		RemoveExtraKeys: append([]string(nil), legacyTaskTransitionExtraKeys...),
 	}
 }
 

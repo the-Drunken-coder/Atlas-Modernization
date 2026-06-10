@@ -240,6 +240,14 @@ func TestMediaObjectGetSizeBytesRejectsFractional(t *testing.T) {
 	if obj.GetSizeBytes() != nil {
 		t.Fatal("expected nil for fractional size_bytes")
 	}
+
+	integerValuedFloat := &models.MediaObject{
+		ObjectID: "test-obj-2",
+		JSON:     json.RawMessage(`{"size_bytes":1.0}`),
+	}
+	if integerValuedFloat.GetSizeBytes() != nil {
+		t.Fatal("expected nil for integer-valued float size_bytes")
+	}
 }
 
 func TestMediaObjectGetUsageHints(t *testing.T) {

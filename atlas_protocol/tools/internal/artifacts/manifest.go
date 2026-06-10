@@ -1,6 +1,31 @@
 package artifacts
 
+import (
+	"fmt"
+	"sort"
+)
+
+var entityComponentSchemaKeys = []string{
+	// Mirrors atlas_protocol/schema/entity.cue #KnownEntityComponents. Update
+	// this list and rerun go run ./tools/check when entity components change.
+	"telemetry",
+	"geometry",
+	"task_catalog",
+	"media_refs",
+	"mil_view",
+	"health",
+	"sensor_refs",
+	"communications",
+	"task_queue",
+	"status",
+	"heartbeat",
+}
+
 func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
+	if err := validateEntityComponentSchemaKeys(meta.EntityComponentKeys); err != nil {
+		return nil, err
+	}
+
 	entitySchema, err := jsonSchema(root, "#EntityBlob")
 	if err != nil {
 		return nil, err
@@ -95,7 +120,7 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 		return nil, err
 	}
 
-	return []Artifact{
+	artifacts := []Artifact{
 		{Path: "generated/jsonschema/entity.schema.json", Content: entitySchema},
 		{Path: "generated/jsonschema/task.schema.json", Content: taskSchema},
 		{Path: "generated/jsonschema/object.schema.json", Content: objectSchema},
@@ -115,5 +140,44 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 		{Path: "generated/jsonschema/components/task-progress.schema.json", Content: taskProgressSchema},
 		{Path: "generated/jsonschema/components/object-reference.schema.json", Content: objectReferenceSchema},
 		{Path: "generated/go/atlasprotocol/protocol.generated.go", Content: goSource},
-	}, nil
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		return artifacts[i].Path < artifacts[j].Path
+	})
+	return artifacts, nil
+}
+
+func validateEntityComponentSchemaKeys(metaKeys []string) error {
+	expected := stringSet(entityComponentSchemaKeys)
+	actual := stringSet(metaKeys)
+
+	var missing []string
+	for key := range actual {
+		if !expected[key] {
+			missing = append(missing, key)
+		}
+	}
+
+	var stale []string
+	for key := range expected {
+		if !actual[key] {
+			stale = append(stale, key)
+		}
+	}
+
+	if len(missing) == 0 && len(stale) == 0 {
+		return nil
+	}
+
+	sort.Strings(missing)
+	sort.Strings(stale)
+	return fmt.Errorf("entity component schema manifest mismatch: CUE keys missing from entityComponentSchemaKeys: %v; entityComponentSchemaKeys entries missing from CUE: %v", missing, stale)
+}
+
+func stringSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
 }
