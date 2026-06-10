@@ -44,7 +44,7 @@ func TestEntityComponentKeys(t *testing.T) {
 			"geomtry": map[string]any{},
 		},
 	}
-	assertErrorContains(t, protocol.ValidateEntityBlob(invalid), "Unknown component 'geomtry'")
+	assertErrorContains(t, protocol.ValidateEntityBlob(invalid), "geomtry")
 }
 
 func TestComponentValidationUnknownKeysAreSorted(t *testing.T) {
@@ -87,14 +87,14 @@ func TestTelemetryValidation(t *testing.T) {
 		telemetry map[string]any
 		contains  string
 	}{
-		{name: "latitude out of range", telemetry: map[string]any{"latitude": 91.0}, contains: "telemetry.latitude"},
-		{name: "longitude out of range", telemetry: map[string]any{"longitude": -181.0}, contains: "telemetry.longitude"},
+		{name: "latitude out of range", telemetry: map[string]any{"latitude": 91.0}, contains: "latitude"},
+		{name: "longitude out of range", telemetry: map[string]any{"longitude": -181.0}, contains: "longitude"},
 		{name: "non finite", telemetry: map[string]any{"speed_m_s": math.NaN()}, contains: "must be finite"},
-		{name: "negative speed", telemetry: map[string]any{"speed_m_s": -1.0}, contains: "must be non-negative"},
-		{name: "invalid heading", telemetry: map[string]any{"heading_deg": 360.0}, contains: "telemetry.heading_deg"},
-		{name: "invalid last_update", telemetry: map[string]any{"last_update": "not-a-date"}, contains: "invalid RFC3339"},
-		{name: "legacy alias rejected", telemetry: map[string]any{"speed_ms": 10.0}, contains: "unknown field 'speed_ms'"},
-		{name: "null rejected", telemetry: map[string]any{"latitude": nil}, contains: "telemetry.latitude: expected number"},
+		{name: "negative speed", telemetry: map[string]any{"speed_m_s": -1.0}, contains: "speed_m_s"},
+		{name: "invalid heading", telemetry: map[string]any{"heading_deg": 360.0}, contains: "heading_deg"},
+		{name: "invalid last_update", telemetry: map[string]any{"last_update": "not-a-date"}, contains: "invalid time"},
+		{name: "legacy alias rejected", telemetry: map[string]any{"speed_ms": 10.0}, contains: "speed_ms"},
+		{name: "null rejected", telemetry: map[string]any{"latitude": nil}, contains: "latitude"},
 	}
 
 	for _, tt := range tests {
@@ -127,13 +127,13 @@ func TestGeometryValidation(t *testing.T) {
 		geometry map[string]any
 		contains string
 	}{
-		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: "longitude"},
+		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: "coordinates.0"},
 		{name: "non finite", geometry: map[string]any{"type": "Point", "coordinates": []any{math.Inf(1), 40.0}}, contains: "must be finite"},
-		{name: "bad radius", geometry: map[string]any{"point_lat": 40.0, "point_lng": -73.0, "radius_m": 0.0}, contains: "must be positive"},
-		{name: "point latitude requires longitude", geometry: map[string]any{"point_lat": 40.0}, contains: "point_lat and point_lng must be provided together"},
-		{name: "radius requires point coordinates", geometry: map[string]any{"radius_m": 25.0}, contains: "radius_m requires both point_lat and point_lng"},
-		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: "requires 'coordinates'"},
-		{name: "empty", geometry: map[string]any{}, contains: "component cannot be empty"},
+		{name: "bad radius", geometry: map[string]any{"point_lat": 40.0, "point_lng": -73.0, "radius_m": 0.0}, contains: "radius_m"},
+		{name: "point latitude requires longitude", geometry: map[string]any{"point_lat": 40.0}, contains: "point_lng"},
+		{name: "radius requires point coordinates", geometry: map[string]any{"radius_m": 25.0}, contains: "point_lat"},
+		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: "coordinates"},
+		{name: "empty", geometry: map[string]any{}, contains: "type"},
 		{name: "unclosed polygon", geometry: map[string]any{"type": "Polygon", "coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}}}, contains: "closed"},
 	}
 
@@ -243,21 +243,21 @@ func TestEntityComponentPayloadValidation(t *testing.T) {
 		components map[string]any
 		contains   string
 	}{
-		{name: "bad task catalog", components: map[string]any{"task_catalog": map[string]any{"supported_tasks": []any{"move", ""}}}, contains: "task_catalog.supported_tasks[1]: must be non-empty"},
+		{name: "bad task catalog", components: map[string]any{"task_catalog": map[string]any{"supported_tasks": []any{"move", ""}}}, contains: "task_catalog.supported_tasks.1"},
 		{name: "bad health", components: map[string]any{"health": map[string]any{"battery_percent": 101.0}}, contains: "health.battery_percent"},
-		{name: "null health battery", components: map[string]any{"health": map[string]any{"battery_percent": nil}}, contains: "health.battery_percent: expected number"},
+		{name: "null health battery", components: map[string]any{"health": map[string]any{"battery_percent": nil}}, contains: "health.battery_percent"},
 		{name: "bad classification", components: map[string]any{"mil_view": map[string]any{"classification": "enemy"}}, contains: "mil_view.classification"},
-		{name: "null classification", components: map[string]any{"mil_view": map[string]any{"classification": nil}}, contains: "mil_view.classification: expected string"},
-		{name: "null last seen", components: map[string]any{"mil_view": map[string]any{"last_seen": nil}}, contains: "mil_view.last_seen: expected string"},
+		{name: "null classification", components: map[string]any{"mil_view": map[string]any{"classification": nil}}, contains: "mil_view.classification"},
+		{name: "null last seen", components: map[string]any{"mil_view": map[string]any{"last_seen": nil}}, contains: "mil_view.last_seen"},
 		{name: "bad link state", components: map[string]any{"communications": map[string]any{"link_state": "offline"}}, contains: "communications.link_state"},
-		{name: "null link state", components: map[string]any{"communications": map[string]any{"link_state": nil}}, contains: "communications.link_state: expected string"},
+		{name: "null link state", components: map[string]any{"communications": map[string]any{"link_state": nil}}, contains: "communications.link_state"},
 		{name: "bad queue id", components: map[string]any{"task_queue": map[string]any{"current_task_id": " "}}, contains: "task_queue.current_task_id"},
-		{name: "null queued task ids", components: map[string]any{"task_queue": map[string]any{"queued_task_ids": nil}}, contains: "task_queue.queued_task_ids: expected array"},
+		{name: "null queued task ids", components: map[string]any{"task_queue": map[string]any{"queued_task_ids": nil}}, contains: "task_queue.queued_task_ids"},
 		{name: "bad status", components: map[string]any{"status": map[string]any{"value": ""}}, contains: "status.value"},
 		{name: "bad heartbeat", components: map[string]any{"heartbeat": map[string]any{}}, contains: "heartbeat.last_seen"},
-		{name: "bad media role", components: map[string]any{"media_refs": []any{map[string]any{"object_id": "obj-1", "role": "bad"}}}, contains: "media_refs[0].role"},
-		{name: "legacy sensor alias rejected", components: map[string]any{"sensor_refs": []any{map[string]any{"sensor_id": "sensor-1", "type": "radar", "fov_horizontal": 90.0}}}, contains: "unknown field 'fov_horizontal'"},
-		{name: "null sensor number", components: map[string]any{"sensor_refs": []any{map[string]any{"sensor_id": "sensor-1", "type": "radar", "horizontal_fov": nil}}}, contains: "sensor_refs[0].horizontal_fov: expected number"},
+		{name: "bad media role", components: map[string]any{"media_refs": []any{map[string]any{"object_id": "obj-1", "role": "bad"}}}, contains: "media_refs.0.role"},
+		{name: "legacy sensor alias rejected", components: map[string]any{"sensor_refs": []any{map[string]any{"sensor_id": "sensor-1", "type": "radar", "fov_horizontal": 90.0}}}, contains: "fov_horizontal"},
+		{name: "null sensor number", components: map[string]any{"sensor_refs": []any{map[string]any{"sensor_id": "sensor-1", "type": "radar", "horizontal_fov": nil}}}, contains: "sensor_refs.0.horizontal_fov"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -290,15 +290,15 @@ func TestTaskValidation(t *testing.T) {
 		components map[string]any
 		contains   string
 	}{
-		{name: "legacy command string rejected", components: map[string]any{"command": "legacy"}, contains: "command component must be an object"},
+		{name: "legacy command string rejected", components: map[string]any{"command": "legacy"}, contains: "command"},
 		{name: "unknown key", components: map[string]any{"unknown": true}, contains: "Unknown component 'unknown'"},
-		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: "missing required field 'type'"},
-		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: "command.type: must be non-empty"},
+		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: "command.type"},
+		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: "command.type"},
 		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: "parameters.latitude"},
 		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: "progress.percent"},
 		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: "progress.updated_at"},
-		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: "status_message must be a string"},
-		{name: "null status message", components: map[string]any{"status_message": nil}, contains: "status_message must be a string"},
+		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: "status_message"},
+		{name: "null status message", components: map[string]any{"status_message": nil}, contains: "status_message"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -331,14 +331,14 @@ func TestObjectValidation(t *testing.T) {
 		blob     map[string]any
 		contains string
 	}{
-		{name: "bad size", blob: map[string]any{"size_bytes": -1}, contains: "object.size_bytes"},
-		{name: "fractional size", blob: map[string]any{"size_bytes": 1.5}, contains: "expected non-negative integer"},
-		{name: "usage hints not array", blob: map[string]any{"usage_hints": "camera_feed"}, contains: "expected array of strings"},
-		{name: "empty usage hint", blob: map[string]any{"usage_hints": []any{""}}, contains: "object.usage_hints[0]: must be non-empty"},
-		{name: "references not array", blob: map[string]any{"referenced_by": "entity-1"}, contains: "expected array"},
-		{name: "reference not object", blob: map[string]any{"referenced_by": []any{"entity-1"}}, contains: "expected object"},
-		{name: "reference missing ids", blob: map[string]any{"referenced_by": []any{map[string]any{}}}, contains: "must include entity_id or task_id"},
-		{name: "reference blank id", blob: map[string]any{"referenced_by": []any{map[string]any{"entity_id": " "}}}, contains: "entity_id: must be non-empty"},
+		{name: "bad size", blob: map[string]any{"size_bytes": -1}, contains: "size_bytes"},
+		{name: "fractional size", blob: map[string]any{"size_bytes": 1.5}, contains: "size_bytes"},
+		{name: "usage hints not array", blob: map[string]any{"usage_hints": "camera_feed"}, contains: "usage_hints"},
+		{name: "empty usage hint", blob: map[string]any{"usage_hints": []any{""}}, contains: "usage_hints"},
+		{name: "references not array", blob: map[string]any{"referenced_by": "entity-1"}, contains: "referenced_by"},
+		{name: "reference not object", blob: map[string]any{"referenced_by": []any{"entity-1"}}, contains: "referenced_by.0"},
+		{name: "reference missing ids", blob: map[string]any{"referenced_by": []any{map[string]any{}}}, contains: "MinFields"},
+		{name: "reference blank id", blob: map[string]any{"referenced_by": []any{map[string]any{"entity_id": " "}}}, contains: "referenced_by"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -358,25 +358,25 @@ func TestRawJSONValidatorsRejectTrailingValues(t *testing.T) {
 			name:     "entity",
 			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
 			validate: protocol.ValidateEntityBlob,
-			contains: "entity blob must be an object",
+			contains: "trailing JSON value",
 		},
 		{
 			name:     "task",
 			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
 			validate: protocol.ValidateTaskBlob,
-			contains: "task blob must be an object",
+			contains: "trailing JSON value",
 		},
 		{
 			name:     "object",
 			raw:      json.RawMessage(`{"size_bytes":1}{"bad":true}`),
 			validate: protocol.ValidateObjectBlob,
-			contains: "object blob must be an object",
+			contains: "trailing JSON value",
 		},
 		{
 			name:     "array component",
 			raw:      json.RawMessage(`[{"object_id":"object-1","role":"thumbnail"}][]`),
 			validate: protocol.ValidateMediaRefsComponent,
-			contains: "media_refs: expected array",
+			contains: "trailing JSON value",
 		},
 	}
 

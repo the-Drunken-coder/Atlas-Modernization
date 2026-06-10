@@ -1,13 +1,16 @@
 package shared
 
-import "list"
+import (
+	"list"
+	"time"
+)
 
 #JSONValue: null | bool | string | number | [...#JSONValue] | {
 	[string]: #JSONValue
 }
 
 #NonEmptyString: string & =~"\\S"
-#RFC3339Timestamp: string & =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+#RFC3339Timestamp: string & time.Format(time.RFC3339)
 
 #FiniteNumber: number
 
