@@ -14,9 +14,9 @@ func TestStaleIfMatchRejectsEntityPatch(t *testing.T) {
 	ctx := context.Background()
 	entityID := fmt.Sprintf("%s-ifmatch-entity-patch", TestArtifactPrefix())
 
-	staleETag := createIfMatchEntity(t, client, ctx, entityID)
+	staleETag := createIfMatchEntity(ctx, t, client, entityID)
 	baselineAlias := "Baseline entity"
-	baseline := patchEntity(t, client, ctx, entityID, map[string]interface{}{
+	baseline := patchEntity(ctx, t, client, entityID, map[string]interface{}{
 		"alias": baselineAlias,
 		"extra": map[string]interface{}{
 			"marker": "baseline",
@@ -32,9 +32,10 @@ func TestStaleIfMatchRejectsEntityPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stale entity PATCH: %v", err)
 	}
+	defer drainClose(resp)
 	requirePreconditionFailed(t, resp, "stale entity PATCH")
 
-	after := getMapResource(t, client, ctx, "/entities/"+entityID)
+	after := getMapResource(ctx, t, client, "/entities/"+entityID)
 	requireSameVersion(t, after, metadataVersion(t, baseline), "entity after stale PATCH")
 	if after["alias"] != baselineAlias {
 		t.Fatalf("entity alias mutated after stale PATCH: %v", after["alias"])
@@ -49,8 +50,8 @@ func TestStaleIfMatchRejectsEntityCheckin(t *testing.T) {
 	ctx := context.Background()
 	entityID := fmt.Sprintf("%s-ifmatch-entity-checkin", TestArtifactPrefix())
 
-	staleETag := createIfMatchEntity(t, client, ctx, entityID)
-	baseline := patchEntity(t, client, ctx, entityID, map[string]interface{}{
+	staleETag := createIfMatchEntity(ctx, t, client, entityID)
+	baseline := patchEntity(ctx, t, client, entityID, map[string]interface{}{
 		"extra": map[string]interface{}{
 			"marker": "baseline",
 		},
@@ -64,9 +65,10 @@ func TestStaleIfMatchRejectsEntityCheckin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stale entity checkin: %v", err)
 	}
+	defer drainClose(resp)
 	requirePreconditionFailed(t, resp, "stale entity checkin")
 
-	after := getMapResource(t, client, ctx, "/entities/"+entityID)
+	after := getMapResource(ctx, t, client, "/entities/"+entityID)
 	requireSameVersion(t, after, metadataVersion(t, baseline), "entity after stale checkin")
 	requireNestedString(t, after, "extra", "marker", "baseline")
 	components, ok := after["components"].(map[string]interface{})
@@ -88,8 +90,8 @@ func TestStaleIfMatchRejectsTaskPatch(t *testing.T) {
 	ctx := context.Background()
 	taskID := fmt.Sprintf("%s-ifmatch-task-patch", TestArtifactPrefix())
 
-	staleETag := createIfMatchTask(t, client, ctx, taskID)
-	baseline := patchTask(t, client, ctx, taskID, map[string]interface{}{
+	staleETag := createIfMatchTask(ctx, t, client, taskID)
+	baseline := patchTask(ctx, t, client, taskID, map[string]interface{}{
 		"extra": map[string]interface{}{
 			"marker": "baseline",
 		},
@@ -103,9 +105,10 @@ func TestStaleIfMatchRejectsTaskPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stale task PATCH: %v", err)
 	}
+	defer drainClose(resp)
 	requirePreconditionFailed(t, resp, "stale task PATCH")
 
-	after := getMapResource(t, client, ctx, "/tasks/"+taskID)
+	after := getMapResource(ctx, t, client, "/tasks/"+taskID)
 	requireSameVersion(t, after, metadataVersion(t, baseline), "task after stale PATCH")
 	if after["status"] != "pending" {
 		t.Fatalf("task status mutated after stale PATCH: %v", after["status"])
@@ -142,8 +145,8 @@ func TestStaleIfMatchRejectsTaskStatusEndpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			taskID := fmt.Sprintf("%s-ifmatch-task-%s", prefix, tt.name)
-			staleETag := createIfMatchTask(t, client, ctx, taskID)
-			baseline := patchTask(t, client, ctx, taskID, map[string]interface{}{
+			staleETag := createIfMatchTask(ctx, t, client, taskID)
+			baseline := patchTask(ctx, t, client, taskID, map[string]interface{}{
 				"extra": map[string]interface{}{
 					"marker": tt.name + "-baseline",
 				},
@@ -153,9 +156,10 @@ func TestStaleIfMatchRejectsTaskStatusEndpoints(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stale task %s: %v", tt.name, err)
 			}
+			defer drainClose(resp)
 			requirePreconditionFailed(t, resp, "stale task "+tt.name)
 
-			after := getMapResource(t, client, ctx, "/tasks/"+taskID)
+			after := getMapResource(ctx, t, client, "/tasks/"+taskID)
 			requireSameVersion(t, after, metadataVersion(t, baseline), "task after stale "+tt.name)
 			if after["status"] != "pending" {
 				t.Fatalf("task status mutated after stale %s: %v", tt.name, after["status"])
@@ -172,8 +176,8 @@ func TestStaleIfMatchRejectsObjectPatch(t *testing.T) {
 	ctx := context.Background()
 	objectID := fmt.Sprintf("%s-ifmatch-object-patch", TestArtifactPrefix())
 
-	staleETag := createIfMatchObject(t, client, ctx, objectID)
-	baseline := patchObject(t, client, ctx, objectID, map[string]interface{}{
+	staleETag := createIfMatchObject(ctx, t, client, objectID)
+	baseline := patchObject(ctx, t, client, objectID, map[string]interface{}{
 		"extra": map[string]interface{}{
 			"description": "baseline",
 		},
@@ -187,14 +191,15 @@ func TestStaleIfMatchRejectsObjectPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stale object PATCH: %v", err)
 	}
+	defer drainClose(resp)
 	requirePreconditionFailed(t, resp, "stale object PATCH")
 
-	after := getMapResource(t, client, ctx, "/objects/"+objectID)
+	after := getMapResource(ctx, t, client, "/objects/"+objectID)
 	requireSameVersion(t, after, metadataVersion(t, baseline), "object after stale PATCH")
 	requireNestedString(t, after, "payload", "description", "baseline")
 }
 
-func createIfMatchEntity(t *testing.T, client *APIClient, ctx context.Context, entityID string) string {
+func createIfMatchEntity(ctx context.Context, t *testing.T, client *APIClient, entityID string) string {
 	t.Helper()
 
 	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
@@ -211,7 +216,7 @@ func createIfMatchEntity(t *testing.T, client *APIClient, ctx context.Context, e
 	return etag
 }
 
-func createIfMatchTask(t *testing.T, client *APIClient, ctx context.Context, taskID string) string {
+func createIfMatchTask(ctx context.Context, t *testing.T, client *APIClient, taskID string) string {
 	t.Helper()
 
 	resp, err := client.Post(ctx, "/tasks", map[string]interface{}{
@@ -227,7 +232,7 @@ func createIfMatchTask(t *testing.T, client *APIClient, ctx context.Context, tas
 	return etag
 }
 
-func createIfMatchObject(t *testing.T, client *APIClient, ctx context.Context, objectID string) string {
+func createIfMatchObject(ctx context.Context, t *testing.T, client *APIClient, objectID string) string {
 	t.Helper()
 
 	path := fmt.Sprintf("objects/%s/ifmatch.json", objectID)
@@ -247,7 +252,7 @@ func createIfMatchObject(t *testing.T, client *APIClient, ctx context.Context, o
 	return etag
 }
 
-func patchEntity(t *testing.T, client *APIClient, ctx context.Context, entityID string, body interface{}, headers map[string]string) map[string]interface{} {
+func patchEntity(ctx context.Context, t *testing.T, client *APIClient, entityID string, body interface{}, headers map[string]string) map[string]interface{} {
 	t.Helper()
 	resp, err := client.PatchWithHeaders(ctx, "/entities/"+entityID, body, headers)
 	if err != nil {
@@ -261,7 +266,7 @@ func patchEntity(t *testing.T, client *APIClient, ctx context.Context, entityID 
 	return resource
 }
 
-func patchTask(t *testing.T, client *APIClient, ctx context.Context, taskID string, body interface{}, headers map[string]string) map[string]interface{} {
+func patchTask(ctx context.Context, t *testing.T, client *APIClient, taskID string, body interface{}, headers map[string]string) map[string]interface{} {
 	t.Helper()
 	resp, err := client.PatchWithHeaders(ctx, "/tasks/"+taskID, body, headers)
 	if err != nil {
@@ -275,7 +280,7 @@ func patchTask(t *testing.T, client *APIClient, ctx context.Context, taskID stri
 	return resource
 }
 
-func patchObject(t *testing.T, client *APIClient, ctx context.Context, objectID string, body interface{}, headers map[string]string) map[string]interface{} {
+func patchObject(ctx context.Context, t *testing.T, client *APIClient, objectID string, body interface{}, headers map[string]string) map[string]interface{} {
 	t.Helper()
 	resp, err := client.PatchWithHeaders(ctx, "/objects/"+objectID, body, headers)
 	if err != nil {
@@ -289,7 +294,7 @@ func patchObject(t *testing.T, client *APIClient, ctx context.Context, objectID 
 	return resource
 }
 
-func getMapResource(t *testing.T, client *APIClient, ctx context.Context, path string) map[string]interface{} {
+func getMapResource(ctx context.Context, t *testing.T, client *APIClient, path string) map[string]interface{} {
 	t.Helper()
 	resp, err := client.Get(ctx, path)
 	if err != nil {
