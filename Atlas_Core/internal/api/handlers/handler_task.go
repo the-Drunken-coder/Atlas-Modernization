@@ -83,10 +83,11 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
 	var req struct {
-		Status     *string                `json:"status,omitempty"`
-		EntityID   *string                `json:"entity_id,omitempty"`
-		Components map[string]interface{} `json:"components,omitempty"`
-		Extra      map[string]interface{} `json:"extra,omitempty"`
+		Status          *string                `json:"status,omitempty"`
+		EntityID        *string                `json:"entity_id,omitempty"`
+		Components      map[string]interface{} `json:"components,omitempty"`
+		Extra           map[string]interface{} `json:"extra,omitempty"`
+		RemoveExtraKeys []string               `json:"remove_extra_keys,omitempty"`
 	}
 
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
@@ -94,10 +95,11 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task, err := h.taskActions.Update(r.Context(), taskID, actions.UpdateTaskParams{
-		Status:     req.Status,
-		EntityID:   req.EntityID,
-		Components: req.Components,
-		Extra:      req.Extra,
+		Status:          req.Status,
+		EntityID:        req.EntityID,
+		Components:      req.Components,
+		Extra:           req.Extra,
+		RemoveExtraKeys: req.RemoveExtraKeys,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)

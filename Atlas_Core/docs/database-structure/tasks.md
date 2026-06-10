@@ -112,6 +112,14 @@ Sending the current status again is treated as a no-op status transition.
 | `/tasks/{task_id}/status` | `POST` | Update status; optional `progress` (percent, 0–100; clamped) → `components.progress.percent`; optional `message` → `components.status_message` |
 | `/entities/{entity_id}/tasks` | `GET` | List tasks for entity (paginated) |
 
+`PATCH /tasks/{task_id}` accepts `status`, `entity_id`, `components`, `extra`,
+and `remove_extra_keys`. `extra` merges JSON keys and preserves explicit `null`
+values. `remove_extra_keys` removes specified top-level keys from the task's
+`extra` object. When the same key appears in both `remove_extra_keys` and
+`extra`, the `extra` value wins, so the key is atomically updated rather than
+removed. Protected task fields such as `components`, `status`, `entity_id`, and
+`version` are never removed by `remove_extra_keys`.
+
 ## Limits
 
 - Task create/update/status/complete/fail handler bodies are capped at `512 KB`.

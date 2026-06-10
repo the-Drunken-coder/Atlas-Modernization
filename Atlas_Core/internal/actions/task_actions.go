@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -709,8 +710,12 @@ func taskStatusTransitionUpdate(status string, progress *float64, message *strin
 }
 
 // normalizeTaskProgressPercent clamps progress to the canonical 0–100 percent scale.
+// NaN and infinite values are coerced to 0.
 // Values are not auto-scaled from 0–1; e.g. 1 means 1%, not 100%.
 func normalizeTaskProgressPercent(p float64) float64 {
+	if math.IsNaN(p) || math.IsInf(p, 0) {
+		return 0
+	}
 	if p < 0 {
 		return 0
 	}

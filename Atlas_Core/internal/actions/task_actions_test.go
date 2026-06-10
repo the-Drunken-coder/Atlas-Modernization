@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"math"
 	"reflect"
 	"sort"
 	"testing"
@@ -93,6 +94,9 @@ func TestNormalizeTaskProgressPercent(t *testing.T) {
 		{name: "mid range", in: 65.5, want: 65.5},
 		{name: "clamp low", in: -5, want: 0},
 		{name: "clamp high", in: 150, want: 100},
+		{name: "nan", in: math.NaN(), want: 0},
+		{name: "positive infinity", in: math.Inf(1), want: 0},
+		{name: "negative infinity", in: math.Inf(-1), want: 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -158,6 +162,40 @@ func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
 	}
 	if _, ok := existing["result"]; !ok {
 		t.Fatal("unrelated extra should not be removed")
+	}
+
+	nilParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
+	if nilParams.Components != nil {
+		t.Fatalf("Components = %#v, want nil for nil progress/message", nilParams.Components)
+	}
+	gotNilRemoveKeys := append([]string(nil), nilParams.RemoveExtraKeys...)
+	sort.Strings(gotNilRemoveKeys)
+	if !reflect.DeepEqual(gotNilRemoveKeys, wantRemoveKeys) {
+		t.Fatalf("nil RemoveExtraKeys (sorted) = %v, want %v", gotNilRemoveKeys, wantRemoveKeys)
+	}
+	nilExisting := map[string]interface{}{
+		"components":     map[string]interface{}{},
+		"status":         "pending",
+		"progress":       0.5,
+		"status_message": "legacy",
+		"message":        "legacy message",
+		"result":         map[string]interface{}{"ok": true},
+	}
+	removeTaskExtraKeys(nilExisting, nilParams.RemoveExtraKeys...)
+	for _, key := range legacyTaskTransitionExtraKeys {
+		if _, ok := nilExisting[key]; ok {
+			t.Fatalf("legacy extra key %q was not removed for nil progress/message: %#v", key, nilExisting)
+		}
+	}
+	for _, key := range []string{"components", "status", "result"} {
+		if _, ok := nilExisting[key]; !ok {
+			t.Fatalf("%s should not be removed for nil progress/message", key)
+		}
+	}
+	nilAliasParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
+	nilAliasParams.RemoveExtraKeys[0] = "mutated"
+	if legacyTaskTransitionExtraKeys[0] == "mutated" {
+		t.Fatal("nil RemoveExtraKeys aliases legacyTaskTransitionExtraKeys")
 	}
 }
 

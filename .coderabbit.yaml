@@ -48,7 +48,8 @@ reviews:
     - "!**/coverage.out"
     - "!**/*.log"
     - "!**/*.tmp"
-  labeling_instructions:
+  # Canonical label guidance; issue enrichment reuses this anchor below.
+  labeling_instructions: &atlas_labeling_instructions
     - label: "atlas-core"
       instructions: "Suggest for changes under Atlas_Core/."
     - label: "atlas-protocol"
@@ -386,13 +387,5 @@ issue_enrichment:
       enabled: true
       labels: []
   labeling:
-    labeling_instructions:
-      - label: "atlas-core"
-        instructions: "Core service behavior, storage, API, database, or Docker work."
-      - label: "atlas-protocol"
-        instructions: "Protocol schema, generator, generated artifact, or protocol documentation work."
-      - label: "ci"
-        instructions: "CI, workflow, Docker, or verification infrastructure work."
-      - label: "security"
-        instructions: "Authentication, secrets, permissions, upload/download, or vulnerability risk."
+    labeling_instructions: *atlas_labeling_instructions
     auto_apply_labels: false
