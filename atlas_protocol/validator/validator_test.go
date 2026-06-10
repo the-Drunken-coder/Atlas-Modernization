@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"cuelang.org/go/cue"
 )
 
 func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
@@ -50,6 +52,11 @@ func TestConcurrentValidationIsSafe(t *testing.T) {
 	if valid != goroutines/2 || invalid != goroutines/2 {
 		t.Fatalf("concurrent validation: valid = %d, invalid = %d, want %d each", valid, invalid, goroutines/2)
 	}
+}
+
+func TestKnownComponentMapsMatchSchemaFields(t *testing.T) {
+	assertKnownComponentsMatchSchema(t, "#EntityComponents", knownEntityComponents)
+	assertKnownComponentsMatchSchema(t, "#TaskComponents", knownTaskComponents)
 }
 
 func TestNonFinitePaths(t *testing.T) {
@@ -218,4 +225,61 @@ func assertAnyContains(t *testing.T, errors []string, want string) {
 		}
 	}
 	t.Fatalf("expected error containing %q, got %v", want, errors)
+}
+
+func assertKnownComponentsMatchSchema(t *testing.T, definition string, known map[string]struct{}) {
+	t.Helper()
+
+	schemaFields := schemaConcreteFields(t, definition)
+	if missing := setDifference(schemaFields, known); len(missing) > 0 {
+		t.Fatalf("%s fields missing from known component map: %v", definition, missing)
+	}
+	if extra := setDifference(known, schemaFields); len(extra) > 0 {
+		t.Fatalf("%s known component map has fields not present in schema: %v", definition, extra)
+	}
+}
+
+func schemaConcreteFields(t *testing.T, definition string) map[string]struct{} {
+	t.Helper()
+
+	schema, err := getSchema()
+	if err != nil {
+		t.Fatalf("load schema: %v", err)
+	}
+	path := cue.ParsePath(definition)
+	if err := path.Err(); err != nil {
+		t.Fatalf("parse schema path %q: %v", definition, err)
+	}
+
+	evalMu.Lock()
+	defer evalMu.Unlock()
+	value := schema.root.LookupPath(path)
+	if err := value.Err(); err != nil {
+		t.Fatalf("lookup %s: %v", definition, err)
+	}
+	fields, err := value.Fields(cue.Optional(true))
+	if err != nil {
+		t.Fatalf("iterate %s fields: %v", definition, err)
+	}
+
+	result := map[string]struct{}{}
+	for fields.Next() {
+		label := fields.Label()
+		if strings.HasPrefix(label, "[") {
+			continue
+		}
+		result[label] = struct{}{}
+	}
+	return result
+}
+
+func setDifference(left, right map[string]struct{}) []string {
+	var diff []string
+	for key := range left {
+		if _, ok := right[key]; !ok {
+			diff = append(diff, key)
+		}
+	}
+	sort.Strings(diff)
+	return diff
 }

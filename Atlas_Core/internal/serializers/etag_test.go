@@ -9,3 +9,11 @@ func TestStrongETagUsesResourceVersion(t *testing.T) {
 		t.Fatalf("etag %q != want %q", etag, want)
 	}
 }
+
+func TestStrongETagRejectsInvalidVersions(t *testing.T) {
+	for _, version := range []int64{0, -1} {
+		if etag := StrongETag(version); etag != "" {
+			t.Fatalf("StrongETag(%d) = %q, want empty", version, etag)
+		}
+	}
+}

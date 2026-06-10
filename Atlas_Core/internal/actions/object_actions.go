@@ -378,10 +378,21 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	return &out, nil
 }
 
-func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, objectID string, expectedVersion *int64) (*models.MediaObject, error) {
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+func beginObjectPreconditionTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin object precondition transaction: %w", err)
+	}
+	return tx, nil
+}
+
+func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, objectID string, expectedVersion *int64) (*models.MediaObject, error) {
+	// This no-op update path only verifies the current row version. It locks the
+	// row but does not allocate a change version, so the global write-version
+	// advisory lock is unnecessary here.
+	tx, err := beginObjectPreconditionTx(ctx, a.pool)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 

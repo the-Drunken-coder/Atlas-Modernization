@@ -16,6 +16,7 @@ func TestParseIfMatchExpectedVersion(t *testing.T) {
 		{name: "weak token rejected", header: `W/"v42"`, wantErr: true},
 		{name: "unquoted token rejected", header: `v42`, wantErr: true},
 		{name: "zero version rejected", header: `"v0"`, wantErr: true},
+		{name: "negative version rejected", header: `"v-1"`, wantErr: true},
 		{name: "malformed version rejected", header: `"vnope"`, wantErr: true},
 		{name: "different versions rejected", header: `"v42", "v43"`, wantErr: true},
 		{name: "mixed wildcard rejected", header: `*, "v42"`, wantErr: true},

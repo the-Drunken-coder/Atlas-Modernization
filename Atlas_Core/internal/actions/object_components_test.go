@@ -48,7 +48,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{}},
 			},
 			wantErr: true,
-			errMsg:  "MinFields",
+			errMsg:  "referenced_by",
 		},
 		{
 			name: "reference id must be non-empty",

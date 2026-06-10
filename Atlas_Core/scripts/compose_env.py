@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from collections.abc import Callable, MutableMapping
 
 COMPOSE_ENV_BARE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@%+=,-]+$")
@@ -140,17 +141,48 @@ def persist_compose_env_values(
     for key in sorted(set(values) - written):
         updated_lines.append(f"{key}={format_compose_env_value(values[key])}\n")
 
-    with open(env_path, "w", encoding="utf-8") as env_file:
-        env_file.writelines(updated_lines)
-
-    try:
-        os.chmod(env_path, 0o600)
-    except OSError:
-        pass
+    write_compose_env_file(env_path, updated_lines)
 
     if announce is not None:
         keys = ", ".join(sorted(values))
         announce(f"[INFO] Persisted generated Docker Compose values to {env_path}: {keys}")
+
+
+def write_compose_env_file(env_path: str, lines: list[str]) -> None:
+    """Atomically write a Compose .env file with owner-only permissions."""
+    env_dir = os.path.dirname(env_path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=".env.", dir=env_dir, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as env_file:
+            env_file.writelines(lines)
+            env_file.flush()
+            os.fsync(env_file.fileno())
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError as exc:
+            raise OSError(f"failed to secure temporary Compose env file {temp_path}: {exc}") from exc
+        os.replace(temp_path, env_path)
+        fsync_directory(env_dir)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def fsync_directory(path: str) -> None:
+    """Best-effort directory fsync after atomic replace."""
+    try:
+        dir_fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
 
 
 def load_compose_dotenv(

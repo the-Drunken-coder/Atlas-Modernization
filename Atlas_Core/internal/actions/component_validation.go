@@ -67,6 +67,9 @@ func ValidateEntityComponents(components map[string]interface{}) error {
 
 // ValidateEntityBlob validates the full entity JSON blob that will be stored.
 func ValidateEntityBlob(blob map[string]interface{}) error {
+	if blob == nil {
+		return nil
+	}
 	result := validationResultFromErrors(protocol.ValidateEntityBlob(blob))
 	if !result.HasErrors() {
 		return nil
@@ -97,6 +100,9 @@ func ValidateTaskComponents(components map[string]interface{}) error {
 
 // ValidateTaskBlob validates the full task JSON blob that will be stored.
 func ValidateTaskBlob(blob map[string]interface{}) error {
+	if blob == nil {
+		return nil
+	}
 	result := validationResultFromErrors(protocol.ValidateTaskBlob(blob))
 	if !result.HasErrors() {
 		return nil

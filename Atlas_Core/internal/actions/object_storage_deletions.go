@@ -30,6 +30,14 @@ const queueStorageDeletionSQL = `
 		updated_at = clock_timestamp()
 `
 
+const queueStorageDeletionPreserveRetrySQL = `
+	INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+	VALUES ($1, $2, $3)
+	ON CONFLICT (bucket, path) DO UPDATE
+	SET object_id = EXCLUDED.object_id,
+		updated_at = clock_timestamp()
+`
+
 func storageDeletionRetryDelay(attempts int) time.Duration {
 	if attempts <= 1 {
 		return time.Minute
@@ -69,6 +77,14 @@ func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, b
 }
 
 func (a *ObjectActions) queueStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
+	return a.queueStorageDeletionWithSQL(ctx, queueStorageDeletionSQL, bucket, path, objectID)
+}
+
+func (a *ObjectActions) queueStorageDeletionPreservingRetry(ctx context.Context, bucket, path, objectID string) error {
+	return a.queueStorageDeletionWithSQL(ctx, queueStorageDeletionPreserveRetrySQL, bucket, path, objectID)
+}
+
+func (a *ObjectActions) queueStorageDeletionWithSQL(ctx context.Context, sql, bucket, path, objectID string) error {
 	if a.pool == nil {
 		return nil
 	}
@@ -77,14 +93,14 @@ func (a *ObjectActions) queueStorageDeletion(ctx context.Context, bucket, path, 
 		return nil
 	}
 
-	if _, err := a.pool.Exec(ctx, queueStorageDeletionSQL, bucket, path, objectIDArg); err != nil {
+	if _, err := a.pool.Exec(ctx, sql, bucket, path, objectIDArg); err != nil {
 		return fmt.Errorf("failed to queue storage deletion: %w", err)
 	}
 	return nil
 }
 
 func (a *ObjectActions) queueStorageDeletionAfterFailure(ctx context.Context, bucket, path, objectID string, deleteErr error) error {
-	if err := a.queueStorageDeletion(ctx, bucket, path, objectID); err != nil {
+	if err := a.queueStorageDeletionPreservingRetry(ctx, bucket, path, objectID); err != nil {
 		return err
 	}
 	return a.recordQueuedStorageDeletionFailure(ctx, bucket, path, deleteErr)

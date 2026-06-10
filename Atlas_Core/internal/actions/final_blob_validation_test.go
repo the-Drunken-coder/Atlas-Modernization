@@ -26,6 +26,16 @@ func TestCreateEntityValidatesFinalBlobBeforeInsert(t *testing.T) {
 	assertValidationDetailsContain(t, err, "published_at")
 }
 
+func TestValidateEntityBlobAcceptsValidBlob(t *testing.T) {
+	err := ValidateEntityBlob(map[string]interface{}{
+		"published_at": "2026-06-10T00:00:00Z",
+		"callsign":     "atlas-one",
+	})
+	if err != nil {
+		t.Fatalf("ValidateEntityBlob() unexpected error: %v", err)
+	}
+}
+
 func TestCreateTaskValidatesFinalBlobBeforeInsert(t *testing.T) {
 	actions := NewTaskActions(nil)
 
@@ -40,6 +50,16 @@ func TestCreateTaskValidatesFinalBlobBeforeInsert(t *testing.T) {
 	assertValidationDetailsContain(t, err, "bad_number: must be finite")
 }
 
+func TestValidateTaskBlobAcceptsValidBlob(t *testing.T) {
+	err := ValidateTaskBlob(map[string]interface{}{
+		"priority": "normal",
+		"score":    1.5,
+	})
+	if err != nil {
+		t.Fatalf("ValidateTaskBlob() unexpected error: %v", err)
+	}
+}
+
 func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -47,7 +67,7 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 	actions := NewEntityActions(pool)
 	entityID := fmt.Sprintf("entity-final-blob-%d", time.Now().UTC().UnixNano())
-	defer cleanupFinalBlobValidationRows(context.Background(), pool, entityID, "")
+	defer cleanupFinalBlobValidationRows(ctx, pool, entityID, "")
 
 	if _, err := actions.Create(ctx, CreateEntityParams{
 		EntityID:   entityID,
@@ -72,7 +92,7 @@ func TestUpdateTaskValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 	actions := NewTaskActions(pool)
 	taskID := fmt.Sprintf("task-final-blob-%d", time.Now().UTC().UnixNano())
-	defer cleanupFinalBlobValidationRows(context.Background(), pool, "", taskID)
+	defer cleanupFinalBlobValidationRows(ctx, pool, "", taskID)
 
 	if _, err := actions.Create(ctx, CreateTaskParams{
 		TaskID: taskID,

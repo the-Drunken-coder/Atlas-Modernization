@@ -179,7 +179,9 @@ func setPaginationHeaders(w http.ResponseWriter, limit, count int, hasMore bool,
 }
 
 func setResourceETag(w http.ResponseWriter, version int64) {
-	w.Header().Set("ETag", serializers.StrongETag(version))
+	if etag := serializers.StrongETag(version); etag != "" {
+		w.Header().Set("ETag", etag)
+	}
 }
 
 func (h *Handler) parseIfMatchExpectedVersion(w http.ResponseWriter, r *http.Request, resourceType string) (*int64, bool) {

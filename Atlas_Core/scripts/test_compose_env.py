@@ -94,6 +94,25 @@ class ComposeEnvTest(unittest.TestCase):
             self.assertEqual(sum(1 for line in lines if compose_env_key(line) == "POSTGRES_PASSWORD"), 1)
             self.assertIn('POSTGRES_PASSWORD="new password"', lines)
             self.assertIn('MINIO_ROOT_PASSWORD="secret\\"with\\\\chars"', lines)
+            self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
+
+    def test_persist_compose_env_values_creates_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+
+            persist_compose_env_values(
+                temp_dir,
+                {
+                    "POSTGRES_PASSWORD": "new password",
+                    "MINIO_ROOT_PASSWORD": "secret",
+                },
+                announce=None,
+            )
+
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+            self.assertIn('POSTGRES_PASSWORD="new password"', lines)
+            self.assertIn("MINIO_ROOT_PASSWORD=secret", lines)
+            self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
 
     def test_load_compose_dotenv_does_not_override_existing_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
