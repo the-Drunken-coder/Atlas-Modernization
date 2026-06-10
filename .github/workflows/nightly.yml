@@ -54,6 +54,16 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
 
+      - name: Scan Atlas Protocol filesystem
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: atlas_protocol
+          trivy-config: ""
+          version: ${{ env.TRIVY_VERSION }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
       - name: Scan production Docker image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
