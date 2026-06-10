@@ -7,9 +7,6 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-// knownEntityComponents is the set of valid component keys for entities
-var knownEntityComponents = protocol.EntityComponentKeySet()
-
 // ValidationResult holds multiple validation errors
 type ValidationResult struct {
 	Errors []string
@@ -50,23 +47,6 @@ func NewValidationErrorWithDetails(message string, details []string) *Validation
 	}
 }
 
-// ValidateComponentKeys validates that all component keys are known or custom
-func ValidateComponentKeys(components map[string]interface{}, knownKeys map[string]bool) *ValidationResult {
-	result := &ValidationResult{}
-
-	for key := range components {
-		if knownKeys[key] {
-			continue
-		}
-		if strings.HasPrefix(key, "custom_") {
-			continue
-		}
-		result.AddError(fmt.Sprintf("Unknown component '%s'", key))
-	}
-
-	return result
-}
-
 // ValidateEntityComponents validates all components for an entity
 func ValidateEntityComponents(components map[string]interface{}) error {
 	if components == nil {
@@ -101,14 +81,4 @@ func ValidateTaskComponents(components map[string]interface{}) error {
 	}
 
 	return nil
-}
-
-// ValidateStatusComponent validates the status component
-func ValidateStatusComponent(status map[string]interface{}) *ValidationResult {
-	return validationResultFromErrors(protocol.ValidateStatusComponent(status))
-}
-
-// ValidateHeartbeatComponent validates the heartbeat component
-func ValidateHeartbeatComponent(heartbeat map[string]interface{}) *ValidationResult {
-	return validationResultFromErrors(protocol.ValidateHeartbeatComponent(heartbeat))
 }

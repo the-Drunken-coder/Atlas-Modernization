@@ -508,7 +508,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		for k, v := range params.Components {
 			existingComponents[k] = mergeJSONValue(existingComponents[k], v)
 		}
-		normalizeLegacyEntityComponents(existingComponents)
 		if err := ValidateEntityComponents(existingComponents); err != nil {
 			return nil, err
 		}
@@ -573,37 +572,6 @@ func mergeJSONValue(existing, incoming interface{}) interface{} {
 	}
 
 	return merged
-}
-
-func normalizeLegacyEntityComponents(components map[string]interface{}) {
-	rawStatus, hasStatus := components["status"]
-	if hasStatus {
-		if _, ok := rawStatus.(map[string]interface{}); !ok {
-			if statusText, ok := rawStatus.(string); ok {
-				statusText = strings.TrimSpace(statusText)
-				if statusText != "" {
-					components["status"] = map[string]interface{}{"value": statusText}
-				} else {
-					delete(components, "status")
-				}
-			}
-			// Non-string legacy values: leave unchanged so validation can fail loudly.
-		}
-	}
-
-	rawHeartbeat, hasHeartbeat := components["heartbeat"]
-	if hasHeartbeat {
-		if _, ok := rawHeartbeat.(map[string]interface{}); !ok {
-			if lastSeen, ok := rawHeartbeat.(string); ok {
-				lastSeen = strings.TrimSpace(lastSeen)
-				if lastSeen != "" {
-					components["heartbeat"] = map[string]interface{}{"last_seen": lastSeen}
-				} else {
-					delete(components, "heartbeat")
-				}
-			}
-		}
-	}
 }
 
 // Delete removes an entity.

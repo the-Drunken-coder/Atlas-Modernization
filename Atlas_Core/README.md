@@ -113,7 +113,6 @@ Key environment variables:
 - `DATABASE_POOL_IDLE_TIMEOUT` (default `600`)
 - `DATABASE_POOL_PRE_PING` (default `true`)
 - `MINIO_ENDPOINT` (default `localhost:9000`)
-- `MINIO_EXTERNAL_ENDPOINT` (optional)
 - `MINIO_ACCESS_KEY` (default `atlas`)
 - `MINIO_SECRET_KEY` or `MINIO_SECRET_KEY_FILE`
 - `MINIO_BUCKET` (default `atlas-media`)

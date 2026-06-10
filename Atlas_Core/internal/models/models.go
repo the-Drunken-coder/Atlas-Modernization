@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -308,8 +307,8 @@ func (o *MediaObject) DecodedJSON() map[string]interface{} {
 
 // GetSizeBytes returns the size_bytes from the JSON blob.
 // decodedJSON decodes with UseNumber, so numeric values arrive as json.Number;
-// Int64 preserves full precision for large sizes (values that overflow int64 or
-// carry a fractional part are rejected as invalid).
+// Int64 preserves full precision for large sizes. Values that overflow int64,
+// use a non-integer JSON literal, or are negative are rejected as invalid.
 func (o *MediaObject) GetSizeBytes() *int64 {
 	data := o.decodedJSON()
 	if data == nil {
@@ -326,21 +325,7 @@ func (o *MediaObject) GetSizeBytes() *int64 {
 		}
 		return &i
 	}
-	// Accept integer-valued float literals (e.g. "1024.0"); reject fractional or out-of-range.
-	f, err := size.Float64()
-	if err != nil {
-		return nil
-	}
-	intpart, frac := math.Modf(f)
-	if frac != 0 {
-		return nil
-	}
-	const maxInt64Plus1 = float64(uint64(1) << 63)
-	if intpart < 0 || intpart >= maxInt64Plus1 {
-		return nil
-	}
-	s := int64(intpart)
-	return &s
+	return nil
 }
 
 // GetUsageHints returns the usage_hints from the JSON blob.

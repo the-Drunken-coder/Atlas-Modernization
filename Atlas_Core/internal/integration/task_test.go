@@ -82,7 +82,8 @@ func TestTaskLifecycle(t *testing.T) {
 	// Update task
 	updatePayload := map[string]interface{}{
 		"extra": map[string]interface{}{
-			"notes": "Test task updated by integration test",
+			"notes":  "Test task updated by integration test",
+			"legacy": "remove me",
 		},
 	}
 
@@ -102,6 +103,87 @@ func TestTaskLifecycle(t *testing.T) {
 	}
 	if notes, _ := extra["notes"].(string); notes != "Test task updated by integration test" {
 		t.Fatalf("expected updated extra.notes, got %v", extra["notes"])
+	}
+	if legacy, _ := extra["legacy"].(string); legacy != "remove me" {
+		t.Fatalf("expected extra.legacy to be set before removal, got %v", extra["legacy"])
+	}
+
+	removePayload := map[string]interface{}{
+		"remove_extra_keys": []string{"legacy"},
+	}
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, removePayload)
+	if err != nil {
+		t.Fatalf("Failed to remove task extra key: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} remove_extra_keys")
+
+	var cleaned map[string]interface{}
+	if err := ParseResponse(resp, &cleaned); err != nil {
+		t.Fatalf("Failed to parse PATCH remove_extra_keys response: %v", err)
+	}
+	cleanedExtra, ok := cleaned["extra"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected extra on cleaned task, got %T", cleaned["extra"])
+	}
+	if _, exists := cleanedExtra["legacy"]; exists {
+		t.Fatalf("expected remove_extra_keys to remove legacy extra key, got %v", cleanedExtra)
+	}
+	if notes, _ := cleanedExtra["notes"].(string); notes != "Test task updated by integration test" {
+		t.Fatalf("expected remove_extra_keys to preserve extra.notes, got %v", cleanedExtra["notes"])
+	}
+
+	protectedPayload := map[string]interface{}{
+		"remove_extra_keys": []string{"components", "status", "entity_id", "version"},
+	}
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, protectedPayload)
+	if err != nil {
+		t.Fatalf("Failed to patch task with protected key removal attempt: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} protected remove_extra_keys")
+
+	var protected map[string]interface{}
+	if err := ParseResponse(resp, &protected); err != nil {
+		t.Fatalf("Failed to parse protected remove_extra_keys response: %v", err)
+	}
+	if _, ok := protected["components"].(map[string]interface{}); !ok {
+		t.Fatalf("remove_extra_keys removed protected components field: %v", protected["components"])
+	}
+	if protected["status"] != "pending" {
+		t.Fatalf("remove_extra_keys changed protected status, got %v", protected["status"])
+	}
+	if protected["entity_id"] != entityID {
+		t.Fatalf("remove_extra_keys changed protected entity_id, got %v", protected["entity_id"])
+	}
+	metadata, ok := protected["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected metadata on protected task, got %T", protected["metadata"])
+	}
+	if metadata["version"] == nil {
+		t.Fatalf("remove_extra_keys removed protected metadata.version: %v", metadata)
+	}
+
+	overlapPayload := map[string]interface{}{
+		"remove_extra_keys": []string{"notes"},
+		"extra": map[string]interface{}{
+			"notes": "atomically updated",
+		},
+	}
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, overlapPayload)
+	if err != nil {
+		t.Fatalf("Failed to patch overlapping task extra key: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} overlapping remove_extra_keys")
+
+	var overlapped map[string]interface{}
+	if err := ParseResponse(resp, &overlapped); err != nil {
+		t.Fatalf("Failed to parse PATCH overlapping remove_extra_keys response: %v", err)
+	}
+	overlappedExtra, ok := overlapped["extra"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected extra on overlapped task, got %T", overlapped["extra"])
+	}
+	if notes, _ := overlappedExtra["notes"].(string); notes != "atomically updated" {
+		t.Fatalf("expected overlapping remove_extra_keys and extra to keep new value, got %v", overlappedExtra["notes"])
 	}
 
 	t.Logf("Task %s updated and left as artifact in system", taskID)

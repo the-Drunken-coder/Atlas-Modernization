@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -44,6 +45,28 @@ func TestEntityComponentKeys(t *testing.T) {
 		},
 	}
 	assertErrorContains(t, protocol.ValidateEntityBlob(invalid), "Unknown component 'geomtry'")
+}
+
+func TestComponentValidationUnknownKeysAreSorted(t *testing.T) {
+	entityErrors := protocol.ValidateEntityComponents(map[string]any{
+		"z_unknown":   true,
+		"a_unknown":   true,
+		"custom_free": true,
+	})
+	wantEntityErrors := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	if !reflect.DeepEqual(entityErrors, wantEntityErrors) {
+		t.Fatalf("ValidateEntityComponents unknown errors = %v, want %v", entityErrors, wantEntityErrors)
+	}
+
+	taskErrors := protocol.ValidateTaskComponents(map[string]any{
+		"z_unknown":   true,
+		"a_unknown":   true,
+		"custom_free": true,
+	})
+	wantTaskErrors := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	if !reflect.DeepEqual(taskErrors, wantTaskErrors) {
+		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", taskErrors, wantTaskErrors)
+	}
 }
 
 func TestTelemetryValidation(t *testing.T) {
@@ -149,6 +172,11 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 	objectDefs := schemaObject(t, objectSchema["$defs"])
 	objectReferenceDef := schemaObject(t, objectDefs["#ObjectReference"])
 	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
+	objectProps := schemaObject(t, objectSchema["properties"])
+	sizeBytes := schemaObject(t, objectProps["size_bytes"])
+	if got, want := sizeBytes["type"], "integer"; got != want {
+		t.Fatalf("object size_bytes type = %v, want %s", got, want)
+	}
 
 	entitySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "entity.schema.json"))
 	entityDefs := schemaObject(t, entitySchema["$defs"])
@@ -304,6 +332,7 @@ func TestObjectValidation(t *testing.T) {
 		contains string
 	}{
 		{name: "bad size", blob: map[string]any{"size_bytes": -1}, contains: "object.size_bytes"},
+		{name: "fractional size", blob: map[string]any{"size_bytes": 1.5}, contains: "expected non-negative integer"},
 		{name: "usage hints not array", blob: map[string]any{"usage_hints": "camera_feed"}, contains: "expected array of strings"},
 		{name: "empty usage hint", blob: map[string]any{"usage_hints": []any{""}}, contains: "object.usage_hints[0]: must be non-empty"},
 		{name: "references not array", blob: map[string]any{"referenced_by": "entity-1"}, contains: "expected array"},
@@ -314,6 +343,46 @@ func TestObjectValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertErrorContains(t, protocol.ValidateObjectBlob(tt.blob), tt.contains)
+		})
+	}
+}
+
+func TestRawJSONValidatorsRejectTrailingValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      json.RawMessage
+		validate func(any) []string
+		contains string
+	}{
+		{
+			name:     "entity",
+			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
+			validate: protocol.ValidateEntityBlob,
+			contains: "entity blob must be an object",
+		},
+		{
+			name:     "task",
+			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
+			validate: protocol.ValidateTaskBlob,
+			contains: "task blob must be an object",
+		},
+		{
+			name:     "object",
+			raw:      json.RawMessage(`{"size_bytes":1}{"bad":true}`),
+			validate: protocol.ValidateObjectBlob,
+			contains: "object blob must be an object",
+		},
+		{
+			name:     "array component",
+			raw:      json.RawMessage(`[{"object_id":"object-1","role":"thumbnail"}][]`),
+			validate: protocol.ValidateMediaRefsComponent,
+			contains: "media_refs: expected array",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertErrorContains(t, tt.validate(tt.raw), tt.contains)
 		})
 	}
 }

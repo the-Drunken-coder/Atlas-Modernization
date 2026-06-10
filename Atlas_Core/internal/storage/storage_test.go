@@ -154,13 +154,12 @@ func TestNewClientRequiresBucket(t *testing.T) {
 
 func TestNewClientUsesConfiguredEndpoints(t *testing.T) {
 	cfg := &config.Config{
-		MinIOEndpoint:         "localhost:9000",
-		MinIOExternalEndpoint: "cdn.example.com",
-		MinIOAccessKey:        "atlas",
-		MinIOSecretKey:        "secret123",
-		MinioBucket:           "atlas-media",
-		MinIOSecure:           true,
-		MinIORegion:           "us-east-1",
+		MinIOEndpoint:  "localhost:9000",
+		MinIOAccessKey: "atlas",
+		MinIOSecretKey: "secret123",
+		MinioBucket:    "atlas-media",
+		MinIOSecure:    true,
+		MinIORegion:    "us-east-1",
 	}
 
 	client, err := NewClient(cfg)
@@ -174,104 +173,21 @@ func TestNewClientUsesConfiguredEndpoints(t *testing.T) {
 	if client.endpoint != cfg.MinIOEndpoint {
 		t.Fatalf("expected endpoint %q, got %q", cfg.MinIOEndpoint, client.endpoint)
 	}
-	if client.presignClient == client.client {
-		t.Fatal("expected separate presign MinIO client when external endpoint differs from internal")
-	}
 	if !client.secure {
 		t.Fatal("expected secure client configuration to be preserved")
 	}
 }
 
-func TestNewClientDefaultsExternalEndpointToInternal(t *testing.T) {
-	cfg := &config.Config{
-		MinIOEndpoint:  "localhost:9000",
-		MinIOAccessKey: "atlas",
-		MinIOSecretKey: "secret123",
-		MinioBucket:    "atlas-media",
-	}
-
-	client, err := NewClient(cfg)
-	if err != nil {
-		t.Fatalf("expected NewClient to succeed, got %v", err)
-	}
-
-	if client.presignClient != client.client {
-		t.Fatal("expected presign client to match main client when external endpoint is unset")
-	}
-}
-
-func TestParseMinIOHostAndSecure(t *testing.T) {
-	tests := []struct {
-		name           string
-		raw            string
-		fallbackSecure bool
-		wantHost       string
-		wantSecure     bool
-		wantErr        string
-	}{
-		{
-			name:           "plain host uses fallback secure",
-			raw:            "cdn.example.com:9000",
-			fallbackSecure: true,
-			wantHost:       "cdn.example.com:9000",
-			wantSecure:     true,
-		},
-		{
-			name:       "https url",
-			raw:        "https://cdn.example.com",
-			wantHost:   "cdn.example.com",
-			wantSecure: true,
-		},
-		{
-			name:       "http url",
-			raw:        "http://cdn.example.com:9000",
-			wantHost:   "cdn.example.com:9000",
-			wantSecure: false,
-		},
-		{
-			name:    "reject unsupported scheme",
-			raw:     "ftp://cdn.example.com",
-			wantErr: "http, https, or no scheme",
-		},
-		{
-			name:    "reject path prefix",
-			raw:     "https://cdn.example.com/minio",
-			wantErr: "must not include a path prefix",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			host, secure, err := parseMinIOHostAndSecure(tt.raw, tt.fallbackSecure)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if host != tt.wantHost || secure != tt.wantSecure {
-				t.Fatalf("got (%q, %v), want (%q, %v)", host, secure, tt.wantHost, tt.wantSecure)
-			}
-		})
-	}
-}
-
-func TestBuildPath(t *testing.T) {
+func TestNewObjectPathUsesVersionedKey(t *testing.T) {
 	client := &Client{}
-
-	tests := map[string]string{
-		"test-object":      "objects/test-object",
-		"abc123":           "objects/abc123",
-		"uuid-with-dashes": "objects/uuid-with-dashes",
+	objectID := "test-object"
+	got := client.NewObjectPath(objectID)
+	prefix := "objects/" + objectID + "/"
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("NewObjectPath(%q) = %q, want prefix %q", objectID, got, prefix)
 	}
-
-	for objectID, want := range tests {
-		if got := client.buildPath(objectID); got != want {
-			t.Fatalf("buildPath(%q) = %q, want %q", objectID, got, want)
-		}
+	if got == "objects/"+objectID {
+		t.Fatalf("NewObjectPath(%q) returned stale canonical key %q", objectID, got)
 	}
 }
 

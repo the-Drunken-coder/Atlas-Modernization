@@ -30,15 +30,14 @@ type Config struct {
 	DatabasePoolPrePing       bool
 
 	// MinIO/S3 settings
-	MinIOEndpoint         string
-	MinIOExternalEndpoint string
-	MinIOAccessKey        string
-	MinIOSecretKey        string
-	MinioBucket           string
-	MinIOSecure           bool
-	MinIORegion           string
-	MinIOHTTPPoolSize     int
-	MinIOHTTPPoolTimeout  int
+	MinIOEndpoint        string
+	MinIOAccessKey       string
+	MinIOSecretKey       string
+	MinioBucket          string
+	MinIOSecure          bool
+	MinIORegion          string
+	MinIOHTTPPoolSize    int
+	MinIOHTTPPoolTimeout int
 
 	// CORS settings
 	CORSOrigins []string
@@ -166,15 +165,14 @@ func Load() (*Config, error) {
 		DatabasePoolIdleTimeout:   dbIdleTimeout,
 		DatabasePoolPrePing:       dbPrePing,
 
-		MinIOEndpoint:         getEnv("MINIO_ENDPOINT", "localhost:9000"),
-		MinIOExternalEndpoint: getEnv("MINIO_EXTERNAL_ENDPOINT", ""),
-		MinIOAccessKey:        getEnv("MINIO_ACCESS_KEY", "atlas"),
-		MinIOSecretKey:        minioSecret,
-		MinioBucket:           getEnv("MINIO_BUCKET", "atlas-media"),
-		MinIOSecure:           minioSecure,
-		MinIORegion:           getEnv("MINIO_REGION", ""),
-		MinIOHTTPPoolSize:     minioHTTPPoolSize,
-		MinIOHTTPPoolTimeout:  minioHTTPPoolTimeout,
+		MinIOEndpoint:        getEnv("MINIO_ENDPOINT", "localhost:9000"),
+		MinIOAccessKey:       getEnv("MINIO_ACCESS_KEY", "atlas"),
+		MinIOSecretKey:       minioSecret,
+		MinioBucket:          getEnv("MINIO_BUCKET", "atlas-media"),
+		MinIOSecure:          minioSecure,
+		MinIORegion:          getEnv("MINIO_REGION", ""),
+		MinIOHTTPPoolSize:    minioHTTPPoolSize,
+		MinIOHTTPPoolTimeout: minioHTTPPoolTimeout,
 
 		CORSOrigins: append([]string(nil), DefaultCORSOrigins...),
 

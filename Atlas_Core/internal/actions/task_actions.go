@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -444,10 +445,11 @@ func normalizeCheckinTaskLimit(limit int) (int, error) {
 
 // UpdateTaskParams holds parameters for updating a task.
 type UpdateTaskParams struct {
-	Status     *string
-	EntityID   *string
-	Components map[string]interface{}
-	Extra      map[string]interface{}
+	Status          *string
+	EntityID        *string
+	Components      map[string]interface{}
+	Extra           map[string]interface{}
+	RemoveExtraKeys []string
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -458,6 +460,9 @@ func isNoOpTaskUpdate(params UpdateTaskParams) bool {
 		return false
 	}
 	if len(params.Extra) > 0 {
+		return false
+	}
+	if len(params.RemoveExtraKeys) > 0 {
 		return false
 	}
 	return true
@@ -538,30 +543,16 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		}
 	}
 
-	// Validate and merge components
-	if params.Components != nil {
-		if err := ValidateTaskComponents(params.Components); err != nil {
-			return nil, err
-		}
-
-		existingComponents, ok := existingJSON["components"].(map[string]interface{})
-		if !ok {
-			existingComponents = make(map[string]interface{})
-		}
-		for k, v := range params.Components {
-			existingComponents[k] = mergeJSONValue(existingComponents[k], v)
-		}
-		existingJSON["components"] = existingComponents
+	if err := mergeTaskComponents(existingJSON, params.Components); err != nil {
+		return nil, err
 	}
 
-	// Merge extra; nil values remove keys (used to clear legacy fields).
+	removeTaskExtraKeys(existingJSON, params.RemoveExtraKeys...)
+
+	// Merge extra.
 	if params.Extra != nil {
 		for k, v := range params.Extra {
 			if k != "components" && k != "status" && k != "entity_id" && k != "version" {
-				if v == nil {
-					delete(existingJSON, k)
-					continue
-				}
 				existingJSON[k] = v
 			}
 		}
@@ -673,9 +664,75 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
 }
 
+var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
+
+func mergeTaskComponents(existingJSON map[string]interface{}, components map[string]interface{}) error {
+	if components == nil {
+		return nil
+	}
+	if err := ValidateTaskComponents(components); err != nil {
+		return err
+	}
+
+	var existingComponents map[string]interface{}
+	rawStored, hadStored := existingJSON["components"]
+	if hadStored && rawStored != nil {
+		storedMap, ok := rawStored.(map[string]interface{})
+		if !ok {
+			return NewValidationError("stored task components must be an object or null")
+		}
+		existingComponents = storedMap
+	} else {
+		existingComponents = make(map[string]interface{})
+	}
+	for k, v := range components {
+		existingComponents[k] = mergeJSONValue(existingComponents[k], v)
+	}
+	if err := ValidateTaskComponents(existingComponents); err != nil {
+		return err
+	}
+	existingJSON["components"] = existingComponents
+	return nil
+}
+
+func removeTaskExtraKeys(jsonData map[string]interface{}, keys ...string) {
+	for _, key := range keys {
+		switch key {
+		case "components", "status", "entity_id", "version":
+			continue
+		default:
+			delete(jsonData, key)
+		}
+	}
+}
+
+func taskStatusTransitionUpdate(status string, progress *float64, message *string) UpdateTaskParams {
+	var components map[string]interface{}
+	if progress != nil || message != nil {
+		components = make(map[string]interface{})
+		if progress != nil {
+			p := normalizeTaskProgressPercent(*progress)
+			components["progress"] = map[string]interface{}{"percent": p}
+		}
+		if message != nil {
+			components["status_message"] = *message
+		}
+	}
+
+	return UpdateTaskParams{
+		Status:          &status,
+		Components:      components,
+		RemoveExtraKeys: append([]string(nil), legacyTaskTransitionExtraKeys...),
+	}
+}
+
 // normalizeTaskProgressPercent clamps progress to the canonical 0–100 percent scale.
+// NaN and infinite values are coerced to 0.
 // Values are not auto-scaled from 0–1; e.g. 1 means 1%, not 100%.
 func normalizeTaskProgressPercent(p float64) float64 {
+	if math.IsNaN(p) || math.IsInf(p, 0) {
+		return 0
+	}
 	if p < 0 {
 		return 0
 	}
@@ -687,24 +744,7 @@ func normalizeTaskProgressPercent(p float64) float64 {
 
 // TransitionStatus updates the task status and optional progress.
 func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*models.Task, error) {
-	var components map[string]interface{}
-	var extra map[string]interface{}
-	if progress != nil || message != nil {
-		components = make(map[string]interface{})
-		if progress != nil {
-			p := normalizeTaskProgressPercent(*progress)
-			components["progress"] = map[string]interface{}{"percent": p}
-		}
-		if message != nil {
-			components["status_message"] = *message
-		}
-		extra = map[string]interface{}{
-			"progress":       nil,
-			"message":        nil,
-			"status_message": nil,
-		}
-	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Components: components, Extra: extra})
+	return a.Update(ctx, taskID, taskStatusTransitionUpdate(status, progress, message))
 }
 
 // Count returns the total number of tasks.

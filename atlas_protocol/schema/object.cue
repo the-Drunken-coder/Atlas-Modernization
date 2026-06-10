@@ -13,7 +13,7 @@ import (
 
 #ObjectBlob: {
 	bucket?:     string
-	size_bytes?: shared.#FiniteNumber & >=0
+	size_bytes?: int & >=0
 	usage_hints?: [...shared.#NonEmptyString]
 	referenced_by?: [...#ObjectReference]
 	[string]: shared.#JSONValue

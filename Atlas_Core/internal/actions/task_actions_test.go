@@ -1,6 +1,12 @@
 package actions
 
-import "testing"
+import (
+	"math"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeTaskStatus(t *testing.T) {
 	tests := []struct {
@@ -89,6 +95,9 @@ func TestNormalizeTaskProgressPercent(t *testing.T) {
 		{name: "mid range", in: 65.5, want: 65.5},
 		{name: "clamp low", in: -5, want: 0},
 		{name: "clamp high", in: 150, want: 100},
+		{name: "nan", in: math.NaN(), want: 0},
+		{name: "positive infinity", in: math.Inf(1), want: 0},
+		{name: "negative infinity", in: math.Inf(-1), want: 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,6 +105,234 @@ func TestNormalizeTaskProgressPercent(t *testing.T) {
 				t.Fatalf("normalizeTaskProgressPercent(%v) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
+	progress := 62.5
+	message := "survey running"
+
+	params := taskStatusTransitionUpdate("acknowledged", &progress, &message)
+	if params.Status == nil || *params.Status != "acknowledged" {
+		t.Fatalf("Status = %v, want acknowledged", params.Status)
+	}
+	gotRemoveKeys := append([]string(nil), params.RemoveExtraKeys...)
+	wantRemoveKeys := append([]string(nil), legacyTaskTransitionExtraKeys...)
+	sort.Strings(gotRemoveKeys)
+	sort.Strings(wantRemoveKeys)
+	if !reflect.DeepEqual(gotRemoveKeys, wantRemoveKeys) {
+		t.Fatalf("RemoveExtraKeys (sorted) = %v, want %v", gotRemoveKeys, wantRemoveKeys)
+	}
+	aliasParams := taskStatusTransitionUpdate("acknowledged", &progress, &message)
+	aliasParams.RemoveExtraKeys[0] = "mutated"
+	if legacyTaskTransitionExtraKeys[0] == "mutated" {
+		t.Fatal("RemoveExtraKeys aliases legacyTaskTransitionExtraKeys")
+	}
+
+	components := params.Components
+	progressComponent, ok := components["progress"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("progress component = %T, want map[string]interface{}", components["progress"])
+	}
+	if got := progressComponent["percent"]; got != 62.5 {
+		t.Fatalf("progress percent = %v, want 62.5", got)
+	}
+	if got := components["status_message"]; got != "survey running" {
+		t.Fatalf("status_message = %v, want survey running", got)
+	}
+
+	existing := map[string]interface{}{
+		"components":     map[string]interface{}{},
+		"status":         "pending",
+		"progress":       0.5,
+		"status_message": "legacy",
+		"message":        "legacy message",
+		"result":         map[string]interface{}{"ok": true},
+	}
+	removeTaskExtraKeys(existing, params.RemoveExtraKeys...)
+	for _, key := range legacyTaskTransitionExtraKeys {
+		if _, ok := existing[key]; ok {
+			t.Fatalf("legacy extra key %q was not removed: %#v", key, existing)
+		}
+	}
+	if _, ok := existing["components"]; !ok {
+		t.Fatal("components should not be removed")
+	}
+	if _, ok := existing["status"]; !ok {
+		t.Fatal("status should not be removed")
+	}
+	if _, ok := existing["result"]; !ok {
+		t.Fatal("unrelated extra should not be removed")
+	}
+
+	nilParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
+	if nilParams.Components != nil {
+		t.Fatalf("Components = %#v, want nil for nil progress/message", nilParams.Components)
+	}
+	gotNilRemoveKeys := append([]string(nil), nilParams.RemoveExtraKeys...)
+	sort.Strings(gotNilRemoveKeys)
+	if !reflect.DeepEqual(gotNilRemoveKeys, wantRemoveKeys) {
+		t.Fatalf("nil RemoveExtraKeys (sorted) = %v, want %v", gotNilRemoveKeys, wantRemoveKeys)
+	}
+	nilExisting := map[string]interface{}{
+		"components":     map[string]interface{}{},
+		"status":         "pending",
+		"progress":       0.5,
+		"status_message": "legacy",
+		"message":        "legacy message",
+		"result":         map[string]interface{}{"ok": true},
+	}
+	removeTaskExtraKeys(nilExisting, nilParams.RemoveExtraKeys...)
+	for _, key := range legacyTaskTransitionExtraKeys {
+		if _, ok := nilExisting[key]; ok {
+			t.Fatalf("legacy extra key %q was not removed for nil progress/message: %#v", key, nilExisting)
+		}
+	}
+	for _, key := range []string{"components", "status", "result"} {
+		if _, ok := nilExisting[key]; !ok {
+			t.Fatalf("%s should not be removed for nil progress/message", key)
+		}
+	}
+	nilAliasParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
+	nilAliasParams.RemoveExtraKeys[0] = "mutated"
+	if legacyTaskTransitionExtraKeys[0] == "mutated" {
+		t.Fatal("nil RemoveExtraKeys aliases legacyTaskTransitionExtraKeys")
+	}
+}
+
+func TestMergeTaskComponentsRevalidatesMergedShape(t *testing.T) {
+	incoming := map[string]interface{}{
+		"progress": map[string]interface{}{
+			"updated_at": "2026-06-10T00:00:00Z",
+		},
+	}
+	if err := ValidateTaskComponents(incoming); err != nil {
+		t.Fatalf("incoming component delta should be valid: %v", err)
+	}
+
+	existingJSON := map[string]interface{}{
+		"components": map[string]interface{}{
+			"progress": map[string]interface{}{
+				"percent": 150.0,
+			},
+		},
+	}
+	err := mergeTaskComponents(existingJSON, incoming)
+	if err == nil {
+		t.Fatal("expected merged task components to be revalidated")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected validation error, got %T %v", err, err)
+	}
+	if len(validationErr.Details) == 0 || !strings.Contains(validationErr.Details[0], "progress.percent") {
+		t.Fatalf("validation details = %v, want progress.percent range error", validationErr.Details)
+	}
+}
+
+func TestMergeTaskComponentsNilIsNoOp(t *testing.T) {
+	components := map[string]interface{}{
+		"progress": map[string]interface{}{"percent": 50.0},
+	}
+	existingJSON := map[string]interface{}{"components": components}
+
+	if err := mergeTaskComponents(existingJSON, nil); err != nil {
+		t.Fatalf("mergeTaskComponents nil incoming: %v", err)
+	}
+	if !reflect.DeepEqual(existingJSON["components"], components) {
+		t.Fatalf("components changed for nil incoming: %v", existingJSON["components"])
+	}
+}
+
+func TestMergeTaskComponentsInitializesMissingOrNullStored(t *testing.T) {
+	tests := []struct {
+		name         string
+		existingJSON map[string]interface{}
+	}{
+		{name: "missing stored components", existingJSON: map[string]interface{}{}},
+		{name: "null stored components", existingJSON: map[string]interface{}{"components": nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			incoming := map[string]interface{}{
+				"progress": map[string]interface{}{"percent": 25.0},
+			}
+			if err := mergeTaskComponents(tt.existingJSON, incoming); err != nil {
+				t.Fatalf("mergeTaskComponents: %v", err)
+			}
+			components, ok := tt.existingJSON["components"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("components = %T, want map[string]interface{}", tt.existingJSON["components"])
+			}
+			progress, ok := components["progress"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("progress = %T, want map[string]interface{}", components["progress"])
+			}
+			if got := progress["percent"]; got != 25.0 {
+				t.Fatalf("progress.percent = %v, want 25", got)
+			}
+		})
+	}
+}
+
+func TestMergeTaskComponentsEmptyIncomingValidatesExisting(t *testing.T) {
+	existingJSON := map[string]interface{}{
+		"components": map[string]interface{}{
+			"progress": map[string]interface{}{"percent": 50.0},
+		},
+	}
+	if err := mergeTaskComponents(existingJSON, map[string]interface{}{}); err != nil {
+		t.Fatalf("mergeTaskComponents empty incoming: %v", err)
+	}
+	components := existingJSON["components"].(map[string]interface{})
+	progress := components["progress"].(map[string]interface{})
+	if got := progress["percent"]; got != 50.0 {
+		t.Fatalf("progress.percent = %v, want preserved 50", got)
+	}
+}
+
+func TestMergeTaskComponentsSuccess(t *testing.T) {
+	existingJSON := map[string]interface{}{
+		"components": map[string]interface{}{
+			"progress": map[string]interface{}{"percent": 50.0},
+		},
+	}
+	incoming := map[string]interface{}{
+		"progress":       map[string]interface{}{"updated_at": "2026-06-10T00:00:00Z"},
+		"status_message": "survey running",
+	}
+	if err := mergeTaskComponents(existingJSON, incoming); err != nil {
+		t.Fatalf("mergeTaskComponents valid merge: %v", err)
+	}
+
+	components := existingJSON["components"].(map[string]interface{})
+	progress := components["progress"].(map[string]interface{})
+	if got := progress["percent"]; got != 50.0 {
+		t.Fatalf("progress.percent = %v, want preserved 50", got)
+	}
+	if got := progress["updated_at"]; got != "2026-06-10T00:00:00Z" {
+		t.Fatalf("progress.updated_at = %v, want incoming timestamp", got)
+	}
+	if got := components["status_message"]; got != "survey running" {
+		t.Fatalf("status_message = %v, want survey running", got)
+	}
+}
+
+func TestMergeTaskComponentsRejectsNonMapStored(t *testing.T) {
+	existingJSON := map[string]interface{}{"components": "corrupt"}
+	incoming := map[string]interface{}{
+		"progress": map[string]interface{}{"percent": 25.0},
+	}
+	err := mergeTaskComponents(existingJSON, incoming)
+	if err == nil {
+		t.Fatal("expected stored component type validation error")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected validation error, got %T %v", err, err)
+	}
+	if !strings.Contains(validationErr.Message, "stored task components must be an object or null") {
+		t.Fatalf("validation message = %q, want stored task components type error", validationErr.Message)
 	}
 }
 

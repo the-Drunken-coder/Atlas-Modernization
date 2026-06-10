@@ -151,37 +151,6 @@ func (t *Task) GetCommand() *CommandComponent {
 	return &command
 }
 
-// taskExtraField resolves a key from GetExtra(), including nested `extra` (canonical JSON shape).
-func taskExtraField(extra map[string]interface{}, key string) (interface{}, bool) {
-	if extra == nil {
-		return nil, false
-	}
-	if v, ok := extra[key]; ok {
-		return v, true
-	}
-	if nested, ok := extra["extra"].(map[string]interface{}); ok {
-		if v, ok := nested[key]; ok {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
-func float64FromJSONNumber(value interface{}) (*float64, bool) {
-	switch typed := value.(type) {
-	case float64:
-		return &typed, true
-	case json.Number:
-		f, err := typed.Float64()
-		if err != nil {
-			return nil, false
-		}
-		return &f, true
-	default:
-		return nil, false
-	}
-}
-
 // GetResult returns the result from the task's extra fields.
 // Returns nil if the result is missing or has an invalid format.
 func (t *Task) GetResult() *TaskResult {
@@ -190,7 +159,7 @@ func (t *Task) GetResult() *TaskResult {
 		return nil
 	}
 
-	resultData, ok := taskExtraField(extra, "result")
+	resultData, ok := extra["result"]
 	if !ok || resultData == nil {
 		return nil
 	}
@@ -214,7 +183,7 @@ func (t *Task) GetError() *TaskError {
 		return nil
 	}
 
-	errorData, ok := taskExtraField(extra, "error")
+	errorData, ok := extra["error"]
 	if !ok || errorData == nil {
 		return nil
 	}
@@ -230,7 +199,7 @@ func (t *Task) GetError() *TaskError {
 	return &taskError
 }
 
-// GetProgress returns progress from components.progress.percent, then legacy extra.progress.
+// GetProgress returns progress from components.progress.percent.
 func (t *Task) GetProgress() *float64 {
 	if components := t.GetComponents(); components != nil {
 		if progressData, ok := components["progress"]; ok && progressData != nil {
@@ -242,21 +211,5 @@ func (t *Task) GetProgress() *float64 {
 			}
 		}
 	}
-
-	extra := t.GetExtra()
-	if extra == nil {
-		return nil
-	}
-
-	progressData, ok := taskExtraField(extra, "progress")
-	if !ok {
-		return nil
-	}
-
-	progress, ok := float64FromJSONNumber(progressData)
-	if !ok {
-		return nil
-	}
-
-	return progress
+	return nil
 }
