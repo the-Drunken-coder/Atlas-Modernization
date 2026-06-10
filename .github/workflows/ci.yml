@@ -142,6 +142,9 @@ jobs:
             echo "No Python scripts found under scripts/; skipping."
           fi
 
+      - name: Test Compose env parser
+        run: python3 scripts/test_compose_env.py
+
       - name: Run ShellCheck
         run: |
           if compgen -G "scripts/*.sh" > /dev/null; then
