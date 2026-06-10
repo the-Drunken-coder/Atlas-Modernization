@@ -10,8 +10,8 @@ import (
 // APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.
 const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
 
-// ObjectStrongETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
-func ObjectStrongETag(version int64) string {
+// StrongETag returns a strong quoted ETag for resource concurrency (If-Match).
+func StrongETag(version int64) string {
 	return fmt.Sprintf(`"v%d"`, version)
 }
 

@@ -95,14 +95,30 @@ type PreconditionFailedError struct {
 	ActionError
 }
 
-// NewObjectPreconditionFailedError indicates PATCH /objects was rejected due to stale If-Match.
-func NewObjectPreconditionFailedError() *PreconditionFailedError {
+// NewPreconditionFailedError indicates a write was rejected due to stale If-Match.
+func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
+	resourceType = strings.TrimSpace(resourceType)
+	if resourceType == "" {
+		resourceType = "resource"
+	}
 	return &PreconditionFailedError{
 		ActionError: ActionError{
-			Message: "If-Match precondition failed for object",
+			Message: fmt.Sprintf("If-Match precondition failed for %s", resourceType),
 			Code:    "PRECONDITION_FAILED",
 		},
 	}
+}
+
+func NewEntityPreconditionFailedError() *PreconditionFailedError {
+	return NewPreconditionFailedError("entity")
+}
+
+func NewTaskPreconditionFailedError() *PreconditionFailedError {
+	return NewPreconditionFailedError("task")
+}
+
+func NewObjectPreconditionFailedError() *PreconditionFailedError {
+	return NewPreconditionFailedError("object")
 }
 
 // ConflictError is returned when a create or update violates a unique constraint.
@@ -394,11 +410,12 @@ func (a *EntityActions) List(ctx context.Context, limit int, cursor string) (*Li
 
 // UpdateEntityParams holds parameters for updating an entity.
 type UpdateEntityParams struct {
-	EntityType *string
-	Subtype    *string
-	Alias      *string
-	Components map[string]interface{}
-	Extra      map[string]interface{}
+	EntityType      *string
+	Subtype         *string
+	Alias           *string
+	Components      map[string]interface{}
+	Extra           map[string]interface{}
+	ExpectedVersion *int64
 }
 
 // IsEmpty reports whether the PATCH carries no updatable fields.
@@ -415,7 +432,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	}
 	entityID = SanitizeID(entityID)
 
-	if params.IsEmpty() {
+	if params.IsEmpty() && params.ExpectedVersion == nil {
 		return a.Get(ctx, entityID)
 	}
 
@@ -441,6 +458,15 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 			return nil, NewEntityNotFoundError(entityID)
 		}
 		return nil, fmt.Errorf("failed to get entity: %w", err)
+	}
+	if err := checkExpectedVersion("entity", params.ExpectedVersion, entity.Version); err != nil {
+		return nil, err
+	}
+	if params.IsEmpty() {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)
+		}
+		return &entity, nil
 	}
 
 	// Parse existing JSON

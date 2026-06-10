@@ -65,6 +65,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusCreated, serializers.SerializeEntity(entity))
 }
 
@@ -78,6 +79,7 @@ func (h *Handler) GetEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
@@ -91,6 +93,7 @@ func (h *Handler) GetEntityByAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
@@ -112,19 +115,25 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
+	if !ok {
+		return
+	}
 
 	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
-		EntityType: req.EntityType,
-		Subtype:    req.Subtype,
-		Alias:      req.Alias,
-		Components: req.Components,
-		Extra:      req.Extra,
+		EntityType:      req.EntityType,
+		Subtype:         req.Subtype,
+		Alias:           req.Alias,
+		Components:      req.Components,
+		Extra:           req.Extra,
+		ExpectedVersion: expectedVersion,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
@@ -164,15 +173,21 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", "VALIDATION_ERROR")
 		return
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
+	if !ok {
+		return
+	}
 
 	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
-		Components: map[string]interface{}{"telemetry": telemetry},
+		Components:      map[string]interface{}{"telemetry": telemetry},
+		ExpectedVersion: expectedVersion,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
+	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
@@ -253,9 +268,14 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	components["heartbeat"] = map[string]interface{}{
 		"last_seen": now,
 	}
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
+	if !ok {
+		return
+	}
 
 	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
-		Components: components,
+		Components:      components,
+		ExpectedVersion: expectedVersion,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
@@ -285,6 +305,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	if taskPage.NextCursor != "" {
 		response["next_task_cursor"] = taskPage.NextCursor
 	}
+	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, response)
 }
 

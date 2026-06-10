@@ -1,0 +1,9 @@
+# Resource Write Concurrency
+
+1. **Time & Date:** 2026-06-10, America/New_York
+2. **Name:** Optional strong If-Match for resource writes
+3. **Context:** Entity and task writes previously serialized database rows but did not expose optimistic concurrency to API clients, while object updates did. That made stale writes silent and made check-in/telemetry behavior look like an accidental asymmetry.
+4. **Decision:** Entity, task, and object update paths accept optional strong `If-Match` headers in the form `"vN"`, backed by each row's `version`. Handlers parse the header to an expected integer version and actions compare that version after acquiring the row lock. Single-resource entity, task, and object responses return a strong `ETag` derived from the current version.
+5. **Alternatives considered:** Require `If-Match` on every write; rejected because high-frequency and greenfield workflows can still use serialized last-writer-wins when they do not need optimistic protection. Keep object-only `If-Match`; rejected because the concurrency contract should be consistent across resource types. Pass raw headers into actions; rejected because HTTP syntax belongs at the handler boundary.
+6. **Consequences:** Requests without `If-Match` remain last-writer-wins after row serialization. Weak, malformed, or conflicting `If-Match` tokens fail with HTTP 412. The `version` field remains the shared resource version source for both ETags and changed-since synchronization.
+7. **Location:** `Atlas_Core/internal/api/handlers/handler_http.go`, `Atlas_Core/internal/api/handlers/handler_entity.go`, `Atlas_Core/internal/api/handlers/handler_task.go`, `Atlas_Core/internal/api/handlers/handler_object.go`, `Atlas_Core/internal/actions/entity_actions.go`, `Atlas_Core/internal/actions/task_actions.go`, `Atlas_Core/internal/actions/object_actions.go`, `Atlas_Core/internal/serializers/serializers.go`

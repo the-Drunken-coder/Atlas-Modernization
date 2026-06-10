@@ -453,6 +453,7 @@ type UpdateTaskParams struct {
 	Components      map[string]interface{}
 	Extra           map[string]interface{}
 	RemoveExtraKeys []string
+	ExpectedVersion *int64
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -478,7 +479,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	}
 	taskID = SanitizeID(taskID)
 
-	if isNoOpTaskUpdate(params) {
+	if isNoOpTaskUpdate(params) && params.ExpectedVersion == nil {
 		return a.Get(ctx, taskID)
 	}
 
@@ -504,6 +505,15 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 			return nil, NewTaskNotFoundError(taskID)
 		}
 		return nil, fmt.Errorf("failed to get task: %w", err)
+	}
+	if err := checkExpectedVersion("task", params.ExpectedVersion, task.Version); err != nil {
+		return nil, err
+	}
+	if isNoOpTaskUpdate(params) {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("failed to commit task precondition transaction: %w", err)
+		}
+		return &task, nil
 	}
 
 	// Parse existing JSON
@@ -645,29 +655,29 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 }
 
 // Acknowledge marks a task as acknowledged.
-func (a *TaskActions) Acknowledge(ctx context.Context, taskID string) (*models.Task, error) {
+func (a *TaskActions) Acknowledge(ctx context.Context, taskID string, expectedVersion *int64) (*models.Task, error) {
 	status := "acknowledged"
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: expectedVersion})
 }
 
 // Complete marks a task as completed with optional result.
-func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}) (*models.Task, error) {
+func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}, expectedVersion *int64) (*models.Task, error) {
 	status := "completed"
 	var extra map[string]interface{}
 	if result != nil {
 		extra = map[string]interface{}{"result": result}
 	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
 }
 
 // Fail marks a task as failed with optional error details.
-func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}) (*models.Task, error) {
+func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}, expectedVersion *int64) (*models.Task, error) {
 	status := "failed"
 	var extra map[string]interface{}
 	if errorDetails != nil {
 		extra = map[string]interface{}{"error": errorDetails}
 	}
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
 }
 
 var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
@@ -749,8 +759,10 @@ func normalizeTaskProgressPercent(p float64) float64 {
 }
 
 // TransitionStatus updates the task status and optional progress.
-func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string) (*models.Task, error) {
-	return a.Update(ctx, taskID, taskStatusTransitionUpdate(status, progress, message))
+func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string, expectedVersion *int64) (*models.Task, error) {
+	params := taskStatusTransitionUpdate(status, progress, message)
+	params.ExpectedVersion = expectedVersion
+	return a.Update(ctx, taskID, params)
 }
 
 // Count returns the total number of tasks.
