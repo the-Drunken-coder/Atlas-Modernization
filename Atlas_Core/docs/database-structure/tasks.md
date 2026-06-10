@@ -1,6 +1,6 @@
 # Task JSON Structure
 
-_Revision: 2026-02-13_
+_Revision: 2026-06-10_
 
 Tasks represent work items dispatched to entities. The `tasks` table stores promoted fields as
 columns and task-specific detail in the JSON blob.
@@ -8,7 +8,8 @@ columns and task-specific detail in the JSON blob.
 Implementation references:
 
 - `internal/models/models.go`
-- `internal/actions/task_actions.go`
+- `internal/actions/taskactions/taskactions.go`
+- `internal/actions/taskactions/update.go`
 - `internal/actions/task_components.go`
 - `internal/actions/component_validation.go`
 

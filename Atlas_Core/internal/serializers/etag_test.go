@@ -9,9 +9,3 @@ func TestStrongETagUsesVersion(t *testing.T) {
 		t.Fatalf("etag %q != want %q", etag, want)
 	}
 }
-
-func TestObjectStrongETagUsesSharedFormatter(t *testing.T) {
-	if got, want := ObjectStrongETag(42), StrongETag(42); got != want {
-		t.Fatalf("object etag %q != shared etag %q", got, want)
-	}
-}

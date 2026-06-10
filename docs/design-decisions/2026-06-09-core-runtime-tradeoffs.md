@@ -9,6 +9,6 @@
    - Changed-since sync remains simple and correct at current scale.
    - Clients must tolerate tasks whose `entity_id` is null after the related entity is deleted.
    - Readiness remains a direct dependency probe and should not grow business behavior.
-7. **Location:** `Atlas_Core/internal/actions/query_actions.go` (`readSnapshotVersion`), `Atlas_Core/internal/database/db.go` (`tasks.entity_id`), `Atlas_Core/internal/api/handlers/handler_health.go`
+7. **Location:** `Atlas_Core/internal/actions/syncactions/changed_since.go` (`readSnapshotVersion`), `Atlas_Core/internal/database/db.go` (`tasks.entity_id`), `Atlas_Core/internal/api/handlers/handler_health.go`
 
 (End of file)

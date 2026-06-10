@@ -2,20 +2,10 @@ package actions
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
-
-// DeletedResource represents a tombstone for a deleted resource.
-// Type is always "entity", "task", or "object" (redundant with which response array it appears in, but uniform for clients).
-type DeletedResource struct {
-	ID        string
-	Type      string
-	DeletedAt string
-	Version   int64
-}
 
 func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
 	if rows == nil {
@@ -73,33 +63,6 @@ func collectObjects(rows pgx.Rows) ([]*models.MediaObject, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating object rows: %w", err)
-	}
-	return out, nil
-}
-
-func collectDeletedResources(rows pgx.Rows, resourceType string) ([]DeletedResource, error) {
-	if rows == nil {
-		return nil, nil
-	}
-	defer rows.Close()
-
-	var out []DeletedResource
-	for rows.Next() {
-		var resourceID string
-		var deletedAt time.Time
-		var version int64
-		if err := rows.Scan(&resourceID, &deletedAt, &version); err != nil {
-			return nil, err
-		}
-		out = append(out, DeletedResource{
-			ID:        resourceID,
-			Type:      resourceType,
-			DeletedAt: deletedAt.UTC().Format(time.RFC3339Nano),
-			Version:   version,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return out, nil
 }

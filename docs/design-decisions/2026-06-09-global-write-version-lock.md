@@ -9,6 +9,6 @@
    - Write throughput is intentionally serialized while the project is greenfield and sync correctness is more important than write parallelism.
    - `GET /queries/changed-since` can treat `version` as a monotonic global cursor across live rows and tombstones.
    - If write volume later makes this lock too expensive, the sync protocol must be redesigned before removing it.
-7. **Location:** `Atlas_Core/internal/actions/write_version.go`, `Atlas_Core/internal/actions/query_actions.go`, `Atlas_Core/internal/database/db.go`
+7. **Location:** `Atlas_Core/internal/actions/write_version.go`, `Atlas_Core/internal/actions/syncactions/changed_since.go`, `Atlas_Core/internal/database/db.go`
 
 (End of file)

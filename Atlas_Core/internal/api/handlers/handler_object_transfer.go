@@ -216,6 +216,6 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.Version))
+	w.Header().Set("ETag", serializers.StrongETag(obj.Version))
 	writeJSON(w, http.StatusCreated, serializers.SerializeObject(obj))
 }

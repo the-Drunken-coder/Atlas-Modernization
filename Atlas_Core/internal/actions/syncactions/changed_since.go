@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
@@ -55,42 +54,42 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 		return nil, err
 	}
 
-	entCur, err := actions.ParseVersionQueryCursor(entCurRaw, "entity_cursor")
+	entCur, err := parseVersionQueryCursor(entCurRaw, "entity_cursor")
 	if err != nil {
 		return nil, err
 	}
-	taskCur, err := actions.ParseVersionQueryCursor(taskCurRaw, "task_cursor")
+	taskCur, err := parseVersionQueryCursor(taskCurRaw, "task_cursor")
 	if err != nil {
 		return nil, err
 	}
-	objCur, err := actions.ParseVersionQueryCursor(objCurRaw, "object_cursor")
+	objCur, err := parseVersionQueryCursor(objCurRaw, "object_cursor")
 	if err != nil {
 		return nil, err
 	}
-	delEntCur, err := actions.ParseVersionQueryCursor(delEntCurRaw, "deleted_entity_cursor")
+	delEntCur, err := parseVersionQueryCursor(delEntCurRaw, "deleted_entity_cursor")
 	if err != nil {
 		return nil, err
 	}
-	delTaskCur, err := actions.ParseVersionQueryCursor(delTaskCurRaw, "deleted_task_cursor")
+	delTaskCur, err := parseVersionQueryCursor(delTaskCurRaw, "deleted_task_cursor")
 	if err != nil {
 		return nil, err
 	}
-	delObjCur, err := actions.ParseVersionQueryCursor(delObjCurRaw, "deleted_object_cursor")
+	delObjCur, err := parseVersionQueryCursor(delObjCurRaw, "deleted_object_cursor")
 	if err != nil {
 		return nil, err
 	}
-	if err := actions.ValidateVersionCursorsSinceVersion(
+	if err := validateVersionCursorsSinceVersion(
 		sinceVersion,
-		actions.LabeledVersionCursor{Label: "entity_cursor", Cursor: entCur},
-		actions.LabeledVersionCursor{Label: "task_cursor", Cursor: taskCur},
-		actions.LabeledVersionCursor{Label: "object_cursor", Cursor: objCur},
-		actions.LabeledVersionCursor{Label: "deleted_entity_cursor", Cursor: delEntCur},
-		actions.LabeledVersionCursor{Label: "deleted_task_cursor", Cursor: delTaskCur},
-		actions.LabeledVersionCursor{Label: "deleted_object_cursor", Cursor: delObjCur},
+		labeledVersionCursor{Label: "entity_cursor", Cursor: entCur},
+		labeledVersionCursor{Label: "task_cursor", Cursor: taskCur},
+		labeledVersionCursor{Label: "object_cursor", Cursor: objCur},
+		labeledVersionCursor{Label: "deleted_entity_cursor", Cursor: delEntCur},
+		labeledVersionCursor{Label: "deleted_task_cursor", Cursor: delTaskCur},
+		labeledVersionCursor{Label: "deleted_object_cursor", Cursor: delObjCur},
 	); err != nil {
 		return nil, err
 	}
-	snapshotUpperVersion, continuation, err := actions.ContinuationVersionUpperBound(snapshotVersion, entCur, taskCur, objCur, delEntCur, delTaskCur, delObjCur)
+	snapshotUpperVersion, continuation, err := continuationVersionUpperBound(snapshotVersion, entCur, taskCur, objCur, delEntCur, delTaskCur, delObjCur)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +97,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	var entities []*models.Entity
 	var hasMoreEnt bool
 	if !skipCursorStream(continuation, entCur) {
-		entities, hasMoreEnt, err = actions.QueryEntitiesByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, entCur != nil, entCur, limit)
+		entities, hasMoreEnt, err = queryEntitiesByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, entCur != nil, entCur, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +106,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	var tasks []*models.Task
 	var hasMoreTasks bool
 	if !skipCursorStream(continuation, taskCur) {
-		tasks, hasMoreTasks, err = actions.QueryTasksByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, taskCur != nil, taskCur, limit)
+		tasks, hasMoreTasks, err = queryTasksByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, taskCur != nil, taskCur, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +115,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	var objects []*models.MediaObject
 	var hasMoreObj bool
 	if !skipCursorStream(continuation, objCur) {
-		objects, hasMoreObj, err = actions.QueryObjectsByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, objCur != nil, objCur, limit)
+		objects, hasMoreObj, err = queryObjectsByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, objCur != nil, objCur, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +150,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	}
 	if hasMoreEnt && len(entities) > 0 {
 		last := entities[len(entities)-1]
-		cur, err := actions.EncodeVersionCursor(last.Version, last.EntityID, snapshotUpperVersion, sinceVersion)
+		cur, err := encodeVersionCursor(last.Version, last.EntityID, snapshotUpperVersion, sinceVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode entity cursor: %w", err)
 		}
@@ -159,7 +158,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	}
 	if hasMoreTasks && len(tasks) > 0 {
 		last := tasks[len(tasks)-1]
-		cur, err := actions.EncodeVersionCursor(last.Version, last.TaskID, snapshotUpperVersion, sinceVersion)
+		cur, err := encodeVersionCursor(last.Version, last.TaskID, snapshotUpperVersion, sinceVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode task cursor: %w", err)
 		}
@@ -167,7 +166,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	}
 	if hasMoreObj && len(objects) > 0 {
 		last := objects[len(objects)-1]
-		cur, err := actions.EncodeVersionCursor(last.Version, last.ObjectID, snapshotUpperVersion, sinceVersion)
+		cur, err := encodeVersionCursor(last.Version, last.ObjectID, snapshotUpperVersion, sinceVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode object cursor: %w", err)
 		}
@@ -175,7 +174,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	}
 	if moreDE && len(deletedEntities) > 0 {
 		last := deletedEntities[len(deletedEntities)-1]
-		cur, err := actions.EncodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_entity_cursor")
+		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_entity_cursor")
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +182,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	}
 	if moreDT && len(deletedTasks) > 0 {
 		last := deletedTasks[len(deletedTasks)-1]
-		cur, err := actions.EncodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_task_cursor")
+		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_task_cursor")
 		if err != nil {
 			return nil, err
 		}
@@ -191,7 +190,7 @@ func (a *Actions) GetDataChangedSince(ctx context.Context, sinceVersion int64, l
 	}
 	if moreDO && len(deletedObjects) > 0 {
 		last := deletedObjects[len(deletedObjects)-1]
-		cur, err := actions.EncodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_object_cursor")
+		cur, err := encodeDeletedCursor(last, snapshotUpperVersion, sinceVersion, "next_deleted_object_cursor")
 		if err != nil {
 			return nil, err
 		}
@@ -217,30 +216,30 @@ func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
 }
 
 // getDeletionsSince queries the deletions table for tombstones after the given version.
-func (a *Actions) getDeletionsSince(ctx context.Context, tx pgx.Tx, sinceVersion, snapshotUpperVersion int64, limitPerType int, continuation bool, cursorEntity, cursorTask, cursorObject *actions.ParsedVersionCursor) ([]actions.DeletedResource, []actions.DeletedResource, []actions.DeletedResource, bool, bool, bool, error) {
-	var deletedEntities []actions.DeletedResource
+func (a *Actions) getDeletionsSince(ctx context.Context, tx pgx.Tx, sinceVersion, snapshotUpperVersion int64, limitPerType int, continuation bool, cursorEntity, cursorTask, cursorObject *parsedVersionCursor) ([]DeletedResource, []DeletedResource, []DeletedResource, bool, bool, bool, error) {
+	var deletedEntities []DeletedResource
 	var moreE bool
 	var err error
 	if !skipCursorStream(continuation, cursorEntity) {
-		deletedEntities, moreE, err = actions.QueryDeletionsByTypeAndVersion(ctx, tx, "entity", sinceVersion, snapshotUpperVersion, cursorEntity != nil, cursorEntity, limitPerType)
+		deletedEntities, moreE, err = queryDeletionsByTypeAndVersion(ctx, tx, "entity", sinceVersion, snapshotUpperVersion, cursorEntity != nil, cursorEntity, limitPerType)
 		if err != nil {
 			return nil, nil, nil, false, false, false, err
 		}
 	}
 
-	var deletedTasks []actions.DeletedResource
+	var deletedTasks []DeletedResource
 	var moreT bool
 	if !skipCursorStream(continuation, cursorTask) {
-		deletedTasks, moreT, err = actions.QueryDeletionsByTypeAndVersion(ctx, tx, "task", sinceVersion, snapshotUpperVersion, cursorTask != nil, cursorTask, limitPerType)
+		deletedTasks, moreT, err = queryDeletionsByTypeAndVersion(ctx, tx, "task", sinceVersion, snapshotUpperVersion, cursorTask != nil, cursorTask, limitPerType)
 		if err != nil {
 			return nil, nil, nil, false, false, false, err
 		}
 	}
 
-	var deletedObjects []actions.DeletedResource
+	var deletedObjects []DeletedResource
 	var moreO bool
 	if !skipCursorStream(continuation, cursorObject) {
-		deletedObjects, moreO, err = actions.QueryDeletionsByTypeAndVersion(ctx, tx, "object", sinceVersion, snapshotUpperVersion, cursorObject != nil, cursorObject, limitPerType)
+		deletedObjects, moreO, err = queryDeletionsByTypeAndVersion(ctx, tx, "object", sinceVersion, snapshotUpperVersion, cursorObject != nil, cursorObject, limitPerType)
 		if err != nil {
 			return nil, nil, nil, false, false, false, err
 		}

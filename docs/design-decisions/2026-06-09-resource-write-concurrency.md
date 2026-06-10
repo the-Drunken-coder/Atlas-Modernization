@@ -9,6 +9,6 @@
    - High-frequency telemetry and check-in clients can omit `If-Match` when overwrites are acceptable.
    - Clients that edit read-modify-write resource blobs can send the last observed strong ETag and receive a deterministic `412` on stale writes.
    - The action layer remains reusable by comparing versions, not HTTP header strings.
-7. **Location:** `Atlas_Core/internal/api/handlers/handler_http.go`, `Atlas_Core/internal/actions/ifmatch.go`, `Atlas_Core/internal/actions/entity_actions.go`, `Atlas_Core/internal/actions/task_actions.go`, `Atlas_Core/internal/actions/object_actions.go`, `Atlas_Core/internal/serializers/serializers.go`
+7. **Location:** `Atlas_Core/internal/api/handlers/handler_http.go`, `Atlas_Core/internal/actions/ifmatch.go`, `Atlas_Core/internal/actions/entityactions/update.go`, `Atlas_Core/internal/actions/taskactions/update.go`, `Atlas_Core/internal/actions/objectactions/update.go`, `Atlas_Core/internal/serializers/serializers.go`
 
 (End of file)

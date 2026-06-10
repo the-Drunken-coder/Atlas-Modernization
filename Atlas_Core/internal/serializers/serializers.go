@@ -15,11 +15,6 @@ func StrongETag(version int64) string {
 	return fmt.Sprintf(`"v%d"`, version)
 }
 
-// ObjectStrongETag returns a strong quoted ETag for object GET/PATCH concurrency (If-Match).
-func ObjectStrongETag(version int64) string {
-	return StrongETag(version)
-}
-
 // EntityResponse represents the serialized form of an Entity.
 type EntityResponse struct {
 	EntityID   string                 `json:"entity_id"`

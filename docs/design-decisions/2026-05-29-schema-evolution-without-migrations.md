@@ -21,7 +21,7 @@
    - Seed or fixture data belongs in `docker/postgres/init.sql` (or equivalent bootstrap), not in expecting data to survive restart.
    - Atlas Protocol (when built) validates **shape** of JSON; it does not change this **storage lifecycle** — Core still owns when rows exist.
 
-7. **Location:** `Atlas_Core/internal/database/db.go` (`EnsureTables`), `Atlas_Core/internal/storage/storage.go` (`EmptyBucket`), `Atlas_Core/internal/actions/object_actions.go` (`storage_deletion_outbox` retries), `Atlas_Core/cmd/atlas_core/main.go` (startup order and reconciler), `Atlas_Core/docs/DATABASE_WORKFLOW.md`, `Atlas_Core/internal/config/config.go` (`DATABASE_RECREATE_ON_STARTUP`)
+7. **Location:** `Atlas_Core/internal/database/db.go` (`EnsureTables`), `Atlas_Core/internal/storage/storage.go` (`EmptyBucket`), `Atlas_Core/internal/actions/objectactions/storage_deletions.go` (`storage_deletion_outbox` retries), `Atlas_Core/cmd/atlas_core/main.go` (startup order and reconciler), `Atlas_Core/docs/DATABASE_WORKFLOW.md`, `Atlas_Core/internal/config/config.go` (`DATABASE_RECREATE_ON_STARTUP`)
 
 8. **Notes:** Supersedes any prior notes that framed destroy-and-recreate as temporary, treated PostgreSQL as something Atlas Core should keep around, or pointed at a future schema-version hash when “data matters.” Disposable runtime storage is intentional for the life of this project.
 

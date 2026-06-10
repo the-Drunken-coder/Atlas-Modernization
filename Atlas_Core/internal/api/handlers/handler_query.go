@@ -97,7 +97,7 @@ func serializeChangedSinceResult(result *syncactions.ChangedSinceResult) *change
 	}
 }
 
-func serializeDeletedResources(resources []actions.DeletedResource) []deletedResourceResponse {
+func serializeDeletedResources(resources []syncactions.DeletedResource) []deletedResourceResponse {
 	result := make([]deletedResourceResponse, len(resources))
 	for i, resource := range resources {
 		result[i] = deletedResourceResponse{

@@ -127,8 +127,13 @@ func NewAPIClient() *APIClient {
 	}
 }
 
-// Request makes an HTTP request to the API
+// Request makes an HTTP request to the API.
 func (c *APIClient) Request(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	return c.RequestWithHeaders(ctx, method, path, body, nil)
+}
+
+// RequestWithHeaders makes a JSON HTTP request with additional request headers.
+func (c *APIClient) RequestWithHeaders(ctx context.Context, method, path string, body interface{}, headers map[string]string) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		jsonBytes, err := json.Marshal(body)
@@ -152,6 +157,9 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body inter
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	return c.Client.Do(req)
 }
@@ -166,9 +174,19 @@ func (c *APIClient) Post(ctx context.Context, path string, body interface{}) (*h
 	return c.Request(ctx, "POST", path, body)
 }
 
+// PostWithHeaders makes a POST request with custom headers.
+func (c *APIClient) PostWithHeaders(ctx context.Context, path string, body interface{}, headers map[string]string) (*http.Response, error) {
+	return c.RequestWithHeaders(ctx, "POST", path, body, headers)
+}
+
 // Patch makes a PATCH request
 func (c *APIClient) Patch(ctx context.Context, path string, body interface{}) (*http.Response, error) {
 	return c.Request(ctx, "PATCH", path, body)
+}
+
+// PatchWithHeaders makes a PATCH request with custom headers.
+func (c *APIClient) PatchWithHeaders(ctx context.Context, path string, body interface{}, headers map[string]string) (*http.Response, error) {
+	return c.RequestWithHeaders(ctx, "PATCH", path, body, headers)
 }
 
 // Delete makes a DELETE request

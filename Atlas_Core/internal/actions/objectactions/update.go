@@ -39,7 +39,7 @@ func (a *Actions) Update(ctx context.Context, objectID string, params UpdatePara
 			return nil, err
 		}
 		if !actions.ExpectedVersionMatches(params.ExpectedVersion, obj.Version) {
-			return nil, actions.NewObjectPreconditionFailedError()
+			return nil, actions.NewPreconditionFailedError("object")
 		}
 		return obj, nil
 	}
@@ -69,7 +69,7 @@ func (a *Actions) Update(ctx context.Context, objectID string, params UpdatePara
 	}
 
 	if !actions.ExpectedVersionMatches(params.ExpectedVersion, obj.Version) {
-		return nil, actions.NewObjectPreconditionFailedError()
+		return nil, actions.NewPreconditionFailedError("object")
 	}
 
 	// Parse existing JSON

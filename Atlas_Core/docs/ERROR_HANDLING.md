@@ -1,6 +1,6 @@
 # Error Handling
 
-_Revision: 2026-05-29_
+_Revision: 2026-06-10_
 
 ## Overview
 
@@ -17,7 +17,7 @@ implemented in `internal/api/handlers/handler_http.go` (`handleActionError`, `wr
 - `ValidationError` (includes `Details []string`)
 - `NotFoundError`
 - `ConflictError` (409 — duplicate id or unique constraint)
-- `PreconditionFailedError` (412 — stale `If-Match` on object PATCH)
+- `PreconditionFailedError` (412 — stale or invalid `If-Match` on resource writes)
 - `ActionError` (base typed error)
 
 `NotFoundError` is produced by helpers such as:
@@ -36,7 +36,7 @@ implemented in `internal/api/handlers/handler_http.go` (`handleActionError`, `wr
 
 `PreconditionFailedError` codes:
 
-- `PRECONDITION_FAILED` — object PATCH rejected due to stale `If-Match` / ETag mismatch
+- `PRECONDITION_FAILED` — entity, task, or object write rejected because `If-Match` is stale, weak, malformed, or otherwise not the current strong resource ETag
 
 ### Storage-layer errors (`internal/storage`)
 

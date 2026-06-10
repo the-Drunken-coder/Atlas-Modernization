@@ -101,11 +101,6 @@ func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
 	}
 }
 
-// NewObjectPreconditionFailedError indicates PATCH /objects was rejected due to stale If-Match.
-func NewObjectPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("object")
-}
-
 // ConflictError is returned when a create or update violates a unique constraint.
 type ConflictError struct {
 	ActionError

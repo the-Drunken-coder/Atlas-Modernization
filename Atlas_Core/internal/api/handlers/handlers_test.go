@@ -192,6 +192,40 @@ func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	}
 }
 
+func TestParseIfMatchExpectedVersionRejectsBadTokensAsPreconditionFailed(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "weak", value: `W/"v42"`},
+		{name: "malformed", value: `"not-a-version"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := newTestHandler()
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPatch, "/entities/entity-1", nil)
+			req.Header.Set("If-Match", tt.value)
+
+			expectedVersion, ok := handler.parseIfMatchExpectedVersion(rec, req, "entity")
+			if ok {
+				t.Fatalf("expected parser to reject %q", tt.value)
+			}
+			if expectedVersion != nil {
+				t.Fatalf("expected nil expected version on rejection, got %d", *expectedVersion)
+			}
+			if rec.Code != http.StatusPreconditionFailed {
+				t.Fatalf("expected 412, got %d", rec.Code)
+			}
+			body := decodeBody(t, rec)
+			if body["error_code"] != "PRECONDITION_FAILED" {
+				t.Fatalf("expected PRECONDITION_FAILED, got %v", body["error_code"])
+			}
+		})
+	}
+}
+
 func TestCreateEntityRejectsInvalidJSON(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

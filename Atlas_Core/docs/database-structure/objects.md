@@ -1,6 +1,6 @@
 # Objects JSON Guide
 
-_Revision: 2026-02-13_
+_Revision: 2026-06-10_
 
 Atlas Core stores object metadata in `objects`, with selected fields promoted to columns.
 Binary content is served through the storage client when configured.
@@ -8,7 +8,8 @@ Binary content is served through the storage client when configured.
 Implementation references:
 
 - `internal/models/models.go`
-- `internal/actions/object_actions.go`
+- `internal/actions/objectactions/objectactions.go`
+- `internal/actions/objectactions/update.go`
 - `internal/api/handlers/handler_object.go`
 - `internal/api/handlers/handler_object_transfer.go`
 - `internal/database/db.go`
@@ -22,7 +23,7 @@ Implementation references:
 - `json` (`JSONB`, not null, default `{}`)
 - `created_at` (`TIMESTAMPTZ`, not null)
 - `updated_at` (`TIMESTAMPTZ`, not null)
-- `version` (`BIGINT`, not null): monotonic change version used for sync ordering, `metadata.version`, and object ETags
+- `version` (`BIGINT`, not null): monotonic change version used for sync ordering, `metadata.version`, and strong resource ETags
 
 ## JSON Blob Fields
 
@@ -55,7 +56,7 @@ Note: there is no dedicated `/objects/{object_id}/references` endpoint in the cu
 links are updated by writing `referenced_by` on `POST /objects`, `PATCH /objects/{object_id}`, or
 after `POST /objects/upload` via a follow-up `PATCH`.
 
-`GET /objects` list responses omit `referenced_by` for compactness; `GET /objects/{object_id}` returns full metadata including `referenced_by`. `PATCH /objects/{object_id}` supports optimistic concurrency via `If-Match` / ETag from `GET`; object ETags are based on the monotonic object `version`.
+`GET /objects` list responses omit `referenced_by` for compactness; `GET /objects/{object_id}` returns full metadata including `referenced_by`. `PATCH /objects/{object_id}` supports optimistic concurrency via `If-Match` / the shared strong resource ETag format (`"v<version>"`) from `GET`.
 
 `bucket` is returned as storage metadata, but clients must not send it in `POST /objects` or
 `PATCH /objects/{object_id}`. Downloads always use Atlas Core's configured storage bucket and the

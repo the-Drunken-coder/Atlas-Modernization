@@ -1,6 +1,6 @@
 # CPU and RAM Optimizations (Go Service)
 
-_Revision: 2026-05-29_
+_Revision: 2026-06-10_
 
 This document reflects the current Go implementation. Earlier Python-specific notes are no longer
 applicable to this repository layout.
@@ -41,10 +41,10 @@ Full dataset query also has an upper bound:
 Implementation:
 
 - `internal/actions/pagination.go`
-- `internal/actions/entity_actions.go`
-- `internal/actions/task_actions.go`
-- `internal/actions/object_actions.go`
-- `internal/actions/query_actions.go`
+- `internal/actions/entityactions/entityactions.go`
+- `internal/actions/taskactions/list.go`
+- `internal/actions/objectactions/references.go`
+- `internal/actions/syncactions/syncactions.go`
 
 ### 3. Database connection pool controls
 

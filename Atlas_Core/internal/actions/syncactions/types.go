@@ -1,9 +1,6 @@
 package syncactions
 
-import (
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
-)
+import "github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 
 // MaxFullQueryLimit is the maximum number of records per type returned by GetFullDataset.
 const MaxFullQueryLimit = 1000
@@ -33,9 +30,9 @@ type ChangedSinceResult struct {
 	Entities                []*models.Entity
 	Tasks                   []*models.Task
 	Objects                 []*models.MediaObject
-	DeletedEntities         []actions.DeletedResource
-	DeletedTasks            []actions.DeletedResource
-	DeletedObjects          []actions.DeletedResource
+	DeletedEntities         []DeletedResource
+	DeletedTasks            []DeletedResource
+	DeletedObjects          []DeletedResource
 	HasMoreEntities         bool
 	HasMoreTasks            bool
 	HasMoreObjects          bool
@@ -71,6 +68,15 @@ type ChangedSinceCursors struct {
 	DeletedEntityCursor *string
 	DeletedTaskCursor   *string
 	DeletedObjectCursor *string
+}
+
+// DeletedResource represents a tombstone for a deleted resource.
+// Type is always "entity", "task", or "object".
+type DeletedResource struct {
+	ID        string
+	Type      string
+	DeletedAt string
+	Version   int64
 }
 
 // effectiveLimit returns the requested limit capped to the provided max,
