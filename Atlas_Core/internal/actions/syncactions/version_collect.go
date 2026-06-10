@@ -80,7 +80,7 @@ func collectDeletedResources(rows pgx.Rows, resourceType string) ([]DeletedResou
 		var deletedAt time.Time
 		var version int64
 		if err := rows.Scan(&resourceID, &deletedAt, &version); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to scan deleted resource: %w", err)
 		}
 		out = append(out, DeletedResource{
 			ID:        resourceID,
@@ -90,7 +90,7 @@ func collectDeletedResources(rows pgx.Rows, resourceType string) ([]DeletedResou
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error iterating deleted resource rows: %w", err)
 	}
 	return out, nil
 }

@@ -48,33 +48,31 @@ func OpenPool(t *testing.T) (*pgxpool.Pool, context.Context, context.CancelFunc)
 		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	pool, err := pgxpool.New(ctx, dbURL)
+	setupCtx, setupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer setupCancel()
+
+	pool, err := pgxpool.New(setupCtx, dbURL)
 	if err != nil {
-		cancel()
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
 		t.Skipf("test database unavailable: %v", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pool.Ping(setupCtx); err != nil {
 		pool.Close()
-		cancel()
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
 		t.Skipf("test database unavailable: %v", err)
 	}
-	if ok, err := coreSchemaPresent(ctx, pool); err != nil {
+	if ok, err := coreSchemaPresent(setupCtx, pool); err != nil {
 		pool.Close()
-		cancel()
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
 		pool.Close()
-		cancel()
 		t.Skip("core schema is not present in test database")
 	}
-	return pool, ctx, cancel
+	return pool, context.Background(), func() {}
 }
 
 func coreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {

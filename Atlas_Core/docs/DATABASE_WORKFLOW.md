@@ -265,8 +265,9 @@ Instead of `localhost`, use the WSL IP address to connect to Docker containers:
 wsl -d Ubuntu -- hostname -I
 # Example output: 172.26.39.116
 
-# Use this IP in your connection string
-postgresql://atlas:atlas@172.26.39.116:5432/atlas_core
+# Use this IP in your connection string. The password is POSTGRES_PASSWORD
+# from your shell or docker/.env; atlas.py generates it when missing.
+postgresql://atlas:<POSTGRES_PASSWORD>@172.26.39.116:5432/atlas_core
 ```
 
 **For DBeaver/Database Tools:**
