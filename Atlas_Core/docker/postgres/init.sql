@@ -1,9 +1,6 @@
 -- ATLAS Core System Database Initialization
 -- Bootstrap only: extensions, grants, and timezone. Schema authority is Go EnsureTables.
 
--- Create TimescaleDB extension
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-
 -- Create additional extensions that might be useful
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -21,5 +18,5 @@ GRANT ALL PRIVILEGES ON SCHEMA public TO atlas;
 -- Log initialization completion
 DO $$
 BEGIN
-    RAISE NOTICE 'ATLAS Core database initialized successfully with TimescaleDB extension';
+    RAISE NOTICE 'ATLAS Core database initialized successfully';
 END $$;

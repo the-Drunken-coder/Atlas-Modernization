@@ -12,7 +12,7 @@ current code.
 
 - Go 1.26.1+
 - Chi router
-- PostgreSQL 15+ (Docker dev stack enables TimescaleDB extension via `docker/postgres/init.sql`; app schema is plain Postgres tables)
+- PostgreSQL 15+ (the Docker dev stack uses plain Postgres; the app schema is plain tables)
 - MinIO (S3-compatible) for object storage
 
 ## Quick Start

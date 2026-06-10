@@ -45,9 +45,9 @@ services:
     networks:
       - atlas_core_network
 
-  # PostgreSQL with TimescaleDB extension
+  # PostgreSQL runtime store
   postgres:
-    image: timescale/timescaledb:2.27.2-pg15@sha256:aa2ae35ec3fc8769b3a645e364f00a0049f0f6822dd519b90225c649ad91ed6b
+    image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
     container_name: atlas_core_postgres
     environment:
       POSTGRES_DB: atlas_core

@@ -98,7 +98,7 @@ The current generated slices do not own:
 
 ### Entity Blob
 
-The first CUE schema should validate the JSON blob shape currently shown by `Atlas_Core/docs/database-structure/examples/entities/*.json`:
+The first CUE schema should validate the JSON blob shape currently shown by `atlas_protocol/examples/entities/*.json`:
 
 - `components` is optional, but when present it is an object keyed by component name.
 - `published_at` is optional and must be RFC3339 when present.
