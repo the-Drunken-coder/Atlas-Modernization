@@ -12,9 +12,6 @@ const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
 
 // StrongETag returns a strong quoted ETag for resource concurrency (If-Match).
 func StrongETag(version int64) string {
-	if version <= 0 {
-		return ""
-	}
 	return fmt.Sprintf(`"v%d"`, version)
 }
 

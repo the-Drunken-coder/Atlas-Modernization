@@ -35,7 +35,8 @@ func coreSchemaCreateDDL() []string {
 			json JSONB NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
+			CONSTRAINT entities_version_positive CHECK (version > 0)
 		)`,
 		`CREATE INDEX idx_entities_type ON entities(type)`,
 		`CREATE INDEX idx_entities_subtype ON entities(subtype)`,
@@ -51,7 +52,8 @@ func coreSchemaCreateDDL() []string {
 			json JSONB NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
+			CONSTRAINT tasks_version_positive CHECK (version > 0)
 		)`,
 		`CREATE INDEX idx_tasks_status ON tasks(status)`,
 		`CREATE INDEX idx_tasks_entity_id ON tasks(entity_id)`,
@@ -69,7 +71,8 @@ func coreSchemaCreateDDL() []string {
 			json JSONB NOT NULL DEFAULT '{}',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
+			CONSTRAINT objects_version_positive CHECK (version > 0)
 		)`,
 		`CREATE INDEX idx_objects_content_type ON objects(content_type)`,
 		`CREATE INDEX idx_objects_type ON objects(type)`,
@@ -85,7 +88,8 @@ func coreSchemaCreateDDL() []string {
 			resource_type VARCHAR(20) NOT NULL,
 			resource_id VARCHAR(50) NOT NULL,
 			deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
+			CONSTRAINT deletions_version_positive CHECK (version > 0)
 		)`,
 		`CREATE INDEX idx_deletions_deleted_at ON deletions(deleted_at)`,
 		`CREATE INDEX idx_deletions_resource_type ON deletions(resource_type)`,

@@ -157,7 +157,8 @@ This means:
     json JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+    version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
+    CONSTRAINT entities_version_positive CHECK (version > 0)
 )`,
 ```
 
