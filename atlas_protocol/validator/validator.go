@@ -26,8 +26,9 @@ const (
 )
 
 type compiledSchema struct {
-	ctx  *cue.Context
-	root cue.Value
+	ctx             *cue.Context
+	root            cue.Value
+	componentFields map[string]map[string]struct{}
 }
 
 var compiled struct {
@@ -128,13 +129,13 @@ func validate(definition string, value any) []string {
 		}
 		return []string{path + ": must be finite"}
 	}
-	if errors := unknownComponentErrors(definition, normalized); len(errors) > 0 {
-		return errors
-	}
 
 	schema, err := getSchema()
 	if err != nil {
 		return []string{fmt.Sprintf("protocol schema load failed: %v", err)}
+	}
+	if errors := unknownComponentErrors(schema, definition, normalized); len(errors) > 0 {
+		return errors
 	}
 
 	path := cue.ParsePath(definition)
@@ -160,46 +161,24 @@ func validate(definition string, value any) []string {
 	return nil
 }
 
-var knownEntityComponents = map[string]struct{}{
-	"telemetry":      {},
-	"geometry":       {},
-	"task_catalog":   {},
-	"media_refs":     {},
-	"mil_view":       {},
-	"health":         {},
-	"sensor_refs":    {},
-	"communications": {},
-	"task_queue":     {},
-	"status":         {},
-	"heartbeat":      {},
-}
-
-var knownTaskComponents = map[string]struct{}{
-	"command":        {},
-	"parameters":     {},
-	"progress":       {},
-	"target":         {},
-	"status_message": {},
-}
-
-func unknownComponentErrors(definition string, value any) []string {
+func unknownComponentErrors(schema *compiledSchema, definition string, value any) []string {
 	switch definition {
 	case "#EntityBlob":
 		blob, ok := value.(map[string]any)
 		if !ok {
 			return nil
 		}
-		return componentUnknowns(blob["components"], knownEntityComponents)
+		return componentUnknowns(blob["components"], schema.componentFields["#EntityComponents"])
 	case "#TaskBlob":
 		blob, ok := value.(map[string]any)
 		if !ok {
 			return nil
 		}
-		return componentUnknowns(blob["components"], knownTaskComponents)
+		return componentUnknowns(blob["components"], schema.componentFields["#TaskComponents"])
 	case "#EntityComponents":
-		return componentUnknowns(value, knownEntityComponents)
+		return componentUnknowns(value, schema.componentFields["#EntityComponents"])
 	case "#TaskComponents":
-		return componentUnknowns(value, knownTaskComponents)
+		return componentUnknowns(value, schema.componentFields["#TaskComponents"])
 	default:
 		return nil
 	}
@@ -257,7 +236,55 @@ func loadSchema() (*compiledSchema, error) {
 	if err := root.Err(); err != nil {
 		return nil, err
 	}
-	return &compiledSchema{ctx: ctx, root: root}, nil
+	componentFields, err := schemaComponentFields(root)
+	if err != nil {
+		return nil, err
+	}
+	return &compiledSchema{ctx: ctx, root: root, componentFields: componentFields}, nil
+}
+
+func schemaComponentFields(root cue.Value) (map[string]map[string]struct{}, error) {
+	definitions := []string{"#EntityComponents", "#TaskComponents"}
+	componentFields := make(map[string]map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		fields, err := schemaConcreteFields(root, definition)
+		if err != nil {
+			return nil, err
+		}
+		componentFields[definition] = fields
+	}
+	return componentFields, nil
+}
+
+func schemaConcreteFields(root cue.Value, definition string) (map[string]struct{}, error) {
+	path := cue.ParsePath(definition)
+	if err := path.Err(); err != nil {
+		return nil, fmt.Errorf("parse schema path %q: %w", definition, err)
+	}
+	value := root.LookupPath(path)
+	if err := value.Err(); err != nil {
+		return nil, fmt.Errorf("lookup %s: %w", definition, err)
+	}
+	return concreteFieldsFromValue(value, definition)
+}
+
+func concreteFieldsFromValue(value cue.Value, label string) (map[string]struct{}, error) {
+	fields, err := value.Fields(cue.Optional(true))
+	if err != nil {
+		return nil, fmt.Errorf("iterate %s fields: %w", label, err)
+	}
+
+	result := map[string]struct{}{}
+	for fields.Next() {
+		selector := fields.Selector()
+		// Optional pattern constraints are present in Fields, but are not concrete
+		// schema keys. Concrete quoted labels still report cue.StringLabel.
+		if selector.LabelType() != cue.StringLabel {
+			continue
+		}
+		result[selector.Unquoted()] = struct{}{}
+	}
+	return result, nil
 }
 
 func schemaOverlay() (map[string]load.Source, error) {

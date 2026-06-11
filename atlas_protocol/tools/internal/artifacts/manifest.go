@@ -116,6 +116,7 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 		return nil, err
 	}
 	artifacts := []Artifact{
+		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidatorsSource()},
 		{Path: "generated/jsonschema/entity.schema.json", Content: entitySchema},
 		{Path: "generated/jsonschema/task.schema.json", Content: taskSchema},
 		{Path: "generated/jsonschema/object.schema.json", Content: objectSchema},

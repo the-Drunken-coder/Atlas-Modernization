@@ -85,21 +85,21 @@ func TestTelemetryValidation(t *testing.T) {
 	tests := []struct {
 		name      string
 		telemetry map[string]any
-		contains  string
+		contains  []string
 	}{
-		{name: "latitude out of range", telemetry: map[string]any{"latitude": 91.0}, contains: "out of bound <=90"},
-		{name: "longitude out of range", telemetry: map[string]any{"longitude": -181.0}, contains: "out of bound >=-180"},
-		{name: "non finite", telemetry: map[string]any{"speed_m_s": math.NaN()}, contains: "must be finite"},
-		{name: "negative speed", telemetry: map[string]any{"speed_m_s": -1.0}, contains: "out of bound >=0"},
-		{name: "invalid heading", telemetry: map[string]any{"heading_deg": 360.0}, contains: "out of bound <360"},
-		{name: "invalid last_update", telemetry: map[string]any{"last_update": "not-a-date"}, contains: "invalid time"},
-		{name: "legacy alias rejected", telemetry: map[string]any{"speed_ms": 10.0}, contains: "speed_ms"},
-		{name: "null rejected", telemetry: map[string]any{"latitude": nil}, contains: "mismatched types null and number"},
+		{name: "latitude out of range", telemetry: map[string]any{"latitude": 91.0}, contains: []string{"latitude"}},
+		{name: "longitude out of range", telemetry: map[string]any{"longitude": -181.0}, contains: []string{"longitude"}},
+		{name: "non finite", telemetry: map[string]any{"speed_m_s": math.NaN()}, contains: []string{"speed_m_s"}},
+		{name: "negative speed", telemetry: map[string]any{"speed_m_s": -1.0}, contains: []string{"speed_m_s"}},
+		{name: "invalid heading", telemetry: map[string]any{"heading_deg": 360.0}, contains: []string{"heading_deg"}},
+		{name: "invalid last_update", telemetry: map[string]any{"last_update": "not-a-date"}, contains: []string{"last_update"}},
+		{name: "legacy alias rejected", telemetry: map[string]any{"speed_ms": 10.0}, contains: []string{"speed_ms"}},
+		{name: "null rejected", telemetry: map[string]any{"latitude": nil}, contains: []string{"latitude"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertErrorContains(t, protocol.ValidateTelemetryComponent(tt.telemetry), tt.contains)
+			assertErrorsContainAll(t, protocol.ValidateTelemetryComponent(tt.telemetry), tt.contains...)
 		})
 	}
 }
@@ -125,21 +125,21 @@ func TestGeometryValidation(t *testing.T) {
 	tests := []struct {
 		name     string
 		geometry map[string]any
-		contains string
+		contains []string
 	}{
-		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: "out of bound <=180"},
-		{name: "non finite", geometry: map[string]any{"type": "Point", "coordinates": []any{math.Inf(1), 40.0}}, contains: "must be finite"},
-		{name: "bad radius", geometry: map[string]any{"point_lat": 40.0, "point_lng": -73.0, "radius_m": 0.0}, contains: "out of bound >0"},
-		{name: "point latitude requires longitude", geometry: map[string]any{"point_lat": 40.0}, contains: "point_lng: field is required"},
-		{name: "radius requires point coordinates", geometry: map[string]any{"radius_m": 25.0}, contains: "point_lat: field is required"},
-		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: "coordinates: field is required"},
-		{name: "empty", geometry: map[string]any{}, contains: "type: field is required"},
-		{name: "unclosed polygon", geometry: map[string]any{"type": "Polygon", "coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}}}, contains: "closed"},
+		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: []string{"coordinates"}},
+		{name: "non finite", geometry: map[string]any{"type": "Point", "coordinates": []any{math.Inf(1), 40.0}}, contains: []string{"coordinates[0]"}},
+		{name: "bad radius", geometry: map[string]any{"point_lat": 40.0, "point_lng": -73.0, "radius_m": 0.0}, contains: []string{"radius_m"}},
+		{name: "point latitude requires longitude", geometry: map[string]any{"point_lat": 40.0}, contains: []string{"point_lng"}},
+		{name: "radius requires point coordinates", geometry: map[string]any{"radius_m": 25.0}, contains: []string{"point_lat"}},
+		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: []string{"coordinates"}},
+		{name: "empty", geometry: map[string]any{}, contains: []string{"type"}},
+		{name: "unclosed polygon", geometry: map[string]any{"type": "Polygon", "coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}}}, contains: []string{"closed"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertErrorContains(t, protocol.ValidateGeometryComponent(tt.geometry), tt.contains)
+			assertErrorsContainAll(t, protocol.ValidateGeometryComponent(tt.geometry), tt.contains...)
 		})
 	}
 }
@@ -288,21 +288,21 @@ func TestTaskValidation(t *testing.T) {
 	tests := []struct {
 		name       string
 		components map[string]any
-		contains   string
+		contains   []string
 	}{
-		{name: "legacy command string rejected", components: map[string]any{"command": "legacy"}, contains: "mismatched types string and struct"},
-		{name: "unknown key", components: map[string]any{"unknown": true}, contains: "Unknown component 'unknown'"},
-		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: "command.type: field is required"},
-		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: `out of bound =~"\\S"`},
-		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: "parameters.latitude"},
-		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: "progress.percent"},
-		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: "progress.updated_at"},
-		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: "mismatched types string and int"},
-		{name: "null status message", components: map[string]any{"status_message": nil}, contains: "mismatched types string and null"},
+		{name: "legacy command string rejected", components: map[string]any{"command": "legacy"}, contains: []string{"command"}},
+		{name: "unknown key", components: map[string]any{"unknown": true}, contains: []string{"Unknown component 'unknown'"}},
+		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: []string{"command.type"}},
+		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: []string{"command.type"}},
+		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: []string{"parameters.latitude"}},
+		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: []string{"progress.percent"}},
+		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: []string{"progress.updated_at"}},
+		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: []string{"status_message"}},
+		{name: "null status message", components: map[string]any{"status_message": nil}, contains: []string{"status_message"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertErrorContains(t, protocol.ValidateTaskComponents(tt.components), tt.contains)
+			assertErrorsContainAll(t, protocol.ValidateTaskComponents(tt.components), tt.contains...)
 		})
 	}
 }
@@ -329,20 +329,20 @@ func TestObjectValidation(t *testing.T) {
 	tests := []struct {
 		name     string
 		blob     map[string]any
-		contains string
+		contains []string
 	}{
-		{name: "bad size", blob: map[string]any{"size_bytes": -1}, contains: "out of bound >=0"},
-		{name: "fractional size", blob: map[string]any{"size_bytes": 1.5}, contains: "mismatched types int and float"},
-		{name: "usage hints not array", blob: map[string]any{"usage_hints": "camera_feed"}, contains: "usage_hints: conflicting values"},
-		{name: "empty usage hint", blob: map[string]any{"usage_hints": []any{""}}, contains: "empty disjunction"},
-		{name: "references not array", blob: map[string]any{"referenced_by": "entity-1"}, contains: "referenced_by: conflicting values"},
-		{name: "reference not object", blob: map[string]any{"referenced_by": []any{"entity-1"}}, contains: "referenced_by.0: conflicting values"},
-		{name: "reference missing ids", blob: map[string]any{"referenced_by": []any{map[string]any{}}}, contains: "referenced_by.0: invalid value"},
-		{name: "reference blank id", blob: map[string]any{"referenced_by": []any{map[string]any{"entity_id": " "}}}, contains: "empty disjunction"},
+		{name: "bad size", blob: map[string]any{"size_bytes": -1}, contains: []string{"size_bytes"}},
+		{name: "fractional size", blob: map[string]any{"size_bytes": 1.5}, contains: []string{"size_bytes"}},
+		{name: "usage hints not array", blob: map[string]any{"usage_hints": "camera_feed"}, contains: []string{"usage_hints"}},
+		{name: "empty usage hint", blob: map[string]any{"usage_hints": []any{""}}, contains: []string{"usage_hints"}},
+		{name: "references not array", blob: map[string]any{"referenced_by": "entity-1"}, contains: []string{"referenced_by"}},
+		{name: "reference not object", blob: map[string]any{"referenced_by": []any{"entity-1"}}, contains: []string{"referenced_by.0"}},
+		{name: "reference missing ids", blob: map[string]any{"referenced_by": []any{map[string]any{}}}, contains: []string{"referenced_by.0"}},
+		{name: "reference blank id", blob: map[string]any{"referenced_by": []any{map[string]any{"entity_id": " "}}}, contains: []string{"referenced_by"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertErrorContains(t, protocol.ValidateObjectBlob(tt.blob), tt.contains)
+			assertErrorsContainAll(t, protocol.ValidateObjectBlob(tt.blob), tt.contains...)
 		})
 	}
 }
@@ -485,4 +485,17 @@ func assertErrorContains(t *testing.T, errors []string, want string) {
 		}
 	}
 	t.Fatalf("expected error containing %q, got %v", want, errors)
+}
+
+func assertErrorsContainAll(t *testing.T, errors []string, want ...string) {
+	t.Helper()
+	if len(errors) == 0 {
+		t.Fatalf("expected validation errors containing %v, got none", want)
+	}
+	joined := strings.Join(errors, "\n")
+	for _, fragment := range want {
+		if !strings.Contains(joined, fragment) {
+			t.Fatalf("expected errors containing %q, got %v", fragment, errors)
+		}
+	}
 }

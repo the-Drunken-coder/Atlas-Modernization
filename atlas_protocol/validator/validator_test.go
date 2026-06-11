@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
-	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 )
 
@@ -55,23 +55,23 @@ func TestConcurrentValidationIsSafe(t *testing.T) {
 	}
 }
 
-func TestKnownComponentMapsMatchSchemaFields(t *testing.T) {
-	assertKnownComponentsMatchSchema(t, "#EntityComponents", knownEntityComponents)
-	assertKnownComponentsMatchSchema(t, "#TaskComponents", knownTaskComponents)
-}
-
-func TestConcreteFieldsFromLabelsExcludesPatternConstraints(t *testing.T) {
-	concreteFields := concreteFieldsFromLabels([]string{
-		"known",
-		`[=~"^custom_"]`,
-	})
-	for field := range concreteFields {
-		if strings.HasPrefix(field, "[") {
-			t.Fatalf("concreteFieldsFromLabels returned pattern constraint label %q", field)
-		}
+func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
+	valid := map[string]any{
+		"telemetry":    map[string]any{},
+		"custom_notes": "operator supplied",
 	}
-	if _, ok := concreteFields["known"]; !ok {
-		t.Fatalf("concreteFieldsFromLabels missing concrete field known: %v", concreteFields)
+	if errors := ValidateEntityComponents(valid); len(errors) > 0 {
+		t.Fatalf("ValidateEntityComponents(valid schema/custom fields) errors = %v", errors)
+	}
+
+	errors := ValidateTaskComponents(map[string]any{
+		"z_unknown": true,
+		"a_unknown": true,
+		"command":   map[string]any{"type": "move_to_location"},
+	})
+	want := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	if !reflect.DeepEqual(errors, want) {
+		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", errors, want)
 	}
 }
 
@@ -84,7 +84,10 @@ func TestConcreteFieldsFromValueExcludesPatternConstraints(t *testing.T) {
 		t.Fatalf("compile CUE value: %v", err)
 	}
 
-	concreteFields := concreteFieldsFromValue(t, value, "test")
+	concreteFields, err := concreteFieldsFromValue(value, "test")
+	if err != nil {
+		t.Fatalf("concreteFieldsFromValue() error = %v", err)
+	}
 	for field := range concreteFields {
 		if strings.HasPrefix(field, "[") {
 			t.Fatalf("concreteFieldsFromValue returned pattern constraint label %q", field)
@@ -103,7 +106,10 @@ func TestConcreteFieldsFromValueIncludesQuotedBracketLabels(t *testing.T) {
 		t.Fatalf("compile CUE value: %v", err)
 	}
 
-	concreteFields := concreteFieldsFromValue(t, value, "test")
+	concreteFields, err := concreteFieldsFromValue(value, "test")
+	if err != nil {
+		t.Fatalf("concreteFieldsFromValue() error = %v", err)
+	}
 	if _, ok := concreteFields["[quoted]"]; !ok {
 		t.Fatalf("concreteFieldsFromValue missing quoted bracket label: %v", concreteFields)
 	}
@@ -286,81 +292,4 @@ func assertAnyContains(t *testing.T, errors []string, want string) {
 		}
 	}
 	t.Fatalf("expected error containing %q, got %v", want, errors)
-}
-
-func assertKnownComponentsMatchSchema(t *testing.T, definition string, known map[string]struct{}) {
-	t.Helper()
-
-	schemaFields := schemaConcreteFields(t, definition)
-	if missing := setDifference(schemaFields, known); len(missing) > 0 {
-		t.Fatalf("%s fields missing from known component map: %v", definition, missing)
-	}
-	if extra := setDifference(known, schemaFields); len(extra) > 0 {
-		t.Fatalf("%s known component map has fields not present in schema: %v", definition, extra)
-	}
-}
-
-func schemaConcreteFields(t *testing.T, definition string) map[string]struct{} {
-	t.Helper()
-
-	schema, err := getSchema()
-	if err != nil {
-		t.Fatalf("load schema: %v", err)
-	}
-	path := cue.ParsePath(definition)
-	if err := path.Err(); err != nil {
-		t.Fatalf("parse schema path %q: %v", definition, err)
-	}
-
-	evalMu.Lock()
-	defer evalMu.Unlock()
-	value := schema.root.LookupPath(path)
-	if err := value.Err(); err != nil {
-		t.Fatalf("lookup %s: %v", definition, err)
-	}
-	return concreteFieldsFromValue(t, value, definition)
-}
-
-func concreteFieldsFromValue(t *testing.T, value cue.Value, label string) map[string]struct{} {
-	t.Helper()
-
-	fields, err := value.Fields(cue.Optional(true))
-	if err != nil {
-		t.Fatalf("iterate %s fields: %v", label, err)
-	}
-
-	result := map[string]struct{}{}
-	for fields.Next() {
-		selector := fields.Selector()
-		// Optional pattern constraints are present in Fields, but are not concrete
-		// schema keys. Concrete quoted labels still report cue.StringLabel.
-		if selector.LabelType() != cue.StringLabel {
-			continue
-		}
-		result[selector.Unquoted()] = struct{}{}
-	}
-	return result
-}
-
-func concreteFieldsFromLabels(labels []string) map[string]struct{} {
-	result := map[string]struct{}{}
-	for _, label := range labels {
-		// Labels that start with "[" are CUE pattern constraints, not concrete fields.
-		if strings.HasPrefix(label, "[") {
-			continue
-		}
-		result[label] = struct{}{}
-	}
-	return result
-}
-
-func setDifference(left, right map[string]struct{}) []string {
-	var diff []string
-	for key := range left {
-		if _, ok := right[key]; !ok {
-			diff = append(diff, key)
-		}
-	}
-	sort.Strings(diff)
-	return diff
 }
