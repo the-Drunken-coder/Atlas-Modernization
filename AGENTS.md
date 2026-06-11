@@ -14,6 +14,8 @@ The Atlas Protocol plan uses CUE, but `cue` may not be installed globally in new
 
 When expressing "at least one of these optional fields" in Atlas Protocol CUE, prefer a concrete helper such as `struct.MinFields(1)` on a closed object. A disjunction of required/optional field variants can leave `cue vet` with incomplete optional-field values even when the JSON example looks valid.
 
+The Atlas Protocol runtime validator uses `cuelang.org/go` against one embedded compiled schema. CUE values are not safe for concurrent shared evaluation here, so keep validation `Unify`/`Validate` calls behind the package-level mutex in `atlas_protocol/validator`.
+
 This project is super greenfield. It has no users and no real data yet. You can remove things, add things, and reshape the codebase without worrying about backwards compatibility, migrations for existing deployments, or preserving old behavior for callers that do not exist yet. Prefer breaking changes over compatibility shims: backwards compatibility in early development tends to accumulate technical debt and bloat.
 
 Atlas Core's PostgreSQL database and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around.

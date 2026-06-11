@@ -20,15 +20,17 @@ import sys
 import time
 
 try:
-    from .compose_env import load_compose_dotenv
+    from .compose_env import load_compose_dotenv, persist_compose_env_values
     from .seed_command_catalog import publish_command_catalog
 except ImportError:
-    from compose_env import load_compose_dotenv
+    from compose_env import load_compose_dotenv, persist_compose_env_values
     from seed_command_catalog import publish_command_catalog
 
 logger = logging.getLogger(__name__)
 
 API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
+DEFAULT_TUNNEL_HOSTNAME = "atlascommandapi.org"
+TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 
 
 def print_banner():
@@ -45,6 +47,7 @@ def print_banner():
 def ensure_minio_secrets():
     """Generate ephemeral MinIO secrets if they are not set."""
     created = []
+    generated_values = {}
     root_password = os.getenv("MINIO_ROOT_PASSWORD")
     secret_key = os.getenv("MINIO_SECRET_KEY")
     root_user = os.getenv("MINIO_ROOT_USER")
@@ -52,6 +55,7 @@ def ensure_minio_secrets():
 
     if not root_user:
         os.environ["MINIO_ROOT_USER"] = "atlas"
+        generated_values["MINIO_ROOT_USER"] = "atlas"
         created.append("MINIO_ROOT_USER")
         root_user = "atlas"
 
@@ -59,6 +63,8 @@ def ensure_minio_secrets():
         generated = secrets.token_urlsafe(32)
         os.environ["MINIO_ROOT_PASSWORD"] = generated
         os.environ["MINIO_SECRET_KEY"] = generated
+        generated_values["MINIO_ROOT_PASSWORD"] = generated
+        generated_values["MINIO_SECRET_KEY"] = generated
         created.extend(["MINIO_ROOT_PASSWORD", "MINIO_SECRET_KEY"])
     elif not root_password and secret_key:
         os.environ["MINIO_ROOT_PASSWORD"] = secret_key
@@ -69,10 +75,13 @@ def ensure_minio_secrets():
 
     if root_user and not access_key:
         os.environ["MINIO_ACCESS_KEY"] = root_user
+        if "MINIO_ROOT_USER" in generated_values:
+            generated_values["MINIO_ACCESS_KEY"] = root_user
         created.append("MINIO_ACCESS_KEY")
 
     if created:
         print(f"[INFO] Set MinIO credentials for this run: {', '.join(created)}")
+    return generated_values
 
 
 def ensure_postgres_password():
@@ -81,6 +90,8 @@ def ensure_postgres_password():
         generated = secrets.token_urlsafe(24)
         os.environ["POSTGRES_PASSWORD"] = generated
         print("[INFO] Generated POSTGRES_PASSWORD for this run (redacted)")
+        return {"POSTGRES_PASSWORD": generated}
+    return {}
 
 
 def resolve_atlas_core_dir():
@@ -386,14 +397,45 @@ def ensure_tunnel_api_auth():
     return True
 
 
+def public_base_url_from_hostname(hostname, default_hostname=DEFAULT_TUNNEL_HOSTNAME):
+    """Return a public base URL without trailing slash.
+
+    Bare or empty hostnames become HTTPS URLs using default_hostname as the
+    fallback. Absolute URLs keep their original scheme.
+    """
+    default_hostname = (default_hostname or DEFAULT_TUNNEL_HOSTNAME).strip() or DEFAULT_TUNNEL_HOSTNAME
+    hostname = (hostname or "").strip()
+    if not hostname:
+        hostname = default_hostname
+    if "://" in hostname:
+        scheme, rest = hostname.split("://", 1)
+        if not rest.strip("/"):
+            return public_base_url_from_hostname(default_hostname, DEFAULT_TUNNEL_HOSTNAME)
+        return f"{scheme}://{rest.strip('/')}"
+    return f"https://{hostname.strip('/')}"
+
+
+def tunnel_public_base_url():
+    """Return the configured public tunnel base URL."""
+    return public_base_url_from_hostname(os.getenv(TUNNEL_HOSTNAME_ENV, DEFAULT_TUNNEL_HOSTNAME))
+
+
+def tunnel_health_url():
+    """Return the configured public tunnel health URL."""
+    return f"{tunnel_public_base_url()}/health"
+
+
 def verify_tunnel_connection(
-    public_url="https://atlascommandapi.org/health", max_retries=10, delay=2.0
+    public_url=None, max_retries=10, delay=2.0
 ):
     """Verify the Cloudflare tunnel is working by checking the public health endpoint."""
     import urllib.request
     import urllib.error
     import urllib.parse
     import json
+
+    if public_url is None:
+        public_url = tunnel_health_url()
 
     print("[WAIT] Verifying Cloudflare tunnel connection...")
     parsed = urllib.parse.urlparse(public_url)
@@ -443,8 +485,10 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         atlas_core_dir = resolve_atlas_core_dir()
         docker_dir = os.path.join(atlas_core_dir, "docker")
         load_compose_dotenv(docker_dir)
-        ensure_minio_secrets()
-        ensure_postgres_password()
+        generated_compose_values = {}
+        generated_compose_values.update(ensure_minio_secrets())
+        generated_compose_values.update(ensure_postgres_password())
+        persist_compose_env_values(docker_dir, generated_compose_values)
         print_disposable_storage_notice(db_only=db_only)
 
         if tunnel:
@@ -534,7 +578,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         if tunnel:
             tunnel_verified, tunnel_status = verify_tunnel_connection()
             print("\nCloudflare Tunnel:")
-            print("  Public URL: https://atlascommandapi.org")
+            print(f"  Public URL: {tunnel_public_base_url()}")
             if tunnel_verified:
                 print(f"  Status:     [OK] {tunnel_status}")
             else:

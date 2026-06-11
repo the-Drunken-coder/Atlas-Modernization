@@ -115,12 +115,8 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	goSource, err := generatedGo(meta)
-	if err != nil {
-		return nil, err
-	}
-
 	artifacts := []Artifact{
+		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidatorsSource()},
 		{Path: "generated/jsonschema/entity.schema.json", Content: entitySchema},
 		{Path: "generated/jsonschema/task.schema.json", Content: taskSchema},
 		{Path: "generated/jsonschema/object.schema.json", Content: objectSchema},
@@ -139,7 +135,6 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 		{Path: "generated/jsonschema/components/task-parameters.schema.json", Content: taskParametersSchema},
 		{Path: "generated/jsonschema/components/task-progress.schema.json", Content: taskProgressSchema},
 		{Path: "generated/jsonschema/components/object-reference.schema.json", Content: objectReferenceSchema},
-		{Path: "generated/go/atlasprotocol/protocol.generated.go", Content: goSource},
 	}
 	sort.Slice(artifacts, func(i, j int) bool {
 		return artifacts[i].Path < artifacts[j].Path

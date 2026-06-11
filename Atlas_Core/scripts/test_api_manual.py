@@ -10,20 +10,34 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
-import os
 import uuid
 from datetime import datetime
 from typing import Any, Optional
 
 import requests
 
+try:
+    from .atlas import DEFAULT_TUNNEL_HOSTNAME, public_base_url_from_hostname
+except ImportError:
+    from atlas import DEFAULT_TUNNEL_HOSTNAME, public_base_url_from_hostname
+
 logger = logging.getLogger(__name__)
 
 # Global API URL - will be set from user input
 API_BASE_URL = "http://localhost:8000"
-REMOTE_API_URL = "https://atlascommandapi.org"
+REMOTE_API_URL_ENV = "ATLAS_API_REMOTE_URL"
+TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
+
+
+def configured_remote_api_url() -> str:
+    """Return the remote API URL used by --remote mode."""
+    configured = os.environ.get(REMOTE_API_URL_ENV, "").strip()
+    if not configured:
+        configured = os.environ.get(TUNNEL_HOSTNAME_ENV, DEFAULT_TUNNEL_HOSTNAME)
+    return public_base_url_from_hostname(configured, DEFAULT_TUNNEL_HOSTNAME)
 
 
 def confirm_remote_writes() -> bool:
@@ -376,12 +390,13 @@ def main():
 
     # Prompt for API URL
     default_url = API_BASE_URL.rstrip("/")
+    remote_api_url = configured_remote_api_url()
     remote_enabled = (
         "--remote" in sys.argv
         or os.environ.get("ATLAS_API_REMOTE", "").lower() == "true"
     )
     if remote_enabled:
-        default_url = REMOTE_API_URL.rstrip("/")
+        default_url = remote_api_url
         print("Remote API mode is enabled. Writes will target the shared deployment.")
     url_input = input(f"Enter API URL (default: {default_url}): ").strip()
 
@@ -397,7 +412,7 @@ def main():
         print("\nAPI is not available. Exiting.")
         return
 
-    remote_target = API_BASE_URL.rstrip("/") == REMOTE_API_URL.rstrip("/")
+    remote_target = API_BASE_URL.rstrip("/") == remote_api_url
     if remote_enabled or remote_target:
         if not confirm_remote_writes():
             print("\nRemote write confirmation declined. Exiting.")

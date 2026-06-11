@@ -206,25 +206,3 @@ func cloneValue(value any) any {
 		return typed
 	}
 }
-
-func TestGoIdentifierConvertsEmptySegments(t *testing.T) {
-	tests := []struct {
-		value string
-		want  string
-	}{
-		{value: "foo_bar", want: "FooBar"},
-		{value: "foo__bar", want: "FooUnderscoreBar"},
-		{value: "foo__", want: "FooUnderscoreUnderscore"},
-		{value: "___", want: "UnderscoreUnderscoreUnderscoreUnderscore"},
-		{value: "__foo", want: "UnderscoreUnderscoreFoo"},
-		{value: "foo__bar__baz", want: "FooUnderscoreBarUnderscoreBaz"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.value, func(t *testing.T) {
-			if got := goIdentifier(tt.value); got != tt.want {
-				t.Fatalf("goIdentifier(%q) = %q, want %q", tt.value, got, tt.want)
-			}
-		})
-	}
-}

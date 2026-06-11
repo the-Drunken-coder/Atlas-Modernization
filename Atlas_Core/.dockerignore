@@ -51,11 +51,6 @@ atlas_core.settings.json
 # Example config is safe for image builds and docs.
 !atlas_core.settings.json.example
 
-# Railway
-.railwayignore
-railway.toml
-RAILWAY_DEPLOYMENT.md
-
 # Environment files
 .env
 .env.local

@@ -230,14 +230,14 @@ func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*Li
 
 // UpdateObjectParams holds parameters for updating an object.
 type UpdateObjectParams struct {
-	Path         *string
-	ContentType  *string
-	Type         *string
-	SizeBytes    *int64
-	UsageHints   []string
-	ReferencedBy []map[string]interface{}
-	Extra        map[string]interface{}
-	IfMatch      *string // optional If-Match (strong ETag from GET /objects/{id})
+	Path            *string
+	ContentType     *string
+	Type            *string
+	SizeBytes       *int64
+	UsageHints      []string
+	ReferencedBy    []map[string]interface{}
+	Extra           map[string]interface{}
+	ExpectedVersion *int64
 }
 
 // Update updates an object.
@@ -249,12 +249,12 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 
 	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
 		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 {
+		if params.ExpectedVersion != nil {
+			return a.lockObjectAndCheckExpectedVersion(ctx, objectID, params.ExpectedVersion)
+		}
 		obj, err := a.Get(ctx, objectID)
 		if err != nil {
 			return nil, err
-		}
-		if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.Version) {
-			return nil, NewObjectPreconditionFailedError()
 		}
 		return obj, nil
 	}
@@ -283,8 +283,8 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	if params.IfMatch != nil && *params.IfMatch != "" && !ObjectIfMatchOK(*params.IfMatch, obj.Version) {
-		return nil, NewObjectPreconditionFailedError()
+	if err := checkExpectedVersion("object", params.ExpectedVersion, obj.Version); err != nil {
+		return nil, err
 	}
 
 	// Parse existing JSON
@@ -376,6 +376,48 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	return &out, nil
+}
+
+func beginObjectPreconditionTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin object precondition transaction: %w", err)
+	}
+	return tx, nil
+}
+
+func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, objectID string, expectedVersion *int64) (*models.MediaObject, error) {
+	// This no-op update path only verifies the current row version. It locks the
+	// row but does not allocate a change version, so the global write-version
+	// advisory lock is unnecessary here.
+	tx, err := beginObjectPreconditionTx(ctx, a.pool)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var obj models.MediaObject
+	err = tx.QueryRow(ctx, `
+		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
+		FROM objects WHERE object_id = $1
+		FOR UPDATE
+	`, objectID).Scan(
+		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
+		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NewObjectNotFoundError(objectID)
+		}
+		return nil, fmt.Errorf("failed to get object: %w", err)
+	}
+	if err := checkExpectedVersion("object", expectedVersion, obj.Version); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit object precondition transaction: %w", err)
+	}
+	return &obj, nil
 }
 
 func applyConfiguredObjectBucket(blob map[string]interface{}, storageClient objectStorage) {

@@ -25,8 +25,8 @@ is not a production configuration.
 
 ## Database Architecture
 
-- **Database**: PostgreSQL 15+ (Docker Compose uses TimescaleDB-enabled Postgres)
-- **TimescaleDB**: The extension is created at cluster init in `docker/postgres/init.sql` (`CREATE EXTENSION IF NOT EXISTS timescaledb`). Go `EnsureTables()` does not create extensions or hypertables — only plain tables and indexes.
+- **Database**: PostgreSQL 15+ (Docker Compose uses the official plain Postgres image)
+- **Extensions**: `docker/postgres/init.sql` enables only basic PostgreSQL extensions used for local development bootstrap. Go `EnsureTables()` owns application tables and indexes.
 - **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
 - **Models**: Located in `internal/models/models.go`
 - **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops all tables then recreates them; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
@@ -157,7 +157,8 @@ This means:
     json JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq')
+    version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
+    CONSTRAINT entities_version_positive CHECK (version > 0)
 )`,
 ```
 

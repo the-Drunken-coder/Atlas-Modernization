@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
@@ -70,7 +69,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.Version))
+	setResourceETag(w, obj.Version)
 	writeJSON(w, http.StatusCreated, serializers.SerializeObject(obj))
 }
 
@@ -84,7 +83,7 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.Version))
+	setResourceETag(w, obj.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeObject(obj))
 }
 
@@ -114,27 +113,27 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ifMatchPtr *string
-	if v := strings.TrimSpace(r.Header.Get("If-Match")); v != "" {
-		ifMatchPtr = &v
+	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "object")
+	if !ok {
+		return
 	}
 
 	obj, err := h.objectActions.Update(r.Context(), objectID, actions.UpdateObjectParams{
-		Path:         req.Path,
-		ContentType:  req.ContentType,
-		Type:         req.Type,
-		SizeBytes:    req.SizeBytes,
-		UsageHints:   req.UsageHints,
-		ReferencedBy: req.ReferencedBy,
-		Extra:        req.Extra,
-		IfMatch:      ifMatchPtr,
+		Path:            req.Path,
+		ContentType:     req.ContentType,
+		Type:            req.Type,
+		SizeBytes:       req.SizeBytes,
+		UsageHints:      req.UsageHints,
+		ReferencedBy:    req.ReferencedBy,
+		Extra:           req.Extra,
+		ExpectedVersion: expectedVersion,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	w.Header().Set("ETag", serializers.ObjectStrongETag(obj.Version))
+	setResourceETag(w, obj.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeObject(obj))
 }
 

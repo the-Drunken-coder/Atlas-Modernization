@@ -1,10 +1,17 @@
 package database
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 )
 
@@ -155,5 +162,131 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 		if !strings.Contains(ddl, stmt) {
 			t.Fatalf("expected core schema DDL to include %q", stmt)
 		}
+	}
+}
+
+func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
+	dbURL, explicitDBURL := databaseTestURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema constraint tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	conn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close test database connection: %v", err)
+		}
+	}()
+
+	schema := fmt.Sprintf("atlas_schema_constraint_test_%d", time.Now().UTC().UnixNano())
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	if _, err := conn.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
+		if explicitDBURL {
+			t.Fatalf("create test schema: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := conn.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE"); err != nil {
+			t.Errorf("drop test schema %s: %v", schema, err)
+		}
+	}()
+
+	if _, err := conn.Exec(ctx, "SET search_path TO "+quotedSchema); err != nil {
+		t.Fatalf("set test schema search_path: %v", err)
+	}
+	for _, stmt := range coreSchemaCreateDDL() {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			t.Fatalf("apply schema DDL %q: %v", stmt, err)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		constraint string
+		sql        string
+	}{
+		{
+			name:       "entities",
+			constraint: "entities_version_positive",
+			sql:        `INSERT INTO entities (entity_id, type, version) VALUES ($1, 'asset', $2)`,
+		},
+		{
+			name:       "tasks",
+			constraint: "tasks_version_positive",
+			sql:        `INSERT INTO tasks (task_id, status, version) VALUES ($1, 'pending', $2)`,
+		},
+		{
+			name:       "objects",
+			constraint: "objects_version_positive",
+			sql:        `INSERT INTO objects (object_id, version) VALUES ($1, $2)`,
+		},
+		{
+			name:       "deletions",
+			constraint: "deletions_version_positive",
+			sql:        `INSERT INTO deletions (resource_type, resource_id, version) VALUES ('entity', $1, $2)`,
+		},
+	}
+
+	for _, tt := range tests {
+		for _, version := range []int64{0, -1} {
+			t.Run(fmt.Sprintf("%s_%d", tt.name, version), func(t *testing.T) {
+				_, err := conn.Exec(ctx, tt.sql, fmt.Sprintf("%s-%d", tt.name, version), version)
+				assertConstraintViolation(t, err, tt.constraint)
+			})
+		}
+		t.Run(tt.name+"_positive", func(t *testing.T) {
+			if _, err := conn.Exec(ctx, tt.sql, tt.name+"-positive", int64(1)); err != nil {
+				t.Fatalf("insert %s with version 1: %v", tt.name, err)
+			}
+		})
+	}
+}
+
+func databaseTestURL() (string, bool) {
+	if dbURL := os.Getenv("ATLAS_DATABASE_TEST_URL"); dbURL != "" {
+		return dbURL, true
+	}
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		return dbURL, true
+	}
+	password := os.Getenv("POSTGRES_PASSWORD")
+	if password == "" {
+		return "", false
+	}
+	dbURL := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("atlas", password),
+		Host:   "localhost:5432",
+		Path:   "/atlas_core",
+	}
+	return dbURL.String(), false
+}
+
+func assertConstraintViolation(t *testing.T, err error, constraint string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected constraint violation %s", constraint)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("error type = %T, want *pgconn.PgError: %v", err, err)
+	}
+	if pgErr.Code != "23514" {
+		t.Fatalf("SQLSTATE = %s, want check_violation for %s: %v", pgErr.Code, constraint, err)
+	}
+	if pgErr.ConstraintName != constraint {
+		t.Fatalf("constraint = %q, want %q: %v", pgErr.ConstraintName, constraint, err)
 	}
 }

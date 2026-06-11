@@ -18,7 +18,7 @@ The command catalog is stored in [`command_catalog.json`](command_catalog.json) 
       "description": "Detailed description of what the command does.",
       "parameters_schema": {
         "parameter_name": {
-          "type": "<string|number|boolean|object|array>",
+          "type": "<string|number|boolean>",
           "description": "Description of what this parameter does.",
           "required": <true|false>,
           "minimum": <number>,
@@ -48,7 +48,7 @@ Each command in the catalog must have the following structure:
 The `parameters_schema` object defines the parameters that the command accepts:
 
 - **Parameter Name** (string): The name of the parameter (used as the key in the schema object).
-- **`type`** (string): The data type of the parameter. It can be: `string`, `number`, `boolean`, `object`, or `array`.
+- **`type`** (string): The data type of the parameter. It can be: `string`, `number`, or `boolean`. Nested `object` and `array` parameters are intentionally not supported; seed script validation rejects unsupported types with the full parameter path, such as `$.commands[0].parameters_schema.latitude.type must be one of: boolean, number, string`.
 - **`description`** (string): Description of what this parameter does and how it affects command execution.
 - **`required`** (boolean): Whether this parameter is required (`true`) or optional (`false`).
 - **`minimum`** (number, optional): Inclusive lower bound for numeric parameters such as latitude or longitude.
