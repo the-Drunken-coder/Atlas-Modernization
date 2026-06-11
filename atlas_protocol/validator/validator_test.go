@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/cuecontext"
 )
 
 func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
@@ -57,6 +58,55 @@ func TestConcurrentValidationIsSafe(t *testing.T) {
 func TestKnownComponentMapsMatchSchemaFields(t *testing.T) {
 	assertKnownComponentsMatchSchema(t, "#EntityComponents", knownEntityComponents)
 	assertKnownComponentsMatchSchema(t, "#TaskComponents", knownTaskComponents)
+}
+
+func TestConcreteFieldsFromLabelsExcludesPatternConstraints(t *testing.T) {
+	concreteFields := concreteFieldsFromLabels([]string{
+		"known",
+		`[=~"^custom_"]`,
+	})
+	for field := range concreteFields {
+		if strings.HasPrefix(field, "[") {
+			t.Fatalf("concreteFieldsFromLabels returned pattern constraint label %q", field)
+		}
+	}
+	if _, ok := concreteFields["known"]; !ok {
+		t.Fatalf("concreteFieldsFromLabels missing concrete field known: %v", concreteFields)
+	}
+}
+
+func TestConcreteFieldsFromValueExcludesPatternConstraints(t *testing.T) {
+	value := cuecontext.New().CompileString(`{
+		known: int
+		[=~"^custom_"]: int
+	}`)
+	if err := value.Err(); err != nil {
+		t.Fatalf("compile CUE value: %v", err)
+	}
+
+	concreteFields := concreteFieldsFromValue(t, value, "test")
+	for field := range concreteFields {
+		if strings.HasPrefix(field, "[") {
+			t.Fatalf("concreteFieldsFromValue returned pattern constraint label %q", field)
+		}
+	}
+	if _, ok := concreteFields["known"]; !ok {
+		t.Fatalf("concreteFieldsFromValue missing concrete field known: %v", concreteFields)
+	}
+}
+
+func TestConcreteFieldsFromValueIncludesQuotedBracketLabels(t *testing.T) {
+	value := cuecontext.New().CompileString(`{
+		"[quoted]": int
+	}`)
+	if err := value.Err(); err != nil {
+		t.Fatalf("compile CUE value: %v", err)
+	}
+
+	concreteFields := concreteFieldsFromValue(t, value, "test")
+	if _, ok := concreteFields["[quoted]"]; !ok {
+		t.Fatalf("concreteFieldsFromValue missing quoted bracket label: %v", concreteFields)
+	}
 }
 
 func TestNonFinitePaths(t *testing.T) {
@@ -182,6 +232,17 @@ func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
 	}
 }
 
+func TestObjectBlobRejectsOversizedJSONNumberSizeBytes(t *testing.T) {
+	blob := map[string]any{
+		"size_bytes": json.Number("1e10000"),
+	}
+	errors := ValidateObjectBlob(blob)
+	if len(errors) == 0 {
+		t.Fatal("ValidateObjectBlob(oversized json.Number size_bytes) returned no errors")
+	}
+	assertAnyContains(t, errors, "size_bytes")
+}
+
 func TestRawJSONUsesJSONNumberNormalization(t *testing.T) {
 	raw := json.RawMessage(`{"bucket":"atlas-media","size_bytes":7966}`)
 	if errors := ValidateObjectBlob(raw); len(errors) > 0 {
@@ -257,14 +318,34 @@ func schemaConcreteFields(t *testing.T, definition string) map[string]struct{} {
 	if err := value.Err(); err != nil {
 		t.Fatalf("lookup %s: %v", definition, err)
 	}
+	return concreteFieldsFromValue(t, value, definition)
+}
+
+func concreteFieldsFromValue(t *testing.T, value cue.Value, label string) map[string]struct{} {
+	t.Helper()
+
 	fields, err := value.Fields(cue.Optional(true))
 	if err != nil {
-		t.Fatalf("iterate %s fields: %v", definition, err)
+		t.Fatalf("iterate %s fields: %v", label, err)
 	}
 
 	result := map[string]struct{}{}
 	for fields.Next() {
-		label := fields.Label()
+		selector := fields.Selector()
+		// Optional pattern constraints are present in Fields, but are not concrete
+		// schema keys. Concrete quoted labels still report cue.StringLabel.
+		if selector.LabelType() != cue.StringLabel {
+			continue
+		}
+		result[selector.Unquoted()] = struct{}{}
+	}
+	return result
+}
+
+func concreteFieldsFromLabels(labels []string) map[string]struct{} {
+	result := map[string]struct{}{}
+	for _, label := range labels {
+		// Labels that start with "[" are CUE pattern constraints, not concrete fields.
 		if strings.HasPrefix(label, "[") {
 			continue
 		}

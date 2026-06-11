@@ -15,7 +15,7 @@ func TestQueueStorageDeletionRequeueResetsRetryState(t *testing.T) {
 
 	objectID := fmt.Sprintf("requeue-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id, attempts, last_error, next_attempt_at)
@@ -61,7 +61,7 @@ func TestQueueStorageDeletionAfterFailurePreservesRetryAttempts(t *testing.T) {
 
 	objectID := fmt.Sprintf("failure-requeue-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRows(ctx, pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id, attempts, last_error, next_attempt_at)

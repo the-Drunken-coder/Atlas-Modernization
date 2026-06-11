@@ -11,16 +11,27 @@ func TestParseIfMatchExpectedVersion(t *testing.T) {
 	}{
 		{name: "empty", header: ""},
 		{name: "wildcard", header: "*"},
+		{name: "minimum version", header: `"v1"`, want: int64Ptr(1)},
 		{name: "strong token", header: `"v42"`, want: int64Ptr(42)},
+		{name: "large version", header: `"v9223372036854775807"`, want: int64Ptr(9223372036854775807)},
+		{name: "version overflow rejected", header: `"v9223372036854775808"`, wantErr: true},
+		{name: "leading zero version rejected", header: `"v01"`, wantErr: true},
+		{name: "multiple leading zero version rejected", header: `"v001"`, wantErr: true},
+		{name: "token with surrounding whitespace", header: `  "v42"  `, want: int64Ptr(42)},
 		{name: "same version repeated", header: `"v42", "v42"`, want: int64Ptr(42)},
+		{name: "same version repeated with extra spaces", header: ` "v42" ,   "v42" `, want: int64Ptr(42)},
 		{name: "weak token rejected", header: `W/"v42"`, wantErr: true},
+		{name: "uppercase version prefix rejected", header: `"V42"`, wantErr: true},
 		{name: "unquoted token rejected", header: `v42`, wantErr: true},
 		{name: "zero version rejected", header: `"v0"`, wantErr: true},
 		{name: "negative version rejected", header: `"v-1"`, wantErr: true},
 		{name: "malformed version rejected", header: `"vnope"`, wantErr: true},
 		{name: "different versions rejected", header: `"v42", "v43"`, wantErr: true},
 		{name: "mixed wildcard rejected", header: `*, "v42"`, wantErr: true},
+		{name: "leading empty list element rejected", header: `,"v1"`, wantErr: true},
 		{name: "empty list element rejected", header: `"v42",`, wantErr: true},
+		{name: "middle empty list element rejected", header: `"v1",,"v1"`, wantErr: true},
+		{name: "commas only rejected", header: `, ,`, wantErr: true},
 	}
 
 	for _, tt := range tests {

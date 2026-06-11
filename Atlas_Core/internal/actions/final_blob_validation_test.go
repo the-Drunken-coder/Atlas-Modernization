@@ -67,7 +67,7 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 	actions := NewEntityActions(pool)
 	entityID := fmt.Sprintf("entity-final-blob-%d", time.Now().UTC().UnixNano())
-	defer cleanupFinalBlobValidationRows(ctx, pool, entityID, "")
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, entityID, "")
 
 	if _, err := actions.Create(ctx, CreateEntityParams{
 		EntityID:   entityID,
@@ -92,7 +92,7 @@ func TestUpdateTaskValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 	actions := NewTaskActions(pool)
 	taskID := fmt.Sprintf("task-final-blob-%d", time.Now().UTC().UnixNano())
-	defer cleanupFinalBlobValidationRows(ctx, pool, "", taskID)
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, "", taskID)
 
 	if _, err := actions.Create(ctx, CreateTaskParams{
 		TaskID: taskID,
@@ -143,16 +143,34 @@ func openActionsTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func cleanupFinalBlobValidationRows(ctx context.Context, pool *pgxpool.Pool, entityID, taskID string) {
+func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, entityID, taskID string) {
+	t.Helper()
 	if taskID != "" {
-		_, _ = pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID)
-		_, _ = pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'task' AND resource_id = $1`, taskID)
+		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
+			t.Errorf("cleanup task row %q: %v", taskID, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'task' AND resource_id = $1`, taskID); err != nil {
+			t.Errorf("cleanup task deletion rows %q: %v", taskID, err)
+		}
 	}
 	if entityID != "" {
-		_, _ = pool.Exec(ctx, `DELETE FROM tasks WHERE entity_id = $1`, entityID)
-		_, _ = pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID)
-		_, _ = pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'entity' AND resource_id = $1`, entityID)
+		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE entity_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup tasks for entity %q: %v", entityID, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup entity row %q: %v", entityID, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'entity' AND resource_id = $1`, entityID); err != nil {
+			t.Errorf("cleanup entity deletion rows %q: %v", entityID, err)
+		}
 	}
+}
+
+func cleanupFinalBlobValidationRowsWithTimeout(t *testing.T, pool *pgxpool.Pool, entityID, taskID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cleanupFinalBlobValidationRows(ctx, t, pool, entityID, taskID)
 }
 
 func assertValidationDetailsContain(t *testing.T, err error, want string) {

@@ -31,7 +31,7 @@ SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 CATALOG_TOP_LEVEL_FIELDS = {"type", "name", "description", "commands"}
 COMMAND_FIELDS = {"id", "name", "description", "parameters_schema"}
 PARAMETER_FIELDS = {"type", "description", "required", "minimum", "maximum"}
-PARAMETER_TYPES = {"string", "number", "boolean", "object", "array"}
+PARAMETER_TYPES = {"string", "number", "boolean"}
 
 
 def _validate_http_url(url: str) -> str:
@@ -126,7 +126,10 @@ def _validate_parameter_schema(value: Any, path: str, errors: list[str]) -> None
             if bound_name in parameter and not _is_finite_number(parameter[bound_name]):
                 errors.append(f"{parameter_path}.{bound_name} must be a finite number")
 
-        if parameter_type != "number" and ("minimum" in parameter or "maximum" in parameter):
+        has_type = "type" in parameter
+        has_numeric_bounds = "minimum" in parameter or "maximum" in parameter
+        # Missing type is already reported above; avoid duplicating that with a bounds error.
+        if has_type and parameter_type != "number" and has_numeric_bounds:
             errors.append(f"{parameter_path}: minimum and maximum are only valid for number parameters")
         if (
             _is_finite_number(parameter.get("minimum"))

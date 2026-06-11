@@ -397,14 +397,27 @@ def ensure_tunnel_api_auth():
     return True
 
 
+def public_base_url_from_hostname(hostname, default_hostname=DEFAULT_TUNNEL_HOSTNAME):
+    """Return a public base URL without trailing slash.
+
+    Bare or empty hostnames become HTTPS URLs using default_hostname as the
+    fallback. Absolute URLs keep their original scheme.
+    """
+    default_hostname = (default_hostname or DEFAULT_TUNNEL_HOSTNAME).strip() or DEFAULT_TUNNEL_HOSTNAME
+    hostname = (hostname or "").strip()
+    if not hostname:
+        hostname = default_hostname
+    if "://" in hostname:
+        scheme, rest = hostname.split("://", 1)
+        if not rest.strip("/"):
+            return public_base_url_from_hostname(default_hostname, DEFAULT_TUNNEL_HOSTNAME)
+        return f"{scheme}://{rest.strip('/')}"
+    return f"https://{hostname.strip('/')}"
+
+
 def tunnel_public_base_url():
     """Return the configured public tunnel base URL."""
-    hostname = os.getenv(TUNNEL_HOSTNAME_ENV, DEFAULT_TUNNEL_HOSTNAME).strip()
-    if not hostname:
-        hostname = DEFAULT_TUNNEL_HOSTNAME
-    if "://" in hostname:
-        return hostname.rstrip("/")
-    return f"https://{hostname.strip('/')}"
+    return public_base_url_from_hostname(os.getenv(TUNNEL_HOSTNAME_ENV, DEFAULT_TUNNEL_HOSTNAME))
 
 
 def tunnel_health_url():

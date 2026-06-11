@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	modulePath = "github.com/the-drunken-coder/atlas/atlas_protocol"
-	moduleRoot = "/atlas_protocol"
+	modulePath         = "github.com/the-drunken-coder/atlas/atlas_protocol"
+	moduleRoot         = "/atlas_protocol"
+	cueLanguageVersion = "v0.16.1"
 )
 
 type compiledSchema struct {
@@ -263,7 +264,7 @@ func schemaOverlay() (map[string]load.Source, error) {
 	overlay := map[string]load.Source{
 		filepath.Join(moduleRoot, "cue.mod", "module.cue"): load.FromString(`module: "` + modulePath + `"
 language: {
-	version: "v0.16.1"
+	version: "` + cueLanguageVersion + `"
 }
 `),
 	}
@@ -340,6 +341,9 @@ func normalizeForCUE(value any) (any, error) {
 		}
 		f, err := typed.Float64()
 		if err != nil {
+			// Preserve oversized or otherwise unparsable numbers as strings so CUE
+			// rejects them through normal schema validation instead of silently
+			// coercing them to malformed numeric values.
 			return typed.String(), nil
 		}
 		return f, nil

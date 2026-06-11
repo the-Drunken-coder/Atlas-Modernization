@@ -240,7 +240,11 @@ func parseStrongETagVersion(token string) (int64, error) {
 	if len(inner) < 2 || inner[0] != 'v' {
 		return 0, fmt.Errorf("malformed If-Match token %q", token)
 	}
-	version, err := strconv.ParseInt(inner[1:], 10, 64)
+	versionDigits := inner[1:]
+	if len(versionDigits) > 1 && versionDigits[0] == '0' {
+		return 0, fmt.Errorf("malformed If-Match token %q", token)
+	}
+	version, err := strconv.ParseInt(versionDigits, 10, 64)
 	if err != nil || version < 1 {
 		return 0, fmt.Errorf("malformed If-Match token %q", token)
 	}

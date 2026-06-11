@@ -10,7 +10,7 @@ func TestValidateObjectBlob(t *testing.T) {
 		name    string
 		blob    map[string]interface{}
 		wantErr bool
-		errMsg  string
+		errMsg  []string
 	}{
 		{
 			name: "valid object blob",
@@ -32,7 +32,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"size_bytes": -1,
 			},
 			wantErr: true,
-			errMsg:  "size_bytes",
+			errMsg:  []string{"size_bytes", "out of bound >=0"},
 		},
 		{
 			name: "usage hints must be strings",
@@ -40,7 +40,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"usage_hints": []interface{}{"thumbnail", 123},
 			},
 			wantErr: true,
-			errMsg:  "usage_hints.1",
+			errMsg:  []string{"usage_hints.1", "mismatched types int and string"},
 		},
 		{
 			name: "reference must include entity or task",
@@ -48,7 +48,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{}},
 			},
 			wantErr: true,
-			errMsg:  "referenced_by",
+			errMsg:  []string{"referenced_by.0", "invalid value"},
 		},
 		{
 			name: "reference id must be non-empty",
@@ -56,7 +56,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{"entity_id": " "}},
 			},
 			wantErr: true,
-			errMsg:  "referenced_by",
+			errMsg:  []string{"referenced_by", "empty disjunction"},
 		},
 	}
 
@@ -71,8 +71,8 @@ func TestValidateObjectBlob(t *testing.T) {
 				if !ok {
 					t.Fatalf("ValidateObjectBlob() error type = %T, want *ValidationError", err)
 				}
-				if tt.errMsg != "" {
-					assertValidationErrorDetailsContain(t, validationErr.Details, tt.errMsg)
+				if len(tt.errMsg) > 0 {
+					assertValidationErrorDetailsContainAll(t, validationErr.Details, tt.errMsg...)
 				}
 				return
 			}
@@ -96,7 +96,7 @@ func TestUploadObjectJSONValidatesMergedBlob(t *testing.T) {
 	if !ok {
 		t.Fatalf("uploadObjectJSON() error type = %T, want *ValidationError", err)
 	}
-	assertValidationErrorDetailsContain(t, validationErr.Details, "MinFields")
+	assertValidationErrorDetailsContainAll(t, validationErr.Details, "referenced_by.0", "invalid value")
 }
 
 func TestUploadObjectJSONPreservesExistingBlobFields(t *testing.T) {

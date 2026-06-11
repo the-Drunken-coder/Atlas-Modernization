@@ -132,7 +132,7 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 
 	objectID := fmt.Sprintf("cleanup-retry-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	storageClient := &recordingObjectStorage{deleteErr: errors.New("delete failed")}
 	actions := NewObjectActions(pool, storageClient)
@@ -314,7 +314,7 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 
 	objectID := fmt.Sprintf("outbox-%d", time.Now().UTC().UnixNano())
 	path := fmt.Sprintf("objects/%s/blob", objectID)
-	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
@@ -387,7 +387,7 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	initialPath := fmt.Sprintf("objects/%s/initial", objectID)
 	contentType := "text/plain"
 	sizeBytes := int64(3)
-	defer cleanupObjectRaceTestRows(context.Background(), pool, objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 	if _, err := actions.Create(ctx, CreateObjectParams{
 		ObjectID:    objectID,
@@ -596,8 +596,22 @@ func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool
 	return ok, err
 }
 
-func cleanupObjectRaceTestRows(ctx context.Context, pool *pgxpool.Pool, objectID string) {
-	_, _ = pool.Exec(ctx, `DELETE FROM objects WHERE object_id = $1`, objectID)
-	_, _ = pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'object' AND resource_id = $1`, objectID)
-	_, _ = pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE object_id = $1`, objectID)
+func cleanupObjectRaceTestRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, objectID string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `DELETE FROM objects WHERE object_id = $1`, objectID); err != nil {
+		t.Errorf("cleanup object row %q: %v", objectID, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'object' AND resource_id = $1`, objectID); err != nil {
+		t.Errorf("cleanup object deletion rows %q: %v", objectID, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE object_id = $1`, objectID); err != nil {
+		t.Errorf("cleanup object storage deletion rows %q: %v", objectID, err)
+	}
+}
+
+func cleanupObjectRaceTestRowsWithTimeout(t *testing.T, pool *pgxpool.Pool, objectID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cleanupObjectRaceTestRows(ctx, t, pool, objectID)
 }

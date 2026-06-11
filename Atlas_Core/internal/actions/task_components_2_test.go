@@ -88,7 +88,7 @@ func TestValidateTaskComponents(t *testing.T) {
 		name       string
 		components map[string]interface{}
 		wantError  bool
-		errMsg     string
+		errMsg     []string
 	}{
 		{
 			name: "valid task components",
@@ -125,7 +125,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    "command",
+			errMsg:    []string{"command", "mismatched types string and struct"},
 		},
 		{
 			name: "unknown task component key",
@@ -133,7 +133,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				"unknown_key": "value",
 			},
 			wantError: true,
-			errMsg:    "Unknown component 'unknown_key'",
+			errMsg:    []string{"Unknown component 'unknown_key'"},
 		},
 		{
 			name: "custom task component key",
@@ -150,7 +150,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    "command.type",
+			errMsg:    []string{"command.type", "out of bound"},
 		},
 		{
 			name: "invalid parameters latitude",
@@ -160,7 +160,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    "parameters.latitude",
+			errMsg:    []string{"parameters.latitude", "out of bound"},
 		},
 		{
 			name: "invalid progress percent",
@@ -170,7 +170,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    "progress.percent",
+			errMsg:    []string{"progress.percent", "out of bound"},
 		},
 	}
 
@@ -187,8 +187,8 @@ func TestValidateTaskComponents(t *testing.T) {
 					t.Errorf("ValidateTaskComponents() expected ValidationError, got %T", err)
 					return
 				}
-				if tt.errMsg != "" {
-					assertValidationErrorDetailsContain(t, validationErr.Details, tt.errMsg)
+				if len(tt.errMsg) > 0 {
+					assertValidationErrorDetailsContainAll(t, validationErr.Details, tt.errMsg...)
 				}
 			} else {
 				if err != nil {

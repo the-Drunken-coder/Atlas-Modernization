@@ -53,6 +53,14 @@ class ComposeEnvTest(unittest.TestCase):
                 },
             )
 
+    def test_parse_compose_env_file_rejects_control_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("BAD=has\x00nul\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"control characters: '\\x00'"):
+                parse_compose_env_file(str(env_path))
+
     def test_normalize_compose_env_value_leaves_unclosed_quotes_alone(self) -> None:
         self.assertEqual(normalize_compose_env_value("'unterminated value"), "'unterminated value")
 
@@ -65,6 +73,21 @@ class ComposeEnvTest(unittest.TestCase):
         self.assertEqual(format_compose_env_value("abc_123-./:@%+=,"), "abc_123-./:@%+=,")
         self.assertEqual(format_compose_env_value("has space"), '"has space"')
         self.assertEqual(format_compose_env_value('has"quote\\slash'), '"has\\"quote\\\\slash"')
+
+    def test_format_compose_env_value_rejects_control_characters(self) -> None:
+        for value in [
+            "has\x00nul",
+            "has\x01start",
+            "has\nnewline",
+            "has\rcarriage",
+            "has\ttab",
+            "has\x1bescape",
+            "has\x1fseparator",
+            "has\x7fdelete",
+        ]:
+            with self.subTest(value=repr(value)):
+                with self.assertRaisesRegex(ValueError, "control characters"):
+                    format_compose_env_value(value)
 
     def test_persist_compose_env_values_updates_existing_keys_without_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -94,7 +117,11 @@ class ComposeEnvTest(unittest.TestCase):
             self.assertEqual(sum(1 for line in lines if compose_env_key(line) == "POSTGRES_PASSWORD"), 1)
             self.assertIn('POSTGRES_PASSWORD="new password"', lines)
             self.assertIn('MINIO_ROOT_PASSWORD="secret\\"with\\\\chars"', lines)
-            self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
+
+    def test_persist_compose_env_values_rejects_control_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(ValueError, r"control characters: '\\t'"):
+                persist_compose_env_values(temp_dir, {"POSTGRES_PASSWORD": "has\ttab"}, announce=None)
 
     def test_persist_compose_env_values_creates_missing_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

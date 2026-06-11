@@ -139,6 +139,11 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache-dependency-path: ${{ env.GO_SUM_FILE }}
 
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.11"
+
       - name: Install validation tools
         run: |
           sudo apt-get update
@@ -163,8 +168,14 @@ jobs:
             echo "No Python scripts found under scripts/; skipping."
           fi
 
-      - name: Test Compose env parser
+      - name: Test compose env script
         run: python3 scripts/test_compose_env.py
+
+      - name: Test atlas script helpers
+        run: python3 scripts/test_atlas.py
+
+      - name: Test seed command catalog
+        run: python3 scripts/test_seed_command_catalog.py
 
       - name: Run ShellCheck
         run: |

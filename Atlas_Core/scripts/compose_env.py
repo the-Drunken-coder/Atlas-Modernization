@@ -8,6 +8,7 @@ import tempfile
 from collections.abc import Callable, MutableMapping
 
 COMPOSE_ENV_BARE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@%+=,-]+$")
+COMPOSE_ENV_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1F\x7F]")
 
 
 def parse_compose_env_file(env_path: str) -> dict[str, str]:
@@ -16,7 +17,7 @@ def parse_compose_env_file(env_path: str) -> dict[str, str]:
     if not os.path.exists(env_path):
         return values
 
-    with open(env_path, "r", encoding="utf-8") as env_file:
+    with open(env_path, encoding="utf-8") as env_file:
         for raw_line in env_file:
             line = raw_line.strip()
             if not line or line.startswith("#"):
@@ -36,7 +37,9 @@ def parse_compose_env_file(env_path: str) -> dict[str, str]:
             if not key:
                 continue
 
-            values[key] = normalize_compose_env_value(value)
+            normalized_value = normalize_compose_env_value(value)
+            reject_compose_env_control_chars(normalized_value)
+            values[key] = normalized_value
 
     return values
 
@@ -100,10 +103,23 @@ def normalize_compose_env_value(value: str) -> str:
 
 def format_compose_env_value(value: str) -> str:
     """Format a generated value for a Docker Compose .env file."""
+    reject_compose_env_control_chars(value)
     if COMPOSE_ENV_BARE_VALUE_RE.fullmatch(value):
         return value
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def reject_compose_env_control_chars(value: str) -> None:
+    """Reject literal control characters in Docker Compose .env values."""
+    control_char = COMPOSE_ENV_CONTROL_CHAR_RE.search(value)
+    if control_char:
+        raise ValueError(compose_env_control_char_error(control_char.group(0)))
+
+
+def compose_env_control_char_error(control_char: str) -> str:
+    """Return the Compose .env control-character validation message."""
+    return f"Docker Compose .env values must not contain control characters: {control_char!r}"
 
 
 def persist_compose_env_values(
@@ -117,7 +133,7 @@ def persist_compose_env_values(
 
     env_path = os.path.join(docker_dir, ".env")
     if os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as env_file:
+        with open(env_path, encoding="utf-8") as env_file:
             lines = env_file.readlines()
     else:
         lines = [

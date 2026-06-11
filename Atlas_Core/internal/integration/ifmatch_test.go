@@ -20,7 +20,7 @@ func TestIfMatchPreconditionsForEntityTaskAndObject(t *testing.T) {
 	prefix := TestArtifactPrefix()
 
 	entityID := fmt.Sprintf("%s-ifmatch-entity", prefix)
-	exerciseIfMatchResource(t, client, ctx, ifMatchResource{
+	exerciseIfMatchResource(ctx, t, client, ifMatchResource{
 		createPath: "/entities",
 		createBody: map[string]interface{}{
 			"entity_id":   entityID,
@@ -60,7 +60,7 @@ func TestIfMatchPreconditionsForEntityTaskAndObject(t *testing.T) {
 	drainClose(resp)
 
 	taskID := fmt.Sprintf("%s-ifmatch-task", prefix)
-	exerciseIfMatchResource(t, client, ctx, ifMatchResource{
+	exerciseIfMatchResource(ctx, t, client, ifMatchResource{
 		createPath: "/tasks",
 		createBody: map[string]interface{}{
 			"task_id":   taskID,
@@ -89,7 +89,7 @@ func TestIfMatchPreconditionsForEntityTaskAndObject(t *testing.T) {
 	})
 
 	objectID := fmt.Sprintf("%s-ifmatch-object", prefix)
-	exerciseIfMatchResource(t, client, ctx, ifMatchResource{
+	exerciseIfMatchResource(ctx, t, client, ifMatchResource{
 		createPath: "/objects",
 		createBody: map[string]interface{}{
 			"object_id":    objectID,
@@ -124,17 +124,85 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 	client := NewAPIClient()
 	ctx := context.Background()
 	prefix := TestArtifactPrefix()
-	entityID := fmt.Sprintf("%s-ifmatch-concurrent-entity", prefix)
 
+	taskEntityID := fmt.Sprintf("%s-ifmatch-concurrent-task-entity", prefix)
 	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
-		"entity_id":   entityID,
+		"entity_id":   taskEntityID,
 		"entity_type": "asset",
-		"subtype":     "drone",
 	})
 	if err != nil {
-		t.Fatalf("create concurrent If-Match entity: %v", err)
+		t.Fatalf("create concurrent If-Match task entity: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (concurrent If-Match fixture)")
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (concurrent task If-Match fixture)")
+	drainClose(resp)
+
+	entityID := fmt.Sprintf("%s-ifmatch-concurrent-entity", prefix)
+	taskID := fmt.Sprintf("%s-ifmatch-concurrent-task", prefix)
+	objectID := fmt.Sprintf("%s-ifmatch-concurrent-object", prefix)
+
+	tests := []struct {
+		name     string
+		resource ifMatchConcurrentResource
+	}{
+		{
+			name: "entity",
+			resource: ifMatchConcurrentResource{
+				createPath: "/entities",
+				createBody: map[string]interface{}{
+					"entity_id":   entityID,
+					"entity_type": "asset",
+					"subtype":     "drone",
+				},
+				patchPath: "/entities/" + entityID,
+			},
+		},
+		{
+			name: "task",
+			resource: ifMatchConcurrentResource{
+				createPath: "/tasks",
+				createBody: map[string]interface{}{
+					"task_id":   taskID,
+					"entity_id": taskEntityID,
+					"status":    "pending",
+				},
+				patchPath: "/tasks/" + taskID,
+			},
+		},
+		{
+			name: "object",
+			resource: ifMatchConcurrentResource{
+				createPath: "/objects",
+				createBody: map[string]interface{}{
+					"object_id":    objectID,
+					"content_type": "application/json",
+					"size_bytes":   1,
+				},
+				patchPath: "/objects/" + objectID,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exerciseConcurrentIfMatchConflict(ctx, t, client, tt.resource)
+		})
+	}
+}
+
+type ifMatchConcurrentResource struct {
+	createPath string
+	createBody map[string]interface{}
+	patchPath  string
+}
+
+func exerciseConcurrentIfMatchConflict(ctx context.Context, t *testing.T, client *APIClient, resource ifMatchConcurrentResource) {
+	t.Helper()
+
+	resp, err := client.Post(ctx, resource.createPath, resource.createBody)
+	if err != nil {
+		t.Fatalf("create concurrent If-Match fixture %s: %v", resource.createPath, err)
+	}
+	requireHTTPStatus(t, resp, http.StatusCreated, "create concurrent If-Match fixture "+resource.createPath)
 	initialETag := requireETag(t, resp)
 	drainClose(resp)
 
@@ -154,7 +222,7 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 				ctx,
 				client,
 				http.MethodPatch,
-				"/entities/"+entityID,
+				resource.patchPath,
 				map[string]interface{}{"extra": map[string]interface{}{"concurrent": i}},
 				map[string]string{"If-Match": initialETag},
 			)
@@ -172,14 +240,19 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 	close(results)
 
 	counts := map[int]int{}
+	var errors []error
 	for result := range results {
 		if result.err != nil {
-			t.Fatalf("concurrent If-Match patch failed: %v", result.err)
+			errors = append(errors, result.err)
+			continue
 		}
 		counts[result.status]++
 	}
+	if len(errors) > 0 {
+		t.Fatalf("concurrent If-Match patch %s failed: %v", resource.patchPath, errors)
+	}
 	if counts[http.StatusOK] != 1 || counts[http.StatusPreconditionFailed] != 1 {
-		t.Fatalf("concurrent If-Match statuses = %v, want one 200 and one 412", counts)
+		t.Fatalf("concurrent If-Match statuses for %s = %v, want one 200 and one 412", resource.patchPath, counts)
 	}
 }
 
@@ -195,7 +268,7 @@ type ifMatchResource struct {
 	noHeaderBody  map[string]interface{}
 }
 
-func exerciseIfMatchResource(t *testing.T, client *APIClient, ctx context.Context, resource ifMatchResource) {
+func exerciseIfMatchResource(ctx context.Context, t *testing.T, client *APIClient, resource ifMatchResource) {
 	t.Helper()
 
 	resp, err := client.Post(ctx, resource.createPath, resource.createBody)
