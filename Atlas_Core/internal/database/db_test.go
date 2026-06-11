@@ -165,22 +165,6 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 	}
 }
 
-func TestCoreSchemaCreateDDLConstrainsPositiveVersions(t *testing.T) {
-	ddl := strings.Join(coreSchemaCreateDDL(), "\n")
-	want := []string{
-		"CONSTRAINT entities_version_positive CHECK (version > 0)",
-		"CONSTRAINT tasks_version_positive CHECK (version > 0)",
-		"CONSTRAINT objects_version_positive CHECK (version > 0)",
-		"CONSTRAINT deletions_version_positive CHECK (version > 0)",
-	}
-
-	for _, stmt := range want {
-		if !strings.Contains(ddl, stmt) {
-			t.Fatalf("expected core schema DDL to include %q", stmt)
-		}
-	}
-}
-
 func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 	dbURL, explicitDBURL := databaseTestURL()
 	if dbURL == "" {

@@ -186,12 +186,16 @@ func setResourceETag(w http.ResponseWriter, version int64) {
 }
 
 func (h *Handler) parseIfMatchExpectedVersion(w http.ResponseWriter, r *http.Request, resourceType string) (*int64, bool) {
-	expectedVersion, err := ParseIfMatchExpectedVersion(r.Header.Get("If-Match"))
+	expectedVersion, err := parseIfMatchExpectedVersionValues(r.Header.Values("If-Match"))
 	if err != nil {
 		h.handleActionError(w, r, actions.NewPreconditionFailedError(resourceType))
 		return nil, false
 	}
 	return expectedVersion, true
+}
+
+func parseIfMatchExpectedVersionValues(values []string) (*int64, error) {
+	return ParseIfMatchExpectedVersion(strings.Join(values, ","))
 }
 
 // ParseIfMatchExpectedVersion parses Atlas strong ETags of the form "vN".
@@ -242,6 +246,11 @@ func parseStrongETagVersion(token string) (int64, error) {
 		return 0, fmt.Errorf("malformed If-Match token %q", token)
 	}
 	versionDigits := inner[1:]
+	for _, ch := range versionDigits {
+		if ch < '0' || ch > '9' {
+			return 0, fmt.Errorf("malformed If-Match token %q", token)
+		}
+	}
 	if len(versionDigits) > 1 && versionDigits[0] == '0' {
 		return 0, fmt.Errorf("malformed If-Match token %q", token)
 	}
