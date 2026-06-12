@@ -4,7 +4,7 @@
 # Build stage: multi-arch index digest for golang:1.26.4-alpine (not the per-platform manifest SHA).
 FROM golang:1.26.4-alpine@sha256:7a3e50096189ad57c9f9f865e7e4aa8585ed1585248513dc5cda498e2f41812c AS builder
 
-# Alpine packages (base is alpine3.23); refresh versions when bumping the Go base image.
+# Alpine packages (base is alpine3.24); refresh versions when bumping the Go base image.
 RUN apk add --no-cache git ca-certificates
 
 # Set work directory
