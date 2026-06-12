@@ -26,12 +26,11 @@ func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
 
 	readHandshake(t, conn)
 	hub.Publish(entityEvent("create", "asset-before-subscribe", 1, "asset"))
-	time.Sleep(50 * time.Millisecond)
 
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe all: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
 	hub.Publish(entityEvent("create", "asset-after-subscribe", 2, "asset"))
 
 	var event protocol.FeedEvent
@@ -65,7 +64,10 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"type","resource_type":"task"}`)); err != nil {
 		t.Fatalf("subscribe task type: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	waitForSubscription(t, hub, Subscription{
+		Filter:       FilterType,
+		ResourceType: protocol.ResourceTypeTask,
+	})
 	hub.Publish(taskEvent("create", "task-auth", 1, "", "asset-1", "pending"))
 
 	var event protocol.FeedEvent
@@ -111,7 +113,7 @@ func dialFeed(t *testing.T, url string) *websocket.Conn {
 
 func readFeedEvent(t *testing.T, conn *websocket.Conn, event *protocol.FeedEvent) {
 	t.Helper()
-	readCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	messageType, data, err := conn.Read(readCtx)
 	if err != nil {
@@ -123,6 +125,40 @@ func readFeedEvent(t *testing.T, conn *websocket.Conn, event *protocol.FeedEvent
 	if err := json.Unmarshal(data, event); err != nil {
 		t.Fatalf("decode feed event: %v", err)
 	}
+}
+
+func waitForSubscription(t *testing.T, hub *Hub, sub Subscription) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	key := sub.Key()
+
+	for {
+		if hubHasSubscription(hub, key) {
+			return
+		}
+
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for feed subscription %q", key)
+		case <-ticker.C:
+		}
+	}
+}
+
+func hubHasSubscription(hub *Hub, key string) bool {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	for client := range hub.clients {
+		client.mu.Lock()
+		_, ok := client.subs[key]
+		client.mu.Unlock()
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 func websocketURL(url string) string {
