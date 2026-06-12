@@ -10,5 +10,6 @@ export type {
   FeedUnsubscribeMessage,
   ObjectResource,
   ResourceType,
+  TaskDeleteEvent,
   TaskResource
 } from "../../atlas_protocol/generated/typescript/index.js";

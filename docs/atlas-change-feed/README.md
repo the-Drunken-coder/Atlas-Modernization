@@ -2,7 +2,7 @@
 
 The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `atlas_protocol/schema/feed.cue`, Core serves the feed from `Atlas_Core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
 
-This document records the design as built and the reasoning behind it. It began as a plan split out of the SDK plan (2026-06-12) so the feed could be specced, built, and simulation-tested **before** the SDK existed — plan against the enemy you know. The durable architectural choice is also recorded as a [design decision](../design-decisions/2026-06-12-change-feed-websocket-fat-events.md); this doc carries the full detail.
+This document records the design as built and the reasoning behind it. It began as a plan split out of the SDK plan (2026-06-12) so the feed could be specced, built, and simulation-tested **before** the SDK existed. The durable architectural choice is also recorded as a [design decision](../design-decisions/2026-06-12-change-feed-websocket-fat-events.md); this doc carries the full detail.
 
 ## Transport and placement
 
@@ -20,7 +20,7 @@ This document records the design as built and the reasoning behind it. It began 
 
   `event` is `create`, `update`, or `delete`; `resource` carries the full serialized resource and is omitted on `delete` — the tombstone is the envelope itself.
 - **A version on every event**, so clients can detect gaps.
-- **Deletes are events.** Tombstones carry the resource ID, resource type, and global version. A subscriber to a deleted resource hears about the deletion; it does not just go silent. (`changed-since` also returns tombstones from the deletions table, so clients that miss the live feed still evict deleted resources on recovery.)
+- **Deletes are events.** Tombstones carry the resource ID, resource type, and global version. Task tombstones also carry the last known `entity_id` when available so `tasks_for_entity` consumers can evict tasks after recovery. A subscriber to a deleted resource hears about the deletion; it does not just go silent. (`changed-since` also returns tombstones from the deletions table, so clients that miss the live feed still evict deleted resources on recovery.)
 - **Object content is never pushed.** Object *metadata* events flow like entity/task events; binary content is fetched lazily by clients.
 - **Protocol-owned shapes.** The envelope and client messages are authored in CUE (`atlas_protocol/schema/feed.cue`) and generated into JSON Schema, Go, and TypeScript artifacts, so the types Core emits and the types the SDK parses come from one source.
 
@@ -35,10 +35,10 @@ This document records the design as built and the reasoning behind it. It began 
 ## Subscriptions
 
 - **Filters, not a query engine:** `all`; by resource ID; by resource type; and one relational filter, **tasks for entity X**, which matches *future* tasks (a server-side filter, not expressible as an ID list).
-- **Task routing rule:** a task event is delivered to a relational subscriber if the task matched the filter **before or after** the change — on reassignment from asset A to asset B, A sees the task leave and B sees it arrive. `all` subscribers receive every task event regardless.
+- **Task routing rule:** a task event is delivered to a relational subscriber if the task matched the filter **before or after** the change — on reassignment from asset A to asset B, A sees the task leave and B sees it arrive. Task update events include `previous_entity_id` when known, and task delete events include the last known `entity_id` when known, so clients can preserve the same routing behavior during `changed-since` recovery. `all` subscribers receive every task event regardless.
 - **Initial subscription state is empty.** A fresh connection delivers nothing until the client subscribes; automatic mode sends subscribe-`all` as its first message after authenticating.
 - **Live re-subscription:** subscribe/unsubscribe over an open connection, no reconnect required. Messages use flat frames matching the event envelope style: `{"action":"subscribe","filter":"all"}`, `{"action":"subscribe","filter":"id","resource_type":"task","id":"task-7"}`, `{"action":"subscribe","filter":"type","resource_type":"entity"}`, `{"action":"subscribe","filter":"tasks_for_entity","entity_id":"asset-1"}`; unsubscribe uses the same fields with `action:"unsubscribe"`.
-- **No subscription acknowledgements.** Subscribe/unsubscribe frames are commands. Valid frames change the connection's filter set silently; malformed JSON, invalid filters, or wrong first-message auth close the websocket with a policy-violation status. The SDK can layer its own local command bookkeeping if it needs UI feedback.
+- **No subscription acknowledgements.** Subscribe/unsubscribe frames are commands. Valid frames change the connection's filter set silently; malformed JSON, invalid filters, or wrong first-message auth close the websocket with a policy-violation status. The SDK can layer local command bookkeeping if it needs UI feedback.
 
 ## Endpoint and auth
 

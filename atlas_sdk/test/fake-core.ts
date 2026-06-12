@@ -18,6 +18,7 @@ export class FakeCore {
   deletions: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
+  private readonly recordedVersions = new Set<number>();
   rejectFeedAuth = false;
   failChangedSince = false;
   objectDownloadCount = 0;
@@ -51,7 +52,7 @@ export class FakeCore {
       });
     }
     if (path.startsWith("/entities/") && init?.method === "GET") {
-      return json(this.entities.get(decodeURIComponent(path.split("/")[2])));
+      return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
     }
     if (path === "/entities" && init?.method === "POST") {
       return json(this.upsertEntity(await readBody<EntityResource>(init)));
@@ -63,11 +64,17 @@ export class FakeCore {
       const id = decodeURIComponent(path.split("/")[2]);
       return json(this.upsertEntity({ ...this.entities.get(id), ...(await readBody<Partial<EntityResource>>(init)) } as EntityResource));
     }
+    if (path.startsWith("/entities/") && init?.method === "DELETE") {
+      return this.deleteEntityResponse(decodeURIComponent(path.split("/")[2]));
+    }
     if (path.startsWith("/tasks/") && init?.method === "GET") {
-      return json(this.tasks.get(decodeURIComponent(path.split("/")[2])));
+      return jsonOrNotFound(this.tasks.get(decodeURIComponent(path.split("/")[2])), "task not found");
     }
     if (path === "/tasks" && init?.method === "POST") {
       return json(this.upsertTask(await readBody<TaskResource>(init)));
+    }
+    if (path.startsWith("/tasks/") && init?.method === "DELETE") {
+      return this.deleteTaskResponse(decodeURIComponent(path.split("/")[2]));
     }
     if (path.startsWith("/objects/") && path.endsWith("/download")) {
       const id = decodeURIComponent(path.split("/")[2]);
@@ -76,20 +83,21 @@ export class FakeCore {
       return new Response(new Uint8Array([1, 2, 3]));
     }
     if (path.startsWith("/objects/") && init?.method === "GET") {
-      return json(this.objects.get(decodeURIComponent(path.split("/")[2])));
+      return jsonOrNotFound(this.objects.get(decodeURIComponent(path.split("/")[2])), "object not found");
+    }
+    if (path.startsWith("/objects/") && init?.method === "DELETE") {
+      return this.deleteObjectResponse(decodeURIComponent(path.split("/")[2]));
     }
     return json({ error: "not found" }, 404);
   };
 
-  WebSocket = class extends FakeWebSocket {
-    constructor(url: string) {
-      super(url, currentCore);
-    }
-  };
-
   attachWebSocketGlobal(): typeof FakeWebSocket {
-    currentCore = this;
-    return this.WebSocket;
+    const owningCore = this;
+    return class BoundFakeWebSocket extends FakeWebSocket {
+      constructor(url: string) {
+        super(url, owningCore);
+      }
+    };
   }
 
   upsertEntity(entity: EntityResource): EntityResource {
@@ -116,8 +124,53 @@ export class FakeCore {
     return value;
   }
 
-  emit(event: FeedEvent, options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null }): void {
+  deleteEntity(id: string): FeedEvent | undefined {
+    if (!this.entities.has(id)) {
+      return undefined;
+    }
+    const version = this.nextVersion();
+    const event: FeedEvent = { event: "delete", resource_type: "entity", id, version };
     this.record(event);
+    return event;
+  }
+
+  deleteTask(id: string): FeedEvent | undefined {
+    const task = this.tasks.get(id);
+    if (!task) {
+      return undefined;
+    }
+    const version = this.nextVersion();
+    const event: FeedEvent = { event: "delete", resource_type: "task", id, version, entity_id: task.entity_id };
+    this.record(event);
+    return event;
+  }
+
+  deleteObject(id: string): FeedEvent | undefined {
+    if (!this.objects.has(id)) {
+      return undefined;
+    }
+    const version = this.nextVersion();
+    const event: FeedEvent = { event: "delete", resource_type: "object", id, version };
+    this.record(event);
+    return event;
+  }
+
+  private deleteEntityResponse(id: string): Response {
+    return this.deleteEntity(id) ? new Response(null, { status: 204 }) : json({ error: "entity not found" }, 404);
+  }
+
+  private deleteTaskResponse(id: string): Response {
+    return this.deleteTask(id) ? new Response(null, { status: 204 }) : json({ error: "task not found" }, 404);
+  }
+
+  private deleteObjectResponse(id: string): Response {
+    return this.deleteObject(id) ? new Response(null, { status: 204 }) : json({ error: "object not found" }, 404);
+  }
+
+  emit(event: FeedEvent, options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null; record?: boolean }): void {
+    if (options?.record !== false) {
+      this.record(event);
+    }
     if (options?.dropForSockets) return;
     for (const socket of this.sockets) {
       if (socket.subscribedTo(event, options?.beforeTaskEntityId)) {
@@ -127,6 +180,10 @@ export class FakeCore {
   }
 
   private record(event: FeedEvent): void {
+    if (this.recordedVersions.has(event.version)) {
+      return;
+    }
+    this.recordedVersions.add(event.version);
     this.version = Math.max(this.version, event.version);
     this.events.push(event);
     if (event.event === "delete") {
@@ -146,8 +203,6 @@ export class FakeCore {
     return this.version;
   }
 }
-
-let currentCore: FakeCore;
 
 class FakeWebSocket {
   readyState = 0;
@@ -189,6 +244,10 @@ class FakeWebSocket {
       this.listeners.set(type, listeners);
     }
     listeners.add(listener);
+  }
+
+  removeEventListener(type: "open" | "message" | "close" | "error", listener: Listener): void {
+    this.listeners.get(type)?.delete(listener);
   }
 
   receive(value: unknown): void {
@@ -236,6 +295,13 @@ function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 }
 
+function jsonOrNotFound(value: unknown, message: string): Response {
+  if (value === undefined) {
+    return json({ error: message }, 404);
+  }
+  return json(value);
+}
+
 async function readBody<T>(init: RequestInit): Promise<T> {
   return JSON.parse(String(init.body ?? "{}")) as T;
 }
@@ -257,7 +323,9 @@ function isDelete(type: "entity" | "task" | "object") {
 }
 
 function deleted(event: FeedEvent) {
-  return { id: event.id, type: event.resource_type, version: event.version };
+  const value: { id: string; type: string; version: number; entity_id?: string | null } = { id: event.id, type: event.resource_type, version: event.version };
+  if ("entity_id" in event && event.entity_id != null) value.entity_id = event.entity_id;
+  return value;
 }
 
 function subscriptionKey(filter: AtlasSubscription): string {
@@ -284,7 +352,10 @@ function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, before
     case "tasks_for_entity":
       return (
         event.resource_type === "task" &&
-        (beforeTaskEntityId === filter.entity_id || (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id))
+        (beforeTaskEntityId === filter.entity_id ||
+          (event as FeedEvent & { entity_id?: string | null }).entity_id === filter.entity_id ||
+          (event as FeedEvent & { previous_entity_id?: string | null }).previous_entity_id === filter.entity_id ||
+          (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id))
       );
   }
 }

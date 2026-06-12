@@ -1,0 +1,7 @@
+{
+  "event": "delete",
+  "resource_type": "task",
+  "id": "task-1",
+  "version": 4,
+  "entity_id": "asset-1"
+}

@@ -18,18 +18,11 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // ErrorResponse represents an API error response.
-type ErrorResponse struct {
-	Success   bool                   `json:"success"`
-	Message   string                 `json:"message"`
-	ErrorCode string                 `json:"error_code"`
-	ErrorID   string                 `json:"error_id"`
-	Timestamp string                 `json:"timestamp"`
-	Path      string                 `json:"path,omitempty"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-}
+type ErrorResponse = protocol.ErrorResponse
 
 // generateErrorID generates a unique error ID.
 func generateErrorID() string {
@@ -53,12 +46,12 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 }
 
 // writeError writes an error response.
-func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, message, errorCode string) {
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, message string, errorCode protocol.ErrorCode) {
 	h.writeErrorWithCause(w, r, status, message, errorCode, nil)
 }
 
 // writeErrorWithCause writes an error response and logs an optional wrapped cause (for 5xx diagnostics).
-func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, status int, message, errorCode string, cause error) {
+func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, status int, message string, errorCode protocol.ErrorCode, cause error) {
 	errorID := generateErrorID()
 	resp := ErrorResponse{
 		Success:   false,
@@ -71,7 +64,7 @@ func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, st
 
 	event := h.logger.Error().
 		Str("error_id", errorID).
-		Str("error_code", errorCode).
+		Str("error_code", string(errorCode)).
 		Str("path", r.URL.Path).
 		Str("method", r.Method).
 		Int("status", status)
@@ -105,7 +98,7 @@ func (h *Handler) writeValidationError(w http.ResponseWriter, r *http.Request, v
 	// Log the error
 	h.logger.Error().
 		Str("error_id", errorID).
-		Str("error_code", validationErr.Code).
+		Str("error_code", string(validationErr.Code)).
 		Str("path", r.URL.Path).
 		Str("method", r.Method).
 		Int("status", http.StatusBadRequest).
@@ -149,23 +142,23 @@ func (h *Handler) handleActionError(w http.ResponseWriter, r *http.Request, err 
 
 	var storageErr *storage.StorageError
 	if errors.As(err, &storageErr) {
-		h.writeErrorWithCause(w, r, http.StatusServiceUnavailable, storageErr.Message, "STORAGE_ERROR", err)
+		h.writeErrorWithCause(w, r, http.StatusServiceUnavailable, storageErr.Message, protocol.ErrorCodeStorageError, err)
 		return
 	}
 
 	var objNotFoundErr *storage.ObjectNotFoundError
 	if errors.As(err, &objNotFoundErr) {
-		h.writeErrorWithCause(w, r, http.StatusNotFound, "Object not found", "OBJECT_NOT_FOUND", err)
+		h.writeErrorWithCause(w, r, http.StatusNotFound, "Object not found", protocol.ErrorCodeObjectNotFound, err)
 		return
 	}
 
 	var bucketNotFoundErr *storage.BucketNotFoundError
 	if errors.As(err, &bucketNotFoundErr) {
-		h.writeErrorWithCause(w, r, http.StatusNotFound, "Storage bucket not found", "BUCKET_NOT_FOUND", err)
+		h.writeErrorWithCause(w, r, http.StatusNotFound, "Storage bucket not found", protocol.ErrorCodeBucketNotFound, err)
 		return
 	}
 
-	h.writeErrorWithCause(w, r, http.StatusInternalServerError, "Internal server error", "INTERNAL_SERVER_ERROR", err)
+	h.writeErrorWithCause(w, r, http.StatusInternalServerError, "Internal server error", protocol.ErrorCodeInternalServerError, err)
 }
 
 // setPaginationHeaders sets cursor pagination headers on the response.
@@ -393,10 +386,10 @@ func (h *Handler) decodeJSONRequestBody(w http.ResponseWriter, r *http.Request, 
 	}
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) {
-		h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", "BODY_TOO_LARGE")
+		h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", protocol.ErrorCodeBodyTooLarge)
 		return false
 	}
-	h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", "INVALID_JSON")
+	h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)
 	return false
 }
 
@@ -413,12 +406,12 @@ func optionalQueryString(q url.Values, key string) *string {
 // so callers can use it directly for both the query and pagination headers.
 func (h *Handler) parseListPagination(w http.ResponseWriter, r *http.Request) (limit int, cursor string, ok bool) {
 	if _, exists := r.URL.Query()["offset"]; exists {
-		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use cursor", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use cursor", protocol.ErrorCodeValidationError)
 		return 0, "", false
 	}
 	limit, err := parseNonNegativeIntQuery(r, "limit", 100)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", protocol.ErrorCodeValidationError)
 		return 0, "", false
 	}
 	return actions.ClampListLimit(limit), strings.TrimSpace(r.URL.Query().Get("cursor")), true

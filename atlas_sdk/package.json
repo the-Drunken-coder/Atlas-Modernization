@@ -1,14 +1,41 @@
 {
   "name": "@the-drunken-coder/atlas-sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "TypeScript SDK and CLI for Atlas Core.",
+  "author": "the-Drunken-coder",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-Drunken-coder/Atlas-Modernization.git",
+    "directory": "atlas_sdk"
+  },
+  "keywords": [
+    "atlas",
+    "atlas-core",
+    "sdk",
+    "change-feed",
+    "websocket"
+  ],
   "type": "module",
+  "files": [
+    "dist/"
+  ],
+  "main": "./dist/atlas_sdk/src/index.js",
+  "types": "./dist/atlas_sdk/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/atlas_sdk/src/index.d.ts",
+      "import": "./dist/atlas_sdk/src/index.js",
+      "default": "./dist/atlas_sdk/src/index.js"
+    }
+  },
   "bin": {
     "atlas": "./dist/atlas_sdk/src/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test:bin": "node ./dist/atlas_sdk/src/cli.js --help",
+    "prepack": "npm run build",
+    "test:bin": "node ./test/bin-smoke.mjs",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test": "npm run test:node && npm run test:browser"

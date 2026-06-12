@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "message": "Entity 'asset-1' was not found",
+  "error_code": "ENTITY_NOT_FOUND",
+  "error_id": "err_entity404",
+  "timestamp": "2026-06-12T12:00:00Z",
+  "path": "/entities/asset-1"
+}

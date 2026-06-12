@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "message": "Storage service is unavailable",
+  "error_code": "STORAGE_ERROR",
+  "error_id": "err_storage",
+  "timestamp": "2026-06-12T12:00:00Z",
+  "path": "/objects/object-1/download"
+}

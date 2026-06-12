@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func requestClientIP(r *http.Request) string {
@@ -22,7 +23,7 @@ func requestClientIP(r *http.Request) string {
 // DownloadObject handles GET /objects/{object_id}/download.
 func (h *Handler) DownloadObject(w http.ResponseWriter, r *http.Request) {
 	if h.storage == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "Storage service is not configured", "STORAGE_UNAVAILABLE")
+		h.writeError(w, r, http.StatusServiceUnavailable, "Storage service is not configured", protocol.ErrorCodeStorageUnavailable)
 		return
 	}
 
@@ -60,7 +61,7 @@ func (h *Handler) DownloadObject(w http.ResponseWriter, r *http.Request) {
 // Returns an error for binary or non-viewable content types.
 func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 	if h.storage == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "Storage service is not configured", "STORAGE_UNAVAILABLE")
+		h.writeError(w, r, http.StatusServiceUnavailable, "Storage service is not configured", protocol.ErrorCodeStorageUnavailable)
 		return
 	}
 
@@ -75,7 +76,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 
 	if !isViewableContentType(contentType) {
 		if !isUnsafeInlineContentType(contentType) {
-			h.writeError(w, r, http.StatusUnsupportedMediaType, "Content type is not viewable (only safe text-based formats are supported)", "CONTENT_TYPE_NOT_VIEWABLE")
+			h.writeError(w, r, http.StatusUnsupportedMediaType, "Content type is not viewable (only safe text-based formats are supported)", protocol.ErrorCodeContentTypeNotViewable)
 			return
 		}
 
@@ -108,7 +109,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 	}
 	maxViewSize := int64(effectiveMaxViewSizeMB) * 1024 * 1024
 	if size > maxViewSize {
-		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File is too large to view (maximum %dMB)", effectiveMaxViewSizeMB), "FILE_TOO_LARGE")
+		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File is too large to view (maximum %dMB)", effectiveMaxViewSizeMB), protocol.ErrorCodeFileTooLarge)
 		return
 	}
 
@@ -117,11 +118,11 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 	// larger-than-reported blob cannot be buffered unbounded into memory.
 	content, err := io.ReadAll(io.LimitReader(reader, maxViewSize+1))
 	if err != nil {
-		h.writeError(w, r, http.StatusInternalServerError, "Failed to read object content", "READ_ERROR")
+		h.writeError(w, r, http.StatusInternalServerError, "Failed to read object content", protocol.ErrorCodeReadError)
 		return
 	}
 	if int64(len(content)) > maxViewSize {
-		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File is too large to view (maximum %dMB)", effectiveMaxViewSizeMB), "FILE_TOO_LARGE")
+		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File is too large to view (maximum %dMB)", effectiveMaxViewSizeMB), protocol.ErrorCodeFileTooLarge)
 		return
 	}
 
@@ -147,7 +148,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 // UploadObject handles POST /objects/upload.
 func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	if h.storage == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "Storage service is not configured", "STORAGE_UNAVAILABLE")
+		h.writeError(w, r, http.StatusServiceUnavailable, "Storage service is not configured", protocol.ErrorCodeStorageUnavailable)
 		return
 	}
 
@@ -163,10 +164,10 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("Request body too large (maximum %dMB)", effectiveMaxUploadSizeMB), "BODY_TOO_LARGE")
+			h.writeError(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("Request body too large (maximum %dMB)", effectiveMaxUploadSizeMB), protocol.ErrorCodeBodyTooLarge)
 			return
 		}
-		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Failed to parse multipart form (maximum %dMB)", effectiveMaxUploadSizeMB), "INVALID_FORM")
+		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("Failed to parse multipart form (maximum %dMB)", effectiveMaxUploadSizeMB), protocol.ErrorCodeInvalidForm)
 		return
 	}
 	defer func() {
@@ -177,7 +178,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 
 	objectID := r.FormValue("object_id")
 	if objectID == "" {
-		h.writeError(w, r, http.StatusBadRequest, "object_id is required", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "object_id is required", protocol.ErrorCodeValidationError)
 		return
 	}
 
@@ -186,7 +187,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "file is required", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "file is required", protocol.ErrorCodeValidationError)
 		return
 	}
 	defer func() {
@@ -196,7 +197,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if header.Size > maxUploadSize {
-		h.writeError(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("File size exceeds maximum allowed (%dMB)", effectiveMaxUploadSizeMB), "FILE_TOO_LARGE")
+		h.writeError(w, r, http.StatusRequestEntityTooLarge, fmt.Sprintf("File size exceeds maximum allowed (%dMB)", effectiveMaxUploadSizeMB), protocol.ErrorCodeFileTooLarge)
 		return
 	}
 

@@ -3,12 +3,18 @@ package serializers
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.
 const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
+
+// MetadataBlock uses the generated protocol metadata shape.
+type MetadataBlock = protocol.MetadataBlock
 
 // StrongETag returns a strong quoted ETag for resource concurrency (If-Match).
 func StrongETag(version int64) string {
@@ -37,17 +43,19 @@ type TaskResponse struct {
 }
 
 // ObjectResponse represents the serialized form of a MediaObject (full detail).
+// ReferencedBy is normalized to the protocol ObjectReference shape and emits
+// only entity_id/task_id, even if stored object metadata includes extra keys.
 type ObjectResponse struct {
-	ObjectID     string                   `json:"object_id"`
-	Path         *string                  `json:"path"`
-	ContentType  *string                  `json:"content_type"`
-	Type         *string                  `json:"type"`
-	SizeBytes    *int64                   `json:"size_bytes"`
-	UsageHints   []string                 `json:"usage_hints"`
-	ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
-	Bucket       *string                  `json:"bucket"`
-	Metadata     MetadataBlock            `json:"metadata"`
-	Payload      map[string]interface{}   `json:"payload,omitempty"`
+	ObjectID     string                     `json:"object_id"`
+	Path         *string                    `json:"path"`
+	ContentType  *string                    `json:"content_type"`
+	Type         *string                    `json:"type"`
+	SizeBytes    *int64                     `json:"size_bytes"`
+	UsageHints   []string                   `json:"usage_hints"`
+	ReferencedBy []protocol.ObjectReference `json:"referenced_by,omitempty"`
+	Bucket       *string                    `json:"bucket"`
+	Metadata     MetadataBlock              `json:"metadata"`
+	Payload      map[string]interface{}     `json:"payload,omitempty"`
 }
 
 // ObjectListResponse represents the serialized form of a MediaObject for list endpoints (without payload).
@@ -60,26 +68,6 @@ type ObjectListResponse struct {
 	UsageHints  []string      `json:"usage_hints"`
 	Bucket      *string       `json:"bucket"`
 	Metadata    MetadataBlock `json:"metadata"`
-}
-
-// ObjectFeedResponse represents object metadata sent over the change feed.
-type ObjectFeedResponse struct {
-	ObjectID     string                   `json:"object_id"`
-	Path         *string                  `json:"path"`
-	ContentType  *string                  `json:"content_type"`
-	Type         *string                  `json:"type"`
-	SizeBytes    *int64                   `json:"size_bytes"`
-	UsageHints   []string                 `json:"usage_hints"`
-	ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
-	Bucket       *string                  `json:"bucket"`
-	Metadata     MetadataBlock            `json:"metadata"`
-}
-
-// MetadataBlock contains storage metadata exposed on API resources.
-type MetadataBlock struct {
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-	Version   int64  `json:"version,omitempty"`
 }
 
 // SerializeEntity converts an Entity to its API response format.
@@ -150,7 +138,7 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 		Type:         o.Type,
 		SizeBytes:    o.GetSizeBytes(),
 		UsageHints:   usageHints,
-		ReferencedBy: o.GetReferencedBy(),
+		ReferencedBy: protocolObjectReferences(o.ObjectID, o.GetReferencedBy()),
 		Bucket:       o.GetBucket(),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
@@ -187,8 +175,8 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 	}
 }
 
-// SerializeObjectForFeed converts a MediaObject to metadata-only feed format.
-func SerializeObjectForFeed(o *models.MediaObject) *ObjectFeedResponse {
+// SerializeObjectForFeed converts a MediaObject to the protocol-owned object feed resource.
+func SerializeObjectForFeed(o *models.MediaObject) *protocol.ObjectResource {
 	if o == nil {
 		return nil
 	}
@@ -197,14 +185,14 @@ func SerializeObjectForFeed(o *models.MediaObject) *ObjectFeedResponse {
 	if usageHints == nil {
 		usageHints = []string{}
 	}
-	return &ObjectFeedResponse{
+	return &protocol.ObjectResource{
 		ObjectID:     o.ObjectID,
 		Path:         o.Path,
 		ContentType:  o.ContentType,
 		Type:         o.Type,
 		SizeBytes:    o.GetSizeBytes(),
 		UsageHints:   usageHints,
-		ReferencedBy: o.GetReferencedBy(),
+		ReferencedBy: protocolObjectReferences(o.ObjectID, o.GetReferencedBy()),
 		Bucket:       o.GetBucket(),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
@@ -212,6 +200,58 @@ func SerializeObjectForFeed(o *models.MediaObject) *ObjectFeedResponse {
 			Version:   o.Version,
 		},
 	}
+}
+
+func protocolObjectReferences(objectID string, values []map[string]interface{}) []protocol.ObjectReference {
+	if len(values) == 0 {
+		return nil
+	}
+	refs := make([]protocol.ObjectReference, 0, len(values))
+	for _, value := range values {
+		ref := protocol.ObjectReference{}
+		if raw, exists := value["entity_id"]; exists {
+			if entityID, ok := raw.(string); ok {
+				trimmed := strings.TrimSpace(entityID)
+				if trimmed != "" {
+					ref.EntityID = &trimmed
+				}
+			} else {
+				log.Warn().
+					Str("object_id", objectID).
+					Str("key", "entity_id").
+					Str("actual_type", fmt.Sprintf("%T", raw)).
+					Interface("value", raw).
+					Msg("Dropping object feed reference field with non-string id")
+			}
+		}
+		if raw, exists := value["task_id"]; exists {
+			if taskID, ok := raw.(string); ok {
+				trimmed := strings.TrimSpace(taskID)
+				if trimmed != "" {
+					ref.TaskID = &trimmed
+				}
+			} else {
+				log.Warn().
+					Str("object_id", objectID).
+					Str("key", "task_id").
+					Str("actual_type", fmt.Sprintf("%T", raw)).
+					Interface("value", raw).
+					Msg("Dropping object feed reference field with non-string id")
+			}
+		}
+		if ref.EntityID != nil || ref.TaskID != nil {
+			refs = append(refs, ref)
+		} else {
+			log.Warn().
+				Str("object_id", objectID).
+				Interface("reference", value).
+				Msg("Dropping object feed reference without entity_id or task_id")
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return refs
 }
 
 // SerializeEntities converts a slice of entities to their API response format.

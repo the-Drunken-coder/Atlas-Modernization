@@ -4,16 +4,17 @@ import (
 	"net/http"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // Feed upgrades the request to the Atlas change-feed websocket.
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	if h.feedHub == nil {
-		http.Error(w, "feed hub is not configured", http.StatusServiceUnavailable)
+		h.writeError(w, r, http.StatusServiceUnavailable, "feed hub is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 	if h.config == nil {
-		http.Error(w, "feed config is not configured", http.StatusServiceUnavailable)
+		h.writeError(w, r, http.StatusServiceUnavailable, "feed config is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 	server := feed.Server{

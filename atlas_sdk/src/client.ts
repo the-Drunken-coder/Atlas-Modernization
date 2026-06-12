@@ -7,8 +7,11 @@ import {
   type FeedUnsubscribeMessage,
   type ObjectResource,
   type ResourceType,
+  type TaskDeleteEvent,
   type TaskResource
 } from "./protocol.js";
+
+const WS_CLOSED = 3;
 
 type FetchLike = typeof fetch;
 
@@ -17,9 +20,17 @@ type WebSocketLike = {
   send(data: string): void;
   close(): void;
   addEventListener(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  removeEventListener?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  off?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  removeListener?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
 };
 
 type WebSocketCtor = new (url: string) => WebSocketLike;
+
+type FeedConnection = {
+  socket: WebSocketLike;
+  controller: AbortController;
+};
 
 export type AtlasSubscription =
   | { filter: "all" }
@@ -70,6 +81,7 @@ type DeletedResource = {
   id: string;
   type: ResourceType;
   version: number;
+  entity_id?: string | null;
 };
 
 type WatchCallback<T> = (value: T | undefined, event: FeedEvent) => void;
@@ -136,7 +148,7 @@ export class AtlasClient {
     create: (entity: EntityResource) => this.writeResource<EntityResource>("POST", "/entities", entity, "entity"),
     update: (id: string, patch: Partial<EntityResource>, options?: { ifMatchVersion?: number }) =>
       this.writeResource<EntityResource>("PATCH", `/entities/${encodeURIComponent(id)}`, patch, "entity", options?.ifMatchVersion),
-    delete: (id: string) => this.deleteResource(`/entities/${encodeURIComponent(id)}`)
+    delete: (id: string) => this.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`)
   };
 
   readonly tasks = {
@@ -144,7 +156,7 @@ export class AtlasClient {
     create: (task: TaskResource) => this.writeResource<TaskResource>("POST", "/tasks", task, "task"),
     update: (id: string, patch: Partial<TaskResource>, options?: { ifMatchVersion?: number }) =>
       this.writeResource<TaskResource>("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", options?.ifMatchVersion),
-    delete: (id: string) => this.deleteResource(`/tasks/${encodeURIComponent(id)}`),
+    delete: (id: string) => this.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
     watch: (id: string, callback: WatchCallback<TaskResource>) => this.watch({ filter: "id", resource_type: "task", id }, callback)
   };
 
@@ -153,7 +165,7 @@ export class AtlasClient {
     create: (object: ObjectResource) => this.writeResource<ObjectResource>("POST", "/objects", object, "object"),
     update: (id: string, patch: Partial<ObjectResource>, options?: { ifMatchVersion?: number }) =>
       this.writeResource<ObjectResource>("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", options?.ifMatchVersion),
-    delete: (id: string) => this.deleteResource(`/objects/${encodeURIComponent(id)}`),
+    delete: (id: string) => this.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
     content: (id: string) => this.objectContent(id)
   };
 
@@ -171,12 +183,14 @@ export class AtlasClient {
   };
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<any>>>();
+  private readonly pendingDeletes = new Set<string>();
   private syncRunning = false;
   private healthy = false;
   private degraded = false;
   private lastVersion = 0;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private socket: WebSocketLike | undefined;
+  private feedConnection: FeedConnection | undefined;
 
   constructor(options: AtlasClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -245,7 +259,37 @@ export class AtlasClient {
       throw new Error("AtlasClient requires a WebSocket implementation");
     }
     const socket = new this.WebSocketImpl(feedUrl(this.baseUrl));
-    this.socket = socket;
+    const previousConnection = this.feedConnection;
+    previousConnection?.controller.abort();
+    if (previousConnection && previousConnection.socket.readyState !== WS_CLOSED) {
+      previousConnection.socket.close();
+    }
+    // Close any orphaned this.socket that drifted away from previousConnection?.socket and is not already CLOSED.
+    if (this.socket && this.socket !== previousConnection?.socket && this.socket.readyState !== WS_CLOSED) {
+      this.socket.close();
+    }
+    this.socket = undefined;
+    const connection: FeedConnection = { socket, controller: new AbortController() };
+    this.feedConnection = connection;
+    const ensureCurrent = () => {
+      if (this.feedConnection !== connection || connection.controller.signal.aborted) {
+        throw new Error("feed connection was replaced");
+      }
+    };
+    const startupCleanups: Array<() => void> = [];
+    const onStartup = (type: "open" | "message" | "close" | "error", listener: (event: any) => void) => {
+      socket.addEventListener(type, listener);
+      startupCleanups.push(() => removeSocketListener(socket, type, listener));
+    };
+    const onAbort = (listener: () => void) => {
+      connection.controller.signal.addEventListener("abort", listener, { once: true });
+      startupCleanups.push(() => connection.controller.signal.removeEventListener("abort", listener));
+    };
+    const cleanupStartup = () => {
+      for (const cleanup of startupCleanups.splice(0)) {
+        cleanup();
+      }
+    };
     const hello = new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (fn: () => void) => {
@@ -276,39 +320,66 @@ export class AtlasClient {
           finish(() => reject(error));
         }
       };
-      socket.addEventListener("message", onMessage);
-      socket.addEventListener("close", () => finish(() => reject(new Error("feed websocket closed before protocol hello"))));
-      socket.addEventListener("error", () => finish(() => reject(new Error("feed websocket failed before protocol hello"))));
+      const onClose = () => finish(() => reject(new Error("feed websocket closed before protocol hello")));
+      const onError = () => finish(() => reject(new Error("feed websocket failed before protocol hello")));
+      const abortHello = () => finish(() => reject(new Error("feed connection was replaced")));
+      onStartup("message", onMessage);
+      onStartup("close", onClose);
+      onStartup("error", onError);
+      onAbort(abortHello);
     });
     void hello.catch(() => undefined);
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const finish = (fn: () => void) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        fn();
-      };
-      const timer = setTimeout(
-        () => finish(() => reject(new Error("feed websocket open timed out"))),
-        this.feedHandshakeTimeoutMs
-      );
-      socket.addEventListener("open", () => finish(resolve));
-      socket.addEventListener("close", () => finish(() => reject(new Error("feed websocket closed before opening"))));
-      socket.addEventListener("error", () => finish(() => reject(new Error("feed websocket failed to open"))));
-    });
-    if (this.apiKey) {
-      socket.send(JSON.stringify({ action: "auth", api_key: this.apiKey }));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (fn: () => void) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          fn();
+        };
+        const timer = setTimeout(
+          () => finish(() => reject(new Error("feed websocket open timed out"))),
+          this.feedHandshakeTimeoutMs
+        );
+        const onOpen = () => finish(resolve);
+        const onClose = () => finish(() => reject(new Error("feed websocket closed before opening")));
+        const onError = () => finish(() => reject(new Error("feed websocket failed to open")));
+        const abortOpen = () => finish(() => reject(new Error("feed connection was replaced")));
+        onStartup("open", onOpen);
+        onStartup("close", onClose);
+        onStartup("error", onError);
+        onAbort(abortOpen);
+      });
+      ensureCurrent();
+      if (this.apiKey) {
+        socket.send(JSON.stringify({ action: "auth", api_key: this.apiKey }));
+      }
+      await hello;
+      ensureCurrent();
+      cleanupStartup();
+    } catch (error) {
+      cleanupStartup();
+      if (this.feedConnection === connection) {
+        this.feedConnection = undefined;
+      }
+      socket.close();
+      throw error;
     }
-    await hello;
+
+    ensureCurrent();
+    this.socket = socket;
     this.healthy = true;
     this.degraded = false;
     for (const filter of this.subscriptions) {
       socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
     }
     socket.addEventListener("message", (message: any) => {
+      if (this.feedConnection !== connection || this.socket !== socket) {
+        return;
+      }
       try {
         const data = JSON.parse(String(message.data));
         if (data.type === "hello") {
@@ -324,6 +395,14 @@ export class AtlasClient {
       }
     });
     socket.addEventListener("close", () => {
+      if (this.feedConnection !== connection) {
+        return;
+      }
+      this.feedConnection = undefined;
+      if (this.socket !== socket) {
+        return;
+      }
+      this.socket = undefined;
       this.healthy = false;
       this.degraded = true;
     });
@@ -331,10 +410,14 @@ export class AtlasClient {
 
   async changedSince(): Promise<void> {
     const response = await this.http<ChangedSinceResponse>("GET", `/queries/changed-since?since_version=${this.lastVersion}`);
-    const events = changedSinceToEvents(response).sort((a, b) => a.version - b.version);
-    for (const event of events) {
+    for (const entity of response.entities ?? []) this.cacheResource("entity", entity.entity_id, entity);
+    for (const task of response.tasks ?? []) this.cacheResource("task", task.task_id, task);
+    for (const object of response.objects ?? []) this.cacheResource("object", object.object_id, object);
+    const deleteEvents = changedSinceToDeleteEvents(response).sort((a, b) => a.version - b.version);
+    for (const event of deleteEvents) {
       this.applyEvent(event);
     }
+    this.pendingDeletes.clear();
     this.lastVersion = Math.max(this.lastVersion, response.version);
     this.degraded = false;
     this.healthy = this.syncRunning;
@@ -383,11 +466,19 @@ export class AtlasClient {
   }
 
   private applyEvent(event: FeedEvent): void {
-    if (event.version <= this.versionFor(event.resource_type, event.id)) {
+    const key = resourceCacheKey(event.resource_type, event.id);
+    const current = this.cache[event.resource_type].get(event.id);
+    if ((this.pendingDeletes.has(key) || current?.deleted) && event.event === "update") {
+      this.lastVersion = Math.max(this.lastVersion, event.version);
       return;
     }
-    const previous = this.cache[event.resource_type].get(event.id)?.value;
+    if (event.version <= this.versionFor(event.resource_type, event.id)) {
+      this.lastVersion = Math.max(this.lastVersion, event.version);
+      return;
+    }
+    const previous = current?.value;
     if (event.event === "delete") {
+      this.pendingDeletes.delete(key);
       this.cache[event.resource_type].set(event.id, { version: event.version, deleted: true });
       this.lastVersion = Math.max(this.lastVersion, event.version);
       this.notify(event, undefined, previous);
@@ -401,6 +492,11 @@ export class AtlasClient {
 
   private cacheResource(type: ResourceType, id: string, value: EntityResource | TaskResource | ObjectResource): void {
     const version = value.metadata.version;
+    const existing = this.cache[type].get(id);
+    if (existing && existing.version >= version) {
+      return;
+    }
+    this.pendingDeletes.delete(resourceCacheKey(type, id));
     this.cache[type].set(id, { value: value as any, version, deleted: false });
     this.lastVersion = Math.max(this.lastVersion, version);
   }
@@ -459,8 +555,11 @@ export class AtlasClient {
     return resource;
   }
 
-  private async deleteResource(path: string): Promise<void> {
+  private async deleteResource(type: ResourceType, id: string, path: string): Promise<void> {
     await this.http<void>("DELETE", path);
+    const previousVersion = this.cache[type].get(id)?.version ?? 0;
+    this.cache[type].set(id, { version: previousVersion, deleted: true });
+    this.pendingDeletes.add(resourceCacheKey(type, id));
   }
 
   private async objectContent(id: string): Promise<ArrayBuffer> {
@@ -537,19 +636,13 @@ export class AtlasClient {
   }
 }
 
-function changedSinceToEvents(response: ChangedSinceResponse): FeedEvent[] {
+function changedSinceToDeleteEvents(response: ChangedSinceResponse): FeedEvent[] {
   const events: FeedEvent[] = [];
-  for (const entity of response.entities ?? []) {
-    events.push({ event: "update", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity });
-  }
-  for (const task of response.tasks ?? []) {
-    events.push({ event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task });
-  }
-  for (const object of response.objects ?? []) {
-    events.push({ event: "update", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object });
-  }
   for (const item of response.deleted_entities ?? []) events.push({ event: "delete", resource_type: "entity", id: item.id, version: item.version });
-  for (const item of response.deleted_tasks ?? []) events.push({ event: "delete", resource_type: "task", id: item.id, version: item.version });
+  for (const item of response.deleted_tasks ?? []) {
+    const event: TaskDeleteEvent = { event: "delete", resource_type: "task", id: item.id, version: item.version, entity_id: item.entity_id };
+    events.push(event);
+  }
   for (const item of response.deleted_objects ?? []) events.push({ event: "delete", resource_type: "object", id: item.id, version: item.version });
   return events;
 }
@@ -561,18 +654,18 @@ function subscriptionMessage(action: "subscribe" | "unsubscribe", filter: AtlasS
 function subscriptionKey(filter: AtlasSubscription): string {
   switch (filter.filter) {
     case "all":
-      return "all";
+      return JSON.stringify(["all"]);
     case "id":
-      return `id:${filter.resource_type}:${filter.id}`;
+      return JSON.stringify(["id", filter.resource_type, filter.id]);
     case "type":
-      return `type:${filter.resource_type}`;
+      return JSON.stringify(["type", filter.resource_type]);
     case "tasks_for_entity":
-      return `tasks_for_entity:${filter.entity_id}`;
+      return JSON.stringify(["tasks_for_entity", filter.entity_id]);
   }
 }
 
 function parseSubscriptionKey(key: string): AtlasSubscription {
-  const [kind, resourceType, id] = key.split(":");
+  const [kind, resourceType, id] = JSON.parse(key) as string[];
   if (kind === "all") return { filter: "all" };
   if (kind === "id") return { filter: "id", resource_type: resourceType as ResourceType, id };
   if (kind === "type") return { filter: "type", resource_type: resourceType as ResourceType };
@@ -599,6 +692,8 @@ function matchesSubscription(filter: AtlasSubscription, event: FeedEvent, previo
       }
       return (
         (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id) ||
+        (event as FeedEvent & { entity_id?: string | null }).entity_id === filter.entity_id ||
+        (event as FeedEvent & { previous_entity_id?: string | null }).previous_entity_id === filter.entity_id ||
         ((previous as TaskResource | undefined)?.entity_id ?? "") === filter.entity_id
       );
   }
@@ -608,6 +703,37 @@ function resourceID(type: ResourceType, resource: EntityResource | TaskResource 
   if (type === "entity") return (resource as EntityResource).entity_id;
   if (type === "task") return (resource as TaskResource).task_id;
   return (resource as ObjectResource).object_id;
+}
+
+function resourceCacheKey(type: ResourceType, id: string): string {
+  return JSON.stringify([type, id]);
+}
+
+function removeSocketListener(
+  socket: WebSocketLike,
+  type: "open" | "message" | "close" | "error",
+  listener: (event: any) => void
+): void {
+  if (socket.removeEventListener) {
+    socket.removeEventListener(type, listener);
+    return;
+  }
+  if (socket.off) {
+    socket.off(type, listener);
+    return;
+  }
+  if (socket.removeListener) {
+    socket.removeListener(type, listener);
+    return;
+  }
+  if (shouldWarnForSocketCleanup()) {
+    console.warn(`AtlasClient could not remove ${type} websocket startup listener`);
+  }
+}
+
+function shouldWarnForSocketCleanup(): boolean {
+  if (typeof process === "undefined") return true;
+  return process.env?.NODE_ENV !== "production";
 }
 
 function feedUrl(baseUrl: string): string {

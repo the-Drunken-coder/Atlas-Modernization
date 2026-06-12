@@ -1,8 +1,8 @@
 # Atlas SDK
 
-The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: a TypeScript/JavaScript package with a typed HTTP client, an optional sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. The package is private in this repository; public npm publishing is a later release step.
+The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: a TypeScript/JavaScript package with a typed HTTP client, an optional sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
 
-The goal is that **no service ever calls the API manually** — every UI, asset-side service, and tool talks to Atlas through the SDK or its bundled CLI. The one documented interim exception: non-TypeScript services without an SDK port may call the API directly (see "CLI and cross-language story"); the goal stands because the contract, not the package, is the source of truth. The one piece of new API work the SDK depends on — the websocket change feed in Atlas Core — was designed and built separately, before the SDK ([change feed doc](../atlas-change-feed/README.md)).
+The SDK is the preferred client path: UI code, asset-side services, and tools should generally talk to Atlas through the SDK or its bundled CLI rather than hand-writing API calls. Direct API use remains acceptable for tooling and non-TypeScript services without an SDK port (see "CLI and cross-language story"), but it is not the recommended default. The one piece of new API work the SDK depends on — the websocket change feed in Atlas Core — was designed and built separately, before the SDK ([change feed doc](../atlas-change-feed/README.md)).
 
 **Sole consumer:** the only user of Atlas and this SDK is its developer. Publishing to public npm is for convenience, not for external users — the package carries **no compatibility guarantees**. Breaking changes are preferred over compatibility shims (matching repo-wide policy in `AGENTS.md`), and all consumers upgrade in lockstep. To make lockstep safe, the SDK performs a cheap version handshake and fails loudly on SDK/API mismatch rather than degrading quietly — over HTTP at client startup and again at websocket connect. The revision token is the generated `ATLAS_PROTOCOL_REVISION`; Core exposes it through `GET /protocol/revision` and the feed `hello` frame.
 
@@ -24,7 +24,7 @@ The goal is that **no service ever calls the API manually** — every UI, asset-
 
 Two components, not three modes:
 
-1. **Typed HTTP client** — always present. Typed functions for every API endpoint: entity/task/object CRUD, task lifecycle (`acknowledge`/`complete`/`fail`/`status`), telemetry, check-in, object upload/download, queries.
+1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. Task lifecycle helpers, telemetry, check-in, object upload, and general query helpers are still direct API calls until they are added to the SDK.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
 The user-facing modes are constructor presets over these components:
@@ -84,9 +84,13 @@ An object is two things, treated differently:
 - **Metadata** (small JSON: name, type, version, references) — flows over the change feed and lives in the cache like entities and tasks.
 - **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
 
+Object `referenced_by` entries are normalized to the protocol `ObjectReference` shape: only `entity_id` and `task_id` are emitted. Extra keys in stored object metadata are intentionally not part of the public API response.
+
 ## Types: generated, not hand-written
 
 Resource types come from `atlas_protocol` generated artifacts: the SDK imports `atlas_protocol/generated/typescript/index.ts` directly (by path) rather than copying or hand-writing resource shapes, so protocol changes propagate by regeneration and the SDK stays in lockstep with Core. The generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
+
+The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/atlas_sdk/src/*` and the generated `dist/atlas_protocol/generated/typescript/*` module that the SDK imports. Package metadata points `main`, `exports`, and `types` at the built SDK entrypoint.
 
 ## CLI and cross-language story
 
@@ -95,7 +99,7 @@ A TypeScript npm package cannot be imported by Python. The goal of being usable 
 1. **A CLI bundled with the SDK** (`atlas entities get <id>`, `atlas tasks create <json>`, JSON output). Any language can subprocess it. The CLI is also the first local testing tool and exercises the whole typed client. For *pushed* data (a Python asset service receiving its tasks), one-shot subprocess calls are not enough, so the CLI includes a long-running streaming mode — `atlas watch --subscribe <filter> --follow` — that runs the sync engine and emits one JSON line per change event for the parent process to read. CI smoke-tests the compiled binary so the published entrypoint always runs.
 2. **A language-neutral contract:** resource shapes are JSON Schema; the feed event shape, subscription messages, gap-detection rule, and changed-since reconciliation algorithm are specified in the [change feed doc](../atlas-change-feed/README.md) and authored in the protocol CUE schema, so a future Python SDK is a port, not a redesign.
 
-Python services in the interim use the CLI or direct API calls; that does not violate the spirit of "everything through the SDK" because the contract, not the package, is the source of truth.
+Python services in the interim may use the CLI or direct API calls; direct calls are a special-case escape hatch, not the default client path. The contract, not the package, remains the source of truth.
 
 ## Auth
 

@@ -6,7 +6,8 @@ _Revision: 2026-05-29_
 
 Atlas Core returns a consistent JSON error envelope from **HTTP handler** code paths. Error mapping is
 implemented in `internal/api/handlers/handler_http.go` (`handleActionError`, `writeError`,
-`writeValidationError`).
+`writeValidationError`). The canonical error-code enum lives in Atlas Protocol as `#ErrorCode`
+and is generated for Go as `atlasprotocol.ErrorCode`.
 
 **Exception:** `APIKeyAuth` (`internal/api/middleware/middleware.go`) returns **401 Unauthorized** with a small JSON body (`success`, `message`, `error_code`) and does **not** include `error_id`, `timestamp`, or `path`. Treat auth failures separately from handler-generated errors.
 
@@ -67,6 +68,8 @@ Some handlers call `writeError` directly (same envelope, not via `handleActionEr
 | `INVALID_JSON` | 400 | Malformed or empty JSON body |
 | `BODY_TOO_LARGE` | 413 | Request body exceeds handler limit |
 | `VALIDATION_ERROR` | 400 | Invalid query params or required field missing |
+| `UNAUTHORIZED` | 401 | API-key middleware rejected a request |
+| `FEED_UNAVAILABLE` | 503 | Change-feed hub or config is not available |
 | `STORAGE_UNAVAILABLE` | 503 | MinIO not configured |
 | `CONTENT_TYPE_NOT_VIEWABLE` | 400 | Object view on non-text content type |
 | `FILE_TOO_LARGE` | 400 | View/download size exceeded |
@@ -81,7 +84,7 @@ Handler-generated error responses use:
 
 - `success` (`false`)
 - `message`
-- `error_code`
+- `error_code` (one of Atlas Protocol `#ErrorCode`)
 - `error_id`
 - `timestamp`
 - `path` (when available)

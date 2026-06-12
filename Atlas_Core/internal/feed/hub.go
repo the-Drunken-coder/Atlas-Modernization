@@ -131,12 +131,23 @@ func (h *Hub) PublishResourceChange(change actions.ResourceChange) {
 	if err != nil {
 		log.Error().
 			Err(err).
-			Str("event", change.Event).
-			Str("resource_type", change.ResourceType).
+			Str("event", string(change.Event)).
+			Str("resource_type", string(change.ResourceType)).
 			Str("id", change.ID).
 			Int64("version", change.Version).
 			Msg("Atlas feed change could not be converted to a feed event; skipping version")
 		h.SkipVersion(change.Version, "event_conversion_failed")
+		return
+	}
+	if errors := ProtocolValidationErrors(routed.Event); len(errors) > 0 {
+		log.Error().
+			Strs("validation_errors", errors).
+			Str("event", string(change.Event)).
+			Str("resource_type", string(change.ResourceType)).
+			Str("id", change.ID).
+			Int64("version", change.Version).
+			Msg("Atlas feed event failed protocol validation; skipping version")
+		h.SkipVersion(change.Version, "invalid_feed_event")
 		return
 	}
 	h.Publish(routed)
@@ -427,8 +438,8 @@ func subscriptionMatches(sub Subscription, event RoutedEvent) bool {
 
 func RoutedEventFromChange(change actions.ResourceChange) (RoutedEvent, error) {
 	event := protocol.FeedEvent{
-		Event:        protocol.FeedEventName(change.Event),
-		ResourceType: protocol.ResourceType(change.ResourceType),
+		Event:        change.Event,
+		ResourceType: change.ResourceType,
 		ID:           change.ID,
 		Version:      change.Version,
 	}
@@ -445,6 +456,12 @@ func RoutedEventFromChange(change actions.ResourceChange) (RoutedEvent, error) {
 	case actions.ChangeResourceTask:
 		routed.BeforeTaskEntityID = taskEntityID(change.BeforeTask)
 		routed.AfterTaskEntityID = taskEntityID(change.AfterTask)
+		if change.Event == actions.ChangeEventUpdate {
+			event.PreviousEntityID = nullableTaskEntityID(change.BeforeTask)
+		}
+		if change.Event == actions.ChangeEventDelete {
+			event.EntityID = nullableTaskEntityID(change.BeforeTask)
+		}
 		if change.Event != actions.ChangeEventDelete {
 			if change.AfterTask == nil {
 				return RoutedEvent{}, fmt.Errorf("task %s event missing after state", change.Event)
@@ -473,6 +490,17 @@ func taskEntityID(task *models.Task) string {
 		return ""
 	}
 	return *task.EntityID
+}
+
+func nullableTaskEntityID(task *models.Task) *string {
+	if task == nil {
+		return nil
+	}
+	if task.EntityID == nil {
+		return nil
+	}
+	value := *task.EntityID
+	return &value
 }
 
 func ProtocolValidationErrors(event protocol.FeedEvent) []string {

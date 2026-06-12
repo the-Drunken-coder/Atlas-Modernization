@@ -1,0 +1,21 @@
+{
+  "event": "create",
+  "resource_type": "task",
+  "id": "task-1",
+  "version": 1,
+  "resource": {
+    "task_id": "task-1",
+    "status": "pending",
+    "entity_id": "asset-1",
+    "components": {
+      "command": {
+        "type": "move_to_location"
+      }
+    },
+    "metadata": {
+      "created_at": "2026-06-12T12:00:00Z",
+      "updated_at": "2026-06-12T12:00:00Z",
+      "version": 1
+    }
+  }
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // --- Entity Handlers ---
@@ -170,7 +171,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 
 	telemetry := buildTelemetryComponent(req.Latitude, req.Longitude, req.AltitudeM, req.SpeedMS, req.HeadingDeg, nil)
 	if len(telemetry) == 0 {
-		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", protocol.ErrorCodeValidationError)
 		return
 	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
@@ -201,16 +202,16 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseNonNegativeIntQuery(r, "limit", 10)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", protocol.ErrorCodeValidationError)
 		return
 	}
 	if limit < 1 || limit > 20 {
-		h.writeError(w, r, http.StatusBadRequest, "limit must be between 1 and 20", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "limit must be between 1 and 20", protocol.ErrorCodeValidationError)
 		return
 	}
 
 	if _, exists := r.URL.Query()["offset"]; exists {
-		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use task_cursor", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use task_cursor", protocol.ErrorCodeValidationError)
 		return
 	}
 	taskCursor := strings.TrimSpace(r.URL.Query().Get("task_cursor"))
@@ -221,7 +222,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	if sinceStr != "" {
 		parsed, err := parseRFC3339Timestamp(sinceStr)
 		if err != nil {
-			h.writeError(w, r, http.StatusBadRequest, "Invalid since timestamp format (use RFC3339)", "VALIDATION_ERROR")
+			h.writeError(w, r, http.StatusBadRequest, "Invalid since timestamp format (use RFC3339)", protocol.ErrorCodeValidationError)
 			return
 		}
 		since = &parsed

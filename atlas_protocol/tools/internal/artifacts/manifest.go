@@ -170,10 +170,15 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	errorResponseSchema, err := jsonSchema(root, "#ErrorResponse", revision)
+	if err != nil {
+		return nil, err
+	}
 	typescriptSource, err := typeScriptSource(revision, map[string][]byte{
 		"EntityBlob":             entitySchema,
 		"TaskBlob":               taskSchema,
 		"ObjectBlob":             objectSchema,
+		"ErrorResponse":          errorResponseSchema,
 		"EntityResource":         entityResourceSchema,
 		"TaskResource":           taskResourceSchema,
 		"ObjectResource":         objectResourceSchema,
@@ -187,13 +192,26 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	goRevision, err := goRevisionSource(revision)
+	if err != nil {
+		return nil, err
+	}
+	goTypes, err := goTypesSource()
+	if err != nil {
+		return nil, err
+	}
+	goValidators, err := goValidatorsSource()
+	if err != nil {
+		return nil, err
+	}
 	artifacts := []Artifact{
 		{Path: "generated/revision.txt", Content: revisionTextSource(revision)},
-		{Path: "generated/go/atlasprotocol/revision.go", Content: goRevisionSource(revision)},
-		{Path: "generated/go/atlasprotocol/types.go", Content: goTypesSource()},
-		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidatorsSource()},
+		{Path: "generated/go/atlasprotocol/revision.go", Content: goRevision},
+		{Path: "generated/go/atlasprotocol/types.go", Content: goTypes},
+		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidators},
 		{Path: "generated/typescript/index.ts", Content: typescriptSource},
 		{Path: "generated/jsonschema/entity.schema.json", Content: entitySchema},
+		{Path: "generated/jsonschema/error/response.schema.json", Content: errorResponseSchema},
 		{Path: "generated/jsonschema/task.schema.json", Content: taskSchema},
 		{Path: "generated/jsonschema/object.schema.json", Content: objectSchema},
 		{Path: "generated/jsonschema/feed/client-message.schema.json", Content: feedClientMessageSchema},

@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -332,6 +333,51 @@ func TestLoadRejectsEnabledAPIAuthWithEmptySettingsKey(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
+	for _, apiKey := range []string{
+		"changeme",
+		"000000",
+		"111111",
+		"123456",
+		"abcd1234",
+		"admin",
+		"apikey",
+		"asdf",
+		"default",
+		"dummy",
+		"example",
+		"key",
+		"password",
+		"password123",
+		"placeholder",
+		"qwerty",
+		"secret",
+		"test",
+		"your-key-here",
+		" changeme ",
+		"CHANGEME",
+		"PlAcEhOlDeR",
+	} {
+		t.Run(apiKey, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("ENABLE_API_AUTH", "true")
+			t.Setenv("API_AUTH_KEY", apiKey)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected enabled API auth with placeholder API_AUTH_KEY %q to fail", apiKey)
+			}
+			if !strings.Contains(err.Error(), "placeholder") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if strings.Contains(err.Error(), fmt.Sprintf("%q", strings.TrimSpace(apiKey))) {
+				t.Fatalf("placeholder error should not echo API_AUTH_KEY, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadSettingsDoesNotOverrideExplicitEmptyEnv(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
@@ -371,7 +417,7 @@ func TestLoadAllowsEnabledAPIAuthWithKey(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
 	t.Setenv("ENABLE_API_AUTH", "true")
-	t.Setenv("API_AUTH_KEY", "test-secret")
+	t.Setenv("API_AUTH_KEY", "  test-secret\n")
 
 	cfg, err := config.Load()
 	if err != nil {

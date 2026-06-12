@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // ListTasks handles GET /tasks.
@@ -242,7 +243,7 @@ func (h *Handler) TaskStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Status == "" {
-		h.writeError(w, r, http.StatusBadRequest, "status is required", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "status is required", protocol.ErrorCodeValidationError)
 		return
 	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")

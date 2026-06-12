@@ -72,11 +72,17 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 })
 
 #TaskUpdateEvent: close({
-	event!:         "update"
-	resource_type!: "task"
-	id!:            shared.#NonEmptyString
-	version!:       #FeedVersion
-	resource!:      #TaskResource
+	event!:              "update"
+	resource_type!:      "task"
+	id!:                 shared.#NonEmptyString
+	version!:            #FeedVersion
+	// Interop note: Go consumers can distinguish explicit null from absent after
+	// decoding raw JSON, but Go producers using *string with omitempty cannot
+	// reliably emit explicit null. TypeScript and other non-Go producers may use
+	// all three states. Consumers SHOULD normalize null to absent for
+	// Go-originated events and MUST treat both states as "no previous entity".
+	previous_entity_id?: null | shared.#NonEmptyString
+	resource!:           #TaskResource
 })
 
 #ObjectCreateEvent: close({
@@ -95,12 +101,36 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	resource!:      #ObjectResource
 })
 
-#DeleteEvent: close({
+#EntityDeleteEvent: close({
 	event!:         "delete"
-	resource_type!: #ResourceType
+	resource_type!: "entity"
 	id!:            shared.#NonEmptyString
 	version!:       #FeedVersion
 })
+
+#TaskDeleteEvent: close({
+	event!:         "delete"
+	resource_type!: "task"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	// Interop note: Go consumers can distinguish explicit null from absent after
+	// decoding raw JSON, but Go producers using *string with omitempty cannot
+	// reliably emit explicit null. TypeScript and other non-Go producers may use
+	// all three states. Consumers SHOULD normalize null to absent for
+	// Go-originated events and MUST treat both states as "no known parent entity".
+	entity_id?:     null | shared.#NonEmptyString
+})
+
+#ObjectDeleteEvent: close({
+	event!:         "delete"
+	resource_type!: "object"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+})
+
+// Deprecated compatibility alias for consumers that referenced the pre-split
+// delete event shape. Prefer the resource-specific delete event definitions.
+#DeleteEvent: #EntityDeleteEvent | #TaskDeleteEvent | #ObjectDeleteEvent
 
 #FeedEvent: #EntityCreateEvent | #EntityUpdateEvent | #TaskCreateEvent | #TaskUpdateEvent | #ObjectCreateEvent | #ObjectUpdateEvent | #DeleteEvent
 

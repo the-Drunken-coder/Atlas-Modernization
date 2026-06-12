@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+var unauthorizedErrorBody = []byte(`{"success":false,"message":"Invalid or missing API key","error_code":"` + string(protocol.ErrorCodeUnauthorized) + `"}`)
 
 // IsPublicUnauthenticatedPath returns true for routes that skip request logging and API-key auth.
 func IsPublicUnauthenticatedPath(path string) bool {
@@ -132,7 +135,7 @@ func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
-				_, _ = w.Write([]byte(`{"success":false,"message":"Invalid or missing API key","error_code":"UNAUTHORIZED"}`))
+				_, _ = w.Write(unauthorizedErrorBody)
 				return
 			}
 
@@ -156,7 +159,7 @@ func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
-				_, _ = w.Write([]byte(`{"success":false,"message":"Invalid or missing API key","error_code":"UNAUTHORIZED"}`))
+				_, _ = w.Write(unauthorizedErrorBody)
 				return
 			}
 

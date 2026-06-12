@@ -1,0 +1,22 @@
+{
+  "event": "update",
+  "resource_type": "task",
+  "id": "task-4",
+  "version": 2,
+  "previous_entity_id": "asset-1",
+  "resource": {
+    "task_id": "task-4",
+    "status": "acknowledged",
+    "entity_id": "asset-1",
+    "components": {
+      "command": {
+        "type": "move_to_location"
+      }
+    },
+    "metadata": {
+      "created_at": "2026-06-12T12:00:00Z",
+      "updated_at": "2026-06-12T12:01:00Z",
+      "version": 2
+    }
+  }
+}

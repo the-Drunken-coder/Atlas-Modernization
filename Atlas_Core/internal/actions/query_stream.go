@@ -14,7 +14,7 @@ const (
 	entitySelectSQL    = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version FROM entities`
 	taskSelectSQL      = `SELECT task_id, status, entity_id, json, created_at, updated_at, version FROM tasks`
 	objectSelectSQL    = `SELECT object_id, path, content_type, type, json, created_at, updated_at, version FROM objects`
-	deletionsSelectSQL = `SELECT resource_id, deleted_at, version FROM deletions`
+	deletionsSelectSQL = `SELECT resource_id, deleted_at, version, CASE WHEN resource_type = 'task' THEN context->>'entity_id' ELSE NULL END FROM deletions`
 )
 
 // Allowlists for the identifiers interpolated into cursor-paged SQL. Every value
@@ -264,18 +264,20 @@ func collectDeletedResources(rows pgx.Rows, resourceType string) ([]DeletedResou
 		var resourceID string
 		var deletedAt time.Time
 		var version int64
-		if err := rows.Scan(&resourceID, &deletedAt, &version); err != nil {
-			return nil, err
+		var entityID *string
+		if err := rows.Scan(&resourceID, &deletedAt, &version, &entityID); err != nil {
+			return nil, fmt.Errorf("failed to scan deleted resource: %w", err)
 		}
 		out = append(out, DeletedResource{
 			ID:        resourceID,
 			Type:      resourceType,
+			EntityID:  entityID,
 			DeletedAt: deletedAt.UTC().Format(time.RFC3339Nano),
 			Version:   version,
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error iterating deleted resource rows: %w", err)
 	}
 	return out, nil
 }

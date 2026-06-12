@@ -150,6 +150,22 @@ jobs:
       - name: Build Atlas SDK
         run: npm run build
 
+      - name: Verify Atlas SDK package output
+        run: |
+          missing=0
+          test -d dist/atlas_sdk/src || { echo "::error::missing dist/atlas_sdk/src"; missing=1; }
+          test -f dist/atlas_sdk/src/index.js || { echo "::error::missing dist/atlas_sdk/src/index.js"; missing=1; }
+          test -f dist/atlas_sdk/src/index.d.ts || { echo "::error::missing dist/atlas_sdk/src/index.d.ts"; missing=1; }
+          test -f dist/atlas_sdk/src/cli.js || { echo "::error::missing dist/atlas_sdk/src/cli.js"; missing=1; }
+          test -f dist/atlas_sdk/src/cli.d.ts || { echo "::error::missing dist/atlas_sdk/src/cli.d.ts"; missing=1; }
+          test -d dist/atlas_protocol/generated/typescript || { echo "::error::missing dist/atlas_protocol/generated/typescript"; missing=1; }
+          test -f dist/atlas_protocol/generated/typescript/index.js || { echo "::error::missing dist/atlas_protocol/generated/typescript/index.js"; missing=1; }
+          test -f dist/atlas_protocol/generated/typescript/index.d.ts || { echo "::error::missing dist/atlas_protocol/generated/typescript/index.d.ts"; missing=1; }
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          node scripts/verify-package-entrypoints.js
+
       - name: Smoke test Atlas SDK CLI binary
         run: npm run test:bin
 

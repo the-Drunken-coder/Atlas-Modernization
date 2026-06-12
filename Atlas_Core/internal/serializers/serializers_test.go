@@ -1,13 +1,21 @@
 package serializers_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+var serializerLogMu sync.Mutex
 
 func TestSerializeEntity(t *testing.T) {
 	now := time.Now().UTC()
@@ -207,11 +215,11 @@ func TestSerializeObject(t *testing.T) {
 	if len(result.ReferencedBy) != 2 {
 		t.Fatalf("Expected 2 referenced_by entries, got %d", len(result.ReferencedBy))
 	}
-	if result.ReferencedBy[0]["entity_id"] != "entity-1" {
-		t.Errorf("Expected first referenced_by entity_id entity-1, got %v", result.ReferencedBy[0]["entity_id"])
+	if result.ReferencedBy[0].EntityID == nil || *result.ReferencedBy[0].EntityID != "entity-1" {
+		t.Errorf("Expected first referenced_by entity_id entity-1, got %#v", result.ReferencedBy[0])
 	}
-	if result.ReferencedBy[1]["task_id"] != "task-1" {
-		t.Errorf("Expected second referenced_by task_id task-1, got %v", result.ReferencedBy[1]["task_id"])
+	if result.ReferencedBy[1].TaskID == nil || *result.ReferencedBy[1].TaskID != "task-1" {
+		t.Errorf("Expected second referenced_by task_id task-1, got %#v", result.ReferencedBy[1])
 	}
 	if result.Payload == nil || result.Payload["custom"] != "value" {
 		t.Errorf("Expected Payload custom value, got %#v", result.Payload)
@@ -221,6 +229,42 @@ func TestSerializeObject(t *testing.T) {
 	}
 	if result.Metadata.Version != 99 {
 		t.Errorf("Expected metadata version 99, got %d", result.Metadata.Version)
+	}
+}
+
+func TestSerializeObjectReferencedByJSONUsesProtocolShape(t *testing.T) {
+	now := time.Now().UTC()
+	obj := &models.MediaObject{
+		ObjectID: "obj-reference-json",
+		JSON: json.RawMessage(`{
+			"usage_hints": [],
+			"referenced_by": [
+				{"entity_id": "entity-1", "extra": "ignored"},
+				{"task_id": "task-1", "role": "ignored"}
+			]
+		}`),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	encoded, err := json.Marshal(serializers.SerializeObject(obj))
+	if err != nil {
+		t.Fatalf("marshal object response: %v", err)
+	}
+	var response struct {
+		ReferencedBy []map[string]any `json:"referenced_by"`
+	}
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		t.Fatalf("decode object response: %v", err)
+	}
+	if len(response.ReferencedBy) != 2 {
+		t.Fatalf("referenced_by length = %d, want 2", len(response.ReferencedBy))
+	}
+	if response.ReferencedBy[0]["entity_id"] != "entity-1" || response.ReferencedBy[0]["extra"] != nil {
+		t.Fatalf("first reference JSON = %#v, want only entity_id", response.ReferencedBy[0])
+	}
+	if response.ReferencedBy[1]["task_id"] != "task-1" || response.ReferencedBy[1]["role"] != nil {
+		t.Fatalf("second reference JSON = %#v, want only task_id", response.ReferencedBy[1])
 	}
 }
 
@@ -244,6 +288,158 @@ func TestSerializeObjectUsesModelSizeParsing(t *testing.T) {
 	}
 }
 
+func TestSerializeObjectForFeedTransformsObjectReferences(t *testing.T) {
+	var logs bytes.Buffer
+
+	now := time.Now().UTC()
+	obj := &models.MediaObject{
+		ObjectID: "object-feed-refs",
+		JSON: json.RawMessage(`{
+			"usage_hints": [],
+			"referenced_by": [
+				{"entity_id": " entity-1 "},
+				{"task_id": "task-1"},
+				{"entity_id": "entity-2", "task_id": "task-2"},
+				{"entity_id": "entity-3", "task_id": ""},
+				{},
+				{"entity_id": ""},
+				{"task_id": " "},
+				{"entity_id": 42}
+			]
+		}`),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	var result *protocol.ObjectResource
+	var logOutput string
+	func() {
+		serializerLogMu.Lock()
+		defer serializerLogMu.Unlock()
+		previousLogger := log.Logger
+		log.Logger = zerolog.New(&logs)
+		defer func() {
+			log.Logger = previousLogger
+		}()
+
+		result = serializers.SerializeObjectForFeed(obj)
+		logOutput = logs.String()
+	}()
+	if result == nil {
+		t.Fatal("SerializeObjectForFeed returned nil")
+	}
+	if len(result.ReferencedBy) != 4 {
+		t.Fatalf("ReferencedBy length = %d, want 4", len(result.ReferencedBy))
+	}
+	if result.ReferencedBy[0].EntityID == nil || *result.ReferencedBy[0].EntityID != "entity-1" {
+		t.Fatalf("first reference entity_id = %#v, want entity-1", result.ReferencedBy[0].EntityID)
+	}
+	if result.ReferencedBy[1].TaskID == nil || *result.ReferencedBy[1].TaskID != "task-1" {
+		t.Fatalf("second reference task_id = %#v, want task-1", result.ReferencedBy[1].TaskID)
+	}
+	if result.ReferencedBy[2].EntityID == nil || result.ReferencedBy[2].TaskID == nil {
+		t.Fatalf("third reference should include both IDs: %#v", result.ReferencedBy[2])
+	}
+	if *result.ReferencedBy[2].EntityID != "entity-2" || *result.ReferencedBy[2].TaskID != "task-2" {
+		t.Fatalf("third reference = %#v, want entity-2/task-2", result.ReferencedBy[2])
+	}
+	if result.ReferencedBy[3].EntityID == nil || *result.ReferencedBy[3].EntityID != "entity-3" || result.ReferencedBy[3].TaskID != nil {
+		t.Fatalf("fourth reference should include only entity_id: %#v", result.ReferencedBy[3])
+	}
+	if strings.Count(logOutput, `"level":"warn"`) < 5 {
+		t.Fatalf("expected at least 5 warning logs, got %q", logOutput)
+	}
+	if strings.Count(logOutput, "Dropping object feed reference without entity_id or task_id") < 4 {
+		t.Fatalf("expected dropped-reference log messages, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "Dropping object feed reference field with non-string id") {
+		t.Fatalf("expected non-string reference-field warning, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, `"key":"entity_id"`) || !hasNonStringNumericReferenceType(logOutput) {
+		t.Fatalf("expected non-string warning to include key and type, got %q", logOutput)
+	}
+	if strings.Count(logOutput, "object-feed-refs") < 5 {
+		t.Fatalf("expected dropped-reference logs to include object id, got %q", logOutput)
+	}
+}
+
+func hasNonStringNumericReferenceType(logOutput string) bool {
+	return strings.Contains(logOutput, `"actual_type":"json.Number"`) ||
+		strings.Contains(logOutput, `"actual_type":"float64"`) ||
+		strings.Contains(logOutput, `"actual_type":"int"`) ||
+		strings.Contains(logOutput, `"actual_type":"int64"`)
+}
+
+func TestSerializeObjectForFeedPopulatesObjectResourceFields(t *testing.T) {
+	now := time.Now().UTC()
+	path := "objects/feed-test"
+	contentType := "application/json"
+	objectType := "data"
+	obj := &models.MediaObject{
+		ObjectID:    "feed-object-full",
+		Path:        &path,
+		ContentType: &contentType,
+		Type:        &objectType,
+		JSON:        json.RawMessage(`{"size_bytes":2048,"bucket":"feed-bucket","usage_hints":["export","thumbnail"]}`),
+		CreatedAt:   now,
+		UpdatedAt:   now.Add(time.Minute),
+		Version:     42,
+	}
+
+	result := serializers.SerializeObjectForFeed(obj)
+	if result == nil {
+		t.Fatal("SerializeObjectForFeed returned nil")
+	}
+	if result.ObjectID != "feed-object-full" {
+		t.Fatalf("ObjectID = %q, want feed-object-full", result.ObjectID)
+	}
+	if result.Path == nil || *result.Path != path {
+		t.Fatalf("Path = %#v, want %q", result.Path, path)
+	}
+	if result.ContentType == nil || *result.ContentType != contentType {
+		t.Fatalf("ContentType = %#v, want %q", result.ContentType, contentType)
+	}
+	if result.Type == nil || *result.Type != objectType {
+		t.Fatalf("Type = %#v, want %q", result.Type, objectType)
+	}
+	if result.SizeBytes == nil || *result.SizeBytes != 2048 {
+		t.Fatalf("SizeBytes = %#v, want 2048", result.SizeBytes)
+	}
+	if len(result.UsageHints) != 2 || result.UsageHints[0] != "export" || result.UsageHints[1] != "thumbnail" {
+		t.Fatalf("UsageHints = %#v, want export/thumbnail", result.UsageHints)
+	}
+	if result.Bucket == nil || *result.Bucket != "feed-bucket" {
+		t.Fatalf("Bucket = %#v, want feed-bucket", result.Bucket)
+	}
+	if result.Metadata.CreatedAt != now.UTC().Format(serializers.APIMetadataTimeLayout) {
+		t.Fatalf("Metadata.CreatedAt = %q", result.Metadata.CreatedAt)
+	}
+	if result.Metadata.UpdatedAt != now.Add(time.Minute).UTC().Format(serializers.APIMetadataTimeLayout) {
+		t.Fatalf("Metadata.UpdatedAt = %q", result.Metadata.UpdatedAt)
+	}
+	if result.Metadata.Version != 42 {
+		t.Fatalf("Metadata.Version = %d, want 42", result.Metadata.Version)
+	}
+}
+
+func TestSerializeObjectForFeedOmitsEmptyObjectReferences(t *testing.T) {
+	now := time.Now().UTC()
+	obj := &models.MediaObject{
+		ObjectID:  "object-no-feed-refs",
+		JSON:      json.RawMessage(`{"usage_hints":[],"referenced_by":[{},{"entity_id":""}]}`),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	result := serializers.SerializeObjectForFeed(obj)
+	if result == nil {
+		t.Fatal("SerializeObjectForFeed returned nil")
+	}
+	if result.ReferencedBy != nil {
+		t.Fatalf("ReferencedBy = %#v, want nil", result.ReferencedBy)
+	}
+}
+
 func TestSerializeNil(t *testing.T) {
 	if serializers.SerializeEntity(nil) != nil {
 		t.Error("Expected nil for nil entity")
@@ -253,6 +449,9 @@ func TestSerializeNil(t *testing.T) {
 	}
 	if serializers.SerializeObject(nil) != nil {
 		t.Error("Expected nil for nil object")
+	}
+	if serializers.SerializeObjectForFeed(nil) != nil {
+		t.Error("Expected nil for nil feed object")
 	}
 }
 

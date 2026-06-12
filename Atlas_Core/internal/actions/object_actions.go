@@ -503,7 +503,9 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	// Record tombstone so changed-since can notify clients.
 	var tombstoneVersion int64
 	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ('object', $1) RETURNING version", objectID).Scan(&tombstoneVersion); err != nil {
+		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, '{}'::jsonb) RETURNING version",
+		ChangeResourceObject, objectID,
+	).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record object deletion tombstone: %w", err)
 	}
 

@@ -66,8 +66,13 @@ func ValidateObjectResource(value any) []string {
 	return validate("#ObjectResource", value)
 }
 
+func ValidateErrorResponse(value any) []string {
+	return validate("#ErrorResponse", value)
+}
+
 func ValidateFeedEvent(value any) []string {
-	return validate("#FeedEvent", value)
+	errors := validate("#FeedEvent", value)
+	return appendFeedEventContextErrors(errors, value)
 }
 
 func ValidateFeedAuthMessage(value any) []string {
@@ -88,6 +93,58 @@ func ValidateFeedClientMessage(value any) []string {
 
 func ValidateFeedHandshakeMessage(value any) []string {
 	return validate("#FeedHandshakeMessage", value)
+}
+
+func appendFeedEventContextErrors(errors []string, value any) []string {
+	// The CUE union owns validity; these checks only add targeted diagnostics for
+	// nullable task routing fields that otherwise produce broad union errors.
+	payload, ok := valueAsMap(value)
+	if !ok || payload["resource_type"] != "task" {
+		return errors
+	}
+	if payload["event"] == "delete" {
+		rawEntityID, exists := payload["entity_id"]
+		if exists && rawEntityID != nil {
+			entityID, ok := rawEntityID.(string)
+			if !ok || strings.TrimSpace(entityID) == "" {
+				errors = append(errors, "entity_id must be null, omitted, or a non-empty string for task delete feed events")
+			}
+		}
+	}
+	if payload["event"] == "update" {
+		rawPreviousEntityID, exists := payload["previous_entity_id"]
+		if exists && rawPreviousEntityID != nil {
+			previousEntityID, ok := rawPreviousEntityID.(string)
+			if !ok || strings.TrimSpace(previousEntityID) == "" {
+				errors = append(errors, "previous_entity_id must be null, omitted, or a non-empty string for task update feed events")
+			}
+		}
+	}
+	return errors
+}
+
+func valueAsMap(value any) (map[string]any, bool) {
+	if payload, ok := value.(map[string]any); ok {
+		return payload, true
+	}
+	var data []byte
+	switch typed := value.(type) {
+	case json.RawMessage:
+		data = typed
+	case []byte:
+		data = typed
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, false
+		}
+		data = encoded
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, false
+	}
+	return payload, true
 }
 
 func ValidateEntityComponents(value any) []string {

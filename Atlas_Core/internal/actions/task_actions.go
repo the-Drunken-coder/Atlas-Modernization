@@ -682,10 +682,12 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 		return NewTaskNotFoundError(taskID)
 	}
 
-	// Record tombstone so changed-since can notify clients.
+	// Record tombstone with entity_id context so changed-since can notify clients which entity's tasks changed.
 	var tombstoneVersion int64
 	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ('task', $1) RETURNING version", taskID).Scan(&tombstoneVersion); err != nil {
+		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, COALESCE(jsonb_strip_nulls(jsonb_build_object('entity_id', $3::text)), '{}'::jsonb)) RETURNING version",
+		ChangeResourceTask, taskID, task.EntityID,
+	).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record task deletion tombstone: %w", err)
 	}
 

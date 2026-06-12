@@ -7,6 +7,7 @@ import (
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 type fullDatasetResponse struct {
@@ -22,10 +23,12 @@ type fullDatasetResponse struct {
 }
 
 type deletedResourceResponse struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	DeletedAt string `json:"deleted_at,omitempty"`
-	Version   int64  `json:"version,omitempty"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// EntityID is the parent entity ID for deleted tasks; nil for entities and objects.
+	EntityID  *string `json:"entity_id,omitempty"`
+	DeletedAt string  `json:"deleted_at,omitempty"`
+	Version   int64   `json:"version,omitempty"`
 }
 
 type changedSinceResponse struct {
@@ -102,6 +105,7 @@ func serializeDeletedResources(resources []actions.DeletedResource) []deletedRes
 		result[i] = deletedResourceResponse{
 			ID:        resource.ID,
 			Type:      resource.Type,
+			EntityID:  resource.EntityID,
 			DeletedAt: resource.DeletedAt,
 			Version:   resource.Version,
 		}
@@ -113,7 +117,7 @@ func serializeDeletedResources(resources []actions.DeletedResource) []deletedRes
 func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 	limits, invalidField, err := parseFullDatasetLimits(r)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid "+invalidField+" parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid "+invalidField+" parameter", protocol.ErrorCodeValidationError)
 		return
 	}
 
@@ -129,7 +133,7 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 // GetChangedSince handles GET /queries/changed-since.
 func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(r.URL.Query().Get("since_version")) == "" {
-		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", protocol.ErrorCodeValidationError)
 		return
 	}
 
@@ -138,7 +142,7 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 		h.writeValidationError(w, r, &actions.ValidationError{
 			ActionError: actions.ActionError{
 				Message: "Invalid since_version format (use non-negative integer)",
-				Code:    "VALIDATION_ERROR",
+				Code:    protocol.ErrorCodeValidationError,
 			},
 			Details: []string{fmt.Sprintf("since_version: %v", err)},
 		})
@@ -147,7 +151,7 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 
 	limitPerType, err := parseNonNegativeIntQuery(r, "limit_per_type", 0)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid limit_per_type parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid limit_per_type parameter", protocol.ErrorCodeValidationError)
 		return
 	}
 

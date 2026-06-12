@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func isPromotedEntityExtraKey(key string) bool {
@@ -27,7 +28,7 @@ func isPromotedEntityExtraKey(key string) bool {
 // ActionError is a base error for action operations.
 type ActionError struct {
 	Message string
-	Code    string
+	Code    protocol.ErrorCode
 }
 
 func (e *ActionError) Error() string {
@@ -43,22 +44,22 @@ type ValidationError struct {
 // NotFoundError is returned when a resource is not found.
 type NotFoundError struct {
 	ActionError
-	ResourceType string
+	ResourceType ChangeResource
 	ResourceID   string
 }
 
 // NewValidationError creates a new validation error.
 func NewValidationError(message string) *ValidationError {
 	return &ValidationError{
-		ActionError: ActionError{Message: message, Code: "VALIDATION_ERROR"},
+		ActionError: ActionError{Message: message, Code: protocol.ErrorCodeValidationError},
 	}
 }
 
 // NewEntityNotFoundError creates an entity not found error.
 func NewEntityNotFoundError(entityID string) *NotFoundError {
 	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("Entity '%s' was not found", entityID), Code: "ENTITY_NOT_FOUND"},
-		ResourceType: "entity",
+		ActionError:  ActionError{Message: fmt.Sprintf("Entity '%s' was not found", entityID), Code: protocol.ErrorCodeEntityNotFound},
+		ResourceType: ChangeResourceEntity,
 		ResourceID:   entityID,
 	}
 }
@@ -66,8 +67,8 @@ func NewEntityNotFoundError(entityID string) *NotFoundError {
 // NewAliasNotFoundError is returned when no entity exists for the given alias.
 func NewAliasNotFoundError(alias string) *NotFoundError {
 	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("No entity was found for alias '%s'", alias), Code: "ENTITY_ALIAS_NOT_FOUND"},
-		ResourceType: "entity",
+		ActionError:  ActionError{Message: fmt.Sprintf("No entity was found for alias '%s'", alias), Code: protocol.ErrorCodeEntityAliasNotFound},
+		ResourceType: ChangeResourceEntity,
 		ResourceID:   alias,
 	}
 }
@@ -75,8 +76,8 @@ func NewAliasNotFoundError(alias string) *NotFoundError {
 // NewTaskNotFoundError creates a task not found error.
 func NewTaskNotFoundError(taskID string) *NotFoundError {
 	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("Task '%s' was not found", taskID), Code: "TASK_NOT_FOUND"},
-		ResourceType: "task",
+		ActionError:  ActionError{Message: fmt.Sprintf("Task '%s' was not found", taskID), Code: protocol.ErrorCodeTaskNotFound},
+		ResourceType: ChangeResourceTask,
 		ResourceID:   taskID,
 	}
 }
@@ -84,8 +85,8 @@ func NewTaskNotFoundError(taskID string) *NotFoundError {
 // NewObjectNotFoundError creates an object not found error.
 func NewObjectNotFoundError(objectID string) *NotFoundError {
 	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("Object '%s' was not found", objectID), Code: "OBJECT_NOT_FOUND"},
-		ResourceType: "object",
+		ActionError:  ActionError{Message: fmt.Sprintf("Object '%s' was not found", objectID), Code: protocol.ErrorCodeObjectNotFound},
+		ResourceType: ChangeResourceObject,
 		ResourceID:   objectID,
 	}
 }
@@ -104,7 +105,7 @@ func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
 	return &PreconditionFailedError{
 		ActionError: ActionError{
 			Message: fmt.Sprintf("If-Match precondition failed for %s", resourceType),
-			Code:    "PRECONDITION_FAILED",
+			Code:    protocol.ErrorCodePreconditionFailed,
 		},
 	}
 }
@@ -131,7 +132,7 @@ func NewEntityConflictError(entityID string) *ConflictError {
 	return &ConflictError{
 		ActionError: ActionError{
 			Message: fmt.Sprintf("An entity with id '%s' already exists", entityID),
-			Code:    "ENTITY_ALREADY_EXISTS",
+			Code:    protocol.ErrorCodeEntityAlreadyExists,
 		},
 	}
 }
@@ -141,7 +142,7 @@ func NewEntityUniqueConstraintError() *ConflictError {
 	return &ConflictError{
 		ActionError: ActionError{
 			Message: "Entity conflicts with an existing unique value",
-			Code:    "ENTITY_ALREADY_EXISTS",
+			Code:    protocol.ErrorCodeEntityAlreadyExists,
 		},
 	}
 }
@@ -151,7 +152,7 @@ func NewTaskConflictError(taskID string) *ConflictError {
 	return &ConflictError{
 		ActionError: ActionError{
 			Message: fmt.Sprintf("A task with id '%s' already exists", taskID),
-			Code:    "TASK_ALREADY_EXISTS",
+			Code:    protocol.ErrorCodeTaskAlreadyExists,
 		},
 	}
 }
@@ -161,7 +162,7 @@ func NewObjectConflictError(objectID string) *ConflictError {
 	return &ConflictError{
 		ActionError: ActionError{
 			Message: fmt.Sprintf("An object with id '%s' already exists", objectID),
-			Code:    "OBJECT_ALREADY_EXISTS",
+			Code:    protocol.ErrorCodeObjectAlreadyExists,
 		},
 	}
 }
@@ -171,7 +172,7 @@ func NewObjectPathConflictError() *ConflictError {
 	return &ConflictError{
 		ActionError: ActionError{
 			Message: "Object path conflicts with an existing object",
-			Code:    "OBJECT_PATH_CONFLICT",
+			Code:    protocol.ErrorCodeObjectPathConflict,
 		},
 	}
 }
@@ -685,10 +686,12 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return NewEntityNotFoundError(entityID)
 	}
 
-	// Record tombstone so changed-since can notify clients.
+	// Entity tombstones do not need extra context; the deleted entity id is the resource_id.
 	var tombstoneVersion int64
 	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ('entity', $1) RETURNING version", entityID).Scan(&tombstoneVersion); err != nil {
+		"INSERT INTO deletions (resource_type, resource_id) VALUES ($1, $2) RETURNING version",
+		ChangeResourceEntity, entityID,
+	).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record entity deletion tombstone: %w", err)
 	}
 

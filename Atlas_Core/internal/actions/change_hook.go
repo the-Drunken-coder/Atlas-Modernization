@@ -1,21 +1,27 @@
 package actions
 
-import "github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+import (
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
+)
+
+type ChangeEvent = protocol.FeedEventName
+type ChangeResource = protocol.ResourceType
 
 const (
-	ChangeEventCreate = "create"
-	ChangeEventUpdate = "update"
-	ChangeEventDelete = "delete"
+	ChangeEventCreate ChangeEvent = protocol.FeedEventCreate
+	ChangeEventUpdate ChangeEvent = protocol.FeedEventUpdate
+	ChangeEventDelete ChangeEvent = protocol.FeedEventDelete
 
-	ChangeResourceEntity = "entity"
-	ChangeResourceTask   = "task"
-	ChangeResourceObject = "object"
+	ChangeResourceEntity ChangeResource = protocol.ResourceTypeEntity
+	ChangeResourceTask   ChangeResource = protocol.ResourceTypeTask
+	ChangeResourceObject ChangeResource = protocol.ResourceTypeObject
 )
 
 // ResourceChange is emitted only after a write transaction commits.
 type ResourceChange struct {
-	Event        string
-	ResourceType string
+	Event        ChangeEvent
+	ResourceType ChangeResource
 	ID           string
 	Version      int64
 

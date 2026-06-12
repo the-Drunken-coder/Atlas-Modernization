@@ -26,8 +26,11 @@ type FullDatasetResult struct {
 // DeletedResource represents a tombstone for a deleted resource.
 // Type is always "entity", "task", or "object" (redundant with which response array it appears in, but uniform for clients).
 type DeletedResource struct {
-	ID        string
-	Type      string
+	ID   string
+	Type string
+	// EntityID is populated only for deleted tasks to identify the parent entity.
+	// Nil means "not applicable", including deleted entities/objects and tasks whose parent entity is NULL.
+	EntityID  *string
 	DeletedAt string
 	Version   int64
 }

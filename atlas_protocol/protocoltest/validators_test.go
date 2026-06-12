@@ -8,10 +8,13 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+var feedValidationMu sync.Mutex
 
 func TestEntityExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
@@ -26,6 +29,574 @@ func TestTaskExamplesValidate(t *testing.T) {
 func TestObjectExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
 	assertExamplesValidate(t, filepath.Join(root, "examples", "objects"), protocol.ValidateObjectBlob)
+}
+
+func TestErrorExamplesValidate(t *testing.T) {
+	root := moduleRoot(t)
+	assertExamplesValidate(t, filepath.Join(root, "examples", "errors"), protocol.ValidateErrorResponse)
+}
+
+func TestFeedEventExamplesValidate(t *testing.T) {
+	root := moduleRoot(t)
+	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "events"), protocol.ValidateFeedEvent)
+}
+
+func TestHandshakeProtocolRevisionMatchesProtocolRevision(t *testing.T) {
+	root := moduleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "examples", "feed", "server", "handshake.json"))
+	if err != nil {
+		t.Fatalf("read handshake example: %v", err)
+	}
+	var handshake protocol.FeedHandshakeMessage
+	if err := json.Unmarshal(data, &handshake); err != nil {
+		t.Fatalf("decode handshake example: %v", err)
+	}
+	if handshake.ProtocolRevision != protocol.ProtocolRevision {
+		t.Fatalf("handshake protocol_revision = %q, want generated ProtocolRevision %q", handshake.ProtocolRevision, protocol.ProtocolRevision)
+	}
+}
+
+func TestTaskDeleteFeedEventAllowsEntityIDContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   map[string]any
+		wantErr bool
+	}{
+		{
+			name: "populated",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     "asset-1",
+			},
+		},
+		{
+			name: "null",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     nil,
+			},
+		},
+		{
+			name: "omitted",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+			},
+		},
+		{
+			name: "empty",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     "",
+			},
+			wantErr: true,
+		},
+		{
+			name: "blank",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     " ",
+			},
+			wantErr: true,
+		},
+		{
+			name: "number",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     42,
+			},
+			wantErr: true,
+		},
+		{
+			name: "array",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     []any{"asset-1"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "object",
+			event: map[string]any{
+				"event":         "delete",
+				"resource_type": "task",
+				"id":            "task-1",
+				"version":       1,
+				"entity_id":     map[string]any{"id": "asset-1"},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := protocol.ValidateFeedEvent(tt.event)
+			if tt.wantErr {
+				assertErrorContains(t, errors, "entity_id")
+				return
+			}
+			if len(errors) > 0 {
+				t.Fatalf("ValidateFeedEvent errors = %v", errors)
+			}
+		})
+	}
+}
+
+func TestTaskUpdateFeedEventAllowsPreviousEntityIDContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   map[string]any
+		wantErr bool
+	}{
+		{name: "populated", event: taskUpdateEventWithPreviousEntityID("asset-1", true)},
+		{name: "null", event: taskUpdateEventWithPreviousEntityID(nil, true)},
+		{name: "omitted", event: taskUpdateEventWithPreviousEntityID(nil, false)},
+		{name: "empty", event: taskUpdateEventWithPreviousEntityID("", true), wantErr: true},
+		{name: "blank", event: taskUpdateEventWithPreviousEntityID(" ", true), wantErr: true},
+		{name: "number", event: taskUpdateEventWithPreviousEntityID(42, true), wantErr: true},
+		{name: "array", event: taskUpdateEventWithPreviousEntityID([]any{"asset-1"}, true), wantErr: true},
+		{name: "object", event: taskUpdateEventWithPreviousEntityID(map[string]any{"id": "asset-1"}, true), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := protocol.ValidateFeedEvent(tt.event)
+			if tt.wantErr {
+				assertErrorContains(t, errors, "previous_entity_id")
+				return
+			}
+			if len(errors) > 0 {
+				t.Fatalf("ValidateFeedEvent errors = %v", errors)
+			}
+		})
+	}
+}
+
+func taskUpdateEventWithPreviousEntityID(previousEntityID any, includePreviousEntityID bool) map[string]any {
+	event := map[string]any{
+		"event":         "update",
+		"resource_type": "task",
+		"id":            "task-1",
+		"version":       1,
+		"resource": map[string]any{
+			"task_id":    "task-1",
+			"status":     "acknowledged",
+			"entity_id":  "asset-2",
+			"components": map[string]any{},
+			"metadata": map[string]any{
+				"created_at": "2026-06-12T12:00:00Z",
+				"updated_at": "2026-06-12T12:01:00Z",
+				"version":    1,
+			},
+		},
+	}
+	if includePreviousEntityID {
+		event["previous_entity_id"] = previousEntityID
+	}
+	return event
+}
+
+func TestFeedEventMarshalRejectsInvalidVariantFields(t *testing.T) {
+	enableFeedEventMarshalValidation(t)
+	previousEntityID := "asset-1"
+	entityID := "asset-1"
+	tests := []struct {
+		name  string
+		event protocol.FeedEvent
+	}{
+		{
+			name: "previous entity outside task update",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventCreate,
+				ResourceType:     protocol.ResourceTypeEntity,
+				ID:               "asset-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "entity id on entity delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on entity create",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventCreate,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on entity update",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventUpdate,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on object create",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventCreate,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on object update",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventUpdate,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on object delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on task create",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventCreate,
+				ResourceType: protocol.ResourceTypeTask,
+				ID:           "task-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "entity id on task update",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventUpdate,
+				ResourceType: protocol.ResourceTypeTask,
+				ID:           "task-1",
+				Version:      1,
+				EntityID:     &entityID,
+			},
+		},
+		{
+			name: "previous entity on entity delete",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventDelete,
+				ResourceType:     protocol.ResourceTypeEntity,
+				ID:               "asset-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "previous entity on entity update",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventUpdate,
+				ResourceType:     protocol.ResourceTypeEntity,
+				ID:               "asset-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "previous entity on object create",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventCreate,
+				ResourceType:     protocol.ResourceTypeObject,
+				ID:               "object-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "previous entity on object update",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventUpdate,
+				ResourceType:     protocol.ResourceTypeObject,
+				ID:               "object-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "previous entity on object delete",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventDelete,
+				ResourceType:     protocol.ResourceTypeObject,
+				ID:               "object-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "previous entity on task create",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventCreate,
+				ResourceType:     protocol.ResourceTypeTask,
+				ID:               "task-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "previous entity on task delete",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventDelete,
+				ResourceType:     protocol.ResourceTypeTask,
+				ID:               "task-1",
+				Version:          1,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+		{
+			name: "resource on object delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      1,
+				Resource:     map[string]any{"object_id": "object-1"},
+			},
+		},
+		{
+			name: "resource on entity delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      1,
+				Resource:     map[string]any{"entity_id": "asset-1"},
+			},
+		},
+		{
+			name: "resource on task delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeTask,
+				ID:           "task-1",
+				Version:      1,
+				Resource:     map[string]any{"task_id": "task-1"},
+			},
+		},
+		{
+			name: "both entity_id and previous_entity_id",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventUpdate,
+				ResourceType:     protocol.ResourceTypeTask,
+				ID:               "task-1",
+				Version:          2,
+				EntityID:         &entityID,
+				PreviousEntityID: &previousEntityID,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := json.Marshal(tt.event); err == nil {
+				t.Fatal("json.Marshal accepted invalid FeedEvent variant fields")
+			}
+		})
+	}
+}
+
+func TestFeedEventMarshalAcceptsValidVariant(t *testing.T) {
+	enableFeedEventMarshalValidation(t)
+	taskEntityID := "asset-1"
+	entityResource := protocol.EntityResource{
+		EntityID:   "asset-1",
+		EntityType: "asset",
+		Components: map[string]protocol.JSONValue{},
+		Metadata: protocol.MetadataBlock{
+			CreatedAt: "2026-06-12T12:00:00Z",
+			UpdatedAt: "2026-06-12T12:01:00Z",
+			Version:   1,
+		},
+	}
+	objectResource := protocol.ObjectResource{
+		ObjectID:   "object-1",
+		UsageHints: []string{},
+		Metadata: protocol.MetadataBlock{
+			CreatedAt: "2026-06-12T12:00:00Z",
+			UpdatedAt: "2026-06-12T12:01:00Z",
+			Version:   1,
+		},
+	}
+	taskResource := protocol.TaskResource{
+		TaskID:     "task-1",
+		Status:     "pending",
+		Components: map[string]protocol.JSONValue{},
+		Metadata: protocol.MetadataBlock{
+			CreatedAt: "2026-06-12T12:00:00Z",
+			UpdatedAt: "2026-06-12T12:01:00Z",
+			Version:   1,
+		},
+	}
+	tests := []struct {
+		name  string
+		event protocol.FeedEvent
+	}{
+		{
+			name: "entity create",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventCreate,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      1,
+				Resource:     entityResource,
+			},
+		},
+		{
+			name: "entity update",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventUpdate,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      2,
+				Resource:     entityResource,
+			},
+		},
+		{
+			name: "entity delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeEntity,
+				ID:           "asset-1",
+				Version:      3,
+			},
+		},
+		{
+			name: "object create",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventCreate,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      1,
+				Resource:     objectResource,
+			},
+		},
+		{
+			name: "object update",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventUpdate,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      2,
+				Resource:     objectResource,
+			},
+		},
+		{
+			name: "object delete",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeObject,
+				ID:           "object-1",
+				Version:      1,
+			},
+		},
+		{
+			name: "task create",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventCreate,
+				ResourceType: protocol.ResourceTypeTask,
+				ID:           "task-1",
+				Version:      1,
+				Resource:     taskResource,
+			},
+		},
+		{
+			name: "task update without previous entity",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventUpdate,
+				ResourceType: protocol.ResourceTypeTask,
+				ID:           "task-1",
+				Version:      2,
+				Resource:     taskResource,
+			},
+		},
+		{
+			name: "task update previous entity",
+			event: protocol.FeedEvent{
+				Event:            protocol.FeedEventUpdate,
+				ResourceType:     protocol.ResourceTypeTask,
+				ID:               "task-1",
+				Version:          2,
+				PreviousEntityID: &taskEntityID,
+				Resource: protocol.TaskResource{
+					TaskID:     "task-1",
+					Status:     "acknowledged",
+					EntityID:   &taskEntityID,
+					Components: map[string]protocol.JSONValue{},
+					Metadata: protocol.MetadataBlock{
+						CreatedAt: "2026-06-12T12:00:00Z",
+						UpdatedAt: "2026-06-12T12:01:00Z",
+						Version:   2,
+					},
+				},
+			},
+		},
+		{
+			name: "task delete entity",
+			event: protocol.FeedEvent{
+				Event:        protocol.FeedEventDelete,
+				ResourceType: protocol.ResourceTypeTask,
+				ID:           "task-1",
+				Version:      3,
+				EntityID:     &taskEntityID,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := json.Marshal(tt.event); err != nil {
+				t.Fatalf("json.Marshal(valid FeedEvent) error = %v", err)
+			}
+		})
+	}
+}
+
+func enableFeedEventMarshalValidation(t *testing.T) {
+	t.Helper()
+	// Serialize access to the package-level marshal-validation flag; these tests must not run concurrently.
+	feedValidationMu.Lock()
+	previous := protocol.EnableFeedEventMarshalValidation.Swap(true)
+	t.Cleanup(func() {
+		protocol.EnableFeedEventMarshalValidation.Store(previous)
+		feedValidationMu.Unlock()
+	})
 }
 
 func TestEntityComponentKeys(t *testing.T) {
@@ -370,6 +941,12 @@ func TestRawJSONValidatorsRejectTrailingValues(t *testing.T) {
 			name:     "object",
 			raw:      json.RawMessage(`{"size_bytes":1}{"bad":true}`),
 			validate: protocol.ValidateObjectBlob,
+			contains: "trailing JSON value",
+		},
+		{
+			name:     "feed event",
+			raw:      json.RawMessage(`{"event":"delete","resource_type":"entity","id":"asset-1","version":1}{"extra":true}`),
+			validate: protocol.ValidateFeedEvent,
 			contains: "trailing JSON value",
 		},
 		{

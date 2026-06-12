@@ -17,8 +17,10 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func newTestHandler() *Handler {
@@ -171,8 +173,39 @@ func TestFeedWithoutHubReturnsServiceUnavailable(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "feed hub is not configured") {
-		t.Fatalf("unexpected body: %s", rec.Body.String())
+	var body ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable || body.Message != "feed hub is not configured" {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	if body.ErrorID == "" {
+		t.Fatal("expected error_id to be populated")
+	}
+}
+
+func TestFeedConfigNilReturnsServiceUnavailable(t *testing.T) {
+	hub := feed.NewHub(1, feed.Options{})
+	defer hub.Close()
+	handler := &Handler{feedHub: hub, config: nil}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	handler.Feed(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	var body ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable || body.Message != "feed config is not configured" {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	if body.ErrorID == "" {
+		t.Fatal("expected error_id to be populated")
 	}
 }
 
@@ -504,6 +537,35 @@ func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
 	errs, _ := details["errors"].([]interface{})
 	if len(errs) == 0 {
 		t.Fatalf("expected details.errors for invalid since")
+	}
+}
+
+func TestChangedSinceDeletedTaskEntityIDJSONPresence(t *testing.T) {
+	entityID := "asset-1"
+	response := serializeChangedSinceResult(&actions.ChangedSinceResult{
+		DeletedTasks: []actions.DeletedResource{
+			{ID: "task-with-parent", Type: string(actions.ChangeResourceTask), EntityID: &entityID, Version: 2},
+			{ID: "task-without-parent", Type: string(actions.ChangeResourceTask), Version: 3},
+		},
+		Version:   3,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal changed-since response: %v", err)
+	}
+	var decoded struct {
+		DeletedTasks []map[string]any `json:"deleted_tasks"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode changed-since response: %v", err)
+	}
+	if got := decoded.DeletedTasks[0]["entity_id"]; got != entityID {
+		t.Fatalf("deleted task entity_id = %v, want %s", got, entityID)
+	}
+	if _, exists := decoded.DeletedTasks[1]["entity_id"]; exists {
+		t.Fatalf("deleted task without parent emitted entity_id: %s", data)
 	}
 }
 

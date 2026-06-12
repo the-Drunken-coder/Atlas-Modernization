@@ -31,7 +31,9 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 		if err := gen.collectDefs(root); err != nil {
 			return nil, err
 		}
-		gen.addDef(name, stripSchemaMetadata(root))
+		if err := gen.addDef(name, stripSchemaMetadata(root)); err != nil {
+			return nil, err
+		}
 	}
 
 	var builder strings.Builder
@@ -79,22 +81,43 @@ func (g *typeScriptGenerator) collectDefs(root typeScriptSchema) error {
 		if isSelfRefType(name, schema) {
 			continue
 		}
-		g.addDef(name, schema)
+		if err := g.addDef(name, schema); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (g *typeScriptGenerator) addDef(name string, schema typeScriptSchema) {
+func (g *typeScriptGenerator) addDef(name string, schema typeScriptSchema) error {
 	if existing, exists := g.defs[name]; exists {
 		if reflect.DeepEqual(existing, schema) {
-			return
+			return nil
 		}
 		if isSelfRefType(name, existing) {
 			g.defs[name] = schema
+			return nil
 		}
-		return
+		return fmt.Errorf("typescript type name collision for %q: existing=%s new=%s", name, summarizeTypeScriptSchema(existing), summarizeTypeScriptSchema(schema))
 	}
 	g.defs[name] = schema
+	return nil
+}
+
+func summarizeTypeScriptSchema(schema typeScriptSchema) string {
+	keys := make([]string, 0, len(schema))
+	for key := range schema {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, 3)
+	if typ, ok := schema["type"].(string); ok {
+		parts = append(parts, "type="+typ)
+	}
+	if ref, ok := schema["$ref"].(string); ok {
+		parts = append(parts, "ref="+ref)
+	}
+	parts = append(parts, "keys="+strings.Join(keys, ","))
+	return strings.Join(parts, " ")
 }
 
 func stripSchemaMetadata(root typeScriptSchema) typeScriptSchema {

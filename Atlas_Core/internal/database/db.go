@@ -87,6 +87,7 @@ func coreSchemaCreateDDL() []string {
 			id BIGSERIAL PRIMARY KEY,
 			resource_type VARCHAR(20) NOT NULL,
 			resource_id VARCHAR(50) NOT NULL,
+			context JSONB NOT NULL DEFAULT '{}',
 			deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
 			CONSTRAINT deletions_version_positive CHECK (version > 0)

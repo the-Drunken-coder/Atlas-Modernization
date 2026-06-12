@@ -184,6 +184,48 @@ func TestValidateEntityComponentSchemaKeys(t *testing.T) {
 	}
 }
 
+func TestTypeScriptGeneratorAddDefAllowsIdenticalSchema(t *testing.T) {
+	schema := typeScriptSchema{"type": "object"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
+
+	if err := g.addDef("Thing", schema); err != nil {
+		t.Fatalf("first addDef returned error: %v", err)
+	}
+	if err := g.addDef("Thing", cloneMap(schema)); err != nil {
+		t.Fatalf("second addDef returned error: %v", err)
+	}
+	if !reflect.DeepEqual(g.defs["Thing"], schema) {
+		t.Fatalf("defs[Thing] = %#v, want %#v", g.defs["Thing"], schema)
+	}
+}
+
+func TestTypeScriptGeneratorAddDefReplacesSelfRef(t *testing.T) {
+	selfRef := typeScriptSchema{"$ref": "#/$defs/%23Thing"}
+	replacement := typeScriptSchema{"type": "string"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{"Thing": selfRef}}
+
+	if err := g.addDef("Thing", replacement); err != nil {
+		t.Fatalf("addDef self-ref replacement returned error: %v", err)
+	}
+	if !reflect.DeepEqual(g.defs["Thing"], replacement) {
+		t.Fatalf("defs[Thing] = %#v, want %#v", g.defs["Thing"], replacement)
+	}
+}
+
+func TestTypeScriptGeneratorAddDefRejectsNameCollision(t *testing.T) {
+	existing := typeScriptSchema{"type": "string"}
+	colliding := typeScriptSchema{"type": "number"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{"Thing": existing}}
+
+	err := g.addDef("Thing", colliding)
+	if err == nil {
+		t.Fatal("addDef accepted colliding schemas")
+	}
+	if !reflect.DeepEqual(g.defs["Thing"], existing) {
+		t.Fatalf("defs[Thing] = %#v after collision, want original %#v", g.defs["Thing"], existing)
+	}
+}
+
 func cloneMap(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for key, value := range in {

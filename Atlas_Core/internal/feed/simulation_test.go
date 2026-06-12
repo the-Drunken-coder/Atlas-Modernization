@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -19,6 +20,32 @@ func (l *simulationLedger) append(t *testing.T, event RoutedEvent) {
 		t.Fatalf("ledger event %d failed protocol validation: %v", event.Event.Version, errors)
 	}
 	l.events = append(l.events, event)
+}
+
+func TestFeedEventNullableTaskContextNormalizesNullToAbsent(t *testing.T) {
+	var deleteWithNull protocol.FeedEvent
+	if err := json.Unmarshal([]byte(`{"event":"delete","resource_type":"task","id":"task-1","version":1,"entity_id":null}`), &deleteWithNull); err != nil {
+		t.Fatalf("decode task delete with null entity_id: %v", err)
+	}
+	if deleteWithNull.EntityID != nil {
+		t.Fatalf("null entity_id decoded as %#v, want nil", deleteWithNull.EntityID)
+	}
+
+	var updateWithNull protocol.FeedEvent
+	if err := json.Unmarshal([]byte(`{"event":"update","resource_type":"task","id":"task-1","version":2,"previous_entity_id":null,"resource":{"task_id":"task-1","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":2}}}`), &updateWithNull); err != nil {
+		t.Fatalf("decode task update with null previous_entity_id: %v", err)
+	}
+	if updateWithNull.PreviousEntityID != nil {
+		t.Fatalf("null previous_entity_id decoded as %#v, want nil", updateWithNull.PreviousEntityID)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(`{"entity_id":null}`), &raw); err != nil {
+		t.Fatalf("decode raw null payload: %v", err)
+	}
+	if _, present := raw["entity_id"]; !present {
+		t.Fatal("raw JSON decoding should preserve explicit entity_id key")
+	}
 }
 
 func (l *simulationLedger) changedSince(version int64) []RoutedEvent {
@@ -138,8 +165,13 @@ func (s *simulatedSubscriber) audit(t *testing.T) {
 	t.Helper()
 	expected := s.ledger.entitled(s.filter)
 	for _, event := range expected {
-		if _, ok := s.received[event.Event.Version]; !ok {
+		received, ok := s.received[event.Event.Version]
+		if !ok {
 			t.Fatalf("%s missed entitled event version=%d event=%s resource=%s id=%s", s.name, event.Event.Version, event.Event.Event, event.Event.ResourceType, event.Event.ID)
+		}
+		if event.Event.ResourceType == protocol.ResourceTypeTask {
+			assertOptionalString(t, s.name, event.Event.Version, "previous_entity_id", event.Event.PreviousEntityID, received.Event.PreviousEntityID)
+			assertOptionalString(t, s.name, event.Event.Version, "entity_id", event.Event.EntityID, received.Event.EntityID)
 		}
 	}
 	for i := 1; i < len(s.appliedOrder); i++ {
@@ -147,6 +179,23 @@ func (s *simulatedSubscriber) audit(t *testing.T) {
 			t.Fatalf("%s applied versions out of order: %v", s.name, s.appliedOrder)
 		}
 	}
+}
+
+func assertOptionalString(t *testing.T, subscriber string, version int64, field string, want, got *string) {
+	t.Helper()
+	if want == nil && got == nil {
+		return
+	}
+	if want == nil || got == nil || *want != *got {
+		t.Fatalf("%s event version=%d %s = %v, want %v", subscriber, version, field, optionalStringValue(got), optionalStringValue(want))
+	}
+}
+
+func optionalStringValue(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func TestHubOrdersAndFiltersFeedEvents(t *testing.T) {
@@ -360,6 +409,12 @@ func taskEvent(eventName, id string, version int64, beforeEntity, afterEntity, s
 		ResourceType: protocol.ResourceTypeTask,
 		ID:           id,
 		Version:      version,
+	}
+	if eventName == "update" && beforeEntity != "" {
+		event.PreviousEntityID = &beforeEntity
+	}
+	if eventName == "delete" && beforeEntity != "" {
+		event.EntityID = &beforeEntity
 	}
 	if eventName != "delete" {
 		var entityID any

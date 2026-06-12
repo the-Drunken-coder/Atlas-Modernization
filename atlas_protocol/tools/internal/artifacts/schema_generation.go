@@ -25,6 +25,9 @@ func ValidateExamples(root string) error {
 	if err := validateExampleSet(root, "objects", "#ObjectBlob"); err != nil {
 		return err
 	}
+	if err := validateExampleSet(root, "errors", "#ErrorResponse"); err != nil {
+		return err
+	}
 	if err := validateExampleSet(root, "feed/events", "#FeedEvent"); err != nil {
 		return err
 	}

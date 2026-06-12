@@ -3,6 +3,7 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,6 +75,259 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	readFeedEvent(t, conn, &event)
 	if event.Version != 1 || event.ResourceType != protocol.ResourceTypeTask {
 		t.Fatalf("unexpected authenticated feed event: %+v", event)
+	}
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsMissingFirstFrame(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsMalformedJSON(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth"`)); err != nil {
+		t.Fatalf("write malformed auth: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsWrongKey(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"wrong"}`)); err != nil {
+		t.Fatalf("write wrong auth: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsEmptyKey(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":""}`)); err != nil {
+		t.Fatalf("write empty auth: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsMissingKey(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth"}`)); err != nil {
+		t.Fatalf("write auth without key: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsSubscribe(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("write first-frame subscribe: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsBinaryAuthFrame(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("write binary auth frame: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsWhitespaceConfiguredKey(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServerWithKey(t, hub, "  ")
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("write auth with empty configured key: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("auth feed: %v", err)
+	}
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe feed: %v", err)
+	}
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	hub.Publish(entityEvent("create", "asset-after-auth", 1, "asset"))
+	var event protocol.FeedEvent
+	readFeedEvent(t, conn, &event)
+	if event.ID != "asset-after-auth" || event.Version != 1 {
+		t.Fatalf("unexpected event after auth: %+v", event)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("write second auth: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+// TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription sends the late
+// auth frame only after a subscribe and event read, proving established sessions
+// still reject auth frames after normal feed traffic.
+func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("auth feed: %v", err)
+	}
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("write subscribe: %v", err)
+	}
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	hub.Publish(entityEvent("create", "asset-after-subscription", 1, "asset"))
+	var event protocol.FeedEvent
+	readFeedEvent(t, conn, &event)
+	if event.ID != "asset-after-subscription" || event.Version != 1 {
+		t.Fatalf("unexpected event after subscription: %+v", event)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("write late auth: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+}
+
+func TestWebsocketFeedRejectsBinaryFrame(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("auth feed: %v", err)
+	}
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageBinary, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("write binary frame: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusUnsupportedData)
+}
+
+func newAuthFeedServer(t *testing.T, hub *Hub) *httptest.Server {
+	t.Helper()
+	return newAuthFeedServerWithKey(t, hub, "secret")
+}
+
+func newAuthFeedServerWithKey(t *testing.T, hub *Hub, apiKey string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		Config: ServerConfig{
+			EnableAPIAuth: true,
+			APIKey:        apiKey,
+			AuthTimeout:   500 * time.Millisecond,
+		},
+	}.ServeHTTP))
+}
+
+func expectFeedClosedWithStatus(t *testing.T, conn *websocket.Conn, expected websocket.StatusCode) {
+	t.Helper()
+	readCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err := conn.Read(readCtx)
+	if err == nil {
+		t.Fatal("expected feed websocket to close")
+	}
+	var closeErr websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		t.Fatalf("expected websocket close error, got %T: %v", err, err)
+	}
+	if closeErr.Code != expected {
+		t.Fatalf("expected feed websocket close status %v, got %v", expected, closeErr.Code)
 	}
 }
 

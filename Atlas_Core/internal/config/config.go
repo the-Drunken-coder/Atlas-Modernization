@@ -209,11 +209,66 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	if cfg.EnableAPIAuth && strings.TrimSpace(cfg.APIAuthKey) == "" {
+	cfg.APIAuthKey = strings.TrimSpace(cfg.APIAuthKey)
+	if cfg.EnableAPIAuth && cfg.APIAuthKey == "" {
 		return nil, fmt.Errorf("ENABLE_API_AUTH is true but API_AUTH_KEY is empty")
+	}
+	if cfg.EnableAPIAuth {
+		placeholderKeys := map[string]struct{}{
+			"000000":        {},
+			"111111":        {},
+			"123456":        {},
+			"abcd1234":      {},
+			"changeme":      {},
+			"admin":         {},
+			"apikey":        {},
+			"asdf":          {},
+			"default":       {},
+			"dummy":         {},
+			"example":       {},
+			"key":           {},
+			"password":      {},
+			"password123":   {},
+			"placeholder":   {},
+			"qwerty":        {},
+			"secret":        {},
+			"test":          {},
+			"your-key-here": {},
+		}
+		normalizedAPIKey := strings.ToLower(cfg.APIAuthKey)
+		if _, placeholder := placeholderKeys[normalizedAPIKey]; placeholder || isWeakAPIAuthKey(normalizedAPIKey) {
+			return nil, fmt.Errorf("API_AUTH_KEY contains placeholder value; use a real secret")
+		}
 	}
 
 	return cfg, nil
+}
+
+func isWeakAPIAuthKey(key string) bool {
+	if len(key) < 8 {
+		return true
+	}
+	if strings.Contains(key, "qwerty") || strings.Contains(key, "asdf") {
+		return true
+	}
+	if strings.HasPrefix(key, "password") || strings.HasSuffix(key, "123") {
+		return true
+	}
+	return allSameRune(key)
+}
+
+func allSameRune(value string) bool {
+	var first rune
+	for index, current := range value {
+		if index == 0 {
+			first = current
+			continue
+		}
+		if current != first {
+			return false
+		}
+	}
+	return value != ""
 }
 
 // loadSettingsFile loads settings from atlas_core.settings.json.

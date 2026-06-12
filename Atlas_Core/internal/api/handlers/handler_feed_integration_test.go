@@ -54,15 +54,19 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	}()
 	readFeedHandshakeIntegration(t, conn)
 
-	subscription := feed.Subscription{Filter: feed.FilterAll}
-	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
-		t.Fatalf("subscribe feed: %v", err)
-	}
-	waitForFeedSubscription(t, hub, subscription)
-
 	prefix := fmt.Sprintf("feed-e2e-%d", time.Now().UTC().UnixNano())
 	firstID := prefix + "-first"
 	secondID := prefix + "-second"
+	firstSubscription := feed.Subscription{Filter: feed.FilterID, ResourceType: protocol.ResourceTypeEntity, ID: firstID}
+	secondSubscription := feed.Subscription{Filter: feed.FilterID, ResourceType: protocol.ResourceTypeEntity, ID: secondID}
+	if err := conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"action":"subscribe","filter":"id","resource_type":"entity","id":%q}`, firstID))); err != nil {
+		t.Fatalf("subscribe first entity feed: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"action":"subscribe","filter":"id","resource_type":"entity","id":%q}`, secondID))); err != nil {
+		t.Fatalf("subscribe second entity feed: %v", err)
+	}
+	waitForFeedSubscription(t, hub, firstSubscription)
+	waitForFeedSubscription(t, hub, secondSubscription)
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -145,6 +149,16 @@ func feedIntegrationCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (
 	var ok bool
 	err := pool.QueryRow(ctx, `
 		SELECT to_regclass('public.entities') IS NOT NULL
+			AND to_regclass('public.tasks') IS NOT NULL
+			AND to_regclass('public.objects') IS NOT NULL
+			AND to_regclass('public.deletions') IS NOT NULL
+			AND EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+					AND table_name = 'deletions'
+					AND column_name = 'context'
+			)
 			AND to_regclass('public.atlas_change_version_seq') IS NOT NULL
 	`).Scan(&ok)
 	return ok, err

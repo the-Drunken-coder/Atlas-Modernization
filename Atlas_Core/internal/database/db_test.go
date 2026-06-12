@@ -152,6 +152,7 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 		"CREATE INDEX idx_tasks_entity_updated_cursor ON tasks(entity_id, updated_at DESC, task_id DESC)",
 		"CREATE INDEX idx_objects_created_cursor ON objects(created_at DESC, object_id DESC)",
 		"CREATE INDEX idx_objects_updated_cursor ON objects(updated_at DESC, object_id DESC)",
+		"context JSONB NOT NULL DEFAULT '{}'",
 		"CREATE INDEX idx_deletions_type_deleted_cursor ON deletions(resource_type, deleted_at DESC, resource_id DESC)",
 		"CREATE TABLE storage_deletion_outbox",
 		"UNIQUE (bucket, path)",
@@ -252,6 +253,33 @@ func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("deletions_context_rejects_null", func(t *testing.T) {
+		_, err := conn.Exec(ctx, `INSERT INTO deletions (resource_type, resource_id, version, context) VALUES ('task', 'task-null-context', 1, NULL)`)
+		assertSQLState(t, err, "23502")
+	})
+
+	t.Run("deletions_context_defaults_to_empty_object", func(t *testing.T) {
+		var contextText string
+		err := conn.QueryRow(ctx, `INSERT INTO deletions (resource_type, resource_id, version) VALUES ('task', 'task-default-context', 1) RETURNING context::text`).Scan(&contextText)
+		if err != nil {
+			t.Fatalf("insert deletion without context: %v", err)
+		}
+		if contextText != "{}" {
+			t.Fatalf("context default = %q, want {}", contextText)
+		}
+	})
+
+	t.Run("deletions_context_persists_json", func(t *testing.T) {
+		var entityID string
+		err := conn.QueryRow(ctx, `INSERT INTO deletions (resource_type, resource_id, version, context) VALUES ('task', 'task-json-context', 1, $1::jsonb) RETURNING context->>'entity_id'`, `{"entity_id":"asset-1"}`).Scan(&entityID)
+		if err != nil {
+			t.Fatalf("insert deletion with context: %v", err)
+		}
+		if entityID != "asset-1" {
+			t.Fatalf("context entity_id = %q, want asset-1", entityID)
+		}
+	})
 }
 
 func databaseTestURL() (string, bool) {
@@ -288,5 +316,19 @@ func assertConstraintViolation(t *testing.T, err error, constraint string) {
 	}
 	if pgErr.ConstraintName != constraint {
 		t.Fatalf("constraint = %q, want %q: %v", pgErr.ConstraintName, constraint, err)
+	}
+}
+
+func assertSQLState(t *testing.T, err error, code string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected SQLSTATE %s", code)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("error type = %T, want *pgconn.PgError: %v", err, err)
+	}
+	if pgErr.Code != code {
+		t.Fatalf("SQLSTATE = %s, want %s: %v", pgErr.Code, code, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // --- Object Handlers ---
@@ -50,7 +51,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Bucket) > 0 {
-		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", protocol.ErrorCodeValidationError)
 		return
 	}
 
@@ -109,7 +110,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Bucket) > 0 {
-		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", protocol.ErrorCodeValidationError)
 		return
 	}
 

@@ -19,6 +19,11 @@ type CLICommand =
   | { kind: "watch"; options: CLIOptions; filter: AtlasSubscription; follow: boolean };
 
 const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
+export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];
+const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
+const PACKAGE_NAME = "@the-drunken-coder/atlas-sdk";
+const PACKAGE_BIN = { atlas: "./dist/atlas_sdk/src/cli.js" } as const;
+const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
 export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<number> {
   try {
@@ -39,11 +44,11 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       return 0;
     }
 
-    await client.subscribe(command.filter);
-    await client.connectFeed();
     client.watch(command.filter, (_resource, event) => {
       io.stdout.write(JSON.stringify(event) + "\n");
     });
+    await client.subscribe(command.filter);
+    await client.connectFeed();
     if (command.follow) {
       await new Promise(() => undefined);
     }
@@ -127,17 +132,24 @@ function readFlagValue(argv: string[], index: number, flag: string): string {
   return value;
 }
 
-function parseFilter(raw: string): AtlasSubscription {
+export function parseFilter(raw: string): AtlasSubscription {
   if (raw === "all") return { filter: "all" };
-  const [kind, resourceType, id] = raw.split(":");
-  if (kind === "type" && isResourceType(resourceType) && id === undefined) return { filter: "type", resource_type: resourceType };
-  if (kind === "id" && isResourceType(resourceType) && id) return { filter: "id", resource_type: resourceType, id };
-  if (kind === "tasks_for_entity" && resourceType && id === undefined) return { filter: "tasks_for_entity", entity_id: resourceType };
+  const parts = raw.split(":");
+  const [kind, secondPart] = parts;
+  if (kind === "type" && isResourceType(secondPart) && parts.length === 2) return { filter: "type", resource_type: secondPart };
+  if (kind === "id" && isResourceType(secondPart) && parts.length >= 3) {
+    const id = parts.slice(2).join(":");
+    if (id) return { filter: "id", resource_type: secondPart, id };
+  }
+  if (kind === "tasks_for_entity" && parts.length >= 2) {
+    const entityId = parts.slice(1).join(":");
+    if (entityId) return { filter: "tasks_for_entity", entity_id: entityId };
+  }
   throw new Error(`invalid subscription filter: ${raw}`);
 }
 
-function isResourceType(value: string | undefined): value is ResourceType {
-  return value === "entity" || value === "task" || value === "object";
+export function isResourceType(value: string | undefined): value is ResourceType {
+  return value !== undefined && RESOURCE_TYPE_SET.has(value);
 }
 
 function defaultIO(): CLIIO {
@@ -148,7 +160,32 @@ function defaultIO(): CLIIO {
   };
 }
 
-if (typeof process !== "undefined" && process.argv[1]?.endsWith("cli.js")) {
+function isCLIEntrypoint(): boolean {
+  if (typeof process === "undefined") return false;
+  const invoked = basename(process.argv[1] ?? "").toLowerCase();
+  return CLI_ENTRYPOINT_NAMES.has(invoked);
+}
+
+function buildCLIEntrypointNames(): Set<string> {
+  const allowedNames = new Set<string>(["cli.ts", "index.js"]);
+  for (const [binName, binPath] of Object.entries(PACKAGE_BIN)) {
+    allowedNames.add(binName.toLowerCase());
+    allowedNames.add(`${binName}.cmd`.toLowerCase());
+    allowedNames.add(basename(binPath).toLowerCase());
+  }
+  const packageLeafName = PACKAGE_NAME.split("/").pop();
+  if (packageLeafName) {
+    allowedNames.add(packageLeafName.toLowerCase());
+    allowedNames.add(`${packageLeafName}.cmd`.toLowerCase());
+  }
+  return allowedNames;
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? "";
+}
+
+if (isCLIEntrypoint()) {
   runCLI(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });

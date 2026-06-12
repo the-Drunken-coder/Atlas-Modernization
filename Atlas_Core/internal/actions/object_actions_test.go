@@ -431,6 +431,36 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	if rowExists {
 		t.Fatal("object row was resurrected after delete won the upload race")
 	}
+	var resourceType, resourceID string
+	var contextJSON []byte
+	var tombstoneVersion int64
+	if err := pool.QueryRow(ctx, `
+		SELECT resource_type, resource_id, context, version
+		FROM deletions
+		WHERE resource_type = 'object' AND resource_id = $1
+	`, objectID).Scan(&resourceType, &resourceID, &contextJSON, &tombstoneVersion); err != nil {
+		t.Fatalf("query object tombstone: %v", err)
+	}
+	if resourceType != "object" || resourceID != objectID {
+		t.Fatalf("tombstone identity = %s/%s, want object/%s", resourceType, resourceID, objectID)
+	}
+	var gotContext map[string]any
+	if err := json.Unmarshal(contextJSON, &gotContext); err != nil {
+		t.Fatalf("decode object tombstone context: %v", err)
+	}
+	if len(gotContext) != 0 {
+		t.Fatalf("object tombstone context = %#v, want empty", gotContext)
+	}
+	if tombstoneVersion <= 0 {
+		t.Fatalf("object tombstone version = %d, want positive", tombstoneVersion)
+	}
+	currentVersion, err := CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("CurrentChangeVersion: %v", err)
+	}
+	if currentVersion < tombstoneVersion {
+		t.Fatalf("CurrentChangeVersion = %d, want at least tombstone version %d", currentVersion, tombstoneVersion)
+	}
 	if !storageClient.deletedPath(initialPath) {
 		t.Fatalf("delete did not remove initial path %q; deleted paths = %#v", initialPath, storageClient.deletedPathsSnapshot())
 	}

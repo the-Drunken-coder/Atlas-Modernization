@@ -28,6 +28,10 @@ func ValidateObjectResource(value any) []string {
 	return validator.ValidateObjectResource(value)
 }
 
+func ValidateErrorResponse(value any) []string {
+	return validator.ValidateErrorResponse(value)
+}
+
 func ValidateFeedEvent(value any) []string {
 	return validator.ValidateFeedEvent(value)
 }
