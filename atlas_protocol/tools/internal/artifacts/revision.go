@@ -65,7 +65,7 @@ func goRevisionSource(revision string) []byte {
 	builder.WriteString("package atlasprotocol\n\n")
 	builder.WriteString("// ProtocolRevision identifies the protocol CUE source used to generate this package.\n")
 	builder.WriteString("const ProtocolRevision = ")
-	builder.WriteString(fmt.Sprintf("%q", revision))
+	_, _ = fmt.Fprintf(&builder, "%q", revision)
 	builder.WriteString("\n")
 	return formatGeneratedGoSource(builder.String())
 }

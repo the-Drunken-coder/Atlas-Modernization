@@ -5,6 +5,7 @@ go 1.26
 toolchain go1.26.4
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/jackc/pgx/v5 v5.10.0
@@ -52,5 +53,4 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
-	nhooyr.io/websocket v1.8.17 // indirect
 )

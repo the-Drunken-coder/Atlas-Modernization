@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
-	"nhooyr.io/websocket"
 )
 
 const (
@@ -46,7 +46,9 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close(websocket.StatusInternalError, "feed closed unexpectedly")
+	defer func() {
+		_ = conn.Close(websocket.StatusInternalError, "feed closed unexpectedly")
+	}()
 
 	client := s.Hub.NewClient()
 	defer client.Close()

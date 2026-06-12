@@ -84,9 +84,7 @@ func (h *Hub) RemoveClient(client *Client) {
 }
 
 func (h *Hub) closeClientLocked(client *Client) {
-	if _, ok := h.clients[client]; ok {
-		delete(h.clients, client)
-	}
+	delete(h.clients, client)
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if client.closed {

@@ -263,8 +263,10 @@ func simulatedTraffic() []RoutedEvent {
 		taskID := fmt.Sprintf("task-%02d", i)
 		from := fmt.Sprintf("asset-%d", i%4)
 		to := fmt.Sprintf("asset-%d", (i+1)%4)
-		events = append(events, taskEvent("create", taskID, nextVersion(), "", from, "pending"))
-		events = append(events, taskEvent("update", taskID, nextVersion(), from, to, "pending"))
+		events = append(events,
+			taskEvent("create", taskID, nextVersion(), "", from, "pending"),
+			taskEvent("update", taskID, nextVersion(), from, to, "pending"),
+		)
 		if i%3 == 0 {
 			events = append(events, taskEvent("update", taskID, nextVersion(), to, to, "acknowledged"))
 		}
@@ -273,8 +275,10 @@ func simulatedTraffic() []RoutedEvent {
 		}
 		if i%5 == 0 {
 			objectID := fmt.Sprintf("object-%02d", i)
-			events = append(events, objectEvent("create", objectID, nextVersion()))
-			events = append(events, objectEvent("update", objectID, nextVersion()))
+			events = append(events,
+				objectEvent("create", objectID, nextVersion()),
+				objectEvent("update", objectID, nextVersion()),
+			)
 		}
 	}
 	events = append(events, entityEvent("delete", "asset-2", nextVersion(), ""))

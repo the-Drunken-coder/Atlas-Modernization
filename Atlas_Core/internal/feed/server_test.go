@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
-	"nhooyr.io/websocket"
 )
 
 func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
@@ -19,11 +19,10 @@ func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
 	defer server.Close()
 
-	conn, _, err := websocket.Dial(context.Background(), websocketURL(server.URL), nil)
-	if err != nil {
-		t.Fatalf("dial feed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
 
 	readHandshake(t, conn)
 	hub.Publish(entityEvent("create", "asset-before-subscribe", 1, "asset"))
@@ -54,11 +53,10 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	}.ServeHTTP))
 	defer server.Close()
 
-	conn, _, err := websocket.Dial(context.Background(), websocketURL(server.URL), nil)
-	if err != nil {
-		t.Fatalf("dial feed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
 
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
 		t.Fatalf("auth feed: %v", err)
@@ -95,6 +93,20 @@ func readHandshake(t *testing.T, conn *websocket.Conn) {
 	if hello.Type != "hello" || hello.ProtocolRevision != protocol.ProtocolRevision {
 		t.Fatalf("unexpected feed handshake: %+v", hello)
 	}
+}
+
+func dialFeed(t *testing.T, url string) *websocket.Conn {
+	t.Helper()
+	conn, response, err := websocket.Dial(context.Background(), websocketURL(url), nil)
+	if response != nil && response.Body != nil {
+		defer func() {
+			_ = response.Body.Close()
+		}()
+	}
+	if err != nil {
+		t.Fatalf("dial feed: %v", err)
+	}
+	return conn
 }
 
 func readFeedEvent(t *testing.T, conn *websocket.Conn, event *protocol.FeedEvent) {
