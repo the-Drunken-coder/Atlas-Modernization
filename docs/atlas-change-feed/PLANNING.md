@@ -1,8 +1,8 @@
 # Atlas Change Feed Planning
 
-Status: protocol feed envelope and Atlas Core websocket feed implemented; SDK consumption not yet implemented. Split out of [`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md) on 2026-06-12 so the feed can be specced, built, and tested as its own deliverable **before** the SDK exists. A first decision pass on 2026-06-12 settled the emission mechanism, event envelope, endpoint and auth, and initial subscription state (see "Decisions from the first open-questions pass"). A protocol implementation pass on 2026-06-12 authored the envelope, resource shapes, and client messages in `../../atlas_protocol/`. A Core implementation pass on 2026-06-12 added `/feed`, post-commit action hooks, in-process ordered fanout, and the simulation harness.
+Status: protocol feed envelope, Atlas Core websocket feed, and SDK consumption are implemented. Split out of [`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md) on 2026-06-12 so the feed can be specced, built, and tested as its own deliverable **before** the SDK exists. A first decision pass on 2026-06-12 settled the emission mechanism, event envelope, endpoint and auth, and initial subscription state (see "Decisions from the first open-questions pass"). A protocol implementation pass on 2026-06-12 authored the envelope, resource shapes, and client messages in `../../atlas_protocol/`. A Core implementation pass on 2026-06-12 added `/feed`, post-commit action hooks, in-process ordered fanout, and the simulation harness. The SDK implementation in `../../atlas_sdk/` now consumes the same feed contract, including selective subscriptions, protocol revision handshakes, gap recovery through `changed-since`, and ledger-style Node/browser tests.
 
-The change feed is the push channel out of Atlas Core: an endpoint that streams change events to connected clients so they learn about writes without polling. The transport is **decided: websocket** — not webhooks (Core calling back URLs that clients register does not work for browser UIs or assets behind flaky links). The Atlas SDK is the eventual primary consumer; until it exists, the feed's real exercising consumer is its tests (see "Testing").
+The change feed is the push channel out of Atlas Core: an endpoint that streams change events to connected clients so they learn about writes without polling. The transport is **decided: websocket** — not webhooks (Core calling back URLs that clients register does not work for browser UIs or assets behind flaky links). The Atlas SDK is now the primary TypeScript consumer; the feed's first correctness consumer remains its Core simulation tests (see "Testing"), with SDK tests covering the same consumer contract from the client side.
 
 ## Decided constraints
 
@@ -34,7 +34,7 @@ Carried over from SDK planning, where they already survived review; these are no
 - **Slow consumers are disconnected.** Each connection gets a bounded in-process send buffer (currently 256 events by default). If the buffer fills, Core closes the connection; the client recovers by reconnecting and calling `changed-since` from its last applied version.
 - **Keepalive is websocket ping/pong.** Core sends pings every 30 seconds and closes dead connections through the websocket library's failed ping/read/write paths.
 - **Protocol revision handshake.** After first-message auth succeeds (or immediately when auth is disabled), Core sends a server `hello` frame containing `protocol_revision`. This is not a subscription event and does not opt the client into any filters.
-- **Simulation harness placement.** The v1 harness lives in `../../Atlas_Core/internal/feed/` and uses a faked Core ledger with the real feed hub. It publishes realistic entity/task/object traffic, deliberately publishes some events out of order, injects dropped connections and forced gaps, and audits subscribers against the ledger. This keeps feed correctness fast and deterministic before the SDK attaches as an additional subscriber.
+- **Simulation harness placement.** The v1 harness lives in `../../Atlas_Core/internal/feed/` and uses a faked Core ledger with the real feed hub. It publishes realistic entity/task/object traffic, deliberately publishes some events out of order, injects dropped connections and forced gaps, and audits subscribers against the ledger. This keeps feed correctness fast and deterministic; the SDK adds a sibling ledger-style harness around the generated TypeScript client and a fake Core/feed transport.
 
 ## What clients must do (consumption contract)
 
@@ -56,7 +56,7 @@ At the end of the run, and at checkpoints during it, audit the feed against the 
 
 Fault injection belongs in the same harness: dropped connections mid-stream, forced version gaps, reconnects — asserting that the `changed-since` recovery path converges every client back to ground truth.
 
-The same philosophy extends to the SDK later: attach an SDK instance to the simulation as one more subscriber and compare what the SDK *thinks* the world looks like against the ledger (see the SDK plan's "Testing" section). Ideally both reuse one harness.
+The same philosophy now extends to the SDK: attach an SDK instance to a feed-compatible simulation as one more subscriber and compare what the SDK *thinks* the world looks like against the ledger (see the SDK plan's "Testing" section). The current implementation uses a TypeScript fake Core/feed transport for the SDK harness so the same tests run in both Node and browser environments.
 
 ## Open questions
 

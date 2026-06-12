@@ -243,14 +243,7 @@ export class AtlasClient {
     }
     const socket = new this.WebSocketImpl(feedUrl(this.baseUrl));
     this.socket = socket;
-    await new Promise<void>((resolve, reject) => {
-      socket.addEventListener("open", () => resolve());
-      socket.addEventListener("error", () => reject(new Error("feed websocket failed to open")));
-    });
-    if (this.apiKey) {
-      socket.send(JSON.stringify({ action: "auth", api_key: this.apiKey }));
-    }
-    await new Promise<void>((resolve, reject) => {
+    const hello = new Promise<void>((resolve, reject) => {
       const onMessage = (message: any) => {
         try {
           const data = JSON.parse(String(message.data)) as FeedHandshakeMessage;
@@ -266,6 +259,14 @@ export class AtlasClient {
       };
       socket.addEventListener("message", onMessage);
     });
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      socket.addEventListener("error", () => reject(new Error("feed websocket failed to open")));
+    });
+    if (this.apiKey) {
+      socket.send(JSON.stringify({ action: "auth", api_key: this.apiKey }));
+    }
+    await hello;
     for (const filter of this.subscriptions) {
       socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
     }
@@ -339,16 +340,17 @@ export class AtlasClient {
     if (event.version <= this.versionFor(event.resource_type, event.id)) {
       return;
     }
+    const previous = this.cache[event.resource_type].get(event.id)?.value;
     if (event.event === "delete") {
       this.cache[event.resource_type].set(event.id, { version: event.version, deleted: true });
       this.lastVersion = Math.max(this.lastVersion, event.version);
-      this.notify(event, undefined);
+      this.notify(event, undefined, previous);
       return;
     }
     const resource = event.resource as EntityResource | TaskResource | ObjectResource;
     this.cacheResource(event.resource_type, event.id, resource);
     this.lastVersion = Math.max(this.lastVersion, event.version);
-    this.notify(event, resource);
+    this.notify(event, resource, previous);
   }
 
   private cacheResource(type: ResourceType, id: string, value: EntityResource | TaskResource | ObjectResource): void {
@@ -428,9 +430,13 @@ export class AtlasClient {
     return data;
   }
 
-  private notify(event: FeedEvent, resource: EntityResource | TaskResource | ObjectResource | undefined): void {
+  private notify(
+    event: FeedEvent,
+    resource: EntityResource | TaskResource | ObjectResource | undefined,
+    previous: EntityResource | TaskResource | ObjectResource | undefined
+  ): void {
     for (const [key, callbacks] of this.watchers) {
-      if (!matchesSubscription(parseSubscriptionKey(key), event)) {
+      if (!matchesSubscription(parseSubscriptionKey(key), event, previous)) {
         continue;
       }
       for (const callback of callbacks) {
@@ -527,7 +533,7 @@ function covers(covering: AtlasSubscription, wanted: AtlasSubscription): boolean
   return subscriptionKey(covering) === subscriptionKey(wanted);
 }
 
-function matchesSubscription(filter: AtlasSubscription, event: FeedEvent): boolean {
+function matchesSubscription(filter: AtlasSubscription, event: FeedEvent, previous?: EntityResource | TaskResource | ObjectResource): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -536,7 +542,13 @@ function matchesSubscription(filter: AtlasSubscription, event: FeedEvent): boole
     case "type":
       return event.resource_type === filter.resource_type;
     case "tasks_for_entity":
-      return event.resource_type === "task" && event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id;
+      if (event.resource_type !== "task") {
+        return false;
+      }
+      return (
+        (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id) ||
+        ((previous as TaskResource | undefined)?.entity_id ?? "") === filter.entity_id
+      );
   }
 }
 

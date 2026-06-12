@@ -84,6 +84,34 @@ describe("AtlasClient sync", () => {
     await assertClientMatchesLedger(client, core);
   });
 
+  it("honors selective tasks-for-entity routing across reassignment", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "selective",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    await client.subscribe({ filter: "tasks_for_entity", entity_id: "asset-old" });
+    const watch = vi.fn();
+    client.watch({ filter: "tasks_for_entity", entity_id: "asset-old" }, watch);
+    await client.connectFeed();
+
+    const first = core.upsertTask(task("task-reassign", "asset-old"));
+    core.emit({ event: "create", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first });
+    const reassigned = core.upsertTask({ ...first, entity_id: "asset-new" });
+    core.emit(
+      { event: "update", resource_type: "task", id: reassigned.task_id, version: reassigned.metadata.version, resource: reassigned },
+      { beforeTaskEntityId: "asset-old" }
+    );
+
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(reassigned, expect.objectContaining({ id: "task-reassign", version: reassigned.metadata.version }));
+    });
+  });
+
   it("caches object content by object version with an LRU cap", async () => {
     const core = new FakeCore();
     core.upsertObject(object("object-1"));

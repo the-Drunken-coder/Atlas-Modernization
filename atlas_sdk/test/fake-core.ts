@@ -1,4 +1,11 @@
-import { ATLAS_PROTOCOL_REVISION, type EntityResource, type FeedEvent, type ObjectResource, type TaskResource } from "../src";
+import {
+  ATLAS_PROTOCOL_REVISION,
+  type AtlasSubscription,
+  type EntityResource,
+  type FeedEvent,
+  type ObjectResource,
+  type TaskResource
+} from "../src";
 
 type Listener = (event: any) => void;
 
@@ -99,10 +106,14 @@ export class FakeCore {
     return value;
   }
 
-  emit(event: FeedEvent, options?: { dropForSockets?: boolean }): void {
+  emit(event: FeedEvent, options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null }): void {
     this.record(event);
     if (options?.dropForSockets) return;
-    for (const socket of this.sockets) socket.receive(event);
+    for (const socket of this.sockets) {
+      if (socket.subscribedTo(event, options?.beforeTaskEntityId)) {
+        socket.receive(event);
+      }
+    }
   }
 
   private record(event: FeedEvent): void {
@@ -131,7 +142,7 @@ let currentCore: FakeCore;
 class FakeWebSocket {
   readyState = 0;
   private listeners = new Map<string, Set<Listener>>();
-  private subscriptions: unknown[] = [];
+  private subscriptions: AtlasSubscription[] = [];
 
   constructor(readonly url: string, private readonly core: FakeCore) {
     this.core.sockets.add(this);
@@ -145,6 +156,10 @@ class FakeWebSocket {
   send(data: string): void {
     const parsed = JSON.parse(data);
     if (parsed.action === "subscribe") this.subscriptions.push(parsed);
+    if (parsed.action === "unsubscribe") {
+      const key = subscriptionKey(parsed);
+      this.subscriptions = this.subscriptions.filter((subscription) => subscriptionKey(subscription) !== key);
+    }
   }
 
   close(): void {
@@ -164,6 +179,10 @@ class FakeWebSocket {
 
   receive(value: unknown): void {
     this.dispatch("message", { data: JSON.stringify(value) });
+  }
+
+  subscribedTo(event: FeedEvent, beforeTaskEntityId?: string | null): boolean {
+    return this.subscriptions.some((subscription) => subscriptionMatches(subscription, event, beforeTaskEntityId));
   }
 
   private dispatch(type: string, event: unknown): void {
@@ -222,4 +241,33 @@ function isDelete(type: "entity" | "task" | "object") {
 
 function deleted(event: FeedEvent) {
   return { id: event.id, type: event.resource_type, version: event.version };
+}
+
+function subscriptionKey(filter: AtlasSubscription): string {
+  switch (filter.filter) {
+    case "all":
+      return "all";
+    case "id":
+      return `id:${filter.resource_type}:${filter.id}`;
+    case "type":
+      return `type:${filter.resource_type}`;
+    case "tasks_for_entity":
+      return `tasks_for_entity:${filter.entity_id}`;
+  }
+}
+
+function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, beforeTaskEntityId?: string | null): boolean {
+  switch (filter.filter) {
+    case "all":
+      return true;
+    case "id":
+      return event.resource_type === filter.resource_type && event.id === filter.id;
+    case "type":
+      return event.resource_type === filter.resource_type;
+    case "tasks_for_entity":
+      return (
+        event.resource_type === "task" &&
+        (beforeTaskEntityId === filter.entity_id || (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id))
+      );
+  }
 }
