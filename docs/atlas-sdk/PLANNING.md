@@ -1,6 +1,6 @@
 # Atlas SDK Planning
 
-Status: planned, not yet implemented. The package will live at `atlas_sdk/` in this repository and be published to public npm under a scoped name (bare `atlas` is taken on npm; final name TBD, e.g. `@the-drunken-coder/atlas-sdk`).
+Status: initial SDK implemented in `../../atlas_sdk/`: typed HTTP client, CLI entrypoint, polling sync cache, websocket feed transport, selective subscriptions, revision handshake, object-content LRU cache, and Node/browser test suites are in place. The package is still private in this repository; public npm publishing remains a later release step.
 
 The Atlas SDK is the single client for Atlas Core. The goal is that **no service ever calls the API manually** — every UI, asset-side service, and tool talks to Atlas through the SDK or its bundled CLI. The one documented interim exception: non-TypeScript services without an SDK port may call the API directly (see "CLI and cross-language story"); the goal stands because the contract, not the package, is the source of truth. The SDK wraps the existing HTTP API. The one piece of new API work it depends on — the websocket change feed in Atlas Core — is planned separately in [`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md) and is being built and tested before the SDK.
 
@@ -89,6 +89,8 @@ An object is two things, treated differently:
 Resource types come from `atlas_protocol` generated artifacts. The SDK must not hand-write resource shapes — protocol changes propagate by regeneration, keeping the SDK in lockstep. SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
 
 TypeScript generation does not exist in `atlas_protocol` yet — the generator currently emits JSON Schema and Go validators only. Adding TypeScript outputs is the one prerequisite protocol slice for phase 1; it is planned in [`../atlas-protocol/PLANNING.md`](../atlas-protocol/PLANNING.md) ("Next Slice: TypeScript Outputs").
+
+Update from 2026-06-12: TypeScript generation now exists in `../../atlas_protocol/generated/typescript/index.ts`, and the generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token. Core exposes the same stamp via `GET /protocol/revision` and the websocket feed `hello` frame. The SDK imports those generated types directly rather than copying or hand-writing resource shapes.
 
 ## CLI and cross-language story
 

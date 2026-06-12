@@ -188,12 +188,19 @@ func isForeignKeyViolation(err error) bool {
 
 // EntityActions handles entity business logic.
 type EntityActions struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	changeSink ChangeSink
 }
 
 // NewEntityActions creates a new EntityActions instance.
 func NewEntityActions(pool *pgxpool.Pool) *EntityActions {
-	return &EntityActions{pool: pool}
+	return NewEntityActionsWithChangeSink(pool, nil)
+}
+
+// NewEntityActionsWithChangeSink creates a new EntityActions instance that
+// emits committed changes to sink.
+func NewEntityActionsWithChangeSink(pool *pgxpool.Pool, sink ChangeSink) *EntityActions {
+	return &EntityActions{pool: pool, changeSink: sink}
 }
 
 // CreateEntityParams holds parameters for creating an entity.
@@ -301,6 +308,14 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit entity create transaction: %w", err)
 	}
+
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventCreate,
+		ResourceType: ChangeResourceEntity,
+		ID:           entity.EntityID,
+		Version:      entity.Version,
+		AfterEntity:  cloneEntityModel(&entity),
+	})
 
 	return &entity, nil
 }
@@ -462,6 +477,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	if err := checkExpectedVersion("entity", params.ExpectedVersion, entity.Version); err != nil {
 		return nil, err
 	}
+	before := cloneEntityModel(&entity)
 	if params.IsEmpty() {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)
@@ -583,6 +599,15 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventUpdate,
+		ResourceType: ChangeResourceEntity,
+		ID:           out.EntityID,
+		Version:      out.Version,
+		BeforeEntity: before,
+		AfterEntity:  cloneEntityModel(&out),
+	})
+
 	return &out, nil
 }
 
@@ -621,6 +646,27 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
+	var entity models.Entity
+	err = tx.QueryRow(ctx, `
+		SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version
+		FROM entities WHERE entity_id = $1
+		FOR UPDATE
+	`, entityID).Scan(
+		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return NewEntityNotFoundError(entityID)
+		}
+		return fmt.Errorf("failed to get entity for deletion: %w", err)
+	}
+
+	beforeTasks, err := queryTasksByEntityForUpdate(ctx, tx, entityID)
+	if err != nil {
+		return err
+	}
+
 	if _, err := tx.Exec(ctx, `
 		UPDATE tasks
 		SET updated_at = clock_timestamp(),
@@ -639,17 +685,104 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return NewEntityNotFoundError(entityID)
 	}
 
-	// Record tombstone so changed-since can notify clients
-	if _, err := tx.Exec(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ('entity', $1)", entityID); err != nil {
+	// Record tombstone so changed-since can notify clients.
+	var tombstoneVersion int64
+	if err := tx.QueryRow(ctx,
+		"INSERT INTO deletions (resource_type, resource_id) VALUES ('entity', $1) RETURNING version", entityID).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record entity deletion tombstone: %w", err)
+	}
+
+	afterTasks, err := queryTasksByIDs(ctx, tx, taskIDs(beforeTasks))
+	if err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit delete transaction: %w", err)
 	}
 
+	for _, beforeTask := range beforeTasks {
+		afterTask := afterTasks[beforeTask.TaskID]
+		if afterTask == nil {
+			continue
+		}
+		publishChange(a.changeSink, ResourceChange{
+			Event:        ChangeEventUpdate,
+			ResourceType: ChangeResourceTask,
+			ID:           afterTask.TaskID,
+			Version:      afterTask.Version,
+			BeforeTask:   cloneTaskModel(beforeTask),
+			AfterTask:    cloneTaskModel(afterTask),
+		})
+	}
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventDelete,
+		ResourceType: ChangeResourceEntity,
+		ID:           entity.EntityID,
+		Version:      tombstoneVersion,
+		BeforeEntity: cloneEntityModel(&entity),
+	})
+
 	return nil
+}
+
+func queryTasksByEntityForUpdate(ctx context.Context, tx pgx.Tx, entityID string) ([]*models.Task, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT task_id, status, entity_id, json, created_at, updated_at, version
+		FROM tasks WHERE entity_id = $1
+		FOR UPDATE
+	`, entityID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lock entity tasks before deletion: %w", err)
+	}
+	defer rows.Close()
+	return scanTaskRows(rows)
+}
+
+func queryTasksByIDs(ctx context.Context, tx pgx.Tx, ids []string) (map[string]*models.Task, error) {
+	tasks := make(map[string]*models.Task, len(ids))
+	if len(ids) == 0 {
+		return tasks, nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT task_id, status, entity_id, json, created_at, updated_at, version
+		FROM tasks WHERE task_id = ANY($1)
+	`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load entity tasks after deletion: %w", err)
+	}
+	defer rows.Close()
+	list, err := scanTaskRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range list {
+		tasks[task.TaskID] = task
+	}
+	return tasks, nil
+}
+
+func taskIDs(tasks []*models.Task) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.TaskID)
+	}
+	return ids
+}
+
+func scanTaskRows(rows pgx.Rows) ([]*models.Task, error) {
+	var tasks []*models.Task
+	for rows.Next() {
+		var task models.Task
+		if err := rows.Scan(&task.TaskID, &task.Status, &task.EntityID, &task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version); err != nil {
+			return nil, fmt.Errorf("failed to scan task: %w", err)
+		}
+		tasks = append(tasks, &task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate tasks: %w", err)
+	}
+	return tasks, nil
 }
 
 // Count returns the total number of entities.

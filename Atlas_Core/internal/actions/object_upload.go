@@ -41,6 +41,7 @@ func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, opera
 type objectUploadState struct {
 	path          *string
 	json          map[string]interface{}
+	resource      *models.MediaObject
 	rowExists     bool
 	maxDeletionID int64
 }
@@ -50,18 +51,25 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 		json: make(map[string]interface{}),
 	}
 
-	var objectPath *string
-	var objectJSON json.RawMessage
-	err := tx.QueryRow(ctx, `SELECT path, json FROM objects WHERE object_id = $1 FOR UPDATE`, objectID).Scan(&objectPath, &objectJSON)
+	var object models.MediaObject
+	err := tx.QueryRow(ctx, `
+		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
+		FROM objects WHERE object_id = $1
+		FOR UPDATE
+	`, objectID).Scan(
+		&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
+		&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
+	)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("failed to lock existing object metadata: %w", err)
 		}
 	} else {
-		state.path = objectPath
+		state.path = object.Path
+		state.resource = cloneObjectModel(&object)
 		state.rowExists = true
 
-		decoded, err := decodeObjectJSONForPatch(objectJSON)
+		decoded, err := decodeObjectJSONForPatch(object.JSON)
 		if err != nil {
 			return nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
 		}
@@ -239,6 +247,19 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 			fmt.Errorf("failed to commit upload metadata transaction: %w", err),
 		)
 	}
+
+	event := ChangeEventCreate
+	if currentState.rowExists {
+		event = ChangeEventUpdate
+	}
+	publishChange(a.changeSink, ResourceChange{
+		Event:        event,
+		ResourceType: ChangeResourceObject,
+		ID:           out.ObjectID,
+		Version:      out.Version,
+		BeforeObject: cloneObjectModel(currentState.resource),
+		AfterObject:  cloneObjectModel(out),
+	})
 
 	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
 		if err := a.deleteObjectPathOrQueueRetry(ctx, objectID, *currentState.path); err != nil {

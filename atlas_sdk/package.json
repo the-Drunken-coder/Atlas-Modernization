@@ -1,0 +1,24 @@
+{
+  "name": "@the-drunken-coder/atlas-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "atlas": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test:node": "vitest run --environment node",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test": "npm run test:node && npm run test:browser"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@vitest/browser": "^4.0.0",
+    "@vitest/browser-playwright": "^4.0.0",
+    "@types/node": "^24.0.0",
+    "playwright": "^1.57.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

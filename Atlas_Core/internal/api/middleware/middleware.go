@@ -28,6 +28,18 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 }
 
+// SkipsAPIKeyAuthPath returns true for routes that do not use HTTP-header API-key auth.
+func SkipsAPIKeyAuthPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+	if normalized == "/feed" {
+		return true
+	}
+	return IsPublicUnauthenticatedPath(path)
+}
+
 // RequestLogger returns middleware that logs each HTTP request.
 func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -109,8 +121,8 @@ func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
 	apiKey = strings.TrimSpace(apiKey)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth for health endpoints
-			if IsPublicUnauthenticatedPath(r.URL.Path) {
+			// Skip auth for endpoints that authenticate outside HTTP headers.
+			if SkipsAPIKeyAuthPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}

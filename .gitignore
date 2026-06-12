@@ -48,6 +48,10 @@ go.work.sum
 # Vendored dependencies (we use modules, not vendoring)
 vendor/
 
+# --- JavaScript / TypeScript SDK ---
+node_modules/
+/atlas_sdk/dist/
+
 # --- Python tooling (Atlas_Core/scripts/) ---
 __pycache__/
 *.py[cod]

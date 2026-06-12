@@ -52,4 +52,5 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
+	nhooyr.io/websocket v1.8.17 // indirect
 )

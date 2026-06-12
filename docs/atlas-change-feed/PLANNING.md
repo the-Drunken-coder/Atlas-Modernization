@@ -1,6 +1,6 @@
 # Atlas Change Feed Planning
 
-Status: planned, not yet implemented. Split out of [`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md) on 2026-06-12 so the feed can be specced, built, and tested as its own deliverable **before** the SDK exists. This document is deliberately light on implementation detail — the open questions at the bottom are waiting to be answered, not forgotten. A first decision pass on 2026-06-12 settled the emission mechanism, event envelope, endpoint and auth, and initial subscription state (see "Decisions from the first open-questions pass").
+Status: protocol feed envelope and Atlas Core websocket feed implemented; SDK consumption not yet implemented. Split out of [`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md) on 2026-06-12 so the feed can be specced, built, and tested as its own deliverable **before** the SDK exists. A first decision pass on 2026-06-12 settled the emission mechanism, event envelope, endpoint and auth, and initial subscription state (see "Decisions from the first open-questions pass"). A protocol implementation pass on 2026-06-12 authored the envelope, resource shapes, and client messages in `../../atlas_protocol/`. A Core implementation pass on 2026-06-12 added `/feed`, post-commit action hooks, in-process ordered fanout, and the simulation harness.
 
 The change feed is the push channel out of Atlas Core: an endpoint that streams change events to connected clients so they learn about writes without polling. The transport is **decided: websocket** — not webhooks (Core calling back URLs that clients register does not work for browser UIs or assets behind flaky links). The Atlas SDK is the eventual primary consumer; until it exists, the feed's real exercising consumer is its tests (see "Testing").
 
@@ -29,6 +29,12 @@ Carried over from SDK planning, where they already survived review; these are no
   `event` is `create`, `update`, or `delete`; `resource` carries the full serialized resource and is omitted on `delete` — the tombstone is the envelope itself. Subscribe/unsubscribe messages follow the same flat style (exact shapes still open, below).
 - **Endpoint and auth: `/feed`, first-message auth.** The client connects, then its first frame carries the API key; the server closes the connection if the key is wrong or does not arrive within a timeout. Identical flow for browsers, Node, and the CLI (browsers cannot set custom headers on websockets), and no keys in URLs or access logs. While API auth is disabled — the current deployment — the auth frame is not required.
 - **Initial subscription state: empty.** A fresh connection delivers nothing until the client subscribes; automatic mode sends subscribe-`all` as its first message after authenticating.
+- **Protocol-owned feed messages.** The envelope and client messages are authored in CUE under `../../atlas_protocol/schema/feed.cue` and generated into JSON Schema plus Go artifacts. Subscribe/unsubscribe messages use flat frames: `{"action":"subscribe","filter":"all"}`, `{"action":"subscribe","filter":"id","resource_type":"task","id":"task-7"}`, `{"action":"subscribe","filter":"type","resource_type":"entity"}`, and `{"action":"subscribe","filter":"tasks_for_entity","entity_id":"asset-1"}`; unsubscribe uses the same fields with `action:"unsubscribe"`.
+- **No subscription acknowledgements in v1.** Subscribe/unsubscribe frames are commands. Valid frames change the connection's filter set silently; malformed JSON, invalid filters, or wrong first-message auth close the websocket with a policy-violation status. The SDK can layer its own local command bookkeeping if it needs UI feedback.
+- **Slow consumers are disconnected.** Each connection gets a bounded in-process send buffer (currently 256 events by default). If the buffer fills, Core closes the connection; the client recovers by reconnecting and calling `changed-since` from its last applied version.
+- **Keepalive is websocket ping/pong.** Core sends pings every 30 seconds and closes dead connections through the websocket library's failed ping/read/write paths.
+- **Protocol revision handshake.** After first-message auth succeeds (or immediately when auth is disabled), Core sends a server `hello` frame containing `protocol_revision`. This is not a subscription event and does not opt the client into any filters.
+- **Simulation harness placement.** The v1 harness lives in `../../Atlas_Core/internal/feed/` and uses a faked Core ledger with the real feed hub. It publishes realistic entity/task/object traffic, deliberately publishes some events out of order, injects dropped connections and forced gaps, and audits subscribers against the ledger. This keeps feed correctness fast and deterministic before the SDK attaches as an additional subscriber.
 
 ## What clients must do (consumption contract)
 
@@ -54,10 +60,4 @@ The same philosophy extends to the SDK later: attach an SDK instance to the simu
 
 ## Open questions
 
-- **Subscription message details.** Exact JSON for subscribe/unsubscribe (following the event envelope's flat style); whether subscriptions are acknowledged; error behavior for invalid filters.
-- **Where the envelope is authored.** Leaning: protocol CUE, so the Go types Core emits and the TypeScript types the SDK parses are generated from one source, like resource shapes.
-- **Slow consumers.** Per-connection buffer cap, then disconnect and let the client recover via `changed-since`? Something gentler?
-- **Keepalive.** Ping/pong interval and dead-connection detection.
-- **Version handshake.** Whether connect-time SDK/API compatibility checking uses the protocol revision stamp (see protocol plan).
-- **Simulation harness placement and shape.** Where it lives (Core integration tests vs. a top-level testing package), how simulated time is driven (compressed real time vs. a controlled clock), which fault cases are in scope for v1, and whether the same harness later drives SDK testing.
 - **Exit criteria for in-process.** What concrete pain — fanout load, deployment coupling, operational isolation — would justify moving the feed out of Core's process.

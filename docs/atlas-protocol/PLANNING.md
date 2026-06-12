@@ -1,6 +1,6 @@
 # Atlas Protocol Planning
 
-Status: bootstrap, task, object, and documented entity-component protocol slices are implemented in `../../atlas_protocol/`. Future work should continue from the generated module and keep this directory as planning/reference material. TypeScript outputs are the next planned slice (see "Next Slice: TypeScript Outputs").
+Status: bootstrap, task, object, documented entity-component, feed-envelope, TypeScript-output, and revision-stamp protocol slices are implemented in `../../atlas_protocol/`. Future work should continue from the generated module and keep this directory as planning/reference material.
 
 Atlas Protocol will be the standalone contract package for Atlas data. It should define what valid Atlas data is, generate reusable types and validators for multiple systems, and stay independent from Atlas Core service behavior.
 
@@ -181,18 +181,17 @@ Do not attempt to replace every Core model and validator in the first slice.
 
 The CUE-to-JSON-Schema and Go-validator path is implemented and stable, which was the stated gate for TypeScript. The Atlas SDK ([`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md)) is the consumer that now needs it: SDK phase 1 requires generated TypeScript types for entity, task, and object shapes so the SDK never hand-writes a resource shape.
 
-Planned, deliberately not fully specced yet:
+Implemented decisions:
 
-- Generate TypeScript types into `generated/typescript/`, checked in and drift-gated by `tools/check` like the existing artifacts.
-- Once the change feed plan ([`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md)) settles its wire formats: author the feed event envelope and subscription message shapes in CUE here, so the Go types Core emits and the TypeScript types the SDK parses are generated from one source.
-- The replacement policy's revision stamp doubles as the SDK's connect-time version handshake token: Core reports the protocol revision it was built from, the SDK compares it to the revision its generated types came from, and mismatch fails loudly.
+- TypeScript types are generated into `generated/typescript/index.ts`, checked in and drift-gated by `tools/check` like the existing artifacts.
+- The change feed plan ([`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md)) has settled its wire formats and the feed event envelope plus subscription message shapes are now authored in CUE here, so the Go types Core emits and the TypeScript types the SDK parses are generated from one source.
+- The replacement policy's revision stamp is a SHA-256 content hash over protocol CUE source files. It is emitted to `generated/revision.txt`, `generated/go/atlasprotocol/revision.go`, JSON Schema `x-atlas-protocol-revision`, and `generated/typescript/index.ts`.
+- The revision stamp doubles as the SDK's connect-time version handshake token: Core reports the protocol revision it was built from over `GET /protocol/revision` and the websocket feed `hello` frame; the SDK compares it to the revision its generated types came from and fails loudly on mismatch.
 
-Open questions:
+Remaining questions:
 
-- Generation tooling: from the already-generated JSON Schema (mature existing tooling) or directly from CUE? Leaning: from JSON Schema, since that path is already stable.
 - TypeScript validators now or later? Types alone satisfy SDK phase 1; no client-side runtime-validation use case is identified yet beyond CLI input checking.
 - How the SDK consumes the artifacts: import the checked-in `generated/typescript/` by path from `atlas_sdk/`, or copy/generate into the SDK package at build time?
-- What the revision stamp concretely is (content hash vs. counter) and where Core exposes it.
 
 ## Deferred Decisions
 

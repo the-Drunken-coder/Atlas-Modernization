@@ -26,5 +26,6 @@
     }
   },
   "$ref": "#/$defs/%23StatusComponent",
-  "$schema": "https://json-schema.org/draft/2020-12/schema"
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-atlas-protocol-revision": "sha256:58a6ed7f686eff200050d0250719a2bc22ad7956837c446e74a18d6ceb04e80d"
 }

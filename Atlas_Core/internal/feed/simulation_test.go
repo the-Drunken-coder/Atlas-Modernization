@@ -1,0 +1,356 @@
+package feed
+
+import (
+	"fmt"
+	"testing"
+
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
+)
+
+type simulationLedger struct {
+	events []RoutedEvent
+}
+
+func (l *simulationLedger) append(t *testing.T, event RoutedEvent) {
+	t.Helper()
+	if errors := ProtocolValidationErrors(event.Event); len(errors) > 0 {
+		t.Fatalf("ledger event %d failed protocol validation: %v", event.Event.Version, errors)
+	}
+	l.events = append(l.events, event)
+}
+
+func (l *simulationLedger) changedSince(version int64) []RoutedEvent {
+	var out []RoutedEvent
+	for _, event := range l.events {
+		if event.Event.Version > version {
+			out = append(out, event)
+		}
+	}
+	return EventsByVersion(out)
+}
+
+func (l *simulationLedger) entitled(filter Subscription) []RoutedEvent {
+	var out []RoutedEvent
+	for _, event := range l.events {
+		if subscriptionMatches(filter, event) {
+			out = append(out, event)
+		}
+	}
+	return EventsByVersion(out)
+}
+
+type simulatedSubscriber struct {
+	name         string
+	filter       Subscription
+	hub          *Hub
+	ledger       *simulationLedger
+	client       *Client
+	received     map[int64]RoutedEvent
+	appliedOrder []int64
+	lastVersion  int64
+	dropVersions map[int64]bool
+	gapRecovery  bool
+}
+
+func newSimulatedSubscriber(name string, hub *Hub, ledger *simulationLedger, filter Subscription, gapRecovery bool) *simulatedSubscriber {
+	s := &simulatedSubscriber{
+		name:         name,
+		filter:       filter,
+		hub:          hub,
+		ledger:       ledger,
+		received:     make(map[int64]RoutedEvent),
+		dropVersions: make(map[int64]bool),
+		gapRecovery:  gapRecovery,
+	}
+	s.connect()
+	return s
+}
+
+func (s *simulatedSubscriber) connect() {
+	s.client = s.hub.NewClient()
+	s.client.Subscribe(s.filter)
+}
+
+func (s *simulatedSubscriber) disconnect() {
+	if s.client != nil {
+		s.client.Close()
+		s.client = nil
+	}
+}
+
+func (s *simulatedSubscriber) reconnectAndRecover() {
+	s.connect()
+	s.recoverFromLedger()
+}
+
+func (s *simulatedSubscriber) drain() {
+	if s.client == nil {
+		return
+	}
+	for {
+		select {
+		case event, ok := <-s.client.Events():
+			if !ok {
+				s.client = nil
+				return
+			}
+			s.handleFeedEvent(event)
+		default:
+			return
+		}
+	}
+}
+
+func (s *simulatedSubscriber) handleFeedEvent(event RoutedEvent) {
+	version := event.Event.Version
+	if s.dropVersions[version] {
+		delete(s.dropVersions, version)
+		return
+	}
+	if s.gapRecovery && s.filter.Filter == FilterAll && s.lastVersion > 0 && version > s.lastVersion+1 {
+		s.recoverFromLedger()
+	}
+	s.apply(event)
+}
+
+func (s *simulatedSubscriber) recoverFromLedger() {
+	for _, event := range s.ledger.changedSince(s.lastVersion) {
+		if subscriptionMatches(s.filter, event) {
+			s.apply(event)
+		}
+	}
+}
+
+func (s *simulatedSubscriber) apply(event RoutedEvent) {
+	version := event.Event.Version
+	if _, exists := s.received[version]; !exists {
+		s.received[version] = event
+	}
+	s.appliedOrder = append(s.appliedOrder, version)
+	if version > s.lastVersion {
+		s.lastVersion = version
+	}
+}
+
+func (s *simulatedSubscriber) audit(t *testing.T) {
+	t.Helper()
+	expected := s.ledger.entitled(s.filter)
+	for _, event := range expected {
+		if _, ok := s.received[event.Event.Version]; !ok {
+			t.Fatalf("%s missed entitled event version=%d event=%s resource=%s id=%s", s.name, event.Event.Version, event.Event.Event, event.Event.ResourceType, event.Event.ID)
+		}
+	}
+	for i := 1; i < len(s.appliedOrder); i++ {
+		if s.appliedOrder[i] < s.appliedOrder[i-1] {
+			t.Fatalf("%s applied versions out of order: %v", s.name, s.appliedOrder)
+		}
+	}
+}
+
+func TestHubOrdersAndFiltersFeedEvents(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+
+	all := hub.NewClient()
+	all.Subscribe(Subscription{Filter: FilterAll})
+	taskForA := hub.NewClient()
+	taskForA.Subscribe(Subscription{Filter: FilterTasksForEntity, EntityID: "asset-a", ResourceType: protocol.ResourceTypeTask})
+
+	first := taskEvent("create", "task-1", 1, "", "asset-a", "pending")
+	second := taskEvent("update", "task-1", 2, "asset-a", "asset-b", "pending")
+
+	hub.Publish(second)
+	assertNoEvent(t, all)
+	hub.Publish(first)
+
+	assertVersion(t, all, 1)
+	assertVersion(t, all, 2)
+	assertVersion(t, taskForA, 1)
+	assertVersion(t, taskForA, 2)
+}
+
+func TestSimulationHarnessAuditsEntitledFeedDeliveryAndRecovery(t *testing.T) {
+	hub := NewHub(0, Options{ClientBuffer: 512})
+	defer hub.Close()
+	ledger := &simulationLedger{}
+
+	subscribers := []*simulatedSubscriber{
+		newSimulatedSubscriber("all-live", hub, ledger, Subscription{Filter: FilterAll}, false),
+		newSimulatedSubscriber("all-gap-recovery", hub, ledger, Subscription{Filter: FilterAll}, true),
+		newSimulatedSubscriber("all-reconnect-recovery", hub, ledger, Subscription{Filter: FilterAll}, true),
+		newSimulatedSubscriber("entity-type", hub, ledger, Subscription{Filter: FilterType, ResourceType: protocol.ResourceTypeEntity}, false),
+		newSimulatedSubscriber("task-id", hub, ledger, Subscription{Filter: FilterID, ResourceType: protocol.ResourceTypeTask, ID: "task-05"}, false),
+		newSimulatedSubscriber("tasks-for-asset-1", hub, ledger, Subscription{Filter: FilterTasksForEntity, ResourceType: protocol.ResourceTypeTask, EntityID: "asset-1"}, false),
+	}
+	subscribers[1].dropVersions[18] = true
+
+	events := simulatedTraffic()
+	for i := 0; i < len(events); i++ {
+		event := events[i]
+		if event.Event.Version == 25 {
+			subscribers[2].disconnect()
+		}
+		if i+1 < len(events) && event.Event.Version%11 == 0 {
+			next := events[i+1]
+			ledger.append(t, next)
+			hub.Publish(next)
+			drainAll(subscribers)
+
+			ledger.append(t, event)
+			hub.Publish(event)
+			drainAll(subscribers)
+			i++
+		} else {
+			ledger.append(t, event)
+			hub.Publish(event)
+			drainAll(subscribers)
+		}
+		if event.Event.Version == 31 {
+			subscribers[2].reconnectAndRecover()
+			drainAll(subscribers)
+		}
+		if event.Event.Version%17 == 0 {
+			for _, sub := range subscribers {
+				sub.audit(t)
+			}
+		}
+	}
+	for _, sub := range subscribers {
+		sub.recoverFromLedger()
+		sub.audit(t)
+	}
+}
+
+func drainAll(subscribers []*simulatedSubscriber) {
+	for _, sub := range subscribers {
+		sub.drain()
+	}
+}
+
+func assertNoEvent(t *testing.T, client *Client) {
+	t.Helper()
+	select {
+	case event := <-client.Events():
+		t.Fatalf("unexpected event version %d", event.Event.Version)
+	default:
+	}
+}
+
+func assertVersion(t *testing.T, client *Client, version int64) {
+	t.Helper()
+	select {
+	case event := <-client.Events():
+		if event.Event.Version != version {
+			t.Fatalf("got version %d, want %d", event.Event.Version, version)
+		}
+	default:
+		t.Fatalf("missing version %d", version)
+	}
+}
+
+func simulatedTraffic() []RoutedEvent {
+	var events []RoutedEvent
+	var version int64
+	nextVersion := func() int64 {
+		version++
+		return version
+	}
+	for i := 0; i < 4; i++ {
+		assetID := fmt.Sprintf("asset-%d", i)
+		events = append(events, entityEvent("create", assetID, nextVersion(), "asset"))
+	}
+	for i := 0; i < 18; i++ {
+		taskID := fmt.Sprintf("task-%02d", i)
+		from := fmt.Sprintf("asset-%d", i%4)
+		to := fmt.Sprintf("asset-%d", (i+1)%4)
+		events = append(events, taskEvent("create", taskID, nextVersion(), "", from, "pending"))
+		events = append(events, taskEvent("update", taskID, nextVersion(), from, to, "pending"))
+		if i%3 == 0 {
+			events = append(events, taskEvent("update", taskID, nextVersion(), to, to, "acknowledged"))
+		}
+		if i%4 == 0 {
+			events = append(events, taskEvent("delete", taskID, nextVersion(), to, "", ""))
+		}
+		if i%5 == 0 {
+			objectID := fmt.Sprintf("object-%02d", i)
+			events = append(events, objectEvent("create", objectID, nextVersion()))
+			events = append(events, objectEvent("update", objectID, nextVersion()))
+		}
+	}
+	events = append(events, entityEvent("delete", "asset-2", nextVersion(), ""))
+	return events
+}
+
+func entityEvent(eventName, id string, version int64, entityType string) RoutedEvent {
+	event := protocol.FeedEvent{
+		Event:        protocol.FeedEventName(eventName),
+		ResourceType: protocol.ResourceTypeEntity,
+		ID:           id,
+		Version:      version,
+	}
+	if eventName != "delete" {
+		event.Resource = map[string]any{
+			"entity_id":   id,
+			"entity_type": entityType,
+			"subtype":     nil,
+			"alias":       nil,
+			"components":  map[string]any{},
+			"metadata":    metadata(version),
+		}
+	}
+	return RoutedEvent{Event: event}
+}
+
+func taskEvent(eventName, id string, version int64, beforeEntity, afterEntity, status string) RoutedEvent {
+	event := protocol.FeedEvent{
+		Event:        protocol.FeedEventName(eventName),
+		ResourceType: protocol.ResourceTypeTask,
+		ID:           id,
+		Version:      version,
+	}
+	if eventName != "delete" {
+		var entityID any
+		if afterEntity != "" {
+			entityID = afterEntity
+		}
+		event.Resource = map[string]any{
+			"task_id":    id,
+			"status":     status,
+			"entity_id":  entityID,
+			"components": map[string]any{},
+			"metadata":   metadata(version),
+		}
+	}
+	return RoutedEvent{Event: event, BeforeTaskEntityID: beforeEntity, AfterTaskEntityID: afterEntity}
+}
+
+func objectEvent(eventName, id string, version int64) RoutedEvent {
+	event := protocol.FeedEvent{
+		Event:        protocol.FeedEventName(eventName),
+		ResourceType: protocol.ResourceTypeObject,
+		ID:           id,
+		Version:      version,
+	}
+	if eventName != "delete" {
+		event.Resource = map[string]any{
+			"object_id":     id,
+			"path":          nil,
+			"content_type":  nil,
+			"type":          "image",
+			"size_bytes":    nil,
+			"usage_hints":   []string{"thumbnail"},
+			"referenced_by": []map[string]any{{"entity_id": "asset-1"}},
+			"bucket":        nil,
+			"metadata":      metadata(version),
+		}
+	}
+	return RoutedEvent{Event: event}
+}
+
+func metadata(version int64) map[string]any {
+	return map[string]any{
+		"created_at": "2026-06-12T12:00:00Z",
+		"updated_at": "2026-06-12T12:00:00Z",
+		"version":    version,
+	}
+}

@@ -30,13 +30,20 @@ type objectStorage interface {
 
 // ObjectActions handles object business logic.
 type ObjectActions struct {
-	pool    *pgxpool.Pool
-	storage objectStorage
+	pool       *pgxpool.Pool
+	storage    objectStorage
+	changeSink ChangeSink
 }
 
 // NewObjectActions creates a new ObjectActions instance.
 func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectActions {
-	return &ObjectActions{pool: pool, storage: storageClient}
+	return NewObjectActionsWithChangeSink(pool, storageClient, nil)
+}
+
+// NewObjectActionsWithChangeSink creates a new ObjectActions instance that
+// emits committed changes to sink.
+func NewObjectActionsWithChangeSink(pool *pgxpool.Pool, storageClient objectStorage, sink ChangeSink) *ObjectActions {
+	return &ObjectActions{pool: pool, storage: storageClient, changeSink: sink}
 }
 
 // CreateObjectParams holds parameters for creating an object.
@@ -121,6 +128,14 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit object create transaction: %w", err)
 	}
+
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventCreate,
+		ResourceType: ChangeResourceObject,
+		ID:           obj.ObjectID,
+		Version:      obj.Version,
+		AfterObject:  cloneObjectModel(&obj),
+	})
 
 	return &obj, nil
 }
@@ -286,6 +301,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	if err := checkExpectedVersion("object", params.ExpectedVersion, obj.Version); err != nil {
 		return nil, err
 	}
+	before := cloneObjectModel(&obj)
 
 	// Parse existing JSON
 	existingJSON, err := decodeObjectJSONForPatch(obj.JSON)
@@ -375,6 +391,15 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventUpdate,
+		ResourceType: ChangeResourceObject,
+		ID:           out.ObjectID,
+		Version:      out.Version,
+		BeforeObject: before,
+		AfterObject:  cloneObjectModel(&out),
+	})
+
 	return &out, nil
 }
 
@@ -460,8 +485,14 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
-	var objectPath *string
-	err = tx.QueryRow(ctx, "DELETE FROM objects WHERE object_id = $1 RETURNING path", objectID).Scan(&objectPath)
+	var object models.MediaObject
+	err = tx.QueryRow(ctx, `
+		DELETE FROM objects WHERE object_id = $1
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
+	`, objectID).Scan(
+		&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
+		&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return NewObjectNotFoundError(objectID)
@@ -469,16 +500,17 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		return fmt.Errorf("failed to delete object: %w", err)
 	}
 
-	// Record tombstone so changed-since can notify clients
-	if _, err := tx.Exec(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ('object', $1)", objectID); err != nil {
+	// Record tombstone so changed-since can notify clients.
+	var tombstoneVersion int64
+	if err := tx.QueryRow(ctx,
+		"INSERT INTO deletions (resource_type, resource_id) VALUES ('object', $1) RETURNING version", objectID).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record object deletion tombstone: %w", err)
 	}
 
 	var queuedBucket, queuedPath string
-	if a.storage != nil && objectPath != nil && strings.TrimSpace(*objectPath) != "" {
+	if a.storage != nil && object.Path != nil && strings.TrimSpace(*object.Path) != "" {
 		queuedBucket = strings.TrimSpace(a.storage.Bucket())
-		queuedPath = strings.TrimSpace(*objectPath)
+		queuedPath = strings.TrimSpace(*object.Path)
 		if err := a.queueStorageDeletionTx(ctx, tx, queuedBucket, queuedPath, objectID); err != nil {
 			return err
 		}
@@ -498,6 +530,14 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but queued retry could not be cleared")
 		}
 	}
+
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventDelete,
+		ResourceType: ChangeResourceObject,
+		ID:           object.ObjectID,
+		Version:      tombstoneVersion,
+		BeforeObject: cloneObjectModel(&object),
+	})
 
 	return nil
 }

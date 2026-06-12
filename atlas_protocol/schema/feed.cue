@@ -1,0 +1,169 @@
+package atlasprotocol
+
+import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
+
+#ResourceType: "entity" | "task" | "object"
+
+#FeedEventName: "create" | "update" | "delete"
+
+#FeedVersion: int & >0
+
+#MetadataBlock: close({
+	created_at!: shared.#RFC3339Timestamp
+	updated_at!: shared.#RFC3339Timestamp
+	version!:    int & >=0
+})
+
+#EntityResource: close({
+	entity_id!:   shared.#NonEmptyString
+	entity_type!: shared.#NonEmptyString
+	subtype!:     null | shared.#NonEmptyString
+	alias!:       null | shared.#NonEmptyString
+	components!:  #EntityComponents
+	metadata!:    #MetadataBlock
+	extra?:       {[string]: shared.#JSONValue}
+})
+
+#TaskResource: close({
+	task_id!:    shared.#NonEmptyString
+	status!:     shared.#NonEmptyString
+	entity_id!:  null | shared.#NonEmptyString
+	components!: #TaskComponents
+	metadata!:   #MetadataBlock
+	extra?:      {[string]: shared.#JSONValue}
+})
+
+#ObjectResource: close({
+	object_id!:     shared.#NonEmptyString
+	path!:          null | string
+	content_type!:  null | string
+	type!:          null | string
+	size_bytes!:    null | (int & >=0)
+	usage_hints!:   [...shared.#NonEmptyString]
+	referenced_by?: [...#ObjectReference]
+	bucket!:        null | string
+	metadata!:      #MetadataBlock
+})
+
+#FeedResource: #EntityResource | #TaskResource | #ObjectResource
+
+#EntityCreateEvent: close({
+	event!:         "create"
+	resource_type!: "entity"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	resource!:      #EntityResource
+})
+
+#EntityUpdateEvent: close({
+	event!:         "update"
+	resource_type!: "entity"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	resource!:      #EntityResource
+})
+
+#TaskCreateEvent: close({
+	event!:         "create"
+	resource_type!: "task"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	resource!:      #TaskResource
+})
+
+#TaskUpdateEvent: close({
+	event!:         "update"
+	resource_type!: "task"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	resource!:      #TaskResource
+})
+
+#ObjectCreateEvent: close({
+	event!:         "create"
+	resource_type!: "object"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	resource!:      #ObjectResource
+})
+
+#ObjectUpdateEvent: close({
+	event!:         "update"
+	resource_type!: "object"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+	resource!:      #ObjectResource
+})
+
+#DeleteEvent: close({
+	event!:         "delete"
+	resource_type!: #ResourceType
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
+})
+
+#FeedEvent: #EntityCreateEvent | #EntityUpdateEvent | #TaskCreateEvent | #TaskUpdateEvent | #ObjectCreateEvent | #ObjectUpdateEvent | #DeleteEvent
+
+#FeedAuthMessage: close({
+	action!:  "auth"
+	api_key!: shared.#NonEmptyString
+})
+
+#SubscribeAllMessage: close({
+	action!: "subscribe"
+	filter!: "all"
+})
+
+#SubscribeIDMessage: close({
+	action!:        "subscribe"
+	filter!:        "id"
+	resource_type!: #ResourceType
+	id!:            shared.#NonEmptyString
+})
+
+#SubscribeTypeMessage: close({
+	action!:        "subscribe"
+	filter!:        "type"
+	resource_type!: #ResourceType
+})
+
+#SubscribeTasksForEntityMessage: close({
+	action!:    "subscribe"
+	filter!:    "tasks_for_entity"
+	entity_id!: shared.#NonEmptyString
+})
+
+#FeedSubscribeMessage: #SubscribeAllMessage | #SubscribeIDMessage | #SubscribeTypeMessage | #SubscribeTasksForEntityMessage
+
+#UnsubscribeAllMessage: close({
+	action!: "unsubscribe"
+	filter!: "all"
+})
+
+#UnsubscribeIDMessage: close({
+	action!:        "unsubscribe"
+	filter!:        "id"
+	resource_type!: #ResourceType
+	id!:            shared.#NonEmptyString
+})
+
+#UnsubscribeTypeMessage: close({
+	action!:        "unsubscribe"
+	filter!:        "type"
+	resource_type!: #ResourceType
+})
+
+#UnsubscribeTasksForEntityMessage: close({
+	action!:    "unsubscribe"
+	filter!:    "tasks_for_entity"
+	entity_id!: shared.#NonEmptyString
+})
+
+#FeedUnsubscribeMessage: #UnsubscribeAllMessage | #UnsubscribeIDMessage | #UnsubscribeTypeMessage | #UnsubscribeTasksForEntityMessage
+
+#FeedClientMessage: #FeedAuthMessage | #FeedSubscribeMessage | #FeedUnsubscribeMessage
+
+#FeedHandshakeMessage: close({
+	type!:              "hello"
+	protocol_revision!: shared.#NonEmptyString
+})

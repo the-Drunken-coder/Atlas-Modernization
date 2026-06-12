@@ -62,6 +62,19 @@ type ObjectListResponse struct {
 	Metadata    MetadataBlock `json:"metadata"`
 }
 
+// ObjectFeedResponse represents object metadata sent over the change feed.
+type ObjectFeedResponse struct {
+	ObjectID     string                   `json:"object_id"`
+	Path         *string                  `json:"path"`
+	ContentType  *string                  `json:"content_type"`
+	Type         *string                  `json:"type"`
+	SizeBytes    *int64                   `json:"size_bytes"`
+	UsageHints   []string                 `json:"usage_hints"`
+	ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
+	Bucket       *string                  `json:"bucket"`
+	Metadata     MetadataBlock            `json:"metadata"`
+}
+
 // MetadataBlock contains storage metadata exposed on API resources.
 type MetadataBlock struct {
 	CreatedAt string `json:"created_at,omitempty"`
@@ -166,6 +179,33 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 		SizeBytes:   o.GetSizeBytes(),
 		UsageHints:  usageHints,
 		Bucket:      o.GetBucket(),
+		Metadata: MetadataBlock{
+			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
+			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+			Version:   o.Version,
+		},
+	}
+}
+
+// SerializeObjectForFeed converts a MediaObject to metadata-only feed format.
+func SerializeObjectForFeed(o *models.MediaObject) *ObjectFeedResponse {
+	if o == nil {
+		return nil
+	}
+
+	usageHints := o.GetUsageHints()
+	if usageHints == nil {
+		usageHints = []string{}
+	}
+	return &ObjectFeedResponse{
+		ObjectID:     o.ObjectID,
+		Path:         o.Path,
+		ContentType:  o.ContentType,
+		Type:         o.Type,
+		SizeBytes:    o.GetSizeBytes(),
+		UsageHints:   usageHints,
+		ReferencedBy: o.GetReferencedBy(),
+		Bucket:       o.GetBucket(),
 		Metadata: MetadataBlock{
 			CreatedAt: o.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),

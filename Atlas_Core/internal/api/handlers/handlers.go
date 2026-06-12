@@ -6,6 +6,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -19,10 +20,16 @@ type Handler struct {
 	taskActions   *actions.TaskActions
 	objectActions *actions.ObjectActions
 	queryActions  *actions.QueryActions
+	feedHub       *feed.Hub
 }
 
 // NewHandler creates a new Handler.
 func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config) *Handler {
+	return NewHandlerWithFeed(db, storageClient, logger, cfg, nil)
+}
+
+// NewHandlerWithFeed creates a new Handler and wires committed writes into feedHub.
+func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub) *Handler {
 	if cfg == nil {
 		panic("handlers.NewHandler: config is required")
 	}
@@ -35,9 +42,10 @@ func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.L
 		storage:       storageClient,
 		logger:        logger,
 		config:        cfg,
-		entityActions: actions.NewEntityActions(db.Pool),
-		taskActions:   actions.NewTaskActions(db.Pool),
-		objectActions: actions.NewObjectActions(db.Pool, storageClient),
+		entityActions: actions.NewEntityActionsWithChangeSink(db.Pool, feedHub),
+		taskActions:   actions.NewTaskActionsWithChangeSink(db.Pool, feedHub),
+		objectActions: actions.NewObjectActionsWithChangeSink(db.Pool, storageClient, feedHub),
 		queryActions:  actions.NewQueryActions(db.Pool),
+		feedHub:       feedHub,
 	}
 }

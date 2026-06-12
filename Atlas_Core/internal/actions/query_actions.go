@@ -330,16 +330,28 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 
 func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
 	var version int64
-	err := tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, currentChangeVersionSQL).Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("read snapshot version: %w", err)
+	}
+	return version, nil
+}
+
+const currentChangeVersionSQL = `
 		SELECT GREATEST(
 			COALESCE((SELECT MAX(version) FROM entities), 0),
 			COALESCE((SELECT MAX(version) FROM tasks), 0),
 			COALESCE((SELECT MAX(version) FROM objects), 0),
 			COALESCE((SELECT MAX(version) FROM deletions), 0)
 		)
-	`).Scan(&version)
+	`
+
+// CurrentChangeVersion reads the current global high-water mark.
+func CurrentChangeVersion(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
+	var version int64
+	err := pool.QueryRow(ctx, currentChangeVersionSQL).Scan(&version)
 	if err != nil {
-		return 0, fmt.Errorf("read snapshot version: %w", err)
+		return 0, fmt.Errorf("read current change version: %w", err)
 	}
 	return version, nil
 }

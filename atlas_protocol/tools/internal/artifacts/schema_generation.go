@@ -22,7 +22,16 @@ func ValidateExamples(root string) error {
 	if err := validateExampleSet(root, "tasks", "#TaskBlob"); err != nil {
 		return err
 	}
-	return validateExampleSet(root, "objects", "#ObjectBlob")
+	if err := validateExampleSet(root, "objects", "#ObjectBlob"); err != nil {
+		return err
+	}
+	if err := validateExampleSet(root, "feed/events", "#FeedEvent"); err != nil {
+		return err
+	}
+	if err := validateExampleSet(root, "feed/messages", "#FeedClientMessage"); err != nil {
+		return err
+	}
+	return validateExampleSet(root, "feed/server", "#FeedHandshakeMessage")
 }
 
 func validateExampleSet(root, name, schema string) error {
@@ -35,18 +44,17 @@ func validateExampleSet(root, name, schema string) error {
 	}
 	sort.Strings(examples)
 
-	args := []string{"vet", "./schema"}
 	for _, example := range examples {
 		rel, err := filepath.Rel(root, example)
 		if err != nil {
 			return err
 		}
-		args = append(args, filepath.ToSlash(rel))
+		args := []string{"vet", "./schema", filepath.ToSlash(rel), "-d", schema}
+		if _, err := runCue(root, args...); err != nil {
+			return err
+		}
 	}
-	args = append(args, "-d", schema)
-
-	_, err = runCue(root, args...)
-	return err
+	return nil
 }
 
 func LoadMeta(root string) (Meta, error) {
@@ -71,13 +79,13 @@ func LoadMeta(root string) (Meta, error) {
 	return meta, nil
 }
 
-func jsonSchema(root, expr string) ([]byte, error) {
+func jsonSchema(root, expr, revision string) ([]byte, error) {
 	args := []string{"def", "./schema", "--out=jsonschema", "-e", expr}
 	out, err := runCue(root, args...)
 	if err != nil {
 		return nil, err
 	}
-	return markGeneratedJSONSchema(out)
+	return markGeneratedJSONSchema(out, revision)
 }
 
 func runCue(root string, args ...string) ([]byte, error) {
