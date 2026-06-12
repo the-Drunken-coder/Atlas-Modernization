@@ -10,6 +10,7 @@ This is the single entry point for project documentation. Docs are split into **
 | Location | What it holds | Use it when… |
 | --- | --- | --- |
 | [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol planning, implementation prep, and goals/reference docs. | "Why is the protocol shaped this way, and what remains planned?" |
+| [`docs/atlas-sdk/`](atlas-sdk/) | Atlas SDK planning: client architecture, sync engine/cache, change feed contract, build phases. | "How should services talk to Atlas Core, and what is the SDK going to be?" |
 | [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, …). | "What did we decide, and why?" |
 | [`docs/problems/`](problems/) | Short-lived agent-to-agent notes on active blockers (minutes to a day or two). Spans all packages. | "What is broken right now on this branch?" |
 
