@@ -3,7 +3,9 @@ package feed
 import (
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -169,6 +171,36 @@ func TestHubOrdersAndFiltersFeedEvents(t *testing.T) {
 	assertVersion(t, taskForA, 2)
 }
 
+func TestHubSkipsTimedOutMissingVersions(t *testing.T) {
+	hub := NewHub(0, Options{MissingVersionTimeout: 10 * time.Millisecond})
+	defer hub.Close()
+
+	all := hub.NewClient()
+	all.Subscribe(Subscription{Filter: FilterAll})
+
+	hub.Publish(entityEvent("create", "asset-after-burned-version", 2, "asset"))
+	assertNoEvent(t, all)
+	assertVersionWithin(t, all, 2, time.Second)
+}
+
+func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
+	hub := NewHub(0, Options{MissingVersionTimeout: time.Second})
+	defer hub.Close()
+
+	all := hub.NewClient()
+	all.Subscribe(Subscription{Filter: FilterAll})
+
+	hub.PublishResourceChange(actions.ResourceChange{
+		Event:        actions.ChangeEventCreate,
+		ResourceType: actions.ChangeResourceEntity,
+		ID:           "asset-missing-after-state",
+		Version:      1,
+	})
+	hub.Publish(entityEvent("create", "asset-after-unbuildable-event", 2, "asset"))
+
+	assertVersionWithin(t, all, 2, time.Second)
+}
+
 func TestSimulationHarnessAuditsEntitledFeedDeliveryAndRecovery(t *testing.T) {
 	hub := NewHub(0, Options{ClientBuffer: 512})
 	defer hub.Close()
@@ -245,6 +277,23 @@ func assertVersion(t *testing.T, client *Client, version int64) {
 		}
 	default:
 		t.Fatalf("missing version %d", version)
+	}
+}
+
+func assertVersionWithin(t *testing.T, client *Client, version int64, timeout time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-client.Events():
+			if event.Event.Version != version {
+				t.Fatalf("got version %d, want %d", event.Event.Version, version)
+			}
+			return
+		case <-timer.C:
+			t.Fatalf("timed out waiting for version %d", version)
+		}
 	}
 }
 

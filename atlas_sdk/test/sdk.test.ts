@@ -73,10 +73,22 @@ describe("AtlasClient sync", () => {
     await client.connectFeed();
 
     for (let i = 0; i < 24; i++) {
+      if (i % 3 === 0) {
+        const entityID = `asset-sim-${i % 5}`;
+        const value = core.upsertEntity({ ...entity(entityID), alias: `asset ${i}` });
+        const event: FeedEvent = { event: "update", resource_type: "entity", id: entityID, version: value.metadata.version, resource: value };
+        core.emit(event, i === 6 ? { dropForSockets: true } : undefined);
+      }
       const id = `task-sim-${i % 4}`;
       const value = core.upsertTask({ ...task(id, `asset-${i % 3}`), status: i % 2 === 0 ? "pending" : "acknowledged" });
       const event: FeedEvent = { event: "update", resource_type: "task", id, version: value.metadata.version, resource: value };
       core.emit(event, i === 7 ? { dropForSockets: true } : undefined);
+      if (i % 4 === 0) {
+        const objectID = `object-sim-${i % 3}`;
+        const value = core.upsertObject({ ...object(objectID), type: i % 8 === 0 ? "image" : "log" });
+        const objectEvent: FeedEvent = { event: "update", resource_type: "object", id: objectID, version: value.metadata.version, resource: value };
+        core.emit(objectEvent, i === 12 ? { dropForSockets: true } : undefined);
+      }
       if (i % 6 === 5) {
         await assertClientMatchesLedger(client, core);
       }
@@ -127,8 +139,14 @@ describe("AtlasClient sync", () => {
 
 async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): Promise<void> {
   await vi.waitFor(async () => {
+    for (const entityValue of core.entities.values()) {
+      await expect(client.entities.get(entityValue.entity_id)).resolves.toEqual(entityValue);
+    }
     for (const taskValue of core.tasks.values()) {
       await expect(client.tasks.get(taskValue.task_id)).resolves.toEqual(taskValue);
+    }
+    for (const objectValue of core.objects.values()) {
+      await expect(client.objects.get(objectValue.object_id)).resolves.toEqual(objectValue);
     }
   });
 }

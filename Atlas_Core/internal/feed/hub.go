@@ -7,26 +7,35 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-const defaultClientBuffer = 256
+const (
+	defaultClientBuffer          = 256
+	defaultMissingVersionTimeout = 2 * time.Second
+)
 
 type Options struct {
-	ClientBuffer int
+	ClientBuffer          int
+	MissingVersionTimeout time.Duration
 }
 
 type Hub struct {
-	mu           sync.Mutex
-	nextVersion  int64
-	pending      map[int64]RoutedEvent
-	clients      map[*Client]struct{}
-	clientBuffer int
-	closed       bool
+	mu                    sync.Mutex
+	nextVersion           int64
+	pending               map[int64]RoutedEvent
+	skipped               map[int64]string
+	clients               map[*Client]struct{}
+	clientBuffer          int
+	missingVersionTimeout time.Duration
+	gapTimer              *time.Timer
+	closed                bool
 }
 
 type RoutedEvent struct {
@@ -40,11 +49,17 @@ func NewHub(startAfterVersion int64, opts Options) *Hub {
 	if buffer <= 0 {
 		buffer = defaultClientBuffer
 	}
+	missingVersionTimeout := opts.MissingVersionTimeout
+	if missingVersionTimeout <= 0 {
+		missingVersionTimeout = defaultMissingVersionTimeout
+	}
 	return &Hub{
-		nextVersion:  startAfterVersion + 1,
-		pending:      make(map[int64]RoutedEvent),
-		clients:      make(map[*Client]struct{}),
-		clientBuffer: buffer,
+		nextVersion:           startAfterVersion + 1,
+		pending:               make(map[int64]RoutedEvent),
+		skipped:               make(map[int64]string),
+		clients:               make(map[*Client]struct{}),
+		clientBuffer:          buffer,
+		missingVersionTimeout: missingVersionTimeout,
 	}
 }
 
@@ -55,6 +70,7 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
+	h.stopGapTimerLocked()
 	for client := range h.clients {
 		h.closeClientLocked(client)
 	}
@@ -83,6 +99,22 @@ func (h *Hub) RemoveClient(client *Client) {
 	h.closeClientLocked(client)
 }
 
+// HasSubscription reports whether any active client currently holds sub.
+func (h *Hub) HasSubscription(sub Subscription) bool {
+	key := sub.Key()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for client := range h.clients {
+		client.mu.Lock()
+		_, ok := client.subs[key]
+		client.mu.Unlock()
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) closeClientLocked(client *Client) {
 	delete(h.clients, client)
 	client.mu.Lock()
@@ -97,6 +129,14 @@ func (h *Hub) closeClientLocked(client *Client) {
 func (h *Hub) PublishResourceChange(change actions.ResourceChange) {
 	routed, err := RoutedEventFromChange(change)
 	if err != nil {
+		log.Error().
+			Err(err).
+			Str("event", change.Event).
+			Str("resource_type", change.ResourceType).
+			Str("id", change.ID).
+			Int64("version", change.Version).
+			Msg("Atlas feed change could not be converted to a feed event; skipping version")
+		h.SkipVersion(change.Version, "event_conversion_failed")
 		return
 	}
 	h.Publish(routed)
@@ -113,18 +153,131 @@ func (h *Hub) Publish(event RoutedEvent) {
 		return
 	}
 	if event.Event.Version < h.nextVersion {
+		log.Warn().
+			Int64("event_version", event.Event.Version).
+			Int64("next_version", h.nextVersion).
+			Str("event", string(event.Event.Event)).
+			Str("resource_type", string(event.Event.ResourceType)).
+			Str("id", event.Event.ID).
+			Msg("Dropping stale Atlas feed event")
+		return
+	}
+	if _, exists := h.pending[event.Event.Version]; exists {
+		log.Warn().
+			Int64("event_version", event.Event.Version).
+			Str("event", string(event.Event.Event)).
+			Str("resource_type", string(event.Event.ResourceType)).
+			Str("id", event.Event.ID).
+			Msg("Dropping duplicate Atlas feed event version")
 		return
 	}
 	h.pending[event.Event.Version] = event
+	h.advanceLocked()
+}
+
+// SkipVersion marks a known-permanent feed version gap so later versions do not
+// block behind an event that cannot be emitted.
+func (h *Hub) SkipVersion(version int64, reason string) {
+	if version <= 0 {
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || version < h.nextVersion {
+		return
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
+	h.skipped[version] = reason
+	h.advanceLocked()
+}
+
+func (h *Hub) advanceLocked() {
 	for {
 		next, ok := h.pending[h.nextVersion]
-		if !ok {
-			break
+		if ok {
+			delete(h.pending, h.nextVersion)
+			h.deliverLocked(next)
+			h.nextVersion++
+			continue
 		}
-		delete(h.pending, h.nextVersion)
-		h.deliverLocked(next)
-		h.nextVersion++
+		if reason, ok := h.skipped[h.nextVersion]; ok {
+			log.Warn().
+				Int64("version", h.nextVersion).
+				Str("reason", reason).
+				Msg("Skipping known-missing Atlas feed version")
+			delete(h.skipped, h.nextVersion)
+			h.nextVersion++
+			continue
+		}
+		break
 	}
+	h.updateGapTimerLocked()
+}
+
+func (h *Hub) updateGapTimerLocked() {
+	if h.closed || h.lowestKnownVersionLocked() == 0 {
+		h.stopGapTimerLocked()
+		return
+	}
+	if h.gapTimer != nil {
+		return
+	}
+	h.gapTimer = time.AfterFunc(h.missingVersionTimeout, h.skipTimedOutMissingVersions)
+}
+
+func (h *Hub) stopGapTimerLocked() {
+	if h.gapTimer == nil {
+		return
+	}
+	h.gapTimer.Stop()
+	h.gapTimer = nil
+}
+
+func (h *Hub) skipTimedOutMissingVersions() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.gapTimer = nil
+	if h.closed {
+		return
+	}
+	target := h.lowestKnownVersionLocked()
+	if target == 0 {
+		return
+	}
+	if target > h.nextVersion {
+		log.Warn().
+			Int64("from_version", h.nextVersion).
+			Int64("to_version", target-1).
+			Int("pending_events", len(h.pending)).
+			Dur("timeout", h.missingVersionTimeout).
+			Msg("Skipping timed-out Atlas feed version gap")
+		h.nextVersion = target
+	}
+	h.advanceLocked()
+}
+
+func (h *Hub) lowestKnownVersionLocked() int64 {
+	var lowest int64
+	for version := range h.pending {
+		if version < h.nextVersion {
+			continue
+		}
+		if lowest == 0 || version < lowest {
+			lowest = version
+		}
+	}
+	for version := range h.skipped {
+		if version < h.nextVersion {
+			continue
+		}
+		if lowest == 0 || version < lowest {
+			lowest = version
+		}
+	}
+	return lowest
 }
 
 func (h *Hub) deliverLocked(event RoutedEvent) {
