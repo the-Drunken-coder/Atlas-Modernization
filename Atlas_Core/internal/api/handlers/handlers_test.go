@@ -209,6 +209,36 @@ func TestFeedConfigNilReturnsServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestFeedAuthEnabledWithEmptyKeyReturnsServiceUnavailable(t *testing.T) {
+	hub := feed.NewHub(1, feed.Options{})
+	defer hub.Close()
+	handler := &Handler{
+		feedHub: hub,
+		config: &config.Config{
+			EnableAPIAuth: true,
+			APIAuthKey:    " \n\t ",
+		},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	handler.Feed(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	var body ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable || body.Message != "feed API key is not configured" {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	if body.ErrorID == "" {
+		t.Fatal("expected error_id to be populated")
+	}
+}
+
 func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

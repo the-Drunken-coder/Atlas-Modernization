@@ -128,12 +128,12 @@ func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
 	if err := taskActions.Delete(ctx, taskWithEntityID); err != nil {
 		t.Fatalf("delete linked task: %v", err)
 	}
-	assertTaskTombstone(t, ctx, pool, taskWithEntityID, map[string]any{"entity_id": entityID})
+	assertTaskTombstone(ctx, t, pool, taskWithEntityID, map[string]any{"entity_id": entityID})
 
 	if err := taskActions.Delete(ctx, taskWithoutEntityID); err != nil {
 		t.Fatalf("delete unlinked task: %v", err)
 	}
-	assertTaskTombstone(t, ctx, pool, taskWithoutEntityID, map[string]any{})
+	assertTaskTombstone(ctx, t, pool, taskWithoutEntityID, map[string]any{})
 
 	err := taskActions.Delete(ctx, fmt.Sprintf("missing-task-%d", suffix))
 	var notFound *NotFoundError
@@ -142,7 +142,7 @@ func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
 	}
 }
 
-func assertTaskTombstone(t *testing.T, ctx context.Context, pool *pgxpool.Pool, taskID string, wantContext map[string]any) {
+func assertTaskTombstone(ctx context.Context, t *testing.T, pool *pgxpool.Pool, taskID string, wantContext map[string]any) {
 	t.Helper()
 	var resourceType, resourceID string
 	var contextJSON []byte
