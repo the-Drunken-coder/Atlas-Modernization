@@ -468,7 +468,16 @@ export class AtlasClient {
   private applyEvent(event: FeedEvent): void {
     const key = resourceCacheKey(event.resource_type, event.id);
     const current = this.cache[event.resource_type].get(event.id);
-    if ((this.pendingDeletes.has(key) || current?.deleted) && event.event === "update") {
+    const pendingDelete = this.pendingDeletes.has(key);
+    const previous = current?.value;
+    if (pendingDelete && event.event === "delete") {
+      this.pendingDeletes.delete(key);
+      this.cache[event.resource_type].set(event.id, { version: event.version, deleted: true });
+      this.lastVersion = Math.max(this.lastVersion, event.version);
+      this.notify(event, undefined, previous);
+      return;
+    }
+    if ((pendingDelete || current?.deleted) && event.event === "update") {
       this.lastVersion = Math.max(this.lastVersion, event.version);
       return;
     }
@@ -476,7 +485,6 @@ export class AtlasClient {
       this.lastVersion = Math.max(this.lastVersion, event.version);
       return;
     }
-    const previous = current?.value;
     if (event.event === "delete") {
       this.pendingDeletes.delete(key);
       this.cache[event.resource_type].set(event.id, { version: event.version, deleted: true });
@@ -558,7 +566,8 @@ export class AtlasClient {
   private async deleteResource(type: ResourceType, id: string, path: string): Promise<void> {
     await this.http<void>("DELETE", path);
     const previousVersion = this.cache[type].get(id)?.version ?? 0;
-    this.cache[type].set(id, { version: previousVersion, deleted: true });
+    const tombstoneVersion = previousVersion || -1;
+    this.cache[type].set(id, { version: tombstoneVersion, deleted: true });
     this.pendingDeletes.add(resourceCacheKey(type, id));
   }
 

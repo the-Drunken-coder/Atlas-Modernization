@@ -304,6 +304,8 @@ func TestSerializeObjectForFeedTransformsObjectReferences(t *testing.T) {
 				{},
 				{"entity_id": ""},
 				{"task_id": " "},
+				{"entity_id": null},
+				{"entity_id": null, "task_id": null},
 				{"entity_id": 42}
 			]
 		}`),
@@ -346,11 +348,8 @@ func TestSerializeObjectForFeedTransformsObjectReferences(t *testing.T) {
 	if result.ReferencedBy[3].EntityID == nil || *result.ReferencedBy[3].EntityID != "entity-3" || result.ReferencedBy[3].TaskID != nil {
 		t.Fatalf("fourth reference should include only entity_id: %#v", result.ReferencedBy[3])
 	}
-	if strings.Count(logOutput, `"level":"warn"`) < 5 {
-		t.Fatalf("expected at least 5 warning logs, got %q", logOutput)
-	}
-	if strings.Count(logOutput, "Dropping object feed reference without entity_id or task_id") < 4 {
-		t.Fatalf("expected dropped-reference log messages, got %q", logOutput)
+	if strings.Count(logOutput, `"level":"warn"`) != 1 {
+		t.Fatalf("expected one warning log for the non-string reference field, got %q", logOutput)
 	}
 	if !strings.Contains(logOutput, "Dropping object feed reference field with non-string id") {
 		t.Fatalf("expected non-string reference-field warning, got %q", logOutput)
@@ -358,8 +357,8 @@ func TestSerializeObjectForFeedTransformsObjectReferences(t *testing.T) {
 	if !strings.Contains(logOutput, `"key":"entity_id"`) || !hasNonStringNumericReferenceType(logOutput) {
 		t.Fatalf("expected non-string warning to include key and type, got %q", logOutput)
 	}
-	if strings.Count(logOutput, "object-feed-refs") < 5 {
-		t.Fatalf("expected dropped-reference logs to include object id, got %q", logOutput)
+	if strings.Count(logOutput, "object-feed-refs") != 1 {
+		t.Fatalf("expected non-string reference log to include object id once, got %q", logOutput)
 	}
 }
 

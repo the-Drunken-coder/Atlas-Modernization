@@ -543,9 +543,15 @@ func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
 func TestChangedSinceDeletedTaskEntityIDJSONPresence(t *testing.T) {
 	entityID := "asset-1"
 	response := serializeChangedSinceResult(&actions.ChangedSinceResult{
+		DeletedEntities: []actions.DeletedResource{
+			{ID: "deleted-entity", Type: string(actions.ChangeResourceEntity), EntityID: &entityID, Version: 1},
+		},
 		DeletedTasks: []actions.DeletedResource{
 			{ID: "task-with-parent", Type: string(actions.ChangeResourceTask), EntityID: &entityID, Version: 2},
 			{ID: "task-without-parent", Type: string(actions.ChangeResourceTask), Version: 3},
+		},
+		DeletedObjects: []actions.DeletedResource{
+			{ID: "deleted-object", Type: string(actions.ChangeResourceObject), EntityID: &entityID, Version: 4},
 		},
 		Version:   3,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -556,16 +562,24 @@ func TestChangedSinceDeletedTaskEntityIDJSONPresence(t *testing.T) {
 		t.Fatalf("marshal changed-since response: %v", err)
 	}
 	var decoded struct {
-		DeletedTasks []map[string]any `json:"deleted_tasks"`
+		DeletedEntities []map[string]any `json:"deleted_entities"`
+		DeletedTasks    []map[string]any `json:"deleted_tasks"`
+		DeletedObjects  []map[string]any `json:"deleted_objects"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("decode changed-since response: %v", err)
+	}
+	if _, exists := decoded.DeletedEntities[0]["entity_id"]; exists {
+		t.Fatalf("deleted entity emitted entity_id: %s", data)
 	}
 	if got := decoded.DeletedTasks[0]["entity_id"]; got != entityID {
 		t.Fatalf("deleted task entity_id = %v, want %s", got, entityID)
 	}
 	if _, exists := decoded.DeletedTasks[1]["entity_id"]; exists {
 		t.Fatalf("deleted task without parent emitted entity_id: %s", data)
+	}
+	if _, exists := decoded.DeletedObjects[0]["entity_id"]; exists {
+		t.Fatalf("deleted object emitted entity_id: %s", data)
 	}
 }
 

@@ -23,12 +23,15 @@ type fullDatasetResponse struct {
 }
 
 type deletedResourceResponse struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	// EntityID is the parent entity ID for deleted tasks; nil for entities and objects.
-	EntityID  *string `json:"entity_id,omitempty"`
-	DeletedAt string  `json:"deleted_at,omitempty"`
-	Version   int64   `json:"version,omitempty"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	DeletedAt string `json:"deleted_at,omitempty"`
+	Version   int64  `json:"version,omitempty"`
+}
+
+type deletedTaskResourceResponse struct {
+	deletedResourceResponse
+	EntityID *string `json:"entity_id,omitempty"`
 }
 
 type changedSinceResponse struct {
@@ -36,7 +39,7 @@ type changedSinceResponse struct {
 	Tasks                   []*serializers.TaskResponse   `json:"tasks"`
 	Objects                 []*serializers.ObjectResponse `json:"objects"`
 	DeletedEntities         []deletedResourceResponse     `json:"deleted_entities,omitempty"`
-	DeletedTasks            []deletedResourceResponse     `json:"deleted_tasks,omitempty"`
+	DeletedTasks            []deletedTaskResourceResponse `json:"deleted_tasks,omitempty"`
 	DeletedObjects          []deletedResourceResponse     `json:"deleted_objects,omitempty"`
 	HasMoreEntities         bool                          `json:"has_more_entities"`
 	HasMoreTasks            bool                          `json:"has_more_tasks"`
@@ -80,7 +83,7 @@ func serializeChangedSinceResult(result *actions.ChangedSinceResult) *changedSin
 		Tasks:                   serializers.SerializeTasks(result.Tasks),
 		Objects:                 serializers.SerializeObjects(result.Objects),
 		DeletedEntities:         serializeDeletedResources(result.DeletedEntities),
-		DeletedTasks:            serializeDeletedResources(result.DeletedTasks),
+		DeletedTasks:            serializeDeletedTaskResources(result.DeletedTasks),
 		DeletedObjects:          serializeDeletedResources(result.DeletedObjects),
 		HasMoreEntities:         result.HasMoreEntities,
 		HasMoreTasks:            result.HasMoreTasks,
@@ -105,9 +108,24 @@ func serializeDeletedResources(resources []actions.DeletedResource) []deletedRes
 		result[i] = deletedResourceResponse{
 			ID:        resource.ID,
 			Type:      resource.Type,
-			EntityID:  resource.EntityID,
 			DeletedAt: resource.DeletedAt,
 			Version:   resource.Version,
+		}
+	}
+	return result
+}
+
+func serializeDeletedTaskResources(resources []actions.DeletedResource) []deletedTaskResourceResponse {
+	result := make([]deletedTaskResourceResponse, len(resources))
+	for i, resource := range resources {
+		result[i] = deletedTaskResourceResponse{
+			deletedResourceResponse: deletedResourceResponse{
+				ID:        resource.ID,
+				Type:      resource.Type,
+				DeletedAt: resource.DeletedAt,
+				Version:   resource.Version,
+			},
+			EntityID: resource.EntityID,
 		}
 	}
 	return result

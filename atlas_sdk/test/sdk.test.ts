@@ -61,6 +61,30 @@ describe("AtlasClient sync", () => {
     await expect(client.entities.get("asset-delete")).rejects.toThrow("Atlas request failed: 404");
   });
 
+  it("applies the real delete feed event after an uncached local delete", async () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-delete-uncached"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.connectFeed();
+    const watch = vi.fn();
+    client.watch({ filter: "id", resource_type: "entity", id: "asset-delete-uncached" }, watch);
+
+    await client.entities.delete("asset-delete-uncached");
+    const deleteEvent = core.deletions.at(-1);
+    if (!deleteEvent) throw new Error("fake core did not record delete event");
+    core.emit(deleteEvent, { record: false });
+
+    await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+    expect(watch.mock.calls[0][0]).toBeUndefined();
+    expect(watch.mock.calls[0][1]).toMatchObject({ event: "delete", resource_type: "entity", id: "asset-delete-uncached" });
+  });
+
   it("keeps local delete tombstones ahead of stale feed updates", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-stale"));

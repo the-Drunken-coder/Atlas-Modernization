@@ -10,10 +10,12 @@ import (
 // Feed upgrades the request to the Atlas change-feed websocket.
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	if h.feedHub == nil {
+		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler is missing feed hub")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed hub is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 	if h.config == nil {
+		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler is missing config")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed config is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}

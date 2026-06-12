@@ -167,7 +167,7 @@ function isCLIEntrypoint(): boolean {
 }
 
 function buildCLIEntrypointNames(): Set<string> {
-  const allowedNames = new Set<string>(["cli.ts", "index.js"]);
+  const allowedNames = new Set<string>(["cli.ts"]);
   for (const [binName, binPath] of Object.entries(PACKAGE_BIN)) {
     allowedNames.add(binName.toLowerCase());
     allowedNames.add(`${binName}.cmd`.toLowerCase());

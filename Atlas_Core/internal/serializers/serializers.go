@@ -210,7 +210,9 @@ func protocolObjectReferences(objectID string, values []map[string]interface{}) 
 	for _, value := range values {
 		ref := protocol.ObjectReference{}
 		if raw, exists := value["entity_id"]; exists {
-			if entityID, ok := raw.(string); ok {
+			if raw == nil {
+				// JSON null means no entity reference.
+			} else if entityID, ok := raw.(string); ok {
 				trimmed := strings.TrimSpace(entityID)
 				if trimmed != "" {
 					ref.EntityID = &trimmed
@@ -225,7 +227,9 @@ func protocolObjectReferences(objectID string, values []map[string]interface{}) 
 			}
 		}
 		if raw, exists := value["task_id"]; exists {
-			if taskID, ok := raw.(string); ok {
+			if raw == nil {
+				// JSON null means no task reference.
+			} else if taskID, ok := raw.(string); ok {
 				trimmed := strings.TrimSpace(taskID)
 				if trimmed != "" {
 					ref.TaskID = &trimmed
@@ -241,11 +245,6 @@ func protocolObjectReferences(objectID string, values []map[string]interface{}) 
 		}
 		if ref.EntityID != nil || ref.TaskID != nil {
 			refs = append(refs, ref)
-		} else {
-			log.Warn().
-				Str("object_id", objectID).
-				Interface("reference", value).
-				Msg("Dropping object feed reference without entity_id or task_id")
 		}
 	}
 	if len(refs) == 0 {

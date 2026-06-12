@@ -112,7 +112,6 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to read current change version")
 	}
 	feedHub := feed.NewHub(currentVersion, feed.Options{})
-	defer feedHub.Close()
 
 	// Connect to storage (optional - may not be configured)
 	var storageClient *storage.Client
@@ -249,6 +248,7 @@ func main() {
 
 	logger.Info().Msg("ATLAS Core API shutting down...")
 	stopReconciler()
+	feedHub.Close()
 
 	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
