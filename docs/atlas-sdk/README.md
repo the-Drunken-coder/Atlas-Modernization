@@ -1,24 +1,24 @@
-# Atlas SDK Planning
+# Atlas SDK
 
-Status: initial SDK implemented in `../../atlas_sdk/`: typed HTTP client, CLI entrypoint, polling sync cache, websocket feed transport, selective subscriptions, revision handshake, object-content LRU cache, and Node/browser test suites are in place. The package is still private in this repository; public npm publishing remains a later release step.
+The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: a TypeScript/JavaScript package with a typed HTTP client, an optional sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. The package is private in this repository; public npm publishing is a later release step.
 
-The Atlas SDK is the single client for Atlas Core. The goal is that **no service ever calls the API manually** — every UI, asset-side service, and tool talks to Atlas through the SDK or its bundled CLI. The one documented interim exception: non-TypeScript services without an SDK port may call the API directly (see "CLI and cross-language story"); the goal stands because the contract, not the package, is the source of truth. The SDK wraps the existing HTTP API. The one piece of new API work it depends on — the websocket change feed in Atlas Core — was planned separately in [`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md) and is now implemented before SDK consumption.
+The goal is that **no service ever calls the API manually** — every UI, asset-side service, and tool talks to Atlas through the SDK or its bundled CLI. The one documented interim exception: non-TypeScript services without an SDK port may call the API directly (see "CLI and cross-language story"); the goal stands because the contract, not the package, is the source of truth. The one piece of new API work the SDK depends on — the websocket change feed in Atlas Core — was designed and built separately, before the SDK ([change feed doc](../atlas-change-feed/README.md)).
 
 **Sole consumer:** the only user of Atlas and this SDK is its developer. Publishing to public npm is for convenience, not for external users — the package carries **no compatibility guarantees**. Breaking changes are preferred over compatibility shims (matching repo-wide policy in `AGENTS.md`), and all consumers upgrade in lockstep. To make lockstep safe, the SDK performs a cheap version handshake and fails loudly on SDK/API mismatch rather than degrading quietly — over HTTP at client startup and again at websocket connect. The revision token is the generated `ATLAS_PROTOCOL_REVISION`; Core exposes it through `GET /protocol/revision` and the feed `hello` frame.
 
-## Goals
+## Design goals
 
 - One TypeScript/JavaScript package that runs unmodified in browsers and Node ("isomorphic"): web-standard `fetch` and `WebSocket` only, no Node-only dependencies, tests run in both environments in CI.
 - Identical function behavior whether the sync engine is running. Callers never branch on mode.
 - Real-time data with minimal latency for UIs — no "reload the page" feel.
 - Reduce API call volume by serving repeated reads from a continuously synced local cache.
-- Usable beyond TypeScript via a bundled CLI and a documented, language-neutral sync contract (see "Cross-language story").
+- Usable beyond TypeScript via a bundled CLI and a documented, language-neutral sync contract (see "CLI and cross-language story").
 
 ## Non-goals
 
 - A polyglot runtime (sidecar/local server other languages talk to). If a Python SDK is needed later, it is a mechanical port of the documented contract, not shared machinery.
 - Caching as an archive. The cache is a hot mirror of current state, never a history store.
-- A speculative composite-function catalog. The extension point is designed now; functions are added when real use cases appear (none identified yet as of 2026-06-12).
+- A speculative composite-function catalog. The extension point is designed; functions are added when real use cases appear (none identified yet as of 2026-06-12).
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Two components, not three modes:
 1. **Typed HTTP client** — always present. Typed functions for every API endpoint: entity/task/object CRUD, task lifecycle (`acknowledge`/`complete`/`fail`/`status`), telemetry, check-in, object upload/download, queries.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
-The user-described modes are constructor presets over these components:
+The user-facing modes are constructor presets over these components:
 
 ```ts
 new AtlasClient({ baseUrl, apiKey });                    // manual: no sync engine
@@ -35,7 +35,7 @@ new AtlasClient({ baseUrl, apiKey, sync: "all" });       // automatic: subscribe
 new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
 ```
 
-Same cache, same feed consumer, same reconciliation logic in all presets. "Selective" adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed plan](../atlas-change-feed/PLANNING.md)).
+Same cache, same feed consumer, same reconciliation logic in all presets. "Selective" adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)).
 
 ### Unified read surface
 
@@ -61,15 +61,15 @@ Write functions always call the API. The API returns the created/updated resourc
 
 The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `ConflictError` plus an opt-in retry-with-refetch helper, rather than hiding it.
 
-## Change feed (planned and built separately)
+## Change feed consumption
 
-The websocket change feed — event shapes, tombstones, subscription primitives, task-routing rules, delivery mechanics, and its own testing plan — lives in [`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md). The feed was built and simulation-tested before the SDK, so the sync engine's websocket transport consumes a finished, demonstrated endpoint.
+The websocket change feed — event shapes, tombstones, subscription primitives, task-routing rules, delivery mechanics, and its testing approach — is documented in the [change feed doc](../atlas-change-feed/README.md). The feed was built and simulation-tested before the SDK, so the sync engine's websocket transport consumes a finished, demonstrated endpoint.
 
 What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, tombstone events for deletes, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, tasks-for-entity).
 
 ## Reconciliation (replaces the original 20-second hard refresh)
 
-The consistency mechanism is `GET /queries/changed-since` with the global version cursor, not periodic full re-pulls. The endpoint returns creates, updates, and delete tombstones after the requested version. The gap-detection and reconnect rules below are the SDK's implementation of the consumption contract in the change feed plan.
+The consistency mechanism is `GET /queries/changed-since` with the global version cursor, not periodic full re-pulls. The endpoint returns creates, updates, and delete tombstones after the requested version. The gap-detection and reconnect rules below are the SDK's implementation of the consumption contract in the change feed doc.
 
 - **Gap detection:** the cache tracks its last applied version N. If an event arrives with a version that skips past expected values, the SDK immediately calls `changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
 - **Reconnect:** after any websocket reconnect, one `changed-since` call from the last known version restores consistency; the engine is degraded (reads fall through to the API) until it completes.
@@ -82,22 +82,18 @@ The consistency mechanism is `GET /queries/changed-since` with the global versio
 An object is two things, treated differently:
 
 - **Metadata** (small JSON: name, type, version, references) — flows over the change feed and lives in the cache like entities and tasks.
-- **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. Content is re-fetched exactly once per actual change. The content cache has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound.
+- **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
 
 ## Types: generated, not hand-written
 
-Resource types come from `atlas_protocol` generated artifacts. The SDK must not hand-write resource shapes — protocol changes propagate by regeneration, keeping the SDK in lockstep. SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
-
-TypeScript generation does not exist in `atlas_protocol` yet — the generator currently emits JSON Schema and Go validators only. Adding TypeScript outputs is the one prerequisite protocol slice for phase 1; it is planned in [`../atlas-protocol/PLANNING.md`](../atlas-protocol/PLANNING.md) ("Next Slice: TypeScript Outputs").
-
-Update from 2026-06-12: TypeScript generation now exists in `../../atlas_protocol/generated/typescript/index.ts`, and the generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token. Core exposes the same stamp via `GET /protocol/revision` and the websocket feed `hello` frame. The SDK imports those generated types directly rather than copying or hand-writing resource shapes.
+Resource types come from `atlas_protocol` generated artifacts: the SDK imports `atlas_protocol/generated/typescript/index.ts` directly (by path) rather than copying or hand-writing resource shapes, so protocol changes propagate by regeneration and the SDK stays in lockstep with Core. The generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
 
 ## CLI and cross-language story
 
 A TypeScript npm package cannot be imported by Python. The goal of being usable beyond TypeScript is met by:
 
-1. **A CLI bundled with the SDK** (`atlas entities get <id>`, `atlas tasks create <json>`, JSON output). Any language can subprocess it. The CLI is also the first local testing tool and exercises the whole typed client. For *pushed* data (a Python asset service receiving its tasks), one-shot subprocess calls are not enough, so the CLI includes a long-running streaming mode — `atlas watch --subscribe <filter> --follow` — that runs the sync engine and emits one JSON line per change event for the parent process to read.
-2. **A language-neutral contract:** resource shapes are already JSON Schema; the feed event shape, subscription messages, gap-detection rule, and changed-since reconciliation algorithm are specified in the [change feed plan](../atlas-change-feed/PLANNING.md) and authored in the protocol CUE schema, so a future Python SDK is a port, not a redesign.
+1. **A CLI bundled with the SDK** (`atlas entities get <id>`, `atlas tasks create <json>`, JSON output). Any language can subprocess it. The CLI is also the first local testing tool and exercises the whole typed client. For *pushed* data (a Python asset service receiving its tasks), one-shot subprocess calls are not enough, so the CLI includes a long-running streaming mode — `atlas watch --subscribe <filter> --follow` — that runs the sync engine and emits one JSON line per change event for the parent process to read. CI smoke-tests the compiled binary so the published entrypoint always runs.
+2. **A language-neutral contract:** resource shapes are JSON Schema; the feed event shape, subscription messages, gap-detection rule, and changed-since reconciliation algorithm are specified in the [change feed doc](../atlas-change-feed/README.md) and authored in the protocol CUE schema, so a future Python SDK is a port, not a redesign.
 
 Python services in the interim use the CLI or direct API calls; that does not violate the spirit of "everything through the SDK" because the contract, not the package, is the source of truth.
 
@@ -107,22 +103,22 @@ Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`); i
 
 ## Composite functions
 
-Higher-level functions (multiple endpoints, or one endpoint with opinionated defaults) live in the SDK so the API layer stays thin. Design rule: composites only orchestrate public client methods — never private internals — so they stay testable and the basic layer remains the single source of API behavior. No concrete composites are specified yet; candidates will come from real usage (likely first: task-an-asset flows built on the command catalog).
+Higher-level functions (multiple endpoints, or one endpoint with opinionated defaults) live in the SDK so the API layer stays thin. Design rule: composites only orchestrate public client methods — never private internals — so they stay testable and the basic layer remains the single source of API behavior. No concrete composites exist yet; candidates will come from real usage (likely first: task-an-asset flows built on the command catalog).
 
-## Build phases
+## Build history
 
-1. **Typed HTTP client + CLI** (manual mode complete). Generated types, auth, ETag/conflict handling, errors. No API changes required.
-2. **Sync engine over `changed-since` polling** (automatic mode works end-to-end). Cache, unified read resolution, watch API, hydration, reconciliation, read-your-writes, object content invalidation. Still no API changes — the poll interval is the latency floor.
-3. **Websocket transport in the SDK** over the Atlas Core change feed (built and tested separately before SDK transport work). Latency drops from poll-interval to push. Same engine, new transport; SDK consumers upgrade transparently.
+The SDK was planned in four phases and built in that order on 2026-06-12, after the change feed landed first:
+
+1. **Typed HTTP client + CLI** (manual mode): generated types, auth, ETag/conflict handling, errors. No API changes required.
+2. **Sync engine over `changed-since` polling** (automatic mode): cache, unified read resolution, watch API, hydration, reconciliation, read-your-writes, object content invalidation.
+3. **Websocket transport** over the Atlas Core change feed: latency drops from poll-interval to push; same engine, new transport.
 4. **Selective subscriptions** (hybrid mode): `client.subscribe(filter)` over the feed's subscription primitives, degraded fallthrough for uncovered resources.
 
-Phases 1–2 have no dependency on new API work, so the SDK is not structurally blocked on the websocket; in this implementation, the feed landed first and the SDK websocket transport consumes it.
+The phasing meant the SDK was never structurally blocked on new API work — phases 1–2 ran against the API as it already existed.
 
 ## Testing
 
-Same philosophy as the [change feed plan](../atlas-change-feed/PLANNING.md): simulation against ground truth. A harness runs multiple simulated assets and clients through realistic traffic over a simulated minute, hour, or day — entity writes and deletes, task lifecycle and reassignment, telemetry, object changes — while the simulation driver keeps a ledger of every write: "reality." At checkpoints and at the end of the run, compare what the SDK *thinks* the world looks like against that reality: cache contents match the ledger, watch callbacks fired for every relevant change, reads served from cache return what a fresh API call would, and fault injection (dropped feed connections, forced version gaps) converges back to truth through reconciliation. Ideally this reuses the feed plan's harness, with the SDK attached as one more subscriber whose internal state is auditable.
-
-Alongside the simulation: ordinary unit/integration tests run in both browser and Node environments in CI, per the isomorphic goal.
+Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simulation against ground truth. The test harness (`atlas_sdk/test/`) drives a fake Core/feed transport through realistic mixed traffic — entity, task, and object writes, reassignments, dropped feed events, forced version gaps — while keeping a ledger of every write. At checkpoints and at the end of the run, the SDK's view is compared to that reality: cache contents match the ledger, watch callbacks fired for every relevant change, and fault injection converges back to truth through reconciliation. The same suite runs in both Node and a real browser (Playwright) in CI, per the isomorphic goal, alongside ordinary unit tests and a CLI binary smoke test.
 
 ## Known gaps (explicitly deferred)
 
@@ -134,4 +130,4 @@ Alongside the simulation: ordinary unit/integration tests run in both browser an
 - Final npm package name/scope.
 - First composite functions (deferred until real use cases exist).
 
-Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed plan](../atlas-change-feed/PLANNING.md).
+Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed doc](../atlas-change-feed/README.md).

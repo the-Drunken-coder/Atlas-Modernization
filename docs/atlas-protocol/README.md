@@ -1,8 +1,8 @@
-# Atlas Protocol Planning
+# Atlas Protocol
 
-Status: bootstrap, task, object, documented entity-component, feed-envelope, TypeScript-output, and revision-stamp protocol slices are implemented in `../../atlas_protocol/`. Future work should continue from the generated module and keep this directory as planning/reference material.
+Atlas Protocol (`atlas_protocol/`) is the standalone contract package for Atlas data: it defines what valid Atlas data is, generates reusable types and validators for multiple systems, and stays independent from Atlas Core service behavior. Implemented slices: bootstrap, task, object, documented entity components, the change feed envelope and client messages, TypeScript outputs, and the revision stamp. Future work should continue from the generated module and keep this directory as design/reference material.
 
-Atlas Protocol will be the standalone contract package for Atlas data. It should define what valid Atlas data is, generate reusable types and validators for multiple systems, and stay independent from Atlas Core service behavior.
+This document records the design decisions and their reasoning; the buildable module's workflow is documented in [`atlas_protocol/README.md`](../../atlas_protocol/README.md).
 
 ## Decisions
 
@@ -177,25 +177,20 @@ Start with the smallest useful vertical slice:
 
 Do not attempt to replace every Core model and validator in the first slice.
 
-## Next Slice: TypeScript Outputs (added 2026-06-12)
+## TypeScript Outputs and the Revision Stamp (implemented 2026-06-12)
 
-The CUE-to-JSON-Schema and Go-validator path is implemented and stable, which was the stated gate for TypeScript. The Atlas SDK ([`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md)) is the consumer that now needs it: SDK phase 1 requires generated TypeScript types for entity, task, and object shapes so the SDK never hand-writes a resource shape.
+The CUE-to-JSON-Schema and Go-validator path stabilizing was the stated gate for TypeScript; the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) was the consumer that needed it, so the SDK never hand-writes a resource shape.
 
 Implemented decisions:
 
-- TypeScript types are generated into `generated/typescript/index.ts`, checked in and drift-gated by `tools/check` like the existing artifacts.
-- The change feed plan ([`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md)) has settled its wire formats and the feed event envelope plus subscription message shapes are now authored in CUE here, so the Go types Core emits and the TypeScript types the SDK parses are generated from one source.
+- TypeScript types are generated into `generated/typescript/index.ts`, checked in and drift-gated by `tools/check` like the existing artifacts. The SDK imports the checked-in artifacts directly by path from `atlas_sdk/` (no copying or build-time generation).
+- The change feed ([`../atlas-change-feed/README.md`](../atlas-change-feed/README.md)) settled its wire formats, and the feed event envelope plus subscription message shapes are authored in CUE here, so the Go types Core emits and the TypeScript types the SDK parses are generated from one source.
 - The replacement policy's revision stamp is a SHA-256 content hash over protocol CUE source files. It is emitted to `generated/revision.txt`, `generated/go/atlasprotocol/revision.go`, JSON Schema `x-atlas-protocol-revision`, and `generated/typescript/index.ts`.
 - The revision stamp doubles as the SDK's connect-time version handshake token: Core reports the protocol revision it was built from over `GET /protocol/revision` and the websocket feed `hello` frame; the SDK compares it to the revision its generated types came from and fails loudly on mismatch.
 
-Remaining questions:
-
-- TypeScript validators now or later? Types alone satisfy SDK phase 1; no client-side runtime-validation use case is identified yet beyond CLI input checking.
-- How the SDK consumes the artifacts: import the checked-in `generated/typescript/` by path from `atlas_sdk/`, or copy/generate into the SDK package at build time?
-
 ## Deferred Decisions
 
-- TypeScript validators should wait until JSON Schema generation is stable; TypeScript types may still be generated earlier if low-friction.
+- TypeScript validators: types alone satisfy the SDK; no client-side runtime-validation use case is identified yet beyond CLI input checking.
 - Command catalog schemas remain a sibling artifact for now; Atlas Protocol can reference command identifiers as strings until command ownership is revisited.
 - Postgres JSON checks are deferred until the protocol model settles.
 - HTTP request/response envelope schemas are deferred until blob/component validation proves the workflow.
