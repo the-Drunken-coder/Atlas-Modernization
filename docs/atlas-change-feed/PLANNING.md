@@ -1,6 +1,6 @@
 # Atlas Change Feed Planning
 
-Status: planned, not yet implemented. Split out of [`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md) on 2026-06-12 so the feed can be specced, built, and tested as its own deliverable **before** the SDK exists. This document is deliberately light on wire-format and implementation detail — the open questions at the bottom are waiting to be answered, not forgotten.
+Status: planned, not yet implemented. Split out of [`../atlas-sdk/PLANNING.md`](../atlas-sdk/PLANNING.md) on 2026-06-12 so the feed can be specced, built, and tested as its own deliverable **before** the SDK exists. This document is deliberately light on implementation detail — the open questions at the bottom are waiting to be answered, not forgotten. A first decision pass on 2026-06-12 settled the emission mechanism, event envelope, endpoint and auth, and initial subscription state (see "Decisions from the first open-questions pass").
 
 The change feed is the push channel out of Atlas Core: an endpoint that streams change events to connected clients so they learn about writes without polling. The transport is **decided: websocket** — not webhooks (Core calling back URLs that clients register does not work for browser UIs or assets behind flaky links). The Atlas SDK is the eventual primary consumer; until it exists, the feed's real exercising consumer is its tests (see "Testing").
 
@@ -16,6 +16,19 @@ Carried over from SDK planning, where they already survived review; these are no
 - **Subscriptions are filters, not a query engine:** `all`; by resource ID; by resource type; and one relational filter, **tasks for entity X**, which must match *future* tasks (a server-side filter, not expressible as an ID list).
 - **Task routing rule:** a task event is delivered to a relational subscriber if the task matched the filter **before or after** the change — on reassignment from asset A to asset B, A sees the task leave and B sees it arrive. `all` subscribers receive every task event regardless.
 - **Live re-subscription:** subscribe/unsubscribe over an open connection, no reconnect required.
+
+## Decisions from the first open-questions pass (2026-06-12)
+
+- **Emission mechanism: in-process post-commit hook.** Core's write path hands each committed change to the feed hub directly, including before-and-after state — which the task-routing rule needs and which the other candidate mechanisms (Postgres LISTEN/NOTIFY, internally tailing `changed-since`) cannot provide without extra bookkeeping. The hub is responsible for emitting in global version order even though hooks fire after the advisory lock releases; the simulation harness exists to catch exactly this class of bug, and the `changed-since` backstop covers anything that slips past.
+- **Event envelope: flat, one event per frame.** Every field in its own slot:
+
+  ```json
+  { "event": "update", "resource_type": "task", "id": "task-7", "version": 123, "resource": { "...": "full serialized task" } }
+  ```
+
+  `event` is `create`, `update`, or `delete`; `resource` carries the full serialized resource and is omitted on `delete` — the tombstone is the envelope itself. Subscribe/unsubscribe messages follow the same flat style (exact shapes still open, below).
+- **Endpoint and auth: `/feed`, first-message auth.** The client connects, then its first frame carries the API key; the server closes the connection if the key is wrong or does not arrive within a timeout. Identical flow for browsers, Node, and the CLI (browsers cannot set custom headers on websockets), and no keys in URLs or access logs. While API auth is disabled — the current deployment — the auth frame is not required.
+- **Initial subscription state: empty.** A fresh connection delivers nothing until the client subscribes; automatic mode sends subscribe-`all` as its first message after authenticating.
 
 ## What clients must do (consumption contract)
 
@@ -41,11 +54,8 @@ The same philosophy extends to the SDK later: attach an SDK instance to the simu
 
 ## Open questions
 
-- **How the feed learns about committed writes.** Candidates: an in-process post-commit hook in the actions layer; Postgres LISTEN/NOTIFY; the feed internally tailing `changed-since`. Hard constraint regardless of mechanism: events are emitted only for committed transactions, in version order.
-- **Endpoint and handshake.** The path (e.g. `/feed`), and how the API key rides the handshake **from a browser** — the browser WebSocket API cannot set custom headers, so it has to be a query parameter, a first-message auth exchange, or a cookie.
-- **Wire formats.** Exact JSON shapes for the event envelope and the subscribe/unsubscribe messages; whether subscriptions are acknowledged; error behavior for invalid filters.
+- **Subscription message details.** Exact JSON for subscribe/unsubscribe (following the event envelope's flat style); whether subscriptions are acknowledged; error behavior for invalid filters.
 - **Where the envelope is authored.** Leaning: protocol CUE, so the Go types Core emits and the TypeScript types the SDK parses are generated from one source, like resource shapes.
-- **Initial subscription state.** Does a fresh connection start subscribed to `all` or to nothing?
 - **Slow consumers.** Per-connection buffer cap, then disconnect and let the client recover via `changed-since`? Something gentler?
 - **Keepalive.** Ping/pong interval and dead-connection detection.
 - **Version handshake.** Whether connect-time SDK/API compatibility checking uses the protocol revision stamp (see protocol plan).
