@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, ConflictError, ProtocolMismatchError, type FeedEvent } from "../src";
+import { runCLI, type CLIIO } from "../src/cli.js";
 import { entity, FakeCore, object, task } from "./fake-core";
 
 describe("AtlasClient HTTP", () => {
@@ -58,6 +59,45 @@ describe("AtlasClient sync", () => {
       await expect(client.tasks.get("task-gap")).resolves.toEqual(second);
     });
     expect(client.sync.status().degraded).toBe(false);
+  });
+
+  it("rejects feed connections that close before the protocol hello", async () => {
+    const core = new FakeCore();
+    core.rejectFeedAuth = true;
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      apiKey: "wrong",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0,
+      feedHandshakeTimeoutMs: 50
+    });
+
+    await expect(client.connectFeed()).rejects.toThrow("before protocol hello");
+  });
+
+  it("marks the sync engine degraded when feed gap recovery fails", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    await client.connectFeed();
+
+    core.upsertTask(task("task-gap-fail", "asset-1"));
+    const second = core.upsertTask({ ...task("task-gap-fail", "asset-1"), status: "acknowledged" });
+    core.failChangedSince = true;
+    core.emit({ event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second });
+
+    await vi.waitFor(() => {
+      expect(client.sync.status().degraded).toBe(true);
+      expect(client.sync.status().healthy).toBe(false);
+    });
   });
 
   it("matches the simulation ledger at checkpoints and run end", async () => {
@@ -135,6 +175,49 @@ describe("AtlasClient sync", () => {
     const downloads = fetchSpy.mock.calls.filter(([url]) => String(url).includes("/download"));
     expect(downloads).toHaveLength(1);
   });
+
+  it("retries object content download when metadata changes mid-flight", async () => {
+    const core = new FakeCore();
+    core.upsertObject(object("object-1"));
+    let raced = false;
+    core.onObjectDownload = (id) => {
+      if (!raced) {
+        raced = true;
+        core.upsertObject({ ...object(id), type: "log" });
+      }
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0, objectContentCacheEntries: 4 });
+    await client.sync.start();
+
+    await expect(client.objects.content("object-1")).resolves.toBeInstanceOf(ArrayBuffer);
+    expect(core.objectDownloadCount).toBe(2);
+
+    await expect(client.objects.content("object-1")).resolves.toBeInstanceOf(ArrayBuffer);
+    expect(core.objectDownloadCount).toBe(2);
+  });
+});
+
+describe("Atlas CLI", () => {
+  it("prints help without opening a network connection", async () => {
+    const io = captureIO();
+    await expect(runCLI(["--help"], io.io)).resolves.toBe(0);
+    expect(io.stdout()).toContain("usage: atlas");
+    expect(io.stderr()).toBe("");
+  });
+
+  it("rejects malformed commands and arguments before handshake", async () => {
+    const missingID = captureIO();
+    await expect(runCLI(["entities", "get"], missingID.io)).resolves.toBe(2);
+    expect(missingID.stderr()).toContain("usage: invalid command");
+
+    const badJSON = captureIO();
+    await expect(runCLI(["tasks", "create", "{bad"], badJSON.io)).resolves.toBe(2);
+    expect(badJSON.stderr()).toContain("invalid task JSON");
+
+    const badFilter = captureIO();
+    await expect(runCLI(["watch", "--subscribe", "id:not-a-type:x"], badFilter.io)).resolves.toBe(2);
+    expect(badFilter.stderr()).toContain("invalid subscription filter");
+  });
 });
 
 async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): Promise<void> {
@@ -149,4 +232,18 @@ async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): P
       await expect(client.objects.get(objectValue.object_id)).resolves.toEqual(objectValue);
     }
   });
+}
+
+function captureIO(): { io: CLIIO; stdout: () => string; stderr: () => string } {
+  let stdout = "";
+  let stderr = "";
+  return {
+    io: {
+      stdout: { write: (data: string) => (stdout += data) },
+      stderr: { write: (data: string) => (stderr += data) },
+      env: {}
+    },
+    stdout: () => stdout,
+    stderr: () => stderr
+  };
 }

@@ -150,6 +150,9 @@ jobs:
       - name: Build Atlas SDK
         run: npm run build
 
+      - name: Smoke test Atlas SDK CLI binary
+        run: npm run test:bin
+
       - name: Run Atlas SDK Node tests
         run: npm run test:node
 

@@ -6,12 +6,12 @@ export {
   type AtlasSubscription,
   type ReadOptions,
   type SyncStatus
-} from "./client";
-export { ATLAS_PROTOCOL_REVISION } from "./protocol";
+} from "./client.js";
+export { ATLAS_PROTOCOL_REVISION } from "./protocol.js";
 export type {
   EntityResource,
   FeedEvent,
   ObjectResource,
   ResourceType,
   TaskResource
-} from "./protocol";
+} from "./protocol.js";

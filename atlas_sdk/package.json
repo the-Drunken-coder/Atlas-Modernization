@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "bin": {
-    "atlas": "./dist/src/cli.js"
+    "atlas": "./dist/atlas_sdk/src/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test:bin": "node ./dist/atlas_sdk/src/cli.js --help",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test": "npm run test:node && npm run test:browser"

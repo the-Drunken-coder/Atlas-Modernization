@@ -18,6 +18,10 @@ export class FakeCore {
   deletions: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
+  rejectFeedAuth = false;
+  failChangedSince = false;
+  objectDownloadCount = 0;
+  onObjectDownload: ((id: string) => void) | undefined;
 
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
@@ -31,6 +35,9 @@ export class FakeCore {
       });
     }
     if (path === "/queries/changed-since") {
+      if (this.failChangedSince) {
+        return json({ error: "changed-since unavailable" }, 500);
+      }
       const since = Number(parsed.searchParams.get("since_version") ?? 0);
       const changed = this.events.filter((event) => event.version > since);
       return json({
@@ -63,6 +70,9 @@ export class FakeCore {
       return json(this.upsertTask(await readBody<TaskResource>(init)));
     }
     if (path.startsWith("/objects/") && path.endsWith("/download")) {
+      const id = decodeURIComponent(path.split("/")[2]);
+      this.objectDownloadCount++;
+      this.onObjectDownload?.(id);
       return new Response(new Uint8Array([1, 2, 3]));
     }
     if (path.startsWith("/objects/") && init?.method === "GET") {
@@ -155,6 +165,10 @@ class FakeWebSocket {
 
   send(data: string): void {
     const parsed = JSON.parse(data);
+    if (parsed.action === "auth" && this.core.rejectFeedAuth) {
+      this.close();
+      return;
+    }
     if (parsed.action === "subscribe") this.subscriptions.push(parsed);
     if (parsed.action === "unsubscribe") {
       const key = subscriptionKey(parsed);
@@ -178,6 +192,9 @@ class FakeWebSocket {
   }
 
   receive(value: unknown): void {
+    if (this.readyState !== 1) {
+      return;
+    }
     this.dispatch("message", { data: JSON.stringify(value) });
   }
 

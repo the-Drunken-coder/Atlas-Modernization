@@ -4,7 +4,7 @@ Status: initial SDK implemented in `../../atlas_sdk/`: typed HTTP client, CLI en
 
 The Atlas SDK is the single client for Atlas Core. The goal is that **no service ever calls the API manually** — every UI, asset-side service, and tool talks to Atlas through the SDK or its bundled CLI. The one documented interim exception: non-TypeScript services without an SDK port may call the API directly (see "CLI and cross-language story"); the goal stands because the contract, not the package, is the source of truth. The SDK wraps the existing HTTP API. The one piece of new API work it depends on — the websocket change feed in Atlas Core — was planned separately in [`../atlas-change-feed/PLANNING.md`](../atlas-change-feed/PLANNING.md) and is now implemented before SDK consumption.
 
-**Sole consumer:** the only user of Atlas and this SDK is its developer. Publishing to public npm is for convenience, not for external users — the package carries **no compatibility guarantees**. Breaking changes are preferred over compatibility shims (matching repo-wide policy in `AGENTS.md`), and all consumers upgrade in lockstep. To make lockstep safe, the SDK performs a cheap version handshake and fails loudly on SDK/API mismatch rather than degrading quietly — over HTTP at client startup in phases 1–2, and again at websocket connect once the feed transport exists (phase 3). The concrete revision token and where Core exposes it are open questions in the protocol plan ("Next Slice: TypeScript Outputs").
+**Sole consumer:** the only user of Atlas and this SDK is its developer. Publishing to public npm is for convenience, not for external users — the package carries **no compatibility guarantees**. Breaking changes are preferred over compatibility shims (matching repo-wide policy in `AGENTS.md`), and all consumers upgrade in lockstep. To make lockstep safe, the SDK performs a cheap version handshake and fails loudly on SDK/API mismatch rather than degrading quietly — over HTTP at client startup and again at websocket connect. The revision token is the generated `ATLAS_PROTOCOL_REVISION`; Core exposes it through `GET /protocol/revision` and the feed `hello` frame.
 
 ## Goals
 
@@ -129,9 +129,9 @@ Alongside the simulation: ordinary unit/integration tests run in both browser an
 - **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `completeTask()` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
 - **Auth hardening.** Single shared API key with full write access, stored in app-managed client-side state for the web UI, is acceptable only for the current single-user local deployment. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything is internet-facing.
 
-## Open questions
+## Remaining release questions
 
 - Final npm package name/scope.
 - First composite functions (deferred until real use cases exist).
 
-(Feed-side open questions — endpoint shape, wire formats, slow-consumer policy, harness placement — live in the [change feed plan](../atlas-change-feed/PLANNING.md).)
+Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed plan](../atlas-change-feed/PLANNING.md).

@@ -1,6 +1,6 @@
 export {
   ATLAS_PROTOCOL_REVISION
-} from "../../atlas_protocol/generated/typescript/index";
+} from "../../atlas_protocol/generated/typescript/index.js";
 
 export type {
   EntityResource,
@@ -11,4 +11,4 @@ export type {
   ObjectResource,
   ResourceType,
   TaskResource
-} from "../../atlas_protocol/generated/typescript/index";
+} from "../../atlas_protocol/generated/typescript/index.js";

@@ -8,7 +8,7 @@ import {
   type ObjectResource,
   type ResourceType,
   type TaskResource
-} from "./protocol";
+} from "./protocol.js";
 
 type FetchLike = typeof fetch;
 
@@ -47,6 +47,7 @@ export type AtlasClientOptions = {
   sync?: false | "all" | "selective";
   pollIntervalMs?: number;
   objectContentCacheEntries?: number;
+  feedHandshakeTimeoutMs?: number;
 };
 
 type ChangedSinceResponse = {
@@ -161,6 +162,7 @@ export class AtlasClient {
   private readonly fetchImpl: FetchLike;
   private readonly WebSocketImpl?: WebSocketCtor;
   private readonly pollIntervalMs: number;
+  private readonly feedHandshakeTimeoutMs: number;
   private readonly objectContents: ObjectContentCache;
   private readonly cache = {
     entity: new Map<string, CacheEntry<EntityResource>>(),
@@ -182,6 +184,7 @@ export class AtlasClient {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.WebSocketImpl = options.WebSocket ?? (globalThis as any).WebSocket;
     this.pollIntervalMs = options.pollIntervalMs ?? 120_000;
+    this.feedHandshakeTimeoutMs = options.feedHandshakeTimeoutMs ?? 5_000;
     this.objectContents = new ObjectContentCache(options.objectContentCacheEntries ?? 64);
     if (!this.fetchImpl) {
       throw new Error("AtlasClient requires a fetch implementation");
@@ -244,38 +247,81 @@ export class AtlasClient {
     const socket = new this.WebSocketImpl(feedUrl(this.baseUrl));
     this.socket = socket;
     const hello = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+      const timer = setTimeout(
+        () => finish(() => reject(new Error("feed protocol hello timed out"))),
+        this.feedHandshakeTimeoutMs
+      );
       const onMessage = (message: any) => {
+        if (settled) {
+          return;
+        }
         try {
           const data = JSON.parse(String(message.data)) as FeedHandshakeMessage;
           if (data.type !== "hello") {
-            reject(new Error("feed did not send protocol hello"));
+            finish(() => reject(new Error("feed did not send protocol hello")));
             return;
           }
           this.assertRevision(data.protocol_revision);
-          resolve();
+          finish(resolve);
         } catch (error) {
-          reject(error);
+          finish(() => reject(error));
         }
       };
       socket.addEventListener("message", onMessage);
+      socket.addEventListener("close", () => finish(() => reject(new Error("feed websocket closed before protocol hello"))));
+      socket.addEventListener("error", () => finish(() => reject(new Error("feed websocket failed before protocol hello"))));
     });
+    void hello.catch(() => undefined);
     await new Promise<void>((resolve, reject) => {
-      socket.addEventListener("open", () => resolve());
-      socket.addEventListener("error", () => reject(new Error("feed websocket failed to open")));
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+      const timer = setTimeout(
+        () => finish(() => reject(new Error("feed websocket open timed out"))),
+        this.feedHandshakeTimeoutMs
+      );
+      socket.addEventListener("open", () => finish(resolve));
+      socket.addEventListener("close", () => finish(() => reject(new Error("feed websocket closed before opening"))));
+      socket.addEventListener("error", () => finish(() => reject(new Error("feed websocket failed to open"))));
     });
     if (this.apiKey) {
       socket.send(JSON.stringify({ action: "auth", api_key: this.apiKey }));
     }
     await hello;
+    this.healthy = true;
+    this.degraded = false;
     for (const filter of this.subscriptions) {
       socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
     }
     socket.addEventListener("message", (message: any) => {
-      const data = JSON.parse(String(message.data));
-      if (data.type === "hello") {
-        return;
+      try {
+        const data = JSON.parse(String(message.data));
+        if (data.type === "hello") {
+          return;
+        }
+        void this.consumeFeedEvent(data as FeedEvent).catch(() => {
+          this.degraded = true;
+          this.healthy = false;
+        });
+      } catch {
+        this.degraded = true;
+        this.healthy = false;
       }
-      void this.consumeFeedEvent(data as FeedEvent);
     });
     socket.addEventListener("close", () => {
       this.healthy = false;
@@ -418,16 +464,22 @@ export class AtlasClient {
   }
 
   private async objectContent(id: string): Promise<ArrayBuffer> {
-    const object = await this.objects.get(id);
-    const key = `${id}@${object.metadata.version}`;
-    const cached = this.objectContents.get(key);
-    if (cached) {
-      return cached;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const object = await this.objects.get(id, { fresh: true });
+      const key = `${id}@${object.metadata.version}`;
+      const cached = this.objectContents.get(key);
+      if (cached) {
+        return cached;
+      }
+      const response = await this.raw("GET", `/objects/${encodeURIComponent(id)}/download`);
+      const data = await response.arrayBuffer();
+      const after = await this.objects.get(id, { fresh: true });
+      if (after.metadata.version === object.metadata.version) {
+        this.objectContents.set(key, data);
+        return data;
+      }
     }
-    const response = await this.raw("GET", `/objects/${encodeURIComponent(id)}/download`);
-    const data = await response.arrayBuffer();
-    this.objectContents.set(key, data);
-    return data;
+    throw new Error(`Atlas object ${id} changed while downloading content; retry`);
   }
 
   private notify(

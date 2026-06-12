@@ -161,6 +161,21 @@ func TestReadinessCheckWithoutDBReturnsUnhealthy(t *testing.T) {
 	}
 }
 
+func TestFeedWithoutHubReturnsServiceUnavailable(t *testing.T) {
+	handler := &Handler{}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	handler.Feed(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "feed hub is not configured") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
 func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
