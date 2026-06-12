@@ -58,5 +58,5 @@ func goValidatorsSource() []byte {
 		builder.WriteString(fn.args)
 		builder.WriteString(")\n}\n")
 	}
-	return []byte(builder.String())
+	return formatGeneratedGoSource(builder.String())
 }

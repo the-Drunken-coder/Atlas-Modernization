@@ -1,6 +1,17 @@
 package artifacts
 
-import "strings"
+import (
+	"go/format"
+	"strings"
+)
+
+func formatGeneratedGoSource(source string) []byte {
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		return []byte(source)
+	}
+	return formatted
+}
 
 func goTypesSource() []byte {
 	var builder strings.Builder
@@ -109,5 +120,5 @@ type FeedHandshakeMessage struct {
 	ProtocolRevision string ` + "`json:\"protocol_revision\"`" + `
 }
 `)
-	return []byte(builder.String())
+	return formatGeneratedGoSource(builder.String())
 }

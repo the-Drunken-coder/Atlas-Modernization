@@ -40,31 +40,59 @@ func cloneRawMessage(raw []byte) []byte {
 	return append([]byte(nil), raw...)
 }
 
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 func cloneEntityModel(entity *models.Entity) *models.Entity {
 	if entity == nil {
 		return nil
 	}
-	out := *entity
-	out.JSON = cloneRawMessage(entity.JSON)
-	return &out
+	return &models.Entity{
+		EntityID:  entity.EntityID,
+		Type:      entity.Type,
+		Subtype:   cloneStringPointer(entity.Subtype),
+		Alias:     cloneStringPointer(entity.Alias),
+		JSON:      cloneRawMessage(entity.JSON),
+		CreatedAt: entity.CreatedAt,
+		UpdatedAt: entity.UpdatedAt,
+		Version:   entity.Version,
+	}
 }
 
 func cloneTaskModel(task *models.Task) *models.Task {
 	if task == nil {
 		return nil
 	}
-	out := *task
-	out.JSON = cloneRawMessage(task.JSON)
-	return &out
+	return &models.Task{
+		TaskID:    task.TaskID,
+		Status:    task.Status,
+		EntityID:  cloneStringPointer(task.EntityID),
+		JSON:      cloneRawMessage(task.JSON),
+		CreatedAt: task.CreatedAt,
+		UpdatedAt: task.UpdatedAt,
+		Version:   task.Version,
+	}
 }
 
 func cloneObjectModel(object *models.MediaObject) *models.MediaObject {
 	if object == nil {
 		return nil
 	}
-	out := *object
-	out.JSON = cloneRawMessage(object.JSON)
-	return &out
+	return &models.MediaObject{
+		ObjectID:    object.ObjectID,
+		Path:        cloneStringPointer(object.Path),
+		ContentType: cloneStringPointer(object.ContentType),
+		Type:        cloneStringPointer(object.Type),
+		JSON:        cloneRawMessage(object.JSON),
+		CreatedAt:   object.CreatedAt,
+		UpdatedAt:   object.UpdatedAt,
+		Version:     object.Version,
+	}
 }
 
 func publishChange(sink ChangeSink, change ResourceChange) {

@@ -67,5 +67,5 @@ func goRevisionSource(revision string) []byte {
 	builder.WriteString("const ProtocolRevision = ")
 	builder.WriteString(fmt.Sprintf("%q", revision))
 	builder.WriteString("\n")
-	return []byte(builder.String())
+	return formatGeneratedGoSource(builder.String())
 }

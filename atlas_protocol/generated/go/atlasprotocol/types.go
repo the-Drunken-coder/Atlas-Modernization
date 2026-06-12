@@ -68,15 +68,15 @@ type ObjectReference struct {
 }
 
 type ObjectResource struct {
-	ObjectID     string                 `json:"object_id"`
-	Path         *string                `json:"path"`
-	ContentType  *string                `json:"content_type"`
-	Type         *string                `json:"type"`
-	SizeBytes    *int64                 `json:"size_bytes"`
-	UsageHints   []string               `json:"usage_hints"`
-	ReferencedBy []ObjectReference      `json:"referenced_by,omitempty"`
-	Bucket       *string                `json:"bucket"`
-	Metadata     MetadataBlock          `json:"metadata"`
+	ObjectID     string            `json:"object_id"`
+	Path         *string           `json:"path"`
+	ContentType  *string           `json:"content_type"`
+	Type         *string           `json:"type"`
+	SizeBytes    *int64            `json:"size_bytes"`
+	UsageHints   []string          `json:"usage_hints"`
+	ReferencedBy []ObjectReference `json:"referenced_by,omitempty"`
+	Bucket       *string           `json:"bucket"`
+	Metadata     MetadataBlock     `json:"metadata"`
 }
 
 type FeedEvent struct {
