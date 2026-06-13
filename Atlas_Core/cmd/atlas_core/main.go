@@ -248,7 +248,6 @@ func main() {
 
 	logger.Info().Msg("ATLAS Core API shutting down...")
 	stopReconciler()
-	feedHub.Close()
 
 	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -257,6 +256,7 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error().Err(err).Msg("Server shutdown error")
 	}
+	feedHub.Close()
 
 	logger.Info().Msg("ATLAS Core API shutdown complete")
 }

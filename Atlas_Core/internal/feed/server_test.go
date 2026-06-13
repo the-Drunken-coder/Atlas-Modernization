@@ -276,6 +276,31 @@ func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription(t *testing.T)
 	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
 }
 
+func TestWebsocketFeedClosesWhenHubClosesWhileReadSideIdle(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := newAuthFeedServer(t, hub)
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
+		t.Fatalf("auth feed: %v", err)
+	}
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe feed: %v", err)
+	}
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+
+	hub.Close()
+
+	expectFeedClosedWithStatus(t, conn, websocket.StatusInternalError)
+}
+
 func TestWebsocketFeedRejectsBinaryFrame(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()

@@ -2,11 +2,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const KILL_GRACE_MS = 2_000;
-const protocolRevision = readFileSync("../atlas_protocol/generated/revision.txt", "utf8").trim();
+const testDir = dirname(fileURLToPath(import.meta.url));
+const protocolRevision = readFileSync(join(testDir, "../../atlas_protocol/generated/revision.txt"), "utf8").trim();
 let tmpdirPath;
 
 function run(command, args, options = {}) {

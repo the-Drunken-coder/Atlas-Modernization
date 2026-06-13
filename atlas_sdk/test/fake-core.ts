@@ -181,7 +181,7 @@ export class FakeCore {
 
   private record(event: FeedEvent): void {
     if (this.recordedVersions.has(event.version)) {
-      return;
+      throw new Error(`duplicate fake core event version ${event.version} for ${event.resource_type}/${event.id}`);
     }
     this.recordedVersions.add(event.version);
     this.version = Math.max(this.version, event.version);

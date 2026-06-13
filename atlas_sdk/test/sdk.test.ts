@@ -132,10 +132,10 @@ describe("AtlasClient sync", () => {
     await client.connectFeed();
 
     const first = core.upsertTask(task("task-gap", "asset-1"));
-    core.emit({ event: "update", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first }, { dropForSockets: true });
+    core.emit({ event: "update", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first }, { dropForSockets: true, record: false });
     const second = core.upsertTask({ ...first, status: "acknowledged" });
     const event: FeedEvent = { event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second };
-    core.emit(event);
+    core.emit(event, { record: false });
 
     await vi.waitFor(async () => {
       await expect(client.tasks.get("task-gap")).resolves.toEqual(second);
@@ -237,6 +237,15 @@ describe("AtlasClient sync", () => {
     expect(secondCore.sockets.size).toBe(0);
   });
 
+  it("fails loudly when the fake core records duplicate event versions", () => {
+    const core = new FakeCore();
+    const value = core.upsertEntity(entity("asset-duplicate-version"));
+
+    expect(() =>
+      core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value })
+    ).toThrow("duplicate fake core event version");
+  });
+
   it("marks the sync engine degraded when feed gap recovery fails", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -252,7 +261,7 @@ describe("AtlasClient sync", () => {
     core.upsertTask(task("task-gap-fail", "asset-1"));
     const second = core.upsertTask({ ...task("task-gap-fail", "asset-1"), status: "acknowledged" });
     core.failChangedSince = true;
-    core.emit({ event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second });
+    core.emit({ event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second }, { record: false });
 
     await vi.waitFor(() => {
       expect(client.sync.status().degraded).toBe(true);
@@ -277,32 +286,32 @@ describe("AtlasClient sync", () => {
         const entityID = `asset-sim-${i % 5}`;
         const value = core.upsertEntity({ ...entity(entityID), alias: `asset ${i}` });
         const event: FeedEvent = { event: "update", resource_type: "entity", id: entityID, version: value.metadata.version, resource: value };
-        core.emit(event, i === 6 ? { dropForSockets: true } : undefined);
+        core.emit(event, { dropForSockets: i === 6, record: false });
       }
       const id = `task-sim-${i % 4}`;
       const value = core.upsertTask({ ...task(id, `asset-${i % 3}`), status: i % 2 === 0 ? "pending" : "acknowledged" });
       const event: FeedEvent = { event: "update", resource_type: "task", id, version: value.metadata.version, resource: value };
-      core.emit(event, i === 7 ? { dropForSockets: true } : undefined);
+      core.emit(event, { dropForSockets: i === 7, record: false });
       if (i % 4 === 0) {
         const objectID = `object-sim-${i % 3}`;
         const value = core.upsertObject({ ...object(objectID), type: i % 8 === 0 ? "image" : "log" });
         const objectEvent: FeedEvent = { event: "update", resource_type: "object", id: objectID, version: value.metadata.version, resource: value };
-        core.emit(objectEvent, i === 12 ? { dropForSockets: true } : undefined);
+        core.emit(objectEvent, { dropForSockets: i === 12, record: false });
       }
       // Mid-simulation task delete is dropped from sockets to force gap reconciliation.
       if (i === 10) {
         const event = core.deleteTask("task-sim-2");
-        if (event) core.emit(event, { dropForSockets: true });
+        if (event) core.emit(event, { dropForSockets: true, record: false });
       }
       // Entity delete follows later so the ledger sees a live tombstone after recovery.
       if (i === 14) {
         const event = core.deleteEntity("asset-sim-2");
-        if (event) core.emit(event);
+        if (event) core.emit(event, { record: false });
       }
       // Object delete lands near the tail to cover all resource tombstone types.
       if (i === 18) {
         const event = core.deleteObject("object-sim-1");
-        if (event) core.emit(event);
+        if (event) core.emit(event, { record: false });
       }
       if (i % 6 === 5) {
         await assertClientMatchesLedger(client, core);
@@ -327,11 +336,11 @@ describe("AtlasClient sync", () => {
     await client.connectFeed();
 
     const first = core.upsertTask(task("task-reassign", "asset-old"));
-    core.emit({ event: "create", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first });
+    core.emit({ event: "create", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first }, { record: false });
     const reassigned = core.upsertTask({ ...first, entity_id: "asset-new" });
     core.emit(
       { event: "update", resource_type: "task", id: reassigned.task_id, version: reassigned.metadata.version, resource: reassigned },
-      { beforeTaskEntityId: "asset-old" }
+      { beforeTaskEntityId: "asset-old", record: false }
     );
 
     await vi.waitFor(() => {
@@ -406,6 +415,7 @@ describe("Atlas CLI", () => {
       });
     }
     expect(parseFilter("id:task:task:with:colons")).toEqual({ filter: "id", resource_type: "task", id: "task:with:colons" });
+    expect(parseFilter("id:task:::id")).toEqual({ filter: "id", resource_type: "task", id: "::id" });
     expect(parseFilter("tasks_for_entity:asset-1")).toEqual({ filter: "tasks_for_entity", entity_id: "asset-1" });
     expect(parseFilter("tasks_for_entity:asset:with:colons")).toEqual({ filter: "tasks_for_entity", entity_id: "asset:with:colons" });
   });
@@ -415,6 +425,7 @@ describe("Atlas CLI", () => {
     expect(() => parseFilter("unknown_filter")).toThrow("invalid subscription filter");
     expect(() => parseFilter("type:invalid")).toThrow("invalid subscription filter");
     expect(() => parseFilter("id:task")).toThrow("invalid subscription filter");
+    expect(() => parseFilter("id:task:")).toThrow("invalid subscription filter");
     expect(() => parseFilter("tasks_for_entity")).toThrow("invalid subscription filter");
   });
 });

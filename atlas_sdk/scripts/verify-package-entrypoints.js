@@ -1,18 +1,36 @@
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const packageRoot = join(scriptDir, "..");
+const packageJSON = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+if (typeof packageJSON.bin?.atlas !== "string" || packageJSON.bin.atlas.trim() === "") {
+  console.error("::error::package.json is missing bin.atlas");
+  process.exit(1);
+}
+const cliModule = await import(pathToFileURL(join(packageRoot, packageJSON.bin.atlas)).href);
 
 const expected = new Map([
+  ["name", "@the-drunken-coder/atlas-sdk"],
   ["main", "./dist/atlas_sdk/src/index.js"],
   ["types", "./dist/atlas_sdk/src/index.d.ts"],
   ['exports["."].import', "./dist/atlas_sdk/src/index.js"],
-  ['exports["."].types', "./dist/atlas_sdk/src/index.d.ts"]
+  ['exports["."].types', "./dist/atlas_sdk/src/index.d.ts"],
+  ['bin["atlas"]', "./dist/atlas_sdk/src/cli.js"],
+  ["cli PACKAGE_NAME", packageJSON.name],
+  ["cli PACKAGE_BIN.atlas", packageJSON.bin?.atlas]
 ]);
 
-const packageJSON = JSON.parse(readFileSync("./package.json", "utf8"));
 const actual = new Map([
+  ["name", packageJSON.name],
   ["main", packageJSON.main],
   ["types", packageJSON.types],
   ['exports["."].import', packageJSON.exports?.["."]?.import],
-  ['exports["."].types', packageJSON.exports?.["."]?.types]
+  ['exports["."].types', packageJSON.exports?.["."]?.types],
+  ['bin["atlas"]', packageJSON.bin?.atlas],
+  ["cli PACKAGE_NAME", cliModule.PACKAGE_NAME],
+  ["cli PACKAGE_BIN.atlas", cliModule.PACKAGE_BIN?.atlas]
 ]);
 
 let failed = false;

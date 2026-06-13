@@ -21,8 +21,8 @@ type CLICommand =
 const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
 export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];
 const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
-const PACKAGE_NAME = "@the-drunken-coder/atlas-sdk";
-const PACKAGE_BIN = { atlas: "./dist/atlas_sdk/src/cli.js" } as const;
+export const PACKAGE_NAME = "@the-drunken-coder/atlas-sdk";
+export const PACKAGE_BIN = { atlas: "./dist/atlas_sdk/src/cli.js" } as const;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
 export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<number> {

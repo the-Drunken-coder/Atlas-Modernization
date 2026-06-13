@@ -686,10 +686,9 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return NewEntityNotFoundError(entityID)
 	}
 
-	// Entity tombstones do not need extra context; the deleted entity id is the resource_id.
 	var tombstoneVersion int64
 	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ($1, $2) RETURNING version",
+		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, '{}'::jsonb) RETURNING version",
 		ChangeResourceEntity, entityID,
 	).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record entity deletion tombstone: %w", err)
