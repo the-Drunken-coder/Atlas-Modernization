@@ -522,6 +522,14 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		return fmt.Errorf("failed to commit delete transaction: %w", err)
 	}
 
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventDelete,
+		ResourceType: ChangeResourceObject,
+		ID:           object.ObjectID,
+		Version:      tombstoneVersion,
+		BeforeObject: cloneObjectModel(&object),
+	})
+
 	if queuedPath != "" {
 		if err := a.storage.DeleteObjectPath(ctx, queuedPath); err != nil {
 			if recordErr := a.recordQueuedStorageDeletionFailure(ctx, queuedBucket, queuedPath, err); recordErr != nil {
@@ -532,14 +540,6 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but queued retry could not be cleared")
 		}
 	}
-
-	publishChange(a.changeSink, ResourceChange{
-		Event:        ChangeEventDelete,
-		ResourceType: ChangeResourceObject,
-		ID:           object.ObjectID,
-		Version:      tombstoneVersion,
-		BeforeObject: cloneObjectModel(&object),
-	})
 
 	return nil
 }

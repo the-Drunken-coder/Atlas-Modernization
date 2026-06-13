@@ -34,7 +34,7 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().healthy).toBe(true);
   });
 
-  it("does not emit synthetic update events for changed-since upserts", async () => {
+  it("emits recovered update events for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
@@ -46,7 +46,40 @@ describe("AtlasClient sync", () => {
     await client.changedSince();
 
     await expect(client.tasks.get("task-polled")).resolves.toEqual(updated);
-    expect(watch).not.toHaveBeenCalled();
+    expect(watch).toHaveBeenCalledWith(updated, expect.objectContaining({ event: "update", resource_type: "task", id: "task-polled" }));
+  });
+
+  it("drains paginated changed-since responses before advancing the high-water mark", async () => {
+    const core = new FakeCore();
+    core.changedSinceLimitPerType = 1;
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.watch({ filter: "type", resource_type: "task" }, watch);
+
+    const first = core.upsertTask(task("task-page-1", "asset-1"));
+    const second = core.upsertTask(task("task-page-2", "asset-1"));
+    await client.changedSince();
+
+    expect(core.requests.some((request) => request.startsWith("/queries/changed-since?") && request.includes("task_cursor="))).toBe(true);
+    expect(watch).toHaveBeenCalledWith(first, expect.objectContaining({ id: "task-page-1", version: first.metadata.version }));
+    expect(watch).toHaveBeenCalledWith(second, expect.objectContaining({ id: "task-page-2", version: second.metadata.version }));
+    expect(client.sync.status().lastVersion).toBe(core.version);
+  });
+
+  it("drains paginated full-dataset hydration responses", async () => {
+    const core = new FakeCore();
+    core.fullLimitPerType = 1;
+    core.upsertEntity(entity("asset-page-1"));
+    core.upsertEntity(entity("asset-page-2"));
+    core.upsertTask(task("task-hydrate-1", "asset-page-1"));
+    core.upsertTask(task("task-hydrate-2", "asset-page-2"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+
+    expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("entity_cursor="))).toBe(true);
+    expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
   it("evicts local cache entries after successful deletes", async () => {
@@ -141,6 +174,28 @@ describe("AtlasClient sync", () => {
       await expect(client.tasks.get("task-gap")).resolves.toEqual(second);
     });
     expect(client.sync.status().degraded).toBe(false);
+  });
+
+  it("starts the websocket feed when sync starts and a WebSocket implementation is available", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    const watch = vi.fn();
+    client.entities.watch("asset-auto-feed", watch);
+
+    await client.sync.start();
+    const value = core.upsertEntity(entity("asset-auto-feed"));
+    core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value }, { record: false });
+
+    expect(core.sockets.size).toBe(1);
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(value, expect.objectContaining({ id: "asset-auto-feed", version: value.metadata.version }));
+    });
   });
 
   it("rejects feed connections that close before the protocol hello", async () => {
@@ -379,6 +434,15 @@ describe("AtlasClient sync", () => {
     await expect(client.objects.content("object-1")).resolves.toBeInstanceOf(ArrayBuffer);
     expect(core.objectDownloadCount).toBe(2);
   });
+
+  it("exposes typed watch helpers for all resource surfaces", () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    expect(typeof client.entities.watch("asset-watch", vi.fn())).toBe("function");
+    expect(typeof client.tasks.watch("task-watch", vi.fn())).toBe("function");
+    expect(typeof client.objects.watch("object-watch", vi.fn())).toBe("function");
+  });
 });
 
 describe("Atlas CLI", () => {
@@ -427,6 +491,14 @@ describe("Atlas CLI", () => {
     expect(() => parseFilter("id:task")).toThrow("invalid subscription filter");
     expect(() => parseFilter("id:task:")).toThrow("invalid subscription filter");
     expect(() => parseFilter("tasks_for_entity")).toThrow("invalid subscription filter");
+  });
+
+  it("requires --follow for watch subscriptions", async () => {
+    const io = captureIO();
+
+    await expect(runCLI(["watch", "--subscribe", "all"], io.io)).resolves.toBe(2);
+
+    expect(io.stderr()).toContain("watch requires --follow");
   });
 });
 

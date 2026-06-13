@@ -68,6 +68,18 @@ type ChangedSinceResponse = {
   deleted_entities?: DeletedResource[];
   deleted_tasks?: DeletedResource[];
   deleted_objects?: DeletedResource[];
+  has_more_entities?: boolean;
+  has_more_tasks?: boolean;
+  has_more_objects?: boolean;
+  has_more_deleted_entities?: boolean;
+  has_more_deleted_tasks?: boolean;
+  has_more_deleted_objects?: boolean;
+  next_entity_cursor?: string;
+  next_task_cursor?: string;
+  next_object_cursor?: string;
+  next_deleted_entity_cursor?: string;
+  next_deleted_task_cursor?: string;
+  next_deleted_object_cursor?: string;
   version: number;
 };
 
@@ -75,6 +87,12 @@ type FullDatasetResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
   objects: ObjectResource[];
+  has_more_entities?: boolean;
+  has_more_tasks?: boolean;
+  has_more_objects?: boolean;
+  next_entity_cursor?: string;
+  next_task_cursor?: string;
+  next_object_cursor?: string;
 };
 
 type DeletedResource = {
@@ -82,6 +100,18 @@ type DeletedResource = {
   type: ResourceType;
   version: number;
   entity_id?: string | null;
+};
+
+type FullDatasetCursors = {
+  entity_cursor?: string;
+  task_cursor?: string;
+  object_cursor?: string;
+};
+
+type ChangedSinceCursors = FullDatasetCursors & {
+  deleted_entity_cursor?: string;
+  deleted_task_cursor?: string;
+  deleted_object_cursor?: string;
 };
 
 type WatchCallback<T> = (value: T | undefined, event: FeedEvent) => void;
@@ -148,7 +178,8 @@ export class AtlasClient {
     create: (entity: EntityResource) => this.writeResource<EntityResource>("POST", "/entities", entity, "entity"),
     update: (id: string, patch: Partial<EntityResource>, options?: { ifMatchVersion?: number }) =>
       this.writeResource<EntityResource>("PATCH", `/entities/${encodeURIComponent(id)}`, patch, "entity", options?.ifMatchVersion),
-    delete: (id: string) => this.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`)
+    delete: (id: string) => this.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`),
+    watch: (id: string, callback: WatchCallback<EntityResource>) => this.watch({ filter: "id", resource_type: "entity", id }, callback)
   };
 
   readonly tasks = {
@@ -166,7 +197,8 @@ export class AtlasClient {
     update: (id: string, patch: Partial<ObjectResource>, options?: { ifMatchVersion?: number }) =>
       this.writeResource<ObjectResource>("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", options?.ifMatchVersion),
     delete: (id: string) => this.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
-    content: (id: string) => this.objectContent(id)
+    content: (id: string) => this.objectContent(id),
+    watch: (id: string, callback: WatchCallback<ObjectResource>) => this.watch({ filter: "id", resource_type: "object", id }, callback)
   };
 
   private readonly baseUrl: string;
@@ -184,6 +216,7 @@ export class AtlasClient {
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<any>>>();
   private readonly pendingDeletes = new Set<string>();
+  private readonly locallyNotifiedDeletes = new Set<string>();
   private syncRunning = false;
   private healthy = false;
   private degraded = false;
@@ -409,16 +442,21 @@ export class AtlasClient {
   }
 
   async changedSince(): Promise<void> {
-    const response = await this.http<ChangedSinceResponse>("GET", `/queries/changed-since?since_version=${this.lastVersion}`);
-    for (const entity of response.entities ?? []) this.cacheResource("entity", entity.entity_id, entity);
-    for (const task of response.tasks ?? []) this.cacheResource("task", task.task_id, task);
-    for (const object of response.objects ?? []) this.cacheResource("object", object.object_id, object);
-    const deleteEvents = changedSinceToDeleteEvents(response).sort((a, b) => a.version - b.version);
-    for (const event of deleteEvents) {
+    const sinceVersion = this.lastVersion;
+    let highWaterVersion = sinceVersion;
+    let cursors: ChangedSinceCursors = {};
+    const recoveredEvents: FeedEvent[] = [];
+    do {
+      const response = await this.http<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
+      highWaterVersion = Math.max(highWaterVersion, response.version);
+      recoveredEvents.push(...changedSinceToEvents(response));
+      cursors = nextChangedSinceCursors(response);
+    } while (hasMoreChangedSince(cursors));
+    for (const event of recoveredEvents.sort((a, b) => a.version - b.version)) {
       this.applyEvent(event);
     }
     this.pendingDeletes.clear();
-    this.lastVersion = Math.max(this.lastVersion, response.version);
+    this.lastVersion = Math.max(this.lastVersion, highWaterVersion);
     this.degraded = false;
     this.healthy = this.syncRunning;
   }
@@ -429,6 +467,14 @@ export class AtlasClient {
     this.syncRunning = true;
     this.healthy = true;
     this.degraded = false;
+    if (this.WebSocketImpl) {
+      try {
+        await this.connectFeed();
+      } catch {
+        this.degraded = true;
+        this.healthy = false;
+      }
+    }
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         void this.changedSince().catch(() => {
@@ -444,17 +490,28 @@ export class AtlasClient {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    this.socket?.close();
+    const connection = this.feedConnection;
+    this.feedConnection = undefined;
+    connection?.controller.abort();
+    const socket = this.socket ?? connection?.socket;
     this.socket = undefined;
+    if (socket && socket.readyState !== WS_CLOSED) {
+      socket.close();
+    }
     this.syncRunning = false;
     this.healthy = false;
+    this.degraded = false;
   }
 
   private async hydrate(): Promise<void> {
-    const response = await this.http<FullDatasetResponse>("GET", "/queries/full");
-    for (const entity of response.entities ?? []) this.cacheResource("entity", entity.entity_id, entity);
-    for (const task of response.tasks ?? []) this.cacheResource("task", task.task_id, task);
-    for (const object of response.objects ?? []) this.cacheResource("object", object.object_id, object);
+    let cursors: FullDatasetCursors = {};
+    do {
+      const response = await this.http<FullDatasetResponse>("GET", fullDatasetPath(cursors));
+      for (const entity of response.entities ?? []) this.cacheResource("entity", entity.entity_id, entity);
+      for (const task of response.tasks ?? []) this.cacheResource("task", task.task_id, task);
+      for (const object of response.objects ?? []) this.cacheResource("object", object.object_id, object);
+      cursors = nextFullDatasetCursors(response);
+    } while (hasMoreFullDataset(cursors));
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
@@ -474,7 +531,10 @@ export class AtlasClient {
       this.pendingDeletes.delete(key);
       this.cache[event.resource_type].set(event.id, { version: event.version, deleted: true });
       this.lastVersion = Math.max(this.lastVersion, event.version);
-      this.notify(event, undefined, previous);
+      const alreadyNotified = this.locallyNotifiedDeletes.delete(key);
+      if (!alreadyNotified) {
+        this.notify(event, undefined, previous);
+      }
       return;
     }
     if ((pendingDelete || current?.deleted) && event.event === "update") {
@@ -489,7 +549,10 @@ export class AtlasClient {
       this.pendingDeletes.delete(key);
       this.cache[event.resource_type].set(event.id, { version: event.version, deleted: true });
       this.lastVersion = Math.max(this.lastVersion, event.version);
-      this.notify(event, undefined, previous);
+      const alreadyNotified = this.locallyNotifiedDeletes.delete(key);
+      if (!alreadyNotified) {
+        this.notify(event, undefined, previous);
+      }
       return;
     }
     const resource = event.resource as EntityResource | TaskResource | ObjectResource;
@@ -505,6 +568,7 @@ export class AtlasClient {
       return;
     }
     this.pendingDeletes.delete(resourceCacheKey(type, id));
+    this.locallyNotifiedDeletes.delete(resourceCacheKey(type, id));
     this.cache[type].set(id, { value: value as any, version, deleted: false });
     this.lastVersion = Math.max(this.lastVersion, version);
   }
@@ -559,7 +623,7 @@ export class AtlasClient {
   ): Promise<T> {
     const resource = await this.http<T>(method, path, body, ifMatchVersion);
     const id = resourceID(type, resource);
-    this.cacheResource(type, id, resource);
+    this.applyEvent({ event: method === "POST" ? "create" : "update", resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent);
     return resource;
   }
 
@@ -567,8 +631,11 @@ export class AtlasClient {
     await this.http<void>("DELETE", path);
     const previousVersion = this.cache[type].get(id)?.version ?? 0;
     const tombstoneVersion = previousVersion || -1;
+    const previous = this.cache[type].get(id)?.value;
     this.cache[type].set(id, { version: tombstoneVersion, deleted: true });
     this.pendingDeletes.add(resourceCacheKey(type, id));
+    this.locallyNotifiedDeletes.add(resourceCacheKey(type, id));
+    this.notify({ event: "delete", resource_type: type, id, version: tombstoneVersion } as FeedEvent, undefined, previous);
   }
 
   private async objectContent(id: string): Promise<ArrayBuffer> {
@@ -645,8 +712,17 @@ export class AtlasClient {
   }
 }
 
-function changedSinceToDeleteEvents(response: ChangedSinceResponse): FeedEvent[] {
+function changedSinceToEvents(response: ChangedSinceResponse): FeedEvent[] {
   const events: FeedEvent[] = [];
+  for (const entity of response.entities ?? []) {
+    events.push({ event: "update", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity });
+  }
+  for (const task of response.tasks ?? []) {
+    events.push({ event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task });
+  }
+  for (const object of response.objects ?? []) {
+    events.push({ event: "update", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object });
+  }
   for (const item of response.deleted_entities ?? []) events.push({ event: "delete", resource_type: "entity", id: item.id, version: item.version });
   for (const item of response.deleted_tasks ?? []) {
     const event: TaskDeleteEvent = { event: "delete", resource_type: "task", id: item.id, version: item.version, entity_id: item.entity_id };
@@ -654,6 +730,59 @@ function changedSinceToDeleteEvents(response: ChangedSinceResponse): FeedEvent[]
   }
   for (const item of response.deleted_objects ?? []) events.push({ event: "delete", resource_type: "object", id: item.id, version: item.version });
   return events;
+}
+
+function fullDatasetPath(cursors: FullDatasetCursors): string {
+  return pathWithQuery("/queries/full", cursors);
+}
+
+function changedSincePath(sinceVersion: number, cursors: ChangedSinceCursors): string {
+  return pathWithQuery("/queries/changed-since", { since_version: String(sinceVersion), ...cursors });
+}
+
+function nextFullDatasetCursors(response: FullDatasetResponse): FullDatasetCursors {
+  const cursors: FullDatasetCursors = {};
+  if (response.has_more_entities) cursors.entity_cursor = requireCursor(response.next_entity_cursor, "next_entity_cursor");
+  if (response.has_more_tasks) cursors.task_cursor = requireCursor(response.next_task_cursor, "next_task_cursor");
+  if (response.has_more_objects) cursors.object_cursor = requireCursor(response.next_object_cursor, "next_object_cursor");
+  return cursors;
+}
+
+function nextChangedSinceCursors(response: ChangedSinceResponse): ChangedSinceCursors {
+  const cursors: ChangedSinceCursors = {};
+  if (response.has_more_entities) cursors.entity_cursor = requireCursor(response.next_entity_cursor, "next_entity_cursor");
+  if (response.has_more_tasks) cursors.task_cursor = requireCursor(response.next_task_cursor, "next_task_cursor");
+  if (response.has_more_objects) cursors.object_cursor = requireCursor(response.next_object_cursor, "next_object_cursor");
+  if (response.has_more_deleted_entities) cursors.deleted_entity_cursor = requireCursor(response.next_deleted_entity_cursor, "next_deleted_entity_cursor");
+  if (response.has_more_deleted_tasks) cursors.deleted_task_cursor = requireCursor(response.next_deleted_task_cursor, "next_deleted_task_cursor");
+  if (response.has_more_deleted_objects) cursors.deleted_object_cursor = requireCursor(response.next_deleted_object_cursor, "next_deleted_object_cursor");
+  return cursors;
+}
+
+function hasMoreFullDataset(cursors: FullDatasetCursors): boolean {
+  return Object.keys(cursors).length > 0;
+}
+
+function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
+  return Object.keys(cursors).length > 0;
+}
+
+function requireCursor(cursor: string | undefined, name: string): string {
+  if (!cursor) {
+    throw new Error(`Atlas response set ${name.replace(/^next_/, "has_more_")} without ${name}`);
+  }
+  return cursor;
+}
+
+function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      query.set(key, value);
+    }
+  }
+  const encoded = query.toString();
+  return encoded ? `${path}?${encoded}` : path;
 }
 
 function subscriptionMessage(action: "subscribe" | "unsubscribe", filter: AtlasSubscription): FeedSubscribeMessage | FeedUnsubscribeMessage {

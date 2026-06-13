@@ -18,8 +18,8 @@ var ErrNilDB = errors.New("database: nil DB")
 // ErrNilPool is returned when Ping is called but the connection pool was never initialized.
 var ErrNilPool = errors.New("database: nil pool")
 
-// ErrSchemaNotPresent is returned when DATABASE_RECREATE_ON_STARTUP is false and core tables are missing.
-var ErrSchemaNotPresent = errors.New("database: core schema tables are missing; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
+// ErrSchemaNotPresent is returned when DATABASE_RECREATE_ON_STARTUP is false and the core schema is missing or stale.
+var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
 
 // coreSchemaTables are required when destructive recreate is disabled.
 var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
@@ -228,18 +228,32 @@ func New(cfg *config.Config) (*DB, error) {
 	}, nil
 }
 
-// coreSchemaTablesPresent reports whether all core application tables exist.
+// coreSchemaTablesPresent reports whether the core application schema is current enough to run without recreate mode.
 func coreSchemaTablesPresent(ctx context.Context, q interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }) (bool, error) {
 	const qSQL = `
-		SELECT COUNT(*) = $1
-		FROM information_schema.tables
-		WHERE table_schema = 'public'
-		  AND table_name = ANY($2::text[])`
+			SELECT
+				(
+					SELECT COUNT(*) = $1
+					FROM information_schema.tables
+					WHERE table_schema = 'public'
+					  AND table_name = ANY($2::text[])
+				)
+				AND to_regclass('public.atlas_change_version_seq') IS NOT NULL
+				AND EXISTS (
+					SELECT 1
+					FROM information_schema.columns
+					WHERE table_schema = 'public'
+					  AND table_name = 'deletions'
+					  AND column_name = 'context'
+					  AND udt_name = 'jsonb'
+					  AND is_nullable = 'NO'
+					  AND COALESCE(column_default, '') LIKE '%{}%'
+				)`
 	var ok bool
 	if err := q.QueryRow(ctx, qSQL, len(coreSchemaTables), coreSchemaTables).Scan(&ok); err != nil {
-		return false, fmt.Errorf("failed to check core schema tables: %w", err)
+		return false, fmt.Errorf("failed to check core schema: %w", err)
 	}
 	return ok, nil
 }

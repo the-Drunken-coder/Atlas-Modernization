@@ -166,6 +166,33 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 	}
 }
 
+func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
+	query := &recordingSchemaCheckQuery{ok: true}
+
+	ok, err := coreSchemaTablesPresent(context.Background(), query)
+	if err != nil {
+		t.Fatalf("coreSchemaTablesPresent returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("coreSchemaTablesPresent = false, want true from fake row")
+	}
+
+	for _, fragment := range []string{
+		"atlas_change_version_seq",
+		"table_name = 'deletions'",
+		"column_name = 'context'",
+		"udt_name = 'jsonb'",
+		"is_nullable = 'NO'",
+	} {
+		if !strings.Contains(query.sql, fragment) {
+			t.Fatalf("schema check SQL missing %q:\n%s", fragment, query.sql)
+		}
+	}
+	if len(query.args) != 2 {
+		t.Fatalf("schema check args = %#v, want table count and table list", query.args)
+	}
+}
+
 func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 	dbURL, explicitDBURL := databaseTestURL()
 	if dbURL == "" {
@@ -300,6 +327,36 @@ func databaseTestURL() (string, bool) {
 		Path:   "/atlas_core",
 	}
 	return dbURL.String(), false
+}
+
+type recordingSchemaCheckQuery struct {
+	sql  string
+	args []any
+	ok   bool
+	err  error
+}
+
+func (q *recordingSchemaCheckQuery) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	q.sql = sql
+	q.args = append([]any(nil), args...)
+	return boolRow{ok: q.ok, err: q.err}
+}
+
+type boolRow struct {
+	ok  bool
+	err error
+}
+
+func (r boolRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	target, ok := dest[0].(*bool)
+	if !ok {
+		return fmt.Errorf("boolRow expected *bool destination, got %T", dest[0])
+	}
+	*target = r.ok
+	return nil
 }
 
 func assertConstraintViolation(t *testing.T, err error, constraint string) {

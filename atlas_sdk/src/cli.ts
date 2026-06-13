@@ -119,7 +119,11 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
     if (!subscribeFilter) {
       throw new Error("usage: watch requires --subscribe <filter>");
     }
-    return { kind: "watch", options, filter: parseFilter(subscribeFilter), follow };
+    const filter = parseFilter(subscribeFilter);
+    if (!follow) {
+      throw new Error("usage: watch requires --follow");
+    }
+    return { kind: "watch", options, filter, follow };
   }
   throw new Error("usage: invalid command");
 }

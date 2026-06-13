@@ -18,6 +18,9 @@ export class FakeCore {
   deletions: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
+  requests: string[] = [];
+  fullLimitPerType = 0;
+  changedSinceLimitPerType = 0;
   private readonly recordedVersions = new Set<number>();
   rejectFeedAuth = false;
   failChangedSince = false;
@@ -27,12 +30,22 @@ export class FakeCore {
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
     const path = parsed.pathname;
+    this.requests.push(parsed.pathname + parsed.search);
     if (path === "/protocol/revision") return json({ protocol_revision: this.revision });
     if (path === "/queries/full") {
+      const entityPage = pageValues([...this.entities.values()], this.fullLimitPerType, parsed.searchParams.get("entity_cursor"));
+      const taskPage = pageValues([...this.tasks.values()], this.fullLimitPerType, parsed.searchParams.get("task_cursor"));
+      const objectPage = pageValues([...this.objects.values()], this.fullLimitPerType, parsed.searchParams.get("object_cursor"));
       return json({
-        entities: [...this.entities.values()],
-        tasks: [...this.tasks.values()],
-        objects: [...this.objects.values()]
+        entities: entityPage.items,
+        tasks: taskPage.items,
+        objects: objectPage.items,
+        has_more_entities: entityPage.hasMore,
+        has_more_tasks: taskPage.hasMore,
+        has_more_objects: objectPage.hasMore,
+        next_entity_cursor: entityPage.nextCursor,
+        next_task_cursor: taskPage.nextCursor,
+        next_object_cursor: objectPage.nextCursor
       });
     }
     if (path === "/queries/changed-since") {
@@ -41,13 +54,31 @@ export class FakeCore {
       }
       const since = Number(parsed.searchParams.get("since_version") ?? 0);
       const changed = this.events.filter((event) => event.version > since);
+      const entityPage = pageValues(changed.filter(isEntityUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("entity_cursor"));
+      const taskPage = pageValues(changed.filter(isTaskUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("task_cursor"));
+      const objectPage = pageValues(changed.filter(isObjectUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("object_cursor"));
+      const deletedEntityPage = pageValues(changed.filter(isDelete("entity")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_entity_cursor"));
+      const deletedTaskPage = pageValues(changed.filter(isDelete("task")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_task_cursor"));
+      const deletedObjectPage = pageValues(changed.filter(isDelete("object")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_object_cursor"));
       return json({
-        entities: changed.filter(isEntityUpsert).map((event) => event.resource),
-        tasks: changed.filter(isTaskUpsert).map((event) => event.resource),
-        objects: changed.filter(isObjectUpsert).map((event) => event.resource),
-        deleted_entities: changed.filter(isDelete("entity")).map(deleted),
-        deleted_tasks: changed.filter(isDelete("task")).map(deleted),
-        deleted_objects: changed.filter(isDelete("object")).map(deleted),
+        entities: entityPage.items,
+        tasks: taskPage.items,
+        objects: objectPage.items,
+        deleted_entities: deletedEntityPage.items,
+        deleted_tasks: deletedTaskPage.items,
+        deleted_objects: deletedObjectPage.items,
+        has_more_entities: entityPage.hasMore,
+        has_more_tasks: taskPage.hasMore,
+        has_more_objects: objectPage.hasMore,
+        has_more_deleted_entities: deletedEntityPage.hasMore,
+        has_more_deleted_tasks: deletedTaskPage.hasMore,
+        has_more_deleted_objects: deletedObjectPage.hasMore,
+        next_entity_cursor: entityPage.nextCursor,
+        next_task_cursor: taskPage.nextCursor,
+        next_object_cursor: objectPage.nextCursor,
+        next_deleted_entity_cursor: deletedEntityPage.nextCursor,
+        next_deleted_task_cursor: deletedTaskPage.nextCursor,
+        next_deleted_object_cursor: deletedObjectPage.nextCursor,
         version: this.version
       });
     }
@@ -326,6 +357,21 @@ function deleted(event: FeedEvent) {
   const value: { id: string; type: string; version: number; entity_id?: string | null } = { id: event.id, type: event.resource_type, version: event.version };
   if ("entity_id" in event && event.entity_id != null) value.entity_id = event.entity_id;
   return value;
+}
+
+function pageValues<T>(items: T[], limit: number, rawCursor: string | null): { items: T[]; hasMore: boolean; nextCursor?: string } {
+  if (limit <= 0) {
+    return { items, hasMore: false };
+  }
+  const offset = rawCursor ? Number(rawCursor) : 0;
+  const page = items.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  const hasMore = nextOffset < items.length;
+  return {
+    items: page,
+    hasMore,
+    nextCursor: hasMore ? String(nextOffset) : undefined
+  };
 }
 
 function subscriptionKey(filter: AtlasSubscription): string {
