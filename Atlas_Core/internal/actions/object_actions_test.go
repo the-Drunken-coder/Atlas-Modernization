@@ -233,7 +233,7 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 		if change.BeforeObject == nil {
 			t.Fatal("published delete change BeforeObject is nil")
 		}
-		assertMediaObjectEqual(t, *change.BeforeObject, beforeObject)
+		assertMediaObjectEqual(t, change.BeforeObject, &beforeObject)
 		if change.AfterObject != nil {
 			t.Fatalf("published delete change AfterObject = %#v, want nil", change.AfterObject)
 		}
@@ -263,8 +263,11 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	}
 }
 
-func assertMediaObjectEqual(t *testing.T, got, want models.MediaObject) {
+func assertMediaObjectEqual(t *testing.T, got, want *models.MediaObject) {
 	t.Helper()
+	if got == nil || want == nil {
+		t.Fatalf("media object nil mismatch: got nil=%t want nil=%t", got == nil, want == nil)
+	}
 	if got.ObjectID != want.ObjectID ||
 		!stringPointersEqual(got.Path, want.Path) ||
 		!stringPointersEqual(got.ContentType, want.ContentType) ||
@@ -273,7 +276,7 @@ func assertMediaObjectEqual(t *testing.T, got, want models.MediaObject) {
 		!got.CreatedAt.Equal(want.CreatedAt) ||
 		!got.UpdatedAt.Equal(want.UpdatedAt) ||
 		got.Version != want.Version {
-		t.Fatalf("media object = %#v, want %#v", got, want)
+		t.Fatalf("media object fields did not match for %q", got.ObjectID)
 	}
 }
 

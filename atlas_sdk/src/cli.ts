@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-import { AtlasClient, type AtlasSubscription, type ResourceType, type TaskResource } from "./index.js";
+import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskResource } from "./index.js";
 
 export type CLIIO = {
   stdout: { write(data: string): void };
   stderr: { write(data: string): void };
   env: Record<string, string | undefined>;
+  fetch?: AtlasClientOptions["fetch"];
+  WebSocket?: AtlasClientOptions["WebSocket"];
+  waitForExitSignal?: () => Promise<void>;
 };
 
 type CLIOptions = {
@@ -37,15 +40,18 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
     const client = new AtlasClient({
       baseUrl: command.options.baseUrl,
       apiKey: command.options.apiKey,
+      fetch: io.fetch,
+      WebSocket: io.WebSocket,
       sync: "selective",
       requestTimeoutMs: CLI_REQUEST_TIMEOUT_MS
     });
-    await client.handshake();
     if (command.kind === "entities.get") {
+      await client.handshake();
       io.stdout.write(JSON.stringify(await client.entities.get(command.id, { fresh: true })) + "\n");
       return 0;
     }
     if (command.kind === "tasks.create") {
+      await client.handshake();
       io.stdout.write(JSON.stringify(await client.tasks.create(command.body)) + "\n");
       return 0;
     }
@@ -54,10 +60,10 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       io.stdout.write(JSON.stringify(event) + "\n");
     });
     await client.subscribe(command.filter);
-    await client.connectFeed();
+    await client.sync.start();
     if (command.follow) {
       try {
-        await waitForExitSignal();
+        await (io.waitForExitSignal ?? waitForExitSignal)();
       } finally {
         client.sync.stop();
       }

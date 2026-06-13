@@ -405,6 +405,87 @@ describe("AtlasClient sync", () => {
     });
   });
 
+  it("recovers selective subscription gaps through changed-since", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "selective",
+      pollIntervalMs: 0
+    });
+    await client.subscribe({ filter: "type", resource_type: "task" });
+    const watch = vi.fn();
+    client.watch({ filter: "type", resource_type: "task" }, watch);
+    await client.sync.start();
+    core.requests = [];
+
+    const dropped = core.upsertTask(task("task-selective-dropped", "asset-1"));
+    core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+    const delivered = core.upsertTask(task("task-selective-delivered", "asset-1"));
+    core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(dropped, expect.objectContaining({ event: "recovered", id: "task-selective-dropped" }));
+      expect(watch).toHaveBeenCalledWith(delivered, expect.objectContaining({ event: "recovered", id: "task-selective-delivered" }));
+    });
+    expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
+    expect(client.sync.status().degraded).toBe(false);
+  });
+
+  it("keeps successful writes successful when watch callbacks throw", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    client.entities.watch("asset-throwing-write-watch", () => {
+      throw new Error("watch failed");
+    });
+
+    try {
+      await expect(client.entities.create(entity("asset-throwing-write-watch"))).resolves.toMatchObject({ entity_id: "asset-throwing-write-watch" });
+      expect(client.sync.status().degraded).toBe(false);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("keeps feed healthy when watch callbacks throw", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    client.entities.watch("asset-throwing-feed-watch", () => {
+      throw new Error("watch failed");
+    });
+
+    try {
+      const value = core.upsertEntity(entity("asset-throwing-feed-watch"));
+      core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value }, { record: false });
+
+      await vi.waitFor(() => {
+        expect(client.sync.status().lastVersion).toBe(value.metadata.version);
+      });
+      expect(client.sync.status().degraded).toBe(false);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("matches the simulation ledger at checkpoints and run end", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -584,6 +665,29 @@ describe("Atlas CLI", () => {
     await expect(runCLI(["watch", "--subscribe", "all"], io.io)).resolves.toBe(2);
 
     expect(io.stderr()).toContain("watch requires --follow");
+  });
+
+  it("runs watch mode through the sync engine and recovers dropped matching events", async () => {
+    const core = new FakeCore();
+    const captured = captureIO();
+    captured.io.fetch = core.fetch;
+    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.waitForExitSignal = async () => {
+      const dropped = core.upsertTask(task("task-cli-dropped", "asset-1"));
+      core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+      const delivered = core.upsertTask(task("task-cli-delivered", "asset-1"));
+      core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+
+      await vi.waitFor(() => {
+        expect(captured.stdout()).toContain('"id":"task-cli-dropped"');
+        expect(captured.stdout()).toContain('"id":"task-cli-delivered"');
+      });
+    };
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)).resolves.toBe(0);
+
+    expect(core.requests.some((request) => request.startsWith("/queries/full"))).toBe(true);
+    expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
   });
 });
 

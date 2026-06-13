@@ -49,7 +49,7 @@ Rules that make this safe:
 - **Always async.** Every read returns a Promise even when served from cache, so the two paths are indistinguishable to callers except in speed.
 - **Degraded fallthrough.** The engine tracks connection state and its last confirmed global version. If the feed is disconnected or a version gap is unreconciled, the engine marks itself degraded and reads fall through to the API until it catches up. The cache only answers when it is entitled to.
 - **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state.
-- **Plain returns + debug hooks.** Functions return plain data (no metadata envelope). Observability comes from `client.on('read', info)` events (source: cache/api, resource version, cache age) and `client.sync.status()`.
+- **Plain returns + sync status.** Functions return plain data (no metadata envelope). Observability currently comes from `client.sync.status()`; read-source debug hooks are deferred until a real caller needs them.
 
 ### Watch API
 
@@ -61,7 +61,7 @@ Watcher callbacks receive protocol feed events for server-published changes. The
 
 Write functions always call the API. The API returns the created/updated resource with its new version; the SDK applies it to the cache immediately, guarded by `version > cachedVersion` so a racing feed event cannot regress state. A client that creates a task and immediately reads it sees it.
 
-The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `ConflictError` plus an opt-in retry-with-refetch helper, rather than hiding it.
+The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `ConflictError`, rather than hiding it. Callers that want retry behavior refetch and resubmit explicitly for now; no shared retry helper exists yet.
 
 ## Change feed consumption
 

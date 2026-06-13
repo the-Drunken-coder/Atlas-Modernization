@@ -12,6 +12,7 @@ import {
 } from "./protocol.js";
 
 const WS_CLOSED = 3;
+const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
 type FetchLike = typeof fetch;
 
@@ -243,6 +244,8 @@ export class AtlasClient {
   private degraded = false;
   private lastVersion = 0;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnecting = false;
   private socket: WebSocketLike | undefined;
   private feedConnection: FeedConnection | undefined;
 
@@ -315,17 +318,19 @@ export class AtlasClient {
     }
     const socket = new this.WebSocketImpl(feedUrl(this.baseUrl));
     const previousConnection = this.feedConnection;
+    const previousSocket = this.socket;
+    const connection: FeedConnection = { socket, controller: new AbortController() };
+    this.feedConnection = connection;
+    this.socket = undefined;
+    this.clearReconnectTimer();
     previousConnection?.controller.abort();
     if (previousConnection && previousConnection.socket.readyState !== WS_CLOSED) {
       previousConnection.socket.close();
     }
     // Close any orphaned this.socket that drifted away from previousConnection?.socket and is not already CLOSED.
-    if (this.socket && this.socket !== previousConnection?.socket && this.socket.readyState !== WS_CLOSED) {
-      this.socket.close();
+    if (previousSocket && previousSocket !== previousConnection?.socket && previousSocket.readyState !== WS_CLOSED) {
+      previousSocket.close();
     }
-    this.socket = undefined;
-    const connection: FeedConnection = { socket, controller: new AbortController() };
-    this.feedConnection = connection;
     const ensureCurrent = () => {
       if (this.feedConnection !== connection || connection.controller.signal.aborted) {
         throw new Error("feed connection was replaced");
@@ -460,6 +465,7 @@ export class AtlasClient {
       this.socket = undefined;
       this.healthy = false;
       this.degraded = true;
+      this.scheduleReconnect();
     });
   }
 
@@ -497,10 +503,11 @@ export class AtlasClient {
     this.degraded = false;
     if (this.WebSocketImpl) {
       try {
-        await this.connectFeed();
+        await this.connectAndRecoverFeed();
       } catch {
         this.degraded = true;
         this.healthy = false;
+        this.scheduleReconnect();
       }
     }
     if (this.pollIntervalMs > 0) {
@@ -518,6 +525,7 @@ export class AtlasClient {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
+    this.clearReconnectTimer();
     const connection = this.feedConnection;
     this.feedConnection = undefined;
     connection?.controller.abort();
@@ -543,11 +551,47 @@ export class AtlasClient {
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
-    if (this.subscriptions.some((sub) => sub.filter === "all") && event.version > this.lastVersion + 1) {
+    if (event.version > this.lastVersion + 1) {
       this.degraded = true;
       await this.changedSince();
     }
     this.applyEvent(event);
+  }
+
+  private async connectAndRecoverFeed(): Promise<void> {
+    if (this.reconnecting) {
+      return;
+    }
+    this.reconnecting = true;
+    this.clearReconnectTimer();
+    try {
+      await this.connectFeed();
+      await this.changedSince();
+    } finally {
+      this.reconnecting = false;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.syncRunning || !this.WebSocketImpl || this.reconnectTimer || this.reconnecting) {
+      return;
+    }
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connectAndRecoverFeed().catch(() => {
+        this.degraded = true;
+        this.healthy = false;
+        this.scheduleReconnect();
+      });
+    }, DEFAULT_RECONNECT_DELAY_MS);
+  }
+
+  private clearReconnectTimer(): void {
+    if (!this.reconnectTimer) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
   }
 
   private applyEvent(event: FeedEvent): void {
@@ -713,7 +757,11 @@ export class AtlasClient {
         continue;
       }
       for (const callback of callbacks) {
-        callback(resource, event);
+        try {
+          callback(resource, event);
+        } catch (error) {
+          reportWatchCallbackError(error);
+        }
       }
     }
   }
@@ -948,6 +996,13 @@ function removeSocketListener(
 function shouldWarnForSocketCleanup(): boolean {
   if (typeof process === "undefined") return true;
   return process.env?.NODE_ENV !== "production";
+}
+
+function reportWatchCallbackError(error: unknown): void {
+  if (typeof console === "undefined" || typeof console.error !== "function") {
+    return;
+  }
+  console.error("Atlas watch callback failed", error);
 }
 
 function feedUrl(baseUrl: string): string {
