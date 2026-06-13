@@ -58,6 +58,7 @@ export type AtlasClientOptions = {
   sync?: false | "all" | "selective";
   pollIntervalMs?: number;
   objectContentCacheEntries?: number;
+  requestTimeoutMs?: number;
   feedHandshakeTimeoutMs?: number;
 };
 
@@ -225,6 +226,7 @@ export class AtlasClient {
   private readonly fetchImpl: FetchLike;
   private readonly WebSocketImpl?: WebSocketCtor;
   private readonly pollIntervalMs: number;
+  private readonly requestTimeoutMs: number;
   private readonly feedHandshakeTimeoutMs: number;
   private readonly objectContents: ObjectContentCache;
   private readonly cache = {
@@ -250,6 +252,7 @@ export class AtlasClient {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.WebSocketImpl = options.WebSocket ?? (globalThis as any).WebSocket;
     this.pollIntervalMs = options.pollIntervalMs ?? 120_000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.feedHandshakeTimeoutMs = options.feedHandshakeTimeoutMs ?? 5_000;
     this.objectContents = new ObjectContentCache(options.objectContentCacheEntries ?? 64);
     if (!this.fetchImpl) {
@@ -734,7 +737,7 @@ export class AtlasClient {
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
     if (ifMatchVersion !== undefined) headers.set("If-Match", `"v${ifMatchVersion}"`);
-    const response = await this.fetchImpl(this.baseUrl + path, {
+    const response = await this.fetchWithTimeout(this.baseUrl + path, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body)
@@ -752,6 +755,24 @@ export class AtlasClient {
       throw new Error(`Atlas request failed: ${response.status}`);
     }
     return response;
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    if (this.requestTimeoutMs <= 0) {
+      return this.fetchImpl(url, init);
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 

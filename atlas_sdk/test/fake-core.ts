@@ -89,10 +89,13 @@ export class FakeCore {
       return json(this.upsertEntity(await readBody<EntityResource>(init)));
     }
     if (path.startsWith("/entities/") && init?.method === "PATCH") {
+      const id = decodeURIComponent(path.split("/")[2]);
+      if (!this.entities.has(id)) {
+        return json({ error: "entity not found" }, 404);
+      }
       if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
         return json({ error_code: "PRECONDITION_FAILED" }, 412);
       }
-      const id = decodeURIComponent(path.split("/")[2]);
       return json(this.upsertEntity({ ...this.entities.get(id), ...(await readBody<Partial<EntityResource>>(init)) } as EntityResource));
     }
     if (path.startsWith("/entities/") && init?.method === "DELETE") {

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -20,8 +19,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed config is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
-	apiKey := strings.TrimSpace(h.config.APIAuthKey)
-	if h.config.EnableAPIAuth && apiKey == "" {
+	if h.config.EnableAPIAuth && h.config.APIAuthKey == "" {
 		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler has auth enabled without an API key")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
@@ -30,7 +28,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		Hub: h.feedHub,
 		Config: feed.ServerConfig{
 			EnableAPIAuth:  h.config.EnableAPIAuth,
-			APIKey:         apiKey,
+			APIKey:         h.config.APIAuthKey,
 			OriginPatterns: h.config.CORSOrigins,
 		},
 	}

@@ -364,4 +364,3 @@ export type UnsubscribeTypeMessage = {
   "filter": "type";
   "resource_type": ResourceType;
 };
-

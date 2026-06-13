@@ -11,6 +11,23 @@ describe("AtlasClient HTTP", () => {
     await expect(client.handshake()).rejects.toBeInstanceOf(ProtocolMismatchError);
   });
 
+  it("aborts stalled HTTP requests with a clear timeout error", async () => {
+    vi.useFakeTimers();
+    const fetchImpl: typeof fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
+
+    try {
+      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
@@ -525,6 +542,10 @@ describe("Atlas CLI", () => {
     const badJSON = captureIO();
     await expect(runCLI(["tasks", "create", "{bad"], badJSON.io)).resolves.toBe(2);
     expect(badJSON.stderr()).toContain("invalid task JSON");
+
+    const invalidTask = captureIO();
+    await expect(runCLI(["tasks", "create", '{"task_id":"","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":0}}'], invalidTask.io)).resolves.toBe(2);
+    expect(invalidTask.stderr()).toContain("invalid task JSON");
 
     const badFilter = captureIO();
     await expect(runCLI(["watch", "--subscribe", "id:not-a-type:x"], badFilter.io)).resolves.toBe(2);

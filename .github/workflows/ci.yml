@@ -145,7 +145,7 @@ jobs:
         run: npm ci
 
       - name: Install browser test runtime
-        run: npx playwright install --with-deps chromium
+        run: npx --no-install playwright install --with-deps chromium
 
       - name: Build Atlas SDK
         run: npm run build

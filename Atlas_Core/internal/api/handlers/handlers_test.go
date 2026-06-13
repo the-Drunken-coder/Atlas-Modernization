@@ -216,7 +216,7 @@ func TestFeedAuthEnabledWithEmptyKeyReturnsServiceUnavailable(t *testing.T) {
 		feedHub: hub,
 		config: &config.Config{
 			EnableAPIAuth: true,
-			APIAuthKey:    " \n\t ",
+			APIAuthKey:    "",
 		},
 	}
 	rec := httptest.NewRecorder()

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { AtlasClient, type AtlasSubscription, type ResourceType } from "./index.js";
+import { AtlasClient, type AtlasSubscription, type ResourceType, type TaskResource } from "./index.js";
 
 export type CLIIO = {
   stdout: { write(data: string): void };
@@ -15,7 +15,7 @@ type CLIOptions = {
 type CLICommand =
   | { kind: "help"; options: CLIOptions }
   | { kind: "entities.get"; options: CLIOptions; id: string }
-  | { kind: "tasks.create"; options: CLIOptions; body: unknown }
+  | { kind: "tasks.create"; options: CLIOptions; body: TaskResource }
   | { kind: "watch"; options: CLIOptions; filter: AtlasSubscription; follow: boolean };
 
 const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
@@ -23,6 +23,7 @@ export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisf
 const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
 export const PACKAGE_NAME = "@the-drunken-coder/atlas-sdk";
 export const PACKAGE_BIN = { atlas: "./dist/atlas_sdk/src/cli.js" } as const;
+const CLI_REQUEST_TIMEOUT_MS = 10_000;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
 export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<number> {
@@ -33,14 +34,19 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       return 0;
     }
 
-    const client = new AtlasClient({ baseUrl: command.options.baseUrl, apiKey: command.options.apiKey, sync: "selective" });
+    const client = new AtlasClient({
+      baseUrl: command.options.baseUrl,
+      apiKey: command.options.apiKey,
+      sync: "selective",
+      requestTimeoutMs: CLI_REQUEST_TIMEOUT_MS
+    });
     await client.handshake();
     if (command.kind === "entities.get") {
       io.stdout.write(JSON.stringify(await client.entities.get(command.id, { fresh: true })) + "\n");
       return 0;
     }
     if (command.kind === "tasks.create") {
-      io.stdout.write(JSON.stringify(await client.tasks.create(command.body as any)) + "\n");
+      io.stdout.write(JSON.stringify(await client.tasks.create(command.body)) + "\n");
       return 0;
     }
 
@@ -50,7 +56,11 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
     await client.subscribe(command.filter);
     await client.connectFeed();
     if (command.follow) {
-      await new Promise(() => undefined);
+      try {
+        await waitForExitSignal();
+      } finally {
+        client.sync.stop();
+      }
     }
     return 0;
   } catch (error) {
@@ -110,7 +120,7 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
   if (resource === "tasks" && action === "create" && rest.length > 0) {
     const raw = rest.join(" ");
     try {
-      return { kind: "tasks.create", options, body: JSON.parse(raw) };
+      return { kind: "tasks.create", options, body: parseTaskCreateBody(JSON.parse(raw)) };
     } catch {
       throw new Error("invalid task JSON");
     }
@@ -154,6 +164,56 @@ export function parseFilter(raw: string): AtlasSubscription {
 
 export function isResourceType(value: string | undefined): value is ResourceType {
   return value !== undefined && RESOURCE_TYPE_SET.has(value);
+}
+
+function parseTaskCreateBody(value: unknown): TaskResource {
+  if (!isTaskResource(value)) {
+    throw new Error("invalid task JSON");
+  }
+  return value;
+}
+
+function isTaskResource(value: unknown): value is TaskResource {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isNonEmptyString(value.task_id) &&
+    isNonEmptyString(value.status) &&
+    (value.entity_id === null || isNonEmptyString(value.entity_id)) &&
+    isRecord(value.components) &&
+    isMetadataBlock(value.metadata)
+  );
+}
+
+function isMetadataBlock(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.created_at) &&
+    isNonEmptyString(value.updated_at) &&
+    typeof value.version === "number" &&
+    Number.isFinite(value.version)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function waitForExitSignal(): Promise<void> {
+  return new Promise((resolve) => {
+    const onSignal = () => {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      resolve();
+    };
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+  });
 }
 
 function defaultIO(): CLIIO {

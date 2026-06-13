@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -199,13 +200,21 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
-	if _, err := pool.Exec(ctx, `INSERT INTO objects (object_id, path, json) VALUES ($1, $2, '{}'::jsonb)`, objectID, objectPath); err != nil {
+	var beforeObject models.MediaObject
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO objects (object_id, path, json)
+		VALUES ($1, $2, '{}'::jsonb)
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
+	`, objectID, objectPath).Scan(
+		&beforeObject.ObjectID, &beforeObject.Path, &beforeObject.ContentType, &beforeObject.Type,
+		&beforeObject.JSON, &beforeObject.CreatedAt, &beforeObject.UpdatedAt, &beforeObject.Version,
+	); err != nil {
 		t.Fatalf("insert object row: %v", err)
 	}
 
 	storageClient := newPausingDeleteObjectStorage()
 	defer storageClient.releaseDelete()
-	sink := &channelChangeSink{changes: make(chan ResourceChange, 1)}
+	sink := &channelChangeSink{changes: make(chan ResourceChange, 4)}
 	actions := NewObjectActionsWithChangeSink(pool, storageClient, sink)
 	deleteResult := make(chan error, 1)
 	go func() {
@@ -221,8 +230,23 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 		if change.Event != ChangeEventDelete || change.ResourceType != ChangeResourceObject || change.ID != objectID {
 			t.Fatalf("published change = %#v, want object delete for %s", change, objectID)
 		}
-		if change.Version <= 0 {
-			t.Fatalf("published change version = %d, want positive", change.Version)
+		if change.BeforeObject == nil {
+			t.Fatal("published delete change BeforeObject is nil")
+		}
+		assertMediaObjectEqual(t, *change.BeforeObject, beforeObject)
+		if change.AfterObject != nil {
+			t.Fatalf("published delete change AfterObject = %#v, want nil", change.AfterObject)
+		}
+		var tombstoneVersion int64
+		if err := pool.QueryRow(ctx, `
+				SELECT version
+				FROM deletions
+				WHERE resource_type = 'object' AND resource_id = $1
+			`, objectID).Scan(&tombstoneVersion); err != nil {
+			t.Fatalf("query deletion tombstone: %v", err)
+		}
+		if change.Version != tombstoneVersion {
+			t.Fatalf("published change version = %d, want tombstone version %d", change.Version, tombstoneVersion)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("delete change was not published while storage cleanup was blocked")
@@ -237,6 +261,27 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("delete did not finish after storage cleanup was released")
 	}
+}
+
+func assertMediaObjectEqual(t *testing.T, got, want models.MediaObject) {
+	t.Helper()
+	if got.ObjectID != want.ObjectID ||
+		!stringPointersEqual(got.Path, want.Path) ||
+		!stringPointersEqual(got.ContentType, want.ContentType) ||
+		!stringPointersEqual(got.Type, want.Type) ||
+		string(got.JSON) != string(want.JSON) ||
+		!got.CreatedAt.Equal(want.CreatedAt) ||
+		!got.UpdatedAt.Equal(want.UpdatedAt) ||
+		got.Version != want.Version {
+		t.Fatalf("media object = %#v, want %#v", got, want)
+	}
+}
+
+func stringPointersEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func TestObjectUploadLockKey(t *testing.T) {

@@ -41,6 +41,98 @@ func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
 	}
 }
 
+func TestWebsocketFeedUnsubscribeStopsDelivery(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe all: %v", err)
+	}
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	hub.Publish(entityEvent("create", "asset-before-unsubscribe", 1, "asset"))
+	var event protocol.FeedEvent
+	readFeedEvent(t, conn, &event)
+	if event.ID != "asset-before-unsubscribe" {
+		t.Fatalf("unexpected event before unsubscribe: %+v", event)
+	}
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"unsubscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("unsubscribe all: %v", err)
+	}
+	waitForNoSubscription(t, hub, Subscription{Filter: FilterAll})
+	hub.Publish(entityEvent("create", "asset-after-unsubscribe", 2, "asset"))
+	assertNoFeedEvent(t, conn)
+}
+
+func TestWebsocketFeedAllowsMultipleSubscriptions(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe all: %v", err)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"id","resource_type":"entity","id":"asset-specific"}`)); err != nil {
+		t.Fatalf("subscribe entity id: %v", err)
+	}
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: FilterID, ResourceType: protocol.ResourceTypeEntity, ID: "asset-specific"})
+
+	hub.Publish(entityEvent("create", "asset-specific", 1, "asset"))
+	var event protocol.FeedEvent
+	readFeedEvent(t, conn, &event)
+	if event.ID != "asset-specific" || event.Version != 1 {
+		t.Fatalf("unexpected specific event: %+v", event)
+	}
+	hub.Publish(taskEvent("create", "task-from-all", 2, "", "asset-specific", "pending"))
+	readFeedEvent(t, conn, &event)
+	if event.ID != "task-from-all" || event.Version != 2 {
+		t.Fatalf("unexpected all-subscription event: %+v", event)
+	}
+}
+
+func TestWebsocketFeedDuplicateSubscriptionsAreIdempotent(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	readHandshake(t, conn)
+	for i := 0; i < 2; i++ {
+		if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+			t.Fatalf("subscribe all %d: %v", i, err)
+		}
+	}
+	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	hub.Publish(entityEvent("create", "asset-duplicate-sub", 1, "asset"))
+	var event protocol.FeedEvent
+	readFeedEvent(t, conn, &event)
+	if event.ID != "asset-duplicate-sub" {
+		t.Fatalf("unexpected duplicate-subscription event: %+v", event)
+	}
+	assertNoFeedEvent(t, conn)
+}
+
 func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()
@@ -75,6 +167,27 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	readFeedEvent(t, conn, &event)
 	if event.Version != 1 || event.ResourceType != protocol.ResourceTypeTask {
 		t.Fatalf("unexpected authenticated feed event: %+v", event)
+	}
+}
+
+func TestWebsocketFeedRejectsAuthEnabledWithoutAPIKey(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	Server{
+		Hub: hub,
+		Config: ServerConfig{
+			EnableAPIAuth: true,
+		},
+	}.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "feed API key is not configured") {
+		t.Fatalf("body = %q, want API key configuration error", rec.Body.String())
 	}
 }
 
@@ -194,21 +307,26 @@ func TestWebsocketFeedFirstMessageAuthRejectsBinaryAuthFrame(t *testing.T) {
 	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
 }
 
-func TestWebsocketFeedFirstMessageAuthRejectsWhitespaceConfiguredKey(t *testing.T) {
+func TestWebsocketFeedRejectsAuthEnabledWithWhitespaceAPIKey(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()
-	server := newAuthFeedServerWithKey(t, hub, "  ")
-	defer server.Close()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
 
-	conn := dialFeed(t, server.URL)
-	defer func() {
-		_ = conn.Close(websocket.StatusNormalClosure, "")
-	}()
+	Server{
+		Hub: hub,
+		Config: ServerConfig{
+			EnableAPIAuth: true,
+			APIKey:        "  ",
+		},
+	}.ServeHTTP(rec, req)
 
-	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"secret"}`)); err != nil {
-		t.Fatalf("write auth with empty configured key: %v", err)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
+	if !strings.Contains(rec.Body.String(), "feed API key is not configured") {
+		t.Fatalf("body = %q, want API key configuration error", rec.Body.String())
+	}
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
@@ -334,14 +452,14 @@ func newAuthFeedServerWithKey(t *testing.T, hub *Hub, apiKey string) *httptest.S
 		Config: ServerConfig{
 			EnableAPIAuth: true,
 			APIKey:        apiKey,
-			AuthTimeout:   500 * time.Millisecond,
+			AuthTimeout:   2 * time.Second,
 		},
 	}.ServeHTTP))
 }
 
 func expectFeedClosedWithStatus(t *testing.T, conn *websocket.Conn, expected websocket.StatusCode) {
 	t.Helper()
-	readCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	readCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, _, err := conn.Read(readCtx)
 	if err == nil {
@@ -406,6 +524,17 @@ func readFeedEvent(t *testing.T, conn *websocket.Conn, event *protocol.FeedEvent
 	}
 }
 
+func assertNoFeedEvent(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	readCtx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	if _, _, err := conn.Read(readCtx); err == nil {
+		t.Fatal("unexpected feed event")
+	} else if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read feed event error = %v, want deadline exceeded", err)
+	}
+}
+
 func waitForSubscription(t *testing.T, hub *Hub, sub Subscription) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
@@ -421,6 +550,26 @@ func waitForSubscription(t *testing.T, hub *Hub, sub Subscription) {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for feed subscription %q", key)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForNoSubscription(t *testing.T, hub *Hub, sub Subscription) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	key := sub.Key()
+
+	for {
+		if !hubHasSubscription(hub, key) {
+			return
+		}
+
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for feed subscription %q to be removed", key)
 		case <-ticker.C:
 		}
 	}
