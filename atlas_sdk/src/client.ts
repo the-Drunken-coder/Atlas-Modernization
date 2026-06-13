@@ -478,7 +478,6 @@ export class AtlasClient {
         this.applyEvent(event);
       }
     }
-    this.pendingDeletes.clear();
     this.lastVersion = Math.max(this.lastVersion, highWaterVersion);
     this.degraded = false;
     this.healthy = this.syncRunning;
@@ -588,14 +587,19 @@ export class AtlasClient {
   }
 
   private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
+    const key = resourceCacheKey(event.resource_type, event.id);
     const current = this.cache[event.resource_type].get(event.id);
     const previous = current?.value;
+    if (this.pendingDeletes.has(key)) {
+      this.lastVersion = Math.max(this.lastVersion, event.version);
+      return;
+    }
     if (event.version <= this.versionFor(event.resource_type, event.id)) {
       this.lastVersion = Math.max(this.lastVersion, event.version);
       return;
     }
-    this.pendingDeletes.delete(resourceCacheKey(event.resource_type, event.id));
-    this.locallyNotifiedDeletes.delete(resourceCacheKey(event.resource_type, event.id));
+    this.pendingDeletes.delete(key);
+    this.locallyNotifiedDeletes.delete(key);
     this.cache[event.resource_type].set(event.id, { value: event.resource as any, version: event.version, deleted: false });
     this.lastVersion = Math.max(this.lastVersion, event.version);
     this.notify(event, event.resource, previous);

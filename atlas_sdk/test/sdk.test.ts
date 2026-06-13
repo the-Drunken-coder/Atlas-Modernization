@@ -83,6 +83,34 @@ describe("AtlasClient sync", () => {
     await expect(client.entities.get("asset-recreated")).resolves.toEqual(recreated);
   });
 
+  it("does not let stale changed-since recovery resurrect an uncached local delete", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const live = core.upsertEntity(entity("asset-delete-race"));
+    const watch = vi.fn();
+    client.entities.watch(live.entity_id, watch);
+
+    await client.entities.delete(live.entity_id);
+    const deleteEvent = core.deletions.at(-1);
+    if (!deleteEvent) throw new Error("fake core did not record delete event");
+    core.events = core.events.filter((event) => event.version < deleteEvent.version);
+    core.version = live.metadata.version;
+
+    await client.changedSince();
+
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch.mock.calls[0][1]).toEqual({ event: "local_delete", resource_type: "entity", id: live.entity_id });
+    await expect(client.entities.get(live.entity_id)).rejects.toThrow("Atlas request failed: 404");
+
+    core.events.push(deleteEvent);
+    core.version = deleteEvent.version;
+    await client.changedSince();
+
+    expect(watch).toHaveBeenCalledTimes(1);
+    await expect(client.entities.get(live.entity_id)).rejects.toThrow("Atlas request failed: 404");
+  });
+
   it("drains paginated full-dataset hydration responses", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
