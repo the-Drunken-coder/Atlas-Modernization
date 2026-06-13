@@ -1,11 +1,18 @@
 import {
   ATLAS_PROTOCOL_REVISION,
   type AtlasSubscription,
+  type EntityCreateRequest,
   type EntityResource,
+  type EntityUpdateRequest,
+  type ErrorCode,
+  type ErrorResponse,
   type FeedEvent,
+  type ObjectCreateRequest,
   type ObjectResource,
+  type ObjectUpdateRequest,
   type TaskCreateRequest,
-  type TaskResource
+  type TaskResource,
+  type TaskUpdateRequest
 } from "../src";
 
 type Listener = (event: any) => void;
@@ -52,7 +59,7 @@ export class FakeCore {
     }
     if (path === "/queries/changed-since") {
       if (this.failChangedSince) {
-        return json({ error: "changed-since unavailable" }, 500);
+        return protocolError("changed-since unavailable", "INTERNAL_SERVER_ERROR", 500);
       }
       const since = Number(parsed.searchParams.get("since_version") ?? 0);
       const changed = this.events.filter((event) => event.version > since);
@@ -88,17 +95,21 @@ export class FakeCore {
       return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
     }
     if (path === "/entities" && init?.method === "POST") {
-      return json(this.upsertEntity(await readBody<EntityResource>(init)));
+      const body = await readStrictBody<EntityCreateRequest>(init, entityCreateKeys);
+      if (body instanceof Response) return body;
+      return json(this.createEntity(body), 201);
     }
     if (path.startsWith("/entities/") && init?.method === "PATCH") {
       const id = decodeURIComponent(path.split("/")[2]);
       if (!this.entities.has(id)) {
-        return json({ error: "entity not found" }, 404);
+        return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
       }
       if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
-        return json({ error_code: "PRECONDITION_FAILED" }, 412);
+        return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
-      return json(this.upsertEntity({ ...this.entities.get(id), ...(await readBody<Partial<EntityResource>>(init)) } as EntityResource));
+      const body = await readStrictBody<EntityUpdateRequest>(init, entityUpdateKeys);
+      if (body instanceof Response) return body;
+      return json(this.updateEntity(id, body));
     }
     if (path.startsWith("/entities/") && init?.method === "DELETE") {
       return this.deleteEntityResponse(decodeURIComponent(path.split("/")[2]));
@@ -107,7 +118,21 @@ export class FakeCore {
       return jsonOrNotFound(this.tasks.get(decodeURIComponent(path.split("/")[2])), "task not found");
     }
     if (path === "/tasks" && init?.method === "POST") {
-      return json(this.upsertTask(taskFromCreateRequest(await readBody<TaskCreateRequest>(init))));
+      const body = await readStrictBody<TaskCreateRequest>(init, taskCreateKeys);
+      if (body instanceof Response) return body;
+      return json(this.createTask(body), 201);
+    }
+    if (path.startsWith("/tasks/") && init?.method === "PATCH") {
+      const id = decodeURIComponent(path.split("/")[2]);
+      if (!this.tasks.has(id)) {
+        return protocolError("task not found", "TASK_NOT_FOUND", 404);
+      }
+      if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
+        return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
+      }
+      const body = await readStrictBody<TaskUpdateRequest>(init, taskUpdateKeys);
+      if (body instanceof Response) return body;
+      return json(this.updateTask(id, body));
     }
     if (path.startsWith("/tasks/") && init?.method === "DELETE") {
       return this.deleteTaskResponse(decodeURIComponent(path.split("/")[2]));
@@ -121,10 +146,27 @@ export class FakeCore {
     if (path.startsWith("/objects/") && init?.method === "GET") {
       return jsonOrNotFound(this.objects.get(decodeURIComponent(path.split("/")[2])), "object not found");
     }
+    if (path === "/objects" && init?.method === "POST") {
+      const body = await readStrictBody<ObjectCreateRequest>(init, objectCreateKeys);
+      if (body instanceof Response) return body;
+      return json(this.createObject(body), 201);
+    }
+    if (path.startsWith("/objects/") && init?.method === "PATCH") {
+      const id = decodeURIComponent(path.split("/")[2]);
+      if (!this.objects.has(id)) {
+        return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
+      }
+      if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
+        return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
+      }
+      const body = await readStrictBody<ObjectUpdateRequest>(init, objectUpdateKeys);
+      if (body instanceof Response) return body;
+      return json(this.updateObject(id, body));
+    }
     if (path.startsWith("/objects/") && init?.method === "DELETE") {
       return this.deleteObjectResponse(decodeURIComponent(path.split("/")[2]));
     }
-    return json({ error: "not found" }, 404);
+    return protocolError("not found", "VALIDATION_ERROR", 404);
   };
 
   attachWebSocketGlobal(): typeof FakeWebSocket {
@@ -144,6 +186,36 @@ export class FakeCore {
     return value;
   }
 
+  createEntity(request: EntityCreateRequest): EntityResource {
+    const version = this.nextVersion();
+    const value: EntityResource = {
+      entity_id: request.entity_id,
+      entity_type: request.entity_type,
+      subtype: request.subtype ?? null,
+      alias: request.alias ?? null,
+      components: request.components ?? {},
+      ...(request.extra === undefined ? {} : { extra: request.extra }),
+      metadata: metadata(version)
+    };
+    this.record({ event: "create", resource_type: "entity", id: value.entity_id, version, resource: value });
+    return value;
+  }
+
+  updateEntity(id: string, patch: EntityUpdateRequest): EntityResource {
+    const current = this.entities.get(id);
+    if (!current) {
+      throw new Error(`fake core entity ${id} missing during update`);
+    }
+    return this.upsertEntity({
+      ...current,
+      ...(patch.entity_type === undefined ? {} : { entity_type: patch.entity_type }),
+      ...(patch.subtype === undefined ? {} : { subtype: patch.subtype.trim() === "" ? null : patch.subtype }),
+      ...(patch.alias === undefined ? {} : { alias: patch.alias.trim() === "" ? null : patch.alias }),
+      components: patch.components === undefined ? current.components : { ...current.components, ...patch.components },
+      ...(patch.extra === undefined ? {} : { extra: { ...(current.extra ?? {}), ...patch.extra } })
+    });
+  }
+
   upsertTask(task: TaskResource): TaskResource {
     const version = this.nextVersion();
     const value = { ...task, metadata: metadata(version) };
@@ -152,12 +224,72 @@ export class FakeCore {
     return value;
   }
 
+  createTask(request: TaskCreateRequest): TaskResource {
+    return this.recordTask(taskFromCreateRequest(request), "create");
+  }
+
+  updateTask(id: string, patch: TaskUpdateRequest): TaskResource {
+    const current = this.tasks.get(id);
+    if (!current) {
+      throw new Error(`fake core task ${id} missing during update`);
+    }
+    const extra = { ...(current.extra ?? {}), ...(patch.extra ?? {}) };
+    for (const key of patch.remove_extra_keys ?? []) {
+      delete extra[key];
+    }
+    const next: TaskResource = {
+      ...current,
+      ...(patch.status === undefined ? {} : { status: patch.status }),
+      ...(patch.entity_id === undefined ? {} : { entity_id: patch.entity_id }),
+      components: patch.components === undefined ? current.components : { ...current.components, ...patch.components }
+    };
+    if (Object.keys(extra).length > 0) {
+      next.extra = extra;
+    } else {
+      delete next.extra;
+    }
+    return this.upsertTask(next);
+  }
+
   upsertObject(object: ObjectResource): ObjectResource {
     const version = this.nextVersion();
     const value = { ...object, metadata: metadata(version) };
     this.objects.set(value.object_id, value);
     this.record({ event: "update", resource_type: "object", id: value.object_id, version, resource: value });
     return value;
+  }
+
+  createObject(request: ObjectCreateRequest): ObjectResource {
+    const version = this.nextVersion();
+    const value: ObjectResource = {
+      object_id: request.object_id,
+      path: request.path ?? null,
+      content_type: request.content_type ?? null,
+      type: request.type ?? null,
+      size_bytes: request.size_bytes ?? null,
+      usage_hints: request.usage_hints ?? [],
+      ...(request.referenced_by === undefined ? {} : { referenced_by: request.referenced_by }),
+      bucket: null,
+      metadata: metadata(version)
+    };
+    this.record({ event: "create", resource_type: "object", id: value.object_id, version, resource: value });
+    return value;
+  }
+
+  updateObject(id: string, patch: ObjectUpdateRequest): ObjectResource {
+    const current = this.objects.get(id);
+    if (!current) {
+      throw new Error(`fake core object ${id} missing during update`);
+    }
+    return this.upsertObject({
+      ...current,
+      ...(patch.path === undefined ? {} : { path: patch.path }),
+      ...(patch.content_type === undefined ? {} : { content_type: patch.content_type }),
+      ...(patch.type === undefined ? {} : { type: patch.type }),
+      ...(patch.size_bytes === undefined ? {} : { size_bytes: patch.size_bytes }),
+      ...(patch.usage_hints === undefined ? {} : { usage_hints: patch.usage_hints }),
+      ...(patch.referenced_by === undefined ? {} : { referenced_by: patch.referenced_by })
+    });
   }
 
   deleteEntity(id: string): FeedEvent | undefined {
@@ -192,15 +324,15 @@ export class FakeCore {
   }
 
   private deleteEntityResponse(id: string): Response {
-    return this.deleteEntity(id) ? new Response(null, { status: 204 }) : json({ error: "entity not found" }, 404);
+    return this.deleteEntity(id) ? new Response(null, { status: 204 }) : protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
   }
 
   private deleteTaskResponse(id: string): Response {
-    return this.deleteTask(id) ? new Response(null, { status: 204 }) : json({ error: "task not found" }, 404);
+    return this.deleteTask(id) ? new Response(null, { status: 204 }) : protocolError("task not found", "TASK_NOT_FOUND", 404);
   }
 
   private deleteObjectResponse(id: string): Response {
-    return this.deleteObject(id) ? new Response(null, { status: 204 }) : json({ error: "object not found" }, 404);
+    return this.deleteObject(id) ? new Response(null, { status: 204 }) : protocolError("object not found", "OBJECT_NOT_FOUND", 404);
   }
 
   emit(event: FeedEvent, options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null; record?: boolean }): void {
@@ -237,6 +369,13 @@ export class FakeCore {
   private nextVersion(): number {
     this.version += 1;
     return this.version;
+  }
+
+  private recordTask(task: TaskResource, eventName: "create" | "update"): TaskResource {
+    const version = this.nextVersion();
+    const value = { ...task, metadata: metadata(version) };
+    this.record({ event: eventName, resource_type: "task", id: value.task_id, version, resource: value });
+    return value;
   }
 }
 
@@ -339,19 +478,49 @@ export function metadata(version: number) {
   return { created_at: "2026-06-12T12:00:00Z", updated_at: "2026-06-12T12:00:00Z", version };
 }
 
+const entityCreateKeys = new Set(["entity_id", "entity_type", "subtype", "alias", "components", "published_at", "updated_at", "extra"]);
+const entityUpdateKeys = new Set(["entity_type", "subtype", "alias", "components", "extra"]);
+const taskCreateKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
+const taskUpdateKeys = new Set(["status", "entity_id", "components", "extra", "remove_extra_keys"]);
+const objectCreateKeys = new Set(["object_id", "path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"]);
+const objectUpdateKeys = new Set(["path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"]);
+
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 }
 
 function jsonOrNotFound(value: unknown, message: string): Response {
   if (value === undefined) {
-    return json({ error: message }, 404);
+    if (message.startsWith("entity")) return protocolError(message, "ENTITY_NOT_FOUND", 404);
+    if (message.startsWith("task")) return protocolError(message, "TASK_NOT_FOUND", 404);
+    if (message.startsWith("object")) return protocolError(message, "OBJECT_NOT_FOUND", 404);
+    return protocolError(message, "VALIDATION_ERROR", 404);
   }
   return json(value);
 }
 
+async function readStrictBody<T>(init: RequestInit, allowedKeys: Set<string>): Promise<T | Response> {
+  const value = await readBody<unknown>(init);
+  if (!isRecord(value)) {
+    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+  }
+  const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unknownKey) {
+    return protocolError(`Invalid JSON body: unknown field ${unknownKey}`, "INVALID_JSON", 400);
+  }
+  return value as T;
+}
+
 async function readBody<T>(init: RequestInit): Promise<T> {
   return JSON.parse(String(init.body ?? "{}")) as T;
+}
+
+function protocolError(message: string, error_code: ErrorCode, status: number): Response {
+  return json({ success: false, message, error_code } satisfies ErrorResponse, status);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isEntityUpsert(event: FeedEvent): event is FeedEvent & { resource: EntityResource } {

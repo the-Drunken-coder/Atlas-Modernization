@@ -247,6 +247,51 @@ func TestTypeScriptGeneratorAddDefRejectsNameCollision(t *testing.T) {
 	}
 }
 
+func TestTypeScriptGeneratorRequiresAtLeastOneProperty(t *testing.T) {
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
+	source := g.objectType(typeScriptSchema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"minProperties":        float64(1),
+		"properties": map[string]any{
+			"entity_id": map[string]any{"type": "string"},
+			"task_id":   map[string]any{"type": "string"},
+		},
+	}, "ObjectReference", 0)
+
+	for _, want := range []string{
+		"RequireAtLeastOne<",
+		`"entity_id"?: string;`,
+		`"task_id"?: string;`,
+		`"entity_id" | "task_id"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("generated TypeScript %q missing %q", source, want)
+		}
+	}
+}
+
+func TestTypeScriptSourceRejectsMalformedRevision(t *testing.T) {
+	_, err := typeScriptSource("revision:unsafe", map[string][]byte{
+		"thing": []byte(`{"type":"object"}`),
+	})
+	if err == nil {
+		t.Fatal("typeScriptSource accepted malformed protocol revision")
+	}
+}
+
+func TestValidateProtocolRevisionRequiresSha256Digest(t *testing.T) {
+	valid := "sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF"
+	if got, err := validateProtocolRevision(valid); err != nil || got != valid {
+		t.Fatalf("validateProtocolRevision(%q) = %q, %v; want original without error", valid, got, err)
+	}
+	for _, invalid := range []string{"", "sha1:0123", "sha256:not-hex", "sha256:0123", "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"} {
+		if _, err := validateProtocolRevision(invalid); err == nil {
+			t.Fatalf("validateProtocolRevision accepted %q", invalid)
+		}
+	}
+}
+
 func cloneMap(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for key, value := range in {

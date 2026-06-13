@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 type simulationLedger struct {
 	events []RoutedEvent
 }
+
+var feedTestLogMu sync.Mutex
 
 func (l *simulationLedger) append(t *testing.T, event RoutedEvent) {
 	t.Helper()
@@ -268,13 +271,58 @@ func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
 	}
 }
 
+func TestAsyncChangeSinkDoesNotBlockPublisher(t *testing.T) {
+	blocking := &blockingChangeSink{
+		received: make(chan actions.ResourceChange, 1),
+		release:  make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		close(blocking.release)
+	})
+	sink := NewAsyncChangeSink(blocking, AsyncChangeSinkOptions{Buffer: 1})
+
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-1", Version: 1})
+	select {
+	case <-blocking.received:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async sink worker to receive first change")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-2", Version: 2})
+		sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-3", Version: 3})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("async sink publisher blocked behind slow downstream sink")
+	}
+}
+
+type blockingChangeSink struct {
+	received chan actions.ResourceChange
+	release  chan struct{}
+}
+
+func (s *blockingChangeSink) PublishResourceChange(change actions.ResourceChange) {
+	select {
+	case s.received <- change:
+	default:
+	}
+	<-s.release
+}
+
 func captureFeedTestLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
+	feedTestLogMu.Lock()
 	var buf bytes.Buffer
 	previous := log.Logger
 	log.Logger = zerolog.New(&buf)
 	t.Cleanup(func() {
 		log.Logger = previous
+		feedTestLogMu.Unlock()
 	})
 	return &buf
 }

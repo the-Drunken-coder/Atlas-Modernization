@@ -15,6 +15,10 @@ import (
 type typeScriptSchema map[string]any
 
 func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error) {
+	revision, err := validateProtocolRevision(revision)
+	if err != nil {
+		return nil, err
+	}
 	gen := &typeScriptGenerator{
 		defs: make(map[string]typeScriptSchema),
 	}
@@ -42,6 +46,7 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 	builder.WriteString(jsonString(revision))
 	builder.WriteString(" as const;\n")
 	builder.WriteString("export type AtlasProtocolRevision = typeof ATLAS_PROTOCOL_REVISION;\n\n")
+	builder.WriteString("type RequireAtLeastOne<T, Keys extends keyof T = keyof T> = Keys extends keyof T ? Required<Pick<T, Keys>> & Partial<Omit<T, Keys>> : never;\n\n")
 
 	defNames := make([]string, 0, len(gen.defs))
 	for name := range gen.defs {
@@ -55,6 +60,7 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 		builder.WriteString(gen.typeFor(gen.defs[name], name, 0))
 		builder.WriteString(";\n\n")
 	}
+	builder.WriteString(requestTypeSource())
 	return formatTypeScript([]byte(builder.String())), nil
 }
 
@@ -305,7 +311,107 @@ func (g *typeScriptGenerator) objectType(schema typeScriptSchema, current string
 	}
 	builder.WriteString(outerIndent)
 	builder.WriteString("}")
-	return builder.String()
+	shape := builder.String()
+	if minPropertiesOne(schema) && len(required) == 0 && len(keys) > 0 {
+		return "RequireAtLeastOne<" + shape + ", " + quotedUnion(keys) + ">"
+	}
+	return shape
+}
+
+func minPropertiesOne(schema typeScriptSchema) bool {
+	value, ok := schema["minProperties"].(float64)
+	return ok && value == 1
+}
+
+func quotedUnion(values []string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, jsonString(value))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func requestTypeSource() string {
+	return `export type EntityCreateRequest = {
+  "alias"?: NonEmptyString | null;
+  "components"?: EntityComponents;
+  "entity_id": NonEmptyString;
+  "entity_type": NonEmptyString;
+  "extra"?: { [key: string]: JSONValue };
+  "published_at"?: RFC3339Timestamp;
+  "subtype"?: NonEmptyString;
+  "updated_at"?: RFC3339Timestamp;
+};
+
+export type EntityUpdateRequest = {
+  "alias"?: string;
+  "components"?: EntityComponents;
+  "entity_type"?: NonEmptyString;
+  "extra"?: { [key: string]: JSONValue };
+  "subtype"?: string;
+};
+
+export type ObjectCreateRequest = {
+  "content_type"?: string;
+  "extra"?: { [key: string]: JSONValue };
+  "object_id": NonEmptyString;
+  "path"?: string;
+  "referenced_by"?: ObjectReference[];
+  "size_bytes"?: number;
+  "type"?: string;
+  "usage_hints"?: NonEmptyString[];
+};
+
+export type ObjectUpdateRequest = {
+  "content_type"?: string;
+  "extra"?: { [key: string]: JSONValue };
+  "path"?: string;
+  "referenced_by"?: ObjectReference[];
+  "size_bytes"?: number;
+  "type"?: string;
+  "usage_hints"?: NonEmptyString[];
+};
+
+export type TaskCreateRequest = {
+  "components"?: TaskComponents;
+  "entity_id"?: NonEmptyString | null;
+  "extra"?: { [key: string]: JSONValue };
+  "status"?: NonEmptyString;
+  "task_id": NonEmptyString;
+};
+
+export type TaskUpdateRequest = {
+  "components"?: TaskComponents;
+  "entity_id"?: NonEmptyString | null;
+  "extra"?: { [key: string]: JSONValue };
+  "remove_extra_keys"?: NonEmptyString[];
+  "status"?: NonEmptyString;
+};
+
+export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {
+  if (!atlasProtocolIsRecord(value)) {
+    return false;
+  }
+  const allowedKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
+  return (
+    Object.keys(value).every((key) => allowedKeys.has(key)) &&
+    atlasProtocolIsNonEmptyString(value.task_id) &&
+    (value.status === undefined || atlasProtocolIsNonEmptyString(value.status)) &&
+    (value.entity_id === undefined || value.entity_id === null || atlasProtocolIsNonEmptyString(value.entity_id)) &&
+    (value.components === undefined || atlasProtocolIsRecord(value.components)) &&
+    (value.extra === undefined || atlasProtocolIsRecord(value.extra))
+  );
+}
+
+function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function atlasProtocolIsNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+`
 }
 
 func requiredProperties(schema typeScriptSchema) map[string]bool {

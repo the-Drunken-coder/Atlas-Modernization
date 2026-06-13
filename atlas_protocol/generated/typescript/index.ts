@@ -3,13 +3,15 @@
 export const ATLAS_PROTOCOL_REVISION = "sha256:d664a94827e8102b3fbeda9ad482d7e3cea14149f2a2c7a8a6af828c69443464" as const;
 export type AtlasProtocolRevision = typeof ATLAS_PROTOCOL_REVISION;
 
-export type AtlasGeometry = {
+type RequireAtLeastOne<T, Keys extends keyof T = keyof T> = Keys extends keyof T ? Required<Pick<T, Keys>> & Partial<Omit<T, Keys>> : never;
+
+export type AtlasGeometry = RequireAtLeastOne<{
   "line"?: NonEmptyLine;
   "point_lat"?: Latitude;
   "point_lng"?: Longitude;
   "polygon"?: AtlasPolygon;
   "radius_m"?: FiniteNumber;
-};
+}, "line" | "point_lat" | "point_lng" | "polygon" | "radius_m">;
 
 export type AtlasPolygon = AtlasPosition[];
 
@@ -200,10 +202,10 @@ export type ObjectDeleteEvent = {
   "version": FeedVersion;
 };
 
-export type ObjectReference = {
+export type ObjectReference = RequireAtLeastOne<{
   "entity_id"?: NonEmptyString;
   "task_id"?: NonEmptyString;
-};
+}, "entity_id" | "task_id">;
 
 export type ObjectResource = {
   "bucket": null | string;
@@ -364,3 +366,82 @@ export type UnsubscribeTypeMessage = {
   "filter": "type";
   "resource_type": ResourceType;
 };
+
+export type EntityCreateRequest = {
+  "alias"?: NonEmptyString | null;
+  "components"?: EntityComponents;
+  "entity_id": NonEmptyString;
+  "entity_type": NonEmptyString;
+  "extra"?: { [key: string]: JSONValue };
+  "published_at"?: RFC3339Timestamp;
+  "subtype"?: NonEmptyString;
+  "updated_at"?: RFC3339Timestamp;
+};
+
+export type EntityUpdateRequest = {
+  "alias"?: string;
+  "components"?: EntityComponents;
+  "entity_type"?: NonEmptyString;
+  "extra"?: { [key: string]: JSONValue };
+  "subtype"?: string;
+};
+
+export type ObjectCreateRequest = {
+  "content_type"?: string;
+  "extra"?: { [key: string]: JSONValue };
+  "object_id": NonEmptyString;
+  "path"?: string;
+  "referenced_by"?: ObjectReference[];
+  "size_bytes"?: number;
+  "type"?: string;
+  "usage_hints"?: NonEmptyString[];
+};
+
+export type ObjectUpdateRequest = {
+  "content_type"?: string;
+  "extra"?: { [key: string]: JSONValue };
+  "path"?: string;
+  "referenced_by"?: ObjectReference[];
+  "size_bytes"?: number;
+  "type"?: string;
+  "usage_hints"?: NonEmptyString[];
+};
+
+export type TaskCreateRequest = {
+  "components"?: TaskComponents;
+  "entity_id"?: NonEmptyString | null;
+  "extra"?: { [key: string]: JSONValue };
+  "status"?: NonEmptyString;
+  "task_id": NonEmptyString;
+};
+
+export type TaskUpdateRequest = {
+  "components"?: TaskComponents;
+  "entity_id"?: NonEmptyString | null;
+  "extra"?: { [key: string]: JSONValue };
+  "remove_extra_keys"?: NonEmptyString[];
+  "status"?: NonEmptyString;
+};
+
+export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {
+  if (!atlasProtocolIsRecord(value)) {
+    return false;
+  }
+  const allowedKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
+  return (
+    Object.keys(value).every((key) => allowedKeys.has(key)) &&
+    atlasProtocolIsNonEmptyString(value.task_id) &&
+    (value.status === undefined || atlasProtocolIsNonEmptyString(value.status)) &&
+    (value.entity_id === undefined || value.entity_id === null || atlasProtocolIsNonEmptyString(value.entity_id)) &&
+    (value.components === undefined || atlasProtocolIsRecord(value.components)) &&
+    (value.extra === undefined || atlasProtocolIsRecord(value.extra))
+  );
+}
+
+function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function atlasProtocolIsNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}

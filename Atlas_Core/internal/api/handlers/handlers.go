@@ -36,15 +36,16 @@ func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger z
 	if db == nil || db.Pool == nil {
 		panic("handlers.NewHandler: db with initialized pool is required")
 	}
+	changeSink := feed.NewAsyncChangeSink(feedHub, feed.AsyncChangeSinkOptions{})
 
 	return &Handler{
 		db:            db,
 		storage:       storageClient,
 		logger:        logger,
 		config:        cfg,
-		entityActions: actions.NewEntityActionsWithChangeSink(db.Pool, feedHub),
-		taskActions:   actions.NewTaskActionsWithChangeSink(db.Pool, feedHub),
-		objectActions: actions.NewObjectActionsWithChangeSink(db.Pool, storageClient, feedHub),
+		entityActions: actions.NewEntityActionsWithChangeSink(db.Pool, changeSink),
+		taskActions:   actions.NewTaskActionsWithChangeSink(db.Pool, changeSink),
+		objectActions: actions.NewObjectActionsWithChangeSink(db.Pool, storageClient, changeSink),
 		queryActions:  actions.NewQueryActions(db.Pool),
 		feedHub:       feedHub,
 	}

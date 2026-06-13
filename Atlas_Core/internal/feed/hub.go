@@ -19,11 +19,16 @@ import (
 const (
 	defaultClientBuffer          = 256
 	defaultMissingVersionTimeout = 2 * time.Second
+	defaultChangeSinkBuffer      = 1024
 )
 
 type Options struct {
 	ClientBuffer          int
 	MissingVersionTimeout time.Duration
+}
+
+type AsyncChangeSinkOptions struct {
+	Buffer int
 }
 
 type Hub struct {
@@ -36,6 +41,46 @@ type Hub struct {
 	missingVersionTimeout time.Duration
 	gapTimer              *time.Timer
 	closed                bool
+}
+
+type asyncChangeSink struct {
+	sink  actions.ChangeSink
+	queue chan actions.ResourceChange
+}
+
+func NewAsyncChangeSink(sink actions.ChangeSink, opts AsyncChangeSinkOptions) actions.ChangeSink {
+	if sink == nil {
+		return nil
+	}
+	buffer := opts.Buffer
+	if buffer <= 0 {
+		buffer = defaultChangeSinkBuffer
+	}
+	async := &asyncChangeSink{
+		sink:  sink,
+		queue: make(chan actions.ResourceChange, buffer),
+	}
+	go async.run()
+	return async
+}
+
+func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
+	select {
+	case s.queue <- change:
+	default:
+		log.Warn().
+			Str("event", string(change.Event)).
+			Str("resource_type", string(change.ResourceType)).
+			Str("id", change.ID).
+			Int64("version", change.Version).
+			Msg("Dropping Atlas feed change because async sink queue is full")
+	}
+}
+
+func (s *asyncChangeSink) run() {
+	for change := range s.queue {
+		s.sink.PublishResourceChange(change)
+	}
 }
 
 type RoutedEvent struct {

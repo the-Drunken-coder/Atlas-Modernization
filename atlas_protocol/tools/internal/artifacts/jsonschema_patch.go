@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var safeProtocolRevisionPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+var safeProtocolRevisionPattern = regexp.MustCompile(`^sha256:[A-Fa-f0-9]{64}$`)
 
 func markGeneratedJSONSchema(schema []byte, revision string) ([]byte, error) {
 	revision, err := validateProtocolRevision(revision)

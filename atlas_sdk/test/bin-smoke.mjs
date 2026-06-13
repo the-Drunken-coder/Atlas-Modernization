@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const KILL_GRACE_MS = 2_000;
 const testDir = dirname(fileURLToPath(import.meta.url));
+const packageRoot = dirname(testDir);
 const protocolRevision = readFileSync(join(testDir, "../../atlas_protocol/generated/revision.txt"), "utf8").trim();
 let tmpdirPath;
 
@@ -185,7 +186,7 @@ async function withFakeCore(callback) {
 
 try {
   tmpdirPath = mkdtempSync(join(tmpdir(), "atlas-sdk-"));
-  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () => run("npm", ["pack", "--pack-destination", tmpdirPath, "--json", "--silent"]));
+  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () => run("npm", ["pack", packageRoot, "--pack-destination", tmpdirPath, "--json", "--silent"]));
   const tarball = join(tmpdirPath, packedTarballName(packOutput));
   const projectDir = join(tmpdirPath, "project");
   mkdirSync(projectDir);

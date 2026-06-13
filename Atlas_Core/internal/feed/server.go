@@ -42,7 +42,7 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Config.EnableAPIAuth && strings.TrimSpace(s.Config.APIKey) == "" {
 		zerolog.Ctx(r.Context()).Error().Msg("Atlas feed server has auth enabled without an API key")
-		http.Error(w, "feed API key is not configured", http.StatusInternalServerError)
+		http.Error(w, "feed API key is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -201,13 +201,10 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 		return fmt.Errorf("feed auth frame is invalid JSON")
 	}
 	if errors := protocol.ValidateFeedAuthMessage(payload); len(errors) > 0 {
-		return fmt.Errorf("feed auth frame is invalid")
+		return fmt.Errorf("feed auth frame is invalid: %s", strings.Join(errors, "; "))
 	}
-	var msg protocol.FeedAuthMessage
-	if err := json.Unmarshal(result.data, &msg); err != nil {
-		return fmt.Errorf("feed auth frame is invalid")
-	}
-	if !constantTimeEqual(msg.APIKey, s.Config.APIKey) {
+	apiKey, _ := payload["api_key"].(string)
+	if !constantTimeEqual(apiKey, s.Config.APIKey) {
 		return fmt.Errorf("feed API key rejected")
 	}
 	return nil

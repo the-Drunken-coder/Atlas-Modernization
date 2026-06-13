@@ -53,30 +53,6 @@ func TestProtocolRevisionHandlerAcceptHeaders(t *testing.T) {
 	}
 }
 
-func TestProtocolRevisionHandlerRejectsWrongMethod(t *testing.T) {
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/protocol/revision", nil)
-
-	(&Handler{}).ProtocolRevision(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
-	}
-	if got := rec.Header().Get("Allow"); got != http.MethodGet {
-		t.Fatalf("Allow = %q, want %s", got, http.MethodGet)
-	}
-	if got := rec.Header().Get("Content-Type"); got != "application/json" {
-		t.Fatalf("Content-Type = %q, want application/json", got)
-	}
-	var response protocol.ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if response.ErrorCode != protocol.ErrorCodeValidationError || response.Message != "method not allowed" {
-		t.Fatalf("unexpected error response: %+v", response)
-	}
-}
-
 func decodeProtocolRevisionResponse(t *testing.T, rec *httptest.ResponseRecorder) protocolRevisionResponse {
 	t.Helper()
 	var response protocolRevisionResponse

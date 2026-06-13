@@ -106,23 +106,11 @@ func publishChange(sink ChangeSink, change ResourceChange) {
 	if sink == nil {
 		return
 	}
-	switch change.ResourceType {
-	case ChangeResourceEntity:
-		change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
-		change.AfterEntity = cloneEntityModel(change.AfterEntity)
-	case ChangeResourceTask:
-		change.BeforeTask = cloneTaskModel(change.BeforeTask)
-		change.AfterTask = cloneTaskModel(change.AfterTask)
-	case ChangeResourceObject:
-		change.BeforeObject = cloneObjectModel(change.BeforeObject)
-		change.AfterObject = cloneObjectModel(change.AfterObject)
-	default:
-		change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
-		change.AfterEntity = cloneEntityModel(change.AfterEntity)
-		change.BeforeTask = cloneTaskModel(change.BeforeTask)
-		change.AfterTask = cloneTaskModel(change.AfterTask)
-		change.BeforeObject = cloneObjectModel(change.BeforeObject)
-		change.AfterObject = cloneObjectModel(change.AfterObject)
-	}
+	change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
+	change.AfterEntity = cloneEntityModel(change.AfterEntity)
+	change.BeforeTask = cloneTaskModel(change.BeforeTask)
+	change.AfterTask = cloneTaskModel(change.AfterTask)
+	change.BeforeObject = cloneObjectModel(change.BeforeObject)
+	change.AfterObject = cloneObjectModel(change.AfterObject)
 	sink.PublishResourceChange(change)
 }

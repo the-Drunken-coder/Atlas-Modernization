@@ -1,0 +1,140 @@
+import type {
+  EntityResource,
+  FeedEvent,
+  ObjectResource,
+  ResourceType,
+  TaskDeleteEvent,
+  TaskResource
+} from "./protocol.js";
+
+export type FetchLike = typeof fetch;
+
+export type WebSocketLike = {
+  readonly readyState: number;
+  send(data: string): void;
+  close(): void;
+  addEventListener(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  removeEventListener?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  off?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  removeListener?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+};
+
+export type WebSocketCtor = new (url: string) => WebSocketLike;
+
+export type AtlasSubscription =
+  | { filter: "all" }
+  | { filter: "id"; resource_type: ResourceType; id: string }
+  | { filter: "type"; resource_type: ResourceType }
+  | { filter: "tasks_for_entity"; entity_id: string };
+
+export type ReadOptions = {
+  fresh?: boolean;
+};
+
+export type SyncStatus = {
+  running: boolean;
+  healthy: boolean;
+  degraded: boolean;
+  lastVersion: number;
+  subscriptions: AtlasSubscription[];
+};
+
+export type ChangedSinceResponse = {
+  entities: EntityResource[];
+  tasks: TaskResource[];
+  objects: ObjectResource[];
+  deleted_entities?: DeletedResource[];
+  deleted_tasks?: DeletedResource[];
+  deleted_objects?: DeletedResource[];
+  has_more_entities?: boolean;
+  has_more_tasks?: boolean;
+  has_more_objects?: boolean;
+  has_more_deleted_entities?: boolean;
+  has_more_deleted_tasks?: boolean;
+  has_more_deleted_objects?: boolean;
+  next_entity_cursor?: string;
+  next_task_cursor?: string;
+  next_object_cursor?: string;
+  next_deleted_entity_cursor?: string;
+  next_deleted_task_cursor?: string;
+  next_deleted_object_cursor?: string;
+  version: number;
+};
+
+export type FullDatasetResponse = {
+  entities: EntityResource[];
+  tasks: TaskResource[];
+  objects: ObjectResource[];
+  has_more_entities?: boolean;
+  has_more_tasks?: boolean;
+  has_more_objects?: boolean;
+  next_entity_cursor?: string;
+  next_task_cursor?: string;
+  next_object_cursor?: string;
+};
+
+export type DeletedResource = {
+  id: string;
+  type: ResourceType;
+  version: number;
+  entity_id?: string | null;
+};
+
+export type ResourceValue = EntityResource | TaskResource | ObjectResource;
+
+export type AtlasRecoveredWatchEvent = {
+  event: "recovered";
+  resource_type: ResourceType;
+  id: string;
+  version: number;
+  resource: ResourceValue;
+};
+
+export type AtlasLocalDeleteWatchEvent = {
+  event: "local_delete";
+  resource_type: ResourceType;
+  id: string;
+  previous_version?: number;
+};
+
+export type AtlasWatchEvent = FeedEvent | AtlasRecoveredWatchEvent | AtlasLocalDeleteWatchEvent;
+
+export type FullDatasetCursors = {
+  entity_cursor?: string;
+  task_cursor?: string;
+  object_cursor?: string;
+};
+
+export type ChangedSinceCursors = FullDatasetCursors & {
+  deleted_entity_cursor?: string;
+  deleted_task_cursor?: string;
+  deleted_object_cursor?: string;
+};
+
+export type WatchCallback<T> = (value: T | undefined, event: AtlasWatchEvent) => void;
+
+export type CacheEntry<T> = {
+  value?: T;
+  version: number;
+  deleted: boolean;
+};
+
+export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatchEvent[] {
+  const events: AtlasWatchEvent[] = [];
+  for (const entity of response.entities ?? []) {
+    events.push({ event: "recovered", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity });
+  }
+  for (const task of response.tasks ?? []) {
+    events.push({ event: "recovered", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task });
+  }
+  for (const object of response.objects ?? []) {
+    events.push({ event: "recovered", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object });
+  }
+  for (const item of response.deleted_entities ?? []) events.push({ event: "delete", resource_type: "entity", id: item.id, version: item.version });
+  for (const item of response.deleted_tasks ?? []) {
+    const event: TaskDeleteEvent = { event: "delete", resource_type: "task", id: item.id, version: item.version, entity_id: item.entity_id };
+    events.push(event);
+  }
+  for (const item of response.deleted_objects ?? []) events.push({ event: "delete", resource_type: "object", id: item.id, version: item.version });
+  return events;
+}

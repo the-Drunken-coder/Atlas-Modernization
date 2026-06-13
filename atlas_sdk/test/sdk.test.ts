@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, ConflictError, ProtocolMismatchError, type FeedEvent } from "../src";
+import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, type FeedEvent } from "../src";
 import { RESOURCE_TYPE_VALUES, isResourceType, parseFilter, runCLI, type CLIIO } from "../src/cli.js";
 import { entity, FakeCore, object, task } from "./fake-core";
 
@@ -32,9 +32,35 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
-    const created = await client.entities.create(entity("asset-1"));
+    const created = await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
     await expect(client.entities.get("asset-1")).resolves.toEqual(created);
     await expect(client.entities.update("asset-1", { alias: "new" }, { ifMatchVersion: 0 })).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("rejects response-shaped write payloads with protocol error details", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await expect(client.entities.create(entity("asset-with-metadata") as any)).rejects.toMatchObject({
+      status: 400,
+      errorCode: "INVALID_JSON"
+    });
+    await expect(client.objects.create({ ...object("object-with-bucket"), bucket: "client-owned" } as any)).rejects.toMatchObject({
+      status: 400,
+      errorCode: "INVALID_JSON"
+    });
+  });
+
+  it("preserves structured protocol errors for non-conflict failures", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await expect(client.entities.get("missing-entity")).rejects.toMatchObject({
+      status: 404,
+      errorCode: "ENTITY_NOT_FOUND",
+      response: expect.objectContaining({ success: false, error_code: "ENTITY_NOT_FOUND" })
+    });
+    await expect(client.entities.get("missing-entity")).rejects.toBeInstanceOf(AtlasAPIError);
   });
 });
 
@@ -183,6 +209,35 @@ describe("AtlasClient sync", () => {
     } finally {
       client.sync.stop();
     }
+  });
+
+  it("does not let sync.stop be undone by an in-flight sync.start", async () => {
+    const core = new FakeCore();
+    let releaseHydration: (() => void) | undefined;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/full") {
+        await new Promise<void>((resolve) => {
+          releaseHydration = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    const start = client.sync.start();
+    await vi.waitFor(() => expect(releaseHydration).toBeTypeOf("function"));
+    client.sync.stop();
+    releaseHydration?.();
+    await start;
+
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    expect(core.sockets.size).toBe(0);
   });
 
   it("evicts local cache entries after successful deletes", async () => {
@@ -523,7 +578,7 @@ describe("AtlasClient sync", () => {
     });
 
     try {
-      await expect(client.entities.create(entity("asset-throwing-write-watch"))).resolves.toMatchObject({ entity_id: "asset-throwing-write-watch" });
+      await expect(client.entities.create({ entity_id: "asset-throwing-write-watch", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-throwing-write-watch" });
       expect(client.sync.status().degraded).toBe(false);
       expect(errorSpy).toHaveBeenCalled();
     } finally {

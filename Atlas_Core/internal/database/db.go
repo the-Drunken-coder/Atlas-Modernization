@@ -247,10 +247,11 @@ func coreSchemaTablesPresent(ctx context.Context, q interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }) (bool, error) {
 	const tableSQL = `
-		SELECT COUNT(*)
-		FROM information_schema.tables
-		WHERE table_schema = 'public'
-		  AND table_name = ANY($1::text[])`
+			SELECT COUNT(*)
+			FROM information_schema.tables
+			WHERE table_schema = 'public'
+			  AND table_type = 'BASE TABLE'
+			  AND table_name = ANY($1::text[])`
 	var tableCount int
 	if err := q.QueryRow(ctx, tableSQL, coreSchemaTables).Scan(&tableCount); err != nil {
 		return false, fmt.Errorf("failed to check core schema tables: %w", err)
@@ -259,7 +260,15 @@ func coreSchemaTablesPresent(ctx context.Context, q interface {
 		return false, nil
 	}
 
-	const sequenceSQL = `SELECT to_regclass('public.atlas_change_version_seq') IS NOT NULL`
+	const sequenceSQL = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = 'public'
+			  AND c.relname = 'atlas_change_version_seq'
+			  AND c.relkind = 'S'
+		)`
 	var sequencePresent bool
 	if err := q.QueryRow(ctx, sequenceSQL).Scan(&sequencePresent); err != nil {
 		return false, fmt.Errorf("failed to check core schema change-version sequence: %w", err)

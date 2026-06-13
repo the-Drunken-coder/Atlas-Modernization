@@ -34,6 +34,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prebuild": "node ./scripts/generate-package-metadata.mjs",
     "prepack": "npm run build",
     "test:bin": "node ./test/bin-smoke.mjs",
     "test:node": "vitest run --environment node",
@@ -42,12 +43,12 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@vitest/browser": "^4.1.5",
-    "@vitest/browser-playwright": "^4.1.8",
-    "@playwright/test": "^1.60.0",
-    "@types/node": "^24.0.0",
-    "playwright": "^1.60.0",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.0"
+    "@vitest/browser": "4.1.8",
+    "@vitest/browser-playwright": "4.1.8",
+    "@playwright/test": "1.60.0",
+    "@types/node": "24.13.2",
+    "playwright": "1.60.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.8"
   }
 }

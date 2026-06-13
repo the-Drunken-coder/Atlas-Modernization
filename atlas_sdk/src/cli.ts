@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskCreateRequest } from "./index.js";
+import { AtlasClient, isTaskCreateRequest, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskCreateRequest } from "./index.js";
+import { PACKAGE_BIN, PACKAGE_NAME } from "./package-metadata.js";
+
+export { PACKAGE_BIN, PACKAGE_NAME };
 
 export type CLIIO = {
   stdout: { write(data: string): void };
@@ -24,8 +27,6 @@ type CLICommand =
 const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
 export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];
 const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
-export const PACKAGE_NAME = "@the-drunken-coder/atlas-sdk";
-export const PACKAGE_BIN = { atlas: "./dist/atlas_sdk/src/cli.js" } as const;
 const CLI_REQUEST_TIMEOUT_MS = 10_000;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
@@ -179,29 +180,6 @@ function parseTaskCreateBody(value: unknown): TaskCreateRequest {
     throw new Error("invalid task JSON");
   }
   return value;
-}
-
-function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {
-  if (!isRecord(value)) {
-    return false;
-  }
-  const allowedKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
-  return (
-    Object.keys(value).every((key) => allowedKeys.has(key)) &&
-    isNonEmptyString(value.task_id) &&
-    (value.status === undefined || isNonEmptyString(value.status)) &&
-    (value.entity_id === undefined || value.entity_id === null || isNonEmptyString(value.entity_id)) &&
-    (value.components === undefined || isRecord(value.components)) &&
-    (value.extra === undefined || isRecord(value.extra))
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
 }
 
 function waitForExitSignal(): Promise<void> {

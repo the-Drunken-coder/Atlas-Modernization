@@ -183,8 +183,8 @@ func TestWebsocketFeedRejectsAuthEnabledWithoutAPIKey(t *testing.T) {
 		},
 	}.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "feed API key is not configured") {
 		t.Fatalf("body = %q, want API key configuration error", rec.Body.String())
@@ -321,8 +321,8 @@ func TestWebsocketFeedRejectsAuthEnabledWithWhitespaceAPIKey(t *testing.T) {
 		},
 	}.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "feed API key is not configured") {
 		t.Fatalf("body = %q, want API key configuration error", rec.Body.String())

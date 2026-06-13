@@ -189,8 +189,10 @@ func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 	for _, fragment := range []string{
 		"information_schema.tables",
 		"table_schema = 'public'",
+		"table_type = 'BASE TABLE'",
 		"table_name = ANY($1::text[])",
 		"atlas_change_version_seq",
+		"c.relkind = 'S'",
 		"FROM information_schema.columns c",
 		"table_name = 'deletions'",
 		"column_name = 'context'",
@@ -204,6 +206,45 @@ func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 	}
 	if len(query.args) != 3 || len(query.args[0]) != 1 {
 		t.Fatalf("schema check args = %#v, want table list on first query only", query.args)
+	}
+}
+
+func TestCoreSchemaCheckRejectsWrongObjectKinds(t *testing.T) {
+	currentContextColumn := schemaColumn{
+		udtName:              "jsonb",
+		isNullable:           "NO",
+		defaultIsEmptyObject: true,
+	}
+	tests := []struct {
+		name            string
+		tableCount      int
+		sequencePresent bool
+	}{
+		{
+			name:            "missing base table or table replaced by view",
+			tableCount:      len(coreSchemaTables) - 1,
+			sequencePresent: true,
+		},
+		{
+			name:            "change version object is not a sequence",
+			tableCount:      len(coreSchemaTables),
+			sequencePresent: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, err := coreSchemaTablesPresent(context.Background(), &recordingSchemaCheckQuery{
+				tableCount:      tt.tableCount,
+				sequencePresent: tt.sequencePresent,
+				contextColumn:   currentContextColumn,
+			})
+			if err != nil {
+				t.Fatalf("coreSchemaTablesPresent returned error: %v", err)
+			}
+			if ok {
+				t.Fatal("coreSchemaTablesPresent = true, want false")
+			}
+		})
 	}
 }
 
