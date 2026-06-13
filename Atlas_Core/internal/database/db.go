@@ -28,7 +28,7 @@ const coreSchemaDeletionsContextSQL = `
 	SELECT
 		c.udt_name,
 		c.is_nullable,
-		COALESCE((pg_get_expr(d.adbin, d.adrelid))::jsonb = '{}'::jsonb, false)
+		COALESCE(pg_get_expr(d.adbin, d.adrelid) = $$'{}'::jsonb$$, false)
 	FROM information_schema.columns c
 	JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
 	JOIN pg_catalog.pg_class cls ON cls.relnamespace = n.oid AND cls.relname = c.table_name
