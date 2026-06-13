@@ -143,7 +143,7 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
-  it("does not start duplicate polling intervals when sync.start is called twice", async () => {
+  it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
     vi.useFakeTimers();
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 100 });
@@ -159,6 +159,29 @@ describe("AtlasClient sync", () => {
     } finally {
       client.sync.stop();
       vi.useRealTimers();
+    }
+  });
+
+  it("shares one startup path across concurrent sync.start calls", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      const firstStart = client.sync.start();
+      const secondStart = client.sync.start();
+
+      await Promise.all([firstStart, secondStart]);
+
+      expect(core.feedConnections).toBe(1);
+      expect(core.requests.filter((request) => request.startsWith("/queries/full")).length).toBe(1);
+    } finally {
+      client.sync.stop();
     }
   });
 

@@ -19,6 +19,7 @@ export class FakeCore {
   deletions: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
+  feedConnections = 0;
   requests: string[] = [];
   fullLimitPerType = 0;
   changedSinceLimitPerType = 0;
@@ -245,6 +246,7 @@ class FakeWebSocket {
   private subscriptions: AtlasSubscription[] = [];
 
   constructor(readonly url: string, private readonly core: FakeCore) {
+    this.core.feedConnections++;
     this.core.sockets.add(this);
     queueMicrotask(() => {
       this.readyState = 1;

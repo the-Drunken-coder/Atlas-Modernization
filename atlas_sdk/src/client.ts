@@ -255,6 +255,7 @@ export class AtlasClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnecting = false;
   private reconnectAfterRecovery = false;
+  private startSyncPromise: Promise<void> | undefined;
   private socket: WebSocketLike | undefined;
   private feedConnection: FeedConnection | undefined;
 
@@ -505,6 +506,18 @@ export class AtlasClient {
     if (this.syncRunning) {
       return;
     }
+    if (this.startSyncPromise) {
+      return this.startSyncPromise;
+    }
+    this.startSyncPromise = this.startSyncFromStopped();
+    try {
+      await this.startSyncPromise;
+    } finally {
+      this.startSyncPromise = undefined;
+    }
+  }
+
+  private async startSyncFromStopped(): Promise<void> {
     await this.handshake();
     await this.hydrate();
     this.syncRunning = true;
