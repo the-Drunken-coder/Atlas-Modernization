@@ -98,6 +98,25 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("does not start duplicate polling intervals when sync.start is called twice", async () => {
+    vi.useFakeTimers();
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 100 });
+
+    try {
+      await client.sync.start();
+      await client.sync.start();
+      core.requests = [];
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(core.requests.filter((request) => request.startsWith("/queries/changed-since")).length).toBe(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("evicts local cache entries after successful deletes", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-delete"));

@@ -485,6 +485,9 @@ export class AtlasClient {
   }
 
   private async startSync(): Promise<void> {
+    if (this.syncRunning) {
+      return;
+    }
     await this.handshake();
     await this.hydrate();
     this.syncRunning = true;
