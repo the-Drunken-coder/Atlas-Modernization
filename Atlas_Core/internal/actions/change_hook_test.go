@@ -135,7 +135,7 @@ func TestCloneObjectModelCopiesPublicFields(t *testing.T) {
 	}
 }
 
-func TestPublishChangeClonesModelsAndIgnoresNilSink(t *testing.T) {
+func TestPublishChangeClonesRelevantModelsAndIgnoresNilSink(t *testing.T) {
 	beforeEntityAlias := "before-alias"
 	beforeEntity := &models.Entity{EntityID: "before", Alias: &beforeEntityAlias, JSON: json.RawMessage(`{"before":true}`)}
 	afterEntityAlias := "after-alias"
@@ -167,26 +167,19 @@ func TestPublishChangeClonesModelsAndIgnoresNilSink(t *testing.T) {
 	if !sink.called {
 		t.Fatal("publishChange did not call sink")
 	}
-	if sink.change.BeforeEntity == beforeEntity ||
-		sink.change.AfterEntity == afterEntity ||
-		sink.change.BeforeTask == beforeTask ||
-		sink.change.AfterTask == afterTask ||
-		sink.change.BeforeObject == beforeObject ||
-		sink.change.AfterObject == afterObject {
-		t.Fatalf("publishChange passed aliased models: %#v", sink.change)
+	if sink.change.BeforeTask == beforeTask || sink.change.AfterTask == afterTask {
+		t.Fatalf("publishChange passed aliased task models: %#v", sink.change)
 	}
-	assertIndependentJSON(t, beforeEntity.JSON, sink.change.BeforeEntity.JSON)
-	assertIndependentStringPointer(t, "BeforeEntity.Alias", beforeEntity.Alias, sink.change.BeforeEntity.Alias)
-	assertIndependentJSON(t, afterEntity.JSON, sink.change.AfterEntity.JSON)
-	assertIndependentStringPointer(t, "AfterEntity.Alias", afterEntity.Alias, sink.change.AfterEntity.Alias)
+	if sink.change.BeforeEntity != beforeEntity ||
+		sink.change.AfterEntity != afterEntity ||
+		sink.change.BeforeObject != beforeObject ||
+		sink.change.AfterObject != afterObject {
+		t.Fatalf("publishChange cloned unrelated models: %#v", sink.change)
+	}
 	assertIndependentJSON(t, beforeTask.JSON, sink.change.BeforeTask.JSON)
 	assertIndependentStringPointer(t, "BeforeTask.EntityID", beforeTask.EntityID, sink.change.BeforeTask.EntityID)
 	assertIndependentJSON(t, afterTask.JSON, sink.change.AfterTask.JSON)
 	assertIndependentStringPointer(t, "AfterTask.EntityID", afterTask.EntityID, sink.change.AfterTask.EntityID)
-	assertIndependentJSON(t, beforeObject.JSON, sink.change.BeforeObject.JSON)
-	assertIndependentStringPointer(t, "BeforeObject.Path", beforeObject.Path, sink.change.BeforeObject.Path)
-	assertIndependentJSON(t, afterObject.JSON, sink.change.AfterObject.JSON)
-	assertIndependentStringPointer(t, "AfterObject.Path", afterObject.Path, sink.change.AfterObject.Path)
 }
 
 func assertIndependentStringPointer(t *testing.T, name string, original, cloned *string) {

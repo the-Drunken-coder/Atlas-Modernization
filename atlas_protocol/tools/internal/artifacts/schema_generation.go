@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -47,17 +49,20 @@ func validateExampleSet(root, name, schema string) error {
 	}
 	sort.Strings(examples)
 
+	var validationErrors []error
 	for _, example := range examples {
 		rel, err := filepath.Rel(root, example)
 		if err != nil {
 			return err
 		}
-		args := []string{"vet", "./schema", filepath.ToSlash(rel), "-d", schema}
+		displayPath := filepath.ToSlash(rel)
+		fmt.Fprintf(os.Stderr, "validating %s against %s\n", displayPath, schema)
+		args := []string{"vet", "./schema", displayPath, "-d", schema}
 		if _, err := runCue(root, args...); err != nil {
-			return err
+			validationErrors = append(validationErrors, fmt.Errorf("%s: %w", displayPath, err))
 		}
 	}
-	return nil
+	return errors.Join(validationErrors...)
 }
 
 func LoadMeta(root string) (Meta, error) {

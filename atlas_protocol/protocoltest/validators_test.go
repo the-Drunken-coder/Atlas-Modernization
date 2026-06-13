@@ -8,13 +8,10 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
-
-var feedValidationMu sync.Mutex
 
 func TestEntityExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
@@ -215,7 +212,6 @@ func taskUpdateEventWithPreviousEntityID(previousEntityID any, includePreviousEn
 }
 
 func TestFeedEventMarshalRejectsInvalidVariantFields(t *testing.T) {
-	enableFeedEventMarshalValidation(t)
 	previousEntityID := "asset-1"
 	entityID := "asset-1"
 	tests := []struct {
@@ -434,7 +430,6 @@ func TestFeedEventMarshalRejectsInvalidVariantFields(t *testing.T) {
 }
 
 func TestFeedEventMarshalAcceptsValidVariant(t *testing.T) {
-	enableFeedEventMarshalValidation(t)
 	taskEntityID := "asset-1"
 	entityResource := protocol.EntityResource{
 		EntityID:   "asset-1",
@@ -586,17 +581,6 @@ func TestFeedEventMarshalAcceptsValidVariant(t *testing.T) {
 			}
 		})
 	}
-}
-
-func enableFeedEventMarshalValidation(t *testing.T) {
-	t.Helper()
-	// Serialize access to the package-level marshal-validation flag; these tests must not run concurrently.
-	feedValidationMu.Lock()
-	previous := protocol.EnableFeedEventMarshalValidation.Swap(true)
-	t.Cleanup(func() {
-		protocol.EnableFeedEventMarshalValidation.Store(previous)
-		feedValidationMu.Unlock()
-	})
 }
 
 func TestEntityComponentKeys(t *testing.T) {

@@ -11,6 +11,23 @@ describe("AtlasClient HTTP", () => {
     await expect(client.handshake()).rejects.toBeInstanceOf(ProtocolMismatchError);
   });
 
+  it("aborts stalled HTTP requests with a clear timeout error", async () => {
+    vi.useFakeTimers();
+    const fetchImpl: typeof fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, requestTimeoutMs: 50 });
+
+    try {
+      const handshake = expect(client.handshake()).rejects.toThrow("Atlas request timed out after 50ms");
+      await vi.advanceTimersByTimeAsync(50);
+      await handshake;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
@@ -299,6 +316,57 @@ describe("AtlasClient sync", () => {
     expect(core.sockets.size).toBe(1);
   });
 
+  it("re-arms reconnect when a replacement socket closes during recovery", async () => {
+    const core = new FakeCore();
+    let delayNextChangedSince = false;
+    let releaseRecovery: (() => void) | undefined;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since" && delayNextChangedSince) {
+        delayNextChangedSince = false;
+        await new Promise<void>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      const initialSocket = Array.from(core.sockets)[0];
+      delayNextChangedSince = true;
+      const recovery = (client as unknown as { connectAndRecoverFeed: () => Promise<void> }).connectAndRecoverFeed();
+
+      await vi.waitFor(() => {
+        expect(releaseRecovery).toBeTypeOf("function");
+      });
+      const recoverySocket = Array.from(core.sockets).find((socket) => socket !== initialSocket);
+      expect(recoverySocket).toBeDefined();
+
+      recoverySocket?.close();
+      releaseRecovery?.();
+      await recovery;
+
+      expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true });
+      await vi.waitFor(
+        () => {
+          expect(client.sync.status().healthy).toBe(true);
+        },
+        { timeout: 2500 }
+      );
+      expect(core.sockets.size).toBe(1);
+      expect(core.sockets.has(recoverySocket!)).toBe(false);
+    } finally {
+      client.sync.stop();
+    }
+  });
+
   it("replaces an existing feed socket on repeated connect calls", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -386,6 +454,87 @@ describe("AtlasClient sync", () => {
       expect(client.sync.status().degraded).toBe(true);
       expect(client.sync.status().healthy).toBe(false);
     });
+  });
+
+  it("recovers selective subscription gaps through changed-since", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "selective",
+      pollIntervalMs: 0
+    });
+    await client.subscribe({ filter: "type", resource_type: "task" });
+    const watch = vi.fn();
+    client.watch({ filter: "type", resource_type: "task" }, watch);
+    await client.sync.start();
+    core.requests = [];
+
+    const dropped = core.upsertTask(task("task-selective-dropped", "asset-1"));
+    core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+    const delivered = core.upsertTask(task("task-selective-delivered", "asset-1"));
+    core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(dropped, expect.objectContaining({ event: "recovered", id: "task-selective-dropped" }));
+      expect(watch).toHaveBeenCalledWith(delivered, expect.objectContaining({ event: "recovered", id: "task-selective-delivered" }));
+    });
+    expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
+    expect(client.sync.status().degraded).toBe(false);
+  });
+
+  it("keeps successful writes successful when watch callbacks throw", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    client.entities.watch("asset-throwing-write-watch", () => {
+      throw new Error("watch failed");
+    });
+
+    try {
+      await expect(client.entities.create(entity("asset-throwing-write-watch"))).resolves.toMatchObject({ entity_id: "asset-throwing-write-watch" });
+      expect(client.sync.status().degraded).toBe(false);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("keeps feed healthy when watch callbacks throw", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    client.entities.watch("asset-throwing-feed-watch", () => {
+      throw new Error("watch failed");
+    });
+
+    try {
+      const value = core.upsertEntity(entity("asset-throwing-feed-watch"));
+      core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value }, { record: false });
+
+      await vi.waitFor(() => {
+        expect(client.sync.status().lastVersion).toBe(value.metadata.version);
+      });
+      expect(client.sync.status().degraded).toBe(false);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("matches the simulation ledger at checkpoints and run end", async () => {
@@ -526,9 +675,65 @@ describe("Atlas CLI", () => {
     await expect(runCLI(["tasks", "create", "{bad"], badJSON.io)).resolves.toBe(2);
     expect(badJSON.stderr()).toContain("invalid task JSON");
 
+    const invalidTask = captureIO();
+    await expect(runCLI(["tasks", "create", '{"task_id":"","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":0}}'], invalidTask.io)).resolves.toBe(2);
+    expect(invalidTask.stderr()).toContain("invalid task JSON");
+
     const badFilter = captureIO();
     await expect(runCLI(["watch", "--subscribe", "id:not-a-type:x"], badFilter.io)).resolves.toBe(2);
     expect(badFilter.stderr()).toContain("invalid subscription filter");
+  });
+
+  it("creates tasks with Core request payloads and server defaults", async () => {
+    const core = new FakeCore();
+    const minimal = captureIO();
+    minimal.io.fetch = core.fetch;
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "tasks", "create", '{"task_id":"task-minimal"}'], minimal.io)).resolves.toBe(0);
+
+    expect(JSON.parse(minimal.stdout())).toMatchObject({
+      task_id: "task-minimal",
+      status: "pending",
+      entity_id: null,
+      components: {}
+    });
+
+    const expanded = captureIO();
+    expanded.io.fetch = core.fetch;
+    await expect(
+      runCLI(
+        [
+          "--base-url",
+          "http://atlas.test",
+          "tasks",
+          "create",
+          '{"task_id":"task-expanded","status":"acknowledged","entity_id":"asset-1","components":{"parameters":{"latitude":1}},"extra":{"priority":"high"}}'
+        ],
+        expanded.io
+      )
+    ).resolves.toBe(0);
+
+    expect(JSON.parse(expanded.stdout())).toMatchObject({
+      task_id: "task-expanded",
+      status: "acknowledged",
+      entity_id: "asset-1",
+      components: { parameters: { latitude: 1 } },
+      extra: { priority: "high" }
+    });
+  });
+
+  it.each([
+    '{"task_id":""}',
+    '{"task_id":"task-invalid","entity_id":""}',
+    '{"task_id":"task-invalid","components":[]}',
+    '{"task_id":"task-invalid","extra":[]}',
+    '{"task_id":"task-invalid","metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":1}}'
+  ])("rejects invalid task create request %s before handshake", async (body) => {
+    const io = captureIO();
+
+    await expect(runCLI(["tasks", "create", body], io.io)).resolves.toBe(2);
+
+    expect(io.stderr()).toContain("invalid task JSON");
   });
 
   it("parses valid subscription filters", () => {
@@ -563,6 +768,44 @@ describe("Atlas CLI", () => {
     await expect(runCLI(["watch", "--subscribe", "all"], io.io)).resolves.toBe(2);
 
     expect(io.stderr()).toContain("watch requires --follow");
+  });
+
+  it("runs watch mode through the sync engine and recovers dropped matching events", async () => {
+    const core = new FakeCore();
+    const captured = captureIO();
+    captured.io.fetch = core.fetch;
+    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.waitForExitSignal = async () => {
+      const dropped = core.upsertTask(task("task-cli-dropped", "asset-1"));
+      core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+      const delivered = core.upsertTask(task("task-cli-delivered", "asset-1"));
+      core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+
+      await vi.waitFor(() => {
+        expect(captured.stdout()).toContain('"id":"task-cli-dropped"');
+        expect(captured.stdout()).toContain('"id":"task-cli-delivered"');
+      });
+    };
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)).resolves.toBe(0);
+
+    expect(core.requests.some((request) => request.startsWith("/queries/full"))).toBe(true);
+    expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
+  });
+
+  it("stops watch sync when follow exits with an error", async () => {
+    const core = new FakeCore();
+    const captured = captureIO();
+    captured.io.fetch = core.fetch;
+    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.waitForExitSignal = async () => {
+      throw new Error("follow failed");
+    };
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)).resolves.toBe(1);
+
+    expect(captured.stderr()).toContain("follow failed");
+    expect(core.sockets.size).toBe(0);
   });
 });
 

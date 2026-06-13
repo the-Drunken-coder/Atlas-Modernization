@@ -14,7 +14,7 @@ const (
 	entitySelectSQL    = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version FROM entities`
 	taskSelectSQL      = `SELECT task_id, status, entity_id, json, created_at, updated_at, version FROM tasks`
 	objectSelectSQL    = `SELECT object_id, path, content_type, type, json, created_at, updated_at, version FROM objects`
-	deletionsSelectSQL = `SELECT resource_id, deleted_at, version, CASE WHEN resource_type = 'task' THEN context->>'entity_id' ELSE NULL END FROM deletions`
+	deletionsSelectSQL = `SELECT resource_id, deleted_at, version, CASE WHEN resource_type = 'task' THEN context->>'entity_id' ELSE NULL END AS entity_id FROM deletions`
 )
 
 // Allowlists for the identifiers interpolated into cursor-paged SQL. Every value

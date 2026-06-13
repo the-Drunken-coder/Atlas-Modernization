@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -199,6 +200,23 @@ func TestTypeScriptGeneratorAddDefAllowsIdenticalSchema(t *testing.T) {
 	}
 }
 
+func TestTypeScriptGeneratorAddDefAllowsIdenticalSchemaUnderDifferentName(t *testing.T) {
+	schema := typeScriptSchema{"type": "object"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
+
+	if err := g.addDef("Thing1", schema); err != nil {
+		t.Fatalf("addDef Thing1 returned error: %v", err)
+	}
+	if err := g.addDef("Thing2", cloneMap(schema)); err != nil {
+		t.Fatalf("addDef Thing2 returned error: %v", err)
+	}
+	for _, name := range []string{"Thing1", "Thing2"} {
+		if !reflect.DeepEqual(g.defs[name], schema) {
+			t.Fatalf("defs[%s] = %#v, want %#v", name, g.defs[name], schema)
+		}
+	}
+}
+
 func TestTypeScriptGeneratorAddDefReplacesSelfRef(t *testing.T) {
 	selfRef := typeScriptSchema{"$ref": "#/$defs/%23Thing"}
 	replacement := typeScriptSchema{"type": "string"}
@@ -220,6 +238,9 @@ func TestTypeScriptGeneratorAddDefRejectsNameCollision(t *testing.T) {
 	err := g.addDef("Thing", colliding)
 	if err == nil {
 		t.Fatal("addDef accepted colliding schemas")
+	}
+	if !strings.Contains(err.Error(), "Thing") || !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("collision error = %q, want type name and collision context", err.Error())
 	}
 	if !reflect.DeepEqual(g.defs["Thing"], existing) {
 		t.Fatalf("defs[Thing] = %#v after collision, want original %#v", g.defs["Thing"], existing)

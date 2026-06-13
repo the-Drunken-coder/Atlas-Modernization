@@ -2,7 +2,6 @@ package config_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -357,6 +356,14 @@ func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
 		" changeme ",
 		"CHANGEME",
 		"PlAcEhOlDeR",
+		"12345678",
+		"87654321",
+		"abcdefgh",
+		"hgfedcba",
+		"password1234",
+		"letmein-now",
+		"welcome-home",
+		"abababababab",
 	} {
 		t.Run(apiKey, func(t *testing.T) {
 			chdirToTemp(t)
@@ -368,11 +375,12 @@ func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected enabled API auth with placeholder API_AUTH_KEY %q to fail", apiKey)
 			}
-			if !strings.Contains(err.Error(), "placeholder") {
+			if !strings.Contains(err.Error(), "too weak") {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if strings.Contains(err.Error(), fmt.Sprintf("%q", strings.TrimSpace(apiKey))) {
-				t.Fatalf("placeholder error should not echo API_AUTH_KEY, got %v", err)
+			trimmed := strings.TrimSpace(apiKey)
+			if strings.Contains(err.Error(), trimmed) {
+				t.Fatalf("placeholder error should not echo API_AUTH_KEY %q, got %v", trimmed, err)
 			}
 		})
 	}

@@ -13,7 +13,7 @@ func TestNewValidationError(t *testing.T) {
 		t.Errorf("Expected message 'test validation error', got '%s'", err.Message)
 	}
 	if err.Code != protocol.ErrorCodeValidationError {
-		t.Errorf("Expected code 'VALIDATION_ERROR', got '%s'", err.Code)
+		t.Errorf("Expected code %q, got %q", protocol.ErrorCodeValidationError, err.Code)
 	}
 	if err.Error() != "test validation error" {
 		t.Errorf("Expected Error() to return message, got '%s'", err.Error())

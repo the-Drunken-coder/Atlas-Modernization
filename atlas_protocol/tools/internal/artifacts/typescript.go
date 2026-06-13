@@ -423,5 +423,6 @@ func uniqueStrings(values []string) []string {
 }
 
 func formatTypeScript(source []byte) []byte {
-	return bytes.ReplaceAll(source, []byte("\t"), []byte("  "))
+	formatted := bytes.ReplaceAll(source, []byte("\t"), []byte("  "))
+	return append(bytes.TrimRight(formatted, "\n"), '\n')
 }

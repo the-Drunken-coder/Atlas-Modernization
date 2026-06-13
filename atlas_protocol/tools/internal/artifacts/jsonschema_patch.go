@@ -4,10 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
+var safeProtocolRevisionPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+
 func markGeneratedJSONSchema(schema []byte, revision string) ([]byte, error) {
+	revision, err := validateProtocolRevision(revision)
+	if err != nil {
+		return nil, err
+	}
 	var root map[string]any
 	if err := json.Unmarshal(schema, &root); err != nil {
 		return nil, err
@@ -21,6 +28,17 @@ func markGeneratedJSONSchema(schema []byte, revision string) ([]byte, error) {
 		return nil, err
 	}
 	return append(out, '\n'), nil
+}
+
+func validateProtocolRevision(revision string) (string, error) {
+	revision = strings.TrimSpace(revision)
+	if revision == "" {
+		return "", fmt.Errorf("invalid protocol revision: empty")
+	}
+	if !safeProtocolRevisionPattern.MatchString(revision) {
+		return "", fmt.Errorf("invalid protocol revision %q", revision)
+	}
+	return revision, nil
 }
 
 func hydrateEntityComponentDefs(entitySchema []byte, componentSchemas ...[]byte) ([]byte, error) {

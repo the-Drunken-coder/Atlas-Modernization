@@ -56,6 +56,18 @@ function runCombined(command, args, options = {}) {
   return output;
 }
 
+function runStep(description, callback) {
+  try {
+    return callback();
+  } catch (error) {
+    throw new Error(`${description}: ${errorMessage(error)}`);
+  }
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function runCombinedAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -64,11 +76,23 @@ function runCombinedAsync(command, args, options = {}) {
     });
     let output = "";
     let killTimer;
-    const timeout = setTimeout(() => {
+    let timeout;
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      callback();
+    };
+    timeout = setTimeout(() => {
+      if (settled) return;
       child.kill("SIGTERM");
       killTimer = setTimeout(() => {
         child.kill("SIGKILL");
       }, KILL_GRACE_MS);
+      settled = true;
+      clearTimeout(timeout);
       reject(new Error(`${command} ${args.join(" ")} timed out`));
     }, options.timeout ?? DEFAULT_TIMEOUT_MS);
     child.stdout.setEncoding("utf8");
@@ -80,25 +104,29 @@ function runCombinedAsync(command, args, options = {}) {
       output += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timeout);
-      clearTimeout(killTimer);
-      process.stderr.write(output);
-      reject(error);
+      finish(() => {
+        process.stderr.write(output);
+        reject(error);
+      });
     });
     child.on("close", (code) => {
-      clearTimeout(timeout);
-      clearTimeout(killTimer);
-      if (options.expectStatus !== undefined && code !== options.expectStatus) {
-        process.stderr.write(output);
-        reject(new Error(`${command} ${args.join(" ")} exited with code ${code}, want ${options.expectStatus}`));
+      if (settled) {
+        clearTimeout(killTimer);
         return;
       }
-      if (options.expectStatus === undefined && code !== 0) {
-        process.stderr.write(output);
-        reject(new Error(`${command} ${args.join(" ")} exited with code ${code}`));
-        return;
-      }
-      resolve(output);
+      finish(() => {
+        if (options.expectStatus !== undefined && code !== options.expectStatus) {
+          process.stderr.write(output);
+          reject(new Error(`${command} ${args.join(" ")} exited with code ${code}, want ${options.expectStatus}`));
+          return;
+        }
+        if (options.expectStatus === undefined && code !== 0) {
+          process.stderr.write(output);
+          reject(new Error(`${command} ${args.join(" ")} exited with code ${code}`));
+          return;
+        }
+        resolve(output);
+      });
     });
   });
 }
@@ -125,8 +153,22 @@ async function withFakeCore(callback) {
     if (req.method === "POST" && req.url === "/tasks") {
       let body = "";
       for await (const chunk of req) body += chunk;
+      const task = JSON.parse(body);
       res.setHeader("Content-Type", "application/json");
-      res.end(body);
+      res.end(
+        JSON.stringify({
+          task_id: task.task_id,
+          status: task.status ?? "pending",
+          entity_id: task.entity_id ?? null,
+          components: task.components ?? {},
+          ...(task.extra === undefined ? {} : { extra: task.extra }),
+          metadata: {
+            created_at: "2026-06-12T12:00:00Z",
+            updated_at: "2026-06-12T12:00:00Z",
+            version: 1
+          }
+        })
+      );
       return;
     }
     res.statusCode = 404;
@@ -143,12 +185,12 @@ async function withFakeCore(callback) {
 
 try {
   tmpdirPath = mkdtempSync(join(tmpdir(), "atlas-sdk-"));
-  const packOutput = run("npm", ["pack", "--pack-destination", tmpdirPath, "--json", "--silent"]);
+  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () => run("npm", ["pack", "--pack-destination", tmpdirPath, "--json", "--silent"]));
   const tarball = join(tmpdirPath, packedTarballName(packOutput));
   const projectDir = join(tmpdirPath, "project");
   mkdirSync(projectDir);
-  run("npm", ["init", "-y", "--silent"], { cwd: projectDir });
-  run("npm", ["install", tarball, "--silent"], { cwd: projectDir });
+  runStep(`Failed to initialize smoke project at ${projectDir}`, () => run("npm", ["init", "-y", "--silent"], { cwd: projectDir }));
+  runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () => run("npm", ["install", tarball, "--silent"], { cwd: projectDir }));
 
   const helpOutput = runCombined("npx", ["atlas", "--help"], { cwd: projectDir });
   if (!/usage: atlas/i.test(helpOutput)) {
@@ -158,20 +200,16 @@ try {
 
   await withFakeCore(async (baseUrl) => {
     const task = {
-      task_id: "smoke-task",
-      status: "pending",
-      entity_id: null,
-      components: {},
-      metadata: {
-        created_at: "2026-06-12T12:00:00Z",
-        updated_at: "2026-06-12T12:00:00Z",
-        version: 1
-      }
+      task_id: "smoke-task"
     };
     const output = await runCombinedAsync("npx", ["atlas", "--base-url", baseUrl, "tasks", "create", JSON.stringify(task)], { cwd: projectDir });
     if (!output.includes('"task_id":"smoke-task"')) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not run tasks create successfully");
+    }
+    if (!output.includes('"status":"pending"') || !output.includes('"entity_id":null') || !output.includes('"components":{}')) {
+      process.stderr.write(output);
+      throw new Error("installed atlas binary did not print Core task create defaults");
     }
   });
 

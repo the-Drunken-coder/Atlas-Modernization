@@ -1,11 +1,15 @@
 package feed
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
@@ -174,6 +178,8 @@ func (s *simulatedSubscriber) audit(t *testing.T) {
 			assertOptionalString(t, s.name, event.Event.Version, "entity_id", event.Event.EntityID, received.Event.EntityID)
 		}
 	}
+	// Gap recovery may re-apply a version already received from the live feed,
+	// so appliedOrder only needs to be non-decreasing, not unique.
 	for i := 1; i < len(s.appliedOrder); i++ {
 		if s.appliedOrder[i] < s.appliedOrder[i-1] {
 			t.Fatalf("%s applied versions out of order: %v", s.name, s.appliedOrder)
@@ -221,7 +227,7 @@ func TestHubOrdersAndFiltersFeedEvents(t *testing.T) {
 }
 
 func TestHubSkipsTimedOutMissingVersions(t *testing.T) {
-	hub := NewHub(0, Options{MissingVersionTimeout: 10 * time.Millisecond})
+	hub := NewHub(0, Options{MissingVersionTimeout: 100 * time.Millisecond})
 	defer hub.Close()
 
 	all := hub.NewClient()
@@ -235,6 +241,7 @@ func TestHubSkipsTimedOutMissingVersions(t *testing.T) {
 func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
 	hub := NewHub(0, Options{MissingVersionTimeout: time.Second})
 	defer hub.Close()
+	logs := captureFeedTestLogs(t)
 
 	all := hub.NewClient()
 	all.Subscribe(Subscription{Filter: FilterAll})
@@ -248,6 +255,28 @@ func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
 	hub.Publish(entityEvent("create", "asset-after-unbuildable-event", 2, "asset"))
 
 	assertVersionWithin(t, all, 2, time.Second)
+	logOutput := logs.String()
+	for _, want := range []string{
+		"Atlas feed change could not be converted to a feed event",
+		"Skipping known-missing Atlas feed version",
+		"asset-missing-after-state",
+		`"version":1`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("captured logs missing %q:\n%s", want, logOutput)
+		}
+	}
+}
+
+func captureFeedTestLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := log.Logger
+	log.Logger = zerolog.New(&buf)
+	t.Cleanup(func() {
+		log.Logger = previous
+	})
+	return &buf
 }
 
 func TestSimulationHarnessAuditsEntitledFeedDeliveryAndRecovery(t *testing.T) {

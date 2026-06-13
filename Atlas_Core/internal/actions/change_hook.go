@@ -33,8 +33,9 @@ type ResourceChange struct {
 	AfterObject  *models.MediaObject
 }
 
-// ChangeSink receives committed resource changes. Implementations must not
-// block write paths indefinitely.
+// ChangeSink receives committed resource changes. PublishResourceChange should
+// complete within 10ms under normal load; delegate slower work to a buffered
+// queue or worker and return immediately.
 type ChangeSink interface {
 	PublishResourceChange(ResourceChange)
 }
@@ -105,11 +106,23 @@ func publishChange(sink ChangeSink, change ResourceChange) {
 	if sink == nil {
 		return
 	}
-	change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
-	change.AfterEntity = cloneEntityModel(change.AfterEntity)
-	change.BeforeTask = cloneTaskModel(change.BeforeTask)
-	change.AfterTask = cloneTaskModel(change.AfterTask)
-	change.BeforeObject = cloneObjectModel(change.BeforeObject)
-	change.AfterObject = cloneObjectModel(change.AfterObject)
+	switch change.ResourceType {
+	case ChangeResourceEntity:
+		change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
+		change.AfterEntity = cloneEntityModel(change.AfterEntity)
+	case ChangeResourceTask:
+		change.BeforeTask = cloneTaskModel(change.BeforeTask)
+		change.AfterTask = cloneTaskModel(change.AfterTask)
+	case ChangeResourceObject:
+		change.BeforeObject = cloneObjectModel(change.BeforeObject)
+		change.AfterObject = cloneObjectModel(change.AfterObject)
+	default:
+		change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
+		change.AfterEntity = cloneEntityModel(change.AfterEntity)
+		change.BeforeTask = cloneTaskModel(change.BeforeTask)
+		change.AfterTask = cloneTaskModel(change.AfterTask)
+		change.BeforeObject = cloneObjectModel(change.BeforeObject)
+		change.AfterObject = cloneObjectModel(change.AfterObject)
+	}
 	sink.PublishResourceChange(change)
 }

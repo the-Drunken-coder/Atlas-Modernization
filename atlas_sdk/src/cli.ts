@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-import { AtlasClient, type AtlasSubscription, type ResourceType } from "./index.js";
+import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskCreateRequest } from "./index.js";
 
 export type CLIIO = {
   stdout: { write(data: string): void };
   stderr: { write(data: string): void };
   env: Record<string, string | undefined>;
+  fetch?: AtlasClientOptions["fetch"];
+  WebSocket?: AtlasClientOptions["WebSocket"];
+  waitForExitSignal?: () => Promise<void>;
 };
 
 type CLIOptions = {
@@ -15,7 +18,7 @@ type CLIOptions = {
 type CLICommand =
   | { kind: "help"; options: CLIOptions }
   | { kind: "entities.get"; options: CLIOptions; id: string }
-  | { kind: "tasks.create"; options: CLIOptions; body: unknown }
+  | { kind: "tasks.create"; options: CLIOptions; body: TaskCreateRequest }
   | { kind: "watch"; options: CLIOptions; filter: AtlasSubscription; follow: boolean };
 
 const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
@@ -23,6 +26,7 @@ export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisf
 const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
 export const PACKAGE_NAME = "@the-drunken-coder/atlas-sdk";
 export const PACKAGE_BIN = { atlas: "./dist/atlas_sdk/src/cli.js" } as const;
+const CLI_REQUEST_TIMEOUT_MS = 10_000;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
 export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<number> {
@@ -33,26 +37,40 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       return 0;
     }
 
-    const client = new AtlasClient({ baseUrl: command.options.baseUrl, apiKey: command.options.apiKey, sync: "selective" });
-    await client.handshake();
+    const client = new AtlasClient({
+      baseUrl: command.options.baseUrl,
+      apiKey: command.options.apiKey,
+      fetch: io.fetch,
+      WebSocket: io.WebSocket,
+      sync: "selective",
+      requestTimeoutMs: CLI_REQUEST_TIMEOUT_MS
+    });
     if (command.kind === "entities.get") {
+      await client.handshake();
       io.stdout.write(JSON.stringify(await client.entities.get(command.id, { fresh: true })) + "\n");
       return 0;
     }
     if (command.kind === "tasks.create") {
-      io.stdout.write(JSON.stringify(await client.tasks.create(command.body as any)) + "\n");
+      await client.handshake();
+      io.stdout.write(JSON.stringify(await client.tasks.create(command.body)) + "\n");
       return 0;
     }
 
     client.watch(command.filter, (_resource, event) => {
       io.stdout.write(JSON.stringify(event) + "\n");
     });
-    await client.subscribe(command.filter);
-    await client.connectFeed();
-    if (command.follow) {
-      await new Promise(() => undefined);
+    try {
+      await client.subscribe(command.filter);
+      await client.sync.start();
+      if (command.follow) {
+        await (io.waitForExitSignal ?? waitForExitSignal)();
+      }
+      return 0;
+    } finally {
+      if (client.sync.status().running) {
+        client.sync.stop();
+      }
     }
-    return 0;
   } catch (error) {
     const message = (error as Error).message;
     if (message.startsWith("usage:") || message.startsWith("invalid ")) {
@@ -110,7 +128,7 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
   if (resource === "tasks" && action === "create" && rest.length > 0) {
     const raw = rest.join(" ");
     try {
-      return { kind: "tasks.create", options, body: JSON.parse(raw) };
+      return { kind: "tasks.create", options, body: parseTaskCreateBody(JSON.parse(raw)) };
     } catch {
       throw new Error("invalid task JSON");
     }
@@ -154,6 +172,48 @@ export function parseFilter(raw: string): AtlasSubscription {
 
 export function isResourceType(value: string | undefined): value is ResourceType {
   return value !== undefined && RESOURCE_TYPE_SET.has(value);
+}
+
+function parseTaskCreateBody(value: unknown): TaskCreateRequest {
+  if (!isTaskCreateRequest(value)) {
+    throw new Error("invalid task JSON");
+  }
+  return value;
+}
+
+function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const allowedKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
+  return (
+    Object.keys(value).every((key) => allowedKeys.has(key)) &&
+    isNonEmptyString(value.task_id) &&
+    (value.status === undefined || isNonEmptyString(value.status)) &&
+    (value.entity_id === undefined || value.entity_id === null || isNonEmptyString(value.entity_id)) &&
+    (value.components === undefined || isRecord(value.components)) &&
+    (value.extra === undefined || isRecord(value.extra))
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function waitForExitSignal(): Promise<void> {
+  return new Promise((resolve) => {
+    const onSignal = () => {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      resolve();
+    };
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+  });
 }
 
 function defaultIO(): CLIIO {

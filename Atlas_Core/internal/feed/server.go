@@ -40,6 +40,11 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed hub is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	if s.Config.EnableAPIAuth && strings.TrimSpace(s.Config.APIKey) == "" {
+		zerolog.Ctx(r.Context()).Error().Msg("Atlas feed server has auth enabled without an API key")
+		http.Error(w, "feed API key is not configured", http.StatusInternalServerError)
+		return
+	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: s.Config.OriginPatterns,

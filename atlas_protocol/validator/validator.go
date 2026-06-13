@@ -107,7 +107,7 @@ func appendFeedEventContextErrors(errors []string, value any) []string {
 		if exists && rawEntityID != nil {
 			entityID, ok := rawEntityID.(string)
 			if !ok || strings.TrimSpace(entityID) == "" {
-				errors = append(errors, "entity_id must be null, omitted, or a non-empty string for task delete feed events")
+				errors = append(errors, "entity_id, if present and not null, must be a non-empty string after trimming whitespace for task delete feed events")
 			}
 		}
 	}
@@ -116,7 +116,7 @@ func appendFeedEventContextErrors(errors []string, value any) []string {
 		if exists && rawPreviousEntityID != nil {
 			previousEntityID, ok := rawPreviousEntityID.(string)
 			if !ok || strings.TrimSpace(previousEntityID) == "" {
-				errors = append(errors, "previous_entity_id must be null, omitted, or a non-empty string for task update feed events")
+				errors = append(errors, "previous_entity_id, if present and not null, must be a non-empty string after trimming whitespace for task update feed events")
 			}
 		}
 	}
@@ -140,11 +140,12 @@ func valueAsMap(value any) (map[string]any, bool) {
 		}
 		data = encoded
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, false
 	}
-	return payload, true
+	payload, ok := decoded.(map[string]any)
+	return payload, ok
 }
 
 func ValidateEntityComponents(value any) []string {

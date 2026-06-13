@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync/atomic"
 
 	"github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
@@ -74,10 +73,13 @@ const (
 	ErrorCodePreconditionFailed     ErrorCode = "PRECONDITION_FAILED"
 )
 
+// ErrorResponse is exported so HTTP handlers can attach request metadata.
+// Prefer NewErrorResponse for base responses; Validate and MarshalJSON enforce
+// the Atlas Protocol error contract before a response is sent.
 type ErrorResponse struct {
-	Success   bool                 ` + "`json:\"success\"`" + `
-	Message   string               ` + "`json:\"message\"`" + `
-	ErrorCode ErrorCode            ` + "`json:\"error_code\"`" + `
+		Success   bool                 ` + "`json:\"success\"`" + `
+		Message   string               ` + "`json:\"message\"`" + `
+		ErrorCode ErrorCode            ` + "`json:\"error_code\"`" + `
 	ErrorID   string               ` + "`json:\"error_id,omitempty\"`" + `
 	Timestamp string               ` + "`json:\"timestamp,omitempty\"`" + `
 	Path      string               ` + "`json:\"path,omitempty\"`" + `
@@ -186,8 +188,6 @@ type FeedEvent struct {
 	Resource         JSONValue     ` + "`json:\"resource,omitempty\"`" + `
 }
 
-var EnableFeedEventMarshalValidation atomic.Bool
-
 func (e FeedEvent) MarshalJSON() ([]byte, error) {
 	type feedEventAlias FeedEvent
 	data, err := json.Marshal(feedEventAlias(e))
@@ -201,9 +201,6 @@ func (e FeedEvent) MarshalJSON() ([]byte, error) {
 }
 
 func validateMarshaledFeedEvent(name string, data []byte) error {
-	if !EnableFeedEventMarshalValidation.Load() {
-		return nil
-	}
 	if errors := validator.ValidateFeedEvent(json.RawMessage(data)); len(errors) > 0 {
 		return fmt.Errorf("invalid %s: %s", name, strings.Join(errors, "; "))
 	}

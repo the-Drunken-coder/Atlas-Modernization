@@ -9,7 +9,27 @@ if (typeof packageJSON.bin?.atlas !== "string" || packageJSON.bin.atlas.trim() =
   console.error("::error::package.json is missing bin.atlas");
   process.exit(1);
 }
-const cliModule = await import(pathToFileURL(join(packageRoot, packageJSON.bin.atlas)).href);
+const cliModuleURL = pathToFileURL(join(packageRoot, packageJSON.bin.atlas)).href;
+let cliModule;
+try {
+  cliModule = await import(cliModuleURL);
+} catch (error) {
+  console.error(`::error::Failed to import CLI module from ${packageJSON.bin.atlas} (${cliModuleURL}): ${errorMessage(error)}`);
+  process.exit(1);
+}
+
+if (typeof cliModule.PACKAGE_NAME !== "string") {
+  console.error("::error::CLI module does not export PACKAGE_NAME as a string");
+  process.exit(1);
+}
+if (typeof cliModule.PACKAGE_BIN !== "object" || cliModule.PACKAGE_BIN === null) {
+  console.error("::error::CLI module does not export PACKAGE_BIN as an object");
+  process.exit(1);
+}
+if (typeof cliModule.PACKAGE_BIN.atlas !== "string") {
+  console.error("::error::CLI module does not export PACKAGE_BIN.atlas as a string");
+  process.exit(1);
+}
 
 const expected = new Map([
   ["name", "@the-drunken-coder/atlas-sdk"],
@@ -44,4 +64,8 @@ for (const [field, want] of expected) {
 
 if (failed) {
   process.exit(1);
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }

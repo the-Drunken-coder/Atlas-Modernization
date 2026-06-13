@@ -167,7 +167,15 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 }
 
 func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
-	query := &recordingSchemaCheckQuery{ok: true}
+	query := &recordingSchemaCheckQuery{
+		tableCount:      len(coreSchemaTables),
+		sequencePresent: true,
+		contextColumn: schemaColumn{
+			udtName:              "jsonb",
+			isNullable:           "NO",
+			defaultIsEmptyObject: true,
+		},
+	}
 
 	ok, err := coreSchemaTablesPresent(context.Background(), query)
 	if err != nil {
@@ -177,19 +185,55 @@ func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 		t.Fatal("coreSchemaTablesPresent = false, want true from fake row")
 	}
 
+	sql := strings.Join(query.sqls, "\n")
 	for _, fragment := range []string{
+		"information_schema.tables",
+		"table_schema = 'public'",
+		"table_name = ANY($1::text[])",
 		"atlas_change_version_seq",
+		"FROM information_schema.columns c",
 		"table_name = 'deletions'",
 		"column_name = 'context'",
-		"udt_name = 'jsonb'",
-		"is_nullable = 'NO'",
 	} {
-		if !strings.Contains(query.sql, fragment) {
-			t.Fatalf("schema check SQL missing %q:\n%s", fragment, query.sql)
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("schema check SQL missing %q:\n%s", fragment, sql)
 		}
 	}
-	if len(query.args) != 2 {
-		t.Fatalf("schema check args = %#v, want table count and table list", query.args)
+	if len(query.sqls) != 3 {
+		t.Fatalf("schema check query count = %d, want 3: %#v", len(query.sqls), query.sqls)
+	}
+	if len(query.args) != 3 || len(query.args[0]) != 1 {
+		t.Fatalf("schema check args = %#v, want table list on first query only", query.args)
+	}
+}
+
+func TestCoreSchemaDeletionsContextQueryParses(t *testing.T) {
+	dbURL, explicitDBURL := databaseTestURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema parse tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	conn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close test database connection: %v", err)
+		}
+	}()
+
+	var udtName, isNullable string
+	var defaultIsEmptyObject bool
+	err = conn.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deletions context schema query should parse and execute without alias errors: %v", err)
 	}
 }
 
@@ -330,32 +374,74 @@ func databaseTestURL() (string, bool) {
 }
 
 type recordingSchemaCheckQuery struct {
-	sql  string
-	args []any
-	ok   bool
-	err  error
+	sqls            []string
+	args            [][]any
+	tableCount      int
+	sequencePresent bool
+	contextColumn   schemaColumn
+	err             error
+}
+
+type schemaColumn struct {
+	udtName              string
+	isNullable           string
+	defaultIsEmptyObject bool
 }
 
 func (q *recordingSchemaCheckQuery) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
-	q.sql = sql
-	q.args = append([]any(nil), args...)
-	return boolRow{ok: q.ok, err: q.err}
+	q.sqls = append(q.sqls, sql)
+	q.args = append(q.args, append([]any(nil), args...))
+	if q.err != nil {
+		return schemaCheckRow{err: q.err}
+	}
+	switch {
+	case strings.Contains(sql, "information_schema.tables"):
+		return schemaCheckRow{values: []any{q.tableCount}}
+	case strings.Contains(sql, "atlas_change_version_seq"):
+		return schemaCheckRow{values: []any{q.sequencePresent}}
+	case strings.Contains(sql, "information_schema.columns"):
+		return schemaCheckRow{values: []any{q.contextColumn.udtName, q.contextColumn.isNullable, q.contextColumn.defaultIsEmptyObject}}
+	default:
+		return schemaCheckRow{err: fmt.Errorf("unexpected schema check query: %s", sql)}
+	}
 }
 
-type boolRow struct {
-	ok  bool
-	err error
+type schemaCheckRow struct {
+	values []any
+	err    error
 }
 
-func (r boolRow) Scan(dest ...any) error {
+func (r schemaCheckRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	target, ok := dest[0].(*bool)
-	if !ok {
-		return fmt.Errorf("boolRow expected *bool destination, got %T", dest[0])
+	if len(dest) != len(r.values) {
+		return fmt.Errorf("schemaCheckRow destination count = %d, want %d", len(dest), len(r.values))
 	}
-	*target = r.ok
+	for index, value := range r.values {
+		switch target := dest[index].(type) {
+		case *bool:
+			typed, ok := value.(bool)
+			if !ok {
+				return fmt.Errorf("schemaCheckRow value %d = %T, want bool", index, value)
+			}
+			*target = typed
+		case *int:
+			typed, ok := value.(int)
+			if !ok {
+				return fmt.Errorf("schemaCheckRow value %d = %T, want int", index, value)
+			}
+			*target = typed
+		case *string:
+			typed, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("schemaCheckRow value %d = %T, want string", index, value)
+			}
+			*target = typed
+		default:
+			return fmt.Errorf("schemaCheckRow destination %d = %T", index, dest[index])
+		}
+	}
 	return nil
 }
 

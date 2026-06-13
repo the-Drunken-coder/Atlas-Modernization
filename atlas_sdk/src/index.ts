@@ -8,7 +8,8 @@ export {
   type AtlasClientOptions,
   type AtlasSubscription,
   type ReadOptions,
-  type SyncStatus
+  type SyncStatus,
+  type TaskCreateRequest
 } from "./client.js";
 export { ATLAS_PROTOCOL_REVISION } from "./protocol.js";
 export type {

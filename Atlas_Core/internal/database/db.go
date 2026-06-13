@@ -24,6 +24,20 @@ var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale;
 // coreSchemaTables are required when destructive recreate is disabled.
 var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
 
+const coreSchemaDeletionsContextSQL = `
+	SELECT
+		c.udt_name,
+		c.is_nullable,
+		COALESCE(pg_get_expr(d.adbin, d.adrelid) = $$'{}'::jsonb$$, false)
+	FROM information_schema.columns c
+	JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
+	JOIN pg_catalog.pg_class cls ON cls.relnamespace = n.oid AND cls.relname = c.table_name
+	JOIN pg_catalog.pg_attribute a ON a.attrelid = cls.oid AND a.attname = c.column_name AND NOT a.attisdropped
+	LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+	WHERE c.table_schema = 'public'
+	  AND c.table_name = 'deletions'
+	  AND c.column_name = 'context'`
+
 func coreSchemaCreateDDL() []string {
 	return []string{
 		`CREATE SEQUENCE atlas_change_version_seq`,
@@ -232,30 +246,40 @@ func New(cfg *config.Config) (*DB, error) {
 func coreSchemaTablesPresent(ctx context.Context, q interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }) (bool, error) {
-	const qSQL = `
-			SELECT
-				(
-					SELECT COUNT(*) = $1
-					FROM information_schema.tables
-					WHERE table_schema = 'public'
-					  AND table_name = ANY($2::text[])
-				)
-				AND to_regclass('public.atlas_change_version_seq') IS NOT NULL
-				AND EXISTS (
-					SELECT 1
-					FROM information_schema.columns
-					WHERE table_schema = 'public'
-					  AND table_name = 'deletions'
-					  AND column_name = 'context'
-					  AND udt_name = 'jsonb'
-					  AND is_nullable = 'NO'
-					  AND COALESCE(column_default, '') LIKE '%{}%'
-				)`
-	var ok bool
-	if err := q.QueryRow(ctx, qSQL, len(coreSchemaTables), coreSchemaTables).Scan(&ok); err != nil {
-		return false, fmt.Errorf("failed to check core schema: %w", err)
+	const tableSQL = `
+		SELECT COUNT(*)
+		FROM information_schema.tables
+		WHERE table_schema = 'public'
+		  AND table_name = ANY($1::text[])`
+	var tableCount int
+	if err := q.QueryRow(ctx, tableSQL, coreSchemaTables).Scan(&tableCount); err != nil {
+		return false, fmt.Errorf("failed to check core schema tables: %w", err)
 	}
-	return ok, nil
+	if tableCount != len(coreSchemaTables) {
+		return false, nil
+	}
+
+	const sequenceSQL = `SELECT to_regclass('public.atlas_change_version_seq') IS NOT NULL`
+	var sequencePresent bool
+	if err := q.QueryRow(ctx, sequenceSQL).Scan(&sequencePresent); err != nil {
+		return false, fmt.Errorf("failed to check core schema change-version sequence: %w", err)
+	}
+	if !sequencePresent {
+		return false, nil
+	}
+
+	var udtName, isNullable string
+	var defaultIsEmptyObject bool
+	if err := q.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check deletions context column: %w", err)
+	}
+	if udtName != "jsonb" || isNullable != "NO" || !defaultIsEmptyObject {
+		return false, nil
+	}
+	return true, nil
 }
 
 // Close closes the database connection pool.
