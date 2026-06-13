@@ -314,10 +314,10 @@ func sequenceStep(previous, current rune) int {
 	if !sameSequenceClass(previous, current) {
 		return 0
 	}
-	switch {
-	case current == previous+1:
+	switch current {
+	case previous + 1:
 		return 1
-	case current == previous-1:
+	case previous - 1:
 		return -1
 	default:
 		return 0
