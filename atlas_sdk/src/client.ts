@@ -254,6 +254,7 @@ export class AtlasClient {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnecting = false;
+  private reconnectAfterRecovery = false;
   private socket: WebSocketLike | undefined;
   private feedConnection: FeedConnection | undefined;
 
@@ -568,22 +569,34 @@ export class AtlasClient {
 
   private async connectAndRecoverFeed(): Promise<void> {
     if (this.reconnecting) {
+      this.reconnectAfterRecovery = true;
       return;
     }
     this.reconnecting = true;
+    this.reconnectAfterRecovery = false;
     this.clearReconnectTimer();
     try {
       await this.connectFeed();
       await this.changedSince();
     } finally {
       this.reconnecting = false;
+      if (this.reconnectAfterRecovery) {
+        this.reconnectAfterRecovery = false;
+        this.scheduleReconnect();
+      }
     }
   }
 
   private scheduleReconnect(): void {
-    if (!this.syncRunning || !this.WebSocketImpl || this.reconnectTimer || this.reconnecting) {
+    if (!this.syncRunning || !this.WebSocketImpl || this.reconnectTimer) {
       return;
     }
+    if (this.reconnecting) {
+      this.reconnectAfterRecovery = true;
+      return;
+    }
+    this.healthy = false;
+    this.degraded = true;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       void this.connectAndRecoverFeed().catch(() => {

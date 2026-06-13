@@ -59,16 +59,18 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
     client.watch(command.filter, (_resource, event) => {
       io.stdout.write(JSON.stringify(event) + "\n");
     });
-    await client.subscribe(command.filter);
-    await client.sync.start();
-    if (command.follow) {
-      try {
+    try {
+      await client.subscribe(command.filter);
+      await client.sync.start();
+      if (command.follow) {
         await (io.waitForExitSignal ?? waitForExitSignal)();
-      } finally {
+      }
+      return 0;
+    } finally {
+      if (client.sync.status().running) {
         client.sync.stop();
       }
     }
-    return 0;
   } catch (error) {
     const message = (error as Error).message;
     if (message.startsWith("usage:") || message.startsWith("invalid ")) {

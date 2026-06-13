@@ -316,6 +316,57 @@ describe("AtlasClient sync", () => {
     expect(core.sockets.size).toBe(1);
   });
 
+  it("re-arms reconnect when a replacement socket closes during recovery", async () => {
+    const core = new FakeCore();
+    let delayNextChangedSince = false;
+    let releaseRecovery: (() => void) | undefined;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since" && delayNextChangedSince) {
+        delayNextChangedSince = false;
+        await new Promise<void>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      const initialSocket = Array.from(core.sockets)[0];
+      delayNextChangedSince = true;
+      const recovery = (client as unknown as { connectAndRecoverFeed: () => Promise<void> }).connectAndRecoverFeed();
+
+      await vi.waitFor(() => {
+        expect(releaseRecovery).toBeTypeOf("function");
+      });
+      const recoverySocket = Array.from(core.sockets).find((socket) => socket !== initialSocket);
+      expect(recoverySocket).toBeDefined();
+
+      recoverySocket?.close();
+      releaseRecovery?.();
+      await recovery;
+
+      expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true });
+      await vi.waitFor(
+        () => {
+          expect(client.sync.status().healthy).toBe(true);
+        },
+        { timeout: 2500 }
+      );
+      expect(core.sockets.size).toBe(1);
+      expect(core.sockets.has(recoverySocket!)).toBe(false);
+    } finally {
+      client.sync.stop();
+    }
+  });
+
   it("replaces an existing feed socket on repeated connect calls", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -740,6 +791,21 @@ describe("Atlas CLI", () => {
 
     expect(core.requests.some((request) => request.startsWith("/queries/full"))).toBe(true);
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
+  });
+
+  it("stops watch sync when follow exits with an error", async () => {
+    const core = new FakeCore();
+    const captured = captureIO();
+    captured.io.fetch = core.fetch;
+    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.waitForExitSignal = async () => {
+      throw new Error("follow failed");
+    };
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)).resolves.toBe(1);
+
+    expect(captured.stderr()).toContain("follow failed");
+    expect(core.sockets.size).toBe(0);
   });
 });
 
