@@ -34,7 +34,7 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().healthy).toBe(true);
   });
 
-  it("emits recovered update events for changed-since upserts", async () => {
+  it("emits recovered events for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
@@ -46,7 +46,7 @@ describe("AtlasClient sync", () => {
     await client.changedSince();
 
     await expect(client.tasks.get("task-polled")).resolves.toEqual(updated);
-    expect(watch).toHaveBeenCalledWith(updated, expect.objectContaining({ event: "update", resource_type: "task", id: "task-polled" }));
+    expect(watch).toHaveBeenCalledWith(updated, expect.objectContaining({ event: "recovered", resource_type: "task", id: "task-polled" }));
   });
 
   it("drains paginated changed-since responses before advancing the high-water mark", async () => {
@@ -65,6 +65,22 @@ describe("AtlasClient sync", () => {
     expect(watch).toHaveBeenCalledWith(first, expect.objectContaining({ id: "task-page-1", version: first.metadata.version }));
     expect(watch).toHaveBeenCalledWith(second, expect.objectContaining({ id: "task-page-2", version: second.metadata.version }));
     expect(client.sync.status().lastVersion).toBe(core.version);
+  });
+
+  it("lets changed-since recovery replace a delete tombstone with a later recreated resource", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-recreated"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch("asset-recreated", watch);
+
+    await client.entities.delete(original.entity_id);
+    const recreated = core.upsertEntity({ ...entity("asset-recreated"), alias: "back" });
+    await client.changedSince();
+
+    expect(watch).toHaveBeenCalledWith(recreated, expect.objectContaining({ event: "recovered", id: "asset-recreated", version: recreated.metadata.version }));
+    await expect(client.entities.get("asset-recreated")).resolves.toEqual(recreated);
   });
 
   it("drains paginated full-dataset hydration responses", async () => {
@@ -94,7 +110,7 @@ describe("AtlasClient sync", () => {
     await expect(client.entities.get("asset-delete")).rejects.toThrow("Atlas request failed: 404");
   });
 
-  it("applies the real delete feed event after an uncached local delete", async () => {
+  it("emits a local delete notification without fabricating a feed version", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-delete-uncached"));
     const client = new AtlasClient({
@@ -115,7 +131,8 @@ describe("AtlasClient sync", () => {
 
     await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
     expect(watch.mock.calls[0][0]).toBeUndefined();
-    expect(watch.mock.calls[0][1]).toMatchObject({ event: "delete", resource_type: "entity", id: "asset-delete-uncached" });
+    expect(watch.mock.calls[0][1]).toEqual({ event: "local_delete", resource_type: "entity", id: "asset-delete-uncached" });
+    expect(watch.mock.calls[0][1]).not.toHaveProperty("version");
   });
 
   it("keeps local delete tombstones ahead of stale feed updates", async () => {
@@ -148,7 +165,7 @@ describe("AtlasClient sync", () => {
 
     await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
     expect(watch.mock.calls[0][0]).toBeUndefined();
-    expect(watch.mock.calls[0][1]).toMatchObject({ event: "delete", resource_type: "entity", id: "asset-delete-stale" });
+    expect(watch.mock.calls[0][1]).toMatchObject({ event: "local_delete", resource_type: "entity", id: "asset-delete-stale" });
     await expect(client.entities.get("asset-delete-stale")).rejects.toThrow("Atlas request failed: 404");
   });
 

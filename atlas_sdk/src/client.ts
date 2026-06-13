@@ -102,6 +102,25 @@ type DeletedResource = {
   entity_id?: string | null;
 };
 
+type ResourceValue = EntityResource | TaskResource | ObjectResource;
+
+export type AtlasRecoveredWatchEvent = {
+  event: "recovered";
+  resource_type: ResourceType;
+  id: string;
+  version: number;
+  resource: ResourceValue;
+};
+
+export type AtlasLocalDeleteWatchEvent = {
+  event: "local_delete";
+  resource_type: ResourceType;
+  id: string;
+  previous_version?: number;
+};
+
+export type AtlasWatchEvent = FeedEvent | AtlasRecoveredWatchEvent | AtlasLocalDeleteWatchEvent;
+
 type FullDatasetCursors = {
   entity_cursor?: string;
   task_cursor?: string;
@@ -114,7 +133,7 @@ type ChangedSinceCursors = FullDatasetCursors & {
   deleted_object_cursor?: string;
 };
 
-type WatchCallback<T> = (value: T | undefined, event: FeedEvent) => void;
+type WatchCallback<T> = (value: T | undefined, event: AtlasWatchEvent) => void;
 
 type CacheEntry<T> = {
   value?: T;
@@ -445,15 +464,19 @@ export class AtlasClient {
     const sinceVersion = this.lastVersion;
     let highWaterVersion = sinceVersion;
     let cursors: ChangedSinceCursors = {};
-    const recoveredEvents: FeedEvent[] = [];
+    const recoveredEvents: AtlasWatchEvent[] = [];
     do {
       const response = await this.http<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
       highWaterVersion = Math.max(highWaterVersion, response.version);
       recoveredEvents.push(...changedSinceToEvents(response));
       cursors = nextChangedSinceCursors(response);
     } while (hasMoreChangedSince(cursors));
-    for (const event of recoveredEvents.sort((a, b) => a.version - b.version)) {
-      this.applyEvent(event);
+    for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
+      if (event.event === "recovered") {
+        this.applyRecoveredEvent(event);
+      } else if (event.event !== "local_delete") {
+        this.applyEvent(event);
+      }
     }
     this.pendingDeletes.clear();
     this.lastVersion = Math.max(this.lastVersion, highWaterVersion);
@@ -561,6 +584,20 @@ export class AtlasClient {
     this.notify(event, resource, previous);
   }
 
+  private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
+    const current = this.cache[event.resource_type].get(event.id);
+    const previous = current?.value;
+    if (event.version <= this.versionFor(event.resource_type, event.id)) {
+      this.lastVersion = Math.max(this.lastVersion, event.version);
+      return;
+    }
+    this.pendingDeletes.delete(resourceCacheKey(event.resource_type, event.id));
+    this.locallyNotifiedDeletes.delete(resourceCacheKey(event.resource_type, event.id));
+    this.cache[event.resource_type].set(event.id, { value: event.resource as any, version: event.version, deleted: false });
+    this.lastVersion = Math.max(this.lastVersion, event.version);
+    this.notify(event, event.resource, previous);
+  }
+
   private cacheResource(type: ResourceType, id: string, value: EntityResource | TaskResource | ObjectResource): void {
     const version = value.metadata.version;
     const existing = this.cache[type].get(id);
@@ -630,12 +667,11 @@ export class AtlasClient {
   private async deleteResource(type: ResourceType, id: string, path: string): Promise<void> {
     await this.http<void>("DELETE", path);
     const previousVersion = this.cache[type].get(id)?.version ?? 0;
-    const tombstoneVersion = previousVersion || -1;
     const previous = this.cache[type].get(id)?.value;
-    this.cache[type].set(id, { version: tombstoneVersion, deleted: true });
+    this.cache[type].set(id, { version: previousVersion, deleted: true });
     this.pendingDeletes.add(resourceCacheKey(type, id));
     this.locallyNotifiedDeletes.add(resourceCacheKey(type, id));
-    this.notify({ event: "delete", resource_type: type, id, version: tombstoneVersion } as FeedEvent, undefined, previous);
+    this.notify(localDeleteEvent(type, id, previousVersion), undefined, previous);
   }
 
   private async objectContent(id: string): Promise<ArrayBuffer> {
@@ -658,7 +694,7 @@ export class AtlasClient {
   }
 
   private notify(
-    event: FeedEvent,
+    event: AtlasWatchEvent,
     resource: EntityResource | TaskResource | ObjectResource | undefined,
     previous: EntityResource | TaskResource | ObjectResource | undefined
   ): void {
@@ -712,16 +748,16 @@ export class AtlasClient {
   }
 }
 
-function changedSinceToEvents(response: ChangedSinceResponse): FeedEvent[] {
-  const events: FeedEvent[] = [];
+function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatchEvent[] {
+  const events: AtlasWatchEvent[] = [];
   for (const entity of response.entities ?? []) {
-    events.push({ event: "update", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity });
+    events.push({ event: "recovered", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity });
   }
   for (const task of response.tasks ?? []) {
-    events.push({ event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task });
+    events.push({ event: "recovered", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task });
   }
   for (const object of response.objects ?? []) {
-    events.push({ event: "update", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object });
+    events.push({ event: "recovered", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object });
   }
   for (const item of response.deleted_entities ?? []) events.push({ event: "delete", resource_type: "entity", id: item.id, version: item.version });
   for (const item of response.deleted_tasks ?? []) {
@@ -730,6 +766,18 @@ function changedSinceToEvents(response: ChangedSinceResponse): FeedEvent[] {
   }
   for (const item of response.deleted_objects ?? []) events.push({ event: "delete", resource_type: "object", id: item.id, version: item.version });
   return events;
+}
+
+function watchEventVersion(event: AtlasWatchEvent): number {
+  return "version" in event ? event.version : 0;
+}
+
+function localDeleteEvent(type: ResourceType, id: string, previousVersion: number): AtlasLocalDeleteWatchEvent {
+  const event: AtlasLocalDeleteWatchEvent = { event: "local_delete", resource_type: type, id };
+  if (previousVersion > 0) {
+    event.previous_version = previousVersion;
+  }
+  return event;
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {
@@ -816,7 +864,7 @@ function covers(covering: AtlasSubscription, wanted: AtlasSubscription): boolean
   return subscriptionKey(covering) === subscriptionKey(wanted);
 }
 
-function matchesSubscription(filter: AtlasSubscription, event: FeedEvent, previous?: EntityResource | TaskResource | ObjectResource): boolean {
+function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, previous?: EntityResource | TaskResource | ObjectResource): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -829,7 +877,7 @@ function matchesSubscription(filter: AtlasSubscription, event: FeedEvent, previo
         return false;
       }
       return (
-        (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id) ||
+        (event.event !== "delete" && event.event !== "local_delete" && (event.resource as TaskResource).entity_id === filter.entity_id) ||
         (event as FeedEvent & { entity_id?: string | null }).entity_id === filter.entity_id ||
         (event as FeedEvent & { previous_entity_id?: string | null }).previous_entity_id === filter.entity_id ||
         ((previous as TaskResource | undefined)?.entity_id ?? "") === filter.entity_id

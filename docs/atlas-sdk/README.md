@@ -55,6 +55,8 @@ Rules that make this safe:
 
 `client.entities.watch(id, callback)` (and equivalents per resource type, plus collection-level watches) fires when the cached resource changes. This is the real-time path for UIs: the change-feed event arrives and the UI reacts immediately, with no polling loop. It is the same cache and the same surface — not a separate layer.
 
+Watcher callbacks receive protocol feed events for server-published changes. They can also receive SDK-local events that are not wire feed frames: `recovered` when `changed-since` reconciliation applies a live resource row, and `local_delete` when a successful local DELETE removes a resource from the cache before Core's versioned tombstone arrives.
+
 ### Writes and read-your-writes
 
 Write functions always call the API. The API returns the created/updated resource with its new version; the SDK applies it to the cache immediately, guarded by `version > cachedVersion` so a racing feed event cannot regress state. A client that creates a task and immediately reads it sees it.

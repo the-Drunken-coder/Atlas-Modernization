@@ -92,7 +92,6 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-errCh:
 			closeWith(websocket.StatusInternalError, "feed write error")
-			cancel()
 			return
 		case result := <-readCh:
 			if result.err != nil {
