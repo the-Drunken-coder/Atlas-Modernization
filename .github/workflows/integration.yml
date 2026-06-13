@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - planning/sdk-change-feed-protocol
   push:
     branches:
       - main

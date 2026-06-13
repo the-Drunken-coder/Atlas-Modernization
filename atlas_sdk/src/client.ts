@@ -43,6 +43,14 @@ export type ReadOptions = {
   fresh?: boolean;
 };
 
+export type TaskCreateRequest = {
+  task_id: string;
+  status?: string;
+  entity_id?: string | null;
+  components?: TaskResource["components"];
+  extra?: TaskResource["extra"];
+};
+
 export type SyncStatus = {
   running: boolean;
   healthy: boolean;
@@ -205,7 +213,7 @@ export class AtlasClient {
 
   readonly tasks = {
     get: (id: string, options?: ReadOptions) => this.readTask(id, options),
-    create: (task: TaskResource) => this.writeResource<TaskResource>("POST", "/tasks", task, "task"),
+    create: (task: TaskCreateRequest) => this.writeResource<TaskResource>("POST", "/tasks", task, "task"),
     update: (id: string, patch: Partial<TaskResource>, options?: { ifMatchVersion?: number }) =>
       this.writeResource<TaskResource>("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", options?.ifMatchVersion),
     delete: (id: string) => this.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),

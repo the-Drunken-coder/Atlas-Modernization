@@ -24,6 +24,20 @@ var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale;
 // coreSchemaTables are required when destructive recreate is disabled.
 var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
 
+const coreSchemaDeletionsContextSQL = `
+	SELECT
+		c.udt_name,
+		c.is_nullable,
+		COALESCE((pg_get_expr(d.adbin, d.adrelid))::jsonb = '{}'::jsonb, false)
+	FROM information_schema.columns c
+	JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
+	JOIN pg_catalog.pg_class cls ON cls.relnamespace = n.oid AND cls.relname = c.table_name
+	JOIN pg_catalog.pg_attribute a ON a.attrelid = cls.oid AND a.attname = c.column_name AND NOT a.attisdropped
+	LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+	WHERE c.table_schema = 'public'
+	  AND c.table_name = 'deletions'
+	  AND c.column_name = 'context'`
+
 func coreSchemaCreateDDL() []string {
 	return []string{
 		`CREATE SEQUENCE atlas_change_version_seq`,
@@ -254,22 +268,9 @@ func coreSchemaTablesPresent(ctx context.Context, q interface {
 		return false, nil
 	}
 
-	const deletionsContextSQL = `
-		SELECT
-			c.udt_name,
-			c.is_nullable,
-			COALESCE((pg_get_expr(d.adbin, d.adrelid))::jsonb = '{}'::jsonb, false)
-		FROM information_schema.columns
-		JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
-		JOIN pg_catalog.pg_class cls ON cls.relnamespace = n.oid AND cls.relname = c.table_name
-		JOIN pg_catalog.pg_attribute a ON a.attrelid = cls.oid AND a.attname = c.column_name AND NOT a.attisdropped
-		LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-		WHERE c.table_schema = 'public'
-		  AND c.table_name = 'deletions'
-		  AND c.column_name = 'context'`
 	var udtName, isNullable string
 	var defaultIsEmptyObject bool
-	if err := q.QueryRow(ctx, deletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject); err != nil {
+	if err := q.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
 		}

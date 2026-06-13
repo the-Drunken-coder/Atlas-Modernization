@@ -633,6 +633,58 @@ describe("Atlas CLI", () => {
     expect(badFilter.stderr()).toContain("invalid subscription filter");
   });
 
+  it("creates tasks with Core request payloads and server defaults", async () => {
+    const core = new FakeCore();
+    const minimal = captureIO();
+    minimal.io.fetch = core.fetch;
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "tasks", "create", '{"task_id":"task-minimal"}'], minimal.io)).resolves.toBe(0);
+
+    expect(JSON.parse(minimal.stdout())).toMatchObject({
+      task_id: "task-minimal",
+      status: "pending",
+      entity_id: null,
+      components: {}
+    });
+
+    const expanded = captureIO();
+    expanded.io.fetch = core.fetch;
+    await expect(
+      runCLI(
+        [
+          "--base-url",
+          "http://atlas.test",
+          "tasks",
+          "create",
+          '{"task_id":"task-expanded","status":"acknowledged","entity_id":"asset-1","components":{"parameters":{"latitude":1}},"extra":{"priority":"high"}}'
+        ],
+        expanded.io
+      )
+    ).resolves.toBe(0);
+
+    expect(JSON.parse(expanded.stdout())).toMatchObject({
+      task_id: "task-expanded",
+      status: "acknowledged",
+      entity_id: "asset-1",
+      components: { parameters: { latitude: 1 } },
+      extra: { priority: "high" }
+    });
+  });
+
+  it.each([
+    '{"task_id":""}',
+    '{"task_id":"task-invalid","entity_id":""}',
+    '{"task_id":"task-invalid","components":[]}',
+    '{"task_id":"task-invalid","extra":[]}',
+    '{"task_id":"task-invalid","metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":1}}'
+  ])("rejects invalid task create request %s before handshake", async (body) => {
+    const io = captureIO();
+
+    await expect(runCLI(["tasks", "create", body], io.io)).resolves.toBe(2);
+
+    expect(io.stderr()).toContain("invalid task JSON");
+  });
+
   it("parses valid subscription filters", () => {
     expect(parseFilter("all")).toEqual({ filter: "all" });
     for (const resourceType of RESOURCE_TYPE_VALUES) {

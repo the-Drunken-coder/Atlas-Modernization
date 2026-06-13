@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskResource } from "./index.js";
+import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskCreateRequest } from "./index.js";
 
 export type CLIIO = {
   stdout: { write(data: string): void };
@@ -18,7 +18,7 @@ type CLIOptions = {
 type CLICommand =
   | { kind: "help"; options: CLIOptions }
   | { kind: "entities.get"; options: CLIOptions; id: string }
-  | { kind: "tasks.create"; options: CLIOptions; body: TaskResource }
+  | { kind: "tasks.create"; options: CLIOptions; body: TaskCreateRequest }
   | { kind: "watch"; options: CLIOptions; filter: AtlasSubscription; follow: boolean };
 
 const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
@@ -172,33 +172,25 @@ export function isResourceType(value: string | undefined): value is ResourceType
   return value !== undefined && RESOURCE_TYPE_SET.has(value);
 }
 
-function parseTaskCreateBody(value: unknown): TaskResource {
-  if (!isTaskResource(value)) {
+function parseTaskCreateBody(value: unknown): TaskCreateRequest {
+  if (!isTaskCreateRequest(value)) {
     throw new Error("invalid task JSON");
   }
   return value;
 }
 
-function isTaskResource(value: unknown): value is TaskResource {
+function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {
   if (!isRecord(value)) {
     return false;
   }
+  const allowedKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
   return (
+    Object.keys(value).every((key) => allowedKeys.has(key)) &&
     isNonEmptyString(value.task_id) &&
-    isNonEmptyString(value.status) &&
-    (value.entity_id === null || isNonEmptyString(value.entity_id)) &&
-    isRecord(value.components) &&
-    isMetadataBlock(value.metadata)
-  );
-}
-
-function isMetadataBlock(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isNonEmptyString(value.created_at) &&
-    isNonEmptyString(value.updated_at) &&
-    typeof value.version === "number" &&
-    Number.isFinite(value.version)
+    (value.status === undefined || isNonEmptyString(value.status)) &&
+    (value.entity_id === undefined || value.entity_id === null || isNonEmptyString(value.entity_id)) &&
+    (value.components === undefined || isRecord(value.components)) &&
+    (value.extra === undefined || isRecord(value.extra))
   );
 }
 

@@ -191,6 +191,7 @@ func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 		"table_schema = 'public'",
 		"table_name = ANY($1::text[])",
 		"atlas_change_version_seq",
+		"FROM information_schema.columns c",
 		"table_name = 'deletions'",
 		"column_name = 'context'",
 	} {
@@ -203,6 +204,36 @@ func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 	}
 	if len(query.args) != 3 || len(query.args[0]) != 1 {
 		t.Fatalf("schema check args = %#v, want table list on first query only", query.args)
+	}
+}
+
+func TestCoreSchemaDeletionsContextQueryParses(t *testing.T) {
+	dbURL, explicitDBURL := databaseTestURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema parse tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	conn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer func() {
+		if err := conn.Close(context.Background()); err != nil {
+			t.Errorf("close test database connection: %v", err)
+		}
+	}()
+
+	var udtName, isNullable string
+	var defaultIsEmptyObject bool
+	err = conn.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deletions context schema query should parse and execute without alias errors: %v", err)
 	}
 }
 

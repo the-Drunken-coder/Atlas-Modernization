@@ -4,6 +4,7 @@ import {
   type EntityResource,
   type FeedEvent,
   type ObjectResource,
+  type TaskCreateRequest,
   type TaskResource
 } from "../src";
 
@@ -105,7 +106,7 @@ export class FakeCore {
       return jsonOrNotFound(this.tasks.get(decodeURIComponent(path.split("/")[2])), "task not found");
     }
     if (path === "/tasks" && init?.method === "POST") {
-      return json(this.upsertTask(await readBody<TaskResource>(init)));
+      return json(this.upsertTask(taskFromCreateRequest(await readBody<TaskCreateRequest>(init))));
     }
     if (path.startsWith("/tasks/") && init?.method === "DELETE") {
       return this.deleteTaskResponse(decodeURIComponent(path.split("/")[2]));
@@ -306,6 +307,17 @@ export function entity(id: string): EntityResource {
 
 export function task(id: string, entity_id: string | null): TaskResource {
   return { task_id: id, status: "pending", entity_id, components: {}, metadata: metadata(0) };
+}
+
+export function taskFromCreateRequest(request: TaskCreateRequest): TaskResource {
+  return {
+    task_id: request.task_id,
+    status: request.status ?? "pending",
+    entity_id: request.entity_id ?? null,
+    components: request.components ?? {},
+    ...(request.extra === undefined ? {} : { extra: request.extra }),
+    metadata: metadata(0)
+  };
 }
 
 export function object(id: string): ObjectResource {

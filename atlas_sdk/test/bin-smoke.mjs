@@ -153,8 +153,22 @@ async function withFakeCore(callback) {
     if (req.method === "POST" && req.url === "/tasks") {
       let body = "";
       for await (const chunk of req) body += chunk;
+      const task = JSON.parse(body);
       res.setHeader("Content-Type", "application/json");
-      res.end(body);
+      res.end(
+        JSON.stringify({
+          task_id: task.task_id,
+          status: task.status ?? "pending",
+          entity_id: task.entity_id ?? null,
+          components: task.components ?? {},
+          ...(task.extra === undefined ? {} : { extra: task.extra }),
+          metadata: {
+            created_at: "2026-06-12T12:00:00Z",
+            updated_at: "2026-06-12T12:00:00Z",
+            version: 1
+          }
+        })
+      );
       return;
     }
     res.statusCode = 404;
@@ -186,20 +200,16 @@ try {
 
   await withFakeCore(async (baseUrl) => {
     const task = {
-      task_id: "smoke-task",
-      status: "pending",
-      entity_id: null,
-      components: {},
-      metadata: {
-        created_at: "2026-06-12T12:00:00Z",
-        updated_at: "2026-06-12T12:00:00Z",
-        version: 1
-      }
+      task_id: "smoke-task"
     };
     const output = await runCombinedAsync("npx", ["atlas", "--base-url", baseUrl, "tasks", "create", JSON.stringify(task)], { cwd: projectDir });
     if (!output.includes('"task_id":"smoke-task"')) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not run tasks create successfully");
+    }
+    if (!output.includes('"status":"pending"') || !output.includes('"entity_id":null') || !output.includes('"components":{}')) {
+      process.stderr.write(output);
+      throw new Error("installed atlas binary did not print Core task create defaults");
     }
   });
 
