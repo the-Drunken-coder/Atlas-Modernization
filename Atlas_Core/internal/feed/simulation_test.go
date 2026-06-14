@@ -301,6 +301,37 @@ func TestAsyncChangeSinkDoesNotBlockPublisher(t *testing.T) {
 	}
 }
 
+func TestAsyncChangeSinkSkipsDroppedVersion(t *testing.T) {
+	blocking := &skippableBlockingChangeSink{
+		received: make(chan actions.ResourceChange, 1),
+		release:  make(chan struct{}),
+		skipped:  make(chan skippedVersion, 1),
+	}
+	t.Cleanup(func() {
+		close(blocking.release)
+	})
+	sink := NewAsyncChangeSink(blocking, AsyncChangeSinkOptions{Buffer: 1})
+
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-1", Version: 1})
+	select {
+	case <-blocking.received:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async sink worker to receive first change")
+	}
+
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-2", Version: 2})
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-3", Version: 3})
+
+	select {
+	case skipped := <-blocking.skipped:
+		if skipped.version != 3 || skipped.reason != "async_sink_queue_full" {
+			t.Fatalf("skipped version = %+v, want version 3 with async_sink_queue_full", skipped)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async sink to skip dropped version")
+	}
+}
+
 type blockingChangeSink struct {
 	received chan actions.ResourceChange
 	release  chan struct{}
@@ -312,6 +343,29 @@ func (s *blockingChangeSink) PublishResourceChange(change actions.ResourceChange
 	default:
 	}
 	<-s.release
+}
+
+type skippedVersion struct {
+	version int64
+	reason  string
+}
+
+type skippableBlockingChangeSink struct {
+	received chan actions.ResourceChange
+	release  chan struct{}
+	skipped  chan skippedVersion
+}
+
+func (s *skippableBlockingChangeSink) PublishResourceChange(change actions.ResourceChange) {
+	select {
+	case s.received <- change:
+	default:
+	}
+	<-s.release
+}
+
+func (s *skippableBlockingChangeSink) SkipVersion(version int64, reason string) {
+	s.skipped <- skippedVersion{version: version, reason: reason}
 }
 
 func captureFeedTestLogs(t *testing.T) *bytes.Buffer {

@@ -21,7 +21,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	alias!:       null | shared.#NonEmptyString
 	components!:  #EntityComponents
 	metadata!:    #MetadataBlock
-	extra?:       {[string]: shared.#JSONValue}
+	extra?: {[string]: shared.#JSONValue}
 })
 
 #TaskResource: close({
@@ -30,19 +30,19 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	entity_id!:  null | shared.#NonEmptyString
 	components!: #TaskComponents
 	metadata!:   #MetadataBlock
-	extra?:      {[string]: shared.#JSONValue}
+	extra?: {[string]: shared.#JSONValue}
 })
 
 #ObjectResource: close({
-	object_id!:     shared.#NonEmptyString
-	path!:          null | string
-	content_type!:  null | string
-	type!:          null | string
-	size_bytes!:    null | (int & >=0)
-	usage_hints!:   [...shared.#NonEmptyString]
+	object_id!:    shared.#NonEmptyString
+	path!:         null | string
+	content_type!: null | string
+	type!:         null | string
+	size_bytes!:   null | (int & >=0)
+	usage_hints!: [...shared.#NonEmptyString]
 	referenced_by?: [...#ObjectReference]
-	bucket!:        null | string
-	metadata!:      #MetadataBlock
+	bucket!:   null | string
+	metadata!: #MetadataBlock
 })
 
 #FeedResource: #EntityResource | #TaskResource | #ObjectResource
@@ -72,10 +72,10 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 })
 
 #TaskUpdateEvent: close({
-	event!:              "update"
-	resource_type!:      "task"
-	id!:                 shared.#NonEmptyString
-	version!:            #FeedVersion
+	event!:         "update"
+	resource_type!: "task"
+	id!:            shared.#NonEmptyString
+	version!:       #FeedVersion
 	// Interop note: Go consumers can distinguish explicit null from absent after
 	// decoding raw JSON, but Go producers using *string with omitempty cannot
 	// reliably emit explicit null. TypeScript and other non-Go producers may use
@@ -118,7 +118,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	// reliably emit explicit null. TypeScript and other non-Go producers may use
 	// all three states. Consumers SHOULD normalize null to absent for
 	// Go-originated events and MUST treat both states as "no known parent entity".
-	entity_id?:     null | shared.#NonEmptyString
+	entity_id?: null | shared.#NonEmptyString
 })
 
 #ObjectDeleteEvent: close({

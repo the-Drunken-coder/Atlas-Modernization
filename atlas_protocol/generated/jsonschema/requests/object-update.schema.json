@@ -32,27 +32,56 @@
     "#NonEmptyString": {
       "pattern": "\\S",
       "type": "string"
+    },
+    "#ObjectReference": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "entity_id": {
+          "$ref": "#/$defs/%23NonEmptyString"
+        },
+        "task_id": {
+          "$ref": "#/$defs/%23NonEmptyString"
+        }
+      },
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "id": {
-      "$ref": "#/$defs/%23NonEmptyString"
+    "content_type": {
+      "type": "string"
     },
-    "parameters": {
-      "$ref": "#/$defs/%23JSONValue"
+    "extra": {
+      "additionalProperties": {
+        "$ref": "#/$defs/%23JSONValue"
+      },
+      "type": "object"
     },
-    "target": {
-      "$ref": "#/$defs/%23JSONValue"
+    "path": {
+      "type": "string"
+    },
+    "referenced_by": {
+      "items": {
+        "$ref": "#/$defs/%23ObjectReference"
+      },
+      "type": "array"
+    },
+    "size_bytes": {
+      "minimum": 0,
+      "type": "integer"
     },
     "type": {
-      "$ref": "#/$defs/%23NonEmptyString"
+      "type": "string"
+    },
+    "usage_hints": {
+      "items": {
+        "$ref": "#/$defs/%23NonEmptyString"
+      },
+      "type": "array"
     }
   },
-  "required": [
-    "type"
-  ],
   "type": "object",
   "x-atlas-protocol-revision": "sha256:fe69828faf1a883b603526942e3cd72945d3474c5d8b7fdcfed626a6f4fbec99"
 }

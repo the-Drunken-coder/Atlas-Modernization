@@ -33,5 +33,5 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	error_id?:   shared.#NonEmptyString
 	timestamp?:  shared.#RFC3339Timestamp
 	path?:       string
-	details?:    {[string]: shared.#JSONValue}
+	details?: {[string]: shared.#JSONValue}
 })

@@ -48,6 +48,10 @@ type asyncChangeSink struct {
 	queue chan actions.ResourceChange
 }
 
+type versionSkipper interface {
+	SkipVersion(version int64, reason string)
+}
+
 func NewAsyncChangeSink(sink actions.ChangeSink, opts AsyncChangeSinkOptions) actions.ChangeSink {
 	if sink == nil {
 		return nil
@@ -68,6 +72,9 @@ func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
 	select {
 	case s.queue <- change:
 	default:
+		if skipper, ok := s.sink.(versionSkipper); ok && change.Version > 0 {
+			skipper.SkipVersion(change.Version, "async_sink_queue_full")
+		}
 		log.Warn().
 			Str("event", string(change.Event)).
 			Str("resource_type", string(change.ResourceType)).

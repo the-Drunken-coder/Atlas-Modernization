@@ -203,8 +203,11 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 	if errors := protocol.ValidateFeedAuthMessage(payload); len(errors) > 0 {
 		return fmt.Errorf("feed auth frame is invalid: %s", strings.Join(errors, "; "))
 	}
-	apiKey, _ := payload["api_key"].(string)
-	if !constantTimeEqual(apiKey, s.Config.APIKey) {
+	var message protocol.FeedAuthMessage
+	if err := json.Unmarshal(result.data, &message); err != nil {
+		return fmt.Errorf("feed auth frame is invalid JSON")
+	}
+	if !constantTimeEqual(message.APIKey, s.Config.APIKey) {
 		return fmt.Errorf("feed API key rejected")
 	}
 	return nil

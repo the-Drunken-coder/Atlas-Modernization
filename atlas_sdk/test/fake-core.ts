@@ -95,7 +95,7 @@ export class FakeCore {
       return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
     }
     if (path === "/entities" && init?.method === "POST") {
-      const body = await readStrictBody<EntityCreateRequest>(init, entityCreateKeys);
+      const body = await readStrictBody<EntityCreateRequest>(init, entityCreateShape);
       if (body instanceof Response) return body;
       return json(this.createEntity(body), 201);
     }
@@ -107,7 +107,7 @@ export class FakeCore {
       if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
         return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
-      const body = await readStrictBody<EntityUpdateRequest>(init, entityUpdateKeys);
+      const body = await readStrictBody<EntityUpdateRequest>(init, entityUpdateShape);
       if (body instanceof Response) return body;
       return json(this.updateEntity(id, body));
     }
@@ -118,7 +118,7 @@ export class FakeCore {
       return jsonOrNotFound(this.tasks.get(decodeURIComponent(path.split("/")[2])), "task not found");
     }
     if (path === "/tasks" && init?.method === "POST") {
-      const body = await readStrictBody<TaskCreateRequest>(init, taskCreateKeys);
+      const body = await readStrictBody<TaskCreateRequest>(init, taskCreateShape);
       if (body instanceof Response) return body;
       return json(this.createTask(body), 201);
     }
@@ -130,7 +130,7 @@ export class FakeCore {
       if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
         return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
-      const body = await readStrictBody<TaskUpdateRequest>(init, taskUpdateKeys);
+      const body = await readStrictBody<TaskUpdateRequest>(init, taskUpdateShape);
       if (body instanceof Response) return body;
       return json(this.updateTask(id, body));
     }
@@ -147,7 +147,7 @@ export class FakeCore {
       return jsonOrNotFound(this.objects.get(decodeURIComponent(path.split("/")[2])), "object not found");
     }
     if (path === "/objects" && init?.method === "POST") {
-      const body = await readStrictBody<ObjectCreateRequest>(init, objectCreateKeys);
+      const body = await readStrictBody<ObjectCreateRequest>(init, objectCreateShape);
       if (body instanceof Response) return body;
       return json(this.createObject(body), 201);
     }
@@ -159,7 +159,7 @@ export class FakeCore {
       if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
         return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
-      const body = await readStrictBody<ObjectUpdateRequest>(init, objectUpdateKeys);
+      const body = await readStrictBody<ObjectUpdateRequest>(init, objectUpdateShape);
       if (body instanceof Response) return body;
       return json(this.updateObject(id, body));
     }
@@ -478,12 +478,64 @@ export function metadata(version: number) {
   return { created_at: "2026-06-12T12:00:00Z", updated_at: "2026-06-12T12:00:00Z", version };
 }
 
-const entityCreateKeys = new Set(["entity_id", "entity_type", "subtype", "alias", "components", "published_at", "updated_at", "extra"]);
-const entityUpdateKeys = new Set(["entity_type", "subtype", "alias", "components", "extra"]);
-const taskCreateKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
-const taskUpdateKeys = new Set(["status", "entity_id", "components", "extra", "remove_extra_keys"]);
-const objectCreateKeys = new Set(["object_id", "path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"]);
-const objectUpdateKeys = new Set(["path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"]);
+type FieldValidator = (value: unknown) => boolean;
+
+type RequestShape = {
+  allowedKeys: Set<string>;
+  requiredKeys: Set<string>;
+  fields: Record<string, FieldValidator>;
+};
+
+const entityCreateShape = requestShape(["entity_id", "entity_type", "subtype", "alias", "components", "published_at", "updated_at", "extra"], ["entity_id", "entity_type"], {
+  entity_id: isNonEmptyString,
+  entity_type: isNonEmptyString,
+  subtype: isNonEmptyString,
+  alias: isNullableNonEmptyString,
+  components: isRecord,
+  published_at: isRFC3339String,
+  updated_at: isRFC3339String,
+  extra: isRecord
+});
+const entityUpdateShape = requestShape(["entity_type", "subtype", "alias", "components", "extra"], [], {
+  entity_type: isNonEmptyString,
+  subtype: isString,
+  alias: isString,
+  components: isRecord,
+  extra: isRecord
+});
+const taskCreateShape = requestShape(["task_id", "status", "entity_id", "components", "extra"], ["task_id"], {
+  task_id: isNonEmptyString,
+  status: isNonEmptyString,
+  entity_id: isNullableNonEmptyString,
+  components: isRecord,
+  extra: isRecord
+});
+const taskUpdateShape = requestShape(["status", "entity_id", "components", "extra", "remove_extra_keys"], [], {
+  status: isNonEmptyString,
+  entity_id: isNullableNonEmptyString,
+  components: isRecord,
+  extra: isRecord,
+  remove_extra_keys: isNonEmptyStringArray
+});
+const objectCreateShape = requestShape(["object_id", "path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"], ["object_id"], {
+  object_id: isNonEmptyString,
+  path: isString,
+  size_bytes: isNonNegativeInteger,
+  content_type: isString,
+  type: isString,
+  usage_hints: isNonEmptyStringArray,
+  referenced_by: isObjectReferenceArray,
+  extra: isRecord
+});
+const objectUpdateShape = requestShape(["path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"], [], {
+  path: isString,
+  size_bytes: isNonNegativeInteger,
+  content_type: isString,
+  type: isString,
+  usage_hints: isNonEmptyStringArray,
+  referenced_by: isObjectReferenceArray,
+  extra: isRecord
+});
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
@@ -499,14 +551,24 @@ function jsonOrNotFound(value: unknown, message: string): Response {
   return json(value);
 }
 
-async function readStrictBody<T>(init: RequestInit, allowedKeys: Set<string>): Promise<T | Response> {
+async function readStrictBody<T>(init: RequestInit, shape: RequestShape): Promise<T | Response> {
   const value = await readBody<unknown>(init);
   if (!isRecord(value)) {
     return protocolError("Invalid JSON body", "INVALID_JSON", 400);
   }
-  const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
+  const unknownKey = Object.keys(value).find((key) => !shape.allowedKeys.has(key));
   if (unknownKey) {
     return protocolError(`Invalid JSON body: unknown field ${unknownKey}`, "INVALID_JSON", 400);
+  }
+  for (const requiredKey of shape.requiredKeys) {
+    if (!(requiredKey in value)) {
+      return protocolError(`Invalid JSON body: missing field ${requiredKey}`, "INVALID_JSON", 400);
+    }
+  }
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (!shape.fields[key]?.(fieldValue)) {
+      return protocolError(`Invalid JSON body: invalid field ${key}`, "INVALID_JSON", 400);
+    }
   }
   return value as T;
 }
@@ -521,6 +583,49 @@ function protocolError(message: string, error_code: ErrorCode, status: number): 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requestShape(allowedKeys: string[], requiredKeys: string[], fields: Record<string, FieldValidator>): RequestShape {
+  return { allowedKeys: new Set(allowedKeys), requiredKeys: new Set(requiredKeys), fields };
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isNullableNonEmptyString(value: unknown): value is string | null {
+  return value === null || isNonEmptyString(value);
+}
+
+function isRFC3339String(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isNonEmptyString);
+}
+
+function isObjectReferenceArray(value: unknown): value is Array<Record<string, string>> {
+  return Array.isArray(value) && value.every(isObjectReference);
+}
+
+function isObjectReference(value: unknown): value is Record<string, string> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== "entity_id" && key !== "task_id")) {
+    return false;
+  }
+  return (isNonEmptyString(value.entity_id) || isNonEmptyString(value.task_id)) && (value.entity_id === undefined || isNonEmptyString(value.entity_id)) && (value.task_id === undefined || isNonEmptyString(value.task_id));
 }
 
 function isEntityUpsert(event: FeedEvent): event is FeedEvent & { resource: EntityResource } {

@@ -65,27 +65,6 @@
       "minimum": -180,
       "type": "number"
     },
-    "#MetadataBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "created_at": {
-          "$ref": "#/$defs/%23RFC3339Timestamp"
-        },
-        "updated_at": {
-          "$ref": "#/$defs/%23RFC3339Timestamp"
-        },
-        "version": {
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "created_at",
-        "updated_at",
-        "version"
-      ],
-      "type": "object"
-    },
     "#NonEmptyString": {
       "pattern": "\\S",
       "type": "string"
@@ -175,9 +154,6 @@
       },
       "type": "object"
     },
-    "metadata": {
-      "$ref": "#/$defs/%23MetadataBlock"
-    },
     "status": {
       "$ref": "#/$defs/%23NonEmptyString"
     },
@@ -186,10 +162,6 @@
     }
   },
   "required": [
-    "components",
-    "entity_id",
-    "metadata",
-    "status",
     "task_id"
   ],
   "type": "object",

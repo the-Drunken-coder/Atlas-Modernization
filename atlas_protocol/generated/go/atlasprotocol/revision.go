@@ -3,4 +3,4 @@
 package atlasprotocol
 
 // ProtocolRevision identifies the protocol CUE source used to generate this package.
-const ProtocolRevision = "sha256:d664a94827e8102b3fbeda9ad482d7e3cea14149f2a2c7a8a6af828c69443464"
+const ProtocolRevision = "sha256:fe69828faf1a883b603526942e3cd72945d3474c5d8b7fdcfed626a6f4fbec99"

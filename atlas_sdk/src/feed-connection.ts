@@ -161,9 +161,17 @@ export class FeedConnectionManager {
 
     ensureCurrent();
     this.socket = socket;
+    const reportEventError = () => {
+      try {
+        options.onEventError();
+      } catch {
+        // The feed manager should not let an error callback poison ordered delivery.
+      }
+    };
     for (const filter of options.subscriptions) {
       socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
     }
+    let eventChain = Promise.resolve();
     socket.addEventListener("message", (message: any) => {
       if (this.connection !== connection || this.socket !== socket) {
         return;
@@ -173,9 +181,15 @@ export class FeedConnectionManager {
         if (data.type === "hello") {
           return;
         }
-        void Promise.resolve(options.onEvent(data as FeedEvent)).catch(options.onEventError);
+        eventChain = eventChain.then(async () => {
+          try {
+            await options.onEvent(data as FeedEvent);
+          } catch {
+            reportEventError();
+          }
+        });
       } catch {
-        options.onEventError();
+        reportEventError();
       }
     });
     socket.addEventListener("close", () => {

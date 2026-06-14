@@ -271,6 +271,38 @@ func TestTypeScriptGeneratorRequiresAtLeastOneProperty(t *testing.T) {
 	}
 }
 
+func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"priority": { "$ref": "#/$defs/%23NonEmptyString" },
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"required": ["task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"export type TaskCreateRequest",
+		"priority",
+		`const allowedKeys = new Set(["priority","task_id"])`,
+		`atlasProtocolHasOwn(value, "task_id") && atlasProtocolIsNonEmptyString(value.task_id)`,
+		`value.priority === undefined || atlasProtocolIsNonEmptyString(value.priority)`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestTypeScriptSourceRejectsMalformedRevision(t *testing.T) {
 	_, err := typeScriptSource("revision:unsafe", map[string][]byte{
 		"thing": []byte(`{"type":"object"}`),

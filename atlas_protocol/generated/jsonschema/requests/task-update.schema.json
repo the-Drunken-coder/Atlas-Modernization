@@ -65,27 +65,6 @@
       "minimum": -180,
       "type": "number"
     },
-    "#MetadataBlock": {
-      "additionalProperties": false,
-      "properties": {
-        "created_at": {
-          "$ref": "#/$defs/%23RFC3339Timestamp"
-        },
-        "updated_at": {
-          "$ref": "#/$defs/%23RFC3339Timestamp"
-        },
-        "version": {
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "created_at",
-        "updated_at",
-        "version"
-      ],
-      "type": "object"
-    },
     "#NonEmptyString": {
       "pattern": "\\S",
       "type": "string"
@@ -154,7 +133,6 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "minProperties": 1,
   "properties": {
     "components": {
       "$ref": "#/$defs/%23TaskComponents"
@@ -175,23 +153,16 @@
       },
       "type": "object"
     },
-    "metadata": {
-      "$ref": "#/$defs/%23MetadataBlock"
+    "remove_extra_keys": {
+      "items": {
+        "$ref": "#/$defs/%23NonEmptyString"
+      },
+      "type": "array"
     },
     "status": {
       "$ref": "#/$defs/%23NonEmptyString"
-    },
-    "task_id": {
-      "$ref": "#/$defs/%23NonEmptyString"
     }
   },
-  "required": [
-    "components",
-    "entity_id",
-    "metadata",
-    "status",
-    "task_id"
-  ],
   "type": "object",
   "x-atlas-protocol-revision": "sha256:fe69828faf1a883b603526942e3cd72945d3474c5d8b7fdcfed626a6f4fbec99"
 }

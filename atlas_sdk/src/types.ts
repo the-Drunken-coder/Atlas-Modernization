@@ -99,6 +99,8 @@ export type AtlasLocalDeleteWatchEvent = {
 
 export type AtlasWatchEvent = FeedEvent | AtlasRecoveredWatchEvent | AtlasLocalDeleteWatchEvent;
 
+type ChangedSinceWatchEvent = FeedEvent | AtlasRecoveredWatchEvent;
+
 export type FullDatasetCursors = {
   entity_cursor?: string;
   task_cursor?: string;
@@ -120,21 +122,25 @@ export type CacheEntry<T> = {
 };
 
 export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatchEvent[] {
-  const events: AtlasWatchEvent[] = [];
-  for (const entity of response.entities ?? []) {
-    events.push({ event: "recovered", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity });
-  }
-  for (const task of response.tasks ?? []) {
-    events.push({ event: "recovered", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task });
-  }
-  for (const object of response.objects ?? []) {
-    events.push({ event: "recovered", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object });
-  }
-  for (const item of response.deleted_entities ?? []) events.push({ event: "delete", resource_type: "entity", id: item.id, version: item.version });
-  for (const item of response.deleted_tasks ?? []) {
-    const event: TaskDeleteEvent = { event: "delete", resource_type: "task", id: item.id, version: item.version, entity_id: item.entity_id };
-    events.push(event);
-  }
-  for (const item of response.deleted_objects ?? []) events.push({ event: "delete", resource_type: "object", id: item.id, version: item.version });
-  return events;
+  const events: ChangedSinceWatchEvent[] = [
+    ...(response.entities ?? []).map(
+      (entity): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity })
+    ),
+    ...(response.tasks ?? []).map(
+      (task): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task })
+    ),
+    ...(response.objects ?? []).map(
+      (object): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object })
+    ),
+    ...(response.deleted_entities ?? []).map((item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "entity", id: item.id, version: item.version })),
+    ...(response.deleted_tasks ?? []).map((item): TaskDeleteEvent => ({
+      event: "delete",
+      resource_type: "task",
+      id: item.id,
+      version: item.version,
+      entity_id: item.entity_id
+    })),
+    ...(response.deleted_objects ?? []).map((item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "object", id: item.id, version: item.version }))
+  ];
+  return events.sort((left, right) => left.version - right.version);
 }

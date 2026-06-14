@@ -60,7 +60,11 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 		builder.WriteString(gen.typeFor(gen.defs[name], name, 0))
 		builder.WriteString(";\n\n")
 	}
-	builder.WriteString(requestTypeSource())
+	validatorSource, err := taskCreateRequestValidatorSource(gen.defs["TaskCreateRequest"])
+	if err != nil {
+		return nil, err
+	}
+	builder.WriteString(validatorSource)
 	return formatTypeScript([]byte(builder.String())), nil
 }
 
@@ -331,87 +335,122 @@ func quotedUnion(values []string) string {
 	return strings.Join(parts, " | ")
 }
 
-func requestTypeSource() string {
-	return `export type EntityCreateRequest = {
-  "alias"?: NonEmptyString | null;
-  "components"?: EntityComponents;
-  "entity_id": NonEmptyString;
-  "entity_type": NonEmptyString;
-  "extra"?: { [key: string]: JSONValue };
-  "published_at"?: RFC3339Timestamp;
-  "subtype"?: NonEmptyString;
-  "updated_at"?: RFC3339Timestamp;
-};
+func taskCreateRequestValidatorSource(schema typeScriptSchema) (string, error) {
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("TaskCreateRequest schema has no properties")
+	}
+	required := requiredProperties(schema)
+	keys := make([]string, 0, len(props))
+	for key := range props {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 
-export type EntityUpdateRequest = {
-  "alias"?: string;
-  "components"?: EntityComponents;
-  "entity_type"?: NonEmptyString;
-  "extra"?: { [key: string]: JSONValue };
-  "subtype"?: string;
-};
+	var checks []string
+	for _, key := range keys {
+		propSchema, ok := props[key].(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("TaskCreateRequest property %s is not a schema", key)
+		}
+		check, err := runtimeValidatorExpression("value."+key, propSchema)
+		if err != nil {
+			return "", fmt.Errorf("TaskCreateRequest property %s: %w", key, err)
+		}
+		if required[key] {
+			checks = append(checks, "atlasProtocolHasOwn(value, "+jsonString(key)+") && "+check)
+		} else {
+			checks = append(checks, "(value."+key+" === undefined || "+check+")")
+		}
+	}
 
-export type ObjectCreateRequest = {
-  "content_type"?: string;
-  "extra"?: { [key: string]: JSONValue };
-  "object_id": NonEmptyString;
-  "path"?: string;
-  "referenced_by"?: ObjectReference[];
-  "size_bytes"?: number;
-  "type"?: string;
-  "usage_hints"?: NonEmptyString[];
-};
-
-export type ObjectUpdateRequest = {
-  "content_type"?: string;
-  "extra"?: { [key: string]: JSONValue };
-  "path"?: string;
-  "referenced_by"?: ObjectReference[];
-  "size_bytes"?: number;
-  "type"?: string;
-  "usage_hints"?: NonEmptyString[];
-};
-
-export type TaskCreateRequest = {
-  "components"?: TaskComponents;
-  "entity_id"?: NonEmptyString | null;
-  "extra"?: { [key: string]: JSONValue };
-  "status"?: NonEmptyString;
-  "task_id": NonEmptyString;
-};
-
-export type TaskUpdateRequest = {
-  "components"?: TaskComponents;
-  "entity_id"?: NonEmptyString | null;
-  "extra"?: { [key: string]: JSONValue };
-  "remove_extra_keys"?: NonEmptyString[];
-  "status"?: NonEmptyString;
-};
-
-export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {
-  if (!atlasProtocolIsRecord(value)) {
-    return false;
-  }
-  const allowedKeys = new Set(["task_id", "status", "entity_id", "components", "extra"]);
-  return (
-    Object.keys(value).every((key) => allowedKeys.has(key)) &&
-    atlasProtocolIsNonEmptyString(value.task_id) &&
-    (value.status === undefined || atlasProtocolIsNonEmptyString(value.status)) &&
-    (value.entity_id === undefined || value.entity_id === null || atlasProtocolIsNonEmptyString(value.entity_id)) &&
-    (value.components === undefined || atlasProtocolIsRecord(value.components)) &&
-    (value.extra === undefined || atlasProtocolIsRecord(value.extra))
-  );
+	var builder strings.Builder
+	builder.WriteString("export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {\n")
+	builder.WriteString("  if (!atlasProtocolIsRecord(value)) {\n")
+	builder.WriteString("    return false;\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("  const allowedKeys = new Set(")
+	builder.WriteString(jsonStringSlice(keys))
+	builder.WriteString(");\n")
+	builder.WriteString("  return Object.keys(value).every((key) => allowedKeys.has(key))")
+	for _, check := range checks {
+		builder.WriteString(" &&\n    ")
+		builder.WriteString(check)
+	}
+	builder.WriteString(";\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolHasOwn(value: Record<string, unknown>, key: string): boolean {\n")
+	builder.WriteString("  return Object.prototype.hasOwnProperty.call(value, key);\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown> {\n")
+	builder.WriteString("  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolIsNonEmptyString(value: unknown): value is string {\n")
+	builder.WriteString("  return typeof value === \"string\" && value.trim() !== \"\";\n")
+	builder.WriteString("}\n\n")
+	return builder.String(), nil
 }
 
-function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+func runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
+	if ref, ok := schema["$ref"].(string); ok {
+		switch typeNameFromRef(ref) {
+		case "NonEmptyString":
+			return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
+		case "TaskComponents", "JSONValue":
+			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
+		default:
+			return "true", nil
+		}
+	}
+	if oneOf, ok := schema["oneOf"].([]any); ok {
+		return runtimeUnionValidatorExpression(valueExpr, oneOf)
+	}
+	if anyOf, ok := schema["anyOf"].([]any); ok {
+		return runtimeUnionValidatorExpression(valueExpr, anyOf)
+	}
+	switch schemaTypeValue(schema) {
+	case "null":
+		return valueExpr + " === null", nil
+	case "string":
+		if _, ok := schema["pattern"].(string); ok {
+			return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
+		}
+		return "typeof " + valueExpr + " === \"string\"", nil
+	case "object":
+		return "atlasProtocolIsRecord(" + valueExpr + ")", nil
+	default:
+		if _, ok := schema["additionalProperties"]; ok {
+			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
+		}
+		return "true", nil
+	}
 }
 
-function atlasProtocolIsNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
+func runtimeUnionValidatorExpression(valueExpr string, items []any) (string, error) {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		schema, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		expression, err := runtimeValidatorExpression(valueExpr, schema)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, expression)
+	}
+	if len(parts) == 0 {
+		return "true", nil
+	}
+	return "(" + strings.Join(uniqueStrings(parts), " || ") + ")", nil
 }
 
-`
+func jsonStringSlice(values []string) string {
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
 
 func requiredProperties(schema typeScriptSchema) map[string]bool {

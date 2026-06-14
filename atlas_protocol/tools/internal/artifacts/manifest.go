@@ -174,20 +174,50 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	entityCreateRequestSchema, err := jsonSchema(root, "#EntityCreateRequest", revision)
+	if err != nil {
+		return nil, err
+	}
+	entityUpdateRequestSchema, err := jsonSchema(root, "#EntityUpdateRequest", revision)
+	if err != nil {
+		return nil, err
+	}
+	objectCreateRequestSchema, err := jsonSchema(root, "#ObjectCreateRequest", revision)
+	if err != nil {
+		return nil, err
+	}
+	objectUpdateRequestSchema, err := jsonSchema(root, "#ObjectUpdateRequest", revision)
+	if err != nil {
+		return nil, err
+	}
+	taskCreateRequestSchema, err := jsonSchema(root, "#TaskCreateRequest", revision)
+	if err != nil {
+		return nil, err
+	}
+	taskUpdateRequestSchema, err := jsonSchema(root, "#TaskUpdateRequest", revision)
+	if err != nil {
+		return nil, err
+	}
 	typescriptSource, err := typeScriptSource(revision, map[string][]byte{
 		"EntityBlob":             entitySchema,
 		"TaskBlob":               taskSchema,
 		"ObjectBlob":             objectSchema,
 		"ErrorResponse":          errorResponseSchema,
+		"EntityCreateRequest":    entityCreateRequestSchema,
+		"EntityUpdateRequest":    entityUpdateRequestSchema,
 		"EntityResource":         entityResourceSchema,
-		"TaskResource":           taskResourceSchema,
-		"ObjectResource":         objectResourceSchema,
 		"FeedEvent":              feedEventSchema,
 		"FeedAuthMessage":        feedAuthMessageSchema,
 		"FeedSubscribeMessage":   feedSubscribeMessageSchema,
 		"FeedUnsubscribeMessage": feedUnsubscribeMessageSchema,
 		"FeedClientMessage":      feedClientMessageSchema,
 		"FeedHandshakeMessage":   feedHandshakeMessageSchema,
+		"ObjectCreateRequest":    objectCreateRequestSchema,
+		"ObjectUpdateRequest":    objectUpdateRequestSchema,
+		"ObjectResource":         objectResourceSchema,
+		"TaskCreateRequest":      taskCreateRequestSchema,
+		"TaskUpdateRequest":      taskUpdateRequestSchema,
+		"TaskResource":           taskResourceSchema,
 	})
 	if err != nil {
 		return nil, err
@@ -239,6 +269,12 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 		{Path: "generated/jsonschema/components/task-parameters.schema.json", Content: taskParametersSchema},
 		{Path: "generated/jsonschema/components/task-progress.schema.json", Content: taskProgressSchema},
 		{Path: "generated/jsonschema/components/object-reference.schema.json", Content: objectReferenceSchema},
+		{Path: "generated/jsonschema/requests/entity-create.schema.json", Content: entityCreateRequestSchema},
+		{Path: "generated/jsonschema/requests/entity-update.schema.json", Content: entityUpdateRequestSchema},
+		{Path: "generated/jsonschema/requests/object-create.schema.json", Content: objectCreateRequestSchema},
+		{Path: "generated/jsonschema/requests/object-update.schema.json", Content: objectUpdateRequestSchema},
+		{Path: "generated/jsonschema/requests/task-create.schema.json", Content: taskCreateRequestSchema},
+		{Path: "generated/jsonschema/requests/task-update.schema.json", Content: taskUpdateRequestSchema},
 	}
 	sort.Slice(artifacts, func(i, j int) bool {
 		return artifacts[i].Path < artifacts[j].Path

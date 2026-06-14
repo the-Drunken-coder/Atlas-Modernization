@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, type FeedEvent } from "../src";
 import { RESOURCE_TYPE_VALUES, isResourceType, parseFilter, runCLI, type CLIIO } from "../src/cli.js";
-import { entity, FakeCore, object, task } from "./fake-core";
+import { FeedConnectionManager } from "../src/feed-connection.js";
+import { changedSinceToEvents, type ChangedSinceResponse } from "../src/types.js";
+import { entity, FakeCore, metadata, object, task } from "./fake-core";
 
 describe("AtlasClient HTTP", () => {
   it("fails loudly on protocol revision mismatch", async () => {
@@ -51,6 +53,20 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
+  it("rejects write payloads with missing required fields or invalid shapes", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await expect(client.tasks.create({} as any)).rejects.toMatchObject({
+      status: 400,
+      errorCode: "INVALID_JSON"
+    });
+    await expect(client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as any)).rejects.toMatchObject({
+      status: 400,
+      errorCode: "INVALID_JSON"
+    });
+  });
+
   it("preserves structured protocol errors for non-conflict failures", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
@@ -90,6 +106,23 @@ describe("AtlasClient sync", () => {
 
     await expect(client.tasks.get("task-polled")).resolves.toEqual(updated);
     expect(watch).toHaveBeenCalledWith(updated, expect.objectContaining({ event: "recovered", resource_type: "task", id: "task-polled" }));
+  });
+
+  it("emits changed-since recovery events in global version order", () => {
+    const entityVersion5 = { ...entity("entity-v5"), metadata: metadata(5) };
+    const taskVersion2 = { ...task("task-v2", null), metadata: metadata(2) };
+    const objectVersion4 = { ...object("object-v4"), metadata: metadata(4) };
+    const response: ChangedSinceResponse = {
+      entities: [entityVersion5],
+      tasks: [taskVersion2],
+      objects: [objectVersion4],
+      deleted_entities: [{ id: "entity-v1", type: "entity", version: 1 }],
+      deleted_tasks: [{ id: "task-v3", type: "task", version: 3, entity_id: null }],
+      deleted_objects: [],
+      version: 5
+    };
+
+    expect(changedSinceToEvents(response).map((event) => event.version)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("drains paginated changed-since responses before advancing the high-water mark", async () => {
@@ -240,6 +273,68 @@ describe("AtlasClient sync", () => {
     expect(core.sockets.size).toBe(0);
   });
 
+  it("does not reconnect after an intentional sync.stop feed close", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.sync.start();
+    expect(core.feedConnections).toBe(1);
+
+    vi.useFakeTimers();
+    try {
+      client.sync.stop();
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(core.feedConnections).toBe(1);
+      expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("serializes async feed event delivery", async () => {
+    const core = new FakeCore();
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: core.attachWebSocketGlobal() as any,
+      feedHandshakeTimeoutMs: 1_000
+    });
+    const delivery: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+
+    await manager.connect({
+      subscriptions: [{ filter: "all" }],
+      onEvent: async (event) => {
+        delivery.push(`start:${event.id}`);
+        if (event.id === "entity-ordered-1") {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        delivery.push(`done:${event.id}`);
+      },
+      onEventError: () => {
+        throw new Error("feed event delivery failed");
+      },
+      onClose: () => undefined
+    });
+
+    const first = { ...entity("entity-ordered-1"), metadata: metadata(1) };
+    const second = { ...entity("entity-ordered-2"), metadata: metadata(2) };
+    core.emit({ event: "create", resource_type: "entity", id: first.entity_id, version: first.metadata.version, resource: first }, { record: false });
+    core.emit({ event: "create", resource_type: "entity", id: second.entity_id, version: second.metadata.version, resource: second }, { record: false });
+
+    await vi.waitFor(() => expect(delivery).toEqual(["start:entity-ordered-1"]));
+    releaseFirst?.();
+    await vi.waitFor(() => expect(delivery).toEqual(["start:entity-ordered-1", "done:entity-ordered-1", "start:entity-ordered-2", "done:entity-ordered-2"]));
+    manager.close();
+  });
+
   it("evicts local cache entries after successful deletes", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-delete"));
@@ -332,7 +427,7 @@ describe("AtlasClient sync", () => {
     await vi.waitFor(async () => {
       await expect(client.tasks.get("task-gap")).resolves.toEqual(second);
     });
-    expect(client.sync.status().degraded).toBe(false);
+    await vi.waitFor(() => expect(client.sync.status().degraded).toBe(false));
   });
 
   it("starts the websocket feed when sync starts and a WebSocket implementation is available", async () => {

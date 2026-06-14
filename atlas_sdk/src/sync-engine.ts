@@ -137,6 +137,9 @@ export class SyncEngine {
         this.healthy = false;
       },
       onClose: () => {
+        if (!this.syncRunning) {
+          return;
+        }
         this.healthy = false;
         this.degraded = true;
         this.scheduleReconnect();
@@ -257,8 +260,8 @@ export class SyncEngine {
       this.pollTimer = undefined;
     }
     this.clearReconnectTimer();
-    this.feed.close();
     this.syncRunning = false;
+    this.feed.close();
     this.healthy = false;
     this.degraded = false;
   }
