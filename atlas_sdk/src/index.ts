@@ -20,6 +20,7 @@ export type {
   ErrorResponse,
   FeedEvent,
   ObjectCreateRequest,
+  ObjectResponse,
   ObjectResource,
   ObjectUpdateRequest,
   ResourceType,

@@ -3,6 +3,7 @@ import type {
   EntityResource,
   EntityUpdateRequest,
   ObjectCreateRequest,
+  ObjectResponse,
   ObjectResource,
   ObjectUpdateRequest,
   TaskCreateRequest,
@@ -69,9 +70,9 @@ export class AtlasClient {
 
   readonly objects = {
     get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
-    create: (object: ObjectCreateRequest) => this.engine.writeResource<ObjectResource>("POST", "/objects", object, "object"),
+    create: (object: ObjectCreateRequest) => this.engine.writeResource<ObjectResponse>("POST", "/objects", object, "object"),
     update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource<ObjectResource>("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", options?.ifMatchVersion),
+      this.engine.writeResource<ObjectResponse>("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
     content: (id: string) => this.objectContent(id),
     watch: (id: string, callback: WatchCallback<ObjectResource>) => this.engine.watch({ filter: "id", resource_type: "object", id }, callback)

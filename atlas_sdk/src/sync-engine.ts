@@ -1,4 +1,4 @@
-import type { EntityResource, FeedEvent, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
+import type { EntityResource, FeedEvent, ObjectResource, ObjectResponse, ResourceType, TaskResource } from "./protocol.js";
 import { ResourceCache } from "./cache.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport } from "./http.js";
@@ -196,12 +196,12 @@ export class SyncEngine {
     return task;
   }
 
-  async readObject(id: string, options?: ReadOptions): Promise<ObjectResource> {
+  async readObject(id: string, options?: ReadOptions): Promise<ObjectResponse> {
     const cached = this.cache.entry<ObjectResource>("object", id);
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached?.value && !cached.deleted) {
       return cached.value;
     }
-    const object = await this.transport.json<ObjectResource>("GET", `/objects/${encodeURIComponent(id)}`);
+    const object = await this.transport.json<ObjectResponse>("GET", `/objects/${encodeURIComponent(id)}`);
     this.cache.cacheResource("object", object.object_id, object);
     return object;
   }

@@ -53,6 +53,26 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
+  it("exposes object payload on object detail and write responses", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    const created = await client.objects.create({
+      object_id: "object-with-payload",
+      type: "image",
+      extra: { label: "thermal", nested: { confidence: 0.91 } }
+    });
+    expect(created.payload).toEqual({ label: "thermal", nested: { confidence: 0.91 } });
+
+    const fetched = await client.objects.get("object-with-payload", { fresh: true });
+    expect(fetched.payload).toEqual(created.payload);
+
+    const updated = await client.objects.update("object-with-payload", {
+      extra: { reviewed: true, label: "visual" }
+    });
+    expect(updated.payload).toEqual({ label: "visual", nested: { confidence: 0.91 }, reviewed: true });
+  });
+
   it("rejects write payloads with missing required fields or invalid shapes", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
