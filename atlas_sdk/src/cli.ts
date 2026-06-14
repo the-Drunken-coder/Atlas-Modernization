@@ -73,7 +73,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       }
     }
   } catch (error) {
-    const message = (error as Error).message;
+    const message = errorMessage(error);
     if (message.startsWith("usage:") || message.startsWith("invalid ")) {
       io.stderr.write(message + "\n");
       io.stderr.write(usage);
@@ -82,6 +82,16 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
     io.stderr.write(message + "\n");
     return 1;
   }
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return String(error ?? "unknown error");
 }
 
 function parseArgs(argv: string[], env: Record<string, string | undefined>): CLICommand {

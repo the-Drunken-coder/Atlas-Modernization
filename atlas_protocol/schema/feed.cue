@@ -128,11 +128,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	version!:       #FeedVersion
 })
 
-// Deprecated compatibility alias for consumers that referenced the pre-split
-// delete event shape. Prefer the resource-specific delete event definitions.
-#DeleteEvent: #EntityDeleteEvent | #TaskDeleteEvent | #ObjectDeleteEvent
-
-#FeedEvent: #EntityCreateEvent | #EntityUpdateEvent | #TaskCreateEvent | #TaskUpdateEvent | #ObjectCreateEvent | #ObjectUpdateEvent | #DeleteEvent
+#FeedEvent: #EntityCreateEvent | #EntityUpdateEvent | #TaskCreateEvent | #TaskUpdateEvent | #ObjectCreateEvent | #ObjectUpdateEvent | #EntityDeleteEvent | #TaskDeleteEvent | #ObjectDeleteEvent
 
 #FeedAuthMessage: close({
 	action!:  "auth"
@@ -195,5 +191,5 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 
 #FeedHandshakeMessage: close({
 	type!:              "hello"
-	protocol_revision!: shared.#NonEmptyString
+	protocol_revision!: shared.#ProtocolRevision
 })

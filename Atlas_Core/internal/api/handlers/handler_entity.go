@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -107,8 +108,8 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		EntityType *string                `json:"entity_type,omitempty"`
-		Subtype    *string                `json:"subtype,omitempty"`
-		Alias      *string                `json:"alias,omitempty"`
+		Subtype    nullablePatchString    `json:"subtype,omitempty"`
+		Alias      nullablePatchString    `json:"alias,omitempty"`
 		Components map[string]interface{} `json:"components,omitempty"`
 		Extra      map[string]interface{} `json:"extra,omitempty"`
 	}
@@ -123,8 +124,8 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
 		EntityType:      req.EntityType,
-		Subtype:         req.Subtype,
-		Alias:           req.Alias,
+		Subtype:         req.Subtype.actionValue(),
+		Alias:           req.Alias.actionValue(),
 		Components:      req.Components,
 		Extra:           req.Extra,
 		ExpectedVersion: expectedVersion,
@@ -136,6 +137,36 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
+}
+
+type nullablePatchString struct {
+	present bool
+	value   *string
+}
+
+func (f *nullablePatchString) UnmarshalJSON(data []byte) error {
+	f.present = true
+	if string(data) == "null" {
+		f.value = nil
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	f.value = &value
+	return nil
+}
+
+func (f nullablePatchString) actionValue() *string {
+	if !f.present {
+		return nil
+	}
+	if f.value == nil {
+		value := ""
+		return &value
+	}
+	return f.value
 }
 
 // DeleteEntity handles DELETE /entities/{entity_id}.

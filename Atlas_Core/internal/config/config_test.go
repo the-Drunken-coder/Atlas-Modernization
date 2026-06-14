@@ -386,6 +386,33 @@ func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsEnabledAPIAuthWithPlaceholderSettingsKey(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		EnableAPIAuth: true,
+		APIAuthKey:    " changeme ",
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	_, err = config.Load()
+	if err == nil {
+		t.Fatal("expected enabled API auth with placeholder settings api_auth_key to fail")
+	}
+	if !strings.Contains(err.Error(), "too weak") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(err.Error(), "changeme") {
+		t.Fatalf("placeholder error should not echo settings api_auth_key, got %v", err)
+	}
+}
+
 func TestLoadSettingsDoesNotOverrideExplicitEmptyEnv(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)

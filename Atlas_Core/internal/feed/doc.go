@@ -1,2 +1,2 @@
-// Package feed publishes committed Atlas Core resource changes over websocket clients.
+// Package feed publishes committed Atlas Core resource changes over WebSocket connections.
 package feed

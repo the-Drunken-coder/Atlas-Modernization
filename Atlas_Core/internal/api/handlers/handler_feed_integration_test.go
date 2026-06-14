@@ -77,9 +77,7 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 
 	first := postEntityIntegration(t, server.URL, firstID, http.StatusCreated)
 	firstEvent := readFeedEventIntegration(t, conn)
-	if firstEvent.ID != firstID || firstEvent.Version != first.Metadata.Version {
-		t.Fatalf("first feed event = %+v, created = %+v", firstEvent, first)
-	}
+	assertEntityCreateFeedEventIntegration(t, firstEvent, firstID, first)
 
 	_ = postEntityIntegration(t, server.URL, firstID, http.StatusConflict)
 	second := postEntityIntegration(t, server.URL, secondID, http.StatusCreated)
@@ -88,8 +86,27 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	}
 
 	secondEvent := readFeedEventIntegration(t, conn)
-	if secondEvent.ID != secondID || secondEvent.Version != second.Metadata.Version {
-		t.Fatalf("second feed event = %+v, created = %+v", secondEvent, second)
+	assertEntityCreateFeedEventIntegration(t, secondEvent, secondID, second)
+}
+
+func assertEntityCreateFeedEventIntegration(t *testing.T, event protocol.FeedEvent, wantID string, created feedIntegrationEntity) {
+	t.Helper()
+	if event.Event != protocol.FeedEventCreate || event.ResourceType != protocol.ResourceTypeEntity || event.ID != wantID || event.Version != created.Metadata.Version {
+		t.Fatalf("feed event = %+v, created = %+v", event, created)
+	}
+	resource, ok := event.Resource.(map[string]any)
+	if !ok {
+		t.Fatalf("feed event resource = %T, want object", event.Resource)
+	}
+	if resource["entity_id"] != wantID || resource["entity_type"] != "asset" {
+		t.Fatalf("feed event resource = %#v, want entity %s/asset", resource, wantID)
+	}
+	metadata, ok := resource["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("feed event resource metadata = %T, want object", resource["metadata"])
+	}
+	if metadata["version"] != float64(created.Metadata.Version) {
+		t.Fatalf("feed event resource metadata = %#v, want version %d", metadata, created.Metadata.Version)
 	}
 }
 

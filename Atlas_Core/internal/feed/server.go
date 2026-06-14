@@ -37,12 +37,12 @@ type Server struct {
 
 func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.Hub == nil {
-		http.Error(w, "feed hub is not configured", http.StatusServiceUnavailable)
+		writeProtocolError(w, r, http.StatusServiceUnavailable, "feed hub is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 	if s.Config.EnableAPIAuth && strings.TrimSpace(s.Config.APIKey) == "" {
 		zerolog.Ctx(r.Context()).Error().Msg("Atlas feed server has auth enabled without an API key")
-		http.Error(w, "feed API key is not configured", http.StatusServiceUnavailable)
+		writeProtocolError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 
@@ -121,6 +121,19 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func writeProtocolError(w http.ResponseWriter, r *http.Request, status int, message string, code protocol.ErrorCode) {
+	response, err := protocol.NewErrorResponse(message, code)
+	if err != nil {
+		zerolog.Ctx(r.Context()).Error().Err(err).Msg("build feed protocol error response")
+		response = protocol.ErrorResponse{Success: false, Message: message, ErrorCode: code}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		zerolog.Ctx(r.Context()).Error().Err(err).Msg("write feed protocol error response")
 	}
 }
 

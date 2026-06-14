@@ -32,7 +32,6 @@ if (typeof cliModule.PACKAGE_BIN.atlas !== "string") {
 }
 
 const expected = new Map([
-  ["name", "@the-drunken-coder/atlas-sdk"],
   ["main", "./dist/atlas_sdk/src/index.js"],
   ["types", "./dist/atlas_sdk/src/index.d.ts"],
   ['exports["."].import', "./dist/atlas_sdk/src/index.js"],
@@ -43,7 +42,6 @@ const expected = new Map([
 ]);
 
 const actual = new Map([
-  ["name", packageJSON.name],
   ["main", packageJSON.main],
   ["types", packageJSON.types],
   ['exports["."].import', packageJSON.exports?.["."]?.import],

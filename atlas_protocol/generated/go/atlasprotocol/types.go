@@ -303,6 +303,29 @@ type FeedAuthMessage struct {
 	APIKey string     `json:"api_key"`
 }
 
+type feedAuthMessageAlias FeedAuthMessage
+
+func (m FeedAuthMessage) Validate() []string {
+	m.Action = FeedActionAuth
+	data, err := json.Marshal(feedAuthMessageAlias(m))
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return validator.ValidateFeedAuthMessage(json.RawMessage(data))
+}
+
+func (m FeedAuthMessage) MarshalJSON() ([]byte, error) {
+	m.Action = FeedActionAuth
+	data, err := json.Marshal(feedAuthMessageAlias(m))
+	if err != nil {
+		return nil, err
+	}
+	if errors := validator.ValidateFeedAuthMessage(json.RawMessage(data)); len(errors) > 0 {
+		return nil, fmt.Errorf("invalid FeedAuthMessage: %s", strings.Join(errors, "; "))
+	}
+	return data, nil
+}
+
 type FeedSubscriptionMessage struct {
 	Action       FeedAction   `json:"action"`
 	Filter       FeedFilter   `json:"filter"`
@@ -311,7 +334,71 @@ type FeedSubscriptionMessage struct {
 	EntityID     string       `json:"entity_id,omitempty"`
 }
 
+type feedSubscriptionMessageAlias FeedSubscriptionMessage
+
+func (m FeedSubscriptionMessage) Validate() []string {
+	data, err := json.Marshal(feedSubscriptionMessageAlias(m))
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return validateFeedSubscriptionMessagePayload(data)
+}
+
+func (m FeedSubscriptionMessage) MarshalJSON() ([]byte, error) {
+	data, err := json.Marshal(feedSubscriptionMessageAlias(m))
+	if err != nil {
+		return nil, err
+	}
+	if errors := validateFeedSubscriptionMessagePayload(data); len(errors) > 0 {
+		return nil, fmt.Errorf("invalid FeedSubscriptionMessage: %s", strings.Join(errors, "; "))
+	}
+	return data, nil
+}
+
+func validateFeedSubscriptionMessagePayload(data []byte) []string {
+	var envelope struct {
+		Action FeedAction `json:"action"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return []string{err.Error()}
+	}
+	switch envelope.Action {
+	case FeedActionSubscribe:
+		return validator.ValidateFeedSubscribeMessage(json.RawMessage(data))
+	case FeedActionUnsubscribe:
+		return validator.ValidateFeedUnsubscribeMessage(json.RawMessage(data))
+	default:
+		if errors := validator.ValidateFeedClientMessage(json.RawMessage(data)); len(errors) > 0 {
+			return errors
+		}
+		return []string{fmt.Sprintf("unsupported feed subscription action %q", envelope.Action)}
+	}
+}
+
 type FeedHandshakeMessage struct {
 	Type             string `json:"type"`
 	ProtocolRevision string `json:"protocol_revision"`
+}
+
+type feedHandshakeMessageAlias FeedHandshakeMessage
+
+func (m FeedHandshakeMessage) Validate() []string {
+	m.Type = "hello"
+	data, err := json.Marshal(feedHandshakeMessageAlias(m))
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return validator.ValidateFeedHandshakeMessage(json.RawMessage(data))
+}
+
+func (m FeedHandshakeMessage) MarshalJSON() ([]byte, error) {
+	m.Type = "hello"
+	data, err := json.Marshal(feedHandshakeMessageAlias(m))
+	if err != nil {
+		return nil, err
+	}
+	if errors := validator.ValidateFeedHandshakeMessage(json.RawMessage(data)); len(errors) > 0 {
+		return nil, fmt.Errorf("invalid FeedHandshakeMessage: %s", strings.Join(errors, "; "))
+	}
+	return data, nil
 }

@@ -193,7 +193,7 @@ try {
   runStep(`Failed to initialize smoke project at ${projectDir}`, () => run("npm", ["init", "-y", "--silent"], { cwd: projectDir }));
   runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () => run("npm", ["install", tarball, "--silent"], { cwd: projectDir }));
 
-  const helpOutput = runCombined("npx", ["atlas", "--help"], { cwd: projectDir });
+  const helpOutput = runCombined("npx", ["--no-install", "atlas", "--help"], { cwd: projectDir });
   if (!/usage: atlas/i.test(helpOutput)) {
     process.stderr.write(helpOutput);
     throw new Error("installed atlas binary did not print usage");
@@ -203,7 +203,7 @@ try {
     const task = {
       task_id: "smoke-task"
     };
-    const output = await runCombinedAsync("npx", ["atlas", "--base-url", baseUrl, "tasks", "create", JSON.stringify(task)], { cwd: projectDir });
+    const output = await runCombinedAsync("npx", ["--no-install", "atlas", "--base-url", baseUrl, "tasks", "create", JSON.stringify(task)], { cwd: projectDir });
     if (!output.includes('"task_id":"smoke-task"')) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not run tasks create successfully");
@@ -214,7 +214,7 @@ try {
     }
   });
 
-  const invalidOutput = runCombined("npx", ["atlas", "not-a-command"], { cwd: projectDir, expectStatus: 2 });
+  const invalidOutput = runCombined("npx", ["--no-install", "atlas", "not-a-command"], { cwd: projectDir, expectStatus: 2 });
   if (!/usage: invalid command/i.test(invalidOutput)) {
     process.stderr.write(invalidOutput);
     throw new Error("installed atlas binary did not reject invalid command");

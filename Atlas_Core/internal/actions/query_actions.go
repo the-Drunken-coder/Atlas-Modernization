@@ -339,12 +339,13 @@ func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
 
 const currentChangeVersionSQL = `
 		SELECT GREATEST(
-			COALESCE((SELECT MAX(version) FROM entities), 0),
-			COALESCE((SELECT MAX(version) FROM tasks), 0),
-			COALESCE((SELECT MAX(version) FROM objects), 0),
-			COALESCE((SELECT MAX(version) FROM deletions), 0)
-		)
-	`
+				COALESCE((SELECT MAX(version) FROM entities), 0),
+				COALESCE((SELECT MAX(version) FROM tasks), 0),
+				COALESCE((SELECT MAX(version) FROM objects), 0),
+				COALESCE((SELECT MAX(version) FROM deletions), 0),
+				COALESCE((SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM atlas_change_version_seq), 0)
+			)
+		`
 
 // CurrentChangeVersion reads the current global high-water mark.
 func CurrentChangeVersion(ctx context.Context, pool *pgxpool.Pool) (int64, error) {

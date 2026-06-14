@@ -1,5 +1,5 @@
 import type { EntityResource, FeedEvent, ObjectResource, ObjectResponse, ResourceType, TaskResource } from "./protocol.js";
-import { ResourceCache } from "./cache.js";
+import { ResourceCache, type CacheResourceOptions } from "./cache.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport } from "./http.js";
 import {
@@ -125,7 +125,12 @@ export class SyncEngine {
       this.watchers.set(key, callbacks);
     }
     callbacks.add(callback as WatchCallback<any>);
-    return () => callbacks?.delete(callback as WatchCallback<any>);
+    return () => {
+      callbacks.delete(callback as WatchCallback<any>);
+      if (callbacks.size === 0 && this.watchers.get(key) === callbacks) {
+        this.watchers.delete(key);
+      }
+    };
   }
 
   async connectFeed(): Promise<void> {
@@ -182,7 +187,7 @@ export class SyncEngine {
       return cached.value;
     }
     const entity = await this.transport.json<EntityResource>("GET", `/entities/${encodeURIComponent(id)}`);
-    this.cache.cacheResource("entity", entity.entity_id, entity);
+    this.cache.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
     return entity;
   }
 
@@ -192,7 +197,7 @@ export class SyncEngine {
       return cached.value;
     }
     const task = await this.transport.json<TaskResource>("GET", `/tasks/${encodeURIComponent(id)}`);
-    this.cache.cacheResource("task", task.task_id, task);
+    this.cache.cacheResource("task", task.task_id, task, { advanceCursor: false });
     return task;
   }
 
@@ -202,7 +207,7 @@ export class SyncEngine {
       return cached.value;
     }
     const object = await this.transport.json<ObjectResponse>("GET", `/objects/${encodeURIComponent(id)}`);
-    this.cache.cacheResource("object", object.object_id, object, { detail: true });
+    this.cache.cacheResource("object", object.object_id, object, { detail: true, advanceCursor: false });
     return object;
   }
 
@@ -217,7 +222,7 @@ export class SyncEngine {
     const id = resourceID(type, resource);
     this.applyEvent(
       { event: method === "POST" ? "create" : "update", resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent,
-      type === "object" ? { detail: true } : undefined
+      { detail: type === "object", advanceCursor: false }
     );
     return resource;
   }
@@ -249,7 +254,9 @@ export class SyncEngine {
     if (!this.isCurrent(generation)) return;
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
+        const pollGeneration = generation;
         void this.changedSince().catch(() => {
+          if (!this.isCurrent(pollGeneration)) return;
           this.degraded = true;
           this.healthy = false;
         });
@@ -346,7 +353,8 @@ export class SyncEngine {
     this.reconnectTimer = undefined;
   }
 
-  private applyEvent(event: FeedEvent, options?: { detail?: boolean }): void {
+  private applyEvent(event: FeedEvent, options?: CacheResourceOptions): void {
+    const advanceCursor = options?.advanceCursor !== false;
     const key = resourceCacheKey(event.resource_type, event.id);
     const current = this.cache.entries[event.resource_type].get(event.id);
     const pendingDelete = this.cache.pendingDeletes.has(key);
@@ -354,7 +362,7 @@ export class SyncEngine {
     if (pendingDelete && event.event === "delete") {
       this.cache.pendingDeletes.delete(key);
       this.cache.entries[event.resource_type].set(event.id, { version: event.version, deleted: true });
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+      this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
         this.notify(event, undefined, previous);
@@ -362,17 +370,17 @@ export class SyncEngine {
       return;
     }
     if ((pendingDelete || current?.deleted) && event.event === "update") {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+      this.advanceCursor(event, advanceCursor);
       return;
     }
     if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+      this.advanceCursor(event, advanceCursor);
       return;
     }
     if (event.event === "delete") {
       this.cache.pendingDeletes.delete(key);
       this.cache.entries[event.resource_type].set(event.id, { version: event.version, deleted: true });
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+      this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
         this.notify(event, undefined, previous);
@@ -381,7 +389,7 @@ export class SyncEngine {
     }
     const resource = event.resource as EntityResource | TaskResource | ObjectResource;
     this.cache.cacheResource(event.resource_type, event.id, resource, options);
-    this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+    this.advanceCursor(event, advanceCursor);
     this.notify(event, resource, previous);
   }
 
@@ -405,10 +413,16 @@ export class SyncEngine {
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
-    if (!this.syncRunning || !this.healthy || this.degraded) {
+    if (!this.syncRunning || this.startSyncPromise || !this.healthy || this.degraded) {
       return false;
     }
     return this.subscriptions.some((sub) => covers(sub, filter));
+  }
+
+  private advanceCursor(event: FeedEvent, enabled: boolean): void {
+    if (enabled) {
+      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+    }
   }
 
   private notify(event: AtlasWatchEvent, resource: ResourceValue | undefined, previous: ResourceValue | undefined): void {

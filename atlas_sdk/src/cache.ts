@@ -2,6 +2,11 @@ import type { EntityResource, ObjectResource, ResourceType, TaskResource } from 
 import type { CacheEntry, ResourceValue } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 
+export type CacheResourceOptions = {
+  detail?: boolean;
+  advanceCursor?: boolean;
+};
+
 export class ObjectContentCache {
   private readonly maxEntries: number;
   private readonly entries = new Map<string, ArrayBuffer>();
@@ -52,7 +57,7 @@ export class ResourceCache {
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
-  cacheResource(type: ResourceType, id: string, value: ResourceValue, options?: { detail?: boolean }): boolean {
+  cacheResource(type: ResourceType, id: string, value: ResourceValue, options?: CacheResourceOptions): boolean {
     const version = value.metadata.version;
     const existing = this.entries[type].get(id);
     const isDetailUpgrade = type === "object" && options?.detail === true && existing?.version === version && !existing.detail;
@@ -66,7 +71,9 @@ export class ResourceCache {
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
     this.entries[type].set(id, { value: value as any, version, deleted: false, detail: type === "object" && options?.detail === true });
-    this.lastVersion = Math.max(this.lastVersion, version);
+    if (options?.advanceCursor !== false) {
+      this.lastVersion = Math.max(this.lastVersion, version);
+    }
     return true;
   }
 

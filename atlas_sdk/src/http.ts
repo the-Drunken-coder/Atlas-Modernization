@@ -39,12 +39,16 @@ export class HttpTransport {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.apiKey = options.apiKey;
     this.fetchImpl = options.fetchImpl;
+    if (!Number.isFinite(options.requestTimeoutMs) || options.requestTimeoutMs <= 0) {
+      throw new Error("Atlas request timeout must be a positive finite number of milliseconds");
+    }
     this.requestTimeoutMs = options.requestTimeoutMs;
   }
 
   async json<T>(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<T> {
     const response = await this.raw(method, path, body, ifMatchVersion);
     if (response.status === 204) {
+      // Core uses 204 only for void responses such as DELETE.
       return undefined as T;
     }
     return (await response.json()) as T;
@@ -72,9 +76,6 @@ export class HttpTransport {
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
-    if (this.requestTimeoutMs <= 0) {
-      return this.fetchImpl(url, init);
-    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {

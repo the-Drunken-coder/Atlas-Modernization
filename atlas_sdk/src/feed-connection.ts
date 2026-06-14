@@ -201,7 +201,11 @@ export class FeedConnectionManager {
         return;
       }
       this.socket = undefined;
-      options.onClose();
+      try {
+        options.onClose();
+      } catch {
+        // Close notifications should not make the underlying socket dispatch throw.
+      }
     });
   }
 

@@ -63,7 +63,11 @@ export class FakeCore {
       if (this.failChangedSince) {
         return protocolError("changed-since unavailable", "INTERNAL_SERVER_ERROR", 500);
       }
-      const since = Number(parsed.searchParams.get("since_version") ?? 0);
+      const rawSince = parsed.searchParams.get("since_version");
+      const since = rawSince === null ? 0 : Number(rawSince);
+      if (!Number.isInteger(since) || since < 0 || String(since) !== rawSince) {
+        return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
+      }
       const changed = this.events.filter((event) => event.version > since);
       const entityPage = pageValues(changed.filter(isEntityUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("entity_cursor"));
       const taskPage = pageValues(changed.filter(isTaskUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("task_cursor"));
@@ -141,6 +145,9 @@ export class FakeCore {
     }
     if (path.startsWith("/objects/") && path.endsWith("/download")) {
       const id = decodeURIComponent(path.split("/")[2]);
+      if (!this.objects.has(id)) {
+        return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
+      }
       this.objectDownloadCount++;
       this.onObjectDownload?.(id);
       return new Response(new Uint8Array([1, 2, 3]));
@@ -211,8 +218,8 @@ export class FakeCore {
     return this.upsertEntity({
       ...current,
       ...(patch.entity_type === undefined ? {} : { entity_type: patch.entity_type }),
-      ...(patch.subtype === undefined ? {} : { subtype: patch.subtype.trim() === "" ? null : patch.subtype }),
-      ...(patch.alias === undefined ? {} : { alias: patch.alias.trim() === "" ? null : patch.alias }),
+      ...(patch.subtype === undefined ? {} : { subtype: patch.subtype }),
+      ...(patch.alias === undefined ? {} : { alias: patch.alias }),
       components: patch.components === undefined ? current.components : { ...current.components, ...patch.components },
       ...(patch.extra === undefined ? {} : { extra: { ...(current.extra ?? {}), ...patch.extra } })
     });
@@ -535,8 +542,8 @@ const entityCreateShape = requestShape(["entity_id", "entity_type", "subtype", "
 });
 const entityUpdateShape = requestShape(["entity_type", "subtype", "alias", "components", "extra"], [], {
   entity_type: isNonEmptyString,
-  subtype: isString,
-  alias: isString,
+  subtype: isNullableNonEmptyString,
+  alias: isNullableNonEmptyString,
   components: isRecord,
   extra: isRecord
 });

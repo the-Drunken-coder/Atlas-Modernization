@@ -183,12 +183,7 @@ func TestWebsocketFeedRejectsAuthEnabledWithoutAPIKey(t *testing.T) {
 		},
 	}.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "feed API key is not configured") {
-		t.Fatalf("body = %q, want API key configuration error", rec.Body.String())
-	}
+	assertFeedProtocolError(t, rec, http.StatusServiceUnavailable, protocol.ErrorCodeFeedUnavailable, "feed API key is not configured")
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsMissingFirstFrame(t *testing.T) {
@@ -321,12 +316,16 @@ func TestWebsocketFeedRejectsAuthEnabledWithWhitespaceAPIKey(t *testing.T) {
 		},
 	}.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "feed API key is not configured") {
-		t.Fatalf("body = %q, want API key configuration error", rec.Body.String())
-	}
+	assertFeedProtocolError(t, rec, http.StatusServiceUnavailable, protocol.ErrorCodeFeedUnavailable, "feed API key is not configured")
+}
+
+func TestWebsocketFeedRejectsMissingHubWithProtocolError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	Server{}.ServeHTTP(rec, req)
+
+	assertFeedProtocolError(t, rec, http.StatusServiceUnavailable, protocol.ErrorCodeFeedUnavailable, "feed hub is not configured")
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
@@ -471,6 +470,23 @@ func expectFeedClosedWithStatus(t *testing.T, conn *websocket.Conn, expected web
 	}
 	if closeErr.Code != expected {
 		t.Fatalf("expected feed websocket close status %v, got %v", expected, closeErr.Code)
+	}
+}
+
+func assertFeedProtocolError(t *testing.T, rec *httptest.ResponseRecorder, status int, code protocol.ErrorCode, message string) {
+	t.Helper()
+	if rec.Code != status {
+		t.Fatalf("status = %d, want %d", rec.Code, status)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	var response protocol.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode protocol error response: %v; body = %q", err, rec.Body.String())
+	}
+	if response.Success || response.ErrorCode != code || response.Message != message {
+		t.Fatalf("protocol error response = %+v, want success=false code=%s message=%q", response, code, message)
 	}
 }
 

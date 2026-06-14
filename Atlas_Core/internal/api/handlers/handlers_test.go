@@ -420,6 +420,28 @@ func TestUpdateEntityTelemetryRequiresAtLeastOneField(t *testing.T) {
 	}
 }
 
+func TestNullablePatchStringDistinguishesAbsentNullAndValue(t *testing.T) {
+	var req struct {
+		Absent nullablePatchString `json:"absent,omitempty"`
+		Clear  nullablePatchString `json:"clear,omitempty"`
+		Set    nullablePatchString `json:"set,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(`{"clear":null,"set":"alias"}`), &req); err != nil {
+		t.Fatalf("decode nullable patch strings: %v", err)
+	}
+	if req.Absent.actionValue() != nil {
+		t.Fatal("absent nullable patch string should not produce an action value")
+	}
+	clear := req.Clear.actionValue()
+	if clear == nil || *clear != "" {
+		t.Fatalf("null nullable patch string action value = %#v, want empty string pointer", clear)
+	}
+	set := req.Set.actionValue()
+	if set == nil || *set != "alias" {
+		t.Fatalf("set nullable patch string action value = %#v, want alias", set)
+	}
+}
+
 func TestParseListPaginationRejectsOffset(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

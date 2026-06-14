@@ -15,8 +15,8 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 
 #EntityUpdateRequest: close({
 	entity_type?: shared.#NonEmptyString
-	subtype?:     string
-	alias?:       string
+	subtype?:     null | shared.#NonEmptyString
+	alias?:       null | shared.#NonEmptyString
 	components?:  #EntityComponents
 	extra?: {[string]: shared.#JSONValue}
 })

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, type FeedEvent } from "../src";
 import { RESOURCE_TYPE_VALUES, isResourceType, parseFilter, runCLI, type CLIIO } from "../src/cli.js";
 import { FeedConnectionManager } from "../src/feed-connection.js";
+import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./fake-core";
 
@@ -28,6 +29,12 @@ describe("AtlasClient HTTP", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("rejects non-positive request timeouts", () => {
+    const core = new FakeCore();
+
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow("positive finite");
   });
 
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
@@ -137,6 +144,30 @@ describe("AtlasClient HTTP", () => {
     expect(response.status).toBe(400);
   });
 
+  it("returns protocol errors for invalid fake Core changed-since query params", async () => {
+    const core = new FakeCore();
+
+    const response = await core.fetch("http://atlas.test/queries/changed-since?since_version=invalid");
+
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error_code: "VALIDATION_ERROR"
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("returns protocol errors when downloading missing fake Core objects", async () => {
+    const core = new FakeCore();
+
+    const response = await core.fetch("http://atlas.test/objects/missing-object/download");
+
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error_code: "OBJECT_NOT_FOUND"
+    });
+    expect(response.status).toBe(404);
+  });
+
   it("preserves structured protocol errors for non-conflict failures", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
@@ -210,6 +241,43 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?") && request.includes("task_cursor="))).toBe(true);
     expect(watch).toHaveBeenCalledWith(first, expect.objectContaining({ id: "task-page-1", version: first.metadata.version }));
     expect(watch).toHaveBeenCalledWith(second, expect.objectContaining({ id: "task-page-2", version: second.metadata.version }));
+    expect(client.sync.status().lastVersion).toBe(core.version);
+  });
+
+  it("does not advance the global change cursor from point reads", async () => {
+    const core = new FakeCore();
+    const baseline = core.upsertEntity(entity("asset-baseline-read"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+
+    const unseenTask = core.upsertTask(task("task-unseen-before-read", "asset-baseline-read"));
+    const newerEntity = core.upsertEntity({ ...entity("asset-point-read"), alias: "fresh" });
+    core.requests = [];
+
+    await expect(client.entities.get(newerEntity.entity_id, { fresh: true })).resolves.toEqual(newerEntity);
+
+    expect(client.sync.status().lastVersion).toBe(baseline.metadata.version);
+    await client.changedSince();
+    expect(core.requests.find((request) => request.startsWith("/queries/changed-since?"))).toContain(`since_version=${baseline.metadata.version}`);
+    await expect(client.tasks.get(unseenTask.task_id)).resolves.toEqual(unseenTask);
+    expect(client.sync.status().lastVersion).toBe(core.version);
+  });
+
+  it("does not advance the global change cursor from optimistic local writes", async () => {
+    const core = new FakeCore();
+    const baseline = core.upsertEntity(entity("asset-baseline-write"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+
+    const unseenTask = core.upsertTask(task("task-unseen-before-write", "asset-baseline-write"));
+    core.requests = [];
+    const written = await client.entities.create({ entity_id: "asset-local-write", entity_type: "asset" });
+
+    expect(client.sync.status().lastVersion).toBe(baseline.metadata.version);
+    await expect(client.entities.get(written.entity_id)).resolves.toEqual(written);
+    await client.changedSince();
+    expect(core.requests.find((request) => request.startsWith("/queries/changed-since?"))).toContain(`since_version=${baseline.metadata.version}`);
+    await expect(client.tasks.get(unseenTask.task_id)).resolves.toEqual(unseenTask);
     expect(client.sync.status().lastVersion).toBe(core.version);
   });
 
@@ -343,6 +411,38 @@ describe("AtlasClient sync", () => {
     expect(core.sockets.size).toBe(0);
   });
 
+  it("does not serve cached point reads while startup recovery is still in flight", async () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-startup-cache"));
+    let releaseRecovery: (() => void) | undefined;
+    let delayedRecovery = false;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since" && !delayedRecovery) {
+        delayedRecovery = true;
+        await new Promise<void>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    const start = client.sync.start();
+    await vi.waitFor(() => expect(releaseRecovery).toBeTypeOf("function"));
+    const updated = core.upsertEntity({ ...entity("asset-startup-cache"), alias: "fresh" });
+
+    await expect(client.entities.get("asset-startup-cache")).resolves.toEqual(updated);
+
+    releaseRecovery?.();
+    await start;
+  });
+
   it("does not reconnect after an intentional sync.stop feed close", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -403,6 +503,26 @@ describe("AtlasClient sync", () => {
     releaseFirst?.();
     await vi.waitFor(() => expect(delivery).toEqual(["start:entity-ordered-1", "done:entity-ordered-1", "start:entity-ordered-2", "done:entity-ordered-2"]));
     manager.close();
+  });
+
+  it("keeps socket close dispatch isolated when the close callback throws", async () => {
+    const core = new FakeCore();
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: core.attachWebSocketGlobal() as any,
+      feedHandshakeTimeoutMs: 1_000
+    });
+    await manager.connect({
+      subscriptions: [{ filter: "all" }],
+      onEvent: () => undefined,
+      onEventError: () => undefined,
+      onClose: () => {
+        throw new Error("close callback failed");
+      }
+    });
+    const socket = Array.from(core.sockets)[0];
+
+    expect(() => socket.close()).not.toThrow();
   });
 
   it("evicts local cache entries after successful deletes", async () => {
@@ -899,6 +1019,27 @@ describe("AtlasClient sync", () => {
     expect(typeof client.tasks.watch("task-watch", vi.fn())).toBe("function");
     expect(typeof client.objects.watch("object-watch", vi.fn())).toBe("function");
   });
+
+  it("prunes empty watcher buckets after unwatch", () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const engine = (client as unknown as { engine: { watchers: Map<string, Set<unknown>> } }).engine;
+
+    const unwatch = client.entities.watch("asset-watch-prune", vi.fn());
+    expect(engine.watchers.size).toBe(1);
+
+    unwatch();
+
+    expect(engine.watchers.size).toBe(0);
+  });
+
+  it("rejects malformed stored subscription keys", () => {
+    expect(() => parseSubscriptionKey("not-json")).toThrow("invalid subscription key");
+    expect(() => parseSubscriptionKey(JSON.stringify(["unknown", "entity-1"]))).toThrow("invalid subscription key");
+    expect(() => parseSubscriptionKey(JSON.stringify(["type", "not-a-type"]))).toThrow("invalid subscription key");
+    expect(() => parseSubscriptionKey(JSON.stringify(["id", "task"]))).toThrow("invalid subscription key");
+    expect(() => parseSubscriptionKey(JSON.stringify(["tasks_for_entity", ""]))).toThrow("invalid subscription key");
+  });
 });
 
 describe("Atlas CLI", () => {
@@ -1049,6 +1190,20 @@ describe("Atlas CLI", () => {
 
     expect(captured.stderr()).toContain("follow failed");
     expect(core.sockets.size).toBe(0);
+  });
+
+  it("prints non-Error failures without crashing", async () => {
+    const core = new FakeCore();
+    const captured = captureIO();
+    captured.io.fetch = core.fetch;
+    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.waitForExitSignal = async () => {
+      throw "raw follow failure";
+    };
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "all", "--follow"], captured.io)).resolves.toBe(1);
+
+    expect(captured.stderr()).toContain("raw follow failure");
   });
 });
 

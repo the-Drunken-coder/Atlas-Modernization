@@ -9,6 +9,8 @@ import type {
 } from "./protocol.js";
 import type { AtlasLocalDeleteWatchEvent, AtlasSubscription, AtlasWatchEvent } from "./types.js";
 
+const RESOURCE_TYPES = new Set<string>(["entity", "task", "object"]);
+
 export function subscriptionMessage(action: "subscribe" | "unsubscribe", filter: AtlasSubscription): FeedSubscribeMessage | FeedUnsubscribeMessage {
   return { action, ...filter } as FeedSubscribeMessage | FeedUnsubscribeMessage;
 }
@@ -27,11 +29,27 @@ export function subscriptionKey(filter: AtlasSubscription): string {
 }
 
 export function parseSubscriptionKey(key: string): AtlasSubscription {
-  const [kind, resourceType, id] = JSON.parse(key) as string[];
-  if (kind === "all") return { filter: "all" };
-  if (kind === "id") return { filter: "id", resource_type: resourceType as ResourceType, id };
-  if (kind === "type") return { filter: "type", resource_type: resourceType as ResourceType };
-  return { filter: "tasks_for_entity", entity_id: resourceType };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(key);
+  } catch {
+    throw new Error("invalid subscription key");
+  }
+  if (!Array.isArray(parsed) || !parsed.every((part) => typeof part === "string")) {
+    throw new Error("invalid subscription key");
+  }
+  const [kind, resourceType, id] = parsed;
+  if (kind === "all" && parsed.length === 1) return { filter: "all" };
+  if (kind === "id" && parsed.length === 3 && isResourceType(resourceType) && isNonEmptyString(id)) {
+    return { filter: "id", resource_type: resourceType, id };
+  }
+  if (kind === "type" && parsed.length === 2 && isResourceType(resourceType)) {
+    return { filter: "type", resource_type: resourceType };
+  }
+  if (kind === "tasks_for_entity" && parsed.length === 2 && isNonEmptyString(resourceType)) {
+    return { filter: "tasks_for_entity", entity_id: resourceType };
+  }
+  throw new Error("invalid subscription key");
 }
 
 export function covers(covering: AtlasSubscription, wanted: AtlasSubscription): boolean {
@@ -77,4 +95,12 @@ export function localDeleteEvent(type: ResourceType, id: string, previousVersion
     event.previous_version = previousVersion;
   }
   return event;
+}
+
+function isResourceType(value: string): value is ResourceType {
+  return RESOURCE_TYPES.has(value);
+}
+
+function isNonEmptyString(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0;
 }

@@ -48,8 +48,53 @@ func TestHandshakeProtocolRevisionMatchesProtocolRevision(t *testing.T) {
 	if err := json.Unmarshal(data, &handshake); err != nil {
 		t.Fatalf("decode handshake example: %v", err)
 	}
+	if errors := protocol.ValidateFeedHandshakeMessage(json.RawMessage(data)); len(errors) > 0 {
+		t.Fatalf("handshake example did not validate: %v", errors)
+	}
 	if handshake.ProtocolRevision != protocol.ProtocolRevision {
 		t.Fatalf("handshake protocol_revision = %q, want generated ProtocolRevision %q", handshake.ProtocolRevision, protocol.ProtocolRevision)
+	}
+}
+
+func TestFeedControlMessageMarshalingPinsAndValidatesDiscriminators(t *testing.T) {
+	auth, err := json.Marshal(protocol.FeedAuthMessage{Action: protocol.FeedActionSubscribe, APIKey: "secret"})
+	if err != nil {
+		t.Fatalf("marshal auth message: %v", err)
+	}
+	var authPayload map[string]any
+	if err := json.Unmarshal(auth, &authPayload); err != nil {
+		t.Fatalf("decode auth payload: %v", err)
+	}
+	if authPayload["action"] != string(protocol.FeedActionAuth) {
+		t.Fatalf("auth action = %v, want %q", authPayload["action"], protocol.FeedActionAuth)
+	}
+	if _, err := json.Marshal(protocol.FeedAuthMessage{}); err == nil {
+		t.Fatal("expected empty auth message to fail validation")
+	}
+
+	subscribe := protocol.FeedSubscriptionMessage{Action: protocol.FeedActionSubscribe, Filter: protocol.FeedFilterAll}
+	if data, err := json.Marshal(subscribe); err != nil {
+		t.Fatalf("marshal subscribe message: %v", err)
+	} else if errors := protocol.ValidateFeedSubscribeMessage(json.RawMessage(data)); len(errors) > 0 {
+		t.Fatalf("subscribe message did not validate: %v", errors)
+	}
+	if _, err := json.Marshal(protocol.FeedSubscriptionMessage{Action: protocol.FeedActionAuth, Filter: protocol.FeedFilterAll}); err == nil {
+		t.Fatal("expected auth action in subscription message to fail validation")
+	}
+
+	hello, err := json.Marshal(protocol.FeedHandshakeMessage{Type: "not-hello", ProtocolRevision: protocol.ProtocolRevision})
+	if err != nil {
+		t.Fatalf("marshal handshake message: %v", err)
+	}
+	var helloPayload map[string]any
+	if err := json.Unmarshal(hello, &helloPayload); err != nil {
+		t.Fatalf("decode handshake payload: %v", err)
+	}
+	if helloPayload["type"] != "hello" {
+		t.Fatalf("handshake type = %v, want hello", helloPayload["type"])
+	}
+	if _, err := json.Marshal(protocol.FeedHandshakeMessage{ProtocolRevision: "not-a-sha"}); err == nil {
+		t.Fatal("expected invalid handshake revision to fail validation")
 	}
 }
 
