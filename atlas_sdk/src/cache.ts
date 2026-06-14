@@ -52,16 +52,20 @@ export class ResourceCache {
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
-  cacheResource(type: ResourceType, id: string, value: ResourceValue): boolean {
+  cacheResource(type: ResourceType, id: string, value: ResourceValue, options?: { detail?: boolean }): boolean {
     const version = value.metadata.version;
     const existing = this.entries[type].get(id);
-    if (existing && existing.version >= version) {
+    const isDetailUpgrade = type === "object" && options?.detail === true && existing?.version === version && !existing.detail;
+    if (existing && existing.version > version) {
+      return false;
+    }
+    if (existing && existing.version === version && !isDetailUpgrade) {
       return false;
     }
     const key = resourceCacheKey(type, id);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
-    this.entries[type].set(id, { value: value as any, version, deleted: false });
+    this.entries[type].set(id, { value: value as any, version, deleted: false, detail: type === "object" && options?.detail === true });
     this.lastVersion = Math.max(this.lastVersion, version);
     return true;
   }

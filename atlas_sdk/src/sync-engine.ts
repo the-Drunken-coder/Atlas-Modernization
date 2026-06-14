@@ -197,12 +197,12 @@ export class SyncEngine {
   }
 
   async readObject(id: string, options?: ReadOptions): Promise<ObjectResponse> {
-    const cached = this.cache.entry<ObjectResource>("object", id);
-    if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached?.value && !cached.deleted) {
+    const cached = this.cache.entry<ObjectResponse>("object", id);
+    if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached?.value && !cached.deleted && cached.detail) {
       return cached.value;
     }
     const object = await this.transport.json<ObjectResponse>("GET", `/objects/${encodeURIComponent(id)}`);
-    this.cache.cacheResource("object", object.object_id, object);
+    this.cache.cacheResource("object", object.object_id, object, { detail: true });
     return object;
   }
 
@@ -215,7 +215,10 @@ export class SyncEngine {
   ): Promise<T> {
     const resource = await this.transport.json<T>(method, path, body, ifMatchVersion);
     const id = resourceID(type, resource);
-    this.applyEvent({ event: method === "POST" ? "create" : "update", resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent);
+    this.applyEvent(
+      { event: method === "POST" ? "create" : "update", resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent,
+      type === "object" ? { detail: true } : undefined
+    );
     return resource;
   }
 
@@ -343,7 +346,7 @@ export class SyncEngine {
     this.reconnectTimer = undefined;
   }
 
-  private applyEvent(event: FeedEvent): void {
+  private applyEvent(event: FeedEvent, options?: { detail?: boolean }): void {
     const key = resourceCacheKey(event.resource_type, event.id);
     const current = this.cache.entries[event.resource_type].get(event.id);
     const pendingDelete = this.cache.pendingDeletes.has(key);
@@ -377,7 +380,7 @@ export class SyncEngine {
       return;
     }
     const resource = event.resource as EntityResource | TaskResource | ObjectResource;
-    this.cache.cacheResource(event.resource_type, event.id, resource);
+    this.cache.cacheResource(event.resource_type, event.id, resource, options);
     this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
     this.notify(event, resource, previous);
   }

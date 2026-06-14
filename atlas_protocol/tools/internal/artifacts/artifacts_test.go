@@ -292,14 +292,37 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"export type TaskCreateRequest",
-		"priority",
-		`const allowedKeys = new Set(["priority","task_id"])`,
-		`atlasProtocolHasOwn(value, "task_id") && atlasProtocolIsNonEmptyString(value.task_id)`,
-		`value.priority === undefined || atlasProtocolIsNonEmptyString(value.priority)`,
+		`"priority"?: NonEmptyString;`,
+		`"task_id": NonEmptyString;`,
+		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestTypeScriptSourceRejectsUnsupportedTaskCreateValidatorSchema(t *testing.T) {
+	_, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"unsupported": { "$ref": "#/$defs/%23Unsupported" }
+			},
+			"required": ["task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" },
+				"#Unsupported": { "type": "array" }
+			}
+		}`),
+	})
+	if err == nil {
+		t.Fatal("typeScriptSource accepted unsupported TaskCreateRequest validator schema")
+	}
+	if !strings.Contains(err.Error(), "unsupported runtime validator ref") {
+		t.Fatalf("typeScriptSource error = %q, want unsupported runtime validator ref", err.Error())
 	}
 }
 

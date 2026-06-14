@@ -399,7 +399,7 @@ func runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (stri
 		case "TaskComponents", "JSONValue":
 			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
 		default:
-			return "true", nil
+			return "", fmt.Errorf("unsupported runtime validator ref %q", ref)
 		}
 	}
 	if oneOf, ok := schema["oneOf"].([]any); ok {
@@ -416,13 +416,19 @@ func runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (stri
 			return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
 		}
 		return "typeof " + valueExpr + " === \"string\"", nil
+	case "integer":
+		return "typeof " + valueExpr + " === \"number\" && Number.isInteger(" + valueExpr + ")", nil
+	case "number":
+		return "typeof " + valueExpr + " === \"number\"", nil
+	case "boolean":
+		return "typeof " + valueExpr + " === \"boolean\"", nil
 	case "object":
 		return "atlasProtocolIsRecord(" + valueExpr + ")", nil
 	default:
 		if _, ok := schema["additionalProperties"]; ok {
 			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
 		}
-		return "true", nil
+		return "", fmt.Errorf("unsupported runtime validator schema: %s", summarizeTypeScriptSchema(schema))
 	}
 }
 
@@ -431,7 +437,7 @@ func runtimeUnionValidatorExpression(valueExpr string, items []any) (string, err
 	for _, item := range items {
 		schema, ok := item.(map[string]any)
 		if !ok {
-			continue
+			return "", fmt.Errorf("unsupported runtime union item %T", item)
 		}
 		expression, err := runtimeValidatorExpression(valueExpr, schema)
 		if err != nil {
@@ -440,7 +446,7 @@ func runtimeUnionValidatorExpression(valueExpr string, items []any) (string, err
 		parts = append(parts, expression)
 	}
 	if len(parts) == 0 {
-		return "true", nil
+		return "", fmt.Errorf("runtime union has no schema branches")
 	}
 	return "(" + strings.Join(uniqueStrings(parts), " || ") + ")", nil
 }

@@ -119,6 +119,7 @@ export type CacheEntry<T> = {
   value?: T;
   version: number;
   deleted: boolean;
+  detail?: boolean;
 };
 
 export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatchEvent[] {

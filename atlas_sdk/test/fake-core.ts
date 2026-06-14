@@ -590,7 +590,12 @@ function jsonOrNotFound(value: unknown, message: string): Response {
 }
 
 async function readStrictBody<T>(init: RequestInit, shape: RequestShape): Promise<T | Response> {
-  const value = await readBody<unknown>(init);
+  let value: unknown;
+  try {
+    value = await readBody<unknown>(init);
+  } catch {
+    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+  }
   if (!isRecord(value)) {
     return protocolError("Invalid JSON body", "INVALID_JSON", 400);
   }

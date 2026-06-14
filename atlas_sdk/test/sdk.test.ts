@@ -73,6 +73,43 @@ describe("AtlasClient HTTP", () => {
     expect(updated.payload).toEqual({ label: "visual", nested: { confidence: 0.91 }, reviewed: true });
   });
 
+  it("refetches object detail when the sync cache only has a feed object", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal() as any,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    await expect(
+      client.objects.create({
+        object_id: "object-feed-cache",
+        type: "image",
+        extra: { label: "thermal" }
+      })
+    ).resolves.toMatchObject({ payload: { label: "thermal" } });
+
+    const feedObject = core.upsertObject({ ...object("object-feed-cache"), type: "log" });
+    core.emit({ event: "update", resource_type: "object", id: feedObject.object_id, version: feedObject.metadata.version, resource: feedObject }, { record: false });
+
+    await vi.waitFor(() => {
+      expect(client.sync.status().lastVersion).toBeGreaterThanOrEqual(feedObject.metadata.version);
+    });
+
+    const detailRequestsBeforeRead = core.requests.filter((request) => request === "/objects/object-feed-cache").length;
+    const fetched = await client.objects.get("object-feed-cache");
+
+    expect(fetched).toMatchObject({
+      object_id: "object-feed-cache",
+      type: "log",
+      payload: { label: "thermal" }
+    });
+    expect(core.requests.filter((request) => request === "/objects/object-feed-cache")).toHaveLength(detailRequestsBeforeRead + 1);
+  });
+
   it("rejects write payloads with missing required fields or invalid shapes", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
@@ -85,6 +122,19 @@ describe("AtlasClient HTTP", () => {
       status: 400,
       errorCode: "INVALID_JSON"
     });
+  });
+
+  it("returns protocol errors for malformed fake Core request JSON", async () => {
+    const core = new FakeCore();
+
+    const response = await core.fetch("http://atlas.test/tasks", { method: "POST", body: "{" });
+
+    await expect(response.json()).resolves.toEqual({
+      success: false,
+      message: "Invalid JSON body",
+      error_code: "INVALID_JSON"
+    });
+    expect(response.status).toBe(400);
   });
 
   it("preserves structured protocol errors for non-conflict failures", async () => {
