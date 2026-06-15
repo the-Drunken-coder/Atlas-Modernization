@@ -41,18 +41,31 @@ type Hub struct {
 	missingVersionTimeout time.Duration
 	gapTimer              *time.Timer
 	closed                bool
+	done                  chan struct{}
+}
+
+type AsyncChangeSink interface {
+	actions.ChangeSink
+	Close()
 }
 
 type asyncChangeSink struct {
-	sink  actions.ChangeSink
-	queue chan actions.ResourceChange
+	sink      actions.ChangeSink
+	queue     chan actions.ResourceChange
+	done      chan struct{}
+	sinkDone  <-chan struct{}
+	closeOnce sync.Once
 }
 
 type versionSkipper interface {
 	SkipVersion(version int64, reason string)
 }
 
-func NewAsyncChangeSink(sink actions.ChangeSink, opts AsyncChangeSinkOptions) actions.ChangeSink {
+type doneSignaler interface {
+	Done() <-chan struct{}
+}
+
+func NewAsyncChangeSink(sink actions.ChangeSink, opts AsyncChangeSinkOptions) AsyncChangeSink {
 	if sink == nil {
 		return nil
 	}
@@ -63,14 +76,23 @@ func NewAsyncChangeSink(sink actions.ChangeSink, opts AsyncChangeSinkOptions) ac
 	async := &asyncChangeSink{
 		sink:  sink,
 		queue: make(chan actions.ResourceChange, buffer),
+		done:  make(chan struct{}),
+	}
+	if signaler, ok := sink.(doneSignaler); ok {
+		async.sinkDone = signaler.Done()
 	}
 	go async.run()
 	return async
 }
 
 func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
+	if s.isClosed() {
+		return
+	}
 	select {
 	case s.queue <- change:
+	case <-s.done:
+	case <-s.sinkDone:
 	default:
 		if skipper, ok := s.sink.(versionSkipper); ok && change.Version > 0 {
 			skipper.SkipVersion(change.Version, "async_sink_queue_full")
@@ -84,9 +106,33 @@ func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
 	}
 }
 
+func (s *asyncChangeSink) Close() {
+	s.closeOnce.Do(func() {
+		close(s.done)
+	})
+}
+
 func (s *asyncChangeSink) run() {
-	for change := range s.queue {
-		s.sink.PublishResourceChange(change)
+	for {
+		select {
+		case change := <-s.queue:
+			s.sink.PublishResourceChange(change)
+		case <-s.done:
+			return
+		case <-s.sinkDone:
+			return
+		}
+	}
+}
+
+func (s *asyncChangeSink) isClosed() bool {
+	select {
+	case <-s.done:
+		return true
+	case <-s.sinkDone:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -112,6 +158,7 @@ func NewHub(startAfterVersion int64, opts Options) *Hub {
 		clients:               make(map[*Client]struct{}),
 		clientBuffer:          buffer,
 		missingVersionTimeout: missingVersionTimeout,
+		done:                  make(chan struct{}),
 	}
 }
 
@@ -122,10 +169,17 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
+	if h.done != nil {
+		close(h.done)
+	}
 	h.stopGapTimerLocked()
 	for client := range h.clients {
 		h.closeClientLocked(client)
 	}
+}
+
+func (h *Hub) Done() <-chan struct{} {
+	return h.done
 }
 
 func (h *Hub) NewClient() *Client {

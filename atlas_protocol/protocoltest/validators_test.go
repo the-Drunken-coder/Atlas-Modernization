@@ -38,6 +38,11 @@ func TestFeedEventExamplesValidate(t *testing.T) {
 	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "events"), protocol.ValidateFeedEvent)
 }
 
+func TestFeedClientMessageExamplesValidate(t *testing.T) {
+	root := moduleRoot(t)
+	assertExamplesValidate(t, filepath.Join(root, "examples", "feed", "messages"), protocol.ValidateFeedClientMessage)
+}
+
 func TestHandshakeProtocolRevisionMatchesProtocolRevision(t *testing.T) {
 	root := moduleRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "examples", "feed", "server", "handshake.json"))
@@ -621,8 +626,16 @@ func TestFeedEventMarshalAcceptsValidVariant(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := json.Marshal(tt.event); err != nil {
+			data, err := json.Marshal(tt.event)
+			if err != nil {
 				t.Fatalf("json.Marshal(valid FeedEvent) error = %v", err)
+			}
+			var decoded protocol.FeedEvent
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("json.Unmarshal(valid FeedEvent JSON) error = %v", err)
+			}
+			if errors := protocol.ValidateFeedEvent(json.RawMessage(data)); len(errors) > 0 {
+				t.Fatalf("marshaled FeedEvent did not validate: %v\n%s", errors, string(data))
 			}
 		})
 	}

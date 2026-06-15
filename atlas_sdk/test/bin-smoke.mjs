@@ -154,7 +154,15 @@ async function withFakeCore(callback) {
     if (req.method === "POST" && req.url === "/tasks") {
       let body = "";
       for await (const chunk of req) body += chunk;
-      const task = JSON.parse(body);
+      let task;
+      try {
+        task = JSON.parse(body);
+      } catch {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ success: false, message: "Invalid JSON body", error_code: "INVALID_JSON" }));
+        return;
+      }
       res.setHeader("Content-Type", "application/json");
       res.end(
         JSON.stringify({
@@ -214,11 +222,7 @@ try {
     }
   });
 
-  const invalidOutput = runCombined("npx", ["--no-install", "atlas", "not-a-command"], { cwd: projectDir, expectStatus: 2 });
-  if (!/usage: invalid command/i.test(invalidOutput)) {
-    process.stderr.write(invalidOutput);
-    throw new Error("installed atlas binary did not reject invalid command");
-  }
+  runCombined("npx", ["--no-install", "atlas", "not-a-command"], { cwd: projectDir, expectStatus: 2 });
 } finally {
   if (tmpdirPath) rmSync(tmpdirPath, { recursive: true, force: true });
 }

@@ -1,5 +1,6 @@
 package atlasprotocol
 
+import "struct"
 import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 
 #EntityCreateRequest: close({
@@ -19,7 +20,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	alias?:       null | shared.#NonEmptyString
 	components?:  #EntityComponents
 	extra?: {[string]: shared.#JSONValue}
-})
+}) & struct.MinFields(1)
 
 #TaskCreateRequest: close({
 	task_id!:    shared.#NonEmptyString
@@ -35,7 +36,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	components?: #TaskComponents
 	extra?: {[string]: shared.#JSONValue}
 	remove_extra_keys?: [...shared.#NonEmptyString]
-})
+}) & struct.MinFields(1)
 
 #ObjectCreateRequest: close({
 	object_id!:    shared.#NonEmptyString
@@ -56,4 +57,4 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	usage_hints?: [...shared.#NonEmptyString]
 	referenced_by?: [...#ObjectReference]
 	extra?: {[string]: shared.#JSONValue}
-})
+}) & struct.MinFields(1)

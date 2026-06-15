@@ -1,5 +1,8 @@
 {
   "success": false,
   "message": "Invalid or missing API key",
-  "error_code": "UNAUTHORIZED"
+  "error_code": "UNAUTHORIZED",
+  "error_id": "err_unauthorized",
+  "timestamp": "2026-06-12T12:00:00Z",
+  "path": "/feed"
 }

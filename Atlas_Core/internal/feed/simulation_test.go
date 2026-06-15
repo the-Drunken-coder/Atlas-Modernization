@@ -280,6 +280,7 @@ func TestAsyncChangeSinkDoesNotBlockPublisher(t *testing.T) {
 		close(blocking.release)
 	})
 	sink := NewAsyncChangeSink(blocking, AsyncChangeSinkOptions{Buffer: 1})
+	t.Cleanup(sink.Close)
 
 	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-1", Version: 1})
 	select {
@@ -311,6 +312,7 @@ func TestAsyncChangeSinkSkipsDroppedVersion(t *testing.T) {
 		close(blocking.release)
 	})
 	sink := NewAsyncChangeSink(blocking, AsyncChangeSinkOptions{Buffer: 1})
+	t.Cleanup(sink.Close)
 
 	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-1", Version: 1})
 	select {
@@ -329,6 +331,40 @@ func TestAsyncChangeSinkSkipsDroppedVersion(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for async sink to skip dropped version")
+	}
+}
+
+func TestAsyncChangeSinkStopsAfterClose(t *testing.T) {
+	recording := &recordingAsyncSink{
+		received: make(chan actions.ResourceChange, 1),
+	}
+	sink := NewAsyncChangeSink(recording, AsyncChangeSinkOptions{Buffer: 1})
+	sink.Close()
+	sink.Close()
+
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-after-close", Version: 1})
+
+	select {
+	case change := <-recording.received:
+		t.Fatalf("closed async sink delivered change: %+v", change)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAsyncChangeSinkStopsWhenWrappedSinkCloses(t *testing.T) {
+	wrapped := &closingChangeSink{
+		done:     make(chan struct{}),
+		received: make(chan actions.ResourceChange, 1),
+	}
+	sink := NewAsyncChangeSink(wrapped, AsyncChangeSinkOptions{Buffer: 1})
+	close(wrapped.done)
+
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-after-wrapped-close", Version: 1})
+
+	select {
+	case change := <-wrapped.received:
+		t.Fatalf("async sink delivered change after wrapped sink closed: %+v", change)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
@@ -366,6 +402,27 @@ func (s *skippableBlockingChangeSink) PublishResourceChange(change actions.Resou
 
 func (s *skippableBlockingChangeSink) SkipVersion(version int64, reason string) {
 	s.skipped <- skippedVersion{version: version, reason: reason}
+}
+
+type recordingAsyncSink struct {
+	received chan actions.ResourceChange
+}
+
+func (s *recordingAsyncSink) PublishResourceChange(change actions.ResourceChange) {
+	s.received <- change
+}
+
+type closingChangeSink struct {
+	done     chan struct{}
+	received chan actions.ResourceChange
+}
+
+func (s *closingChangeSink) PublishResourceChange(change actions.ResourceChange) {
+	s.received <- change
+}
+
+func (s *closingChangeSink) Done() <-chan struct{} {
+	return s.done
 }
 
 func captureFeedTestLogs(t *testing.T) *bytes.Buffer {

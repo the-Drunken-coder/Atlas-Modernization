@@ -388,6 +388,25 @@ func taskCreateRequestValidatorSource(schema typeScriptSchema) (string, error) {
 	builder.WriteString("function atlasProtocolIsNonEmptyString(value: unknown): value is string {\n")
 	builder.WriteString("  return typeof value === \"string\" && value.trim() !== \"\";\n")
 	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {\n")
+	builder.WriteString("  if (value === null) {\n")
+	builder.WriteString("    return true;\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("  switch (typeof value) {\n")
+	builder.WriteString("    case \"boolean\":\n")
+	builder.WriteString("    case \"string\":\n")
+	builder.WriteString("      return true;\n")
+	builder.WriteString("    case \"number\":\n")
+	builder.WriteString("      return Number.isFinite(value);\n")
+	builder.WriteString("    case \"object\":\n")
+	builder.WriteString("      if (Array.isArray(value)) {\n")
+	builder.WriteString("        return value.every(atlasProtocolIsJSONValue);\n")
+	builder.WriteString("      }\n")
+	builder.WriteString("      return atlasProtocolIsRecord(value) && Object.values(value).every(atlasProtocolIsJSONValue);\n")
+	builder.WriteString("    default:\n")
+	builder.WriteString("      return false;\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("}\n\n")
 	return builder.String(), nil
 }
 
@@ -396,7 +415,9 @@ func runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (stri
 		switch typeNameFromRef(ref) {
 		case "NonEmptyString":
 			return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
-		case "TaskComponents", "JSONValue":
+		case "JSONValue":
+			return "atlasProtocolIsJSONValue(" + valueExpr + ")", nil
+		case "TaskComponents":
 			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
 		default:
 			return "", fmt.Errorf("unsupported runtime validator ref %q", ref)
@@ -423,10 +444,21 @@ func runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (stri
 	case "boolean":
 		return "typeof " + valueExpr + " === \"boolean\"", nil
 	case "object":
+		if additionalSchema, ok := schema["additionalProperties"].(map[string]any); ok {
+			check, err := runtimeValidatorExpression("item", additionalSchema)
+			if err != nil {
+				return "", err
+			}
+			return "atlasProtocolIsRecord(" + valueExpr + ") && Object.values(" + valueExpr + ").every((item) => " + check + ")", nil
+		}
 		return "atlasProtocolIsRecord(" + valueExpr + ")", nil
 	default:
-		if _, ok := schema["additionalProperties"]; ok {
-			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
+		if additionalSchema, ok := schema["additionalProperties"].(map[string]any); ok {
+			check, err := runtimeValidatorExpression("item", additionalSchema)
+			if err != nil {
+				return "", err
+			}
+			return "atlasProtocolIsRecord(" + valueExpr + ") && Object.values(" + valueExpr + ").every((item) => " + check + ")", nil
 		}
 		return "", fmt.Errorf("unsupported runtime validator schema: %s", summarizeTypeScriptSchema(schema))
 	}

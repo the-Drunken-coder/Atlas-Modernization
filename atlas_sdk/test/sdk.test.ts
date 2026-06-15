@@ -46,6 +46,29 @@ describe("AtlasClient HTTP", () => {
     await expect(client.entities.update("asset-1", { alias: "new" }, { ifMatchVersion: 0 })).rejects.toBeInstanceOf(ConflictError);
   });
 
+  it("matches Core duplicate-create conflicts in the fake transport", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" });
+    await expect(client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" })).rejects.toMatchObject({
+      status: 409,
+      errorCode: "ENTITY_ALREADY_EXISTS"
+    });
+
+    await client.tasks.create({ task_id: "task-conflict" });
+    await expect(client.tasks.create({ task_id: "task-conflict" })).rejects.toMatchObject({
+      status: 409,
+      errorCode: "TASK_ALREADY_EXISTS"
+    });
+
+    await client.objects.create({ object_id: "object-conflict" });
+    await expect(client.objects.create({ object_id: "object-conflict" })).rejects.toMatchObject({
+      status: 409,
+      errorCode: "OBJECT_ALREADY_EXISTS"
+    });
+  });
+
   it("rejects response-shaped write payloads with protocol error details", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
@@ -126,6 +149,11 @@ describe("AtlasClient HTTP", () => {
       errorCode: "INVALID_JSON"
     });
     await expect(client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as any)).rejects.toMatchObject({
+      status: 400,
+      errorCode: "INVALID_JSON"
+    });
+    core.upsertEntity(entity("asset-empty-update"));
+    await expect(client.entities.update("asset-empty-update", {} as any)).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
@@ -244,6 +272,41 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(core.version);
   });
 
+  it("ignores in-flight changed-since results after stop", async () => {
+    let resolveChangedSince!: (response: Response) => void;
+    const changedSinceResponse = new Promise<Response>((resolve) => {
+      resolveChangedSince = resolve;
+    });
+    const fetchImpl: typeof fetch = (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === "/queries/changed-since") {
+        return changedSinceResponse;
+      }
+      return Promise.resolve(new Response(JSON.stringify({ success: false, message: "not found", error_code: "ENTITY_NOT_FOUND" }), { status: 404 }));
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+
+    const recovery = client.changedSince();
+    client.sync.stop();
+    resolveChangedSince(
+      new Response(
+        JSON.stringify({
+          entities: [{ ...entity("asset-after-stop"), metadata: metadata(1) }],
+          tasks: [],
+          objects: [],
+          deleted_entities: [],
+          deleted_tasks: [],
+          deleted_objects: [],
+          version: 1
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      )
+    );
+    await recovery;
+
+    expect(client.sync.status().lastVersion).toBe(0);
+  });
+
   it("does not advance the global change cursor from point reads", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-read"));
@@ -315,14 +378,20 @@ describe("AtlasClient sync", () => {
 
     expect(watch).toHaveBeenCalledTimes(1);
     expect(watch.mock.calls[0][1]).toEqual({ event: "local_delete", resource_type: "entity", id: live.entity_id });
-    await expect(client.entities.get(live.entity_id)).rejects.toThrow("Atlas request failed: 404");
+    await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
+      status: 404,
+      errorCode: "ENTITY_NOT_FOUND"
+    });
 
     core.events.push(deleteEvent);
     core.version = deleteEvent.version;
     await client.changedSince();
 
     expect(watch).toHaveBeenCalledTimes(1);
-    await expect(client.entities.get(live.entity_id)).rejects.toThrow("Atlas request failed: 404");
+    await expect(client.entities.get(live.entity_id)).rejects.toMatchObject({
+      status: 404,
+      errorCode: "ENTITY_NOT_FOUND"
+    });
   });
 
   it("drains paginated full-dataset hydration responses", async () => {
@@ -534,7 +603,10 @@ describe("AtlasClient sync", () => {
     await expect(client.entities.get("asset-delete")).resolves.toMatchObject({ entity_id: "asset-delete" });
     await client.entities.delete("asset-delete");
 
-    await expect(client.entities.get("asset-delete")).rejects.toThrow("Atlas request failed: 404");
+    await expect(client.entities.get("asset-delete")).rejects.toMatchObject({
+      status: 404,
+      errorCode: "ENTITY_NOT_FOUND"
+    });
   });
 
   it("emits a local delete notification without fabricating a feed version", async () => {
@@ -593,7 +665,10 @@ describe("AtlasClient sync", () => {
     await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
     expect(watch.mock.calls[0][0]).toBeUndefined();
     expect(watch.mock.calls[0][1]).toMatchObject({ event: "local_delete", resource_type: "entity", id: "asset-delete-stale" });
-    await expect(client.entities.get("asset-delete-stale")).rejects.toThrow("Atlas request failed: 404");
+    await expect(client.entities.get("asset-delete-stale")).rejects.toMatchObject({
+      status: 404,
+      errorCode: "ENTITY_NOT_FOUND"
+    });
   });
 
   it("uses websocket feed events and converges through changed-since after a forced gap", async () => {

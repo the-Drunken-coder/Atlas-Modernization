@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
@@ -20,18 +22,40 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed config is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
-	if h.config.EnableAPIAuth && strings.TrimSpace(h.config.APIAuthKey) == "" {
+	serverConfig := feedServerConfig(h.config)
+	if serverConfig.EnableAPIAuth && serverConfig.APIKey == "" {
 		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler has auth enabled without an API key")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 	server := feed.Server{
-		Hub: h.feedHub,
-		Config: feed.ServerConfig{
-			EnableAPIAuth:  h.config.EnableAPIAuth,
-			APIKey:         h.config.APIAuthKey,
-			OriginPatterns: h.config.CORSOrigins,
-		},
+		Hub:    h.feedHub,
+		Config: serverConfig,
 	}
 	server.ServeHTTP(w, r)
+}
+
+func feedServerConfig(cfg *config.Config) feed.ServerConfig {
+	return feed.ServerConfig{
+		EnableAPIAuth:  cfg.EnableAPIAuth,
+		APIKey:         strings.TrimSpace(cfg.APIAuthKey),
+		OriginPatterns: websocketOriginPatterns(cfg.CORSOrigins),
+	}
+}
+
+func websocketOriginPatterns(origins []string) []string {
+	patterns := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		parsed, err := url.Parse(origin)
+		if err == nil && parsed.Host != "" {
+			patterns = append(patterns, parsed.Host)
+			continue
+		}
+		patterns = append(patterns, origin)
+	}
+	return patterns
 }

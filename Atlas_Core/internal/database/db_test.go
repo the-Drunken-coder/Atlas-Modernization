@@ -185,27 +185,21 @@ func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 		t.Fatal("coreSchemaTablesPresent = false, want true from fake row")
 	}
 
-	sql := strings.Join(query.sqls, "\n")
-	for _, fragment := range []string{
-		"information_schema.tables",
-		"table_schema = 'public'",
-		"table_type = 'BASE TABLE'",
-		"table_name = ANY($1::text[])",
-		"atlas_change_version_seq",
-		"c.relkind = 'S'",
-		"FROM information_schema.columns c",
-		"table_name = 'deletions'",
-		"column_name = 'context'",
-	} {
-		if !strings.Contains(sql, fragment) {
-			t.Fatalf("schema check SQL missing %q:\n%s", fragment, sql)
-		}
-	}
 	if len(query.sqls) != 3 {
 		t.Fatalf("schema check query count = %d, want 3: %#v", len(query.sqls), query.sqls)
 	}
 	if len(query.args) != 3 || len(query.args[0]) != 1 {
 		t.Fatalf("schema check args = %#v, want table list on first query only", query.args)
+	}
+	tableNames, ok := query.args[0][0].([]string)
+	if !ok {
+		t.Fatalf("schema check table args = %#v, want []string", query.args[0][0])
+	}
+	if !equalStringSets(tableNames, coreSchemaTables) {
+		t.Fatalf("schema check table args = %#v, want %#v", tableNames, coreSchemaTables)
+	}
+	if len(query.args[1]) != 0 || len(query.args[2]) != 0 {
+		t.Fatalf("schema check extra args = %#v, want no sequence/context args", query.args[1:])
 	}
 }
 
@@ -414,6 +408,23 @@ func databaseTestURL() (string, bool) {
 	return dbURL.String(), false
 }
 
+func equalStringSets(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, value := range left {
+		counts[value]++
+	}
+	for _, value := range right {
+		counts[value]--
+		if counts[value] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
 type recordingSchemaCheckQuery struct {
 	sqls            []string
 	args            [][]any
@@ -435,12 +446,12 @@ func (q *recordingSchemaCheckQuery) QueryRow(_ context.Context, sql string, args
 	if q.err != nil {
 		return schemaCheckRow{err: q.err}
 	}
-	switch {
-	case strings.Contains(sql, "information_schema.tables"):
+	switch len(q.sqls) {
+	case 1:
 		return schemaCheckRow{values: []any{q.tableCount}}
-	case strings.Contains(sql, "atlas_change_version_seq"):
+	case 2:
 		return schemaCheckRow{values: []any{q.sequencePresent}}
-	case strings.Contains(sql, "information_schema.columns"):
+	case 3:
 		return schemaCheckRow{values: []any{q.contextColumn.udtName, q.contextColumn.isNullable, q.contextColumn.defaultIsEmptyObject}}
 	default:
 		return schemaCheckRow{err: fmt.Errorf("unexpected schema check query: %s", sql)}

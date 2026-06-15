@@ -103,6 +103,9 @@ export class FakeCore {
     if (path === "/entities" && init?.method === "POST") {
       const body = await readStrictBody<EntityCreateRequest>(init, entityCreateShape);
       if (body instanceof Response) return body;
+      if (this.entities.has(body.entity_id)) {
+        return protocolError("entity already exists", "ENTITY_ALREADY_EXISTS", 409);
+      }
       return json(this.createEntity(body), 201);
     }
     if (path.startsWith("/entities/") && init?.method === "PATCH") {
@@ -126,6 +129,9 @@ export class FakeCore {
     if (path === "/tasks" && init?.method === "POST") {
       const body = await readStrictBody<TaskCreateRequest>(init, taskCreateShape);
       if (body instanceof Response) return body;
+      if (this.tasks.has(body.task_id)) {
+        return protocolError("task already exists", "TASK_ALREADY_EXISTS", 409);
+      }
       return json(this.createTask(body), 201);
     }
     if (path.startsWith("/tasks/") && init?.method === "PATCH") {
@@ -158,6 +164,9 @@ export class FakeCore {
     if (path === "/objects" && init?.method === "POST") {
       const body = await readStrictBody<ObjectCreateRequest>(init, objectCreateShape);
       if (body instanceof Response) return body;
+      if (this.objects.has(body.object_id)) {
+        return protocolError("object already exists", "OBJECT_ALREADY_EXISTS", 409);
+      }
       return json(this.createObject(body), 201);
     }
     if (path.startsWith("/objects/") && init?.method === "PATCH") {
@@ -528,6 +537,7 @@ type RequestShape = {
   allowedKeys: Set<string>;
   requiredKeys: Set<string>;
   fields: Record<string, FieldValidator>;
+  minProperties: number;
 };
 
 const entityCreateShape = requestShape(["entity_id", "entity_type", "subtype", "alias", "components", "published_at", "updated_at", "extra"], ["entity_id", "entity_type"], {
@@ -546,7 +556,7 @@ const entityUpdateShape = requestShape(["entity_type", "subtype", "alias", "comp
   alias: isNullableNonEmptyString,
   components: isRecord,
   extra: isRecord
-});
+}, 1);
 const taskCreateShape = requestShape(["task_id", "status", "entity_id", "components", "extra"], ["task_id"], {
   task_id: isNonEmptyString,
   status: isNonEmptyString,
@@ -560,7 +570,7 @@ const taskUpdateShape = requestShape(["status", "entity_id", "components", "extr
   components: isRecord,
   extra: isRecord,
   remove_extra_keys: isNonEmptyStringArray
-});
+}, 1);
 const objectCreateShape = requestShape(["object_id", "path", "size_bytes", "content_type", "type", "usage_hints", "referenced_by", "extra"], ["object_id"], {
   object_id: isNonEmptyString,
   path: isString,
@@ -579,7 +589,7 @@ const objectUpdateShape = requestShape(["path", "size_bytes", "content_type", "t
   usage_hints: isNonEmptyStringArray,
   referenced_by: isObjectReferenceArray,
   extra: isRecord
-});
+}, 1);
 const promotedObjectPayloadKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
 
 function json(value: unknown, status = 200): Response {
@@ -615,6 +625,9 @@ async function readStrictBody<T>(init: RequestInit, shape: RequestShape): Promis
       return protocolError(`Invalid JSON body: missing field ${requiredKey}`, "INVALID_JSON", 400);
     }
   }
+  if (Object.keys(value).length < shape.minProperties) {
+    return protocolError("Invalid JSON body: at least one field is required", "INVALID_JSON", 400);
+  }
   for (const [key, fieldValue] of Object.entries(value)) {
     if (!shape.fields[key]?.(fieldValue)) {
       return protocolError(`Invalid JSON body: invalid field ${key}`, "INVALID_JSON", 400);
@@ -635,8 +648,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function requestShape(allowedKeys: string[], requiredKeys: string[], fields: Record<string, FieldValidator>): RequestShape {
-  return { allowedKeys: new Set(allowedKeys), requiredKeys: new Set(requiredKeys), fields };
+function requestShape(allowedKeys: string[], requiredKeys: string[], fields: Record<string, FieldValidator>, minProperties = 0): RequestShape {
+  return { allowedKeys: new Set(allowedKeys), requiredKeys: new Set(requiredKeys), fields, minProperties };
 }
 
 function isString(value: unknown): value is string {

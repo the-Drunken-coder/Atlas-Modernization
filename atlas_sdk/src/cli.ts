@@ -30,6 +30,13 @@ const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
 const CLI_REQUEST_TIMEOUT_MS = 10_000;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
+class UsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UsageError";
+  }
+}
+
 export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<number> {
   try {
     const command = parseArgs(argv, io.env);
@@ -74,7 +81,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
     }
   } catch (error) {
     const message = errorMessage(error);
-    if (message.startsWith("usage:") || message.startsWith("invalid ")) {
+    if (error instanceof UsageError) {
       io.stderr.write(message + "\n");
       io.stderr.write(usage);
       return 2;
@@ -126,7 +133,7 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
         break;
       default:
         if (arg.startsWith("--")) {
-          throw new Error(`usage: unknown flag ${arg}`);
+          throw new UsageError(`usage: unknown flag ${arg}`);
         }
         positional.push(arg);
     }
@@ -141,26 +148,26 @@ function parseArgs(argv: string[], env: Record<string, string | undefined>): CLI
     try {
       return { kind: "tasks.create", options, body: parseTaskCreateBody(JSON.parse(raw)) };
     } catch {
-      throw new Error("invalid task JSON");
+      throw new UsageError("invalid task JSON");
     }
   }
   if (resource === "watch" && action === undefined && rest.length === 0) {
     if (!subscribeFilter) {
-      throw new Error("usage: watch requires --subscribe <filter>");
+      throw new UsageError("usage: watch requires --subscribe <filter>");
     }
     const filter = parseFilter(subscribeFilter);
     if (!follow) {
-      throw new Error("usage: watch requires --follow");
+      throw new UsageError("usage: watch requires --follow");
     }
     return { kind: "watch", options, filter, follow };
   }
-  throw new Error("usage: invalid command");
+  throw new UsageError("usage: invalid command");
 }
 
 function readFlagValue(argv: string[], index: number, flag: string): string {
   const value = argv[index + 1];
   if (!value || value.startsWith("--")) {
-    throw new Error(`usage: ${flag} requires a value`);
+    throw new UsageError(`usage: ${flag} requires a value`);
   }
   return value;
 }
@@ -178,7 +185,7 @@ export function parseFilter(raw: string): AtlasSubscription {
     const entityId = parts.slice(1).join(":");
     if (entityId) return { filter: "tasks_for_entity", entity_id: entityId };
   }
-  throw new Error(`invalid subscription filter: ${raw}`);
+  throw new UsageError(`invalid subscription filter: ${raw}`);
 }
 
 export function isResourceType(value: string | undefined): value is ResourceType {
@@ -187,7 +194,7 @@ export function isResourceType(value: string | undefined): value is ResourceType
 
 function parseTaskCreateBody(value: unknown): TaskCreateRequest {
   if (!isTaskCreateRequest(value)) {
-    throw new Error("invalid task JSON");
+    throw new UsageError("invalid task JSON");
   }
   return value;
 }

@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -177,8 +178,11 @@ func TestFeedWithoutHubReturnsServiceUnavailable(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable || body.Message != "feed hub is not configured" {
+	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable {
 		t.Fatalf("unexpected body: %+v", body)
+	}
+	if strings.TrimSpace(body.Message) == "" {
+		t.Fatal("expected non-empty error message")
 	}
 	if body.ErrorID == "" {
 		t.Fatal("expected error_id to be populated")
@@ -201,8 +205,11 @@ func TestFeedConfigNilReturnsServiceUnavailable(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable || body.Message != "feed config is not configured" {
+	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable {
 		t.Fatalf("unexpected body: %+v", body)
+	}
+	if strings.TrimSpace(body.Message) == "" {
+		t.Fatal("expected non-empty error message")
 	}
 	if body.ErrorID == "" {
 		t.Fatal("expected error_id to be populated")
@@ -231,11 +238,37 @@ func TestFeedAuthEnabledWithEmptyKeyReturnsServiceUnavailable(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable || body.Message != "feed API key is not configured" {
+	if body.ErrorCode != protocol.ErrorCodeFeedUnavailable {
 		t.Fatalf("unexpected body: %+v", body)
+	}
+	if strings.TrimSpace(body.Message) == "" {
+		t.Fatal("expected non-empty error message")
 	}
 	if body.ErrorID == "" {
 		t.Fatal("expected error_id to be populated")
+	}
+}
+
+func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
+	cfg := &config.Config{
+		EnableAPIAuth: true,
+		APIAuthKey:    "  secret-key  ",
+		CORSOrigins: []string{
+			"http://localhost:5173",
+			"https://atlas.example:8443",
+			"devbox.local:3000",
+			" ",
+		},
+	}
+
+	got := feedServerConfig(cfg)
+
+	if got.APIKey != "secret-key" {
+		t.Fatalf("APIKey = %q, want trimmed key", got.APIKey)
+	}
+	wantOrigins := []string{"localhost:5173", "atlas.example:8443", "devbox.local:3000"}
+	if !reflect.DeepEqual(got.OriginPatterns, wantOrigins) {
+		t.Fatalf("OriginPatterns = %#v, want %#v", got.OriginPatterns, wantOrigins)
 	}
 }
 

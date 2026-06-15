@@ -276,15 +276,29 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"TaskCreateRequest": []byte(`{
 			"type": "object",
 			"additionalProperties": false,
-			"properties": {
-				"priority": { "$ref": "#/$defs/%23NonEmptyString" },
-				"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
-			},
-			"required": ["task_id"],
-			"$defs": {
-				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
-			}
-		}`),
+				"properties": {
+					"extra": {
+						"type": "object",
+						"additionalProperties": { "$ref": "#/$defs/%23JSONValue" }
+					},
+					"priority": { "$ref": "#/$defs/%23NonEmptyString" },
+					"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
+				},
+				"required": ["task_id"],
+				"$defs": {
+					"#JSONValue": {
+						"oneOf": [
+							{ "type": "null" },
+							{ "type": "boolean" },
+							{ "type": "string" },
+							{ "type": "number" },
+							{ "type": "array", "items": { "$ref": "#/$defs/%23JSONValue" } },
+							{ "type": "object", "additionalProperties": { "$ref": "#/$defs/%23JSONValue" } }
+						]
+					},
+					"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+				}
+			}`),
 	})
 	if err != nil {
 		t.Fatalf("typeScriptSource: %v", err)
@@ -292,9 +306,12 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"export type TaskCreateRequest",
+		`"extra"?: { [key: string]: JSONValue };`,
 		`"priority"?: NonEmptyString;`,
 		`"task_id": NonEmptyString;`,
 		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
+		"atlasProtocolIsJSONValue",
+		`Object.values(value.extra).every((item) => atlasProtocolIsJSONValue(item))`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)

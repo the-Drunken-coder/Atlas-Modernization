@@ -11,7 +11,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 #MetadataBlock: close({
 	created_at!: shared.#RFC3339Timestamp
 	updated_at!: shared.#RFC3339Timestamp
-	version!:    int & >=0
+	version!:    #FeedVersion
 })
 
 #EntityResource: close({
@@ -132,6 +132,8 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 
 #FeedAuthMessage: close({
 	action!:  "auth"
+	// Sensitive credential material. Producers and consumers must not log,
+	// echo, or expose this value in error responses or debug output.
 	api_key!: shared.#NonEmptyString
 })
 

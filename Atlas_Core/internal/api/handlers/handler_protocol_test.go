@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -18,8 +19,8 @@ func TestProtocolRevisionHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if got := rec.Header().Get("Content-Type"); got != "application/json" {
-		t.Fatalf("Content-Type = %q, want application/json", got)
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json*", got)
 	}
 	var response protocolRevisionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -42,8 +43,8 @@ func TestProtocolRevisionHandlerAcceptHeaders(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 			}
-			if got := rec.Header().Get("Content-Type"); got != "application/json" {
-				t.Fatalf("Content-Type = %q, want application/json", got)
+			if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+				t.Fatalf("Content-Type = %q, want application/json*", got)
 			}
 			response := decodeProtocolRevisionResponse(t, rec)
 			if response.ProtocolRevision != protocol.ProtocolRevision {

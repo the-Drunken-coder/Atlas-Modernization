@@ -154,24 +154,29 @@ export class SyncEngine {
     this.degraded = false;
   }
 
-  async changedSince(): Promise<void> {
+  async changedSince(generation = this.lifecycleGeneration): Promise<void> {
+    if (!this.isCurrent(generation)) return;
     const sinceVersion = this.cache.lastVersion;
     let highWaterVersion = sinceVersion;
     let cursors: ChangedSinceCursors = {};
     const recoveredEvents: AtlasWatchEvent[] = [];
     do {
+      if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
+      if (!this.isCurrent(generation)) return;
       highWaterVersion = Math.max(highWaterVersion, response.version);
       recoveredEvents.push(...changedSinceToEvents(response));
       cursors = nextChangedSinceCursors(response);
     } while (hasMoreChangedSince(cursors));
     for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
+      if (!this.isCurrent(generation)) return;
       if (event.event === "recovered") {
         this.applyRecoveredEvent(event);
       } else if (event.event !== "local_delete") {
         this.applyEvent(event);
       }
     }
+    if (!this.isCurrent(generation)) return;
     this.cache.lastVersion = Math.max(this.cache.lastVersion, highWaterVersion);
     this.degraded = false;
     this.healthy = this.syncRunning;
@@ -236,7 +241,7 @@ export class SyncEngine {
   private async startSyncFromStopped(generation: number): Promise<void> {
     await this.handshake();
     if (!this.isCurrent(generation)) return;
-    await this.hydrate();
+    await this.hydrate(generation);
     if (!this.isCurrent(generation)) return;
     this.syncRunning = true;
     this.healthy = true;
@@ -255,7 +260,7 @@ export class SyncEngine {
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         const pollGeneration = generation;
-        void this.changedSince().catch(() => {
+        void this.changedSince(pollGeneration).catch(() => {
           if (!this.isCurrent(pollGeneration)) return;
           this.degraded = true;
           this.healthy = false;
@@ -280,10 +285,12 @@ export class SyncEngine {
     return this.lifecycleGeneration === generation;
   }
 
-  private async hydrate(): Promise<void> {
+  private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
     do {
+      if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<FullDatasetResponse>("GET", fullDatasetPath(cursors));
+      if (!this.isCurrent(generation)) return;
       for (const entity of response.entities ?? []) this.cache.cacheResource("entity", entity.entity_id, entity);
       for (const task of response.tasks ?? []) this.cache.cacheResource("task", task.task_id, task);
       for (const object of response.objects ?? []) this.cache.cacheResource("object", object.object_id, object);
@@ -292,9 +299,11 @@ export class SyncEngine {
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
+    const generation = this.lifecycleGeneration;
     if (event.version > this.cache.lastVersion + 1) {
       this.degraded = true;
-      await this.changedSince();
+      await this.changedSince(generation);
+      if (!this.isCurrent(generation)) return;
     }
     this.applyEvent(event);
   }
@@ -313,7 +322,7 @@ export class SyncEngine {
     try {
       await this.connectFeed();
       if (!this.isCurrent(generation)) return;
-      await this.changedSince();
+      await this.changedSince(generation);
     } finally {
       this.reconnecting = false;
       if (this.reconnectAfterRecovery && this.isCurrent(generation)) {
