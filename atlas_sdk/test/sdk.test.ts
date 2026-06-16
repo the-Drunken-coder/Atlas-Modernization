@@ -37,6 +37,15 @@ describe("AtlasClient HTTP", () => {
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow("positive finite");
   });
 
+  it("rejects non-plain records in task create requests", () => {
+    const nullPrototypeRequest = Object.assign(Object.create(null) as Record<string, unknown>, { task_id: "task-null-proto" });
+
+    expect(isTaskCreateRequest({ task_id: "task-plain", components: {}, extra: {} })).toBe(true);
+    expect(isTaskCreateRequest(nullPrototypeRequest)).toBe(true);
+    expect(isTaskCreateRequest({ task_id: "task-date", components: new Date() })).toBe(false);
+    expect(isTaskCreateRequest({ task_id: "task-map", extra: new Map([["priority", "high"]]) })).toBe(false);
+  });
+
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });

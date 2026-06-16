@@ -441,7 +441,11 @@ function atlasProtocolHasOwn(value: Record<string, unknown>, key: string): boole
 }
 
 function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function atlasProtocolIsNonEmptyString(value: unknown): value is string {

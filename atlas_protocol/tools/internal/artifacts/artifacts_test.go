@@ -316,6 +316,8 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"if (seen.has(value))",
 		"seen.delete(value)",
 		`Object.values(value.extra).every((item) => atlasProtocolIsJSONValue(item))`,
+		"const prototype = Object.getPrototypeOf(value);",
+		"return prototype === Object.prototype || prototype === null;",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
