@@ -449,6 +449,10 @@ function atlasProtocolIsNonEmptyString(value: unknown): value is string {
 }
 
 function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
+  return atlasProtocolIsJSONValueInternal(value, new WeakSet<object>());
+}
+
+function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue {
   if (value === null) {
     return true;
   }
@@ -459,10 +463,18 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     case "number":
       return Number.isFinite(value);
     case "object":
-      if (Array.isArray(value)) {
-        return value.every(atlasProtocolIsJSONValue);
+      if (seen.has(value)) {
+        return false;
       }
-      return atlasProtocolIsRecord(value) && Object.values(value).every(atlasProtocolIsJSONValue);
+      seen.add(value);
+      if (Array.isArray(value)) {
+        const valid = value.every((item) => atlasProtocolIsJSONValueInternal(item, seen));
+        seen.delete(value);
+        return valid;
+      }
+      const valid = atlasProtocolIsRecord(value) && Object.values(value).every((item) => atlasProtocolIsJSONValueInternal(item, seen));
+      seen.delete(value);
+      return valid;
     default:
       return false;
   }

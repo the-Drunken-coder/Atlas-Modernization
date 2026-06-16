@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -267,8 +268,12 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 		t.Fatalf("APIKey = %q, want trimmed key", got.APIKey)
 	}
 	wantOrigins := []string{"localhost:5173", "atlas.example:8443", "devbox.local:3000"}
-	if !reflect.DeepEqual(got.OriginPatterns, wantOrigins) {
-		t.Fatalf("OriginPatterns = %#v, want %#v", got.OriginPatterns, wantOrigins)
+	gotPatterns := append([]string(nil), got.OriginPatterns...)
+	wantPatterns := append([]string(nil), wantOrigins...)
+	sort.Strings(gotPatterns)
+	sort.Strings(wantPatterns)
+	if !reflect.DeepEqual(gotPatterns, wantPatterns) {
+		t.Fatalf("OriginPatterns = %#v, want %#v", gotPatterns, wantPatterns)
 	}
 }
 

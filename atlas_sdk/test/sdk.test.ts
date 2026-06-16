@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, type FeedEvent } from "../src";
+import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, isTaskCreateRequest, type FeedEvent } from "../src";
 import { RESOURCE_TYPE_VALUES, isResourceType, parseFilter, runCLI, type CLIIO } from "../src/cli.js";
 import { FeedConnectionManager } from "../src/feed-connection.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
@@ -157,6 +157,13 @@ describe("AtlasClient HTTP", () => {
       status: 400,
       errorCode: "INVALID_JSON"
     });
+  });
+
+  it("rejects cyclic JSON values in task create extra payloads", () => {
+    const extra: Record<string, unknown> = {};
+    extra.self = extra;
+
+    expect(isTaskCreateRequest({ task_id: "task-cycle", extra })).toBe(false);
   });
 
   it("returns protocol errors for malformed fake Core request JSON", async () => {

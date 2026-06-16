@@ -311,6 +311,10 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		`"task_id": NonEmptyString;`,
 		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
 		"atlasProtocolIsJSONValue",
+		"return atlasProtocolIsJSONValueInternal(value, new WeakSet<object>())",
+		"function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue",
+		"if (seen.has(value))",
+		"seen.delete(value)",
 		`Object.values(value.extra).every((item) => atlasProtocolIsJSONValue(item))`,
 	} {
 		if !strings.Contains(text, want) {

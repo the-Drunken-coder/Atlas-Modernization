@@ -347,7 +347,7 @@ func TestAsyncChangeSinkStopsAfterClose(t *testing.T) {
 	select {
 	case change := <-recording.received:
 		t.Fatalf("closed async sink delivered change: %+v", change)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond):
 	}
 }
 
@@ -364,7 +364,7 @@ func TestAsyncChangeSinkStopsWhenWrappedSinkCloses(t *testing.T) {
 	select {
 	case change := <-wrapped.received:
 		t.Fatalf("async sink delivered change after wrapped sink closed: %+v", change)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond):
 	}
 }
 
