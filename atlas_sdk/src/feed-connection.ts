@@ -1,6 +1,6 @@
 import { ATLAS_PROTOCOL_REVISION, type FeedEvent, type FeedHandshakeMessage } from "./protocol.js";
 import { subscriptionMessage } from "./subscriptions.js";
-import type { AtlasSubscription, WebSocketCtor, WebSocketLike } from "./types.js";
+import type { AtlasSubscription, WebSocketCtor, WebSocketEventType, WebSocketLike, WebSocketListener } from "./types.js";
 
 const WS_CLOSED = 3;
 
@@ -66,7 +66,7 @@ export class FeedConnectionManager {
       }
     };
     const startupCleanups: Array<() => void> = [];
-    const onStartup = (type: "open" | "message" | "close" | "error", listener: (event: any) => void) => {
+    const onStartup = (type: WebSocketEventType, listener: WebSocketListener) => {
       socket.addEventListener(type, listener);
       startupCleanups.push(() => removeSocketListener(socket, type, listener));
     };
@@ -93,7 +93,7 @@ export class FeedConnectionManager {
         () => finish(() => reject(new Error("feed protocol hello timed out"))),
         this.feedHandshakeTimeoutMs
       );
-      const onMessage = (message: any) => {
+      const onMessage: WebSocketListener = (message) => {
         if (settled) {
           return;
         }
@@ -172,7 +172,7 @@ export class FeedConnectionManager {
       socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
     }
     let eventChain = Promise.resolve();
-    socket.addEventListener("message", (message: any) => {
+    socket.addEventListener("message", (message) => {
       if (this.connection !== connection || this.socket !== socket) {
         return;
       }
@@ -233,8 +233,8 @@ export function assertRevision(actual: string): void {
 
 function removeSocketListener(
   socket: WebSocketLike,
-  type: "open" | "message" | "close" | "error",
-  listener: (event: any) => void
+  type: WebSocketEventType,
+  listener: WebSocketListener
 ): void {
   if (socket.removeEventListener) {
     socket.removeEventListener(type, listener);

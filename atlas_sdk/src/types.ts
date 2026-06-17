@@ -13,13 +13,16 @@ export type WebSocketLike = {
   readonly readyState: number;
   send(data: string): void;
   close(): void;
-  addEventListener(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
-  removeEventListener?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
-  off?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
-  removeListener?(type: "open" | "message" | "close" | "error", listener: (event: any) => void): void;
+  addEventListener(type: WebSocketEventType, listener: WebSocketListener): void;
+  removeEventListener?(type: WebSocketEventType, listener: WebSocketListener): void;
+  off?(type: WebSocketEventType, listener: WebSocketListener): void;
+  removeListener?(type: WebSocketEventType, listener: WebSocketListener): void;
 };
 
 export type WebSocketCtor = new (url: string) => WebSocketLike;
+export type WebSocketEventType = "open" | "message" | "close" | "error";
+export type WebSocketEvent = { data?: unknown };
+export type WebSocketListener = (event: WebSocketEvent) => void;
 
 export type AtlasSubscription =
   | { filter: "all" }

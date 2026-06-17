@@ -15,8 +15,7 @@ import {
   type TaskResource,
   type TaskUpdateRequest
 } from "../src";
-
-type Listener = (event: any) => void;
+import type { WebSocketCtor, WebSocketEvent, WebSocketEventType, WebSocketListener } from "../src/types.js";
 
 export class FakeCore {
   revision = ATLAS_PROTOCOL_REVISION;
@@ -187,7 +186,7 @@ export class FakeCore {
     return protocolError("not found", "VALIDATION_ERROR", 404);
   };
 
-  attachWebSocketGlobal(): typeof FakeWebSocket {
+  attachWebSocketGlobal(): WebSocketCtor {
     const owningCore = this;
     return class BoundFakeWebSocket extends FakeWebSocket {
       constructor(url: string) {
@@ -434,7 +433,7 @@ export class FakeCore {
 
 class FakeWebSocket {
   readyState = 0;
-  private listeners = new Map<string, Set<Listener>>();
+  private listeners = new Map<WebSocketEventType, Set<WebSocketListener>>();
   private subscriptions: AtlasSubscription[] = [];
 
   constructor(readonly url: string, private readonly core: FakeCore) {
@@ -466,7 +465,7 @@ class FakeWebSocket {
     this.dispatch("close", {});
   }
 
-  addEventListener(type: "open" | "message" | "close" | "error", listener: Listener): void {
+  addEventListener(type: WebSocketEventType, listener: WebSocketListener): void {
     let listeners = this.listeners.get(type);
     if (!listeners) {
       listeners = new Set();
@@ -475,7 +474,7 @@ class FakeWebSocket {
     listeners.add(listener);
   }
 
-  removeEventListener(type: "open" | "message" | "close" | "error", listener: Listener): void {
+  removeEventListener(type: WebSocketEventType, listener: WebSocketListener): void {
     this.listeners.get(type)?.delete(listener);
   }
 
@@ -490,7 +489,7 @@ class FakeWebSocket {
     return this.subscriptions.some((subscription) => subscriptionMatches(subscription, event, beforeTaskEntityId));
   }
 
-  private dispatch(type: string, event: unknown): void {
+  private dispatch(type: WebSocketEventType, event: WebSocketEvent): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
 }

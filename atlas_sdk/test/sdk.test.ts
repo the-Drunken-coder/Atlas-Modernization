@@ -140,7 +140,7 @@ describe("AtlasClient HTTP", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -472,7 +472,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -504,7 +504,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: fetchImpl,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -536,7 +536,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: fetchImpl,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -556,7 +556,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -579,7 +579,7 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     const manager = new FeedConnectionManager({
       baseUrl: "http://atlas.test",
-      WebSocketImpl: core.attachWebSocketGlobal() as any,
+      WebSocketImpl: core.attachWebSocketGlobal(),
       feedHandshakeTimeoutMs: 1_000
     });
     const delivery: string[] = [];
@@ -617,7 +617,7 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     const manager = new FeedConnectionManager({
       baseUrl: "http://atlas.test",
-      WebSocketImpl: core.attachWebSocketGlobal() as any,
+      WebSocketImpl: core.attachWebSocketGlobal(),
       feedHandshakeTimeoutMs: 1_000
     });
     await manager.connect({
@@ -654,7 +654,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -679,7 +679,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -715,7 +715,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -739,7 +739,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -763,7 +763,7 @@ describe("AtlasClient sync", () => {
       baseUrl: "http://atlas.test",
       apiKey: "wrong",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0,
       feedHandshakeTimeoutMs: 50
@@ -780,7 +780,7 @@ describe("AtlasClient sync", () => {
       baseUrl: "http://atlas.test",
       apiKey: "wrong",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0,
       feedHandshakeTimeoutMs: 50
@@ -809,7 +809,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: fetchImpl,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -818,7 +818,7 @@ describe("AtlasClient sync", () => {
       await client.sync.start();
       const initialSocket = Array.from(core.sockets)[0];
       delayNextChangedSince = true;
-      const recovery = (client as unknown as { connectAndRecoverFeed: () => Promise<void> }).connectAndRecoverFeed();
+      const recovery = client.connectAndRecoverFeed();
 
       await vi.waitFor(() => {
         expect(releaseRecovery).toBeTypeOf("function");
@@ -849,7 +849,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -868,7 +868,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -890,7 +890,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: firstCore.fetch,
-      WebSocket: firstWebSocket as any,
+      WebSocket: firstWebSocket,
       sync: "all",
       pollIntervalMs: 0
     });
@@ -915,7 +915,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -938,7 +938,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "selective",
       pollIntervalMs: 0
     });
@@ -966,7 +966,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -990,7 +990,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -1019,7 +1019,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
     });
@@ -1070,7 +1070,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
-      WebSocket: core.attachWebSocketGlobal() as any,
+      WebSocket: core.attachWebSocketGlobal(),
       sync: "selective",
       pollIntervalMs: 0
     });
@@ -1272,7 +1272,7 @@ describe("Atlas CLI", () => {
     const core = new FakeCore();
     const captured = captureIO();
     captured.io.fetch = core.fetch;
-    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.WebSocket = core.attachWebSocketGlobal();
     captured.io.waitForExitSignal = async () => {
       const dropped = core.upsertTask(task("task-cli-dropped", "asset-1"));
       core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
@@ -1295,7 +1295,7 @@ describe("Atlas CLI", () => {
     const core = new FakeCore();
     const captured = captureIO();
     captured.io.fetch = core.fetch;
-    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.WebSocket = core.attachWebSocketGlobal();
     captured.io.waitForExitSignal = async () => {
       throw new Error("follow failed");
     };
@@ -1310,7 +1310,7 @@ describe("Atlas CLI", () => {
     const core = new FakeCore();
     const captured = captureIO();
     captured.io.fetch = core.fetch;
-    captured.io.WebSocket = core.attachWebSocketGlobal() as any;
+    captured.io.WebSocket = core.attachWebSocketGlobal();
     captured.io.waitForExitSignal = async () => {
       throw "raw follow failure";
     };
