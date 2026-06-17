@@ -2,9 +2,9 @@
 
 The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: a TypeScript/JavaScript package with a typed HTTP client, an optional sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
 
-The SDK is the preferred client path: UI code, asset-side services, and tools should generally talk to Atlas through the SDK or its bundled CLI rather than hand-writing API calls. Direct API use remains acceptable for tooling and non-TypeScript services without an SDK port (see "CLI and cross-language story"), but it is not the recommended default. The one piece of new API work the SDK depends on — the websocket change feed in Atlas Core — was designed and built separately, before the SDK ([change feed doc](../atlas-change-feed/README.md)).
+The SDK is the preferred client path for UI code, asset-side services, and tools. Direct API calls remain acceptable for small tools and non-TypeScript services, but the SDK/CLI should be the default integration surface.
 
-**Sole consumer:** the only user of Atlas and this SDK is its developer. Publishing to public npm is for convenience, not for external users — the package carries **no compatibility guarantees**. Breaking changes are preferred over compatibility shims (matching repo-wide policy in `AGENTS.md`), and all consumers upgrade in lockstep. To make lockstep safe, the SDK performs a cheap version handshake and fails loudly on SDK/API mismatch rather than degrading quietly — over HTTP at client startup and again at websocket connect. The revision token is the generated `ATLAS_PROTOCOL_REVISION`; Core exposes it through `GET /protocol/revision` and the feed `hello` frame.
+**Sole consumer:** Atlas currently has one developer/operator. The package carries no compatibility promise; breaking changes are preferred over shims. The SDK keeps lockstep upgrades safe by comparing its generated `ATLAS_PROTOCOL_REVISION` with Core over `GET /protocol/revision` and the feed `hello` frame.
 
 ## Design goals
 
@@ -16,9 +16,9 @@ The SDK is the preferred client path: UI code, asset-side services, and tools sh
 
 ## Non-goals
 
-- A polyglot runtime (sidecar/local server other languages talk to). If a Python SDK is needed later, it is a mechanical port of the documented contract, not shared machinery.
-- Caching as an archive. The cache is a hot mirror of current state, never a history store.
-- A speculative composite-function catalog. The extension point is designed; functions are added when real use cases appear (none identified yet as of 2026-06-12).
+- A sidecar runtime for other languages.
+- A historical cache or offline archive.
+- Speculative composite functions before real callers need them.
 
 ## Architecture
 
@@ -96,31 +96,17 @@ The TypeScript compiler intentionally uses the repository root as `rootDir` so t
 
 ## CLI and cross-language story
 
-A TypeScript npm package cannot be imported by Python. The goal of being usable beyond TypeScript is met by:
+The SDK ships a CLI (`atlas entities get <id>`, `atlas tasks create <json>`, JSON output) so non-TypeScript callers can subprocess the typed client. For pushed data, `atlas watch --subscribe <filter> --follow` runs the sync engine and emits one JSON line per change event.
 
-1. **A CLI bundled with the SDK** (`atlas entities get <id>`, `atlas tasks create <json>`, JSON output). Any language can subprocess it. The CLI is also the first local testing tool and exercises the whole typed client. For *pushed* data (a Python asset service receiving its tasks), one-shot subprocess calls are not enough, so the CLI includes a long-running streaming mode — `atlas watch --subscribe <filter> --follow` — that runs the sync engine and emits one JSON line per change event for the parent process to read. CI smoke-tests the compiled binary so the published entrypoint always runs.
-2. **A language-neutral contract:** resource shapes are JSON Schema; the feed event shape, subscription messages, gap-detection rule, and changed-since reconciliation algorithm are specified in the [change feed doc](../atlas-change-feed/README.md) and authored in the protocol CUE schema, so a future Python SDK is a port, not a redesign.
-
-Python services in the interim may use the CLI or direct API calls; direct calls are a special-case escape hatch, not the default client path. The contract, not the package, remains the source of truth.
+The language-neutral contract remains Atlas Protocol plus the change-feed consumption rules. A future Python SDK should be a port of that contract, not a new design.
 
 ## Auth
 
-Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`); it is **currently disabled** in this deployment. The SDK takes `apiKey` in client config and attaches it to every HTTP request and the websocket handshake. Keys are **never embedded in the package or its builds** — the host application supplies the key at runtime. The web UI keeps the key in app-managed client-side state for the current local-only deployment; services read it from their own config/env. This is not cookie-based auth and does not try to model browser sessions. A single shared key with full write access is acceptable only under the current posture: one user, local deployment. Per-client identity, scoped/read-only keys, and tasking audit are prerequisites for any internet-facing deployment (see "Known gaps"). No token refresh machinery until the API grows a richer auth model.
+Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), currently disabled for the local deployment. The SDK accepts `apiKey`, attaches it to HTTP requests and the websocket handshake, and never embeds keys in package output. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
 
 ## Composite functions
 
 Higher-level functions (multiple endpoints, or one endpoint with opinionated defaults) live in the SDK so the API layer stays thin. Design rule: composites only orchestrate public client methods — never private internals — so they stay testable and the basic layer remains the single source of API behavior. No concrete composites exist yet; candidates will come from real usage (likely first: task-an-asset flows built on the command catalog).
-
-## Build history
-
-The SDK was planned in four phases and built in that order on 2026-06-12, after the change feed landed first:
-
-1. **Typed HTTP client + CLI** (manual mode): generated types, auth, ETag/conflict handling, errors. No API changes required.
-2. **Sync engine over `changed-since` polling** (automatic mode): cache, unified read resolution, watch API, hydration, reconciliation, read-your-writes, object content invalidation.
-3. **Websocket transport** over the Atlas Core change feed: latency drops from poll-interval to push; same engine, new transport.
-4. **Selective subscriptions** (hybrid mode): `client.subscribe(filter)` over the feed's subscription primitives, degraded fallthrough for uncovered resources.
-
-The phasing meant the SDK was never structurally blocked on new API work — phases 1–2 ran against the API as it already existed.
 
 ## Testing
 
@@ -130,10 +116,5 @@ Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simula
 
 - **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `completeTask()` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
 - **Auth hardening.** Single shared API key with full write access, stored in app-managed client-side state for the web UI, is acceptable only for the current single-user local deployment. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything is internet-facing.
-
-## Remaining release questions
-
-- Final npm package name/scope.
-- First composite functions (deferred until real use cases exist).
 
 Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed doc](../atlas-change-feed/README.md).

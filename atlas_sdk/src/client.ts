@@ -104,7 +104,7 @@ export class AtlasClient {
     const feed = new FeedConnectionManager({
       baseUrl: this.transport.baseUrl,
       apiKey: options.apiKey,
-      WebSocketImpl: options.WebSocket ?? (globalThis as any).WebSocket,
+      WebSocketImpl: options.WebSocket ?? globalThis.WebSocket,
       feedHandshakeTimeoutMs: options.feedHandshakeTimeoutMs ?? 5_000
     });
     this.objectContents = new ObjectContentCache(options.objectContentCacheEntries ?? 64);
