@@ -17,12 +17,19 @@ import (
 
 // TaskActions handles task business logic.
 type TaskActions struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	changeSink ChangeSink
 }
 
 // NewTaskActions creates a new TaskActions instance.
 func NewTaskActions(pool *pgxpool.Pool) *TaskActions {
-	return &TaskActions{pool: pool}
+	return NewTaskActionsWithChangeSink(pool, nil)
+}
+
+// NewTaskActionsWithChangeSink creates a new TaskActions instance that emits
+// committed changes to sink.
+func NewTaskActionsWithChangeSink(pool *pgxpool.Pool, sink ChangeSink) *TaskActions {
+	return &TaskActions{pool: pool, changeSink: sink}
 }
 
 func normalizeTaskStatus(raw string) (string, error) {
@@ -172,6 +179,14 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit task create transaction: %w", err)
 	}
+
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventCreate,
+		ResourceType: ChangeResourceTask,
+		ID:           task.TaskID,
+		Version:      task.Version,
+		AfterTask:    cloneTaskModel(&task),
+	})
 
 	return &task, nil
 }
@@ -509,6 +524,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	if err := checkExpectedVersion("task", params.ExpectedVersion, task.Version); err != nil {
 		return nil, err
 	}
+	before := cloneTaskModel(&task)
 	if isNoOpTaskUpdate(params) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit task precondition transaction: %w", err)
@@ -603,6 +619,15 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventUpdate,
+		ResourceType: ChangeResourceTask,
+		ID:           task.TaskID,
+		Version:      task.Version,
+		BeforeTask:   before,
+		AfterTask:    cloneTaskModel(&task),
+	})
+
 	return &task, nil
 }
 
@@ -632,6 +657,22 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 		_ = tx.Rollback(ctx)
 	}()
 
+	var task models.Task
+	err = tx.QueryRow(ctx, `
+		SELECT task_id, status, entity_id, json, created_at, updated_at, version
+		FROM tasks WHERE task_id = $1
+		FOR UPDATE
+	`, taskID).Scan(
+		&task.TaskID, &task.Status, &task.EntityID,
+		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return NewTaskNotFoundError(taskID)
+		}
+		return fmt.Errorf("failed to get task for deletion: %w", err)
+	}
+
 	result, err := tx.Exec(ctx, "DELETE FROM tasks WHERE task_id = $1", taskID)
 	if err != nil {
 		return fmt.Errorf("failed to delete task: %w", err)
@@ -641,15 +682,26 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 		return NewTaskNotFoundError(taskID)
 	}
 
-	// Record tombstone so changed-since can notify clients
-	if _, err := tx.Exec(ctx,
-		"INSERT INTO deletions (resource_type, resource_id) VALUES ('task', $1)", taskID); err != nil {
+	// Record tombstone with entity_id context so changed-since can notify clients which entity's tasks changed.
+	var tombstoneVersion int64
+	if err := tx.QueryRow(ctx,
+		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, jsonb_strip_nulls(jsonb_build_object('entity_id', $3::text))) RETURNING version",
+		ChangeResourceTask, taskID, task.EntityID,
+	).Scan(&tombstoneVersion); err != nil {
 		return fmt.Errorf("failed to record task deletion tombstone: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit delete transaction: %w", err)
 	}
+
+	publishChange(a.changeSink, ResourceChange{
+		Event:        ChangeEventDelete,
+		ResourceType: ChangeResourceTask,
+		ID:           task.TaskID,
+		Version:      tombstoneVersion,
+		BeforeTask:   cloneTaskModel(&task),
+	})
 
 	return nil
 }

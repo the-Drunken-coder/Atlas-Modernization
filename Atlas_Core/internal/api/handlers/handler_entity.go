@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // --- Entity Handlers ---
@@ -106,8 +108,8 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		EntityType *string                `json:"entity_type,omitempty"`
-		Subtype    *string                `json:"subtype,omitempty"`
-		Alias      *string                `json:"alias,omitempty"`
+		Subtype    nullablePatchString    `json:"subtype,omitempty"`
+		Alias      nullablePatchString    `json:"alias,omitempty"`
 		Components map[string]interface{} `json:"components,omitempty"`
 		Extra      map[string]interface{} `json:"extra,omitempty"`
 	}
@@ -122,8 +124,8 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
 		EntityType:      req.EntityType,
-		Subtype:         req.Subtype,
-		Alias:           req.Alias,
+		Subtype:         req.Subtype.actionValue(),
+		Alias:           req.Alias.actionValue(),
 		Components:      req.Components,
 		Extra:           req.Extra,
 		ExpectedVersion: expectedVersion,
@@ -135,6 +137,36 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 
 	setResourceETag(w, entity.Version)
 	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
+}
+
+type nullablePatchString struct {
+	present bool
+	value   *string
+}
+
+func (f *nullablePatchString) UnmarshalJSON(data []byte) error {
+	f.present = true
+	if string(data) == "null" {
+		f.value = nil
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	f.value = &value
+	return nil
+}
+
+func (f nullablePatchString) actionValue() *string {
+	if !f.present {
+		return nil
+	}
+	if f.value == nil {
+		value := ""
+		return &value
+	}
+	return f.value
 }
 
 // DeleteEntity handles DELETE /entities/{entity_id}.
@@ -170,7 +202,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 
 	telemetry := buildTelemetryComponent(req.Latitude, req.Longitude, req.AltitudeM, req.SpeedMS, req.HeadingDeg, nil)
 	if len(telemetry) == 0 {
-		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", protocol.ErrorCodeValidationError)
 		return
 	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
@@ -201,16 +233,16 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseNonNegativeIntQuery(r, "limit", 10)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", protocol.ErrorCodeValidationError)
 		return
 	}
 	if limit < 1 || limit > 20 {
-		h.writeError(w, r, http.StatusBadRequest, "limit must be between 1 and 20", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "limit must be between 1 and 20", protocol.ErrorCodeValidationError)
 		return
 	}
 
 	if _, exists := r.URL.Query()["offset"]; exists {
-		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use task_cursor", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use task_cursor", protocol.ErrorCodeValidationError)
 		return
 	}
 	taskCursor := strings.TrimSpace(r.URL.Query().Get("task_cursor"))
@@ -221,7 +253,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	if sinceStr != "" {
 		parsed, err := parseRFC3339Timestamp(sinceStr)
 		if err != nil {
-			h.writeError(w, r, http.StatusBadRequest, "Invalid since timestamp format (use RFC3339)", "VALIDATION_ERROR")
+			h.writeError(w, r, http.StatusBadRequest, "Invalid since timestamp format (use RFC3339)", protocol.ErrorCodeValidationError)
 			return
 		}
 		since = &parsed

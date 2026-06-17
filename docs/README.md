@@ -1,6 +1,6 @@
 # Atlas Modernization — documentation index
 
-_Revision: 2026-05-29_
+_Revision: 2026-06-12_
 
 This is the single entry point for project documentation. Docs are split into **project-level**
 (this `docs/` tree, spanning every package) and **package-level** (each package's own `docs/`).
@@ -9,7 +9,9 @@ This is the single entry point for project documentation. Docs are split into **
 
 | Location | What it holds | Use it when… |
 | --- | --- | --- |
-| [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol planning, implementation prep, and goals/reference docs. | "Why is the protocol shaped this way, and what remains planned?" |
+| [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
+| [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions, bootstrap-era implementation prep, and reference docs. | "Why is the protocol shaped this way?" |
+| [`docs/atlas-sdk/`](atlas-sdk/) | Atlas SDK design: client architecture, sync engine/cache, unified reads, testing, known gaps. | "How do services talk to Atlas Core?" |
 | [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, …). | "What did we decide, and why?" |
 | [`docs/problems/`](problems/) | Short-lived agent-to-agent notes on active blockers (minutes to a day or two). Spans all packages. | "What is broken right now on this branch?" |
 

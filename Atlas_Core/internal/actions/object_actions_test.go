@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -165,6 +166,125 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 	if !strings.Contains(lastError, "delete failed") {
 		t.Fatalf("queued last_error = %q, want delete failure", lastError)
 	}
+}
+
+func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
+	dbURL, explicitDBURL := actionsTestDatabaseURL()
+	if dbURL == "" {
+		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object delete ordering test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		if explicitDBURL {
+			t.Fatalf("ping test database: %v", err)
+		}
+		t.Skipf("test database unavailable: %v", err)
+	}
+	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
+		t.Fatalf("check core schema: %v", err)
+	} else if !ok {
+		t.Skip("core schema with storage deletion outbox is not present in test database")
+	}
+
+	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
+	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	var beforeObject models.MediaObject
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO objects (object_id, path, json)
+		VALUES ($1, $2, '{}'::jsonb)
+		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
+	`, objectID, objectPath).Scan(
+		&beforeObject.ObjectID, &beforeObject.Path, &beforeObject.ContentType, &beforeObject.Type,
+		&beforeObject.JSON, &beforeObject.CreatedAt, &beforeObject.UpdatedAt, &beforeObject.Version,
+	); err != nil {
+		t.Fatalf("insert object row: %v", err)
+	}
+
+	storageClient := newPausingDeleteObjectStorage()
+	defer storageClient.releaseDelete()
+	sink := &channelChangeSink{changes: make(chan ResourceChange, 4)}
+	actions := NewObjectActionsWithChangeSink(pool, storageClient, sink)
+	deleteResult := make(chan error, 1)
+	go func() {
+		deleteResult <- actions.Delete(ctx, objectID)
+	}()
+
+	if got := storageClient.waitForDeleteStart(t); got != objectPath {
+		t.Fatalf("storage delete path = %q, want %q", got, objectPath)
+	}
+
+	select {
+	case change := <-sink.changes:
+		if change.Event != ChangeEventDelete || change.ResourceType != ChangeResourceObject || change.ID != objectID {
+			t.Fatalf("published change = %#v, want object delete for %s", change, objectID)
+		}
+		if change.BeforeObject == nil {
+			t.Fatal("published delete change BeforeObject is nil")
+		}
+		assertMediaObjectEqual(t, change.BeforeObject, &beforeObject)
+		if change.AfterObject != nil {
+			t.Fatalf("published delete change AfterObject = %#v, want nil", change.AfterObject)
+		}
+		var tombstoneVersion int64
+		if err := pool.QueryRow(ctx, `
+				SELECT version
+				FROM deletions
+				WHERE resource_type = 'object' AND resource_id = $1
+			`, objectID).Scan(&tombstoneVersion); err != nil {
+			t.Fatalf("query deletion tombstone: %v", err)
+		}
+		if change.Version != tombstoneVersion {
+			t.Fatalf("published change version = %d, want tombstone version %d", change.Version, tombstoneVersion)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("delete change was not published while storage cleanup was blocked")
+	}
+
+	storageClient.releaseDelete()
+	select {
+	case err := <-deleteResult:
+		if err != nil {
+			t.Fatalf("delete returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delete did not finish after storage cleanup was released")
+	}
+}
+
+func assertMediaObjectEqual(t *testing.T, got, want *models.MediaObject) {
+	t.Helper()
+	if got == nil || want == nil {
+		t.Fatalf("media object nil mismatch: got nil=%t want nil=%t", got == nil, want == nil)
+	}
+	if got.ObjectID != want.ObjectID ||
+		!stringPointersEqual(got.Path, want.Path) ||
+		!stringPointersEqual(got.ContentType, want.ContentType) ||
+		!stringPointersEqual(got.Type, want.Type) ||
+		string(got.JSON) != string(want.JSON) ||
+		!got.CreatedAt.Equal(want.CreatedAt) ||
+		!got.UpdatedAt.Equal(want.UpdatedAt) ||
+		got.Version != want.Version {
+		t.Fatalf("media object fields did not match for %q", got.ObjectID)
+	}
+}
+
+func stringPointersEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func TestObjectUploadLockKey(t *testing.T) {
@@ -431,6 +551,36 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	if rowExists {
 		t.Fatal("object row was resurrected after delete won the upload race")
 	}
+	var resourceType, resourceID string
+	var contextJSON []byte
+	var tombstoneVersion int64
+	if err := pool.QueryRow(ctx, `
+		SELECT resource_type, resource_id, context, version
+		FROM deletions
+		WHERE resource_type = 'object' AND resource_id = $1
+	`, objectID).Scan(&resourceType, &resourceID, &contextJSON, &tombstoneVersion); err != nil {
+		t.Fatalf("query object tombstone: %v", err)
+	}
+	if resourceType != "object" || resourceID != objectID {
+		t.Fatalf("tombstone identity = %s/%s, want object/%s", resourceType, resourceID, objectID)
+	}
+	var gotContext map[string]any
+	if err := json.Unmarshal(contextJSON, &gotContext); err != nil {
+		t.Fatalf("decode object tombstone context: %v", err)
+	}
+	if len(gotContext) != 0 {
+		t.Fatalf("object tombstone context = %#v, want empty", gotContext)
+	}
+	if tombstoneVersion <= 0 {
+		t.Fatalf("object tombstone version = %d, want positive", tombstoneVersion)
+	}
+	currentVersion, err := CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("CurrentChangeVersion: %v", err)
+	}
+	if currentVersion < tombstoneVersion {
+		t.Fatalf("CurrentChangeVersion = %d, want at least tombstone version %d", currentVersion, tombstoneVersion)
+	}
 	if !storageClient.deletedPath(initialPath) {
 		t.Fatalf("delete did not remove initial path %q; deleted paths = %#v", initialPath, storageClient.deletedPathsSnapshot())
 	}
@@ -447,6 +597,14 @@ type recordingObjectStorage struct {
 	deletedPaths []string
 	deleteErr    error
 	pathCounter  atomic.Int64
+}
+
+type channelChangeSink struct {
+	changes chan ResourceChange
+}
+
+func (s *channelChangeSink) PublishResourceChange(change ResourceChange) {
+	s.changes <- change
 }
 
 func (s *recordingObjectStorage) Bucket() string {
@@ -468,6 +626,63 @@ func (s *recordingObjectStorage) StreamObjectPath(context.Context, string, strin
 
 func (s *recordingObjectStorage) UploadObjectFromReaderToPath(context.Context, string, string, io.Reader, int64, string) (*storage.ObjectInfo, error) {
 	return nil, nil
+}
+
+type pausingDeleteObjectStorage struct {
+	deleteStarted chan string
+	release       chan struct{}
+	releaseOnce   sync.Once
+	pathCounter   atomic.Int64
+}
+
+func newPausingDeleteObjectStorage() *pausingDeleteObjectStorage {
+	return &pausingDeleteObjectStorage{
+		deleteStarted: make(chan string, 1),
+		release:       make(chan struct{}),
+	}
+}
+
+func (s *pausingDeleteObjectStorage) Bucket() string {
+	return "atlas-media"
+}
+
+func (s *pausingDeleteObjectStorage) DeleteObjectPath(ctx context.Context, path string) error {
+	s.deleteStarted <- path
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *pausingDeleteObjectStorage) NewObjectPath(objectID string) string {
+	return nextVersionedObjectPath(&s.pathCounter, objectID)
+}
+
+func (s *pausingDeleteObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
+	return nil, nil, nil
+}
+
+func (s *pausingDeleteObjectStorage) UploadObjectFromReaderToPath(context.Context, string, string, io.Reader, int64, string) (*storage.ObjectInfo, error) {
+	return nil, nil
+}
+
+func (s *pausingDeleteObjectStorage) releaseDelete() {
+	s.releaseOnce.Do(func() {
+		close(s.release)
+	})
+}
+
+func (s *pausingDeleteObjectStorage) waitForDeleteStart(t *testing.T) string {
+	t.Helper()
+	select {
+	case path := <-s.deleteStarted:
+		return path
+	case <-time.After(5 * time.Second):
+		t.Fatal("storage delete did not start")
+		return ""
+	}
 }
 
 type blockingObjectStorage struct {

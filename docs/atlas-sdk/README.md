@@ -1,0 +1,120 @@
+# Atlas SDK
+
+The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: a TypeScript/JavaScript package with a typed HTTP client, an optional sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
+
+The SDK is the preferred client path for UI code, asset-side services, and tools. Direct API calls remain acceptable for small tools and non-TypeScript services, but the SDK/CLI should be the default integration surface.
+
+**Sole consumer:** Atlas currently has one developer/operator. The package carries no compatibility promise; breaking changes are preferred over shims. The SDK keeps lockstep upgrades safe by comparing its generated `ATLAS_PROTOCOL_REVISION` with Core over `GET /protocol/revision` and the feed `hello` frame.
+
+## Design goals
+
+- One TypeScript/JavaScript package that runs unmodified in browsers and Node ("isomorphic"): web-standard `fetch` and `WebSocket` only, no Node-only dependencies, tests run in both environments in CI.
+- Identical function behavior whether the sync engine is running. Callers never branch on mode.
+- Real-time data with minimal latency for UIs — no "reload the page" feel.
+- Reduce API call volume by serving repeated reads from a continuously synced local cache.
+- Usable beyond TypeScript via a bundled CLI and a documented, language-neutral sync contract (see "CLI and cross-language story").
+
+## Non-goals
+
+- A sidecar runtime for other languages.
+- A historical cache or offline archive.
+- Speculative composite functions before real callers need them.
+
+## Architecture
+
+Two components, not three modes:
+
+1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. Task lifecycle helpers, telemetry, check-in, object upload, and general query helpers are still direct API calls until they are added to the SDK.
+2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
+
+The user-facing modes are constructor presets over these components:
+
+```ts
+new AtlasClient({ baseUrl, apiKey });                    // manual: no sync engine
+new AtlasClient({ baseUrl, apiKey, sync: "all" });       // automatic: subscribe to everything
+new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
+```
+
+Same cache, same feed consumer, same reconciliation logic in all presets. "Selective" adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)).
+
+### Unified read surface
+
+Every read function resolves the same way, invisibly to the caller:
+
+1. Sync engine running **and healthy** and the resource is covered by an active subscription → serve from cache.
+2. Otherwise (cache miss, engine degraded, engine not running, or caller passed `{ fresh: true }`) → call the API; merge the response into the cache on the way back.
+
+Rules that make this safe:
+
+- **Always async.** Every read returns a Promise even when served from cache, so the two paths are indistinguishable to callers except in speed.
+- **Degraded fallthrough.** The engine tracks connection state and its last confirmed global version. If the feed is disconnected or a version gap is unreconciled, the engine marks itself degraded and reads fall through to the API until it catches up. The cache only answers when it is entitled to.
+- **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state.
+- **Plain returns + sync status.** Functions return plain data (no metadata envelope). Observability currently comes from `client.sync.status()`; read-source debug hooks are deferred until a real caller needs them.
+
+### Watch API
+
+`client.entities.watch(id, callback)` (and equivalents per resource type, plus collection-level watches) fires when the cached resource changes. This is the real-time path for UIs: the change-feed event arrives and the UI reacts immediately, with no polling loop. It is the same cache and the same surface — not a separate layer.
+
+Watcher callbacks receive protocol feed events for server-published changes. They can also receive SDK-local events that are not wire feed frames: `recovered` when `changed-since` reconciliation applies a live resource row, and `local_delete` when a successful local DELETE removes a resource from the cache before Core's versioned tombstone arrives.
+
+### Writes and read-your-writes
+
+Write functions always call the API. The API returns the created/updated resource with its new version; the SDK applies it to the cache immediately, guarded by `version > cachedVersion` so a racing feed event cannot regress state. A client that creates a task and immediately reads it sees it.
+
+The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `ConflictError`, rather than hiding it. Callers that want retry behavior refetch and resubmit explicitly for now; no shared retry helper exists yet.
+
+## Change feed consumption
+
+The websocket change feed — event shapes, tombstones, subscription primitives, task-routing rules, delivery mechanics, and its testing approach — is documented in the [change feed doc](../atlas-change-feed/README.md). The feed was built and simulation-tested before the SDK, so the sync engine's websocket transport consumes a finished, demonstrated endpoint.
+
+What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, tombstone events for deletes, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, tasks-for-entity).
+
+## Reconciliation (replaces the original 20-second hard refresh)
+
+The consistency mechanism is `GET /queries/changed-since` with the global version cursor, not periodic full re-pulls. The endpoint returns creates, updates, and delete tombstones after the requested version. The gap-detection and reconnect rules below are the SDK's implementation of the consumption contract in the change feed doc.
+
+- **Gap detection:** the cache tracks its last applied version N. If an event arrives with a version that skips past expected values, the SDK immediately calls `changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
+- **Reconnect:** after any websocket reconnect, one `changed-since` call from the last known version restores consistency; the engine is degraded (reads fall through to the API) until it completes.
+- **Version-guarded application:** reconciliation applies returned events in ascending version order and updates cache entries only when `event.version > cachedVersion`. A tombstone is a versioned cache entry, so an older resource payload cannot restore a resource after a newer delete has been applied.
+- **Safety-net poll:** a lazy periodic `changed-since` call (interval on the order of minutes, configurable) as a backstop; a no-change response is nearly free. This is a backstop, not the mechanism.
+- **Hydration:** `GET /queries/full` on engine start. At expected scale (10–20 assets, low hundreds of tracks from ADS-B ingest, never thousands) this is one or a few pages and subscribe-`all` in a browser tab is trivially fine.
+
+## Objects
+
+An object is two things, treated differently:
+
+- **Metadata** (small JSON: name, type, version, references) — flows over the change feed and lives in the cache like entities and tasks.
+- **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
+
+Object `referenced_by` entries are normalized to the protocol `ObjectReference` shape: only `entity_id` and `task_id` are emitted. Extra keys in stored object metadata are intentionally not part of the public API response.
+
+## Types: generated, not hand-written
+
+Resource types come from `atlas_protocol` generated artifacts: the SDK imports `atlas_protocol/generated/typescript/index.ts` directly (by path) rather than copying or hand-writing resource shapes, so protocol changes propagate by regeneration and the SDK stays in lockstep with Core. The generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
+
+The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/atlas_sdk/src/*` and the generated `dist/atlas_protocol/generated/typescript/*` module that the SDK imports. Package metadata points `main`, `exports`, and `types` at the built SDK entrypoint.
+
+## CLI and cross-language story
+
+The SDK ships a CLI (`atlas entities get <id>`, `atlas tasks create <json>`, JSON output) so non-TypeScript callers can subprocess the typed client. For pushed data, `atlas watch --subscribe <filter> --follow` runs the sync engine and emits one JSON line per change event.
+
+The language-neutral contract remains Atlas Protocol plus the change-feed consumption rules. A future Python SDK should be a port of that contract, not a new design.
+
+## Auth
+
+Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), currently disabled for the local deployment. The SDK accepts `apiKey`, attaches it to HTTP requests and the websocket handshake, and never embeds keys in package output. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
+
+## Composite functions
+
+Higher-level functions (multiple endpoints, or one endpoint with opinionated defaults) live in the SDK so the API layer stays thin. Design rule: composites only orchestrate public client methods — never private internals — so they stay testable and the basic layer remains the single source of API behavior. No concrete composites exist yet; candidates will come from real usage (likely first: task-an-asset flows built on the command catalog).
+
+## Testing
+
+Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simulation against ground truth. The test harness (`atlas_sdk/test/`) drives a fake Core/feed transport through realistic mixed traffic — entity, task, and object writes, reassignments, dropped feed events, forced version gaps — while keeping a ledger of every write. At checkpoints and at the end of the run, the SDK's view is compared to that reality: cache contents match the ledger, watch callbacks fired for every relevant change, and fault injection converges back to truth through reconciliation. The same suite runs in both Node and a real browser (Playwright) in CI, per the isomorphic goal, alongside ordinary unit tests and a CLI binary smoke test.
+
+## Known gaps (explicitly deferred)
+
+- **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `completeTask()` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
+- **Auth hardening.** Single shared API key with full write access, stored in app-managed client-side state for the web UI, is acceptable only for the current single-user local deployment. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything is internet-facing.
+
+Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed doc](../atlas-change-feed/README.md).

@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "message": "Invalid JSON body",
+  "error_code": "INVALID_JSON",
+  "error_id": "err_invalidjson",
+  "timestamp": "2026-06-12T12:00:00Z",
+  "path": "/entities"
+}

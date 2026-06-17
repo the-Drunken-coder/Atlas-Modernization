@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+var unauthorizedErrorBody = []byte(`{"success":false,"message":"Invalid or missing API key","error_code":"` + string(protocol.ErrorCodeUnauthorized) + `"}`)
 
 // IsPublicUnauthenticatedPath returns true for routes that skip request logging and API-key auth.
 func IsPublicUnauthenticatedPath(path string) bool {
@@ -26,6 +29,18 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+// SkipsAPIKeyAuthPath returns true for routes that do not use HTTP-header API-key auth.
+func SkipsAPIKeyAuthPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+	if normalized == "/feed" {
+		return true
+	}
+	return IsPublicUnauthenticatedPath(path)
 }
 
 // RequestLogger returns middleware that logs each HTTP request.
@@ -109,8 +124,8 @@ func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
 	apiKey = strings.TrimSpace(apiKey)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth for health endpoints
-			if IsPublicUnauthenticatedPath(r.URL.Path) {
+			// Skip auth for endpoints that authenticate outside HTTP headers.
+			if SkipsAPIKeyAuthPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -120,7 +135,7 @@ func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
-				_, _ = w.Write([]byte(`{"success":false,"message":"Invalid or missing API key","error_code":"UNAUTHORIZED"}`))
+				_, _ = w.Write(unauthorizedErrorBody)
 				return
 			}
 
@@ -144,7 +159,7 @@ func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
-				_, _ = w.Write([]byte(`{"success":false,"message":"Invalid or missing API key","error_code":"UNAUTHORIZED"}`))
+				_, _ = w.Write(unauthorizedErrorBody)
 				return
 			}
 

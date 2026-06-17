@@ -266,6 +266,160 @@ func TestQueryChangedSinceIncludesTasksAffectedByDeletedEntity(t *testing.T) {
 	}
 }
 
+func TestQueryChangedSinceIncludesDeletedTaskEntityID(t *testing.T) {
+	SkipIfSystemNotAvailable(t)
+
+	client := NewAPIClient()
+	ctx := context.Background()
+	prefix := TestArtifactPrefix()
+
+	entityID := fmt.Sprintf("%s-delete-task-entity", prefix)
+	taskID := fmt.Sprintf("%s-delete-task-tombstone", prefix)
+
+	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
+		"entity_id":   entityID,
+		"entity_type": "asset",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create entity: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (task tombstone setup)")
+	drainClose(resp)
+	t.Cleanup(func() {
+		cleanupResp, cleanupErr := client.Delete(context.Background(), "/entities/"+entityID)
+		if cleanupErr == nil {
+			drainClose(cleanupResp)
+		}
+	})
+
+	resp, err = client.Post(ctx, "/tasks", map[string]interface{}{
+		"task_id":   taskID,
+		"entity_id": entityID,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create task: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (task tombstone setup)")
+	var createdTask map[string]interface{}
+	if err := ParseResponse(resp, &createdTask); err != nil {
+		t.Fatalf("Failed to parse created task: %v", err)
+	}
+	metadata, ok := createdTask["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("created task missing metadata: %#v", createdTask)
+	}
+	sinceVersion := mustVersionFromMetadata(t, metadata)
+
+	resp, err = client.Delete(ctx, "/tasks/"+taskID)
+	if err != nil {
+		t.Fatalf("Failed to delete task: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusNoContent, "DELETE /tasks/{task_id}")
+	drainClose(resp)
+
+	q := url.Values{}
+	q.Set("since_version", fmt.Sprintf("%d", sinceVersion))
+	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
+	if err != nil {
+		t.Fatalf("Failed to query changed-since after task delete: %v", err)
+	}
+	defer drainClose(resp)
+	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after task delete")
+
+	var result map[string]interface{}
+	if err := ParseResponse(resp, &result); err != nil {
+		t.Fatalf("Failed to parse changed-since response: %v", err)
+	}
+	deletedTasks, ok := result["deleted_tasks"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected deleted_tasks array, got %T", result["deleted_tasks"])
+	}
+	var tombstone map[string]interface{}
+	for _, item := range deletedTasks {
+		deleted, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if deleted["id"] == taskID {
+			tombstone = deleted
+			break
+		}
+	}
+	if tombstone == nil {
+		t.Fatalf("expected deleted_tasks to include tombstone for %s", taskID)
+	}
+	if tombstone["entity_id"] != entityID {
+		t.Fatalf("expected deleted task entity_id %q, got %#v", entityID, tombstone["entity_id"])
+	}
+}
+
+func TestQueryChangedSinceIncludesDeletedTaskNullEntityID(t *testing.T) {
+	SkipIfSystemNotAvailable(t)
+
+	client := NewAPIClient()
+	ctx := context.Background()
+	taskID := fmt.Sprintf("%s-delete-task-null-entity", TestArtifactPrefix())
+
+	resp, err := client.Post(ctx, "/tasks", map[string]interface{}{
+		"task_id": taskID,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create task without entity: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (null entity task tombstone setup)")
+	var createdTask map[string]interface{}
+	if err := ParseResponse(resp, &createdTask); err != nil {
+		t.Fatalf("Failed to parse created task: %v", err)
+	}
+	metadata, ok := createdTask["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("created task missing metadata: %#v", createdTask)
+	}
+	sinceVersion := mustVersionFromMetadata(t, metadata)
+
+	resp, err = client.Delete(ctx, "/tasks/"+taskID)
+	if err != nil {
+		t.Fatalf("Failed to delete task without entity: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusNoContent, "DELETE /tasks/{task_id} (null entity)")
+	drainClose(resp)
+
+	q := url.Values{}
+	q.Set("since_version", fmt.Sprintf("%d", sinceVersion))
+	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
+	if err != nil {
+		t.Fatalf("Failed to query changed-since after task delete: %v", err)
+	}
+	defer drainClose(resp)
+	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after null-entity task delete")
+
+	var result map[string]interface{}
+	if err := ParseResponse(resp, &result); err != nil {
+		t.Fatalf("Failed to parse changed-since response: %v", err)
+	}
+	deletedTasks, ok := result["deleted_tasks"].([]interface{})
+	if !ok {
+		t.Fatalf("Expected deleted_tasks array, got %T", result["deleted_tasks"])
+	}
+	var tombstone map[string]interface{}
+	for _, item := range deletedTasks {
+		deleted, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if deleted["id"] == taskID {
+			tombstone = deleted
+			break
+		}
+	}
+	if tombstone == nil {
+		t.Fatalf("expected deleted_tasks to include tombstone for %s", taskID)
+	}
+	if entityID, ok := tombstone["entity_id"]; ok && entityID != nil {
+		t.Fatalf("expected deleted task entity_id to be null or omitted, got %#v", entityID)
+	}
+}
+
 // TestQueryChangedSinceMissingParam tests error handling for missing since param
 func TestQueryChangedSinceMissingParam(t *testing.T) {
 	SkipIfSystemNotAvailable(t)

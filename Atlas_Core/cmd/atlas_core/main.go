@@ -20,6 +20,7 @@ import (
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -104,6 +105,14 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
 
+	versionCtx, versionCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	currentVersion, err := actions.CurrentChangeVersion(versionCtx, db.Pool)
+	versionCancel()
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to read current change version")
+	}
+	feedHub := feed.NewHub(currentVersion, feed.Options{})
+
 	// Connect to storage (optional - may not be configured)
 	var storageClient *storage.Client
 	if cfg.MinIOSecretKey != "" {
@@ -144,7 +153,7 @@ func main() {
 	}
 
 	// Create handler
-	handler := handlers.NewHandler(db, storageClient, logger, cfg)
+	handler := handlers.NewHandlerWithFeed(db, storageClient, logger, cfg, feedHub)
 
 	// Create router
 	r := chi.NewRouter()
@@ -173,6 +182,8 @@ func main() {
 
 	// Register routes
 	r.Get("/", handler.Root)
+	r.Get("/protocol/revision", handler.ProtocolRevision)
+	r.Get("/feed", handler.Feed)
 
 	// Entity routes
 	r.Get("/entities", handler.ListEntities)
@@ -245,6 +256,7 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error().Err(err).Msg("Server shutdown error")
 	}
+	feedHub.Close()
 
 	logger.Info().Msg("ATLAS Core API shutdown complete")
 }

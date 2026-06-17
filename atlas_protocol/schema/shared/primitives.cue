@@ -11,6 +11,7 @@ import (
 
 #NonEmptyString: string & =~"\\S"
 #RFC3339Timestamp: string & time.Format(time.RFC3339)
+#ProtocolRevision: string & =~"^sha256:[A-Fa-f0-9]{64}$"
 
 #FiniteNumber: number
 

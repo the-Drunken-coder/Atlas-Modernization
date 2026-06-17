@@ -332,6 +332,87 @@ func TestLoadRejectsEnabledAPIAuthWithEmptySettingsKey(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
+	for _, apiKey := range []string{
+		"changeme",
+		"000000",
+		"111111",
+		"123456",
+		"abcd1234",
+		"admin",
+		"apikey",
+		"asdf",
+		"default",
+		"dummy",
+		"example",
+		"key",
+		"password",
+		"password123",
+		"placeholder",
+		"qwerty",
+		"secret",
+		"test",
+		"your-key-here",
+		" changeme ",
+		"CHANGEME",
+		"PlAcEhOlDeR",
+		"12345678",
+		"87654321",
+		"abcdefgh",
+		"hgfedcba",
+		"password1234",
+		"letmein-now",
+		"welcome-home",
+		"abababababab",
+	} {
+		t.Run(apiKey, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("ENABLE_API_AUTH", "true")
+			t.Setenv("API_AUTH_KEY", apiKey)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected enabled API auth with placeholder API_AUTH_KEY %q to fail", apiKey)
+			}
+			if !strings.Contains(err.Error(), "too weak") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			trimmed := strings.TrimSpace(apiKey)
+			if strings.Contains(err.Error(), trimmed) {
+				t.Fatalf("placeholder error should not echo API_AUTH_KEY %q, got %v", trimmed, err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsEnabledAPIAuthWithPlaceholderSettingsKey(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		EnableAPIAuth: true,
+		APIAuthKey:    " changeme ",
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	_, err = config.Load()
+	if err == nil {
+		t.Fatal("expected enabled API auth with placeholder settings api_auth_key to fail")
+	}
+	if !strings.Contains(err.Error(), "too weak") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(err.Error(), "changeme") {
+		t.Fatalf("placeholder error should not echo settings api_auth_key, got %v", err)
+	}
+}
+
 func TestLoadSettingsDoesNotOverrideExplicitEmptyEnv(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
@@ -371,7 +452,7 @@ func TestLoadAllowsEnabledAPIAuthWithKey(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
 	t.Setenv("ENABLE_API_AUTH", "true")
-	t.Setenv("API_AUTH_KEY", "test-secret")
+	t.Setenv("API_AUTH_KEY", "  test-secret\n")
 
 	cfg, err := config.Load()
 	if err != nil {

@@ -1,0 +1,13 @@
+{
+  "success": false,
+  "message": "Invalid limit parameter",
+  "error_code": "VALIDATION_ERROR",
+  "error_id": "err_1a2b3c4d5e6f",
+  "timestamp": "2026-06-12T12:00:00Z",
+  "path": "/entities",
+  "details": {
+    "errors": [
+      "limit must be between 1 and 100"
+    ]
+  }
+}

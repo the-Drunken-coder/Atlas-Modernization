@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -181,6 +182,189 @@ func TestValidateEntityComponentSchemaKeys(t *testing.T) {
 	missing := append([]string(nil), entityComponentSchemaKeys[:len(entityComponentSchemaKeys)-1]...)
 	if err := validateEntityComponentSchemaKeys(missing); err == nil {
 		t.Fatal("validateEntityComponentSchemaKeys accepted stale descriptor set")
+	}
+}
+
+func TestTypeScriptGeneratorAddDefAllowsIdenticalSchema(t *testing.T) {
+	schema := typeScriptSchema{"type": "object"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
+
+	if err := g.addDef("Thing", schema); err != nil {
+		t.Fatalf("first addDef returned error: %v", err)
+	}
+	if err := g.addDef("Thing", cloneMap(schema)); err != nil {
+		t.Fatalf("second addDef returned error: %v", err)
+	}
+	if !reflect.DeepEqual(g.defs["Thing"], schema) {
+		t.Fatalf("defs[Thing] = %#v, want %#v", g.defs["Thing"], schema)
+	}
+}
+
+func TestTypeScriptGeneratorAddDefAllowsIdenticalSchemaUnderDifferentName(t *testing.T) {
+	schema := typeScriptSchema{"type": "object"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
+
+	if err := g.addDef("Thing1", schema); err != nil {
+		t.Fatalf("addDef Thing1 returned error: %v", err)
+	}
+	if err := g.addDef("Thing2", cloneMap(schema)); err != nil {
+		t.Fatalf("addDef Thing2 returned error: %v", err)
+	}
+	for _, name := range []string{"Thing1", "Thing2"} {
+		if !reflect.DeepEqual(g.defs[name], schema) {
+			t.Fatalf("defs[%s] = %#v, want %#v", name, g.defs[name], schema)
+		}
+	}
+}
+
+func TestTypeScriptGeneratorAddDefReplacesSelfRef(t *testing.T) {
+	selfRef := typeScriptSchema{"$ref": "#/$defs/%23Thing"}
+	replacement := typeScriptSchema{"type": "string"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{"Thing": selfRef}}
+
+	if err := g.addDef("Thing", replacement); err != nil {
+		t.Fatalf("addDef self-ref replacement returned error: %v", err)
+	}
+	if !reflect.DeepEqual(g.defs["Thing"], replacement) {
+		t.Fatalf("defs[Thing] = %#v, want %#v", g.defs["Thing"], replacement)
+	}
+}
+
+func TestTypeScriptGeneratorAddDefRejectsNameCollision(t *testing.T) {
+	existing := typeScriptSchema{"type": "string"}
+	colliding := typeScriptSchema{"type": "number"}
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{"Thing": existing}}
+
+	err := g.addDef("Thing", colliding)
+	if err == nil {
+		t.Fatal("addDef accepted colliding schemas")
+	}
+	if !strings.Contains(err.Error(), "Thing") || !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("collision error = %q, want type name and collision context", err.Error())
+	}
+	if !reflect.DeepEqual(g.defs["Thing"], existing) {
+		t.Fatalf("defs[Thing] = %#v after collision, want original %#v", g.defs["Thing"], existing)
+	}
+}
+
+func TestTypeScriptGeneratorRequiresAtLeastOneProperty(t *testing.T) {
+	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
+	source := g.objectType(typeScriptSchema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"minProperties":        float64(1),
+		"properties": map[string]any{
+			"entity_id": map[string]any{"type": "string"},
+			"task_id":   map[string]any{"type": "string"},
+		},
+	}, "ObjectReference", 0)
+
+	for _, want := range []string{
+		"RequireAtLeastOne<",
+		`"entity_id"?: string;`,
+		`"task_id"?: string;`,
+		`"entity_id" | "task_id"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("generated TypeScript %q missing %q", source, want)
+		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+				"properties": {
+					"extra": {
+						"type": "object",
+						"additionalProperties": { "$ref": "#/$defs/%23JSONValue" }
+					},
+					"priority": { "$ref": "#/$defs/%23NonEmptyString" },
+					"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
+				},
+				"required": ["task_id"],
+				"$defs": {
+					"#JSONValue": {
+						"oneOf": [
+							{ "type": "null" },
+							{ "type": "boolean" },
+							{ "type": "string" },
+							{ "type": "number" },
+							{ "type": "array", "items": { "$ref": "#/$defs/%23JSONValue" } },
+							{ "type": "object", "additionalProperties": { "$ref": "#/$defs/%23JSONValue" } }
+						]
+					},
+					"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+				}
+			}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"export type TaskCreateRequest",
+		`"extra"?: { [key: string]: JSONValue };`,
+		`"priority"?: NonEmptyString;`,
+		`"task_id": NonEmptyString;`,
+		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
+		"atlasProtocolIsJSONValue",
+		"return atlasProtocolIsJSONValueInternal(value, new WeakSet<object>())",
+		"function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue",
+		"if (seen.has(value))",
+		"seen.delete(value)",
+		`Object.values(value.extra).every((item) => atlasProtocolIsJSONValue(item))`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceRejectsUnsupportedTaskCreateValidatorSchema(t *testing.T) {
+	_, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"unsupported": { "$ref": "#/$defs/%23Unsupported" }
+			},
+			"required": ["task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" },
+				"#Unsupported": { "type": "array" }
+			}
+		}`),
+	})
+	if err == nil {
+		t.Fatal("typeScriptSource accepted unsupported TaskCreateRequest validator schema")
+	}
+	if !strings.Contains(err.Error(), "unsupported runtime validator ref") {
+		t.Fatalf("typeScriptSource error = %q, want unsupported runtime validator ref", err.Error())
+	}
+}
+
+func TestTypeScriptSourceRejectsMalformedRevision(t *testing.T) {
+	_, err := typeScriptSource("revision:unsafe", map[string][]byte{
+		"thing": []byte(`{"type":"object"}`),
+	})
+	if err == nil {
+		t.Fatal("typeScriptSource accepted malformed protocol revision")
+	}
+}
+
+func TestValidateProtocolRevisionRequiresSha256Digest(t *testing.T) {
+	valid := "sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF"
+	if got, err := validateProtocolRevision(valid); err != nil || got != valid {
+		t.Fatalf("validateProtocolRevision(%q) = %q, %v; want original without error", valid, got, err)
+	}
+	for _, invalid := range []string{"", "sha1:0123", "sha256:not-hex", "sha256:0123", "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"} {
+		if _, err := validateProtocolRevision(invalid); err == nil {
+			t.Fatalf("validateProtocolRevision accepted %q", invalid)
+		}
 	}
 }
 

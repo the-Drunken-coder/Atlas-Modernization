@@ -18,11 +18,25 @@ var ErrNilDB = errors.New("database: nil DB")
 // ErrNilPool is returned when Ping is called but the connection pool was never initialized.
 var ErrNilPool = errors.New("database: nil pool")
 
-// ErrSchemaNotPresent is returned when DATABASE_RECREATE_ON_STARTUP is false and core tables are missing.
-var ErrSchemaNotPresent = errors.New("database: core schema tables are missing; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
+// ErrSchemaNotPresent is returned when DATABASE_RECREATE_ON_STARTUP is false and the core schema is missing or stale.
+var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
 
 // coreSchemaTables are required when destructive recreate is disabled.
 var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
+
+const coreSchemaDeletionsContextSQL = `
+	SELECT
+		c.udt_name,
+		c.is_nullable,
+		COALESCE(pg_get_expr(d.adbin, d.adrelid) = $$'{}'::jsonb$$, false)
+	FROM information_schema.columns c
+	JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
+	JOIN pg_catalog.pg_class cls ON cls.relnamespace = n.oid AND cls.relname = c.table_name
+	JOIN pg_catalog.pg_attribute a ON a.attrelid = cls.oid AND a.attname = c.column_name AND NOT a.attisdropped
+	LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+	WHERE c.table_schema = 'public'
+	  AND c.table_name = 'deletions'
+	  AND c.column_name = 'context'`
 
 func coreSchemaCreateDDL() []string {
 	return []string{
@@ -87,6 +101,7 @@ func coreSchemaCreateDDL() []string {
 			id BIGSERIAL PRIMARY KEY,
 			resource_type VARCHAR(20) NOT NULL,
 			resource_id VARCHAR(50) NOT NULL,
+			context JSONB NOT NULL DEFAULT '{}',
 			deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
 			CONSTRAINT deletions_version_positive CHECK (version > 0)
@@ -227,20 +242,53 @@ func New(cfg *config.Config) (*DB, error) {
 	}, nil
 }
 
-// coreSchemaTablesPresent reports whether all core application tables exist.
+// coreSchemaTablesPresent reports whether the core application schema is current enough to run without recreate mode.
 func coreSchemaTablesPresent(ctx context.Context, q interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }) (bool, error) {
-	const qSQL = `
-		SELECT COUNT(*) = $1
-		FROM information_schema.tables
-		WHERE table_schema = 'public'
-		  AND table_name = ANY($2::text[])`
-	var ok bool
-	if err := q.QueryRow(ctx, qSQL, len(coreSchemaTables), coreSchemaTables).Scan(&ok); err != nil {
+	const tableSQL = `
+			SELECT COUNT(*)
+			FROM information_schema.tables
+			WHERE table_schema = 'public'
+			  AND table_type = 'BASE TABLE'
+			  AND table_name = ANY($1::text[])`
+	var tableCount int
+	if err := q.QueryRow(ctx, tableSQL, coreSchemaTables).Scan(&tableCount); err != nil {
 		return false, fmt.Errorf("failed to check core schema tables: %w", err)
 	}
-	return ok, nil
+	if tableCount != len(coreSchemaTables) {
+		return false, nil
+	}
+
+	const sequenceSQL = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = 'public'
+			  AND c.relname = 'atlas_change_version_seq'
+			  AND c.relkind = 'S'
+		)`
+	var sequencePresent bool
+	if err := q.QueryRow(ctx, sequenceSQL).Scan(&sequencePresent); err != nil {
+		return false, fmt.Errorf("failed to check core schema change-version sequence: %w", err)
+	}
+	if !sequencePresent {
+		return false, nil
+	}
+
+	var udtName, isNullable string
+	var defaultIsEmptyObject bool
+	if err := q.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check deletions context column: %w", err)
+	}
+	if udtName != "jsonb" || isNullable != "NO" || !defaultIsEmptyObject {
+		return false, nil
+	}
+	return true, nil
 }
 
 // Close closes the database connection pool.

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func TestNewValidationError(t *testing.T) {
@@ -11,8 +12,8 @@ func TestNewValidationError(t *testing.T) {
 	if err.Message != "test validation error" {
 		t.Errorf("Expected message 'test validation error', got '%s'", err.Message)
 	}
-	if err.Code != "VALIDATION_ERROR" {
-		t.Errorf("Expected code 'VALIDATION_ERROR', got '%s'", err.Code)
+	if err.Code != protocol.ErrorCodeValidationError {
+		t.Errorf("Expected code %q, got %q", protocol.ErrorCodeValidationError, err.Code)
 	}
 	if err.Error() != "test validation error" {
 		t.Errorf("Expected Error() to return message, got '%s'", err.Error())
@@ -24,9 +25,9 @@ func TestNewNotFoundErrors(t *testing.T) {
 		name        string
 		makeErr     func() *actions.NotFoundError
 		wantMessage string
-		wantType    string
+		wantType    actions.ChangeResource
 		wantID      string
-		wantCode    string
+		wantCode    protocol.ErrorCode
 	}{
 		{
 			name: "entity",
@@ -34,9 +35,9 @@ func TestNewNotFoundErrors(t *testing.T) {
 				return actions.NewEntityNotFoundError("entity-123")
 			},
 			wantMessage: "Entity 'entity-123' was not found",
-			wantType:    "entity",
+			wantType:    actions.ChangeResourceEntity,
 			wantID:      "entity-123",
-			wantCode:    "ENTITY_NOT_FOUND",
+			wantCode:    protocol.ErrorCodeEntityNotFound,
 		},
 		{
 			name: "task",
@@ -44,9 +45,9 @@ func TestNewNotFoundErrors(t *testing.T) {
 				return actions.NewTaskNotFoundError("task-456")
 			},
 			wantMessage: "Task 'task-456' was not found",
-			wantType:    "task",
+			wantType:    actions.ChangeResourceTask,
 			wantID:      "task-456",
-			wantCode:    "TASK_NOT_FOUND",
+			wantCode:    protocol.ErrorCodeTaskNotFound,
 		},
 		{
 			name: "object",
@@ -54,9 +55,9 @@ func TestNewNotFoundErrors(t *testing.T) {
 				return actions.NewObjectNotFoundError("object-789")
 			},
 			wantMessage: "Object 'object-789' was not found",
-			wantType:    "object",
+			wantType:    actions.ChangeResourceObject,
 			wantID:      "object-789",
-			wantCode:    "OBJECT_NOT_FOUND",
+			wantCode:    protocol.ErrorCodeObjectNotFound,
 		},
 	}
 	for _, tc := range cases {

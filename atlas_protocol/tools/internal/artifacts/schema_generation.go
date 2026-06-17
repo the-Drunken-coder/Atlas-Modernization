@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +23,19 @@ func ValidateExamples(root string) error {
 	if err := validateExampleSet(root, "tasks", "#TaskBlob"); err != nil {
 		return err
 	}
-	return validateExampleSet(root, "objects", "#ObjectBlob")
+	if err := validateExampleSet(root, "objects", "#ObjectBlob"); err != nil {
+		return err
+	}
+	if err := validateExampleSet(root, "errors", "#ErrorResponse"); err != nil {
+		return err
+	}
+	if err := validateExampleSet(root, "feed/events", "#FeedEvent"); err != nil {
+		return err
+	}
+	if err := validateExampleSet(root, "feed/messages", "#FeedClientMessage"); err != nil {
+		return err
+	}
+	return validateExampleSet(root, "feed/server", "#FeedHandshakeMessage")
 }
 
 func validateExampleSet(root, name, schema string) error {
@@ -44,9 +57,26 @@ func validateExampleSet(root, name, schema string) error {
 		args = append(args, filepath.ToSlash(rel))
 	}
 	args = append(args, "-d", schema)
-
-	_, err = runCue(root, args...)
-	return err
+	if _, err := runCue(root, args...); err == nil {
+		return nil
+	} else {
+		var validationErrors []error
+		for _, example := range examples {
+			rel, relErr := filepath.Rel(root, example)
+			if relErr != nil {
+				return relErr
+			}
+			displayPath := filepath.ToSlash(rel)
+			fileArgs := []string{"vet", "./schema", displayPath, "-d", schema}
+			if _, fileErr := runCue(root, fileArgs...); fileErr != nil {
+				validationErrors = append(validationErrors, fmt.Errorf("%s: %w", displayPath, fileErr))
+			}
+		}
+		if len(validationErrors) == 0 {
+			return err
+		}
+		return errors.Join(validationErrors...)
+	}
 }
 
 func LoadMeta(root string) (Meta, error) {
@@ -71,13 +101,39 @@ func LoadMeta(root string) (Meta, error) {
 	return meta, nil
 }
 
-func jsonSchema(root, expr string) ([]byte, error) {
+func jsonSchema(root, expr, revision string) ([]byte, error) {
 	args := []string{"def", "./schema", "--out=jsonschema", "-e", expr}
 	out, err := runCue(root, args...)
 	if err != nil {
 		return nil, err
 	}
-	return markGeneratedJSONSchema(out)
+	schema, err := markGeneratedJSONSchema(out, revision)
+	if err != nil {
+		return nil, err
+	}
+	if isUpdateRequestExpr(expr) {
+		return markRootMinProperties(schema)
+	}
+	return schema, nil
+}
+
+func isUpdateRequestExpr(expr string) bool {
+	return strings.HasSuffix(strings.TrimPrefix(expr, "#"), "UpdateRequest")
+}
+
+func markRootMinProperties(schema []byte) ([]byte, error) {
+	var root map[string]any
+	if err := json.Unmarshal(schema, &root); err != nil {
+		return nil, err
+	}
+	if schemaType(root) == "object" {
+		root["minProperties"] = float64(1)
+	}
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(out, '\n'), nil
 }
 
 func runCue(root string, args ...string) ([]byte, error) {

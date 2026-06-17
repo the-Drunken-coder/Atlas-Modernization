@@ -54,6 +54,100 @@ func ValidateObjectBlob(value any) []string {
 	return validate("#ObjectBlob", value)
 }
 
+func ValidateEntityResource(value any) []string {
+	return validate("#EntityResource", value)
+}
+
+func ValidateTaskResource(value any) []string {
+	return validate("#TaskResource", value)
+}
+
+func ValidateObjectResource(value any) []string {
+	return validate("#ObjectResource", value)
+}
+
+func ValidateErrorResponse(value any) []string {
+	return validate("#ErrorResponse", value)
+}
+
+func ValidateFeedEvent(value any) []string {
+	errors := validate("#FeedEvent", value)
+	return appendFeedEventContextErrors(errors, value)
+}
+
+func ValidateFeedAuthMessage(value any) []string {
+	return validate("#FeedAuthMessage", value)
+}
+
+func ValidateFeedSubscribeMessage(value any) []string {
+	return validate("#FeedSubscribeMessage", value)
+}
+
+func ValidateFeedUnsubscribeMessage(value any) []string {
+	return validate("#FeedUnsubscribeMessage", value)
+}
+
+func ValidateFeedClientMessage(value any) []string {
+	return validate("#FeedClientMessage", value)
+}
+
+func ValidateFeedHandshakeMessage(value any) []string {
+	return validate("#FeedHandshakeMessage", value)
+}
+
+func appendFeedEventContextErrors(errors []string, value any) []string {
+	// The CUE union owns validity; these checks only add targeted diagnostics for
+	// nullable task routing fields that otherwise produce broad union errors.
+	payload, ok := valueAsMap(value)
+	if !ok || payload["resource_type"] != "task" {
+		return errors
+	}
+	if payload["event"] == "delete" {
+		rawEntityID, exists := payload["entity_id"]
+		if exists && rawEntityID != nil {
+			entityID, ok := rawEntityID.(string)
+			if !ok || strings.TrimSpace(entityID) == "" {
+				errors = append(errors, "entity_id, if present and not null, must be a non-empty string after trimming whitespace for task delete feed events")
+			}
+		}
+	}
+	if payload["event"] == "update" {
+		rawPreviousEntityID, exists := payload["previous_entity_id"]
+		if exists && rawPreviousEntityID != nil {
+			previousEntityID, ok := rawPreviousEntityID.(string)
+			if !ok || strings.TrimSpace(previousEntityID) == "" {
+				errors = append(errors, "previous_entity_id, if present and not null, must be a non-empty string after trimming whitespace for task update feed events")
+			}
+		}
+	}
+	return errors
+}
+
+func valueAsMap(value any) (map[string]any, bool) {
+	if payload, ok := value.(map[string]any); ok {
+		return payload, true
+	}
+	var data []byte
+	switch typed := value.(type) {
+	case json.RawMessage:
+		data = typed
+	case []byte:
+		data = typed
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, false
+		}
+		data = encoded
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, false
+	}
+	payload, ok := decoded.(map[string]any)
+	return payload, ok
+}
+
 func ValidateEntityComponents(value any) []string {
 	return validate("#EntityComponents", value)
 }

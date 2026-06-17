@@ -41,7 +41,7 @@ func NewValidationErrorWithDetails(message string, details []string) *Validation
 	return &ValidationError{
 		ActionError: ActionError{
 			Message: message,
-			Code:    "VALIDATION_ERROR",
+			Code:    protocol.ErrorCodeValidationError,
 		},
 		Details: details,
 	}

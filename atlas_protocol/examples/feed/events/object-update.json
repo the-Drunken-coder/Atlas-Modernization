@@ -1,0 +1,25 @@
+{
+  "event": "update",
+  "resource_type": "object",
+  "id": "object-1",
+  "version": 2,
+  "resource": {
+    "object_id": "object-1",
+    "path": "captures/object-1.jpg",
+    "content_type": "image/jpeg",
+    "type": "thumbnail",
+    "size_bytes": 1024,
+    "usage_hints": ["thumbnail"],
+    "referenced_by": [
+      {
+        "entity_id": "asset-1"
+      }
+    ],
+    "bucket": "atlas-media",
+    "metadata": {
+      "created_at": "2026-06-12T12:00:00Z",
+      "updated_at": "2026-06-12T12:01:00Z",
+      "version": 2
+    }
+  }
+}

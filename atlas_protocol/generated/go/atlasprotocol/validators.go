@@ -16,6 +16,46 @@ func ValidateObjectBlob(value any) []string {
 	return validator.ValidateObjectBlob(value)
 }
 
+func ValidateEntityResource(value any) []string {
+	return validator.ValidateEntityResource(value)
+}
+
+func ValidateTaskResource(value any) []string {
+	return validator.ValidateTaskResource(value)
+}
+
+func ValidateObjectResource(value any) []string {
+	return validator.ValidateObjectResource(value)
+}
+
+func ValidateErrorResponse(value any) []string {
+	return validator.ValidateErrorResponse(value)
+}
+
+func ValidateFeedEvent(value any) []string {
+	return validator.ValidateFeedEvent(value)
+}
+
+func ValidateFeedAuthMessage(value any) []string {
+	return validator.ValidateFeedAuthMessage(value)
+}
+
+func ValidateFeedSubscribeMessage(value any) []string {
+	return validator.ValidateFeedSubscribeMessage(value)
+}
+
+func ValidateFeedUnsubscribeMessage(value any) []string {
+	return validator.ValidateFeedUnsubscribeMessage(value)
+}
+
+func ValidateFeedClientMessage(value any) []string {
+	return validator.ValidateFeedClientMessage(value)
+}
+
+func ValidateFeedHandshakeMessage(value any) []string {
+	return validator.ValidateFeedHandshakeMessage(value)
+}
+
 func ValidateEntityComponents(value any) []string {
 	return validator.ValidateEntityComponents(value)
 }

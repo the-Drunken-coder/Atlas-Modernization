@@ -1,11 +1,18 @@
 package actions
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestNormalizeTaskStatus(t *testing.T) {
@@ -81,6 +88,91 @@ func TestNormalizeInitialTaskStatus(t *testing.T) {
 				t.Fatalf("normalizeInitialTaskStatus(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	entityActions := NewEntityActions(pool)
+	taskActions := NewTaskActions(pool)
+	suffix := time.Now().UTC().UnixNano()
+	entityID := fmt.Sprintf("task-delete-entity-%d", suffix)
+	taskWithEntityID := fmt.Sprintf("task-delete-linked-%d", suffix)
+	taskWithoutEntityID := fmt.Sprintf("task-delete-unlinked-%d", suffix)
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, entityID, taskWithEntityID)
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, "", taskWithoutEntityID)
+
+	if _, err := entityActions.Create(ctx, CreateEntityParams{
+		EntityID:   entityID,
+		EntityType: "asset",
+	}); err != nil {
+		t.Fatalf("create entity fixture: %v", err)
+	}
+	if _, err := taskActions.Create(ctx, CreateTaskParams{
+		TaskID:   taskWithEntityID,
+		Status:   "pending",
+		EntityID: &entityID,
+	}); err != nil {
+		t.Fatalf("create linked task fixture: %v", err)
+	}
+	if _, err := taskActions.Create(ctx, CreateTaskParams{
+		TaskID: taskWithoutEntityID,
+		Status: "pending",
+	}); err != nil {
+		t.Fatalf("create unlinked task fixture: %v", err)
+	}
+
+	if err := taskActions.Delete(ctx, taskWithEntityID); err != nil {
+		t.Fatalf("delete linked task: %v", err)
+	}
+	assertTaskTombstone(ctx, t, pool, taskWithEntityID, map[string]any{"entity_id": entityID})
+
+	if err := taskActions.Delete(ctx, taskWithoutEntityID); err != nil {
+		t.Fatalf("delete unlinked task: %v", err)
+	}
+	assertTaskTombstone(ctx, t, pool, taskWithoutEntityID, map[string]any{})
+
+	err := taskActions.Delete(ctx, fmt.Sprintf("missing-task-%d", suffix))
+	var notFound *NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("delete missing task error = %T %v, want NotFoundError", err, err)
+	}
+}
+
+func assertTaskTombstone(ctx context.Context, t *testing.T, pool *pgxpool.Pool, taskID string, wantContext map[string]any) {
+	t.Helper()
+	var resourceType, resourceID string
+	var contextJSON []byte
+	var tombstoneVersion int64
+	if err := pool.QueryRow(ctx, `
+		SELECT resource_type, resource_id, context, version
+		FROM deletions
+		WHERE resource_type = 'task' AND resource_id = $1
+	`, taskID).Scan(&resourceType, &resourceID, &contextJSON, &tombstoneVersion); err != nil {
+		t.Fatalf("query task tombstone %q: %v", taskID, err)
+	}
+	if resourceType != "task" || resourceID != taskID {
+		t.Fatalf("tombstone identity = %s/%s, want task/%s", resourceType, resourceID, taskID)
+	}
+	var gotContext map[string]any
+	if err := json.Unmarshal(contextJSON, &gotContext); err != nil {
+		t.Fatalf("decode task tombstone context %q: %v", taskID, err)
+	}
+	if !reflect.DeepEqual(gotContext, wantContext) {
+		t.Fatalf("task tombstone context = %#v, want %#v", gotContext, wantContext)
+	}
+	if tombstoneVersion <= 0 {
+		t.Fatalf("task tombstone version = %d, want positive", tombstoneVersion)
+	}
+	currentVersion, err := CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("CurrentChangeVersion: %v", err)
+	}
+	if currentVersion < tombstoneVersion {
+		t.Fatalf("CurrentChangeVersion = %d, want at least tombstone version %d", currentVersion, tombstoneVersion)
 	}
 }
 

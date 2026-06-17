@@ -1,0 +1,24 @@
+{
+  "event": "update",
+  "resource_type": "entity",
+  "id": "asset-1",
+  "version": 2,
+  "resource": {
+    "entity_id": "asset-1",
+    "entity_type": "asset",
+    "subtype": null,
+    "alias": "Scout 1A",
+    "components": {
+      "telemetry": {
+        "latitude": 38.8978,
+        "longitude": -77.0366,
+        "last_update": "2026-06-12T12:01:00Z"
+      }
+    },
+    "metadata": {
+      "created_at": "2026-06-12T12:00:00Z",
+      "updated_at": "2026-06-12T12:01:00Z",
+      "version": 2
+    }
+  }
+}

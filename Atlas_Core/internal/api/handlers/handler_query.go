@@ -7,6 +7,7 @@ import (
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 type fullDatasetResponse struct {
@@ -28,12 +29,17 @@ type deletedResourceResponse struct {
 	Version   int64  `json:"version,omitempty"`
 }
 
+type deletedTaskResourceResponse struct {
+	deletedResourceResponse
+	EntityID *string `json:"entity_id,omitempty"`
+}
+
 type changedSinceResponse struct {
 	Entities                []*serializers.EntityResponse `json:"entities"`
 	Tasks                   []*serializers.TaskResponse   `json:"tasks"`
 	Objects                 []*serializers.ObjectResponse `json:"objects"`
 	DeletedEntities         []deletedResourceResponse     `json:"deleted_entities,omitempty"`
-	DeletedTasks            []deletedResourceResponse     `json:"deleted_tasks,omitempty"`
+	DeletedTasks            []deletedTaskResourceResponse `json:"deleted_tasks,omitempty"`
 	DeletedObjects          []deletedResourceResponse     `json:"deleted_objects,omitempty"`
 	HasMoreEntities         bool                          `json:"has_more_entities"`
 	HasMoreTasks            bool                          `json:"has_more_tasks"`
@@ -77,7 +83,7 @@ func serializeChangedSinceResult(result *actions.ChangedSinceResult) *changedSin
 		Tasks:                   serializers.SerializeTasks(result.Tasks),
 		Objects:                 serializers.SerializeObjects(result.Objects),
 		DeletedEntities:         serializeDeletedResources(result.DeletedEntities),
-		DeletedTasks:            serializeDeletedResources(result.DeletedTasks),
+		DeletedTasks:            serializeDeletedTaskResources(result.DeletedTasks),
 		DeletedObjects:          serializeDeletedResources(result.DeletedObjects),
 		HasMoreEntities:         result.HasMoreEntities,
 		HasMoreTasks:            result.HasMoreTasks,
@@ -109,11 +115,27 @@ func serializeDeletedResources(resources []actions.DeletedResource) []deletedRes
 	return result
 }
 
+func serializeDeletedTaskResources(resources []actions.DeletedResource) []deletedTaskResourceResponse {
+	result := make([]deletedTaskResourceResponse, len(resources))
+	for i, resource := range resources {
+		result[i] = deletedTaskResourceResponse{
+			deletedResourceResponse: deletedResourceResponse{
+				ID:        resource.ID,
+				Type:      resource.Type,
+				DeletedAt: resource.DeletedAt,
+				Version:   resource.Version,
+			},
+			EntityID: resource.EntityID,
+		}
+	}
+	return result
+}
+
 // GetFullDataset handles GET /queries/full.
 func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 	limits, invalidField, err := parseFullDatasetLimits(r)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid "+invalidField+" parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid "+invalidField+" parameter", protocol.ErrorCodeValidationError)
 		return
 	}
 
@@ -129,7 +151,7 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 // GetChangedSince handles GET /queries/changed-since.
 func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(r.URL.Query().Get("since_version")) == "" {
-		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", protocol.ErrorCodeValidationError)
 		return
 	}
 
@@ -138,7 +160,7 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 		h.writeValidationError(w, r, &actions.ValidationError{
 			ActionError: actions.ActionError{
 				Message: "Invalid since_version format (use non-negative integer)",
-				Code:    "VALIDATION_ERROR",
+				Code:    protocol.ErrorCodeValidationError,
 			},
 			Details: []string{fmt.Sprintf("since_version: %v", err)},
 		})
@@ -147,7 +169,7 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 
 	limitPerType, err := parseNonNegativeIntQuery(r, "limit_per_type", 0)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid limit_per_type parameter", "VALIDATION_ERROR")
+		h.writeError(w, r, http.StatusBadRequest, "Invalid limit_per_type parameter", protocol.ErrorCodeValidationError)
 		return
 	}
 

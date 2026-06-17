@@ -28,5 +28,6 @@
     }
   },
   "$ref": "#/$defs/%23MilViewComponent",
-  "$schema": "https://json-schema.org/draft/2020-12/schema"
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-atlas-protocol-revision": "sha256:95f6263c5dfaf62c69f65f1b3a479c3ba8e6ab641c2f467129b12ffb20230901"
 }

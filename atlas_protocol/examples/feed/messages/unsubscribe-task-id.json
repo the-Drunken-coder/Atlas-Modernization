@@ -1,0 +1,6 @@
+{
+  "action": "unsubscribe",
+  "filter": "id",
+  "resource_type": "task",
+  "id": "task-7"
+}
