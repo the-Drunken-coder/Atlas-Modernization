@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -60,7 +61,7 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 		builder.WriteString(gen.typeFor(gen.defs[name], name, 0))
 		builder.WriteString(";\n\n")
 	}
-	validatorSource, err := taskCreateRequestValidatorSource(gen.defs["TaskCreateRequest"])
+	validatorSource, err := requestValidatorSource(gen)
 	if err != nil {
 		return nil, err
 	}
@@ -306,11 +307,7 @@ func (g *typeScriptGenerator) objectType(schema typeScriptSchema, current string
 	if additionalSchema, ok := additional.(map[string]any); ok {
 		builder.WriteString(innerIndent)
 		builder.WriteString("[key: string]: ")
-		if len(props) > 0 {
-			builder.WriteString("unknown")
-		} else {
-			builder.WriteString(g.typeFor(additionalSchema, current, indent+1))
-		}
+		builder.WriteString(g.additionalPropertyIndexType(additionalSchema, props, required, current, indent+1))
 		builder.WriteString(";\n")
 	}
 	builder.WriteString(outerIndent)
@@ -320,6 +317,30 @@ func (g *typeScriptGenerator) objectType(schema typeScriptSchema, current string
 		return "RequireAtLeastOne<" + shape + ", " + quotedUnion(keys) + ">"
 	}
 	return shape
+}
+
+func (g *typeScriptGenerator) additionalPropertyIndexType(additionalSchema typeScriptSchema, props map[string]any, required map[string]bool, current string, indent int) string {
+	parts := []string{g.typeFor(additionalSchema, current, indent)}
+	hasOptional := false
+	keys := make([]string, 0, len(props))
+	for key := range props {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		propSchema, ok := props[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		parts = append(parts, g.typeFor(propSchema, current, indent))
+		if !required[key] {
+			hasOptional = true
+		}
+	}
+	if hasOptional {
+		parts = append(parts, "undefined")
+	}
+	return strings.Join(uniqueStrings(parts), " | ")
 }
 
 func minPropertiesOne(schema typeScriptSchema) bool {
@@ -335,52 +356,332 @@ func quotedUnion(values []string) string {
 	return strings.Join(parts, " | ")
 }
 
-func taskCreateRequestValidatorSource(schema typeScriptSchema) (string, error) {
-	props, ok := schema["properties"].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("TaskCreateRequest schema has no properties")
+var requestValidatorTypeNames = []string{
+	"EntityCreateRequest",
+	"EntityUpdateRequest",
+	"ObjectCreateRequest",
+	"ObjectUpdateRequest",
+	"TaskCreateRequest",
+	"TaskUpdateRequest",
+}
+
+func requestValidatorSource(g *typeScriptGenerator) (string, error) {
+	var builder strings.Builder
+	generated := false
+	for _, name := range requestValidatorTypeNames {
+		schema, ok := g.defs[name]
+		if !ok {
+			continue
+		}
+		generated = true
+		check, err := g.runtimeValidatorExpression("value", schema)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", name, err)
+		}
+		builder.WriteString("export function ")
+		builder.WriteString(validatorFunctionName(name))
+		builder.WriteString("(value: unknown): value is ")
+		builder.WriteString(name)
+		builder.WriteString(" {\n")
+		builder.WriteString("  return ")
+		builder.WriteString(check)
+		builder.WriteString(";\n")
+		builder.WriteString("}\n\n")
 	}
+	if !generated {
+		return "", nil
+	}
+	builder.WriteString(runtimeValidatorHelpersSource())
+	return builder.String(), nil
+}
+
+func validatorFunctionName(typeName string) string {
+	return "is" + typeName
+}
+
+func (g *typeScriptGenerator) runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
+	if ref, ok := schema["$ref"].(string); ok {
+		refExpression, err := g.runtimeRefValidatorExpression(valueExpr, ref)
+		if err != nil {
+			return "", err
+		}
+		siblingSchema := cloneSchemaWithoutKey(schema, "$ref")
+		if len(siblingSchema) == 0 {
+			return refExpression, nil
+		}
+		siblingExpression, err := g.runtimeValidatorExpression(valueExpr, siblingSchema)
+		if err != nil {
+			return "", err
+		}
+		return "(" + refExpression + " && " + siblingExpression + ")", nil
+	}
+	if oneOf, ok := schema["oneOf"].([]any); ok {
+		return g.runtimeUnionValidatorExpression(valueExpr, oneOf)
+	}
+	if anyOf, ok := schema["anyOf"].([]any); ok {
+		return g.runtimeUnionValidatorExpression(valueExpr, anyOf)
+	}
+	if allOf, ok := schema["allOf"].([]any); ok {
+		return g.runtimeAllOfValidatorExpression(valueExpr, allOf)
+	}
+	if value, ok := schema["const"]; ok {
+		return valueExpr + " === " + literalValue(value), nil
+	}
+	if enumValues, ok := schema["enum"].([]any); ok {
+		parts := make([]string, 0, len(enumValues))
+		for _, value := range enumValues {
+			parts = append(parts, valueExpr+" === "+literalValue(value))
+		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("runtime enum has no values")
+		}
+		return "(" + strings.Join(parts, " || ") + ")", nil
+	}
+
+	switch schemaTypeValue(schema) {
+	case "null":
+		return valueExpr + " === null", nil
+	case "string":
+		return runtimeStringValidatorExpression(valueExpr, schema), nil
+	case "integer":
+		return runtimeNumberValidatorExpression(valueExpr, schema, true), nil
+	case "number":
+		return runtimeNumberValidatorExpression(valueExpr, schema, false), nil
+	case "boolean":
+		return "typeof " + valueExpr + " === \"boolean\"", nil
+	case "array":
+		return g.runtimeArrayValidatorExpression(valueExpr, schema)
+	case "object":
+		return g.runtimeObjectValidatorExpression(valueExpr, schema)
+	default:
+		if _, ok := schema["properties"].(map[string]any); ok {
+			return g.runtimeObjectValidatorExpression(valueExpr, schema)
+		}
+		if _, ok := schema["additionalProperties"].(map[string]any); ok {
+			return g.runtimeObjectValidatorExpression(valueExpr, schema)
+		}
+		if _, ok := schema["additionalProperties"].(bool); ok {
+			return g.runtimeObjectValidatorExpression(valueExpr, schema)
+		}
+		return "", fmt.Errorf("unsupported runtime validator schema: %s", summarizeTypeScriptSchema(schema))
+	}
+}
+
+func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, ref string) (string, error) {
+	name := typeNameFromRef(ref)
+	switch name {
+	case "JSONValue":
+		return "atlasProtocolIsJSONValue(" + valueExpr + ")", nil
+	case "NonEmptyString":
+		return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
+	case "RFC3339Timestamp":
+		return "atlasProtocolIsRFC3339String(" + valueExpr + ")", nil
+	}
+	schema, ok := g.defs[name]
+	if !ok {
+		return "", fmt.Errorf("unsupported runtime validator ref %q", ref)
+	}
+	return g.runtimeValidatorExpression(valueExpr, schema)
+}
+
+func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema) string {
+	if format, ok := schema["format"].(string); ok && format == "date-time" {
+		return "atlasProtocolIsRFC3339String(" + valueExpr + ")"
+	}
+	if _, ok := schema["pattern"].(string); ok {
+		return "atlasProtocolIsNonEmptyString(" + valueExpr + ")"
+	}
+	if minLength, ok := schema["minLength"].(float64); ok && minLength > 0 {
+		return "atlasProtocolIsNonEmptyString(" + valueExpr + ")"
+	}
+	return "typeof " + valueExpr + " === \"string\""
+}
+
+func runtimeNumberValidatorExpression(valueExpr string, schema typeScriptSchema, integer bool) string {
+	checks := []string{"typeof " + valueExpr + " === \"number\"", "Number.isFinite(" + valueExpr + ")"}
+	if integer {
+		checks = append(checks, "Number.isInteger("+valueExpr+")")
+	}
+	if minimum, ok := schema["minimum"].(float64); ok {
+		checks = append(checks, valueExpr+" >= "+jsonNumber(minimum))
+	}
+	if maximum, ok := schema["maximum"].(float64); ok {
+		checks = append(checks, valueExpr+" <= "+jsonNumber(maximum))
+	}
+	if exclusiveMinimum, ok := schema["exclusiveMinimum"].(float64); ok {
+		checks = append(checks, valueExpr+" > "+jsonNumber(exclusiveMinimum))
+	}
+	if exclusiveMaximum, ok := schema["exclusiveMaximum"].(float64); ok {
+		checks = append(checks, valueExpr+" < "+jsonNumber(exclusiveMaximum))
+	}
+	return strings.Join(checks, " && ")
+}
+
+func (g *typeScriptGenerator) runtimeArrayValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
+	if itemSchema, ok := schema["items"].(map[string]any); ok {
+		itemCheck, err := g.runtimeValidatorExpression("item", itemSchema)
+		if err != nil {
+			return "", err
+		}
+		return "Array.isArray(" + valueExpr + ") && " + valueExpr + ".every((item) => " + itemCheck + ")", nil
+	}
+	return "Array.isArray(" + valueExpr + ")", nil
+}
+
+func (g *typeScriptGenerator) runtimeObjectValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
+	props, _ := schema["properties"].(map[string]any)
+	patterns, _ := schema["patternProperties"].(map[string]any)
 	required := requiredProperties(schema)
+
 	keys := make([]string, 0, len(props))
 	for key := range props {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 
-	var checks []string
+	checks := []string{"atlasProtocolIsRecord(" + valueExpr + ")"}
+	if minPropertiesOne(schema) {
+		checks = append(checks, "Object.keys("+valueExpr+").length >= 1")
+	}
 	for _, key := range keys {
 		propSchema, ok := props[key].(map[string]any)
 		if !ok {
-			return "", fmt.Errorf("TaskCreateRequest property %s is not a schema", key)
+			return "", fmt.Errorf("property %s is not a schema", key)
 		}
-		check, err := runtimeValidatorExpression("value."+key, propSchema)
+		propExpr := valueExpr + "[" + jsonString(key) + "]"
+		check, err := g.runtimeValidatorExpression(propExpr, propSchema)
 		if err != nil {
-			return "", fmt.Errorf("TaskCreateRequest property %s: %w", key, err)
+			return "", fmt.Errorf("property %s: %w", key, err)
 		}
 		if required[key] {
-			checks = append(checks, "atlasProtocolHasOwn(value, "+jsonString(key)+") && "+check)
+			checks = append(checks, "(atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+") && "+check+")")
 		} else {
-			checks = append(checks, "(value."+key+" === undefined || "+check+")")
+			checks = append(checks, "(!atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+") || "+check+")")
 		}
 	}
 
-	var builder strings.Builder
-	builder.WriteString("export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest {\n")
-	builder.WriteString("  if (!atlasProtocolIsRecord(value)) {\n")
-	builder.WriteString("    return false;\n")
-	builder.WriteString("  }\n")
-	builder.WriteString("  const allowedKeys = new Set(")
-	builder.WriteString(jsonStringSlice(keys))
-	builder.WriteString(");\n")
-	builder.WriteString("  return Object.keys(value).every((key) => allowedKeys.has(key))")
-	for _, check := range checks {
-		builder.WriteString(" &&\n    ")
-		builder.WriteString(check)
+	entriesCheck, err := g.runtimeObjectEntriesValidatorExpression(valueExpr, keys, patterns, schema["additionalProperties"])
+	if err != nil {
+		return "", err
 	}
-	builder.WriteString(";\n")
-	builder.WriteString("}\n\n")
+	if entriesCheck != "" {
+		checks = append(checks, entriesCheck)
+	}
+	return "(" + strings.Join(checks, " && ") + ")", nil
+}
+
+func (g *typeScriptGenerator) runtimeObjectEntriesValidatorExpression(valueExpr string, propKeys []string, patterns map[string]any, additional any) (string, error) {
+	if len(patterns) == 0 {
+		switch typed := additional.(type) {
+		case nil:
+			return "", nil
+		case bool:
+			if typed {
+				return "", nil
+			}
+			return "Object.keys(" + valueExpr + ").every((key) => atlasProtocolKnownKeys(" + jsonStringSlice(propKeys) + ", key))", nil
+		case map[string]any:
+			check, err := g.runtimeValidatorExpression("item", typed)
+			if err != nil {
+				return "", err
+			}
+			return "Object.entries(" + valueExpr + ").every(([key, item]) => atlasProtocolKnownKeys(" + jsonStringSlice(propKeys) + ", key) || " + check + ")", nil
+		default:
+			return "", fmt.Errorf("unsupported additionalProperties %T", additional)
+		}
+	}
+
+	patternKeys := make([]string, 0, len(patterns))
+	for key := range patterns {
+		patternKeys = append(patternKeys, key)
+	}
+	sort.Strings(patternKeys)
+
+	patternChecks := make([]string, 0, len(patternKeys))
+	for _, pattern := range patternKeys {
+		patternSchema, ok := patterns[pattern].(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("pattern %s is not a schema", pattern)
+		}
+		itemCheck, err := g.runtimeValidatorExpression("item", patternSchema)
+		if err != nil {
+			return "", fmt.Errorf("pattern %s: %w", pattern, err)
+		}
+		patternChecks = append(patternChecks, "(atlasProtocolKeyMatches(key, "+jsonString(pattern)+") && "+itemCheck+")")
+	}
+
+	fallback := "true"
+	switch typed := additional.(type) {
+	case nil:
+		fallback = "true"
+	case bool:
+		if !typed {
+			fallback = "false"
+		}
+	case map[string]any:
+		check, err := g.runtimeValidatorExpression("item", typed)
+		if err != nil {
+			return "", err
+		}
+		fallback = check
+	default:
+		return "", fmt.Errorf("unsupported additionalProperties %T", additional)
+	}
+
+	parts := []string{"atlasProtocolKnownKeys(" + jsonStringSlice(propKeys) + ", key)"}
+	parts = append(parts, patternChecks...)
+	parts = append(parts, fallback)
+	return "Object.entries(" + valueExpr + ").every(([key, item]) => " + strings.Join(parts, " || ") + ")", nil
+}
+
+func (g *typeScriptGenerator) runtimeUnionValidatorExpression(valueExpr string, items []any) (string, error) {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		schema, ok := item.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("unsupported runtime union item %T", item)
+		}
+		expression, err := g.runtimeValidatorExpression(valueExpr, schema)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, expression)
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("runtime union has no schema branches")
+	}
+	return "(" + strings.Join(uniqueStrings(parts), " || ") + ")", nil
+}
+
+func (g *typeScriptGenerator) runtimeAllOfValidatorExpression(valueExpr string, items []any) (string, error) {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		schema, ok := item.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("unsupported runtime allOf item %T", item)
+		}
+		expression, err := g.runtimeValidatorExpression(valueExpr, schema)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, expression)
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("runtime allOf has no schema branches")
+	}
+	return "(" + strings.Join(uniqueStrings(parts), " && ") + ")", nil
+}
+
+func runtimeValidatorHelpersSource() string {
+	var builder strings.Builder
 	builder.WriteString("function atlasProtocolHasOwn(value: Record<string, unknown>, key: string): boolean {\n")
 	builder.WriteString("  return Object.prototype.hasOwnProperty.call(value, key);\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolKnownKeys(keys: readonly string[], key: string): boolean {\n")
+	builder.WriteString("  return keys.includes(key);\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolKeyMatches(key: string, pattern: string): boolean {\n")
+	builder.WriteString("  return new RegExp(pattern).test(key);\n")
 	builder.WriteString("}\n\n")
 	builder.WriteString("function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown> {\n")
 	builder.WriteString("  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n")
@@ -398,6 +699,9 @@ func taskCreateRequestValidatorSource(schema typeScriptSchema) (string, error) {
 	builder.WriteString("}\n\n")
 	builder.WriteString("function atlasProtocolIsNonEmptyString(value: unknown): value is string {\n")
 	builder.WriteString("  return typeof value === \"string\" && value.trim() !== \"\";\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolIsRFC3339String(value: unknown): value is string {\n")
+	builder.WriteString("  return typeof value === \"string\" && Number.isFinite(Date.parse(value));\n")
 	builder.WriteString("}\n\n")
 	builder.WriteString("function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {\n")
 	builder.WriteString("  return atlasProtocolIsJSONValueInternal(value, new WeakSet<object>());\n")
@@ -429,80 +733,7 @@ func taskCreateRequestValidatorSource(schema typeScriptSchema) (string, error) {
 	builder.WriteString("      return false;\n")
 	builder.WriteString("  }\n")
 	builder.WriteString("}\n\n")
-	return builder.String(), nil
-}
-
-func runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
-	if ref, ok := schema["$ref"].(string); ok {
-		switch typeNameFromRef(ref) {
-		case "NonEmptyString":
-			return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
-		case "JSONValue":
-			return "atlasProtocolIsJSONValue(" + valueExpr + ")", nil
-		case "TaskComponents":
-			return "atlasProtocolIsRecord(" + valueExpr + ")", nil
-		default:
-			return "", fmt.Errorf("unsupported runtime validator ref %q", ref)
-		}
-	}
-	if oneOf, ok := schema["oneOf"].([]any); ok {
-		return runtimeUnionValidatorExpression(valueExpr, oneOf)
-	}
-	if anyOf, ok := schema["anyOf"].([]any); ok {
-		return runtimeUnionValidatorExpression(valueExpr, anyOf)
-	}
-	switch schemaTypeValue(schema) {
-	case "null":
-		return valueExpr + " === null", nil
-	case "string":
-		if _, ok := schema["pattern"].(string); ok {
-			return "atlasProtocolIsNonEmptyString(" + valueExpr + ")", nil
-		}
-		return "typeof " + valueExpr + " === \"string\"", nil
-	case "integer":
-		return "typeof " + valueExpr + " === \"number\" && Number.isInteger(" + valueExpr + ")", nil
-	case "number":
-		return "typeof " + valueExpr + " === \"number\"", nil
-	case "boolean":
-		return "typeof " + valueExpr + " === \"boolean\"", nil
-	case "object":
-		if additionalSchema, ok := schema["additionalProperties"].(map[string]any); ok {
-			check, err := runtimeValidatorExpression("item", additionalSchema)
-			if err != nil {
-				return "", err
-			}
-			return "atlasProtocolIsRecord(" + valueExpr + ") && Object.values(" + valueExpr + ").every((item) => " + check + ")", nil
-		}
-		return "atlasProtocolIsRecord(" + valueExpr + ")", nil
-	default:
-		if additionalSchema, ok := schema["additionalProperties"].(map[string]any); ok {
-			check, err := runtimeValidatorExpression("item", additionalSchema)
-			if err != nil {
-				return "", err
-			}
-			return "atlasProtocolIsRecord(" + valueExpr + ") && Object.values(" + valueExpr + ").every((item) => " + check + ")", nil
-		}
-		return "", fmt.Errorf("unsupported runtime validator schema: %s", summarizeTypeScriptSchema(schema))
-	}
-}
-
-func runtimeUnionValidatorExpression(valueExpr string, items []any) (string, error) {
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		schema, ok := item.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("unsupported runtime union item %T", item)
-		}
-		expression, err := runtimeValidatorExpression(valueExpr, schema)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, expression)
-	}
-	if len(parts) == 0 {
-		return "", fmt.Errorf("runtime union has no schema branches")
-	}
-	return "(" + strings.Join(uniqueStrings(parts), " || ") + ")", nil
+	return builder.String()
 }
 
 func jsonStringSlice(values []string) string {
@@ -532,6 +763,17 @@ func schemaTypeValue(schema typeScriptSchema) string {
 		return value
 	}
 	return ""
+}
+
+func cloneSchemaWithoutKey(schema typeScriptSchema, without string) typeScriptSchema {
+	out := make(typeScriptSchema, len(schema))
+	for key, value := range schema {
+		if key == without {
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func typeNameFromRef(ref string) string {
@@ -607,6 +849,18 @@ func literalType(value any) string {
 	default:
 		return jsonString(fmt.Sprint(typed))
 	}
+}
+
+func literalValue(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func jsonNumber(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
 func jsonString(value string) string {

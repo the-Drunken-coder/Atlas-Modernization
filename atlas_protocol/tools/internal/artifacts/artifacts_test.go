@@ -315,7 +315,48 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue",
 		"if (seen.has(value))",
 		"seen.delete(value)",
-		`Object.values(value.extra).every((item) => atlasProtocolIsJSONValue(item))`,
+		`Object.entries(value["extra"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || atlasProtocolIsJSONValue(item))`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"required": ["entity_id", "entity_type"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+		"TaskUpdateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"minProperties": 1,
+			"properties": {
+				"status": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"export function isEntityCreateRequest(value: unknown): value is EntityCreateRequest",
+		"export function isTaskUpdateRequest(value: unknown): value is TaskUpdateRequest",
+		"Object.keys(value).length >= 1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
@@ -334,8 +375,7 @@ func TestTypeScriptSourceRejectsUnsupportedTaskCreateValidatorSchema(t *testing.
 			},
 			"required": ["task_id"],
 			"$defs": {
-				"#NonEmptyString": { "type": "string", "pattern": "\\S" },
-				"#Unsupported": { "type": "array" }
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
 			}
 		}`),
 	})
