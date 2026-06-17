@@ -445,7 +445,14 @@ function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown>
     return false;
   }
   const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  if (prototype === null) {
+    return true;
+  }
+  let basePrototype = prototype;
+  while (Object.getPrototypeOf(basePrototype) !== null) {
+    basePrototype = Object.getPrototypeOf(basePrototype);
+  }
+  return prototype === basePrototype;
 }
 
 function atlasProtocolIsNonEmptyString(value: unknown): value is string {

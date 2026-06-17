@@ -6,6 +6,27 @@ import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./fake-core";
 
+async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
+  if (typeof document !== "undefined" && document.body) {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    try {
+      const objectCtor = iframe.contentWindow?.Object;
+      if (!objectCtor) {
+        throw new Error("iframe Object constructor unavailable");
+      }
+      const value = new objectCtor() as Record<string, unknown>;
+      value.task_id = "task-cross-realm";
+      return value;
+    } finally {
+      iframe.remove();
+    }
+  }
+
+  const { runInNewContext } = await import(/* @vite-ignore */ "node:vm");
+  return runInNewContext("({ task_id: 'task-cross-realm' })") as Record<string, unknown>;
+}
+
 describe("AtlasClient HTTP", () => {
   it("fails loudly on protocol revision mismatch", async () => {
     const core = new FakeCore();
@@ -37,11 +58,13 @@ describe("AtlasClient HTTP", () => {
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow("positive finite");
   });
 
-  it("rejects non-plain records in task create requests", () => {
+  it("accepts plain records and rejects non-plain records in task create requests", async () => {
     const nullPrototypeRequest = Object.assign(Object.create(null) as Record<string, unknown>, { task_id: "task-null-proto" });
+    const crossRealmRequest = await crossRealmTaskCreateRequest();
 
     expect(isTaskCreateRequest({ task_id: "task-plain", components: {}, extra: {} })).toBe(true);
     expect(isTaskCreateRequest(nullPrototypeRequest)).toBe(true);
+    expect(isTaskCreateRequest(crossRealmRequest)).toBe(true);
     expect(isTaskCreateRequest({ task_id: "task-date", components: new Date() })).toBe(false);
     expect(isTaskCreateRequest({ task_id: "task-map", extra: new Map([["priority", "high"]]) })).toBe(false);
   });
