@@ -145,7 +145,7 @@ jobs:
         run: npm ci
 
       - name: Install browser test runtime
-        run: npx --no-install playwright install --with-deps chromium
+        run: timeout 10m npx --no-install playwright install chromium
 
       - name: Build Atlas SDK
         run: npm run build
