@@ -114,7 +114,7 @@ Task lifecycle helpers wrap the existing Core lifecycle endpoints: `client.tasks
 
 `client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full task pages are merged into the SDK cache; `fields: "minimal"` returns compact command-oriented task entries.
 
-`client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine keeps its own reconciliation cursor management.
+`client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine manages its own reconciliation cursor.
 
 ## Testing
 

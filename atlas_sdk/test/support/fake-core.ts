@@ -378,6 +378,9 @@ export class FakeCore {
       .filter(Boolean);
     const since = parsed.searchParams.get("since");
     const sinceMs = since ? Date.parse(since) : undefined;
+    if (sinceMs !== undefined && Number.isNaN(sinceMs)) {
+      return protocolError("Invalid since timestamp format (use RFC3339)", "VALIDATION_ERROR", 400);
+    }
     const filteredTasks = [...this.tasks.values()].filter((value) => value.entity_id === id && statusFilter.includes(value.status) && (sinceMs === undefined || Date.parse(value.metadata.updated_at) >= sinceMs));
     const taskPage = pageValues(filteredTasks, limit, parsed.searchParams.get("task_cursor"));
     const tasks = parsed.searchParams.get("fields") === "minimal" ? taskPage.items.map(minimalTask) : taskPage.items;
@@ -584,11 +587,29 @@ function minimalTask(value: TaskResource): Record<string, unknown> {
   };
   if (value.entity_id !== null) entry.entity_id = value.entity_id;
   const command = value.components.command;
-  if (command?.id) entry.command_id = command.id;
-  else if (command?.type) entry.command_id = command.type;
-  if (value.components.parameters && isRecord(value.components.parameters)) entry.parameters = value.components.parameters;
-  else if (command?.parameters && isRecord(command.parameters)) entry.parameters = command.parameters;
+  const commandID = firstNonEmptyString((value.components as Record<string, unknown>).command_id, command?.id, command?.type, command);
+  const parameters = firstRecord(value.components.parameters, value.components.target, command?.parameters, command?.target);
+  if (commandID) entry.command_id = commandID;
+  if (parameters) entry.parameters = parameters;
   return entry;
+}
+
+function firstNonEmptyString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function firstRecord(...values: unknown[]): Record<string, JSONValue> | undefined {
+  for (const value of values) {
+    if (isRecord(value)) {
+      return value as Record<string, JSONValue>;
+    }
+  }
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

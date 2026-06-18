@@ -96,7 +96,7 @@ export class AtlasClient {
       this.engine.writeResource<TaskResource>("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
     acknowledge: (id: string, options?: TaskLifecycleOptions) =>
-      this.engine.writeResource<TaskResource>("POST", `/tasks/${encodeURIComponent(id)}/acknowledge`, undefined, "task", options?.ifMatchVersion, "update"),
+      this.engine.writeResource<TaskResource>("POST", `/tasks/${encodeURIComponent(id)}/acknowledge`, {}, "task", options?.ifMatchVersion, "update"),
     complete: (id: string, options?: TaskCompleteOptions) =>
       this.engine.writeResource<TaskResource>(
         "POST",

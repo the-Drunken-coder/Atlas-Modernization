@@ -223,6 +223,7 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-minimal-checkin"));
     core.upsertTask({ ...task("task-minimal-checkin", "asset-minimal-checkin"), components: { command: { id: "move_to", parameters: { latitude: 1 } } } });
+    core.upsertTask({ ...task("task-minimal-target-checkin", "asset-minimal-checkin"), components: { command: { type: "loiter", target: { radius_m: 50 } } } });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     const response = await client.entities.checkIn("asset-minimal-checkin", {
@@ -238,9 +239,27 @@ describe("AtlasClient HTTP", () => {
         entity_id: "asset-minimal-checkin",
         command_id: "move_to",
         parameters: { latitude: 1 }
+      },
+      {
+        task_id: "task-minimal-target-checkin",
+        status: "pending",
+        entity_id: "asset-minimal-checkin",
+        command_id: "loiter",
+        parameters: { radius_m: 50 }
       }
     ]);
     expect(core.requests).toContain("/entities/asset-minimal-checkin/checkin?status_filter=pending%2Cacknowledged&limit=10&fields=minimal");
+  });
+
+  it("surfaces Core-style check-in validation errors from the fake transport", async () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-invalid-checkin"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await expect(client.entities.checkIn("asset-invalid-checkin", { since: "not-a-date" })).rejects.toMatchObject({
+      status: 400,
+      errorCode: "VALIDATION_ERROR"
+    });
   });
 
   it("exposes one-page query helpers without mutating sync state", async () => {
