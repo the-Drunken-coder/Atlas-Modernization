@@ -232,6 +232,7 @@ export class FakeCore {
       ...(request.extra === undefined ? {} : { extra: request.extra }),
       metadata: metadata(version)
     };
+    this.entities.set(value.entity_id, value);
     this.record({ event: "create", resource_type: "entity", id: value.entity_id, version, resource: value });
     return value;
   }
@@ -307,6 +308,7 @@ export class FakeCore {
       bucket: null,
       metadata: metadata(version)
     };
+    this.objects.set(value.object_id, value);
     this.applyObjectExtra(value.object_id, request.extra);
     this.record({ event: "create", resource_type: "object", id: value.object_id, version, resource: value });
     return this.objectResponse(value.object_id)!;
@@ -336,6 +338,7 @@ export class FakeCore {
     }
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "entity", id, version };
+    this.entities.delete(id);
     this.record(event);
     return event;
   }
@@ -347,6 +350,7 @@ export class FakeCore {
     }
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "task", id, version, entity_id: task.entity_id };
+    this.tasks.delete(id);
     this.record(event);
     return event;
   }
@@ -357,6 +361,8 @@ export class FakeCore {
     }
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "object", id, version };
+    this.objects.delete(id);
+    this.objectPayloads.delete(id);
     this.record(event);
     return event;
   }
@@ -397,6 +403,7 @@ export class FakeCore {
   private recordTask(task: TaskResource, eventName: "create" | "update"): TaskResource {
     const version = this.nextVersion();
     const value = { ...task, metadata: metadata(version) };
+    this.tasks.set(value.task_id, value);
     this.record({ event: eventName, resource_type: "task", id: value.task_id, version, resource: value });
     return value;
   }
