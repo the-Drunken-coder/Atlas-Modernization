@@ -69,7 +69,7 @@ type EntityCheckInBaseOptions = {
   status?: string;
   telemetry?: EntityCheckInTelemetry;
   components?: EntityComponents;
-  statusFilter?: readonly string[];
+  statusFilter?: readonly TaskStatus[];
   limit?: number;
   taskCursor?: string;
   since?: string | Date;
