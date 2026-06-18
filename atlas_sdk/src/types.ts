@@ -1,6 +1,8 @@
 import type {
+  EntityComponents,
   EntityResource,
   FeedEvent,
+  JSONValue,
   ObjectResource,
   ResourceType,
   TaskDeleteEvent,
@@ -32,6 +34,99 @@ export type AtlasSubscription =
 
 export type ReadOptions = {
   fresh?: boolean;
+};
+
+export type TaskStatus = "pending" | "acknowledged" | "completed" | "failed" | "cancelled";
+
+export type TaskLifecycleOptions = {
+  ifMatchVersion?: number;
+};
+
+export type TaskCompleteOptions = TaskLifecycleOptions & {
+  result?: Record<string, JSONValue>;
+};
+
+export type TaskFailOptions = TaskLifecycleOptions & {
+  error?: Record<string, JSONValue>;
+};
+
+export type TaskStatusOptions = TaskLifecycleOptions & {
+  progress?: number;
+  message?: string;
+};
+
+export type EntityCheckInFields = "full" | "minimal";
+
+export type EntityCheckInTelemetry = {
+  latitude?: number;
+  longitude?: number;
+  altitude_m?: number;
+  speed_m_s?: number;
+  heading_deg?: number;
+};
+
+export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = {
+  status?: string;
+  telemetry?: EntityCheckInTelemetry;
+  components?: EntityComponents;
+  statusFilter?: readonly string[];
+  limit?: number;
+  taskCursor?: string;
+  since?: string | Date;
+  fields?: TFields;
+  ifMatchVersion?: number;
+};
+
+export type EntityCheckInBody = {
+  status?: string;
+  latitude?: number;
+  longitude?: number;
+  altitude_m?: number;
+  speed_m_s?: number;
+  heading_deg?: number;
+  components?: EntityComponents;
+};
+
+export type EntityCheckInMinimalTask = {
+  task_id: string;
+  status: string;
+  entity_id?: string;
+  command_id?: string;
+  parameters?: Record<string, JSONValue>;
+};
+
+export type EntityCheckInResponse<TTask extends TaskResource | EntityCheckInMinimalTask = TaskResource | EntityCheckInMinimalTask> = {
+  entity: EntityResource;
+  tasks: TTask[];
+  task_count: number;
+  task_limit: number;
+  has_more_tasks: boolean;
+  next_task_cursor?: string;
+};
+
+export type EntityCheckInMethod = {
+  (id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
+  (id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInResponse<TaskResource>>;
+  (id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
+};
+
+export type FullDatasetQueryOptions = {
+  entityLimit?: number;
+  taskLimit?: number;
+  objectLimit?: number;
+  entityCursor?: string;
+  taskCursor?: string;
+  objectCursor?: string;
+};
+
+export type ChangedSinceQueryOptions = {
+  limitPerType?: number;
+  entityCursor?: string;
+  taskCursor?: string;
+  objectCursor?: string;
+  deletedEntityCursor?: string;
+  deletedTaskCursor?: string;
+  deletedObjectCursor?: string;
 };
 
 export type SyncStatus = {

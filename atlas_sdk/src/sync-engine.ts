@@ -17,6 +17,9 @@ import type {
   AtlasWatchEvent,
   ChangedSinceCursors,
   ChangedSinceResponse,
+  EntityCheckInBody,
+  EntityCheckInMinimalTask,
+  EntityCheckInResponse,
   FullDatasetCursors,
   FullDatasetResponse,
   ReadOptions,
@@ -221,15 +224,38 @@ export class SyncEngine {
     path: string,
     body: unknown,
     type: ResourceType,
-    ifMatchVersion?: number
+    ifMatchVersion?: number,
+    eventName?: "create" | "update"
   ): Promise<T> {
     const resource = await this.transport.json<T>(method, path, body, ifMatchVersion);
     const id = resourceID(type, resource);
     this.applyEvent(
-      { event: method === "POST" ? "create" : "update", resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent,
+      { event: eventName ?? (method === "POST" ? "create" : "update"), resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent,
       { detail: type === "object", advanceCursor: false }
     );
     return resource;
+  }
+
+  async checkInEntity<TTask extends TaskResource | EntityCheckInMinimalTask>(
+    id: string,
+    path: string,
+    body: EntityCheckInBody,
+    ifMatchVersion?: number
+  ): Promise<EntityCheckInResponse<TTask>> {
+    const response = await this.transport.json<EntityCheckInResponse<TTask>>("POST", path, body, ifMatchVersion);
+    this.applyEvent(
+      { event: "update", resource_type: "entity", id: response.entity.entity_id, version: response.entity.metadata.version, resource: response.entity },
+      { advanceCursor: false }
+    );
+    for (const task of response.tasks) {
+      if (isTaskResource(task)) {
+        this.applyEvent(
+          { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task },
+          { advanceCursor: false }
+        );
+      }
+    }
+    return response;
   }
 
   async deleteResource(type: ResourceType, id: string, path: string): Promise<void> {
@@ -452,6 +478,10 @@ export class SyncEngine {
 
 function watchEventVersion(event: AtlasWatchEvent): number {
   return "version" in event ? event.version : 0;
+}
+
+function isTaskResource(value: TaskResource | EntityCheckInMinimalTask): value is TaskResource {
+  return "metadata" in value && "components" in value && "entity_id" in value;
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {

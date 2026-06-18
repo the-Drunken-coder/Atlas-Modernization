@@ -8,8 +8,23 @@ export {
   type AtlasWatchEvent,
   type AtlasClientOptions,
   type AtlasSubscription,
+  type ChangedSinceQueryOptions,
+  type ChangedSinceResponse,
+  type EntityCheckInFields,
+  type EntityCheckInMethod,
+  type EntityCheckInMinimalTask,
+  type EntityCheckInOptions,
+  type EntityCheckInResponse,
+  type EntityCheckInTelemetry,
+  type FullDatasetQueryOptions,
+  type FullDatasetResponse,
   type ReadOptions,
-  type SyncStatus
+  type SyncStatus,
+  type TaskCompleteOptions,
+  type TaskFailOptions,
+  type TaskLifecycleOptions,
+  type TaskStatus,
+  type TaskStatusOptions
 } from "./client.js";
 export {
   ATLAS_PROTOCOL_REVISION,
@@ -22,11 +37,13 @@ export {
 } from "./protocol.js";
 export type {
   EntityCreateRequest,
+  EntityComponents,
   EntityResource,
   EntityUpdateRequest,
   ErrorCode,
   ErrorResponse,
   FeedEvent,
+  JSONValue,
   ObjectCreateRequest,
   ObjectResponse,
   ObjectResource,

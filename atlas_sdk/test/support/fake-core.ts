@@ -1,9 +1,11 @@
 import {
   ATLAS_PROTOCOL_REVISION,
+  type EntityComponents,
   type EntityCreateRequest,
   type EntityResource,
   type EntityUpdateRequest,
   type FeedEvent,
+  type JSONValue,
   type ObjectCreateRequest,
   type ObjectResponse,
   type ObjectResource,
@@ -16,7 +18,7 @@ import type { WebSocketCtor } from "../../src/types.js";
 import { deleted, isDelete, isEntityUpsert, isObjectUpsert, isTaskUpsert, recordLedgerEvent } from "./event-ledger.js";
 import { FakeWebSocket } from "./fake-websocket.js";
 import { metadata, taskFromCreateRequest } from "./fixtures.js";
-import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError } from "./http.js";
+import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError, readBody } from "./http.js";
 import { readValidatedBody, requestValidators } from "./request-validation.js";
 export { entity, metadata, object, task, taskFromCreateRequest } from "./fixtures.js";
 
@@ -32,6 +34,7 @@ export class FakeCore {
   sockets = new Set<FakeWebSocket>();
   feedConnections = 0;
   requests: string[] = [];
+  requestHeaders: Array<{ path: string; ifMatch?: string | null }> = [];
   fullLimitPerType = 0;
   changedSinceLimitPerType = 0;
   readonly recordedVersions = new Set<number>();
@@ -46,6 +49,7 @@ export class FakeCore {
     const method = (init?.method ?? "GET").toUpperCase();
     const ifMatch = new Headers(init?.headers).get("If-Match");
     this.requests.push(parsed.pathname + parsed.search);
+    this.requestHeaders.push({ path: parsed.pathname + parsed.search, ifMatch });
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
     if (path === "/queries/full" && method === "GET") {
       try {
@@ -115,6 +119,9 @@ export class FakeCore {
         throw error;
       }
     }
+    if (path.startsWith("/entities/") && path.endsWith("/checkin") && method === "POST") {
+      return this.checkInEntityResponse(decodeURIComponent(path.split("/")[2]), parsed, init, ifMatch);
+    }
     if (path.startsWith("/entities/") && method === "GET") {
       return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
     }
@@ -151,6 +158,10 @@ export class FakeCore {
         return protocolError("task already exists", "TASK_ALREADY_EXISTS", 409);
       }
       return json(this.createTask(body), 201);
+    }
+    if (path.startsWith("/tasks/") && method === "POST") {
+      const [, , rawID, action] = path.split("/");
+      return this.taskLifecycleResponse(decodeURIComponent(rawID), action, init, ifMatch);
     }
     if (path.startsWith("/tasks/") && method === "PATCH") {
       const id = decodeURIComponent(path.split("/")[2]);
@@ -286,6 +297,98 @@ export class FakeCore {
       delete next.extra;
     }
     return this.upsertTask(next);
+  }
+
+  private async taskLifecycleResponse(id: string, action: string, init: RequestInit | undefined, ifMatch: string | null): Promise<Response> {
+    if (!this.tasks.has(id)) {
+      return protocolError("task not found", "TASK_NOT_FOUND", 404);
+    }
+    if (ifMatch === '"v0"') {
+      return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
+    }
+    if (action === "acknowledge") {
+      return json(this.updateTask(id, { status: "acknowledged" }));
+    }
+    if (action === "complete") {
+      const body = await readRecord(init);
+      if (body instanceof Response) return body;
+      if (body.result !== undefined && !isRecord(body.result)) {
+        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+      }
+      return json(this.updateTask(id, { status: "completed", ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } }) }));
+    }
+    if (action === "fail") {
+      const body = await readRecord(init);
+      if (body instanceof Response) return body;
+      if (body.error !== undefined && !isRecord(body.error)) {
+        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+      }
+      return json(this.updateTask(id, { status: "failed", ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } }) }));
+    }
+    if (action === "status") {
+      const body = await readRecord(init);
+      if (body instanceof Response) return body;
+      if (!isNonEmptyString(body.status) || (body.progress !== undefined && !isFiniteNumber(body.progress)) || (body.message !== undefined && typeof body.message !== "string")) {
+        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+      }
+      const components: TaskUpdateRequest["components"] = {};
+      if (body.progress !== undefined) components.progress = { percent: clampPercent(body.progress) };
+      if (body.message !== undefined) components.status_message = body.message;
+      return json(this.updateTask(id, { status: body.status, ...(Object.keys(components).length === 0 ? {} : { components }), remove_extra_keys: ["progress", "status_message", "message"] }));
+    }
+    return protocolError("not found", "VALIDATION_ERROR", 404);
+  }
+
+  private async checkInEntityResponse(id: string, parsed: URL, init: RequestInit | undefined, ifMatch: string | null): Promise<Response> {
+    if (!this.entities.has(id)) {
+      return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
+    }
+    if (ifMatch === '"v0"') {
+      return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
+    }
+    const limit = Number(parsed.searchParams.get("limit") ?? "10");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+      return protocolError("limit must be between 1 and 20", "VALIDATION_ERROR", 400);
+    }
+    const body = await readRecord(init);
+    if (body instanceof Response) return body;
+    if (!isCheckInBody(body)) {
+      return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+    }
+
+    const now = metadata(0).updated_at;
+    const components: EntityComponents = { ...(body.components ?? {}) };
+    if (body.status !== undefined) {
+      components.status = { value: body.status, last_update: now };
+    }
+    const telemetry: Record<string, number | string> = {};
+    for (const key of ["latitude", "longitude", "altitude_m", "speed_m_s", "heading_deg"] as const) {
+      if (body[key] !== undefined) telemetry[key] = body[key];
+    }
+    if (Object.keys(telemetry).length > 0) {
+      telemetry.last_update = now;
+      components.telemetry = telemetry;
+    }
+    components.heartbeat = { last_seen: now };
+    const updatedEntity = this.updateEntity(id, { components });
+
+    const statusFilter = (parsed.searchParams.get("status_filter") || "pending,acknowledged")
+      .split(",")
+      .map((status) => status.trim())
+      .filter(Boolean);
+    const since = parsed.searchParams.get("since");
+    const sinceMs = since ? Date.parse(since) : undefined;
+    const filteredTasks = [...this.tasks.values()].filter((value) => value.entity_id === id && statusFilter.includes(value.status) && (sinceMs === undefined || Date.parse(value.metadata.updated_at) >= sinceMs));
+    const taskPage = pageValues(filteredTasks, limit, parsed.searchParams.get("task_cursor"));
+    const tasks = parsed.searchParams.get("fields") === "minimal" ? taskPage.items.map(minimalTask) : taskPage.items;
+    return json({
+      entity: updatedEntity,
+      tasks,
+      task_count: tasks.length,
+      task_limit: limit,
+      has_more_tasks: taskPage.hasMore,
+      next_task_cursor: taskPage.nextCursor
+    });
   }
 
   upsertObject(object: ObjectResource): ObjectResource {
@@ -440,3 +543,68 @@ export class FakeCore {
 }
 
 const promotedObjectPayloadKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
+
+async function readRecord(init: RequestInit | undefined): Promise<Record<string, unknown> | Response> {
+  let value: unknown;
+  try {
+    value = await readBody<unknown>(init ?? {});
+  } catch {
+    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+  }
+  if (!isRecord(value)) {
+    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+  }
+  return value;
+}
+
+function isCheckInBody(value: Record<string, unknown>): value is {
+  status?: string;
+  latitude?: number;
+  longitude?: number;
+  altitude_m?: number;
+  speed_m_s?: number;
+  heading_deg?: number;
+  components?: EntityComponents;
+} {
+  const allowed = new Set(["status", "latitude", "longitude", "altitude_m", "speed_m_s", "heading_deg", "components"]);
+  return Object.keys(value).every((key) => allowed.has(key)) &&
+    (value.status === undefined || isNonEmptyString(value.status)) &&
+    (value.latitude === undefined || isFiniteNumber(value.latitude)) &&
+    (value.longitude === undefined || isFiniteNumber(value.longitude)) &&
+    (value.altitude_m === undefined || isFiniteNumber(value.altitude_m)) &&
+    (value.speed_m_s === undefined || isFiniteNumber(value.speed_m_s)) &&
+    (value.heading_deg === undefined || isFiniteNumber(value.heading_deg)) &&
+    (value.components === undefined || isRecord(value.components));
+}
+
+function minimalTask(value: TaskResource): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    task_id: value.task_id,
+    status: value.status
+  };
+  if (value.entity_id !== null) entry.entity_id = value.entity_id;
+  const command = value.components.command;
+  if (command?.id) entry.command_id = command.id;
+  else if (command?.type) entry.command_id = command.type;
+  if (value.components.parameters && isRecord(value.components.parameters)) entry.parameters = value.components.parameters;
+  else if (command?.parameters && isRecord(command.parameters)) entry.parameters = command.parameters;
+  return entry;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
+}
