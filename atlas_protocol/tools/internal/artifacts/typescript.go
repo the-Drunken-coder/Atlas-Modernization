@@ -190,6 +190,9 @@ func (g *typeScriptGenerator) typeFor(schema typeScriptSchema, current string, i
 		if _, ok := schema["properties"].(map[string]any); ok {
 			return g.objectType(schema, current, indent)
 		}
+		if _, ok := schema["patternProperties"].(map[string]any); ok {
+			return g.objectType(schema, current, indent)
+		}
 		if _, ok := schema["additionalProperties"].(map[string]any); ok {
 			return g.objectType(schema, current, indent)
 		}
@@ -468,6 +471,9 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 		if _, ok := schema["properties"].(map[string]any); ok {
 			return g.runtimeObjectValidatorExpression(valueExpr, schema, seenRefs)
 		}
+		if _, ok := schema["patternProperties"].(map[string]any); ok {
+			return g.runtimeObjectValidatorExpression(valueExpr, schema, seenRefs)
+		}
 		if _, ok := schema["additionalProperties"].(map[string]any); ok {
 			return g.runtimeObjectValidatorExpression(valueExpr, schema, seenRefs)
 		}
@@ -601,6 +607,11 @@ func (g *typeScriptGenerator) runtimeObjectValidatorExpression(valueExpr string,
 			checks = append(checks, "(!atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+") || "+check+")")
 		}
 	}
+	dependencies, err := runtimeDependentRequiredExpressions(valueExpr, schema)
+	if err != nil {
+		return "", err
+	}
+	checks = append(checks, dependencies...)
 
 	entriesCheck, err := g.runtimeObjectEntriesValidatorExpression(valueExpr, keys, patterns, schema["additionalProperties"], seenRefs)
 	if err != nil {
@@ -610,6 +621,44 @@ func (g *typeScriptGenerator) runtimeObjectValidatorExpression(valueExpr string,
 		checks = append(checks, entriesCheck)
 	}
 	return "(" + strings.Join(checks, " && ") + ")", nil
+}
+
+func runtimeDependentRequiredExpressions(valueExpr string, schema typeScriptSchema) ([]string, error) {
+	raw, ok := schema["dependentRequired"].(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	checks := make([]string, 0, len(keys))
+	for _, key := range keys {
+		rawDependencies, ok := raw[key].([]any)
+		if !ok {
+			return nil, fmt.Errorf("dependentRequired[%s] is not an array", key)
+		}
+		dependencies := make([]string, 0, len(rawDependencies))
+		for _, rawDependency := range rawDependencies {
+			dependency, ok := rawDependency.(string)
+			if !ok {
+				return nil, fmt.Errorf("dependentRequired[%s] contains non-string dependency", key)
+			}
+			dependencies = append(dependencies, dependency)
+		}
+		sort.Strings(dependencies)
+		if len(dependencies) == 0 {
+			continue
+		}
+		dependencyChecks := make([]string, 0, len(dependencies))
+		for _, dependency := range dependencies {
+			dependencyChecks = append(dependencyChecks, "atlasProtocolHasOwn("+valueExpr+", "+jsonString(dependency)+")")
+		}
+		checks = append(checks, "(!atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+") || ("+strings.Join(dependencyChecks, " && ")+"))")
+	}
+	return checks, nil
 }
 
 func (g *typeScriptGenerator) runtimeObjectEntriesValidatorExpression(valueExpr string, propKeys []string, patterns map[string]any, additional any, seenRefs map[string]bool) (string, error) {

@@ -13,45 +13,49 @@ describe("AtlasClient simulation", () => {
       pollIntervalMs: 0
     });
     await client.sync.start();
-    await client.connectFeed();
+    try {
+      await client.connectFeed();
 
-    for (let i = 0; i < 24; i++) {
-      if (i % 3 === 0) {
-        const entityID = `asset-sim-${i % 5}`;
-        const value = core.upsertEntity({ ...entity(entityID), alias: `asset ${i}` });
-        const event: FeedEvent = { event: "update", resource_type: "entity", id: entityID, version: value.metadata.version, resource: value };
-        core.emit(event, { dropForSockets: i === 6, record: false });
+      for (let i = 0; i < 24; i++) {
+        if (i % 3 === 0) {
+          const entityID = `asset-sim-${i % 5}`;
+          const value = core.upsertEntity({ ...entity(entityID), alias: `asset ${i}` });
+          const event: FeedEvent = { event: "update", resource_type: "entity", id: entityID, version: value.metadata.version, resource: value };
+          core.emit(event, { dropForSockets: i === 6, record: false });
+        }
+        const id = `task-sim-${i % 4}`;
+        const value = core.upsertTask({ ...task(id, `asset-${i % 3}`), status: i % 2 === 0 ? "pending" : "acknowledged" });
+        const event: FeedEvent = { event: "update", resource_type: "task", id, version: value.metadata.version, resource: value };
+        core.emit(event, { dropForSockets: i === 7, record: false });
+        if (i % 4 === 0) {
+          const objectID = `object-sim-${i % 3}`;
+          const value = core.upsertObject({ ...object(objectID), type: i % 8 === 0 ? "image" : "log" });
+          const objectEvent: FeedEvent = { event: "update", resource_type: "object", id: objectID, version: value.metadata.version, resource: value };
+          core.emit(objectEvent, { dropForSockets: i === 12, record: false });
+        }
+        // Mid-simulation task delete is dropped from sockets to force gap reconciliation.
+        if (i === 10) {
+          const event = core.deleteTask("task-sim-2");
+          if (event) core.emit(event, { dropForSockets: true, record: false });
+        }
+        // Entity delete follows later so the ledger sees a live tombstone after recovery.
+        if (i === 14) {
+          const event = core.deleteEntity("asset-sim-2");
+          if (event) core.emit(event, { record: false });
+        }
+        // Object delete lands near the tail to cover all resource tombstone types.
+        if (i === 18) {
+          const event = core.deleteObject("object-sim-1");
+          if (event) core.emit(event, { record: false });
+        }
+        if (i % 6 === 5) {
+          await assertClientMatchesLedger(client, core);
+        }
       }
-      const id = `task-sim-${i % 4}`;
-      const value = core.upsertTask({ ...task(id, `asset-${i % 3}`), status: i % 2 === 0 ? "pending" : "acknowledged" });
-      const event: FeedEvent = { event: "update", resource_type: "task", id, version: value.metadata.version, resource: value };
-      core.emit(event, { dropForSockets: i === 7, record: false });
-      if (i % 4 === 0) {
-        const objectID = `object-sim-${i % 3}`;
-        const value = core.upsertObject({ ...object(objectID), type: i % 8 === 0 ? "image" : "log" });
-        const objectEvent: FeedEvent = { event: "update", resource_type: "object", id: objectID, version: value.metadata.version, resource: value };
-        core.emit(objectEvent, { dropForSockets: i === 12, record: false });
-      }
-      // Mid-simulation task delete is dropped from sockets to force gap reconciliation.
-      if (i === 10) {
-        const event = core.deleteTask("task-sim-2");
-        if (event) core.emit(event, { dropForSockets: true, record: false });
-      }
-      // Entity delete follows later so the ledger sees a live tombstone after recovery.
-      if (i === 14) {
-        const event = core.deleteEntity("asset-sim-2");
-        if (event) core.emit(event, { record: false });
-      }
-      // Object delete lands near the tail to cover all resource tombstone types.
-      if (i === 18) {
-        const event = core.deleteObject("object-sim-1");
-        if (event) core.emit(event, { record: false });
-      }
-      if (i % 6 === 5) {
-        await assertClientMatchesLedger(client, core);
-      }
+      await assertClientMatchesLedger(client, core);
+    } finally {
+      client.sync.stop();
     }
-    await assertClientMatchesLedger(client, core);
   });
 
 });

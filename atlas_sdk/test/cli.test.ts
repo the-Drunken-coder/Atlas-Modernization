@@ -16,21 +16,30 @@ describe("Atlas CLI", () => {
   });
 
   it("rejects malformed commands and arguments before handshake", async () => {
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("fetch should not be called for invalid CLI input");
+    });
+
     const missingID = captureIO();
+    missingID.io.fetch = fetchSpy;
     await expect(runCLI(["entities", "get"], missingID.io)).resolves.toBe(2);
     expect(missingID.stderr()).toContain("usage: invalid command");
 
     const badJSON = captureIO();
+    badJSON.io.fetch = fetchSpy;
     await expect(runCLI(["tasks", "create", "{bad"], badJSON.io)).resolves.toBe(2);
     expect(badJSON.stderr()).toContain("invalid task JSON");
 
     const invalidTask = captureIO();
+    invalidTask.io.fetch = fetchSpy;
     await expect(runCLI(["tasks", "create", '{"task_id":"","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":0}}'], invalidTask.io)).resolves.toBe(2);
     expect(invalidTask.stderr()).toContain("invalid task JSON");
 
     const badFilter = captureIO();
+    badFilter.io.fetch = fetchSpy;
     await expect(runCLI(["watch", "--subscribe", "id:not-a-type:x"], badFilter.io)).resolves.toBe(2);
     expect(badFilter.stderr()).toContain("invalid subscription filter");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("creates tasks with Core request payloads and server defaults", async () => {

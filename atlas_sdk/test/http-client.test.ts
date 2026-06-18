@@ -86,6 +86,43 @@ describe("AtlasClient HTTP", () => {
         components: { geometry: { type: "Point", coordinates: [-97.7431, 30.2672] } }
       })
     ).toBe(true);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-missing-lng",
+        entity_type: "asset",
+        components: { geometry: { point_lat: 30.2672 } }
+      })
+    ).toBe(false);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-missing-radius-center",
+        entity_type: "asset",
+        components: { geometry: { radius_m: 500, point_lat: 30.2672 } }
+      })
+    ).toBe(false);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-radius",
+        entity_type: "asset",
+        components: { geometry: { radius_m: 500, point_lat: 30.2672, point_lng: -97.7431 } }
+      })
+    ).toBe(true);
+  });
+
+  it("enforces fake Core route verbs while preserving default GET semantics", async () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-method"));
+
+    const revision = await core.fetch("http://atlas.test/protocol/revision");
+    expect(revision.status).toBe(200);
+    await expect(revision.json()).resolves.toMatchObject({ protocol_revision: core.revision });
+
+    const entityResponse = await core.fetch("http://atlas.test/entities/asset-method");
+    expect(entityResponse.status).toBe(200);
+    await expect(entityResponse.json()).resolves.toMatchObject({ entity_id: "asset-method" });
+
+    await expect(core.fetch("http://atlas.test/protocol/revision", { method: "POST" }).then((response) => response.status)).resolves.toBe(404);
+    await expect(core.fetch("http://atlas.test/entities/asset-method", { method: "POST" }).then((response) => response.status)).resolves.toBe(404);
   });
 
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {

@@ -43,10 +43,11 @@ export class FakeCore {
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
     const path = parsed.pathname;
+    const method = (init?.method ?? "GET").toUpperCase();
     const ifMatch = new Headers(init?.headers).get("If-Match");
     this.requests.push(parsed.pathname + parsed.search);
-    if (path === "/protocol/revision") return json({ protocol_revision: this.revision });
-    if (path === "/queries/full") {
+    if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
+    if (path === "/queries/full" && method === "GET") {
       try {
         const entityPage = pageValues([...this.entities.values()], this.fullLimitPerType, parsed.searchParams.get("entity_cursor"));
         const taskPage = pageValues([...this.tasks.values()], this.fullLimitPerType, parsed.searchParams.get("task_cursor"));
@@ -69,7 +70,7 @@ export class FakeCore {
         throw error;
       }
     }
-    if (path === "/queries/changed-since") {
+    if (path === "/queries/changed-since" && method === "GET") {
       if (this.failChangedSince) {
         return protocolError("changed-since unavailable", "INTERNAL_SERVER_ERROR", 500);
       }
@@ -114,10 +115,10 @@ export class FakeCore {
         throw error;
       }
     }
-    if (path.startsWith("/entities/") && init?.method === "GET") {
+    if (path.startsWith("/entities/") && method === "GET") {
       return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
     }
-    if (path === "/entities" && init?.method === "POST") {
+    if (path === "/entities" && method === "POST") {
       const body = await readValidatedBody<EntityCreateRequest>(init, requestValidators.entityCreate);
       if (body instanceof Response) return body;
       if (this.entities.has(body.entity_id)) {
@@ -125,7 +126,7 @@ export class FakeCore {
       }
       return json(this.createEntity(body), 201);
     }
-    if (path.startsWith("/entities/") && init?.method === "PATCH") {
+    if (path.startsWith("/entities/") && method === "PATCH") {
       const id = decodeURIComponent(path.split("/")[2]);
       if (!this.entities.has(id)) {
         return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
@@ -137,13 +138,13 @@ export class FakeCore {
       if (body instanceof Response) return body;
       return json(this.updateEntity(id, body));
     }
-    if (path.startsWith("/entities/") && init?.method === "DELETE") {
+    if (path.startsWith("/entities/") && method === "DELETE") {
       return this.deleteEntityResponse(decodeURIComponent(path.split("/")[2]));
     }
-    if (path.startsWith("/tasks/") && init?.method === "GET") {
+    if (path.startsWith("/tasks/") && method === "GET") {
       return jsonOrNotFound(this.tasks.get(decodeURIComponent(path.split("/")[2])), "task not found");
     }
-    if (path === "/tasks" && init?.method === "POST") {
+    if (path === "/tasks" && method === "POST") {
       const body = await readValidatedBody<TaskCreateRequest>(init, requestValidators.taskCreate);
       if (body instanceof Response) return body;
       if (this.tasks.has(body.task_id)) {
@@ -151,7 +152,7 @@ export class FakeCore {
       }
       return json(this.createTask(body), 201);
     }
-    if (path.startsWith("/tasks/") && init?.method === "PATCH") {
+    if (path.startsWith("/tasks/") && method === "PATCH") {
       const id = decodeURIComponent(path.split("/")[2]);
       if (!this.tasks.has(id)) {
         return protocolError("task not found", "TASK_NOT_FOUND", 404);
@@ -163,10 +164,10 @@ export class FakeCore {
       if (body instanceof Response) return body;
       return json(this.updateTask(id, body));
     }
-    if (path.startsWith("/tasks/") && init?.method === "DELETE") {
+    if (path.startsWith("/tasks/") && method === "DELETE") {
       return this.deleteTaskResponse(decodeURIComponent(path.split("/")[2]));
     }
-    if (path.startsWith("/objects/") && path.endsWith("/download")) {
+    if (path.startsWith("/objects/") && path.endsWith("/download") && method === "GET") {
       const id = decodeURIComponent(path.split("/")[2]);
       if (!this.objects.has(id)) {
         return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
@@ -175,10 +176,10 @@ export class FakeCore {
       this.onObjectDownload?.(id);
       return new Response(new Uint8Array([1, 2, 3]));
     }
-    if (path.startsWith("/objects/") && init?.method === "GET") {
+    if (path.startsWith("/objects/") && method === "GET") {
       return jsonOrNotFound(this.objectResponse(decodeURIComponent(path.split("/")[2])), "object not found");
     }
-    if (path === "/objects" && init?.method === "POST") {
+    if (path === "/objects" && method === "POST") {
       const body = await readValidatedBody<ObjectCreateRequest>(init, requestValidators.objectCreate);
       if (body instanceof Response) return body;
       if (this.objects.has(body.object_id)) {
@@ -186,7 +187,7 @@ export class FakeCore {
       }
       return json(this.createObject(body), 201);
     }
-    if (path.startsWith("/objects/") && init?.method === "PATCH") {
+    if (path.startsWith("/objects/") && method === "PATCH") {
       const id = decodeURIComponent(path.split("/")[2]);
       if (!this.objects.has(id)) {
         return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
@@ -198,7 +199,7 @@ export class FakeCore {
       if (body instanceof Response) return body;
       return json(this.updateObject(id, body));
     }
-    if (path.startsWith("/objects/") && init?.method === "DELETE") {
+    if (path.startsWith("/objects/") && method === "DELETE") {
       return this.deleteObjectResponse(decodeURIComponent(path.split("/")[2]));
     }
     return protocolError("not found", "VALIDATION_ERROR", 404);

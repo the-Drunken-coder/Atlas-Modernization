@@ -411,6 +411,59 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testi
 	}
 }
 
+func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" },
+				"geometry": {
+					"type": "object",
+					"additionalProperties": false,
+					"minProperties": 1,
+					"properties": {
+						"point_lat": { "type": "number" },
+						"point_lng": { "type": "number" },
+						"radius_m": { "type": "number" }
+					},
+					"dependentRequired": {
+						"point_lat": ["point_lng"],
+						"point_lng": ["point_lat"],
+						"radius_m": ["point_lat", "point_lng"]
+					}
+				},
+				"labels": {
+					"patternProperties": {
+						"^custom_": { "type": "string" }
+					},
+					"additionalProperties": false
+				}
+			},
+			"required": ["entity_id", "entity_type"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		`"labels"?: {`,
+		"[key: `custom_${string}`]: string;",
+		`(!atlasProtocolHasOwn(value["geometry"], "point_lat") || (atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
+		`(!atlasProtocolHasOwn(value["geometry"], "radius_m") || (atlasProtocolHasOwn(value["geometry"], "point_lat") && atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
+		`Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || (atlasProtocolKeyMatches(key, "^custom_") && typeof item === "string") || false)`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestTypeScriptSourceRejectsMissingTaskCreateValidatorRef(t *testing.T) {
 	_, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
 		"TaskCreateRequest": []byte(`{
