@@ -315,11 +315,175 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue",
 		"if (seen.has(value))",
 		"seen.delete(value)",
-		`Object.values(value.extra).every((item) => atlasProtocolIsJSONValue(item))`,
+		`Object.entries(value["extra"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || atlasProtocolIsJSONValue(item))`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"required": ["entity_id", "entity_type"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+		"TaskUpdateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"minProperties": 1,
+			"properties": {
+				"status": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"export function isEntityCreateRequest(value: unknown): value is EntityCreateRequest",
+		"export function isTaskUpdateRequest(value: unknown): value is TaskUpdateRequest",
+		"Object.keys(value).length >= 1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" },
+				"position": {
+					"type": "array",
+					"minItems": 2,
+					"maxItems": 3,
+					"prefixItems": [
+						{ "type": "number", "minimum": -180, "maximum": 180 },
+						{ "type": "number", "minimum": -90, "maximum": 90 }
+					],
+					"items": { "type": "number" }
+				},
+				"published_at": { "type": "string", "format": "date-time" }
+			},
+			"required": ["entity_id", "entity_type"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		`"position"?: [number, number, ...number[]];`,
+		`value["position"].length >= 2`,
+		`value["position"].length <= 3`,
+		`value["position"][0] >= -180`,
+		`value["position"][1] >= -90`,
+		`value["position"].slice(2).every((item) => typeof item === "number" && Number.isFinite(item))`,
+		`const atlasProtocolPatternCache = new Map<string, RegExp>();`,
+		`const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);`,
+		`day > atlasProtocolDaysInMonth(year, month)`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" },
+				"geometry": {
+					"type": "object",
+					"additionalProperties": false,
+					"minProperties": 1,
+					"properties": {
+						"point_lat": { "type": "number" },
+						"point_lng": { "type": "number" },
+						"radius_m": { "type": "number" }
+					},
+					"dependentRequired": {
+						"point_lat": ["point_lng"],
+						"point_lng": ["point_lat"],
+						"radius_m": ["point_lat", "point_lng"]
+					}
+				},
+				"labels": {
+					"patternProperties": {
+						"^custom_": { "type": "string" }
+					},
+					"additionalProperties": false
+				}
+			},
+			"required": ["entity_id", "entity_type"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		`"labels"?: {`,
+		"[key: `custom_${string}`]: string;",
+		`(!atlasProtocolHasOwn(value["geometry"], "point_lat") || (atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
+		`(!atlasProtocolHasOwn(value["geometry"], "radius_m") || (atlasProtocolHasOwn(value["geometry"], "point_lat") && atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
+		`Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || (atlasProtocolKeyMatches(key, "^custom_") && typeof item === "string") || false)`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceRejectsMissingTaskCreateValidatorRef(t *testing.T) {
+	_, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"unsupported": { "$ref": "#/$defs/%23Unsupported" }
+			},
+			"required": ["task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err == nil {
+		t.Fatal("typeScriptSource accepted unsupported TaskCreateRequest validator schema")
+	}
+	if !strings.Contains(err.Error(), "unsupported runtime validator ref") {
+		t.Fatalf("typeScriptSource error = %q, want unsupported runtime validator ref", err.Error())
 	}
 }
 
@@ -335,15 +499,40 @@ func TestTypeScriptSourceRejectsUnsupportedTaskCreateValidatorSchema(t *testing.
 			"required": ["task_id"],
 			"$defs": {
 				"#NonEmptyString": { "type": "string", "pattern": "\\S" },
-				"#Unsupported": { "type": "array" }
+				"#Unsupported": { "not": { "type": "string" } }
 			}
 		}`),
 	})
 	if err == nil {
 		t.Fatal("typeScriptSource accepted unsupported TaskCreateRequest validator schema")
 	}
-	if !strings.Contains(err.Error(), "unsupported runtime validator ref") {
-		t.Fatalf("typeScriptSource error = %q, want unsupported runtime validator ref", err.Error())
+	if !strings.Contains(err.Error(), "unsupported runtime validator schema") {
+		t.Fatalf("typeScriptSource error = %q, want unsupported runtime validator schema", err.Error())
+	}
+}
+
+func TestTypeScriptSourceRejectsCyclicTaskCreateValidatorRefs(t *testing.T) {
+	_, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"cyclic": { "$ref": "#/$defs/A" }
+			},
+			"required": ["task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" },
+				"A": { "$ref": "#/$defs/B" },
+				"B": { "$ref": "#/$defs/A" }
+			}
+		}`),
+	})
+	if err == nil {
+		t.Fatal("typeScriptSource accepted cyclic TaskCreateRequest validator refs")
+	}
+	if !strings.Contains(err.Error(), "cyclic runtime validator ref") {
+		t.Fatalf("typeScriptSource error = %q, want cyclic runtime validator ref", err.Error())
 	}
 }
 

@@ -11,7 +11,15 @@ export {
   type ReadOptions,
   type SyncStatus
 } from "./client.js";
-export { ATLAS_PROTOCOL_REVISION, isTaskCreateRequest } from "./protocol.js";
+export {
+  ATLAS_PROTOCOL_REVISION,
+  isEntityCreateRequest,
+  isEntityUpdateRequest,
+  isObjectCreateRequest,
+  isObjectUpdateRequest,
+  isTaskCreateRequest,
+  isTaskUpdateRequest
+} from "./protocol.js";
 export type {
   EntityCreateRequest,
   EntityResource,

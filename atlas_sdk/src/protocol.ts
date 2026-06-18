@@ -2,7 +2,12 @@ import type { JSONValue, ObjectResource } from "../../atlas_protocol/generated/t
 
 export {
   ATLAS_PROTOCOL_REVISION,
-  isTaskCreateRequest
+  isEntityCreateRequest,
+  isEntityUpdateRequest,
+  isObjectCreateRequest,
+  isObjectUpdateRequest,
+  isTaskCreateRequest,
+  isTaskUpdateRequest
 } from "../../atlas_protocol/generated/typescript/index.js";
 
 export type ObjectResponse = ObjectResource & {
