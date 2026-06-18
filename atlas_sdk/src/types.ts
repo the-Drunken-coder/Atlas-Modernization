@@ -65,7 +65,7 @@ export type EntityCheckInTelemetry = {
   heading_deg?: number;
 };
 
-export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = {
+type EntityCheckInBaseOptions = {
   status?: string;
   telemetry?: EntityCheckInTelemetry;
   components?: EntityComponents;
@@ -73,9 +73,11 @@ export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityChe
   limit?: number;
   taskCursor?: string;
   since?: string | Date;
-  fields?: TFields;
   ifMatchVersion?: number;
 };
+
+export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = EntityCheckInBaseOptions &
+  (TFields extends "minimal" ? { fields: "minimal" } : { fields?: TFields });
 
 export type EntityCheckInBody = {
   status?: string;
