@@ -17,9 +17,13 @@ export class FakeWebSocket {
     this.core.feedConnections++;
     this.core.sockets.add(this);
     queueMicrotask(() => {
+      if (this.readyState !== 0) return;
       this.readyState = 1;
       this.dispatch("open", {});
-      setTimeout(() => this.receive({ type: "hello", protocol_revision: this.core.revision }), 0);
+      setTimeout(() => {
+        if (this.readyState !== 1) return;
+        this.receive({ type: "hello", protocol_revision: this.core.revision });
+      }, 0);
     });
   }
 
@@ -37,6 +41,7 @@ export class FakeWebSocket {
   }
 
   close(): void {
+    if (this.readyState === 3) return;
     this.readyState = 3;
     this.core.sockets.delete(this);
     this.dispatch("close", {});

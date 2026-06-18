@@ -537,17 +537,29 @@ describe("AtlasClient sync", () => {
     expect(typeof client.objects.watch("object-watch", vi.fn())).toBe("function");
   });
 
-  it("prunes empty watcher buckets after unwatch", () => {
+  it("stops delivering events after unwatch without affecting other watchers", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
-    const engine = (client as unknown as { engine: { watchers: Map<string, Set<unknown>> } }).engine;
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const beforeWatch = vi.fn();
+    const removedWatch = vi.fn();
+    const afterWatch = vi.fn();
 
-    const unwatch = client.entities.watch("asset-watch-prune", vi.fn());
-    expect(engine.watchers.size).toBe(1);
+    client.entities.watch("asset-watch-before", beforeWatch);
+    const unwatch = client.entities.watch("asset-watch-prune", removedWatch);
 
     unwatch();
+    client.entities.watch("asset-watch-after", afterWatch);
 
-    expect(engine.watchers.size).toBe(0);
+    const beforeEntity = core.upsertEntity(entity("asset-watch-before"));
+    core.upsertEntity(entity("asset-watch-prune"));
+    const afterEntity = core.upsertEntity(entity("asset-watch-after"));
+
+    await client.changedSince();
+
+    expect(beforeWatch).toHaveBeenCalledWith(beforeEntity, expect.objectContaining({ event: "recovered", id: "asset-watch-before" }));
+    expect(removedWatch).not.toHaveBeenCalled();
+    expect(afterWatch).toHaveBeenCalledWith(afterEntity, expect.objectContaining({ event: "recovered", id: "asset-watch-after" }));
   });
 
   it("rejects malformed stored subscription keys", () => {

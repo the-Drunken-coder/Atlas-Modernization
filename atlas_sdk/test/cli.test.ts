@@ -5,9 +5,14 @@ import { FakeCore, task } from "./support/fake-core.js";
 describe("Atlas CLI", () => {
   it("prints help without opening a network connection", async () => {
     const io = captureIO();
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("fetch should not be called for --help");
+    });
+    io.io.fetch = fetchSpy;
     await expect(runCLI(["--help"], io.io)).resolves.toBe(0);
     expect(io.stdout()).toContain("usage: atlas");
     expect(io.stderr()).toBe("");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("rejects malformed commands and arguments before handshake", async () => {
@@ -112,6 +117,14 @@ describe("Atlas CLI", () => {
     await expect(runCLI(["watch", "--subscribe", "all"], io.io)).resolves.toBe(2);
 
     expect(io.stderr()).toContain("watch requires --follow");
+  });
+
+  it("requires --subscribe for watch", async () => {
+    const io = captureIO();
+
+    await expect(runCLI(["watch", "--follow"], io.io)).resolves.toBe(2);
+
+    expect(io.stderr()).toContain("watch requires --subscribe");
   });
 
   it("runs watch mode through the sync engine and recovers dropped matching events", async () => {

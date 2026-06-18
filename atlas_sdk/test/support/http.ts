@@ -1,5 +1,12 @@
 import type { ErrorCode, ErrorResponse } from "../../src";
 
+export class InvalidCursorError extends Error {
+  constructor(rawCursor: string) {
+    super(`Invalid cursor parameter: ${rawCursor}`);
+    this.name = "InvalidCursorError";
+  }
+}
+
 export function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -26,7 +33,7 @@ export function pageValues<T>(items: T[], limit: number, rawCursor: string | nul
   if (limit <= 0) {
     return { items, hasMore: false };
   }
-  const offset = rawCursor ? Number(rawCursor) : 0;
+  const offset = pageOffset(rawCursor);
   const page = items.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
   const hasMore = nextOffset < items.length;
@@ -35,4 +42,15 @@ export function pageValues<T>(items: T[], limit: number, rawCursor: string | nul
     hasMore,
     nextCursor: hasMore ? String(nextOffset) : undefined
   };
+}
+
+function pageOffset(rawCursor: string | null): number {
+  if (rawCursor === null) {
+    return 0;
+  }
+  const offset = Number(rawCursor);
+  if (!Number.isInteger(offset) || offset < 0 || String(offset) !== rawCursor) {
+    throw new InvalidCursorError(rawCursor);
+  }
+  return offset;
 }

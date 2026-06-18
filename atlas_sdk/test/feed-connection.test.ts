@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient } from "../src";
+import type { FeedEvent } from "../src";
 import { FeedConnectionManager } from "../src/feed-connection.js";
 import { entity, FakeCore, metadata, task } from "./support/fake-core.js";
 

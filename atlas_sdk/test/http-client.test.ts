@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, isTaskCreateRequest } from "../src";
+import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, isEntityCreateRequest, isTaskCreateRequest } from "../src";
 import { entity, FakeCore, object } from "./support/fake-core.js";
 
 async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
@@ -52,6 +52,9 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
 
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow("positive finite");
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: -1 })).toThrow("positive finite");
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.NaN })).toThrow("positive finite");
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.POSITIVE_INFINITY })).toThrow("positive finite");
   });
 
   it("accepts plain records and rejects non-plain records in task create requests", async () => {
@@ -63,6 +66,26 @@ describe("AtlasClient HTTP", () => {
     expect(isTaskCreateRequest(crossRealmRequest)).toBe(true);
     expect(isTaskCreateRequest({ task_id: "task-date", components: new Date() })).toBe(false);
     expect(isTaskCreateRequest({ task_id: "task-map", extra: new Map([["priority", "high"]]) })).toBe(false);
+  });
+
+  it("rejects malformed generated entity create validator geometry and timestamps", () => {
+    expect(isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", published_at: "2026-06-18T12:00:00Z" })).toBe(true);
+    expect(isEntityCreateRequest({ entity_id: "asset-date-only", entity_type: "asset", published_at: "2026-06-18" })).toBe(false);
+    expect(isEntityCreateRequest({ entity_id: "asset-bad-date", entity_type: "asset", published_at: "2026-02-30T12:00:00Z" })).toBe(false);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-bad-point",
+        entity_type: "asset",
+        components: { geometry: { type: "Point", coordinates: [999] } }
+      })
+    ).toBe(false);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-good-point",
+        entity_type: "asset",
+        components: { geometry: { type: "Point", coordinates: [-97.7431, 30.2672] } }
+      })
+    ).toBe(true);
   });
 
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
@@ -79,19 +102,25 @@ describe("AtlasClient HTTP", () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     await client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" });
-    await expect(client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" })).rejects.toMatchObject({
+    const entityConflict = await client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" }).catch((error) => error);
+    expect(entityConflict).toBeInstanceOf(ConflictError);
+    expect(entityConflict).toMatchObject({
       status: 409,
       errorCode: "ENTITY_ALREADY_EXISTS"
     });
 
     await client.tasks.create({ task_id: "task-conflict" });
-    await expect(client.tasks.create({ task_id: "task-conflict" })).rejects.toMatchObject({
+    const taskConflict = await client.tasks.create({ task_id: "task-conflict" }).catch((error) => error);
+    expect(taskConflict).toBeInstanceOf(ConflictError);
+    expect(taskConflict).toMatchObject({
       status: 409,
       errorCode: "TASK_ALREADY_EXISTS"
     });
 
     await client.objects.create({ object_id: "object-conflict" });
-    await expect(client.objects.create({ object_id: "object-conflict" })).rejects.toMatchObject({
+    const objectConflict = await client.objects.create({ object_id: "object-conflict" }).catch((error) => error);
+    expect(objectConflict).toBeInstanceOf(ConflictError);
+    expect(objectConflict).toMatchObject({
       status: 409,
       errorCode: "OBJECT_ALREADY_EXISTS"
     });
@@ -217,6 +246,26 @@ describe("AtlasClient HTTP", () => {
       error_code: "VALIDATION_ERROR"
     });
     expect(response.status).toBe(400);
+  });
+
+  it("returns protocol errors for invalid fake Core pagination cursors", async () => {
+    const core = new FakeCore();
+    core.fullLimitPerType = 1;
+    core.changedSinceLimitPerType = 1;
+
+    const fullResponse = await core.fetch("http://atlas.test/queries/full?entity_cursor=abc");
+    await expect(fullResponse.json()).resolves.toMatchObject({
+      success: false,
+      error_code: "VALIDATION_ERROR"
+    });
+    expect(fullResponse.status).toBe(400);
+
+    const changedSinceResponse = await core.fetch("http://atlas.test/queries/changed-since?since_version=0&task_cursor=-1");
+    await expect(changedSinceResponse.json()).resolves.toMatchObject({
+      success: false,
+      error_code: "VALIDATION_ERROR"
+    });
+    expect(changedSinceResponse.status).toBe(400);
   });
 
   it("returns protocol errors when downloading missing fake Core objects", async () => {

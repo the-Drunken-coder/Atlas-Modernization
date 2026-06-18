@@ -69,13 +69,13 @@ async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): P
     }
     for (const deletion of core.deletions) {
       if (deletion.resource_type === "entity" && !core.entities.has(deletion.id)) {
-        await expect(client.entities.get(deletion.id)).rejects.toThrow(/404/);
+        await expect(client.entities.get(deletion.id)).rejects.toMatchObject({ status: 404, errorCode: "ENTITY_NOT_FOUND" });
       }
       if (deletion.resource_type === "task" && !core.tasks.has(deletion.id)) {
-        await expect(client.tasks.get(deletion.id)).rejects.toThrow(/404/);
+        await expect(client.tasks.get(deletion.id)).rejects.toMatchObject({ status: 404, errorCode: "TASK_NOT_FOUND" });
       }
       if (deletion.resource_type === "object" && !core.objects.has(deletion.id)) {
-        await expect(client.objects.get(deletion.id)).rejects.toThrow(/404/);
+        await expect(client.objects.get(deletion.id)).rejects.toMatchObject({ status: 404, errorCode: "OBJECT_NOT_FOUND" });
       }
     }
   });

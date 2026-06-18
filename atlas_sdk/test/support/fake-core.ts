@@ -16,7 +16,7 @@ import type { WebSocketCtor } from "../../src/types.js";
 import { deleted, isDelete, isEntityUpsert, isObjectUpsert, isTaskUpsert, recordLedgerEvent } from "./event-ledger.js";
 import { FakeWebSocket } from "./fake-websocket.js";
 import { metadata, taskFromCreateRequest } from "./fixtures.js";
-import { json, jsonOrNotFound, pageValues, protocolError } from "./http.js";
+import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError } from "./http.js";
 import { readValidatedBody, requestValidators } from "./request-validation.js";
 export { entity, metadata, object, task, taskFromCreateRequest } from "./fixtures.js";
 
@@ -43,23 +43,31 @@ export class FakeCore {
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
     const path = parsed.pathname;
+    const ifMatch = new Headers(init?.headers).get("If-Match");
     this.requests.push(parsed.pathname + parsed.search);
     if (path === "/protocol/revision") return json({ protocol_revision: this.revision });
     if (path === "/queries/full") {
-      const entityPage = pageValues([...this.entities.values()], this.fullLimitPerType, parsed.searchParams.get("entity_cursor"));
-      const taskPage = pageValues([...this.tasks.values()], this.fullLimitPerType, parsed.searchParams.get("task_cursor"));
-      const objectPage = pageValues([...this.objects.values()], this.fullLimitPerType, parsed.searchParams.get("object_cursor"));
-      return json({
-        entities: entityPage.items,
-        tasks: taskPage.items,
-        objects: objectPage.items,
-        has_more_entities: entityPage.hasMore,
-        has_more_tasks: taskPage.hasMore,
-        has_more_objects: objectPage.hasMore,
-        next_entity_cursor: entityPage.nextCursor,
-        next_task_cursor: taskPage.nextCursor,
-        next_object_cursor: objectPage.nextCursor
-      });
+      try {
+        const entityPage = pageValues([...this.entities.values()], this.fullLimitPerType, parsed.searchParams.get("entity_cursor"));
+        const taskPage = pageValues([...this.tasks.values()], this.fullLimitPerType, parsed.searchParams.get("task_cursor"));
+        const objectPage = pageValues([...this.objects.values()], this.fullLimitPerType, parsed.searchParams.get("object_cursor"));
+        return json({
+          entities: entityPage.items,
+          tasks: taskPage.items,
+          objects: objectPage.items,
+          has_more_entities: entityPage.hasMore,
+          has_more_tasks: taskPage.hasMore,
+          has_more_objects: objectPage.hasMore,
+          next_entity_cursor: entityPage.nextCursor,
+          next_task_cursor: taskPage.nextCursor,
+          next_object_cursor: objectPage.nextCursor
+        });
+      } catch (error) {
+        if (error instanceof InvalidCursorError) {
+          return protocolError(error.message, "VALIDATION_ERROR", 400);
+        }
+        throw error;
+      }
     }
     if (path === "/queries/changed-since") {
       if (this.failChangedSince) {
@@ -71,33 +79,40 @@ export class FakeCore {
         return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
       }
       const changed = this.events.filter((event) => event.version > since);
-      const entityPage = pageValues(changed.filter(isEntityUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("entity_cursor"));
-      const taskPage = pageValues(changed.filter(isTaskUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("task_cursor"));
-      const objectPage = pageValues(changed.filter(isObjectUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("object_cursor"));
-      const deletedEntityPage = pageValues(changed.filter(isDelete("entity")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_entity_cursor"));
-      const deletedTaskPage = pageValues(changed.filter(isDelete("task")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_task_cursor"));
-      const deletedObjectPage = pageValues(changed.filter(isDelete("object")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_object_cursor"));
-      return json({
-        entities: entityPage.items,
-        tasks: taskPage.items,
-        objects: objectPage.items,
-        deleted_entities: deletedEntityPage.items,
-        deleted_tasks: deletedTaskPage.items,
-        deleted_objects: deletedObjectPage.items,
-        has_more_entities: entityPage.hasMore,
-        has_more_tasks: taskPage.hasMore,
-        has_more_objects: objectPage.hasMore,
-        has_more_deleted_entities: deletedEntityPage.hasMore,
-        has_more_deleted_tasks: deletedTaskPage.hasMore,
-        has_more_deleted_objects: deletedObjectPage.hasMore,
-        next_entity_cursor: entityPage.nextCursor,
-        next_task_cursor: taskPage.nextCursor,
-        next_object_cursor: objectPage.nextCursor,
-        next_deleted_entity_cursor: deletedEntityPage.nextCursor,
-        next_deleted_task_cursor: deletedTaskPage.nextCursor,
-        next_deleted_object_cursor: deletedObjectPage.nextCursor,
-        version: this.version
-      });
+      try {
+        const entityPage = pageValues(changed.filter(isEntityUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("entity_cursor"));
+        const taskPage = pageValues(changed.filter(isTaskUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("task_cursor"));
+        const objectPage = pageValues(changed.filter(isObjectUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("object_cursor"));
+        const deletedEntityPage = pageValues(changed.filter(isDelete("entity")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_entity_cursor"));
+        const deletedTaskPage = pageValues(changed.filter(isDelete("task")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_task_cursor"));
+        const deletedObjectPage = pageValues(changed.filter(isDelete("object")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_object_cursor"));
+        return json({
+          entities: entityPage.items,
+          tasks: taskPage.items,
+          objects: objectPage.items,
+          deleted_entities: deletedEntityPage.items,
+          deleted_tasks: deletedTaskPage.items,
+          deleted_objects: deletedObjectPage.items,
+          has_more_entities: entityPage.hasMore,
+          has_more_tasks: taskPage.hasMore,
+          has_more_objects: objectPage.hasMore,
+          has_more_deleted_entities: deletedEntityPage.hasMore,
+          has_more_deleted_tasks: deletedTaskPage.hasMore,
+          has_more_deleted_objects: deletedObjectPage.hasMore,
+          next_entity_cursor: entityPage.nextCursor,
+          next_task_cursor: taskPage.nextCursor,
+          next_object_cursor: objectPage.nextCursor,
+          next_deleted_entity_cursor: deletedEntityPage.nextCursor,
+          next_deleted_task_cursor: deletedTaskPage.nextCursor,
+          next_deleted_object_cursor: deletedObjectPage.nextCursor,
+          version: this.version
+        });
+      } catch (error) {
+        if (error instanceof InvalidCursorError) {
+          return protocolError(error.message, "VALIDATION_ERROR", 400);
+        }
+        throw error;
+      }
     }
     if (path.startsWith("/entities/") && init?.method === "GET") {
       return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
@@ -115,7 +130,7 @@ export class FakeCore {
       if (!this.entities.has(id)) {
         return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
       }
-      if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
+      if (ifMatch === '"v0"') {
         return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
       const body = await readValidatedBody<EntityUpdateRequest>(init, requestValidators.entityUpdate);
@@ -141,7 +156,7 @@ export class FakeCore {
       if (!this.tasks.has(id)) {
         return protocolError("task not found", "TASK_NOT_FOUND", 404);
       }
-      if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
+      if (ifMatch === '"v0"') {
         return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
       const body = await readValidatedBody<TaskUpdateRequest>(init, requestValidators.taskUpdate);
@@ -176,7 +191,7 @@ export class FakeCore {
       if (!this.objects.has(id)) {
         return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
       }
-      if (init.headers instanceof Headers && init.headers.get("If-Match") === '"v0"') {
+      if (ifMatch === '"v0"') {
         return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
       }
       const body = await readValidatedBody<ObjectUpdateRequest>(init, requestValidators.objectUpdate);
