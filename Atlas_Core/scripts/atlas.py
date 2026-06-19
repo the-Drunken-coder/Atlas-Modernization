@@ -251,7 +251,7 @@ def wait_for_api(max_retries=30, delay=2.0):
                     "3",
                     "--max-time",
                     "5",
-                    "http://localhost:8000/health",
+                    "http://localhost:8000/readiness",
                 ],
                 capture_output=True,
                 timeout=5,
@@ -420,22 +420,22 @@ def tunnel_public_base_url():
     return public_base_url_from_hostname(os.getenv(TUNNEL_HOSTNAME_ENV, DEFAULT_TUNNEL_HOSTNAME))
 
 
-def tunnel_health_url():
-    """Return the configured public tunnel health URL."""
-    return f"{tunnel_public_base_url()}/health"
+def tunnel_readiness_url():
+    """Return the configured public tunnel readiness URL."""
+    return f"{tunnel_public_base_url()}/readiness"
 
 
 def verify_tunnel_connection(
     public_url=None, max_retries=10, delay=2.0
 ):
-    """Verify the Cloudflare tunnel is working by checking the public health endpoint."""
+    """Verify the Cloudflare tunnel is working by checking the public readiness endpoint."""
     import urllib.request
     import urllib.error
     import urllib.parse
     import json
 
     if public_url is None:
-        public_url = tunnel_health_url()
+        public_url = tunnel_readiness_url()
 
     print("[WAIT] Verifying Cloudflare tunnel connection...")
     parsed = urllib.parse.urlparse(public_url)
@@ -554,7 +554,8 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         if not db_only:
             print("\nAPI:")
             print("  HTTP:   http://localhost:8000")
-            print("  Health: http://localhost:8000/health")
+            print("  Health:    http://localhost:8000/health")
+            print("  Readiness: http://localhost:8000/readiness")
 
         print("\nPostgreSQL:")
         print("  Host:     localhost (or 127.0.0.1)")

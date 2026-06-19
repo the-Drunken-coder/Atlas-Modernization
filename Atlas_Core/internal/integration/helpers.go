@@ -85,31 +85,31 @@ func drainClose(resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
-// SystemAvailable checks if the Atlas Core system is running
+// SystemAvailable checks if the Atlas Core system is ready for integration tests.
 func SystemAvailable(t *testing.T) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
-	healthURL, err := joinURL(GetAPIURL(), "/health")
+	readinessURL, err := joinURL(GetAPIURL(), "/readiness")
 	if err != nil {
-		t.Logf("Failed to construct health URL: %v", err)
+		t.Logf("Failed to construct readiness URL: %v", err)
 		return false
 	}
-	resp, err := client.Get(healthURL)
+	resp, err := client.Get(readinessURL)
 	if err != nil {
 		t.Logf("System not available: %v", err)
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Logf("Health endpoint returned status %d", resp.StatusCode)
+		t.Logf("Readiness endpoint returned status %d", resp.StatusCode)
 		return false
 	}
 	return true
 }
 
-// SkipIfSystemNotAvailable skips the test if system is not running
+// SkipIfSystemNotAvailable skips the test if system is not ready.
 func SkipIfSystemNotAvailable(t *testing.T) {
 	if !SystemAvailable(t) {
-		t.Skip("Skipping integration test: Atlas Core system not running locally")
+		t.Skip("Skipping integration test: Atlas Core system not ready locally")
 	}
 }
 

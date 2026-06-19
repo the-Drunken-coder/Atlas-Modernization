@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -61,6 +62,42 @@ func TestParseResponseRejectsEmptyBody(t *testing.T) {
 	}
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("expected io.ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+func TestSystemAvailableUsesReadinessEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	mux.HandleFunc("/readiness", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Setenv("ATLAS_CORE_API_URL", server.URL)
+
+	if !SystemAvailable(t) {
+		t.Fatal("expected ready system to be available")
+	}
+}
+
+func TestSystemAvailableRejectsUnreadySystem(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/readiness", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Setenv("ATLAS_CORE_API_URL", server.URL)
+
+	if SystemAvailable(t) {
+		t.Fatal("expected unready system to be unavailable")
 	}
 }
 
