@@ -24,7 +24,7 @@ The SDK is the preferred client path for UI code, asset-side services, and tools
 
 Two components, not three modes:
 
-1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. Task lifecycle helpers, telemetry, check-in, object upload, and general query helpers are still direct API calls until they are added to the SDK.
+1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. Standalone telemetry patching and object upload are still direct API calls until they are added to the SDK.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
 The user-facing modes are constructor presets over these components:
@@ -108,6 +108,14 @@ Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), c
 
 Higher-level functions (multiple endpoints, or one endpoint with opinionated defaults) live in the SDK so the API layer stays thin. Design rule: composites only orchestrate public client methods — never private internals — so they stay testable and the basic layer remains the single source of API behavior. No concrete composites exist yet; candidates will come from real usage (likely first: task-an-asset flows built on the command catalog).
 
+## Task lifecycle, check-in, and queries
+
+Task lifecycle helpers wrap the existing Core lifecycle endpoints: `client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
+
+`client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full task pages are merged into the SDK cache; `fields: "minimal"` returns compact command-oriented task entries.
+
+`client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine manages its own reconciliation cursor.
+
 ## Testing
 
 Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simulation against ground truth. The test harness (`atlas_sdk/test/`) drives a fake Core/feed transport through realistic mixed traffic — entity, task, and object writes, reassignments, dropped feed events, forced version gaps — while keeping a ledger of every write. At checkpoints and at the end of the run, the SDK's view is compared to that reality: cache contents match the ledger, watch callbacks fired for every relevant change, and fault injection converges back to truth through reconciliation. The same suite runs in both Node and a real browser (Playwright) in CI, per the isomorphic goal, alongside ordinary unit tests and a CLI binary smoke test.
@@ -115,6 +123,7 @@ Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simula
 ## Known gaps (explicitly deferred)
 
 - **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `completeTask()` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
+- **Object upload.** Upload remains a direct Core API call for now; the SDK already has the transport and cache conventions it should follow when this is added.
 - **Auth hardening.** Single shared API key with full write access, stored in app-managed client-side state for the web UI, is acceptable only for the current single-user local deployment. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything is internet-facing.
 
 Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed doc](../atlas-change-feed/README.md).

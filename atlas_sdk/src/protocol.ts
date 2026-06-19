@@ -16,6 +16,7 @@ export type ObjectResponse = ObjectResource & {
 
 export type {
   EntityCreateRequest,
+  EntityComponents,
   EntityResource,
   EntityUpdateRequest,
   ErrorCode,
