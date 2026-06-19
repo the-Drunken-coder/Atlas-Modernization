@@ -449,9 +449,10 @@ def verify_tunnel_connection(
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
-                if data.get("status") == "healthy":
+                status = data.get("status")
+                if status in {"healthy", "degraded"}:
                     print("[OK] Cloudflare tunnel verified - public endpoint is accessible!")
-                    return True, "Connected and healthy"
+                    return True, f"Connected and {status}"
         except urllib.error.HTTPError as e:
             logger.debug("Tunnel verification HTTP error: %s", e)
             # A warming tunnel commonly returns 5xx (e.g. Cloudflare 502/503/504)
