@@ -3,10 +3,25 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from atlas import DEFAULT_TUNNEL_HOSTNAME, public_base_url_from_hostname
+from atlas import DEFAULT_TUNNEL_HOSTNAME, public_base_url_from_hostname, verify_tunnel_connection
+
+
+class FakeHTTPResponse:
+    def __init__(self, body: str) -> None:
+        self.body = body
+
+    def __enter__(self) -> "FakeHTTPResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body.encode()
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
@@ -40,6 +55,28 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         self.assertEqual(public_base_url_from_hostname("http://"), want_default)
         self.assertEqual(public_base_url_from_hostname("//example.com"), "https://example.com")
         self.assertEqual(public_base_url_from_hostname("///example.com///"), "https://example.com")
+
+    def test_verify_tunnel_connection_accepts_degraded_readiness(self) -> None:
+        with patch("urllib.request.urlopen", return_value=FakeHTTPResponse('{"status": "degraded"}')):
+            verified, status = verify_tunnel_connection(
+                public_url="https://example.com/readiness",
+                max_retries=1,
+                delay=0,
+            )
+
+        self.assertTrue(verified)
+        self.assertEqual(status, "Connected and degraded")
+
+    def test_verify_tunnel_connection_rejects_unknown_readiness_status(self) -> None:
+        with patch("urllib.request.urlopen", return_value=FakeHTTPResponse('{"status": "starting"}')):
+            verified, status = verify_tunnel_connection(
+                public_url="https://example.com/readiness",
+                max_retries=1,
+                delay=0,
+            )
+
+        self.assertFalse(verified)
+        self.assertEqual(status, "Connection not verified (may still be starting)")
 
 
 if __name__ == "__main__":

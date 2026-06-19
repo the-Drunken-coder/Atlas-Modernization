@@ -7,7 +7,7 @@
 #   ATLAS_CORE_API_URL=http://localhost:8000 ./run_integration_tests.sh
 #
 # Requires: curl, jq
-# The API must already be running and healthy before this script is invoked.
+# The API must already be running and ready before this script is invoked.
 
 set -euo pipefail
 

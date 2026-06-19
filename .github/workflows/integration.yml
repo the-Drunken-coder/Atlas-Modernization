@@ -47,11 +47,10 @@ jobs:
       - name: Start Atlas Core stack
         run: docker compose -f docker/docker-compose.yml up -d --build
 
-      - name: Wait for health endpoints
+      - name: Wait for readiness
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS "$ATLAS_CORE_API_URL/health" >/dev/null &&
-               curl -fsS "$ATLAS_CORE_API_URL/readiness" >/dev/null; then
+            if curl -fsS "$ATLAS_CORE_API_URL/readiness" >/dev/null; then
               exit 0
             fi
             echo "Waiting for Atlas Core stack (${i}/60)..."
