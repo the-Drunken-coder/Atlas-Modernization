@@ -5,6 +5,27 @@ import { changedSinceToEvents, type ChangedSinceResponse } from "../src/types.js
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync", () => {
+  it("configures sync presets without starting hydration or feed side effects", () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    expect(client.sync.status()).toMatchObject({
+      running: false,
+      healthy: false,
+      degraded: false,
+      lastVersion: 0,
+      subscriptions: [{ filter: "all" }]
+    });
+    expect(core.requests).toEqual([]);
+    expect(core.feedConnections).toBe(0);
+  });
+
   it("hydrates, polls changed-since, updates cache, and serves covered reads from cache", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
