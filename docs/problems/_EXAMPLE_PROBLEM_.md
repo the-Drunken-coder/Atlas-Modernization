@@ -1,6 +1,6 @@
 # Problem Template
 
-Each entry under `docs/problems/` is a short-lived note for agent-to-agent reference, spanning any Atlas package (Atlas Core, Atlas Protocol, …) — most are resolved in minutes; none should live longer than a day or two. Use this template to keep the format consistent:
+Each entry under `docs/problems/` is a short-lived note for agent-to-agent reference, spanning any Atlas package (Atlas Core, Atlas Protocol, Atlas SDK, …) — most are resolved in minutes; none should live longer than a day or two. Use this template to keep the format consistent:
 
 1. **Time & Date:** [UTC timestamp or local time zone timestamp]
 2. **Name:** [One-line summary identifier]
