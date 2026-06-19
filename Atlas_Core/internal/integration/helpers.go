@@ -87,7 +87,7 @@ func drainClose(resp *http.Response) {
 
 // SystemAvailable checks if the Atlas Core system is ready for integration tests.
 func SystemAvailable(t *testing.T) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: 6 * time.Second}
 	readinessURL, err := joinURL(GetAPIURL(), "/readiness")
 	if err != nil {
 		t.Logf("Failed to construct readiness URL: %v", err)
