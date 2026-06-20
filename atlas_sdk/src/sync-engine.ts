@@ -14,6 +14,7 @@ import {
 import type {
   AtlasRecoveredWatchEvent,
   AtlasSubscription,
+  AtlasSyncSnapshot,
   AtlasWatchEvent,
   ChangedSinceCursors,
   ChangedSinceResponse,
@@ -101,6 +102,15 @@ export class SyncEngine {
       degraded: this.degraded,
       lastVersion: this.cache.lastVersion,
       subscriptions: [...this.subscriptions]
+    };
+  }
+
+  snapshot(): AtlasSyncSnapshot {
+    return {
+      entities: this.cache.values("entity"),
+      tasks: this.cache.values("task"),
+      objects: this.cache.values("object"),
+      status: this.status()
     };
   }
 

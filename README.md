@@ -7,6 +7,7 @@ This workspace is focused on modernizing the ATLAS Core backend.
 - **`Atlas_Core/`** — the core backend: the Go HTTP API, disposable runtime database/object-store layer, Docker setup, and command catalog.
 - **`atlas_protocol/`** — the buildable Atlas Protocol module: CUE source, generated contracts, validators, examples, and protocol tooling.
 - **`atlas_sdk/`** — the TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, and Node/browser test suites.
+- **`atlas_command_interface/`** — Atlas Command interface plumbing: Cloudflare Worker proxy/API routes plus reusable command/catalog functions for future UI surfaces.
 - **`docs/`** — project-level documentation that spans packages, including Atlas Protocol planning/reference docs in [`docs/atlas-protocol/`](docs/atlas-protocol/) and Atlas SDK design docs in [`docs/atlas-sdk/`](docs/atlas-sdk/).
 
 ## Agent guidance
