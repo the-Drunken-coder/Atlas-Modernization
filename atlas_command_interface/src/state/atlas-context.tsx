@@ -46,6 +46,16 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
+    const cleanup = () => {
+      if (healthTimer) {
+        clearInterval(healthTimer);
+        healthTimer = undefined;
+      }
+      unsubscribe?.();
+      unsubscribe = undefined;
+      dataSourceRef.current?.dispose();
+      dataSourceRef.current = undefined;
+    };
 
     (async () => {
       try {
@@ -82,6 +92,7 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
         }
       } catch (cause) {
         if (cancelled) return;
+        cleanup();
         setError(cause instanceof Error ? cause.message : String(cause));
         setStatus("error");
       }
@@ -89,10 +100,7 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
 
     return () => {
       cancelled = true;
-      if (healthTimer) clearInterval(healthTimer);
-      unsubscribe?.();
-      dataSourceRef.current?.dispose();
-      dataSourceRef.current = undefined;
+      cleanup();
     };
   }, [loadConfig, createDataSource]);
 

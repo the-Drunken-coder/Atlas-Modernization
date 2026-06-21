@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CommandSubmission } from "../atlas/data-source.js";
@@ -82,29 +82,7 @@ function renderConsole(fake: AtlasDataSource) {
   );
 }
 
-function memoryStorage(initial: Record<string, string> = {}): Storage {
-  const store = new Map<string, string>(Object.entries(initial));
-  return {
-    get length() {
-      return store.size;
-    },
-    clear: () => store.clear(),
-    getItem: (key: string) => store.get(key) ?? null,
-    key: (index: number) => [...store.keys()][index] ?? null,
-    removeItem: (key: string) => void store.delete(key),
-    setItem: (key: string, value: string) => void store.set(key, value)
-  };
-}
-
 describe("MapConsole command flow", () => {
-  beforeEach(() => {
-    vi.stubGlobal("localStorage", memoryStorage({ "atlas.commandApiKey": "test-key" }));
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it("selects an asset, lists its commands, and submits a pending task", async () => {
     const user = userEvent.setup();
     const { fake, submissions } = makeFakeDataSource();
@@ -120,6 +98,11 @@ describe("MapConsole command flow", () => {
     expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute("title", "This asset does not support this command");
 
     await user.click(hold);
+    const send = await screen.findByRole("button", { name: "Send command" });
+    expect(send).toBeDisabled();
+    await user.type(screen.getByPlaceholderText("ATLAS_COMMAND_API_KEY"), "test-key");
+    expect(send).toBeEnabled();
+    await user.click(send);
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({ submission: { entityId: "asset-1", commandId: "hold_position" }, credential: "test-key" });

@@ -126,16 +126,20 @@ export function removeVertex(geometry: UiGeometry, ref: VertexRef): UiGeometry |
 
 export function validateGeometry(geometry: UiGeometry): GeometryValidity {
   if (geometry.type === "Point") {
-    return Number.isFinite(geometry.coordinates[0]) && Number.isFinite(geometry.coordinates[1])
-      ? { valid: true }
-      : { valid: false, reason: "Point needs one valid coordinate" };
+    return isFinitePosition(geometry.coordinates) ? { valid: true } : { valid: false, reason: "Point needs one valid coordinate" };
   }
   if (geometry.type === "LineString") {
-    return geometry.coordinates.length >= 2 ? { valid: true } : { valid: false, reason: "Line needs at least two points" };
+    if (geometry.coordinates.length < 2) {
+      return { valid: false, reason: "Line needs at least two points" };
+    }
+    return geometry.coordinates.every(isFinitePosition) ? { valid: true } : { valid: false, reason: "Line contains an invalid coordinate" };
   }
   const ring = geometry.coordinates[0];
   if (!ring || ring.length < 4) {
     return { valid: false, reason: "Polygon needs a closed ring of at least four coordinates" };
+  }
+  if (!ring.every(isFinitePosition)) {
+    return { valid: false, reason: "Polygon contains an invalid coordinate" };
   }
   if (!positionsEqual(ring[0], ring[ring.length - 1])) {
     return { valid: false, reason: "Polygon ring must repeat its first coordinate to close" };
@@ -207,8 +211,8 @@ function geometryFromAtlas(value: unknown): UiGeometry | undefined {
     return { type: "LineString", coordinates: value.line.map((p) => latLngToPosition(p as number[])) };
   }
   if (Array.isArray(value.polygon) && value.polygon.every(isPosition)) {
-    const open = value.polygon.map((p) => latLngToPosition(p as number[]));
-    return { type: "Polygon", coordinates: [closeRing(open)] };
+    const ring = value.polygon.map((p) => latLngToPosition(p as number[]));
+    return { type: "Polygon", coordinates: [isClosedRing(ring) ? ring : closeRing(ring)] };
   }
   return undefined;
 }
@@ -218,7 +222,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isPosition(value: unknown): value is number[] {
-  return Array.isArray(value) && value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number";
+  return Array.isArray(value) && value.length >= 2 && isFiniteNumber(value[0]) && isFiniteNumber(value[1]);
+}
+
+function isFinitePosition(value: Position): boolean {
+  return isFiniteNumber(value[0]) && isFiniteNumber(value[1]);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isClosedRing(ring: Position[]): boolean {
+  return ring.length >= 2 && positionsEqual(ring[0], ring[ring.length - 1]);
 }
 
 function toPosition(value: number[]): Position {

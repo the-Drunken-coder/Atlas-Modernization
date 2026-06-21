@@ -53,6 +53,13 @@ export function MapConsole() {
   const selectedEntity = getEntity(snapshot, selection?.id);
   const selectedId = selection?.id;
 
+  // Drop transient command UI when the selected entity changes.
+  useEffect(() => {
+    setMapMenu(null);
+    setCommandForm(null);
+    setSubmitError(undefined);
+  }, [selectedId]);
+
   // Drop an edit session when the selection moves to another entity.
   useEffect(() => {
     if (edit && edit.entityId !== selectedId) {
@@ -125,6 +132,8 @@ export function MapConsole() {
         setMapMenu(null);
         return;
       }
+      setCommandForm(null);
+      setSubmitError(undefined);
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
     [selectedEntity]

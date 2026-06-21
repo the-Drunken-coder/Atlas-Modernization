@@ -127,6 +127,5 @@ function nextDatasetCursors(page: FullDatasetResponse): FullDatasetQueryOptions 
   const cursors: FullDatasetQueryOptions = {};
   if (page.has_more_entities && page.next_entity_cursor) cursors.entityCursor = page.next_entity_cursor;
   if (page.has_more_tasks && page.next_task_cursor) cursors.taskCursor = page.next_task_cursor;
-  if (page.has_more_objects && page.next_object_cursor) cursors.objectCursor = page.next_object_cursor;
   return Object.keys(cursors).length > 0 ? cursors : undefined;
 }

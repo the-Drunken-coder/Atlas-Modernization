@@ -58,8 +58,9 @@ with refresh/recovery through normal Core queries (both via the Atlas SDK).
    ```
 
    Open http://localhost:5173/map. The browser holds the command API key in
-   `localStorage` (entered through the command form); it is never embedded at
-   build time. Command submissions send `Authorization: Bearer <ATLAS_COMMAND_API_KEY>`.
+   session memory after it is entered through the command form; it is never
+   persisted or embedded at build time. Command submissions send
+   `Authorization: Bearer <ATLAS_COMMAND_API_KEY>`.
 
 No deployment, routes, custom domains, or production secrets are configured here.
 

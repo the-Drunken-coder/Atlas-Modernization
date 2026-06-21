@@ -20,9 +20,13 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const selectedAsset = storyAssets[0];
+if (!selectedAsset) throw new Error("Commands stories require at least one asset fixture");
+
 const sidebarCommands = commandsForTargeting(storyCommandCatalog, selectedAsset, "none");
 const mapCommand = commandsForTargeting(storyCommandCatalog, selectedAsset, "map_point")[0];
 const formCommand = sidebarCommands.find((entry) => entry.command.id === "set_mode") ?? sidebarCommands[0];
+if (!mapCommand) throw new Error("Commands stories require a map-point command fixture");
+if (!formCommand) throw new Error("Commands stories require a sidebar command fixture");
 
 export const SidebarCommandList: Story = {
   render: () => (

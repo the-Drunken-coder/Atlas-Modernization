@@ -7,6 +7,37 @@ const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T0
 afterEach(() => vi.unstubAllGlobals());
 
 describe("sdk data source command submission", () => {
+  it("paginates entity and task snapshots without paginating objects", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        requestedUrls.push(String(input));
+        return new Response(
+          JSON.stringify({
+            entities: [],
+            tasks: [],
+            objects: [],
+            has_more_entities: requestedUrls.length === 1,
+            has_more_tasks: false,
+            has_more_objects: requestedUrls.length === 1,
+            next_entity_cursor: "next-entities",
+            next_object_cursor: "next-objects"
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      })
+    );
+
+    const dataSource = createSdkDataSource(config);
+    await dataSource.loadSnapshot();
+
+    expect(requestedUrls).toHaveLength(2);
+    expect(requestedUrls[0]).toBe("https://console.test/atlas/queries/full");
+    expect(requestedUrls[1]).toContain("entity_cursor=next-entities");
+    expect(requestedUrls[1]).not.toContain("object_cursor=");
+  });
+
   it("posts to /api/commands with bearer auth and returns the created task", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     vi.stubGlobal(

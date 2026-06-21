@@ -23,6 +23,9 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+const editingGeometry = entityGeometry(storyGeofeatures[0]);
+if (!editingGeometry) throw new Error("EditingPolygon story requires a geofeature with geometry");
+
 export const TacticalPicture: Story = {
   args: {
     sources: buildMapSources(storyEntities, "asset-summit-01"),
@@ -40,7 +43,7 @@ export const EditingPolygon: Story = {
     selectedId: "geo-area-alpha",
     initialCenter: [-77.0366, 38.9037],
     editing: {
-      geometry: entityGeometry(storyGeofeatures[0])!,
+      geometry: editingGeometry,
       onChange: console.info
     },
     onSelectEntity: console.info,

@@ -38,6 +38,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const mapRef = useRef<MlMap | undefined>(undefined);
   const readyRef = useRef(false);
   const fitOnceRef = useRef(false);
+  const shouldAutoFitRef = useRef(initialCenter === undefined);
   const markersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const [fallbackReason, setFallbackReason] = useState<string>();
@@ -78,7 +79,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       registerSourcesAndLayers(map);
       readyRef.current = true;
       pushSources(map, sources);
-      fitToSourcesOnce(map, sources, fitOnceRef);
+      if (shouldAutoFitRef.current) fitToSourcesOnce(map, sources, fitOnceRef);
 
       for (const layer of INTERACTIVE_LAYERS) {
         map.on("click", layer, (event) => {
@@ -136,7 +137,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     const map = mapRef.current;
     if (map && readyRef.current) {
       pushSources(map, sources);
-      fitToSourcesOnce(map, sources, fitOnceRef);
+      if (shouldAutoFitRef.current) fitToSourcesOnce(map, sources, fitOnceRef);
     }
   }, [sources]);
 

@@ -25,32 +25,18 @@ export function JsonDrawer({ value, title = "Raw JSON", defaultOpen = false }: J
 
   return (
     <div className="json-drawer">
-      <button type="button" className="json-drawer__summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span>{open ? "▾" : "▸"}</span>
-        <span style={{ flex: 1 }}>{title}</span>
+      <div className="json-drawer__summary">
+        <button type="button" className="json-drawer__toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <span>{open ? "▾" : "▸"}</span>
+          <span>{title}</span>
+        </button>
         {open ? (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label="Copy JSON"
-            title="Copy JSON"
-            onClick={(event) => {
-              event.stopPropagation();
-              void copy();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.stopPropagation();
-                void copy();
-              }
-            }}
-            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-          >
+          <button type="button" className="json-drawer__copy" aria-label="Copy JSON" title="Copy JSON" onClick={() => void copy()}>
             <CopyIcon size={14} />
             {copied ? "Copied" : "Copy"}
-          </span>
+          </button>
         ) : null}
-      </button>
+      </div>
       {open ? (
         <div className="json-drawer__body">
           <pre className="json-drawer__pre">{text}</pre>

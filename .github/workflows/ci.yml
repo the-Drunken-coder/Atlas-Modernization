@@ -22,6 +22,7 @@ env:
   PROTOCOL_GO_SUM_FILE: atlas_protocol/go.sum
   PROTOCOL_WORKING_DIRECTORY: atlas_protocol
   SDK_WORKING_DIRECTORY: atlas_sdk
+  COMMAND_INTERFACE_WORKING_DIRECTORY: atlas_command_interface
   WORKING_DIRECTORY: Atlas_Core
 
 jobs:
@@ -174,6 +175,40 @@ jobs:
 
       - name: Run Atlas SDK browser tests
         run: npm run test:browser
+
+  atlas-command-interface:
+    name: atlas-command-interface
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.COMMAND_INTERFACE_WORKING_DIRECTORY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: ${{ env.COMMAND_INTERFACE_WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Install command interface dependencies
+        run: npm ci
+
+      - name: Type-check command interface
+        run: npm run typecheck
+
+      - name: Test command interface
+        run: npm test
+
+      - name: Build command interface
+        run: npm run build
+
+      - name: Build Storybook
+        run: npm run build-storybook
 
   build:
     name: build

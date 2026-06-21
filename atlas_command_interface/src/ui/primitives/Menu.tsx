@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 export type MenuItemDef = {
   key: string;
@@ -20,6 +20,9 @@ type ContextMenuProps = {
 
 /** A docked, position-fixed context menu. Closes on outside click or Escape. */
 export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: ContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ x, y });
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -28,10 +31,24 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) {
+      setPosition({ x, y });
+      return;
+    }
+    const rect = menu.getBoundingClientRect();
+    const margin = 8;
+    setPosition({
+      x: clamp(x, margin, Math.max(margin, window.innerWidth - rect.width - margin)),
+      y: clamp(y, margin, Math.max(margin, window.innerHeight - rect.height - margin))
+    });
+  }, [x, y, header, items.length, emptyLabel]);
+
   return (
     <>
       <div style={{ position: "fixed", inset: 0, zIndex: 55 }} onClick={onClose} onContextMenu={(event) => event.preventDefault()} />
-      <div className="context-menu" style={{ left: x, top: y }} role="menu">
+      <div ref={menuRef} className="context-menu" style={{ left: position.x, top: position.y }} role="menu">
         {header ? <div className="context-menu__header">{header}</div> : null}
         {items.length === 0 ? <div className="menu-item" aria-disabled>{emptyLabel ?? "No actions"}</div> : null}
         {items.map((item) => (
@@ -59,4 +76,8 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
       </div>
     </>
   );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

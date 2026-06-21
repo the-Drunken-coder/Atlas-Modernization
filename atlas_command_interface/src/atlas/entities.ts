@@ -89,6 +89,7 @@ export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.
   const timestamp = Date.parse(lastSeen);
   if (!Number.isFinite(timestamp)) return undefined;
   const seconds = (now - timestamp) / 1000;
+  if (seconds < 0) return undefined;
   if (seconds >= HEARTBEAT_OFFLINE_SECONDS) return "offline";
   if (seconds >= HEARTBEAT_STALE_SECONDS) return "stale";
   return "fresh";

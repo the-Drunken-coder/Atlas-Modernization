@@ -38,6 +38,18 @@ describe("geometry normalisation", () => {
     });
   });
 
+  it("does not double-close already closed legacy AtlasGeometry polygons", () => {
+    expect(toUiGeometry({ polygon: [[40.1, -74.2], [40.1, -74.1], [40.2, -74.1], [40.1, -74.2]] })).toEqual({
+      type: "Polygon",
+      coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.1]]]
+    });
+  });
+
+  it("returns undefined for geometry with non-finite coordinates", () => {
+    expect(toUiGeometry({ type: "Point", coordinates: [Number.NaN, 40.1] })).toBeUndefined();
+    expect(toUiGeometry({ line: [[40.1, Number.POSITIVE_INFINITY], [40.2, -74.1]] })).toBeUndefined();
+  });
+
   it("returns undefined for missing or unsupported geometry", () => {
     expect(toUiGeometry(undefined)).toBeUndefined();
     expect(toUiGeometry({})).toBeUndefined();
@@ -140,5 +152,12 @@ describe("geometry validity", () => {
     expect(
       validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2]]] })
     ).toEqual({ valid: false, reason: "Polygon ring must repeat its first coordinate to close" });
+    expect(validateGeometry({ type: "LineString", coordinates: [[-74.2, 40.1], [Number.NaN, 40.2]] })).toEqual({
+      valid: false,
+      reason: "Line contains an invalid coordinate"
+    });
+    expect(
+      validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [Number.POSITIVE_INFINITY, 40.2], [-74.2, 40.1]]] })
+    ).toEqual({ valid: false, reason: "Polygon contains an invalid coordinate" });
   });
 });

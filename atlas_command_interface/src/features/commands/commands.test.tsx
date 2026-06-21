@@ -23,7 +23,7 @@ const catalog = parseCommandCatalog({
       parameters_schema: {
         latitude: { type: "number", description: "Latitude", minimum: -90, maximum: 90, required: true },
         longitude: { type: "number", description: "Longitude", minimum: -180, maximum: 180, required: true },
-        altitude_m: { type: "number", description: "Altitude", required: true }
+        altitude_m: { type: "number", description: "Altitude", minimum: 0, maximum: 500, required: true }
       }
     }
   ] as JSONValue[]
@@ -83,7 +83,34 @@ describe("CommandForm", () => {
     expect(send).toBeEnabled();
     await user.click(send);
 
-    expect(onSubmit).toHaveBeenCalledWith({ latitude: 40.1, longitude: -74.2, altitude_m: "120" });
+    expect(onSubmit).toHaveBeenCalledWith({ latitude: 40.1, longitude: -74.2, altitude_m: 120 });
+  });
+
+  it("keeps submit disabled when numeric parameters are outside bounds", async () => {
+    const user = userEvent.setup();
+    render(
+      <CommandForm
+        command={command}
+        targeting="map_point"
+        formParameters={params}
+        mapPoint={{ lat: 40.1, lng: -74.2 }}
+        credential="secret"
+        onCredentialChange={() => {}}
+        submitting={false}
+        onCancel={() => {}}
+        onSubmit={() => {}}
+      />
+    );
+
+    const send = screen.getByRole("button", { name: "Send command" });
+    const altitude = screen.getByRole("spinbutton");
+    await user.type(altitude, "120");
+    expect(send).toBeEnabled();
+
+    await user.clear(altitude);
+    await user.type(altitude, "600");
+    expect(send).toBeDisabled();
+    expect(screen.getByText("Must be <= 500")).toBeInTheDocument();
   });
 
   it("keeps submit disabled without a command key", () => {

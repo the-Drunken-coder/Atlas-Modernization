@@ -25,7 +25,8 @@ export function CommandForm(props: CommandFormProps) {
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
 
   const missingRequired = formParameters.some(([name, schema]) => schema.required && schema.type !== "boolean" && !(values[name]?.trim()));
-  const canSubmit = !submitting && credential.trim().length > 0 && !missingRequired;
+  const invalidParameter = formParameters.some(([name, schema]) => parameterError(schema, values[name]) !== undefined);
+  const canSubmit = !submitting && credential.trim().length > 0 && !missingRequired && !invalidParameter;
 
   const submit = () => {
     const parameters: Record<string, JSONValue> = {};
@@ -41,7 +42,7 @@ export function CommandForm(props: CommandFormProps) {
         continue;
       }
       if (raw === undefined || raw.trim() === "") continue;
-      parameters[name] = raw;
+      parameters[name] = schema.type === "number" ? Number(raw) : raw;
     }
     onSubmit(parameters);
   };
@@ -64,9 +65,10 @@ export function CommandForm(props: CommandFormProps) {
             </div>
           ) : null}
 
-          {formParameters.map(([name, schema]) => (
-            <ParameterField key={name} name={name} schema={schema} value={values[name] ?? ""} onChange={(value) => setValue(name, value)} />
-          ))}
+          {formParameters.map(([name, schema]) => {
+            const value = values[name] ?? "";
+            return <ParameterField key={name} name={name} schema={schema} value={value} error={parameterError(schema, value)} onChange={(next) => setValue(name, next)} />;
+          })}
 
           <label className="field">
             <span className="field__label">Command API key {credential.trim() ? "" : "(required)"}</span>
@@ -99,11 +101,13 @@ function ParameterField({
   name,
   schema,
   value,
+  error,
   onChange
 }: {
   name: string;
   schema: CommandParameterSchema;
   value: string;
+  error?: string;
   onChange: (value: string) => void;
 }) {
   const label = `${name}${schema.required ? " *" : ""}`;
@@ -124,10 +128,22 @@ function ParameterField({
       <input
         className="input"
         type={schema.type === "number" ? "number" : "text"}
+        min={schema.type === "number" ? schema.minimum : undefined}
+        max={schema.type === "number" ? schema.maximum : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-      <span className="field__hint">{[schema.description, bounds.join(", ")].filter(Boolean).join(" · ")}</span>
+      {error ? <span className="field__error">{error}</span> : <span className="field__hint">{[schema.description, bounds.join(", ")].filter(Boolean).join(" · ")}</span>}
     </label>
   );
+}
+
+function parameterError(schema: CommandParameterSchema, raw: string | undefined): string | undefined {
+  if (schema.type !== "number") return undefined;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return "Enter a finite number";
+  if (schema.minimum !== undefined && value < schema.minimum) return `Must be >= ${schema.minimum}`;
+  if (schema.maximum !== undefined && value > schema.maximum) return `Must be <= ${schema.maximum}`;
+  return undefined;
 }
