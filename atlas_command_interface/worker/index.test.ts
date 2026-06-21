@@ -273,6 +273,17 @@ describe("atlas command worker", () => {
     expect(browser.sent).toEqual([]);
   });
 
+  it("propagates socket close calls across the feed bridge", () => {
+    const browser = new TestSocket();
+    const upstream = new TestSocket();
+
+    bridgeFeedSockets(browser, upstream);
+    browser.close();
+
+    expect(browser.readyState).toBe(3);
+    expect(upstream.readyState).toBe(3);
+  });
+
   it("closes the feed bridge when pre-open browser messages exceed the pending queue limit", () => {
     const browser = new TestSocket();
     const upstream = new TestSocket();
@@ -393,6 +404,7 @@ class TestSocket {
 
   close(): void {
     this.readyState = 3;
+    this.emit("close", {});
   }
 
   addEventListener(type: TestSocketEvent, listener: TestSocketListener): void {
