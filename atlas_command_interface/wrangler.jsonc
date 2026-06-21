@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "atlas-command-interface",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    }
+  },
+  "vars": {
+    "ATLAS_CORE_BASE_URL": "http://localhost:8000"
+  },
+  "secrets": {
+    "required": ["ATLAS_API_KEY", "ATLAS_COMMAND_API_KEY"]
+  }
+}
