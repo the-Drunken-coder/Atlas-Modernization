@@ -25,7 +25,7 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 | `Atlas_Core/` | [`Atlas_Core/docs/`](../Atlas_Core/docs/README.md) | The Go HTTP API: handlers, actions, disposable runtime database/storage. Operational reference (pagination, errors, security, database workflow, entity/task/object shapes). |
 | `atlas_protocol/` | [`atlas_protocol/README.md`](../atlas_protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: CUE source, generated contracts, validators, examples, tooling, and planning/reference docs. |
 | `atlas_sdk/` | [`docs/atlas-sdk/`](atlas-sdk/) | TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, package metadata, and Node/browser test suites. |
-| `atlas_command_interface/` | [`atlas_command_interface/README.md`](../atlas_command_interface/README.md) | Atlas Command interface plumbing: Worker proxy/API routes and reusable command/catalog functions for future UI surfaces. |
+| `atlas_command_interface/` | [`atlas_command_interface/README.md`](../atlas_command_interface/README.md) | Atlas Command interface plumbing: Worker proxy/API routes and reusable command-model helpers. |
 
 Use **`Atlas_Core/docs/`** when the question is "how does this API behave?"
 

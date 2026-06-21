@@ -139,13 +139,6 @@ export type SyncStatus = {
   subscriptions: AtlasSubscription[];
 };
 
-export type AtlasSyncSnapshot = {
-  entities: EntityResource[];
-  tasks: TaskResource[];
-  objects: ObjectResource[];
-  status: SyncStatus;
-};
-
 export type ChangedSinceResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];

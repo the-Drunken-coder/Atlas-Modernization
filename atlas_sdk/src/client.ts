@@ -18,7 +18,6 @@ import type {
   AtlasLocalDeleteWatchEvent,
   AtlasRecoveredWatchEvent,
   AtlasSubscription,
-  AtlasSyncSnapshot,
   AtlasWatchEvent,
   ChangedSinceQueryOptions,
   ChangedSinceResponse,
@@ -45,7 +44,6 @@ export type {
   AtlasLocalDeleteWatchEvent,
   AtlasRecoveredWatchEvent,
   AtlasSubscription,
-  AtlasSyncSnapshot,
   AtlasWatchEvent,
   ChangedSinceQueryOptions,
   ChangedSinceResponse,
@@ -144,8 +142,7 @@ export class AtlasClient {
       await this.engine.start();
     },
     stop: () => this.engine.stop(),
-    status: (): SyncStatus => this.engine.status(),
-    snapshot: (): AtlasSyncSnapshot => this.engine.snapshot()
+    status: (): SyncStatus => this.engine.status()
   };
 
   private readonly transport: HttpTransport;
@@ -153,7 +150,7 @@ export class AtlasClient {
   private readonly engine: SyncEngine;
 
   constructor(options: AtlasClientOptions) {
-    const fetchImpl = options.fetch ?? globalThis.fetch?.bind(globalThis);
+    const fetchImpl = options.fetch ?? globalThis.fetch;
     if (!fetchImpl) {
       throw new Error("AtlasClient requires a fetch implementation");
     }

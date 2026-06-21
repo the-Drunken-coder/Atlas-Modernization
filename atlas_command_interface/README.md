@@ -1,6 +1,6 @@
 # Atlas Command Interface
 
-Atlas Command Interface is currently the Worker/API and reusable function layer for future Atlas command surfaces. It intentionally does not contain a React app, MapLibre view, routes, components, or a command drawer yet.
+Atlas Command Interface is currently the Worker command plumbing and reusable command-model helper layer. It intentionally does not contain a React app, MapLibre view, routes, components, command drawer, browser API client, or map selector helpers yet.
 
 This project is greenfield: remove stale helpers and reshape contracts instead of preserving backwards compatibility.
 
@@ -12,9 +12,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
   - `/api/config` returns non-secret browser/runtime config.
   - `/api/commands` validates command submissions and creates Atlas tasks.
 - `src/atlas/command-model.ts` parses command catalogs, filters supported commands, validates parameters, and builds task payloads.
-- `src/atlas/api.ts` contains small client-side API helpers for future UI surfaces.
-- `src/atlas/selectors.ts` contains entity/task/object selectors and map-feature projection helpers.
-- `src/index.ts` re-exports the reusable function surface.
+- `src/index.ts` re-exports the reusable command-model helper surface.
 
 ## Local Development
 
@@ -48,6 +46,6 @@ Command submissions must send either `Authorization: Bearer <ATLAS_COMMAND_API_K
 
 ```bash
 npm --prefix atlas_command_interface test
-npm --prefix atlas_command_interface run cf:types
+npm --prefix atlas_command_interface run typecheck
 npm --prefix atlas_command_interface run build
 ```

@@ -57,16 +57,6 @@ export class ResourceCache {
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
-  values<T extends ResourceValue>(type: ResourceType): T[] {
-    const values: T[] = [];
-    for (const entry of this.entries[type].values()) {
-      if (!entry.deleted && entry.value) {
-        values.push(entry.value as T);
-      }
-    }
-    return values;
-  }
-
   cacheResource(type: ResourceType, id: string, value: ResourceValue, options?: CacheResourceOptions): boolean {
     const version = value.metadata.version;
     const existing = this.entries[type].get(id);

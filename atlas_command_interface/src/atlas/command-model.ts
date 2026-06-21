@@ -43,6 +43,8 @@ export type APIErrorResponse = {
   details?: Record<string, JSONValue>;
 };
 
+type CommandModelErrorCode = "INVALID_CATALOG" | "INVALID_PARAMETERS";
+
 export class CommandModelError extends Error {
   readonly code: string;
   readonly details: Record<string, JSONValue>;
@@ -139,7 +141,7 @@ export function assertEntitySupportsCommand(entity: EntityResource, commandId: s
 }
 
 export function coerceParameters(command: CommandDefinition, rawParameters: unknown): Record<string, JSONValue> {
-  const raw = rawParameters === undefined || rawParameters === null ? {} : requireRecord(rawParameters, "parameters");
+  const raw = rawParameters === undefined || rawParameters === null ? {} : requireRecord(rawParameters, "parameters", "INVALID_PARAMETERS");
   const result: Record<string, JSONValue> = {};
   const schemaEntries = Object.entries(command.parameters_schema);
   const knownNames = new Set(schemaEntries.map(([name]) => name));
@@ -250,16 +252,17 @@ function coerceParameterValue(name: string, schema: CommandParameterSchema, valu
   return numberValue;
 }
 
-function requireRecord(value: unknown, path: string): Record<string, unknown> {
+function requireRecord(value: unknown, path: string, code: CommandModelErrorCode = "INVALID_CATALOG"): Record<string, unknown> {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return value as Record<string, unknown>;
   }
-  throw new CommandModelError("INVALID_CATALOG", `${path} must be an object`, { path });
+  throw new CommandModelError(code, `${path} must be an object`, { path });
 }
 
 function requireString(value: unknown, path: string): string {
-  if (typeof value === "string" && value.trim() !== "") {
-    return value;
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed !== "") {
+    return trimmed;
   }
   throw new CommandModelError("INVALID_CATALOG", `${path} must be a non-empty string`, { path });
 }

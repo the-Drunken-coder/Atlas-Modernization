@@ -7,6 +7,7 @@ import {
   coerceParameters,
   commandById,
   commandLabel,
+  CommandModelError,
   commandsForEntity,
   parseCommandCatalog
 } from "./command-model.js";
@@ -29,6 +30,7 @@ const catalogPayload: Record<string, JSONValue> = {
       parameters_schema: {
         latitude: { type: "number", description: "Latitude", minimum: -90, maximum: 90, required: true },
         longitude: { type: "number", description: "Longitude", minimum: -180, maximum: 180, required: true },
+        mode: { type: "string", description: "Mode", required: false },
         verify: { type: "boolean", description: "Verify arrival", required: false }
       }
     },
@@ -140,12 +142,35 @@ describe("command model", () => {
     ).toThrow("minimum must be <= maximum");
   });
 
+  it("trims catalog string fields while parsing", () => {
+    const catalog = parseCommandCatalog({
+      type: "command_catalog",
+      name: "  Trimmed Catalog  ",
+      description: "  Trimmed description  ",
+      commands: [
+        {
+          id: "hold_position",
+          name: "  Hold Position  ",
+          description: "  Hold the current position.  ",
+          parameters_schema: {}
+        }
+      ]
+    });
+
+    expect(catalog).toMatchObject({
+      name: "Trimmed Catalog",
+      description: "Trimmed description",
+      commands: [{ name: "Hold Position", description: "Hold the current position." }]
+    });
+  });
+
   it("coerces form values and validates numeric bounds", () => {
     const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
 
-    expect(coerceParameters(command, { latitude: "40.1", longitude: -74.2, verify: "true" })).toEqual({
+    expect(coerceParameters(command, { latitude: "40.1", longitude: -74.2, mode: "manual", verify: "true" })).toEqual({
       latitude: 40.1,
       longitude: -74.2,
+      mode: "manual",
       verify: true
     });
     expect(coerceParameters(command, { latitude: 40.1, longitude: -74.2, verify: "false" })).toEqual({
@@ -161,7 +186,22 @@ describe("command model", () => {
     expect(() => coerceParameters(command, { latitude: -91, longitude: -74.2 })).toThrow("latitude must be >= -90");
     expect(() => coerceParameters(command, { latitude: 91, longitude: -74.2 })).toThrow("latitude must be <= 90");
     expect(() => coerceParameters(command, { latitude: "north", longitude: -74.2 })).toThrow("latitude must be a finite number");
+    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, mode: [] })).toThrow("mode must be a string");
     expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, verify: "sometimes" })).toThrow("verify must be a boolean");
+  });
+
+  it("rejects malformed parameter containers as invalid parameters", () => {
+    const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
+
+    for (const value of [[], "latitude=40.1"]) {
+      try {
+        coerceParameters(command, value);
+        throw new Error("coerceParameters should have failed");
+      } catch (error) {
+        expect(error).toBeInstanceOf(CommandModelError);
+        expect(error).toMatchObject({ code: "INVALID_PARAMETERS", message: "parameters must be an object" });
+      }
+    }
   });
 
   it("rejects unknown parameters even when their values are empty", () => {

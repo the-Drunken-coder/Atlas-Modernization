@@ -15,10 +15,10 @@ import {
   buildCommandTaskRequest,
   catalogFromObject,
   coerceParameters,
-  commandById
+  commandById,
+  COMMAND_CATALOG_OBJECT_ID
 } from "../src/atlas/command-model.js";
 
-const COMMAND_CATALOG_OBJECT_ID = "command_catalog";
 const CORE_REQUEST_TIMEOUT_MS = 10_000;
 const PROXY_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_PENDING_FEED_MESSAGES = 256;
@@ -205,18 +205,26 @@ export function bridgeFeedSockets(browser: WorkerSocket, upstream: WorkerSocket,
   upstream.addEventListener("open", () => {
     if (closed) return;
     upstreamOpen = true;
-    if (apiKey) {
-      upstream.send(JSON.stringify({ action: "auth", api_key: apiKey }));
-    }
-    for (const message of pending.splice(0)) {
-      upstream.send(message);
+    try {
+      if (apiKey) {
+        upstream.send(JSON.stringify({ action: "auth", api_key: apiKey }));
+      }
+      for (const message of pending.splice(0)) {
+        upstream.send(message);
+      }
+    } catch {
+      closeBoth();
     }
   });
   browser.addEventListener("message", (event) => {
     if (closed) return;
     if (event.data === undefined) return;
     if (upstreamOpen) {
-      upstream.send(event.data);
+      try {
+        upstream.send(event.data);
+      } catch {
+        closeBoth();
+      }
       return;
     }
     if (pending.length >= MAX_PENDING_FEED_MESSAGES) {
@@ -228,7 +236,11 @@ export function bridgeFeedSockets(browser: WorkerSocket, upstream: WorkerSocket,
   upstream.addEventListener("message", (event) => {
     if (closed) return;
     if (event.data !== undefined) {
-      browser.send(event.data);
+      try {
+        browser.send(event.data);
+      } catch {
+        closeBoth();
+      }
     }
   });
   browser.addEventListener("close", closeBoth);
@@ -396,10 +408,10 @@ function commandCredential(headers: Headers): string | undefined {
 }
 
 function sameSecret(actual: string, expected: string): boolean {
-  if (actual.length !== expected.length) return false;
-  let difference = 0;
-  for (let index = 0; index < expected.length; index++) {
-    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  const length = Math.max(actual.length, expected.length);
+  let difference = actual.length ^ expected.length;
+  for (let index = 0; index < length; index++) {
+    difference |= (actual.charCodeAt(index) || 0) ^ (expected.charCodeAt(index) || 0);
   }
   return difference === 0;
 }

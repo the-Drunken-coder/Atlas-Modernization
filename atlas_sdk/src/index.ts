@@ -8,7 +8,6 @@ export {
   type AtlasWatchEvent,
   type AtlasClientOptions,
   type AtlasSubscription,
-  type AtlasSyncSnapshot,
   type ChangedSinceQueryOptions,
   type ChangedSinceResponse,
   type EntityCheckInFields,
