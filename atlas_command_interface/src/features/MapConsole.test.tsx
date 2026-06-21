@@ -1,0 +1,130 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
+import { parseCommandCatalog } from "../atlas/command-model.js";
+import type { AtlasDataSource, CommandSubmission } from "../atlas/data-source.js";
+import { AtlasProvider } from "../state/atlas-context.js";
+import { MapConsole } from "./MapConsole.js";
+
+// MapLibre never runs in jsdom; stub the map but keep the real source builder.
+vi.mock("../ui/map/MapView.js", async () => {
+  const sources = await import("../ui/map/map-sources.js");
+  return { MapView: () => <div data-testid="map" />, buildMapSources: sources.buildMapSources };
+});
+
+const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
+
+const catalog = parseCommandCatalog({
+  type: "command_catalog",
+  name: "Catalog",
+  description: "Test",
+  commands: [
+    { id: "hold_position", name: "Hold Position", description: "Hold here.", parameters_schema: {} },
+    { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
+  ]
+});
+
+const rover: EntityResource = {
+  entity_id: "asset-1",
+  entity_type: "asset",
+  subtype: null,
+  alias: "Rover",
+  components: { task_catalog: { supported_tasks: ["hold_position"] }, telemetry: { latitude: 40, longitude: -74 } },
+  metadata
+};
+
+function makeFakeDataSource() {
+  let emit: ((event: AtlasWatchEvent) => void) | undefined;
+  const submissions: Array<{ submission: CommandSubmission; credential: string }> = [];
+  const fake: AtlasDataSource = {
+    async loadSnapshot() {
+      return { entities: [rover], tasks: [] };
+    },
+    async loadCommandCatalog() {
+      return catalog;
+    },
+    watch(onEvent) {
+      emit = onEvent;
+      return () => {
+        emit = undefined;
+      };
+    },
+    async start() {},
+    health() {
+      return { running: true, healthy: true, degraded: false };
+    },
+    async submitCommand(submission, credential) {
+      submissions.push({ submission, credential });
+      const task = {
+        task_id: "task-1",
+        status: "pending",
+        entity_id: submission.entityId,
+        components: { command: { type: submission.commandId, id: submission.commandId }, parameters: submission.parameters ?? {} },
+        metadata: { ...metadata, version: 2 }
+      };
+      emit?.({ event: "create", resource_type: "task", id: task.task_id, version: 2, resource: task });
+      return task;
+    },
+    async updateGeometry() {
+      throw new Error("not used in this test");
+    },
+    dispose() {}
+  };
+  return { fake, submissions };
+}
+
+function renderConsole(fake: AtlasDataSource) {
+  return render(
+    <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+      <MapConsole />
+    </AtlasProvider>
+  );
+}
+
+function memoryStorage(initial: Record<string, string> = {}): Storage {
+  const store = new Map<string, string>(Object.entries(initial));
+  return {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (key: string) => store.get(key) ?? null,
+    key: (index: number) => [...store.keys()][index] ?? null,
+    removeItem: (key: string) => void store.delete(key),
+    setItem: (key: string, value: string) => void store.set(key, value)
+  };
+}
+
+describe("MapConsole command flow", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", memoryStorage({ "atlas.commandApiKey": "test-key" }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("selects an asset, lists its commands, and submits a pending task", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    // Default assets list renders once the snapshot is ready.
+    const row = await screen.findByText("Rover");
+    await user.click(row);
+
+    // The asset inspector lists the supported command and greys out the rest.
+    const hold = await screen.findByRole("button", { name: /Hold Position/ });
+    expect(screen.getByRole("button", { name: /Return To Home/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute("title", "This asset does not support this command");
+
+    await user.click(hold);
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({ submission: { entityId: "asset-1", commandId: "hold_position" }, credential: "test-key" });
+
+    // The created task arrives over the feed and shows as pending in history.
+    expect(await screen.findByText("Pending")).toBeInTheDocument();
+  });
+});

@@ -1,0 +1,87 @@
+import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import {
+  entityClassification,
+  entityDisplayName,
+  entityGeometry,
+  entityHeading,
+  entityKind,
+  entityLinkState,
+  entityPosition
+} from "../../atlas/entities.js";
+import type { UiGeometry } from "../../atlas/geometry.js";
+
+export type MapFeatureProperties = {
+  entityId: string;
+  kind: "asset" | "track" | "geofeature";
+  name: string;
+  selected: boolean;
+  classification?: string;
+  linkState?: string;
+  heading?: number;
+};
+
+export type MapFeature = {
+  type: "Feature";
+  id: string;
+  geometry: UiGeometry;
+  properties: MapFeatureProperties;
+};
+
+export type MapFeatureCollection = {
+  type: "FeatureCollection";
+  features: MapFeature[];
+};
+
+export type MapSources = {
+  assets: MapFeatureCollection;
+  tracks: MapFeatureCollection;
+  geofeatures: MapFeatureCollection;
+};
+
+export function emptyFeatureCollection(): MapFeatureCollection {
+  return { type: "FeatureCollection", features: [] };
+}
+
+/**
+ * Turn the entity snapshot into one GeoJSON source per kind. Assets/tracks
+ * render as points (telemetry preferred); geofeatures render their geometry.
+ */
+export function buildMapSources(entities: EntityResource[], selectedId: string | undefined): MapSources {
+  const sources: MapSources = { assets: emptyFeatureCollection(), tracks: emptyFeatureCollection(), geofeatures: emptyFeatureCollection() };
+
+  for (const entity of entities) {
+    const kind = entityKind(entity);
+    if (kind === "other") continue;
+
+    const geometry = kind === "geofeature" ? entityGeometry(entity) : pointGeometry(entity);
+    if (!geometry) continue;
+
+    const feature: MapFeature = {
+      type: "Feature",
+      id: entity.entity_id,
+      geometry,
+      properties: {
+        entityId: entity.entity_id,
+        kind,
+        name: entityDisplayName(entity),
+        selected: entity.entity_id === selectedId,
+        classification: entityClassification(entity),
+        linkState: entityLinkState(entity),
+        heading: kind === "asset" ? entityHeading(entity) : undefined
+      }
+    };
+
+    sources[kindToSource(kind)].features.push(feature);
+  }
+
+  return sources;
+}
+
+function pointGeometry(entity: EntityResource): UiGeometry | undefined {
+  const position = entityPosition(entity);
+  return position ? { type: "Point", coordinates: position } : undefined;
+}
+
+function kindToSource(kind: "asset" | "track" | "geofeature"): keyof MapSources {
+  return kind === "asset" ? "assets" : kind === "track" ? "tracks" : "geofeatures";
+}

@@ -3,23 +3,39 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare Worker-hosted Atlas Command interface.",
+  "description": "Cloudflare Worker-hosted Atlas Command map console.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
+    "dev": "vite",
+    "dev:worker": "wrangler dev",
     "prebuild": "wrangler types",
-    "dev": "wrangler dev --local",
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "build": "vite build && wrangler deploy --dry-run --outdir dist/worker",
+    "build:web": "vite build",
+    "preview": "vite preview",
     "pretest": "wrangler types",
     "test": "vitest run",
+    "test:watch": "vitest",
     "pretypecheck": "wrangler types",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "cf:types": "wrangler types"
   },
-  "dependencies": {},
+  "dependencies": {
+    "maplibre-gl": "^5.6.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0"
+  },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^26.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^26.0.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.9",

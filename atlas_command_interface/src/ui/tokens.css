@@ -1,0 +1,122 @@
+/* Semantic design tokens for the dark-only tactical console. Feature components
+   reference these variables instead of raw color literals. */
+:root,
+.atlas-dark {
+  color-scheme: dark;
+
+  /* Backgrounds & surfaces */
+  --bg-base: #070a0f;
+  --bg-app: #0b0f16;
+  --surface-1: #111722;
+  --surface-2: #161d2b;
+  --surface-3: #1d2737;
+  --surface-hover: #222d40;
+
+  /* Borders */
+  --border: #232c3b;
+  --border-strong: #33415a;
+
+  /* Text levels */
+  --text-1: #e7edf4;
+  --text-2: #9aa7b8;
+  --text-3: #61708a;
+  --text-on-accent: #04121d;
+
+  /* Accent */
+  --accent: #3fb6ff;
+  --accent-strong: #6cc7ff;
+  --accent-muted: rgba(63, 182, 255, 0.16);
+
+  /* Feedback */
+  --success: #3fd27a;
+  --warning: #f5c451;
+  --error: #ff5d5d;
+  --info: #5aa0ff;
+
+  /* Selection / hover */
+  --selected: #ffffff;
+  --selected-ring: rgba(63, 182, 255, 0.55);
+
+  /* Task status */
+  --status-pending: #f5c451;
+  --status-acknowledged: #5aa0ff;
+  --status-completed: #3fd27a;
+  --status-failed: #ff5d5d;
+  --status-cancelled: #7a8699;
+
+  /* Communications link state */
+  --link-connected: #3fd27a;
+  --link-degraded: #f5c451;
+  --link-disconnected: #ff5d5d;
+  --link-unknown: #7a8699;
+
+  /* Heartbeat freshness */
+  --heartbeat-fresh: #3fd27a;
+  --heartbeat-stale: #f5c451;
+  --heartbeat-offline: #ff5d5d;
+
+  /* Classification */
+  --class-friendly: #5aa0ff;
+  --class-hostile: #ff5d5d;
+  --class-neutral: #3fd27a;
+  --class-civilian: #c08bff;
+  --class-unknown: #9aa7b8;
+
+  /* Map overlay colors */
+  --map-asset: #3fb6ff;
+  --map-track: #f5c451;
+  --map-geofeature: #3fd27a;
+  --map-geofeature-fill: rgba(63, 210, 122, 0.14);
+  --map-selected: #ffffff;
+  --map-vertex: #ffffff;
+  --map-vertex-mid: rgba(255, 255, 255, 0.45);
+
+  /* Geometry */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --rail-width: 52px;
+  --panel-width: 332px;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+a {
+  color: var(--accent);
+}

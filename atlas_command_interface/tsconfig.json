@@ -3,6 +3,7 @@
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
     "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -16,6 +17,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "worker", "vitest.config.ts", "worker-configuration.d.ts"],
+  "include": ["src", "worker", "vite.config.ts", "vitest.config.ts", "test", "worker-configuration.d.ts"],
   "references": []
 }
