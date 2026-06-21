@@ -204,6 +204,7 @@ Structured `zerolog` logs include request method/path/status/duration and error 
 ## More Docs
 
 - `docs/README.md`
+- `docs/API_GUIDE.md`
 - `docs/PAGINATION.md`
 - `docs/ERROR_HANDLING.md`
 - `docs/SECURITY.md`
