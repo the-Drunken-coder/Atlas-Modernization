@@ -145,7 +145,7 @@ export function coerceParameters(command: CommandDefinition, rawParameters: unkn
   const knownNames = new Set(schemaEntries.map(([name]) => name));
 
   for (const key of Object.keys(raw)) {
-    if (!knownNames.has(key) && !isEmptyOptionalInput(raw[key])) {
+    if (!knownNames.has(key)) {
       throw new CommandModelError("INVALID_PARAMETERS", `Unknown parameter ${key}`, { parameter: key });
     }
   }

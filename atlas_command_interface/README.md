@@ -21,9 +21,10 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 1. Start Atlas Core from this checkout.
 2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
 3. Configure non-secret Worker vars in `wrangler.jsonc`.
-4. Add `.dev.vars` only for local secrets when Core auth is enabled:
+4. Add `.dev.vars` for local secrets. `ATLAS_COMMAND_API_KEY` gates `/api/commands`; `ATLAS_API_KEY` is only for Worker-to-Core requests when Core auth is enabled:
 
    ```text
+   ATLAS_COMMAND_API_KEY=replace-with-local-command-key
    ATLAS_API_KEY=replace-with-local-core-key
    ```
 
@@ -40,6 +41,8 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
    ```
 
 No deployment, routes, custom domains, or production secrets are configured here.
+
+Command submissions must send either `Authorization: Bearer <ATLAS_COMMAND_API_KEY>` or `X-API-Key: <ATLAS_COMMAND_API_KEY>`.
 
 ## Checks
 

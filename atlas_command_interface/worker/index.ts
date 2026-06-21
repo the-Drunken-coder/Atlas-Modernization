@@ -4,7 +4,6 @@ import {
   AtlasClient,
   ProtocolMismatchError,
   type EntityResource,
-  type FullDatasetResponse,
   type ObjectResponse,
   type TaskResource
 } from "../../atlas_sdk/src/index.js";
@@ -22,11 +21,12 @@ import {
 const COMMAND_CATALOG_OBJECT_ID = "command_catalog";
 const CORE_REQUEST_TIMEOUT_MS = 10_000;
 const PROXY_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_PENDING_FEED_MESSAGES = 256;
 
 export type AtlasClientLike = {
   handshake(): Promise<void>;
-  queries: {
-    full(options?: { entityLimit?: number; taskLimit?: number; objectLimit?: number }): Promise<FullDatasetResponse>;
+  entities: {
+    get(id: string, options?: { fresh?: boolean }): Promise<EntityResource>;
   };
   objects: {
     get(id: string, options?: { fresh?: boolean }): Promise<ObjectResponse>;
@@ -91,6 +91,7 @@ export async function handleCommandRequest(request: Request, env: Env, ctx: Exec
       });
     }
     if (url.pathname === "/api/commands" && request.method === "POST") {
+      requireCommandAuth(request, env);
       return jsonResponse(await submitCommand(request, env, dependencies), { status: 201 });
     }
     if (url.pathname.startsWith("/atlas/") || url.pathname === "/atlas") {
@@ -109,12 +110,11 @@ async function submitCommand(request: Request, env: Env, dependencies: CommandWo
   const body = parseSubmitRequest(await readJSONBody(request));
   const client = createClient(env, dependencies);
   await client.handshake();
-  const [dataset, catalogObject] = await Promise.all([
-    client.queries.full({ entityLimit: 500, taskLimit: 100, objectLimit: 50 }),
+  const [entity, catalogObject] = await Promise.all([
+    getCommandEntity(client, body.entity_id),
     client.objects.get(COMMAND_CATALOG_OBJECT_ID, { fresh: true })
   ]);
   const catalog = catalogFromObject(catalogObject);
-  const entity = findCommandEntity(dataset.entities, body.entity_id);
   const command = commandById(catalog, body.command_id);
   assertEntitySupportsCommand(entity, command.id);
   const parameters = coerceParameters(command, body.parameters);
@@ -127,6 +127,17 @@ async function submitCommand(request: Request, env: Env, dependencies: CommandWo
     })
   );
   return { task };
+}
+
+async function getCommandEntity(client: AtlasClientLike, entityId: string): Promise<EntityResource> {
+  try {
+    return await client.entities.get(entityId, { fresh: true });
+  } catch (error) {
+    if (error instanceof AtlasAPIError && error.status === 404) {
+      throw new WorkerHTTPError(404, "ENTITY_NOT_FOUND", `Entity ${entityId} was not found`, { entity_id: entityId });
+    }
+    throw error;
+  }
 }
 
 export async function proxyAtlasRequest(request: Request, env: Env, ctx: ExecutionContext, dependencies: CommandWorkerDependencies = {}): Promise<Response> {
@@ -151,19 +162,32 @@ export async function proxyAtlasRequest(request: Request, env: Env, ctx: Executi
       statusText: response.statusText,
       headers: proxyResponseHeaders(response.headers)
     });
+  } catch (error) {
+    if (isAbortError(error)) {
+      return jsonResponse(
+        {
+          success: false,
+          error_code: "GATEWAY_TIMEOUT",
+          message: "Atlas Core request timed out",
+          details: { timeout_ms: PROXY_REQUEST_TIMEOUT_MS }
+        },
+        { status: 504 }
+      );
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
 }
 
 function proxyFeedRequest(env: Env, dependencies: CommandWorkerDependencies): Response {
-  requiredCoreBaseUrl(env);
+  const baseUrl = requiredCoreBaseUrl(env);
   const pair = dependencies.createWebSocketPair?.() ?? createNativeWebSocketPair();
   const client = pair[0];
   const server = pair[1];
   server.accept?.();
   const WebSocketCtor = dependencies.WebSocketCtor ?? WebSocket;
-  const upstream = new WebSocketCtor(feedUrl(env.ATLAS_CORE_BASE_URL));
+  const upstream = new WebSocketCtor(feedUrl(baseUrl));
   bridgeFeedSockets(server, upstream, optionalString(env.ATLAS_API_KEY));
   return new Response(null, { status: 101, webSocket: client } as ResponseInit & { webSocket: WorkerSocket });
 }
@@ -179,6 +203,7 @@ export function bridgeFeedSockets(browser: WorkerSocket, upstream: WorkerSocket,
     upstream.close();
   };
   upstream.addEventListener("open", () => {
+    if (closed) return;
     upstreamOpen = true;
     if (apiKey) {
       upstream.send(JSON.stringify({ action: "auth", api_key: apiKey }));
@@ -188,14 +213,20 @@ export function bridgeFeedSockets(browser: WorkerSocket, upstream: WorkerSocket,
     }
   });
   browser.addEventListener("message", (event) => {
+    if (closed) return;
     if (event.data === undefined) return;
     if (upstreamOpen) {
       upstream.send(event.data);
       return;
     }
+    if (pending.length >= MAX_PENDING_FEED_MESSAGES) {
+      closeBoth();
+      return;
+    }
     pending.push(event.data);
   });
   upstream.addEventListener("message", (event) => {
+    if (closed) return;
     if (event.data !== undefined) {
       browser.send(event.data);
     }
@@ -243,14 +274,6 @@ function parseSubmitRequest(value: unknown): CommandSubmitRequest {
     throw new WorkerHTTPError(400, "VALIDATION_ERROR", "parameters must be an object");
   }
   return { entity_id: entityId, command_id: commandId, parameters };
-}
-
-function findCommandEntity(entities: EntityResource[], entityId: string): EntityResource {
-  const entity = entities.find((candidate) => candidate.entity_id === entityId);
-  if (!entity) {
-    throw new WorkerHTTPError(404, "ENTITY_NOT_FOUND", `Entity ${entityId} was not found`, { entity_id: entityId });
-  }
-  return entity;
 }
 
 function stripAtlasPrefix(pathname: string): string {
@@ -350,6 +373,39 @@ function requiredCoreBaseUrl(env: Env): string {
     throw new WorkerHTTPError(500, "CONFIGURATION_ERROR", "ATLAS_CORE_BASE_URL is not configured");
   }
   return baseUrl;
+}
+
+function requireCommandAuth(request: Request, env: Env): void {
+  const expected = optionalString((env as Env & { ATLAS_COMMAND_API_KEY?: unknown }).ATLAS_COMMAND_API_KEY);
+  if (!expected) {
+    throw new WorkerHTTPError(500, "CONFIGURATION_ERROR", "ATLAS_COMMAND_API_KEY is not configured");
+  }
+  const actual = commandCredential(request.headers);
+  if (!actual || !sameSecret(actual, expected)) {
+    throw new WorkerHTTPError(401, "UNAUTHORIZED", "Command API credentials are required");
+  }
+}
+
+function commandCredential(headers: Headers): string | undefined {
+  const authorization = headers.get("Authorization");
+  if (authorization) {
+    const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+    if (match?.[1]) return match[1].trim();
+  }
+  return optionalString(headers.get("X-API-Key"));
+}
+
+function sameSecret(actual: string, expected: string): boolean {
+  if (actual.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < expected.length; index++) {
+    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error instanceof DOMException && error.name === "AbortError") || (isRecord(error) && error.name === "AbortError");
 }
 
 function feedUrl(baseUrl: string): string {

@@ -87,7 +87,9 @@ function geometryForEntity(entity: EntityResource): MapFeature["geometry"] | und
     return line.length >= 2 ? { type: "LineString", coordinates: line } : undefined;
   }
   if ("type" in geometry && geometry.type === "Polygon" && Array.isArray(geometry.coordinates)) {
-    const polygon = geometry.coordinates.map((ring) => (Array.isArray(ring) ? ring.filter(isPosition) : [])).filter((ring) => ring.length >= 4);
+    const polygon = geometry.coordinates
+      .map((ring, index) => (Array.isArray(ring) ? normalizePolygonRing(closeRing(ring.filter(isPosition)), index === 0 ? "exterior" : "hole") : undefined))
+      .filter((ring): ring is Position[] => ring !== undefined);
     return polygon.length > 0 ? { type: "Polygon", coordinates: polygon } : undefined;
   }
   if ("point_lat" in geometry && "point_lng" in geometry) {
@@ -104,15 +106,40 @@ function geometryForEntity(entity: EntityResource): MapFeature["geometry"] | und
     const ring = geometry.polygon
       .filter((value): value is [number, number] => Array.isArray(value) && positionFromCoordinates(value[1], value[0]) !== undefined)
       .map((value): Position => [value[1], value[0]]);
-    return ring.length >= 3 ? { type: "Polygon", coordinates: [closeRing(ring)] } : undefined;
+    const polygon = normalizePolygonRing(ring, "exterior");
+    return polygon ? { type: "Polygon", coordinates: [polygon] } : undefined;
   }
   return undefined;
 }
 
 function closeRing(ring: Position[]): Position[] {
+  if (ring.length === 0) return ring;
   const first = ring[0];
   const last = ring[ring.length - 1];
   return first && last && first[0] === last[0] && first[1] === last[1] ? ring : [...ring, first];
+}
+
+function normalizePolygonRing(ring: Position[], role: "exterior" | "hole"): Position[] | undefined {
+  const closed = closeRing(ring);
+  if (closed.length < 4) return undefined;
+  const area = signedArea(closed);
+  if (area === 0) return undefined;
+  const shouldBeCounterClockwise = role === "exterior";
+  return (area > 0) === shouldBeCounterClockwise ? closed : reverseClosedRing(closed);
+}
+
+function reverseClosedRing(ring: Position[]): Position[] {
+  return closeRing(ring.slice(0, -1).reverse());
+}
+
+function signedArea(ring: Position[]): number {
+  let area = 0;
+  for (let index = 0; index < ring.length - 1; index++) {
+    const current = ring[index];
+    const next = ring[index + 1];
+    area += current[0] * next[1] - next[0] * current[1];
+  }
+  return area / 2;
 }
 
 function isPosition(value: unknown): value is Position {
@@ -120,7 +147,16 @@ function isPosition(value: unknown): value is Position {
 }
 
 function positionFromCoordinates(longitude: unknown, latitude: unknown): Position | undefined {
-  if (typeof longitude === "number" && Number.isFinite(longitude) && typeof latitude === "number" && Number.isFinite(latitude)) {
+  if (
+    typeof longitude === "number" &&
+    Number.isFinite(longitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    typeof latitude === "number" &&
+    Number.isFinite(latitude) &&
+    latitude >= -90 &&
+    latitude <= 90
+  ) {
     return [longitude, latitude];
   }
   return undefined;

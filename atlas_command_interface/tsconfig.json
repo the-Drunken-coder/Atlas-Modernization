@@ -14,8 +14,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["node", "./worker-configuration.d.ts"]
+    "types": ["node"]
   },
-  "include": ["src", "worker", "vitest.config.ts"],
+  "include": ["src", "worker", "vitest.config.ts", "worker-configuration.d.ts"],
   "references": []
 }

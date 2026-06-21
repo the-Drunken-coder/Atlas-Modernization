@@ -73,6 +73,33 @@ describe("AtlasClient sync", () => {
     });
   });
 
+  it("returns an empty sync snapshot before hydration starts", () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-before-start"));
+    core.upsertTask(task("task-before-start", "asset-before-start"));
+    core.upsertObject(object("object-before-start"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    expect(client.sync.snapshot()).toEqual({
+      entities: [],
+      tasks: [],
+      objects: [],
+      status: {
+        running: false,
+        healthy: false,
+        degraded: false,
+        lastVersion: 0,
+        subscriptions: [{ filter: "all" }]
+      }
+    });
+  });
+
   it("keeps sync snapshots current from feed events", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -93,7 +120,7 @@ describe("AtlasClient sync", () => {
   it("omits deleted resources from sync snapshots without hiding delete events", async () => {
     const core = new FakeCore();
     const deletedEntity = core.upsertEntity(entity("asset-snapshot-delete"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, WebSocket: core.attachWebSocketGlobal(), sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
     const watch = vi.fn();
     client.entities.watch(deletedEntity.entity_id, watch);

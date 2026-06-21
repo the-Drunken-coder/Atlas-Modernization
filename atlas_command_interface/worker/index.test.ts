@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource, FullDatasetResponse, JSONValue, ObjectResponse, TaskCreateRequest, TaskResource } from "../../atlas_sdk/src/index.js";
+import { AtlasAPIError, type EntityResource, type JSONValue, type ObjectResponse, type TaskCreateRequest, type TaskResource } from "../../atlas_sdk/src/index.js";
 import { bridgeFeedSockets, handleCommandRequest, proxyAtlasRequest, type AtlasClientLike } from "./index.js";
 
 const metadata = {
@@ -73,6 +73,25 @@ describe("atlas command worker", () => {
     expect(init.body).toBe(request.body);
   });
 
+  it("returns 504 when proxied Atlas HTTP requests time out", async () => {
+    vi.useFakeTimers();
+    const fetchImpl: typeof fetch = async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+
+    try {
+      const pending = proxyAtlasRequest(new Request("https://command.test/atlas/entities"), env(), executionContext(), { fetch: fetchImpl });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const response = await pending;
+
+      expect(response.status).toBe(504);
+      await expect(response.json()).resolves.toMatchObject({ error_code: "GATEWAY_TIMEOUT" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("validates commands against the live catalog and creates a task", async () => {
     let createdTask: TaskCreateRequest | undefined;
     const client = fakeClient({
@@ -98,10 +117,7 @@ describe("atlas command worker", () => {
     });
 
     const response = await handleCommandRequest(
-      new Request("https://command.test/api/commands", {
-        method: "POST",
-        body: JSON.stringify({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: "5", notify: "true" } })
-      }),
+      commandRequest({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: "5", notify: "true" } }),
       env(),
       executionContext(),
       { createClient: () => client, createTaskId: () => "command-fixed" }
@@ -134,10 +150,7 @@ describe("atlas command worker", () => {
     });
 
     const response = await handleCommandRequest(
-      new Request("https://command.test/api/commands", {
-        method: "POST",
-        body: JSON.stringify({ entity_id: "asset-1", command_id: "return_home", parameters: {} })
-      }),
+      commandRequest({ entity_id: "asset-1", command_id: "return_home", parameters: {} }),
       env(),
       executionContext(),
       { createClient: () => client }
@@ -145,6 +158,89 @@ describe("atlas command worker", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error_code: "UNSUPPORTED_COMMAND" });
+  });
+
+  it("rejects unauthenticated command submissions before creating a client", async () => {
+    const createClient = vi.fn(() =>
+      fakeClient({
+        dataset: {
+          entities: [asset("asset-1", ["hold_position"])],
+          tasks: [],
+          objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        },
+        catalog: catalogObject()
+      })
+    );
+
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/commands", {
+        method: "POST",
+        body: JSON.stringify({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } })
+      }),
+      env(),
+      executionContext(),
+      { createClient }
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error_code: "UNAUTHORIZED" });
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("reads command targets directly instead of scanning a capped full-dataset page", async () => {
+    let requestedEntityId = "";
+    const client = fakeClient({
+      dataset: {
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: true,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject(),
+      getEntity(entityId) {
+        requestedEntityId = entityId;
+        return asset(entityId, ["hold_position"]);
+      }
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "asset-after-page-500", command_id: "hold_position", parameters: { seconds: 5 } }),
+      env(),
+      executionContext(),
+      { createClient: () => client, createTaskId: () => "command-fixed" }
+    );
+
+    expect(response.status).toBe(201);
+    expect(requestedEntityId).toBe("asset-after-page-500");
+  });
+
+  it("returns 404 when the command target entity is missing", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "missing-asset", command_id: "hold_position", parameters: { seconds: 5 } }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error_code: "ENTITY_NOT_FOUND" });
   });
 
   it("authenticates and forwards feed WebSocket frames", () => {
@@ -162,12 +258,42 @@ describe("atlas command worker", () => {
     ]);
     expect(browser.sent).toEqual([JSON.stringify({ type: "hello", protocol_revision: "test" })]);
   });
+
+  it("stops forwarding WebSocket frames after either side closes", () => {
+    const browser = new TestSocket();
+    const upstream = new TestSocket();
+
+    bridgeFeedSockets(browser, upstream);
+    upstream.emit("open", {});
+    browser.emit("close", {});
+    browser.emit("message", { data: "late browser frame" });
+    upstream.emit("message", { data: "late upstream frame" });
+
+    expect(upstream.sent).toEqual([]);
+    expect(browser.sent).toEqual([]);
+  });
+
+  it("closes the feed bridge when pre-open browser messages exceed the pending queue limit", () => {
+    const browser = new TestSocket();
+    const upstream = new TestSocket();
+
+    bridgeFeedSockets(browser, upstream);
+    for (let index = 0; index < 257; index++) {
+      browser.emit("message", { data: `queued-${index}` });
+    }
+
+    expect(browser.readyState).toBe(3);
+    expect(upstream.readyState).toBe(3);
+    upstream.emit("open", {});
+    expect(upstream.sent).toEqual([]);
+  });
 });
 
 function env(): Env {
   return {
     ATLAS_CORE_BASE_URL: "http://localhost:8000",
-    ATLAS_API_KEY: "worker-secret"
+    ATLAS_API_KEY: "worker-secret",
+    ATLAS_COMMAND_API_KEY: "command-secret"
   };
 }
 
@@ -181,15 +307,20 @@ function executionContext(): ExecutionContext {
 }
 
 function fakeClient(options: {
-  dataset: FullDatasetResponse;
+  dataset: { entities: EntityResource[] } & Record<string, unknown>;
   catalog: ObjectResponse;
+  getEntity?: (entityId: string) => EntityResource | Promise<EntityResource>;
   createTask?: (task: TaskCreateRequest) => TaskResource;
 }): AtlasClientLike {
   return {
     async handshake() {},
-    queries: {
-      async full() {
-        return options.dataset;
+    entities: {
+      async get(entityId) {
+        const entity = await (options.getEntity?.(entityId) ?? options.dataset.entities.find((candidate) => candidate.entity_id === entityId));
+        if (!entity) {
+          throw new AtlasAPIError("entity not found", 404, { success: false, error_code: "ENTITY_NOT_FOUND", message: "entity not found" });
+        }
+        return entity;
       }
     },
     objects: {
@@ -209,6 +340,14 @@ function fakeClient(options: {
       }
     }
   };
+}
+
+function commandRequest(body: Record<string, unknown>): Request {
+  return new Request("https://command.test/api/commands", {
+    method: "POST",
+    headers: { Authorization: "Bearer command-secret" },
+    body: JSON.stringify(body)
+  });
 }
 
 function asset(entityId: string, supportedTasks?: string[]): EntityResource {
