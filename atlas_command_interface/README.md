@@ -63,10 +63,26 @@ with refresh/recovery through normal Core queries (both via the Atlas SDK).
 
 No deployment, routes, custom domains, or production secrets are configured here.
 
+## Storybook UI Workbench
+
+Storybook is the dev-only catalog for the shared operator UI system. It renders
+fixture-backed states for primitives, the rail/sidebar shell, entity lists,
+inspectors, command forms, MapLibre map views, and the full `/map` console
+without requiring a live Atlas Core.
+
+```bash
+npm --prefix atlas_command_interface run storybook
+npm --prefix atlas_command_interface run build-storybook
+```
+
+Keep stories focused on reusable UI states and operational fixtures. The live
+`/map` page remains the integration surface for Core, Worker, and map behavior.
+
 ## Checks
 
 ```bash
 npm --prefix atlas_command_interface test
 npm --prefix atlas_command_interface run typecheck
 npm --prefix atlas_command_interface run build
+npm --prefix atlas_command_interface run build-storybook
 ```

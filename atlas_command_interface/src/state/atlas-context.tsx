@@ -29,6 +29,10 @@ export type AtlasProviderProps = {
   createDataSource?: (config: AppConfig) => AtlasDataSource;
 };
 
+export function AtlasStaticProvider({ children, value }: { children: ReactNode; value: AtlasContextValue }) {
+  return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;
+}
+
 export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDataSource = createSdkDataSource }: AtlasProviderProps) {
   const [status, setStatus] = useState<AtlasStatus>("loading");
   const [error, setError] = useState<string>();
