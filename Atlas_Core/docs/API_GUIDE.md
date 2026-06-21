@@ -282,7 +282,7 @@ Check-in body is optional. When present, it can include:
   "longitude": -77.0365,
   "components": {
     "communications": {
-      "link_quality": "good"
+      "link_state": "connected"
     }
   }
 }
@@ -346,7 +346,7 @@ Patch body:
 {
   "status": "acknowledged",
   "components": {
-    "task_progress": {
+    "progress": {
       "percent": 25
     }
   },
@@ -382,8 +382,8 @@ Status transition body:
 
 ```json
 {
-  "status": "running",
-  "progress": 0.4,
+  "status": "acknowledged",
+  "progress": 40,
   "message": "en route"
 }
 ```
