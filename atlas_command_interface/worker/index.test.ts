@@ -216,6 +216,37 @@ describe("atlas command worker", () => {
     expect(createClient).not.toHaveBeenCalled();
   });
 
+  it("rejects X-API-Key for command submissions", async () => {
+    const createClient = vi.fn(() =>
+      fakeClient({
+        dataset: {
+          entities: [asset("asset-1", ["hold_position"])],
+          tasks: [],
+          objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        },
+        catalog: catalogObject()
+      })
+    );
+
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/commands", {
+        method: "POST",
+        headers: { "X-API-Key": "command-secret" },
+        body: JSON.stringify({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } })
+      }),
+      env(),
+      executionContext(),
+      { createClient }
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error_code: "UNAUTHORIZED" });
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
   it("reads command targets directly instead of scanning a capped full-dataset page", async () => {
     let requestedEntityId = "";
     const client = fakeClient({

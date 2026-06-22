@@ -31,19 +31,25 @@ export function applyWatchEvent(snapshot: AtlasSnapshot, event: AtlasWatchEvent)
     const resource = "resource" in event ? event.resource : undefined;
     if (!resource) return snapshot;
     if (event.resource_type === "entity") {
+      if (snapshot.entities[event.id]?.metadata.version >= resource.metadata.version) return snapshot;
       return { ...snapshot, entities: { ...snapshot.entities, [event.id]: resource as EntityResource } };
     }
+    if (snapshot.tasks[event.id]?.metadata.version >= resource.metadata.version) return snapshot;
     return { ...snapshot, tasks: { ...snapshot.tasks, [event.id]: resource as TaskResource } };
   }
 
   if (event.event === "delete" || event.event === "local_delete") {
     if (event.resource_type === "entity") {
-      if (!(event.id in snapshot.entities)) return snapshot;
+      const current = snapshot.entities[event.id];
+      if (!current) return snapshot;
+      if (event.event === "delete" && current.metadata.version >= event.version) return snapshot;
       const entities = { ...snapshot.entities };
       delete entities[event.id];
       return { ...snapshot, entities };
     }
-    if (!(event.id in snapshot.tasks)) return snapshot;
+    const current = snapshot.tasks[event.id];
+    if (!current) return snapshot;
+    if (event.event === "delete" && current.metadata.version >= event.version) return snapshot;
     const tasks = { ...snapshot.tasks };
     delete tasks[event.id];
     return { ...snapshot, tasks };

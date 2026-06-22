@@ -127,5 +127,7 @@ function nextDatasetCursors(page: FullDatasetResponse): FullDatasetQueryOptions 
   const cursors: FullDatasetQueryOptions = {};
   if (page.has_more_entities && page.next_entity_cursor) cursors.entityCursor = page.next_entity_cursor;
   if (page.has_more_tasks && page.next_task_cursor) cursors.taskCursor = page.next_task_cursor;
+  // Objects are loaded on demand, such as the command catalog above, so object
+  // pagination must not delay the operator picture during snapshot bootstrap.
   return Object.keys(cursors).length > 0 ? cursors : undefined;
 }

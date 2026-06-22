@@ -40,4 +40,18 @@ describe("fetchAppConfig", () => {
 
     await expect(fetchAppConfig()).rejects.toThrow("/api/config returned invalid atlasBaseUrl");
   });
+
+  it("rejects invalid mapStyleUrl when atlasBaseUrl is valid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev", mapStyleUrl: "http://[bad" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+    );
+
+    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned invalid mapStyleUrl");
+  });
 });

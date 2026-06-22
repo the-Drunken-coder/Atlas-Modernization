@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { AtlasWatchEvent, EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
 import { fetchAppConfig, type AppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { createSdkDataSource, type AtlasDataSource, type CommandSubmission, type ConnectionHealth } from "../atlas/data-source.js";
@@ -46,6 +46,8 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
+    let bootstrapped = false;
+    const bufferedEvents: AtlasWatchEvent[] = [];
     const cleanup = () => {
       if (healthTimer) {
         clearInterval(healthTimer);
@@ -66,20 +68,31 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
         const dataSource = createDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
 
-        const dataset = await dataSource.loadSnapshot();
-        if (cancelled) return;
-        setSnapshot(snapshotFromDataset(dataset.entities, dataset.tasks));
-
-        const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
-        if (cancelled) return;
-        if (loadedCatalog) setCatalog(loadedCatalog);
-
         unsubscribe = dataSource.watch((event) => {
+          if (!bootstrapped) {
+            bufferedEvents.push(event);
+            return;
+          }
           setSnapshot((current) => applyWatchEvent(current, event));
         });
 
         await dataSource.start();
         if (cancelled) return;
+
+        const dataset = await dataSource.loadSnapshot();
+        if (cancelled) return;
+        let nextSnapshot = snapshotFromDataset(dataset.entities, dataset.tasks);
+        for (const event of bufferedEvents) {
+          nextSnapshot = applyWatchEvent(nextSnapshot, event);
+        }
+        bufferedEvents.length = 0;
+        bootstrapped = true;
+        setSnapshot(nextSnapshot);
+
+        const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
+        if (cancelled) return;
+        if (loadedCatalog) setCatalog(loadedCatalog);
+
         setStatus("ready");
 
         if (dataSource.health) {

@@ -5,12 +5,12 @@ import { listEntities, tasksForEntity } from "./selectors.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-function entity(id: string, type = "asset"): EntityResource {
-  return { entity_id: id, entity_type: type, subtype: null, alias: id.toUpperCase(), components: {}, metadata };
+function entity(id: string, type = "asset", version = 1): EntityResource {
+  return { entity_id: id, entity_type: type, subtype: null, alias: id.toUpperCase(), components: {}, metadata: { ...metadata, version } };
 }
 
-function task(id: string, entityId: string, status = "pending"): TaskResource {
-  return { task_id: id, entity_id: entityId, status, components: {}, metadata };
+function task(id: string, entityId: string, status = "pending", version = 1): TaskResource {
+  return { task_id: id, entity_id: entityId, status, components: {}, metadata: { ...metadata, version } };
 }
 
 describe("snapshot store", () => {
@@ -25,12 +25,26 @@ describe("snapshot store", () => {
     snapshot = applyWatchEvent(snapshot, { event: "create", resource_type: "entity", id: "a", version: 1, resource: entity("a") });
     expect(snapshot.entities.a.alias).toBe("A");
 
-    const renamed = { ...entity("a"), alias: "Renamed" };
+    const renamed = { ...entity("a", "asset", 2), alias: "Renamed" };
     snapshot = applyWatchEvent(snapshot, { event: "update", resource_type: "entity", id: "a", version: 2, resource: renamed });
     expect(snapshot.entities.a.alias).toBe("Renamed");
 
-    snapshot = applyWatchEvent(snapshot, { event: "recovered", resource_type: "entity", id: "b", version: 3, resource: entity("b") });
+    snapshot = applyWatchEvent(snapshot, { event: "recovered", resource_type: "entity", id: "b", version: 3, resource: entity("b", "asset", 3) });
     expect(Object.keys(snapshot.entities).sort()).toEqual(["a", "b"]);
+  });
+
+  it("ignores stale entity and task events by resource version", () => {
+    const snapshot = snapshotFromDataset([entity("a", "asset", 3)], [task("t1", "a", "pending", 3)]);
+    const staleEntity = { ...entity("a", "asset", 2), alias: "Stale" };
+    const afterEntity = applyWatchEvent(snapshot, { event: "update", resource_type: "entity", id: "a", version: 2, resource: staleEntity });
+    expect(afterEntity).toBe(snapshot);
+
+    const staleTask = task("t1", "a", "acked", 2);
+    const afterTask = applyWatchEvent(snapshot, { event: "update", resource_type: "task", id: "t1", version: 2, resource: staleTask });
+    expect(afterTask).toBe(snapshot);
+
+    const afterDelete = applyWatchEvent(snapshot, { event: "delete", resource_type: "entity", id: "a", version: 2 });
+    expect(afterDelete).toBe(snapshot);
   });
 
   it("removes entities on delete events", () => {

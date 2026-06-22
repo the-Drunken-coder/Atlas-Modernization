@@ -406,7 +406,7 @@ function commandCredential(headers: Headers): string | undefined {
     const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
     if (match?.[1]) return match[1].trim();
   }
-  return optionalString(headers.get("X-API-Key"));
+  return undefined;
 }
 
 function sameSecret(actual: string, expected: string): boolean {
