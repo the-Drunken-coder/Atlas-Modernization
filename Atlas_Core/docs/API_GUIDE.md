@@ -325,11 +325,12 @@ Create body:
   "entity_id": "asset-1",
   "components": {
     "command": {
-      "type": "move_to"
+      "type": "move_to_location"
     },
     "parameters": {
       "latitude": 38.8977,
-      "longitude": -77.0365
+      "longitude": -77.0365,
+      "altitude_m": 120.5
     }
   },
   "extra": {
@@ -539,10 +540,11 @@ The `atlas_command_interface/` Worker is a small same-origin layer in front of C
 ```json
 {
   "entity_id": "asset-1",
-  "command_id": "move_to",
+  "command_id": "move_to_location",
   "parameters": {
     "latitude": 38.8977,
-    "longitude": -77.0365
+    "longitude": -77.0365,
+    "altitude_m": 120.5
   }
 }
 ```
@@ -559,12 +561,13 @@ Response:
     "entity_id": "asset-1",
     "components": {
       "command": {
-        "type": "move_to",
-        "id": "move_to"
+        "type": "move_to_location",
+        "id": "move_to_location"
       },
       "parameters": {
         "latitude": 38.8977,
-        "longitude": -77.0365
+        "longitude": -77.0365,
+        "altitude_m": 120.5
       }
     }
   }
@@ -586,7 +589,7 @@ Create a task:
 ```bash
 curl -sS -X POST http://localhost:8000/tasks \
   -H 'Content-Type: application/json' \
-  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"command":{"type":"move_to"},"parameters":{"latitude":38.8977,"longitude":-77.0365}}}'
+  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"command":{"type":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
 ```
 
 Check in and fetch pending work:
