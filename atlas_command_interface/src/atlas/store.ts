@@ -42,18 +42,22 @@ export function applyWatchEvent(snapshot: AtlasSnapshot, event: AtlasWatchEvent)
     if (event.resource_type === "entity") {
       const current = snapshot.entities[event.id];
       if (!current) return snapshot;
-      if (event.event === "delete" && current.metadata.version >= event.version) return snapshot;
+      if (event.event === "delete" && !isFreshDelete(current.metadata.version, event.version)) return snapshot;
       const entities = { ...snapshot.entities };
       delete entities[event.id];
       return { ...snapshot, entities };
     }
     const current = snapshot.tasks[event.id];
     if (!current) return snapshot;
-    if (event.event === "delete" && current.metadata.version >= event.version) return snapshot;
+    if (event.event === "delete" && !isFreshDelete(current.metadata.version, event.version)) return snapshot;
     const tasks = { ...snapshot.tasks };
     delete tasks[event.id];
     return { ...snapshot, tasks };
   }
 
   return snapshot;
+}
+
+function isFreshDelete(currentVersion: number, eventVersion: number): boolean {
+  return Number.isFinite(eventVersion) && eventVersion > currentVersion;
 }

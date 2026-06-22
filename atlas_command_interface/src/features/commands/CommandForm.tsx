@@ -24,13 +24,14 @@ export function CommandForm(props: CommandFormProps) {
 
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
 
+  const hasValidMapPoint = targeting !== "map_point" || isFiniteMapPoint(mapPoint);
   const missingRequired = formParameters.some(([name, schema]) => schema.required && schema.type !== "boolean" && !(values[name]?.trim()));
   const invalidParameter = formParameters.some(([name, schema]) => parameterError(schema, values[name]) !== undefined);
-  const canSubmit = !submitting && credential.trim().length > 0 && !missingRequired && !invalidParameter;
+  const canSubmit = !submitting && credential.trim().length > 0 && hasValidMapPoint && !missingRequired && !invalidParameter;
 
   const submit = () => {
     const parameters: Record<string, JSONValue> = {};
-    if (targeting === "map_point" && mapPoint) {
+    if (targeting === "map_point" && isFiniteMapPoint(mapPoint)) {
       parameters.latitude = mapPoint.lat;
       parameters.longitude = mapPoint.lng;
     }
@@ -146,4 +147,8 @@ function parameterError(schema: CommandParameterSchema, raw: string | undefined)
   if (schema.minimum !== undefined && value < schema.minimum) return `Must be >= ${schema.minimum}`;
   if (schema.maximum !== undefined && value > schema.maximum) return `Must be <= ${schema.maximum}`;
   return undefined;
+}
+
+function isFiniteMapPoint(value: { lat: number; lng: number } | undefined): value is { lat: number; lng: number } {
+  return value !== undefined && Number.isFinite(value.lat) && Number.isFinite(value.lng);
 }

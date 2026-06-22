@@ -38,11 +38,12 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
             type="button"
             className="rail-button"
             aria-label={item.label}
+            aria-pressed={activeList === item.list}
             data-active={activeList === item.list}
             onClick={() => onSelectList(item.list)}
           >
             <item.Icon size={20} />
-            {item.kind && counts[item.kind] > 0 ? <span className="rail-button__badge">{counts[item.kind]}</span> : null}
+            {item.kind !== undefined && counts[item.kind] > 0 ? <span className="rail-button__badge">{counts[item.kind]}</span> : null}
           </button>
         </Tooltip>
       ))}

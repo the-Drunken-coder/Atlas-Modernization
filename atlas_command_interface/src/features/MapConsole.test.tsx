@@ -34,12 +34,34 @@ const rover: EntityResource = {
   metadata
 };
 
+const area: EntityResource = {
+  entity_id: "geo-1",
+  entity_type: "geofeature",
+  subtype: null,
+  alias: "Area Alpha",
+  components: {
+    geometry: {
+      type: "Polygon",
+      coordinates: [
+        [
+          [-74, 40],
+          [-73.9, 40],
+          [-73.9, 40.1],
+          [-74, 40]
+        ]
+      ]
+    }
+  },
+  metadata
+};
+
 function makeFakeDataSource() {
   let emit: ((event: AtlasWatchEvent) => void) | undefined;
   const submissions: Array<{ submission: CommandSubmission; credential: string }> = [];
+  const geometryUpdates: Array<{ entityId: string; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
     async loadSnapshot() {
-      return { entities: [rover], tasks: [] };
+      return { entities: [rover, area], tasks: [] };
     },
     async loadCommandCatalog() {
       return catalog;
@@ -66,12 +88,13 @@ function makeFakeDataSource() {
       emit?.({ event: "create", resource_type: "task", id: task.task_id, version: 2, resource: task });
       return task;
     },
-    async updateGeometry() {
-      throw new Error("not used in this test");
+    async updateGeometry(entityId, geometry, ifMatchVersion) {
+      geometryUpdates.push({ entityId, ifMatchVersion });
+      return { ...area, components: { ...area.components, geometry }, metadata: { ...area.metadata, version: 10 } };
     },
     dispose() {}
   };
-  return { fake, submissions };
+  return { fake, submissions, geometryUpdates, emit: (event: AtlasWatchEvent) => emit?.(event) };
 }
 
 function renderConsole(fake: AtlasDataSource) {
@@ -109,5 +132,29 @@ describe("MapConsole command flow", () => {
 
     // The created task arrives over the feed and shows as pending in history.
     expect(await screen.findByText("Pending")).toBeInTheDocument();
+  });
+
+  it("saves geometry edits with the version captured when editing started", async () => {
+    const user = userEvent.setup();
+    const { fake, geometryUpdates, emit } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+
+    emit({
+      event: "update",
+      resource_type: "entity",
+      id: "geo-1",
+      version: 7,
+      resource: { ...area, metadata: { ...area.metadata, version: 7 } }
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(geometryUpdates).toHaveLength(1));
+    expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", ifMatchVersion: 1 });
   });
 });

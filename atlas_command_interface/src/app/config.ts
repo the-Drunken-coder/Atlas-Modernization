@@ -17,11 +17,23 @@ export async function fetchAppConfig(signal?: AbortSignal): Promise<AppConfig> {
   if (typeof data.atlasBaseUrl !== "string" || typeof data.protocolRevision !== "string") {
     throw new Error("/api/config returned an unexpected shape");
   }
+  const protocolRevision = data.protocolRevision.trim();
+  if (!protocolRevision) {
+    throw new Error("/api/config returned empty protocolRevision");
+  }
   return {
     atlasBaseUrl: parseConfigUrl(data.atlasBaseUrl, "atlasBaseUrl").replace(/\/$/, ""),
-    protocolRevision: data.protocolRevision,
-    mapStyleUrl: typeof data.mapStyleUrl === "string" && data.mapStyleUrl.trim() !== "" ? parseConfigUrl(data.mapStyleUrl, "mapStyleUrl") : undefined
+    protocolRevision,
+    mapStyleUrl: parseOptionalConfigUrl(data.mapStyleUrl, "mapStyleUrl")
   };
+}
+
+function parseOptionalConfigUrl(value: unknown, field: keyof Pick<AppConfig, "mapStyleUrl">): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`/api/config returned invalid ${field}`);
+  }
+  return value.trim() === "" ? undefined : parseConfigUrl(value, field);
 }
 
 function parseConfigUrl(value: string, field: keyof Pick<AppConfig, "atlasBaseUrl" | "mapStyleUrl">): string {

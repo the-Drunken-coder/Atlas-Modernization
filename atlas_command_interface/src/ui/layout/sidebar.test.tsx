@@ -68,8 +68,13 @@ describe("sidebar rail + panel", () => {
   it("opens a list mode when a rail icon is clicked", async () => {
     const user = userEvent.setup();
     render(<Harness />);
+    expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "false");
+
     await user.click(screen.getByRole("button", { name: "Geo Features" }));
     expect(screen.getByText("list geofeatures")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("switches to inspector mode when a list item is selected", async () => {

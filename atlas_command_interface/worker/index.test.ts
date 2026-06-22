@@ -68,6 +68,26 @@ describe("atlas command worker", () => {
     expect(config).not.toHaveProperty("mapStyleUrl");
   });
 
+  it("omits map style URL when it is absent", async () => {
+    const response = await handleCommandRequest(new Request("https://command.test/api/config"), env(), executionContext());
+
+    expect(response.status).toBe(200);
+    const config = (await response.json()) as Record<string, unknown>;
+    expect(config).not.toHaveProperty("mapStyleUrl");
+  });
+
+  it("omits an explicit empty map style URL", async () => {
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/config"),
+      envWith({ MAP_STYLE_URL: "" }),
+      executionContext()
+    );
+
+    expect(response.status).toBe(200);
+    const config = (await response.json()) as Record<string, unknown>;
+    expect(config).not.toHaveProperty("mapStyleUrl");
+  });
+
   it("proxies Atlas HTTP requests through the Worker origin", async () => {
     let proxiedRequest: { input: Parameters<typeof fetch>[0]; init?: Parameters<typeof fetch>[1] } | undefined;
     const fetchImpl: typeof fetch = async (input, init) => {

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import { useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "primary" | "ghost";
@@ -28,7 +28,9 @@ type TextFieldProps = InputHTMLAttributes<HTMLInputElement> & {
   mono?: boolean;
 };
 
-export function TextField({ label, hint, mono, id, className, ...props }: TextFieldProps) {
+export function TextField({ label, hint, mono, id: providedId, className, ...props }: TextFieldProps) {
+  const generatedId = useId();
+  const id = providedId ?? generatedId;
   return (
     <label className="field" htmlFor={id}>
       {label ? <span className="field__label">{label}</span> : null}
@@ -43,7 +45,9 @@ type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & {
   options: Array<{ value: string; label: string }>;
 };
 
-export function SelectField({ label, options, id, className, ...props }: SelectFieldProps) {
+export function SelectField({ label, options, id: providedId, className, ...props }: SelectFieldProps) {
+  const generatedId = useId();
+  const id = providedId ?? generatedId;
   return (
     <label className="field" htmlFor={id}>
       {label ? <span className="field__label">{label}</span> : null}

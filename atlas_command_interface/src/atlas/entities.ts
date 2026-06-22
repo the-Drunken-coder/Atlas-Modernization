@@ -37,8 +37,10 @@ export function entityGeometry(entity: EntityResource): UiGeometry | undefined {
  */
 export function entityPosition(entity: EntityResource): Position | undefined {
   const telemetry = entity.components.telemetry;
-  if (telemetry && typeof telemetry.latitude === "number" && typeof telemetry.longitude === "number") {
-    return [telemetry.longitude, telemetry.latitude];
+  const latitude = telemetry?.latitude;
+  const longitude = telemetry?.longitude;
+  if (typeof latitude === "number" && Number.isFinite(latitude) && typeof longitude === "number" && Number.isFinite(longitude)) {
+    return [longitude, latitude];
   }
   const geometry = entityGeometry(entity);
   return geometry ? representativePoint(geometry) : undefined;

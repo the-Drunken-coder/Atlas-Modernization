@@ -47,10 +47,26 @@ describe("snapshot store", () => {
     expect(afterDelete).toBe(snapshot);
   });
 
+  it("ignores delete events with invalid versions", () => {
+    const snapshot = snapshotFromDataset([entity("a", "asset", 3)], [task("t1", "a", "pending", 3)]);
+
+    expect(applyWatchEvent(snapshot, { event: "delete", resource_type: "entity", id: "a" } as never)).toBe(snapshot);
+    expect(applyWatchEvent(snapshot, { event: "delete", resource_type: "entity", id: "a", version: Number.NaN })).toBe(snapshot);
+    expect(applyWatchEvent(snapshot, { event: "delete", resource_type: "task", id: "t1" } as never)).toBe(snapshot);
+    expect(applyWatchEvent(snapshot, { event: "delete", resource_type: "task", id: "t1", version: Number.NaN })).toBe(snapshot);
+  });
+
   it("removes entities on delete events", () => {
     let snapshot = snapshotFromDataset([entity("a"), entity("b")], []);
     snapshot = applyWatchEvent(snapshot, { event: "delete", resource_type: "entity", id: "a", version: 4 });
     expect(Object.keys(snapshot.entities)).toEqual(["b"]);
+  });
+
+  it("removes resources on local delete events", () => {
+    let snapshot = snapshotFromDataset([entity("a")], [task("t1", "a")]);
+    snapshot = applyWatchEvent(snapshot, { event: "local_delete", resource_type: "entity", id: "a" });
+    snapshot = applyWatchEvent(snapshot, { event: "local_delete", resource_type: "task", id: "t1" });
+    expect(snapshot).toEqual(emptySnapshot());
   });
 
   it("ignores object events and unchanged deletes by reference", () => {

@@ -69,6 +69,7 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
         dataSourceRef.current = dataSource;
 
         unsubscribe = dataSource.watch((event) => {
+          if (cancelled) return;
           if (!bootstrapped) {
             bufferedEvents.push(event);
             return;

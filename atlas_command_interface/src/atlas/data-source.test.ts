@@ -4,7 +4,10 @@ import { CommandSubmitError, createSdkDataSource } from "./data-source.js";
 const config = { atlasBaseUrl: "https://console.test/atlas", protocolRevision: "rev" };
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("sdk data source command submission", () => {
   it("paginates entity and task snapshots without paginating objects", async () => {
@@ -38,6 +41,52 @@ describe("sdk data source command submission", () => {
     expect(requestedUrls[1]).not.toContain("object_cursor=");
   });
 
+  it("stops snapshot pagination when the server keeps returning cursors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            entities: [],
+            tasks: [],
+            objects: [],
+            has_more_entities: true,
+            has_more_tasks: false,
+            has_more_objects: false,
+            next_entity_cursor: "same-cursor"
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      )
+    );
+
+    const dataSource = createSdkDataSource(config);
+    await expect(dataSource.loadSnapshot()).rejects.toThrow("Atlas snapshot pagination exceeded 100 pages");
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(100);
+  });
+
+  it("rejects paginated snapshots when a required cursor is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            entities: [],
+            tasks: [],
+            objects: [],
+            has_more_entities: true,
+            has_more_tasks: false,
+            has_more_objects: false
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      )
+    );
+
+    const dataSource = createSdkDataSource(config);
+    await expect(dataSource.loadSnapshot()).rejects.toThrow("Atlas snapshot page indicated more entities without a next cursor");
+  });
+
   it("posts to /api/commands with bearer auth and returns the created task", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     vi.stubGlobal(
@@ -59,7 +108,28 @@ describe("sdk data source command submission", () => {
     expect(calls[0].input).toBe("/api/commands");
     expect(calls[0].init.method).toBe("POST");
     expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer secret");
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: "5" } });
+  });
+
+  it("aborts command submissions that do not complete", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          })
+      )
+    );
+
+    const dataSource = createSdkDataSource(config);
+    const pending = dataSource.submitCommand({ entityId: "asset-1", commandId: "hold_position" }, "secret");
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await rejected;
   });
 
   it("wraps non-2xx responses in a CommandSubmitError", async () => {

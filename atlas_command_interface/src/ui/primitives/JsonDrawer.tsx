@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CopyIcon } from "./icons.js";
 
 type JsonDrawerProps = {
@@ -11,13 +11,26 @@ type JsonDrawerProps = {
 export function JsonDrawer({ value, title = "Raw JSON", defaultOpen = false }: JsonDrawerProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const text = useMemo(() => safeStringify(value), [value]);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    },
+    []
+  );
 
   const copy = async () => {
     try {
-      await navigator.clipboard?.writeText(text);
+      if (!navigator.clipboard?.writeText) {
+        setCopied(false);
+        return;
+      }
+      await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1200);
     } catch {
       setCopied(false);
     }

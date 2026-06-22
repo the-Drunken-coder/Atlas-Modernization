@@ -33,7 +33,7 @@ const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track"
 
 type MapMenuState = { x: number; y: number; lat: number; lng: number };
 type CommandFormState = { availability: CommandAvailability; mapPoint?: { lat: number; lng: number } };
-type EditState = { entityId: string; draft: UiGeometry };
+type EditState = { entityId: string; version: number; draft: UiGeometry };
 
 export function MapConsole() {
   const atlas = useAtlas();
@@ -144,7 +144,7 @@ export function MapConsole() {
     const geometry = entityGeometry(selectedEntity);
     if (!geometry) return;
     setSaveError(undefined);
-    setEdit({ entityId: selectedEntity.entity_id, draft: geometry });
+    setEdit({ entityId: selectedEntity.entity_id, version: selectedEntity.metadata.version, draft: geometry });
   }, [selectedEntity]);
 
   const saveEdit = useCallback(async () => {
@@ -152,7 +152,7 @@ export function MapConsole() {
     setSaving(true);
     setSaveError(undefined);
     try {
-      await atlas.updateGeometry(edit.entityId, edit.draft, selectedEntity.metadata.version);
+      await atlas.updateGeometry(edit.entityId, edit.draft, edit.version);
       setEdit(null);
     } catch (cause) {
       setSaveError(cause instanceof Error ? cause.message : String(cause));

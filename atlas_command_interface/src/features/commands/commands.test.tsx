@@ -129,4 +129,24 @@ describe("CommandForm", () => {
     );
     expect(screen.getByRole("button", { name: "Send command" })).toBeDisabled();
   });
+
+  it("keeps submit disabled without finite map coordinates", async () => {
+    const user = userEvent.setup();
+    render(
+      <CommandForm
+        command={command}
+        targeting="map_point"
+        formParameters={params}
+        mapPoint={{ lat: Number.NaN, lng: -74.2 }}
+        credential="secret"
+        onCredentialChange={() => {}}
+        submitting={false}
+        onCancel={() => {}}
+        onSubmit={() => {}}
+      />
+    );
+
+    await user.type(screen.getByRole("spinbutton"), "120");
+    expect(screen.getByRole("button", { name: "Send command" })).toBeDisabled();
+  });
 });

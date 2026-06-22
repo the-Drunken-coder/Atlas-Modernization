@@ -36,6 +36,11 @@ describe("entity accessors", () => {
     expect(entityPosition(entity({ components: {} }))).toBeUndefined();
   });
 
+  it("rejects non-finite telemetry positions", () => {
+    expect(entityPosition(entity({ components: { telemetry: { latitude: Number.NaN, longitude: -74.2 } } }))).toBeUndefined();
+    expect(entityPosition(entity({ components: { telemetry: { latitude: 40.1, longitude: Infinity } } }))).toBeUndefined();
+  });
+
   it("reads structured indicators", () => {
     expect(entityLinkState(entity({ components: { communications: { link_state: "degraded" } } }))).toBe("degraded");
     expect(entityClassification(entity({ components: { mil_view: { classification: "hostile" } } }))).toBe("hostile");
