@@ -122,6 +122,9 @@ export function supportedCommandIds(entity: EntityResource): string[] | undefine
 }
 
 export function commandsForEntity(catalog: CommandCatalog, entity: EntityResource): CommandDefinition[] {
+  if (entity.entity_type !== "asset") {
+    return [];
+  }
   const supported = supportedCommandIds(entity);
   if (supported === undefined) {
     return [];
@@ -131,6 +134,13 @@ export function commandsForEntity(catalog: CommandCatalog, entity: EntityResourc
 }
 
 export function assertEntitySupportsCommand(entity: EntityResource, commandId: string): void {
+  if (entity.entity_type !== "asset") {
+    throw new CommandModelError("UNSUPPORTED_COMMAND", "Only assets can receive commands", {
+      entity_id: entity.entity_id,
+      entity_type: entity.entity_type,
+      command_id: commandId
+    });
+  }
   const supported = supportedCommandIds(entity);
   if (supported === undefined || !supported.includes(commandId)) {
     throw new CommandModelError("UNSUPPORTED_COMMAND", `${entity.entity_id} does not advertise support for ${commandId}`, {

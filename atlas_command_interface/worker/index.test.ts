@@ -160,6 +160,34 @@ describe("atlas command worker", () => {
     await expect(response.json()).resolves.toMatchObject({ error_code: "UNSUPPORTED_COMMAND" });
   });
 
+  it("rejects commands for non-asset targets", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [track("track-1", ["hold_position"])],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "track-1", command_id: "hold_position", parameters: {} }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error_code: "UNSUPPORTED_COMMAND",
+      message: "Only assets can receive commands",
+      details: { entity_id: "track-1", entity_type: "track", command_id: "hold_position" }
+    });
+  });
+
   it("rejects commands when the selected target has no task catalog", async () => {
     const client = fakeClient({
       dataset: {
@@ -451,6 +479,14 @@ function asset(entityId: string, supportedTasks?: string[]): EntityResource {
     alias: "Asset One",
     components: supportedTasks === undefined ? {} : { task_catalog: { supported_tasks: supportedTasks } },
     metadata
+  };
+}
+
+function track(entityId: string, supportedTasks?: string[]): EntityResource {
+  return {
+    ...asset(entityId, supportedTasks),
+    entity_type: "track",
+    alias: "Track One"
   };
 }
 

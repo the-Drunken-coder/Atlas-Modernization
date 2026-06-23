@@ -54,6 +54,15 @@ function asset(supportedTasks?: string[]): EntityResource {
   };
 }
 
+function track(supportedTasks?: string[]): EntityResource {
+  return {
+    ...asset(supportedTasks),
+    entity_id: "track-1",
+    entity_type: "track",
+    alias: "Track 1"
+  };
+}
+
 describe("command model", () => {
   it("normalizes Core object metadata plus JSON payload catalog fields", () => {
     const payload = { ...catalogPayload };
@@ -220,9 +229,10 @@ describe("command model", () => {
       commandsForEntity(catalog, {
         ...asset(),
         components: { task_catalog: { supported_tasks: "hold_position" } }
-      } as unknown as EntityResource).map((command) => command.id)
+    } as unknown as EntityResource).map((command) => command.id)
     ).toEqual([]);
     expect(commandsForEntity(catalog, asset(["", "hold_position", 42 as unknown as string])).map((command) => command.id)).toEqual(["hold_position"]);
+    expect(commandsForEntity(catalog, track(["hold_position"]))).toEqual([]);
   });
 
   it("builds command task payloads with command type and id", () => {
@@ -252,5 +262,6 @@ describe("command model", () => {
     expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "hold_position")).not.toThrow();
     expect(() => assertEntitySupportsCommand(asset([]), "hold_position")).toThrow("does not advertise support");
     expect(() => assertEntitySupportsCommand(asset(), "move_to_location")).toThrow("does not advertise support");
+    expect(() => assertEntitySupportsCommand(track(["hold_position"]), "hold_position")).toThrow("Only assets can receive commands");
   });
 });

@@ -539,7 +539,7 @@ The `atlas_command_interface/` Worker is a small same-origin layer in front of C
 | any | `/atlas` or `/atlas/*` | upstream status | Proxies HTTP requests to Atlas Core after removing the `/atlas` prefix. |
 | websocket | `/atlas/feed` | `101` | Bridges browser websocket traffic to Core `/feed`. |
 
-`POST /api/commands` requires `ATLAS_COMMAND_API_KEY`, supplied with `X-API-Key` or `Authorization: Bearer`. Body:
+`POST /api/commands` requires `ATLAS_COMMAND_API_KEY`, supplied as `Authorization: Bearer <ATLAS_COMMAND_API_KEY>`. Body:
 
 ```json
 {
@@ -553,7 +553,7 @@ The `atlas_command_interface/` Worker is a small same-origin layer in front of C
 }
 ```
 
-The Worker reads the `command_catalog` object from Core, checks that the entity supports the command when `components.task_catalog.supported_tasks` is present, coerces parameters against the catalog schema, and creates a pending task in Core.
+The Worker reads the `command_catalog` object from Core, checks that the target is an asset whose `components.task_catalog.supported_tasks` explicitly lists the command, coerces parameters against the catalog schema, and creates a pending task in Core.
 
 Response:
 
