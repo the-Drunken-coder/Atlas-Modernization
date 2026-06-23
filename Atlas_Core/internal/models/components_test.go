@@ -184,16 +184,18 @@ func TestEntity_GetHeartbeat(t *testing.T) {
 
 func TestTask_GetCommand(t *testing.T) {
 	tests := []struct {
-		name      string
-		json      string
-		wantNil   bool
-		checkType string
+		name       string
+		json       string
+		wantNil    bool
+		checkType  string
+		wantTarget map[string]float64
 	}{
 		{
-			name:      "valid command",
-			json:      `{"components":{"command":{"type":"move","target":{"lat":0,"lon":0}}}}`,
-			wantNil:   false,
-			checkType: "move",
+			name:       "valid command",
+			json:       `{"components":{"command":{"type":"move","target":{"latitude":40.1,"longitude":-74.2}}}}`,
+			wantNil:    false,
+			checkType:  "move",
+			wantTarget: map[string]float64{"latitude": 40.1, "longitude": -74.2},
 		},
 		{
 			name:    "missing command component",
@@ -215,6 +217,11 @@ func TestTask_GetCommand(t *testing.T) {
 			json:    `{"components":{"command":{}}}`,
 			wantNil: true,
 		},
+		{
+			name:    "malformed command target",
+			json:    `{"components":{"command":{"type":"move","target":"latitude=40.1,longitude=-74.2"}}}`,
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -232,6 +239,16 @@ func TestTask_GetCommand(t *testing.T) {
 			}
 			if got.Type != tt.checkType {
 				t.Errorf("GetCommand().Type = %v, want %v", got.Type, tt.checkType)
+			}
+			for key, want := range tt.wantTarget {
+				gotValue, ok := got.Target[key].(float64)
+				if !ok {
+					t.Errorf("GetCommand().Target[%q] = %T(%v), want float64", key, got.Target[key], got.Target[key])
+					continue
+				}
+				if gotValue != want {
+					t.Errorf("GetCommand().Target[%q] = %v, want %v", key, gotValue, want)
+				}
 			}
 		})
 	}

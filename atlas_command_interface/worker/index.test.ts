@@ -160,6 +160,85 @@ describe("atlas command worker", () => {
     await expect(response.json()).resolves.toMatchObject({ error_code: "UNSUPPORTED_COMMAND" });
   });
 
+  it("rejects commands for non-asset targets", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [track("track-1", ["hold_position"])],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "track-1", command_id: "hold_position", parameters: {} }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error_code: "UNSUPPORTED_COMMAND",
+      message: "Only assets can receive commands",
+      details: { entity_id: "track-1", entity_type: "track", command_id: "hold_position" }
+    });
+  });
+
+  it("rejects commands when the selected target has no task catalog", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [asset("asset-1")],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error_code: "UNSUPPORTED_COMMAND",
+      details: { entity_id: "asset-1", command_id: "hold_position" }
+    });
+  });
+
+  it("rejects commands when the selected target advertises an empty task catalog", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [asset("asset-1", [])],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error_code: "UNSUPPORTED_COMMAND" });
+  });
+
   it("rejects unauthenticated command submissions before creating a client", async () => {
     const createClient = vi.fn(() =>
       fakeClient({
@@ -178,6 +257,37 @@ describe("atlas command worker", () => {
     const response = await handleCommandRequest(
       new Request("https://command.test/api/commands", {
         method: "POST",
+        body: JSON.stringify({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } })
+      }),
+      env(),
+      executionContext(),
+      { createClient }
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error_code: "UNAUTHORIZED" });
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("rejects X-API-Key for command submissions", async () => {
+    const createClient = vi.fn(() =>
+      fakeClient({
+        dataset: {
+          entities: [asset("asset-1", ["hold_position"])],
+          tasks: [],
+          objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        },
+        catalog: catalogObject()
+      })
+    );
+
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/commands", {
+        method: "POST",
+        headers: { "X-API-Key": "command-secret" },
         body: JSON.stringify({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } })
       }),
       env(),
@@ -369,6 +479,14 @@ function asset(entityId: string, supportedTasks?: string[]): EntityResource {
     alias: "Asset One",
     components: supportedTasks === undefined ? {} : { task_catalog: { supported_tasks: supportedTasks } },
     metadata
+  };
+}
+
+function track(entityId: string, supportedTasks?: string[]): EntityResource {
+  return {
+    ...asset(entityId, supportedTasks),
+    entity_type: "track",
+    alias: "Track One"
   };
 }
 

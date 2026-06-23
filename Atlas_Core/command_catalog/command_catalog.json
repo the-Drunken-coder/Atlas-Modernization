@@ -199,14 +199,14 @@
       "name": "Goto",
       "description": "Navigate a ground rover in 2D toward a target GPS coordinate (no altitude; stops within arrival_radius). For 3D assets that fly to a precise altitude, use 'move_to_location' instead.",
       "parameters_schema": {
-        "lat": {
+        "latitude": {
           "type": "number",
           "description": "Target latitude in decimal degrees (WGS84).",
           "minimum": -90,
           "maximum": 90,
           "required": true
         },
-        "lon": {
+        "longitude": {
           "type": "number",
           "description": "Target longitude in decimal degrees (WGS84).",
           "minimum": -180,
