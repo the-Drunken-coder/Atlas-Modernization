@@ -47,6 +47,17 @@ describe("snapshot store", () => {
     expect(afterDelete).toBe(snapshot);
   });
 
+  it("ignores events whose resource ID does not match the event ID", () => {
+    const snapshot = snapshotFromDataset([entity("a", "asset", 1)], [task("t1", "a", "pending", 1)]);
+
+    expect(applyWatchEvent(snapshot, { event: "update", resource_type: "entity", id: "a", version: 2, resource: entity("b", "asset", 2) })).toBe(
+      snapshot
+    );
+    expect(applyWatchEvent(snapshot, { event: "update", resource_type: "task", id: "t1", version: 2, resource: task("t2", "a", "pending", 2) })).toBe(
+      snapshot
+    );
+  });
+
   it("ignores delete events with invalid versions", () => {
     const snapshot = snapshotFromDataset([entity("a", "asset", 3)], [task("t1", "a", "pending", 3)]);
 

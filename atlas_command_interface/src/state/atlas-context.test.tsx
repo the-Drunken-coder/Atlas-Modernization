@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
@@ -14,6 +14,22 @@ function StatusProbe() {
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
       {atlas.error ? <code>{atlas.error}</code> : null}
+    </div>
+  );
+}
+
+function GeometryActionProbe() {
+  const atlas = useAtlas();
+  const entityNames = Object.values(atlas.snapshot.entities)
+    .map((entity) => entity.alias ?? entity.entity_id)
+    .join(",");
+  return (
+    <div>
+      <span>{atlas.status}</span>
+      <span data-testid="entity-names">{entityNames}</span>
+      <button type="button" onClick={() => void atlas.updateGeometry("asset-1", { type: "Point", coordinates: [-74.2, 40.1] }, 1)}>
+        save
+      </button>
     </div>
   );
 }
@@ -111,5 +127,47 @@ describe("AtlasProvider", () => {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
       expect(dispose).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("keeps newer watch data when an action resolves with a stale resource version", async () => {
+    let emit: ((event: AtlasWatchEvent) => void) | undefined;
+    const updateGeometry = vi.fn(async () => entity("Stale Action", 1));
+    const fake: AtlasDataSource = {
+      async loadSnapshot() {
+        return { entities: [entity("Initial", 1)], tasks: [] };
+      },
+      async loadCommandCatalog() {
+        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+      },
+      watch(onEvent) {
+        emit = onEvent;
+        return () => {
+          emit = undefined;
+        };
+      },
+      async start() {},
+      async submitCommand() {
+        throw new Error("not used");
+      },
+      updateGeometry,
+      dispose() {}
+    };
+
+    render(
+      <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+        <GeometryActionProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+
+    act(() => {
+      emit?.({ event: "update", resource_type: "entity", id: "asset-1", version: 2, resource: entity("Fresh Watch", 2) });
+    });
+    expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Watch");
+
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(updateGeometry).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Watch"));
   });
 });

@@ -159,5 +159,14 @@ describe("geometry validity", () => {
     expect(
       validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [Number.POSITIVE_INFINITY, 40.2], [-74.2, 40.1]]] })
     ).toEqual({ valid: false, reason: "Polygon contains an invalid coordinate" });
+    expect(
+      validateGeometry({
+        type: "Polygon",
+        coordinates: [
+          [[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2], [-74.2, 40.1]],
+          [[-74.15, 40.15], [-74.12, 40.15], [-74.12, 40.18], [-74.15, 40.18]]
+        ]
+      })
+    ).toEqual({ valid: false, reason: "Polygon ring must repeat its first coordinate to close" });
   });
 });

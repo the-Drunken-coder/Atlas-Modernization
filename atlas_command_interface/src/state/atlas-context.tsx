@@ -130,14 +130,16 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
         const task = await dataSource.submitCommand(submission, credential);
-        setSnapshot((current) => ({ ...current, tasks: { ...current.tasks, [task.task_id]: task } }));
+        setSnapshot((current) => applyWatchEvent(current, { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task }));
         return task;
       },
       updateGeometry: async (entityId, geometry, ifMatchVersion) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
         const entity = await dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
-        setSnapshot((current) => ({ ...current, entities: { ...current.entities, [entity.entity_id]: entity } }));
+        setSnapshot((current) =>
+          applyWatchEvent(current, { event: "update", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity })
+        );
         return entity;
       }
     }),

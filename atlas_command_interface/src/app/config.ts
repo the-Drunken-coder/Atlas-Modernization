@@ -21,10 +21,12 @@ export async function fetchAppConfig(signal?: AbortSignal): Promise<AppConfig> {
   if (!protocolRevision) {
     throw new Error("/api/config returned empty protocolRevision");
   }
+  const atlasBaseUrl = parseConfigUrl(data.atlasBaseUrl, "atlasBaseUrl").replace(/\/$/, "");
+  const mapStyleUrl = parseOptionalConfigUrl(data.mapStyleUrl, "mapStyleUrl");
   return {
-    atlasBaseUrl: parseConfigUrl(data.atlasBaseUrl, "atlasBaseUrl").replace(/\/$/, ""),
+    atlasBaseUrl,
     protocolRevision,
-    mapStyleUrl: parseOptionalConfigUrl(data.mapStyleUrl, "mapStyleUrl")
+    ...(mapStyleUrl ? { mapStyleUrl } : {})
   };
 }
 

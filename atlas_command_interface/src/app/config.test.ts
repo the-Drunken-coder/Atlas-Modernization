@@ -44,8 +44,8 @@ describe("fetchAppConfig", () => {
       );
     vi.stubGlobal("fetch", fetch);
 
-    await expect(fetchAppConfig()).resolves.toEqual({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" });
-    await expect(fetchAppConfig()).resolves.toEqual({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" });
+    await expect(fetchAppConfig()).resolves.toStrictEqual({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" });
+    await expect(fetchAppConfig()).resolves.toStrictEqual({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" });
   });
 
   it("rejects invalid URL fields", async () => {

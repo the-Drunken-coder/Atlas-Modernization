@@ -25,7 +25,7 @@ export function taskCommandId(task: TaskResource): string | undefined {
 
 export function taskParameters(task: TaskResource): Record<string, JSONValue> | undefined {
   const parameters = task.components.parameters;
-  return parameters ? (parameters as Record<string, JSONValue>) : undefined;
+  return isRecord(parameters) ? parameters : undefined;
 }
 
 export function taskStatusMessage(task: TaskResource): string | undefined {
@@ -41,4 +41,8 @@ export function sortTasksByRecency(tasks: TaskResource[]): TaskResource[] {
     if (Number.isFinite(byCreated) && byCreated !== 0) return byCreated;
     return a.task_id.localeCompare(b.task_id);
   });
+}
+
+function isRecord(value: unknown): value is Record<string, JSONValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

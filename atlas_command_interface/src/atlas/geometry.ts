@@ -134,15 +134,19 @@ export function validateGeometry(geometry: UiGeometry): GeometryValidity {
     }
     return geometry.coordinates.every(isFinitePosition) ? { valid: true } : { valid: false, reason: "Line contains an invalid coordinate" };
   }
-  const ring = geometry.coordinates[0];
-  if (!ring || ring.length < 4) {
+  if (geometry.coordinates.length === 0) {
     return { valid: false, reason: "Polygon needs a closed ring of at least four coordinates" };
   }
-  if (!ring.every(isFinitePosition)) {
-    return { valid: false, reason: "Polygon contains an invalid coordinate" };
-  }
-  if (!positionsEqual(ring[0], ring[ring.length - 1])) {
-    return { valid: false, reason: "Polygon ring must repeat its first coordinate to close" };
+  for (const ring of geometry.coordinates) {
+    if (ring.length < 4) {
+      return { valid: false, reason: "Polygon needs a closed ring of at least four coordinates" };
+    }
+    if (!ring.every(isFinitePosition)) {
+      return { valid: false, reason: "Polygon contains an invalid coordinate" };
+    }
+    if (!positionsEqual(ring[0], ring[ring.length - 1])) {
+      return { valid: false, reason: "Polygon ring must repeat its first coordinate to close" };
+    }
   }
   return { valid: true };
 }
