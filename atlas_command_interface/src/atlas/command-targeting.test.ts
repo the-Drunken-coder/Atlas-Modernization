@@ -116,9 +116,16 @@ describe("command targeting", () => {
     expect(result.disabledReason).toBe("Only assets can receive commands");
   });
 
-  it("treats an undeclared task catalog as supporting all commands", () => {
+  it("disables commands when an asset has no task catalog", () => {
     const result = evaluateCommand(entity(), command("move_to_location"));
-    expect(result.disabled).toBe(false);
+    expect(result.disabled).toBe(true);
+    expect(result.disabledReason).toBe("This asset has no declared command support");
+  });
+
+  it("disables commands when an asset advertises an empty supported task list", () => {
+    const result = evaluateCommand(entity({ components: { task_catalog: { supported_tasks: [] } } }), command("move_to_location"));
+    expect(result.disabled).toBe(true);
+    expect(result.disabledReason).toBe("This asset does not support this command");
   });
 
   it("partitions a targeting bucket with valid commands first and stable order", () => {

@@ -10,7 +10,10 @@ import { MapConsole } from "./MapConsole.js";
 // MapLibre never runs in jsdom; stub the map but keep the real source builder.
 vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
-  return { MapView: () => <div data-testid="map" />, buildMapSources: sources.buildMapSources };
+  return {
+    MapView: (props: { editing?: unknown }) => <div data-testid="map" data-editing={props.editing ? "true" : "false"} />,
+    buildMapSources: sources.buildMapSources
+  };
 });
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
@@ -156,5 +159,23 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(geometryUpdates).toHaveLength(1));
     expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", ifMatchVersion: 1 });
+  });
+
+  it("clears geofeature edit state when the selected entity disappears", async () => {
+    const user = userEvent.setup();
+    const { fake, emit } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "true");
+
+    emit({ event: "delete", resource_type: "entity", id: "geo-1", version: 2 });
+
+    expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });

@@ -49,7 +49,10 @@ export function disabledReasonForEntity(entity: EntityResource, command: Command
     return "Only assets can receive commands";
   }
   const supported = supportedCommandIds(entity);
-  if (supported !== undefined && !supported.includes(command.id)) {
+  if (supported === undefined) {
+    return "This asset has no declared command support";
+  }
+  if (!supported.includes(command.id)) {
     return "This asset does not support this command";
   }
   return undefined;

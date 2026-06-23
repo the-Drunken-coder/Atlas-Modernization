@@ -1,6 +1,6 @@
 import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addVertexAfter, geometryVertices, moveVertex, removeVertex, type UiGeometry } from "../../atlas/geometry.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
 import { defaultDarkStyle } from "./map-style.js";
@@ -41,15 +41,15 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const shouldAutoFitRef = useRef(initialCenter === undefined);
   const markersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
-  const [fallbackReason, setFallbackReason] = useState<string>();
+  const [mapError, setMapError] = useState<string>();
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
 
   // Create the map once.
   useEffect(() => {
-    if (fallbackReason) return;
+    if (mapError) return;
     if (!containerRef.current) return;
     if (!webglAvailable()) {
-      setFallbackReason("MapLibre WebGL renderer is unavailable");
+      setMapError("MapLibre WebGL renderer is unavailable");
       return;
     }
 
@@ -63,7 +63,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         attributionControl: { compact: true }
       });
     } catch (error) {
-      setFallbackReason(error instanceof Error ? error.message : "MapLibre failed to initialize");
+      setMapError(error instanceof Error ? error.message : "MapLibre failed to initialize");
       return;
     }
 
@@ -130,7 +130,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     };
     // The map is created once; props are synced via the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fallbackReason]);
+  }, [mapError]);
 
   // Sync entity sources.
   useEffect(() => {
@@ -191,14 +191,11 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
   return (
     <div className="map-canvas" ref={containerRef} style={{ position: "absolute", inset: 0 }} data-testid="map-canvas">
-      {fallbackReason ? (
-        <FallbackMap
-          sources={sources}
-          reason={fallbackReason}
-          onSelectEntity={onSelectEntity}
-          onMapContextMenu={onMapContextMenu}
-          onBackgroundClick={onBackgroundClick}
-        />
+      {mapError ? (
+        <div className="map-unavailable" role="status" aria-live="polite">
+          <span>Map unavailable</span>
+          <code>{mapError}</code>
+        </div>
       ) : null}
     </div>
   );
@@ -332,212 +329,6 @@ function forEachPosition(geometry: UiGeometry, visitor: (position: [number, numb
   for (const ring of geometry.coordinates) {
     for (const position of ring) visitor(position);
   }
-}
-
-type FallbackMapProps = {
-  sources: MapSources;
-  reason: string;
-  onSelectEntity: (id: string) => void;
-  onMapContextMenu: (info: MapContextMenuInfo) => void;
-  onBackgroundClick?: () => void;
-};
-
-const FALLBACK_WIDTH = 1000;
-const FALLBACK_HEIGHT = 620;
-const FALLBACK_PADDING = 44;
-
-function FallbackMap({ sources, reason, onSelectEntity, onMapContextMenu, onBackgroundClick }: FallbackMapProps) {
-  const features = allFeatures(sources);
-  const viewport = fallbackViewport(features);
-
-  const project = (position: [number, number]) => projectFallback(position, viewport);
-  const unproject = (x: number, y: number): [number, number] => {
-    const usableWidth = FALLBACK_WIDTH - FALLBACK_PADDING * 2;
-    const usableHeight = FALLBACK_HEIGHT - FALLBACK_PADDING * 2;
-    const lng = viewport.minLng + ((x - FALLBACK_PADDING) / usableWidth) * (viewport.maxLng - viewport.minLng);
-    const lat = viewport.maxLat - ((y - FALLBACK_PADDING) / usableHeight) * (viewport.maxLat - viewport.minLat);
-    return [clamp(lng, -180, 180), clamp(lat, -85, 85)];
-  };
-
-  function contextMenu(event: ReactMouseEvent<HTMLDivElement>): void {
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * FALLBACK_WIDTH;
-    const y = ((event.clientY - rect.top) / rect.height) * FALLBACK_HEIGHT;
-    const [lng, lat] = unproject(x, y);
-    onMapContextMenu({ lng, lat, x: event.clientX, y: event.clientY });
-  }
-
-  return (
-    <div className="fallback-map" onClick={onBackgroundClick} onContextMenu={contextMenu}>
-      <svg className="fallback-map__svg" viewBox={`0 0 ${FALLBACK_WIDTH} ${FALLBACK_HEIGHT}`} role="img" aria-label="Tactical fallback map">
-        <FallbackGrid viewport={viewport} project={project} />
-        {sources.geofeatures.features.map((feature) => (
-          <FallbackGeometry key={feature.id} feature={feature} project={project} onSelectEntity={onSelectEntity} />
-        ))}
-        {sources.tracks.features.map((feature) => (
-          <FallbackPoint key={feature.id} feature={feature} project={project} onSelectEntity={onSelectEntity} />
-        ))}
-        {sources.assets.features.map((feature) => (
-          <FallbackPoint key={feature.id} feature={feature} project={project} onSelectEntity={onSelectEntity} />
-        ))}
-      </svg>
-      <div className="fallback-map__badge">{reason}</div>
-    </div>
-  );
-}
-
-type FallbackViewport = { minLng: number; maxLng: number; minLat: number; maxLat: number };
-
-function fallbackViewport(features: MapFeature[]): FallbackViewport {
-  let minLng = -130;
-  let maxLng = -60;
-  let minLat = 20;
-  let maxLat = 55;
-  let hasPoint = false;
-  for (const feature of features) {
-    forEachPosition(feature.geometry, ([lng, lat]) => {
-      if (!hasPoint) {
-        minLng = lng;
-        maxLng = lng;
-        minLat = lat;
-        maxLat = lat;
-        hasPoint = true;
-        return;
-      }
-      minLng = Math.min(minLng, lng);
-      maxLng = Math.max(maxLng, lng);
-      minLat = Math.min(minLat, lat);
-      maxLat = Math.max(maxLat, lat);
-    });
-  }
-  const lngPad = Math.max(4, (maxLng - minLng) * 0.12);
-  const latPad = Math.max(3, (maxLat - minLat) * 0.16);
-  return {
-    minLng: clamp(minLng - lngPad, -180, 180),
-    maxLng: clamp(maxLng + lngPad, -180, 180),
-    minLat: clamp(minLat - latPad, -85, 85),
-    maxLat: clamp(maxLat + latPad, -85, 85)
-  };
-}
-
-function projectFallback([lng, lat]: [number, number], viewport: FallbackViewport): { x: number; y: number } {
-  const usableWidth = FALLBACK_WIDTH - FALLBACK_PADDING * 2;
-  const usableHeight = FALLBACK_HEIGHT - FALLBACK_PADDING * 2;
-  const x = FALLBACK_PADDING + ((lng - viewport.minLng) / (viewport.maxLng - viewport.minLng || 1)) * usableWidth;
-  const y = FALLBACK_PADDING + ((viewport.maxLat - lat) / (viewport.maxLat - viewport.minLat || 1)) * usableHeight;
-  return { x, y };
-}
-
-function FallbackGrid({
-  viewport,
-  project
-}: {
-  viewport: FallbackViewport;
-  project: (position: [number, number]) => { x: number; y: number };
-}) {
-  const lngLines = gridValues(viewport.minLng, viewport.maxLng, 10);
-  const latLines = gridValues(viewport.minLat, viewport.maxLat, 5);
-  return (
-    <g className="fallback-map__grid">
-      {lngLines.map((lng) => {
-        const top = project([lng, viewport.maxLat]);
-        const bottom = project([lng, viewport.minLat]);
-        return <line key={`lng-${lng}`} x1={top.x} y1={top.y} x2={bottom.x} y2={bottom.y} />;
-      })}
-      {latLines.map((lat) => {
-        const left = project([viewport.minLng, lat]);
-        const right = project([viewport.maxLng, lat]);
-        return <line key={`lat-${lat}`} x1={left.x} y1={left.y} x2={right.x} y2={right.y} />;
-      })}
-    </g>
-  );
-}
-
-function FallbackGeometry({
-  feature,
-  project,
-  onSelectEntity
-}: {
-  feature: MapFeature;
-  project: (position: [number, number]) => { x: number; y: number };
-  onSelectEntity: (id: string) => void;
-}) {
-  if (feature.geometry.type === "Point") {
-    return <FallbackPoint feature={feature} project={project} onSelectEntity={onSelectEntity} />;
-  }
-  if (feature.geometry.type === "LineString") {
-    return <FallbackPath feature={feature} positions={feature.geometry.coordinates} project={project} onSelectEntity={onSelectEntity} />;
-  }
-  const [outer] = feature.geometry.coordinates;
-  return (
-    <g className={feature.properties.selected ? "fallback-feature fallback-feature--selected" : "fallback-feature"} onClick={(event) => selectFallback(event, feature, onSelectEntity)}>
-      <polygon points={points(outer, project)} className="fallback-feature__fill" />
-      <polyline points={points(outer, project)} className="fallback-feature__line" />
-    </g>
-  );
-}
-
-function FallbackPath({
-  feature,
-  positions,
-  project,
-  onSelectEntity
-}: {
-  feature: MapFeature;
-  positions: [number, number][];
-  project: (position: [number, number]) => { x: number; y: number };
-  onSelectEntity: (id: string) => void;
-}) {
-  return (
-    <polyline
-      className={feature.properties.selected ? "fallback-feature fallback-feature--selected" : "fallback-feature"}
-      points={points(positions, project)}
-      onClick={(event) => selectFallback(event, feature, onSelectEntity)}
-    />
-  );
-}
-
-function FallbackPoint({
-  feature,
-  project,
-  onSelectEntity
-}: {
-  feature: MapFeature;
-  project: (position: [number, number]) => { x: number; y: number };
-  onSelectEntity: (id: string) => void;
-}) {
-  if (feature.geometry.type !== "Point") return null;
-  const { x, y } = project(feature.geometry.coordinates);
-  return (
-    <g className={`fallback-point fallback-point--${feature.properties.kind}${feature.properties.selected ? " fallback-point--selected" : ""}`} onClick={(event) => selectFallback(event, feature, onSelectEntity)}>
-      <circle cx={x} cy={y} r={feature.properties.selected ? 8 : 5.5} />
-      <title>{feature.properties.name}</title>
-    </g>
-  );
-}
-
-function points(positions: [number, number][], project: (position: [number, number]) => { x: number; y: number }): string {
-  return positions.map((position) => {
-    const { x, y } = project(position);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-}
-
-function selectFallback(event: ReactMouseEvent, feature: MapFeature, onSelectEntity: (id: string) => void): void {
-  event.stopPropagation();
-  onSelectEntity(feature.properties.entityId);
-}
-
-function gridValues(min: number, max: number, step: number): number[] {
-  const values: number[] = [];
-  const start = Math.ceil(min / step) * step;
-  for (let value = start; value <= max; value += step) values.push(value);
-  return values;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 export { buildMapSources };

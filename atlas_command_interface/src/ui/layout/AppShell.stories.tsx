@@ -48,8 +48,8 @@ function ShellStory({ initialCollapsed }: { initialCollapsed: boolean }) {
           </SidebarPanel>
         }
         map={
-          <div className="fallback-map">
-            <span className="fallback-map__badge">Map workspace</span>
+          <div className="map-unavailable">
+            <span>Map workspace</span>
           </div>
         }
       />

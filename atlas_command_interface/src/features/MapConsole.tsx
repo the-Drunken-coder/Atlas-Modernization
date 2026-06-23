@@ -52,6 +52,7 @@ export function MapConsole() {
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
   const selectedId = selection?.id;
+  const selectedEntityId = selectedEntity?.entity_id;
 
   // Drop transient command UI when the selected entity changes.
   useEffect(() => {
@@ -67,6 +68,17 @@ export function MapConsole() {
       setSaveError(undefined);
     }
   }, [edit, selectedId]);
+
+  // Live updates can remove the selected entity while the sidebar still holds
+  // its ID; transient command/edit UI must follow the snapshot.
+  useEffect(() => {
+    if (!selectedId || selectedEntityId) return;
+    setMapMenu(null);
+    setCommandForm(null);
+    setSubmitError(undefined);
+    setEdit(null);
+    setSaveError(undefined);
+  }, [selectedId, selectedEntityId]);
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);

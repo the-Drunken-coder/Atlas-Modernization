@@ -210,10 +210,10 @@ describe("command model", () => {
     expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, typo: "" })).toThrow("Unknown parameter typo");
   });
 
-  it("filters commands only when an entity declares supported tasks", () => {
+  it("filters commands through explicit supported task declarations", () => {
     const catalog = parseCommandCatalog(catalogPayload);
 
-    expect(commandsForEntity(catalog, asset()).map((command) => command.id)).toEqual(["move_to_location", "hold_position"]);
+    expect(commandsForEntity(catalog, asset())).toEqual([]);
     expect(commandsForEntity(catalog, asset(["hold_position"])).map((command) => command.id)).toEqual(["hold_position"]);
     expect(commandsForEntity(catalog, asset([]))).toEqual([]);
     expect(
@@ -221,7 +221,7 @@ describe("command model", () => {
         ...asset(),
         components: { task_catalog: { supported_tasks: "hold_position" } }
       } as unknown as EntityResource).map((command) => command.id)
-    ).toEqual(["move_to_location", "hold_position"]);
+    ).toEqual([]);
     expect(commandsForEntity(catalog, asset(["", "hold_position", 42 as unknown as string])).map((command) => command.id)).toEqual(["hold_position"]);
   });
 
@@ -250,6 +250,7 @@ describe("command model", () => {
   it("enforces entity command support declarations", () => {
     expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "move_to_location")).toThrow("does not advertise support");
     expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "hold_position")).not.toThrow();
-    expect(() => assertEntitySupportsCommand(asset(), "move_to_location")).not.toThrow();
+    expect(() => assertEntitySupportsCommand(asset([]), "hold_position")).toThrow("does not advertise support");
+    expect(() => assertEntitySupportsCommand(asset(), "move_to_location")).toThrow("does not advertise support");
   });
 });

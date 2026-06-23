@@ -206,6 +206,57 @@ describe("atlas command worker", () => {
     await expect(response.json()).resolves.toMatchObject({ error_code: "UNSUPPORTED_COMMAND" });
   });
 
+  it("rejects commands when the selected target has no task catalog", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [asset("asset-1")],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error_code: "UNSUPPORTED_COMMAND",
+      details: { entity_id: "asset-1", command_id: "hold_position" }
+    });
+  });
+
+  it("rejects commands when the selected target advertises an empty task catalog", async () => {
+    const client = fakeClient({
+      dataset: {
+        entities: [asset("asset-1", [])],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      },
+      catalog: catalogObject()
+    });
+
+    const response = await handleCommandRequest(
+      commandRequest({ entity_id: "asset-1", command_id: "hold_position", parameters: { seconds: 5 } }),
+      env(),
+      executionContext(),
+      { createClient: () => client }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error_code: "UNSUPPORTED_COMMAND" });
+  });
+
   it("rejects unauthenticated command submissions before creating a client", async () => {
     const createClient = vi.fn(() =>
       fakeClient({

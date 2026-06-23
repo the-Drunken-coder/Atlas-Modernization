@@ -546,94 +546,30 @@
   inset: 0;
 }
 
-.fallback-map {
+.map-unavailable {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  background:
-    linear-gradient(rgba(63, 182, 255, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(63, 182, 255, 0.045) 1px, transparent 1px),
-    radial-gradient(circle at 45% 42%, rgba(63, 182, 255, 0.1), transparent 34%),
-    #070a0f;
-  background-size: 44px 44px, 44px 44px, 100% 100%, 100% 100%;
-}
-
-.fallback-map__svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.fallback-map__grid line {
-  stroke: rgba(154, 167, 184, 0.22);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.fallback-feature {
-  fill: none;
-  stroke: var(--map-geofeature);
-  stroke-width: 2.2;
-  cursor: pointer;
-  vector-effect: non-scaling-stroke;
-}
-
-.fallback-feature__fill {
-  fill: var(--map-geofeature-fill);
-  stroke: none;
-}
-
-.fallback-feature__line {
-  fill: none;
-  stroke: var(--map-geofeature);
-  stroke-width: 2.2;
-  vector-effect: non-scaling-stroke;
-}
-
-.fallback-feature--selected,
-.fallback-feature--selected .fallback-feature__line {
-  stroke: var(--map-selected);
-  stroke-width: 3.2;
-}
-
-.fallback-point {
-  cursor: pointer;
-}
-
-.fallback-point circle {
-  fill: var(--map-asset);
-  stroke: rgba(0, 0, 0, 0.72);
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-}
-
-.fallback-point--track circle {
-  fill: var(--map-track);
-}
-
-.fallback-point--geofeature circle {
-  fill: var(--map-geofeature);
-}
-
-.fallback-point--selected circle {
-  stroke: var(--map-selected);
-  stroke-width: 3;
-}
-
-.fallback-map__badge {
-  position: absolute;
-  right: var(--space-3);
-  bottom: var(--space-3);
-  z-index: 10;
-  max-width: 320px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  display: grid;
+  place-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--bg-base);
   color: var(--text-2);
+  text-align: center;
+}
+
+.map-unavailable span {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.map-unavailable code {
+  max-width: min(520px, calc(100vw - 96px));
+  color: var(--text-3);
+  font-family: var(--font-mono);
   font-size: 11px;
-  box-shadow: var(--shadow-panel);
+  white-space: normal;
 }
 
 .map-overlay-tl {

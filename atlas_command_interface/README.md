@@ -30,6 +30,16 @@ of preserving backwards compatibility.
 The browser reaches Atlas Core only through the same-origin Worker; it never
 learns private Core deployment details. Live updates flow over `/atlas/feed`
 with refresh/recovery through normal Core queries (both via the Atlas SDK).
+The map workspace requires MapLibre/WebGL; unsupported environments show a
+clear map-unavailable state rather than a second renderer.
+
+## Command Support Policy
+
+Command availability fails closed. An asset can receive a command only when its
+`components.task_catalog.supported_tasks` array explicitly lists that command ID.
+Assets with a missing or malformed task catalog have no available commands. The
+browser UI uses the same policy for disabled command buttons, and the Worker
+enforces it again before creating a task.
 
 ## Local Development
 
