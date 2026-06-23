@@ -3,7 +3,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { addVertexAfter, geometryVertices, moveVertex, removeVertex, type Position, type UiGeometry, type VertexRef } from "../../atlas/geometry.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
-import { defaultDarkStyle } from "./map-style.js";
+import { defaultBlankStyle } from "./map-style.js";
 
 const COLORS = {
   asset: "#3fb6ff",
@@ -58,7 +58,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl ?? defaultDarkStyle(),
+        style: styleUrl ?? defaultBlankStyle(),
         center: initialCenter ?? [0, 20],
         zoom: initialCenter ? 11 : 1.6,
         attributionControl: { compact: true }

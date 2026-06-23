@@ -45,8 +45,9 @@ enforces it again before creating a task.
 
 1. Start Atlas Core from this checkout.
 2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
-3. Configure non-secret Worker vars in `wrangler.jsonc`. To override the default
-   dark basemap, set a `MAP_STYLE_URL` var to a MapLibre style URL.
+3. Configure non-secret Worker vars in `wrangler.jsonc`. Set `MAP_STYLE_URL` to
+   a MapLibre style URL when you want a real basemap; without it, the map uses a
+   local blank background and does not request public map tiles.
 4. Add `.dev.vars` for local secrets. `ATLAS_COMMAND_API_KEY` gates `/api/commands`; `ATLAS_API_KEY` is only for Worker-to-Core requests when Core auth is enabled:
 
    ```text
