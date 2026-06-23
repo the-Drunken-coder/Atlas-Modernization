@@ -88,7 +88,11 @@ export function MapConsole() {
             snapshot={snapshot}
             sidebar={sidebar}
             selectedEntity={selectedEntity}
-            onSelectEntity={(entity) => dispatch({ type: "selectEntity", kind: entityKind(entity) as EntityKind, id: entity.entity_id })}
+            onSelectEntity={(entity) => {
+              const kind = entityKind(entity);
+              if (kind === "other") return;
+              dispatch({ type: "selectEntity", kind, id: entity.entity_id });
+            }}
           />
         </SidebarPanel>
       }

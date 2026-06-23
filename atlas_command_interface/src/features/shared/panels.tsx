@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 export function Section({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
   return (
@@ -16,10 +16,10 @@ export function FieldGrid({ rows }: { rows: Array<[string, ReactNode]> }) {
   return (
     <dl className="field-grid">
       {rows.map(([label, value]) => (
-        <div key={label} style={{ display: "contents" }}>
+        <Fragment key={label}>
           <dt>{label}</dt>
           <dd>{value ?? "—"}</dd>
-        </div>
+        </Fragment>
       ))}
     </dl>
   );

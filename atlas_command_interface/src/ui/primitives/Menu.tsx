@@ -43,7 +43,7 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
       x: clamp(x, margin, Math.max(margin, window.innerWidth - rect.width - margin)),
       y: clamp(y, margin, Math.max(margin, window.innerHeight - rect.height - margin))
     });
-  }, [x, y, header, items.length, emptyLabel]);
+  }, [x, y, header, items, emptyLabel]);
 
   return (
     <>

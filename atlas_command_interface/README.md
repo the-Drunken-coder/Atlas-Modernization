@@ -60,10 +60,13 @@ in the follow-up command/editing branch.
    npm --prefix atlas_command_interface run cf:types
    ```
 
-6. Run the Worker and Vite dev server together:
+6. Run the Worker and Vite dev server in separate terminals:
 
    ```bash
+   # terminal 1
    npm --prefix atlas_command_interface run dev:worker
+
+   # terminal 2
    npm --prefix atlas_command_interface run dev
    ```
 
