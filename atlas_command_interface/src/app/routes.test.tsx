@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConsoleRoutes } from "./routes.js";
+
+// MapConsole pulls in MapLibre; stub it so routing can be tested in jsdom.
+vi.mock("../features/MapConsole.js", () => ({ MapConsole: () => <div>console</div> }));
 
 describe("console routes", () => {
   it("redirects /home to /map", () => {
