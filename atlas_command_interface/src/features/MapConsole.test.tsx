@@ -11,10 +11,15 @@ import { MapConsole } from "./MapConsole.js";
 vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
   return {
-    MapView: (props: { editing?: unknown; onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void }) => (
+    MapView: (props: {
+      editing?: unknown;
+      onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+      onBackgroundClick?: () => void;
+    }) => (
       <div
         data-testid="map"
         data-editing={props.editing ? "true" : "false"}
+        onClick={() => props.onBackgroundClick?.()}
         onContextMenu={(event) => {
           event.preventDefault();
           props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
@@ -195,6 +200,20 @@ describe("MapConsole command flow", () => {
       submission: { entityId: "asset-1", commandId: "goto", parameters: { latitude: 47.61, longitude: -122.33 } },
       credential: "test-key"
     });
+  });
+
+  it("clears the selected entity when the map background is clicked", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    expect(await screen.findByRole("button", { name: /Hold Position/ })).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("map"));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Hold Position/ })).not.toBeInTheDocument());
+    expect(screen.getByText("Rover")).toBeInTheDocument();
   });
 
   it("clears geofeature edit state when the selected entity disappears", async () => {
