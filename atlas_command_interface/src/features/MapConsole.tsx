@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useReducer } from "react";
 import type { EntityResource } from "../../../atlas_sdk/src/index.js";
-import { entityKind, entityPosition, type EntityKind } from "../atlas/entities.js";
+import { entityKind, type EntityKind } from "../atlas/entities.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { useAtlas } from "../state/atlas-context.js";
@@ -34,7 +34,6 @@ export function MapConsole() {
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
-  const initialCenter = useMemo(() => firstPosition(snapshot), [snapshot]);
 
   const selectEntityById = useCallback(
     (id: string) => {
@@ -102,7 +101,6 @@ export function MapConsole() {
             sources={sources}
             styleUrl={atlas.config?.mapStyleUrl}
             selectedId={selectedId}
-            initialCenter={initialCenter}
             onSelectEntity={selectEntityById}
             onBackgroundClick={() => dispatch({ type: "clearSelection" })}
           />
@@ -177,12 +175,4 @@ function ConnectionBadge({ running, healthy, degraded }: { running: boolean; hea
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {
   if (sidebar.view.mode === "list") return LIST_TITLES[sidebar.view.list];
   return selectionKind ? KIND_TITLES[selectionKind] : "Inspector";
-}
-
-function firstPosition(snapshot: AtlasSnapshot): [number, number] | undefined {
-  for (const entity of Object.values(snapshot.entities)) {
-    const position = entityPosition(entity);
-    if (position) return position;
-  }
-  return undefined;
 }

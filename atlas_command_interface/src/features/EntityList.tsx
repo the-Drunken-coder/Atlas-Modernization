@@ -23,24 +23,24 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect }: Entit
     return <div className="panel__empty">{emptyLabel}</div>;
   }
   return (
-    <div className="entity-list" role="list">
+    <ul className="entity-list">
       {entities.map((entity) => (
-        <button
-          key={entity.entity_id}
-          type="button"
-          role="listitem"
-          className="entity-row"
-          data-selected={entity.entity_id === selectedId}
-          onClick={() => onSelect(entity)}
-        >
-          <span className="entity-row__dot" style={{ background: entityDotColor(entity) }} />
-          <span className="entity-row__main">
-            <span className="entity-row__name">{entityDisplayName(entity)}</span>
-            <span className="entity-row__meta">{entityMeta(entity)}</span>
-          </span>
-        </button>
+        <li key={entity.entity_id}>
+          <button
+            type="button"
+            className="entity-row"
+            data-selected={entity.entity_id === selectedId}
+            onClick={() => onSelect(entity)}
+          >
+            <span className="entity-row__dot" style={{ background: entityDotColor(entity) }} />
+            <span className="entity-row__main">
+              <span className="entity-row__name">{entityDisplayName(entity)}</span>
+              <span className="entity-row__meta">{entityMeta(entity)}</span>
+            </span>
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
