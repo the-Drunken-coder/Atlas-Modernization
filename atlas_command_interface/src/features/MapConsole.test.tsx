@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
@@ -11,7 +11,16 @@ import { MapConsole } from "./MapConsole.js";
 vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
   return {
-    MapView: (props: { editing?: unknown }) => <div data-testid="map" data-editing={props.editing ? "true" : "false"} />,
+    MapView: (props: { editing?: unknown; onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void }) => (
+      <div
+        data-testid="map"
+        data-editing={props.editing ? "true" : "false"}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
+        }}
+      />
+    ),
     buildMapSources: sources.buildMapSources
   };
 });
@@ -24,6 +33,15 @@ const catalog = parseCommandCatalog({
   description: "Test",
   commands: [
     { id: "hold_position", name: "Hold Position", description: "Hold here.", parameters_schema: {} },
+    {
+      id: "goto",
+      name: "Goto",
+      description: "Go there.",
+      parameters_schema: {
+        latitude: { type: "number", description: "Latitude", minimum: -90, maximum: 90, required: true },
+        longitude: { type: "number", description: "Longitude", minimum: -180, maximum: 180, required: true }
+      }
+    },
     { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
   ]
 });
@@ -33,7 +51,7 @@ const rover: EntityResource = {
   entity_type: "asset",
   subtype: null,
   alias: "Rover",
-  components: { task_catalog: { supported_tasks: ["hold_position"] }, telemetry: { latitude: 40, longitude: -74 } },
+  components: { task_catalog: { supported_tasks: ["hold_position", "goto"] }, telemetry: { latitude: 40, longitude: -74 } },
   metadata
 };
 
@@ -159,6 +177,24 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(geometryUpdates).toHaveLength(1));
     expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", ifMatchVersion: 1 });
+  });
+
+  it("submits map-point commands with the clicked coordinates", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    fireEvent.contextMenu(screen.getByTestId("map"));
+    await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
+    await user.type(screen.getByPlaceholderText("ATLAS_COMMAND_API_KEY"), "test-key");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({
+      submission: { entityId: "asset-1", commandId: "goto", parameters: { latitude: 47.61, longitude: -122.33 } },
+      credential: "test-key"
+    });
   });
 
   it("clears geofeature edit state when the selected entity disappears", async () => {

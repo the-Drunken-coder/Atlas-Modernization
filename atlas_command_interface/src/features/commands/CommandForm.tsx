@@ -39,6 +39,7 @@ export function CommandForm(props: CommandFormProps) {
       const raw = values[name];
       if (schema.type === "boolean") {
         if (raw === "true") parameters[name] = true;
+        else if (raw === "false") parameters[name] = false;
         else if (schema.required) parameters[name] = false;
         continue;
       }

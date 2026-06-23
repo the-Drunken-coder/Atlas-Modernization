@@ -95,7 +95,7 @@ export function MapConsole() {
   );
 
   const submit = useCallback(
-    async (availability: CommandAvailability, parameters: Record<string, JSONValue>) => {
+    async (availability: CommandAvailability, parameters: Record<string, JSONValue>, errorFormState?: CommandFormState) => {
       if (!selectedEntity) return;
       setSubmitting(true);
       setSubmitError(undefined);
@@ -103,7 +103,9 @@ export function MapConsole() {
         await atlas.submitCommand({ entityId: selectedEntity.entity_id, commandId: availability.command.id, parameters }, credential);
         setCommandForm(null);
       } catch (cause) {
-        setSubmitError(cause instanceof CommandSubmitError ? `${cause.errorCode}: ${cause.message}` : cause instanceof Error ? cause.message : String(cause));
+        const message = cause instanceof CommandSubmitError ? `${cause.errorCode}: ${cause.message}` : cause instanceof Error ? cause.message : String(cause);
+        setSubmitError(message);
+        setCommandForm((current) => current ?? errorFormState ?? null);
       } finally {
         setSubmitting(false);
       }
@@ -113,28 +115,32 @@ export function MapConsole() {
 
   const pickSidebarCommand = useCallback(
     (availability: CommandAvailability) => {
-      if (availability.disabled) return;
+      if (submitting || availability.disabled) return;
       if (availability.requiresForm || !credential.trim()) {
         setSubmitError(undefined);
         setCommandForm({ availability });
         return;
       }
-      void submit(availability, {});
+      const formState = { availability };
+      setCommandForm(formState);
+      void submit(availability, {}, formState);
     },
-    [credential, submit]
+    [credential, submit, submitting]
   );
 
   const pickMapCommand = useCallback(
     (availability: CommandAvailability, point: { lat: number; lng: number }) => {
-      if (availability.disabled) return;
+      if (submitting || availability.disabled) return;
       if (availability.requiresForm || !credential.trim()) {
         setSubmitError(undefined);
         setCommandForm({ availability, mapPoint: point });
         return;
       }
-      void submit(availability, { latitude: point.lat, longitude: point.lng });
+      const formState = { availability, mapPoint: point };
+      setCommandForm(formState);
+      void submit(availability, { latitude: point.lat, longitude: point.lng }, formState);
     },
-    [credential, submit]
+    [credential, submit, submitting]
   );
 
   const onMapContextMenu = useCallback(
@@ -239,7 +245,10 @@ export function MapConsole() {
               onStartEdit={startEdit}
               onChangeDraft={(geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current))}
               onSaveEdit={() => void saveEdit()}
-              onCancelEdit={() => setEdit(null)}
+              onCancelEdit={() => {
+                setEdit(null);
+                setSaveError(undefined);
+              }}
             />
           </SidebarPanel>
         }
@@ -284,7 +293,7 @@ export function MapConsole() {
           submitting={submitting}
           error={submitError}
           onCancel={() => setCommandForm(null)}
-          onSubmit={(parameters) => void submit(commandForm.availability, parameters)}
+          onSubmit={(parameters) => void submit(commandForm.availability, parameters, commandForm)}
         />
       ) : null}
     </>

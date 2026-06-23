@@ -149,4 +149,37 @@ describe("CommandForm", () => {
     await user.type(screen.getByRole("spinbutton"), "120");
     expect(screen.getByRole("button", { name: "Send command" })).toBeDisabled();
   });
+
+  it("submits optional boolean parameters when explicitly set to false", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const booleanCommand = {
+      id: "set_flag",
+      name: "Set Flag",
+      description: "Toggle a flag.",
+      parameters_schema: {
+        flag: { type: "boolean", description: "Optional flag", required: false }
+      }
+    } as const;
+
+    render(
+      <CommandForm
+        command={booleanCommand}
+        targeting="none"
+        formParameters={[["flag", booleanCommand.parameters_schema.flag]]}
+        credential="secret"
+        onCredentialChange={() => {}}
+        submitting={false}
+        onCancel={() => {}}
+        onSubmit={onSubmit}
+      />
+    );
+
+    const flag = screen.getByRole("checkbox", { name: "flag" });
+    await user.click(flag);
+    await user.click(flag);
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({ flag: false });
+  });
 });

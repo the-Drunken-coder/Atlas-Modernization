@@ -1,7 +1,7 @@
 import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
-import { addVertexAfter, geometryVertices, moveVertex, removeVertex, type UiGeometry } from "../../atlas/geometry.js";
+import { addVertexAfter, geometryVertices, moveVertex, removeVertex, type Position, type UiGeometry, type VertexRef } from "../../atlas/geometry.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
 import { defaultDarkStyle } from "./map-style.js";
 
@@ -42,6 +42,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const markersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const [mapError, setMapError] = useState<string>();
+  const [mapReady, setMapReady] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
 
   // Create the map once.
@@ -78,6 +79,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       if (readyRef.current) return;
       registerSourcesAndLayers(map);
       readyRef.current = true;
+      setMapReady(true);
       pushSources(map, sources);
       if (shouldAutoFitRef.current) fitToSourcesOnce(map, sources, fitOnceRef);
 
@@ -122,6 +124,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
     return () => {
       readyRef.current = false;
+      setMapReady(false);
       resizeObserver.disconnect();
       clearMarkers(markersRef.current);
       markersRef.current = [];
@@ -144,7 +147,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   // Sync the editing overlay (live geometry + draggable handles).
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !mapReady) return;
 
     clearMarkers(markersRef.current);
     markersRef.current = [];
@@ -187,7 +190,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       });
       markersRef.current.push(marker);
     }
-  }, [editing]);
+  }, [editing, mapReady]);
 
   return (
     <div className="map-canvas" ref={containerRef} style={{ position: "absolute", inset: 0 }} data-testid="map-canvas">
@@ -201,21 +204,42 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   );
 }
 
-type Midpoint = { lng: number; lat: number; afterRef: ReturnType<typeof geometryVertices>[number]["ref"] };
+type Midpoint = { lng: number; lat: number; afterRef: VertexRef };
 
 function midpoints(geometry: UiGeometry): Midpoint[] {
   if (geometry.type === "Point") return [];
-  const vertices = geometryVertices(geometry);
   const result: Midpoint[] = [];
-  const wrap = geometry.type === "Polygon";
-  for (let index = 0; index < vertices.length; index++) {
-    const current = vertices[index];
-    const nextIndex = index + 1;
-    const next = vertices[nextIndex] ?? (wrap ? vertices[0] : undefined);
-    if (!next) break;
-    result.push({ lng: (current.lng + next.lng) / 2, lat: (current.lat + next.lat) / 2, afterRef: current.ref });
+  if (geometry.type === "LineString") {
+    for (let index = 0; index < geometry.coordinates.length - 1; index++) {
+      result.push(midpoint(geometry.coordinates[index], geometry.coordinates[index + 1], { kind: "LineString", index }));
+    }
+    return result;
+  }
+  for (const [ringIndex, ring] of geometry.coordinates.entries()) {
+    const open = openRing(ring);
+    for (let index = 0; index < open.length; index++) {
+      const next = open[(index + 1) % open.length];
+      if (!next) continue;
+      result.push(midpoint(open[index], next, { kind: "Polygon", ring: ringIndex, index }));
+    }
   }
   return result;
+}
+
+function midpoint(current: Position, next: Position, afterRef: VertexRef): Midpoint {
+  return { lng: (current[0] + next[0]) / 2, lat: (current[1] + next[1]) / 2, afterRef };
+}
+
+function openRing(ring: Position[]): Position[] {
+  if (ring.length >= 2 && positionsEqual(ring[0], ring[ring.length - 1])) {
+    return ring.slice(0, -1);
+  }
+  return [...ring];
+}
+
+function positionsEqual(a: Position | undefined, b: Position | undefined): boolean {
+  if (!a || !b) return false;
+  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
 
 function pushSources(map: MlMap, sources: MapSources): void {

@@ -5,9 +5,10 @@ import { snapshotFromDataset, type AtlasSnapshot } from "../atlas/store.js";
 import type { AtlasContextValue } from "../state/atlas-context.js";
 
 const BASE_TIME = "2026-06-21T17:30:00Z";
+const FIXTURE_NOW = "2026-06-21T18:00:00Z";
 
 function minutesAgo(minutes: number): string {
-  return new Date(Date.now() - minutes * 60_000).toISOString();
+  return new Date(Date.parse(FIXTURE_NOW) - minutes * 60_000).toISOString();
 }
 
 function metadata(version = 1) {
