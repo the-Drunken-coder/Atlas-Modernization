@@ -65,7 +65,8 @@ Use:
 
 - React + TypeScript.
 - Vite for the browser app.
-- MapLibre GL JS for map rendering and online map tiles.
+- MapLibre GL JS for map rendering, with basemap tiles supplied only by a
+  configured `MAP_STYLE_URL`.
 - The existing Atlas SDK for Atlas Core data access.
 - Existing Worker routes for same-origin access:
   - `/api/config`
