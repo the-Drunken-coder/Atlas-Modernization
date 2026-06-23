@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { MapConsole } from "../features/MapConsole.js";
 import { Providers } from "./providers.js";
 
 /**
- * Route table. `/map` is the only workspace; `/home` and any unknown path
- * redirect to it. `mapElement` is injectable so later console layers can mount
- * their map experience without changing the app shell.
+ * Route table. `/map` is the only real workspace; `/home` and any unknown path
+ * redirect to it. `mapElement` is injectable so routing can be tested without
+ * the live Atlas data layer.
  */
 export function ConsoleRoutes({ mapElement }: { mapElement: ReactNode }) {
   return (
@@ -17,15 +18,11 @@ export function ConsoleRoutes({ mapElement }: { mapElement: ReactNode }) {
   );
 }
 
-function MapShellPlaceholder() {
-  return <main aria-label="Atlas map console" />;
-}
-
 export function AppRoutes() {
   return (
     <BrowserRouter>
       <Providers>
-        <ConsoleRoutes mapElement={<MapShellPlaceholder />} />
+        <ConsoleRoutes mapElement={<MapConsole />} />
       </Providers>
     </BrowserRouter>
   );

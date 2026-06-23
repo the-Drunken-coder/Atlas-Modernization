@@ -1,4 +1,6 @@
 import { createRoot } from "react-dom/client";
+import "../ui/tokens.css";
+import "../ui/console.css";
 import { AppRoutes } from "./routes.js";
 
 const container = document.getElementById("root");
