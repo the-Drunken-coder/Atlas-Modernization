@@ -1,0 +1,56 @@
+.sb-atlas-root {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+.sb-atlas-workbench {
+  min-height: 100vh;
+  padding: var(--space-4);
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+.sb-atlas-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.sb-atlas-stack {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.sb-atlas-panel {
+  width: min(380px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.sb-atlas-rail-frame {
+  height: 560px;
+  width: 92px;
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.sb-atlas-map-frame {
+  position: relative;
+  height: min(620px, calc(100vh - 48px));
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.sb-atlas-modal-frame {
+  position: relative;
+  min-height: 620px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+}
