@@ -191,7 +191,7 @@ func TestTask_GetCommand(t *testing.T) {
 	}{
 		{
 			name:      "valid command",
-			json:      `{"components":{"command":{"type":"move","target":{"lat":0,"lon":0}}}}`,
+			json:      `{"components":{"command":{"type":"move","target":{"latitude":0,"longitude":0}}}}`,
 			wantNil:   false,
 			checkType: "move",
 		},

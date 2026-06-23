@@ -124,7 +124,7 @@ export function supportedCommandIds(entity: EntityResource): string[] | undefine
 export function commandsForEntity(catalog: CommandCatalog, entity: EntityResource): CommandDefinition[] {
   const supported = supportedCommandIds(entity);
   if (supported === undefined) {
-    return [...catalog.commands];
+    return [];
   }
   const supportedSet = new Set(supported);
   return catalog.commands.filter((command) => supportedSet.has(command.id));
@@ -132,7 +132,7 @@ export function commandsForEntity(catalog: CommandCatalog, entity: EntityResourc
 
 export function assertEntitySupportsCommand(entity: EntityResource, commandId: string): void {
   const supported = supportedCommandIds(entity);
-  if (supported !== undefined && !supported.includes(commandId)) {
+  if (supported === undefined || !supported.includes(commandId)) {
     throw new CommandModelError("UNSUPPORTED_COMMAND", `${entity.entity_id} does not advertise support for ${commandId}`, {
       entity_id: entity.entity_id,
       command_id: commandId
