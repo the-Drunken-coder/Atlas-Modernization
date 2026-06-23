@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import type { EntityKind } from "../../atlas/entities.js";
 import type { ListKind } from "../../state/selection.js";
-import { AssetsIcon, BrandIcon, CollapseIcon, GeofeaturesIcon, TracksIcon } from "../primitives/icons.js";
+import { AssetsIcon, BrandIcon, CollapseIcon, CommandsIcon, GeofeaturesIcon, TracksIcon } from "../primitives/icons.js";
 import { Tooltip } from "../primitives/Tooltip.js";
 
 type RailItem = {
@@ -14,7 +14,8 @@ type RailItem = {
 const RAIL_ITEMS: RailItem[] = [
   { list: "assets", label: "Assets", Icon: AssetsIcon, kind: "asset" },
   { list: "tracks", label: "Tracks", Icon: TracksIcon, kind: "track" },
-  { list: "geofeatures", label: "Geo Features", Icon: GeofeaturesIcon, kind: "geofeature" }
+  { list: "geofeatures", label: "Geo Features", Icon: GeofeaturesIcon, kind: "geofeature" },
+  { list: "commands", label: "Commands", Icon: CommandsIcon }
 ];
 
 type SidebarRailProps = {

@@ -1,19 +1,29 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
-import type { AtlasDataSource } from "../atlas/data-source.js";
+import type { AtlasDataSource, CommandSubmission } from "../atlas/data-source.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
+// MapLibre never runs in jsdom; stub the map but keep the real source builder.
 vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
   return {
-    MapView: (props: { sources: { assets: { features: unknown[] }; tracks: { features: unknown[] }; geofeatures: { features: unknown[] } } }) => (
+    MapView: (props: {
+      editing?: unknown;
+      onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+      onBackgroundClick?: () => void;
+    }) => (
       <div
         data-testid="map"
-        data-feature-count={props.sources.assets.features.length + props.sources.tracks.features.length + props.sources.geofeatures.features.length}
+        data-editing={props.editing ? "true" : "false"}
+        onClick={() => props.onBackgroundClick?.()}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
+        }}
       />
     ),
     buildMapSources: sources.buildMapSources
@@ -26,7 +36,19 @@ const catalog = parseCommandCatalog({
   type: "command_catalog",
   name: "Catalog",
   description: "Test",
-  commands: [{ id: "hold_position", name: "Hold Position", description: "Hold here.", parameters_schema: {} }]
+  commands: [
+    { id: "hold_position", name: "Hold Position", description: "Hold here.", parameters_schema: {} },
+    {
+      id: "goto",
+      name: "Goto",
+      description: "Go there.",
+      parameters_schema: {
+        latitude: { type: "number", description: "Latitude", minimum: -90, maximum: 90, required: true },
+        longitude: { type: "number", description: "Longitude", minimum: -180, maximum: 180, required: true }
+      }
+    },
+    { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
+  ]
 });
 
 const rover: EntityResource = {
@@ -34,7 +56,7 @@ const rover: EntityResource = {
   entity_type: "asset",
   subtype: null,
   alias: "Rover",
-  components: { task_catalog: { supported_tasks: ["hold_position"] }, telemetry: { latitude: 40, longitude: -74 } },
+  components: { task_catalog: { supported_tasks: ["hold_position", "goto"] }, telemetry: { latitude: 40, longitude: -74 } },
   metadata
 };
 
@@ -61,6 +83,8 @@ const area: EntityResource = {
 
 function makeFakeDataSource() {
   let emit: ((event: AtlasWatchEvent) => void) | undefined;
+  const submissions: Array<{ submission: CommandSubmission; credential: string }> = [];
+  const geometryUpdates: Array<{ entityId: string; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
     async loadSnapshot() {
       return { entities: [rover, area], tasks: [] };
@@ -78,15 +102,25 @@ function makeFakeDataSource() {
     health() {
       return { running: true, healthy: true, degraded: false };
     },
-    async submitCommand() {
-      throw new Error("not used");
+    async submitCommand(submission, credential) {
+      submissions.push({ submission, credential });
+      const task = {
+        task_id: "task-1",
+        status: "pending",
+        entity_id: submission.entityId,
+        components: { command: { type: submission.commandId, id: submission.commandId }, parameters: submission.parameters ?? {} },
+        metadata: { ...metadata, version: 2 }
+      };
+      emit?.({ event: "create", resource_type: "task", id: task.task_id, version: 2, resource: task });
+      return task;
     },
-    async updateGeometry() {
-      throw new Error("not used");
+    async updateGeometry(entityId, geometry, ifMatchVersion) {
+      geometryUpdates.push({ entityId, ifMatchVersion });
+      return { ...area, components: { ...area.components, geometry }, metadata: { ...area.metadata, version: 10 } };
     },
     dispose() {}
   };
-  return { fake, emit: (event: AtlasWatchEvent) => emit?.(event) };
+  return { fake, submissions, geometryUpdates, emit: (event: AtlasWatchEvent) => emit?.(event) };
 }
 
 function renderConsole(fake: AtlasDataSource) {
@@ -97,43 +131,106 @@ function renderConsole(fake: AtlasDataSource) {
   );
 }
 
-describe("MapConsole read-only flow", () => {
-  it("selects an asset and shows its read-only inspector", async () => {
+describe("MapConsole command flow", () => {
+  it("selects an asset, lists its commands, and submits a pending task", async () => {
     const user = userEvent.setup();
-    const { fake } = makeFakeDataSource();
+    const { fake, submissions } = makeFakeDataSource();
     renderConsole(fake);
 
-    await user.click(await screen.findByText("Rover"));
+    // Default assets list renders once the snapshot is ready.
+    const row = await screen.findByText("Rover");
+    await user.click(row);
 
-    expect(screen.getByText("asset-1")).toBeInTheDocument();
-    expect(screen.getByText("Location & Movement")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Hold Position/ })).not.toBeInTheDocument();
+    // The asset inspector lists the supported command and greys out the rest.
+    const hold = await screen.findByRole("button", { name: /Hold Position/ });
+    expect(screen.getByRole("button", { name: /Return To Home/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute("title", "This asset does not support this command");
+
+    await user.click(hold);
+    const send = await screen.findByRole("button", { name: "Send command" });
+    expect(send).toBeDisabled();
+    await user.type(screen.getByPlaceholderText("ATLAS_COMMAND_API_KEY"), "test-key");
+    expect(send).toBeEnabled();
+    await user.click(send);
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({ submission: { entityId: "asset-1", commandId: "hold_position" }, credential: "test-key" });
+
+    // The created task arrives over the feed and shows as pending in history.
+    expect(await screen.findByText("Pending")).toBeInTheDocument();
   });
 
-  it("switches lists and inspects a geofeature without edit controls", async () => {
+  it("saves geometry edits with the version captured when editing started", async () => {
     const user = userEvent.setup();
-    const { fake } = makeFakeDataSource();
+    const { fake, geometryUpdates, emit } = makeFakeDataSource();
     renderConsole(fake);
 
     await screen.findByText("Rover");
     await user.click(screen.getByRole("button", { name: "Geo Features" }));
     await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
 
-    expect(screen.getByText("geo-1")).toBeInTheDocument();
-    expect(screen.getByText("Polygon")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-    expect(screen.getByTestId("map")).toHaveAttribute("data-feature-count", "2");
+    emit({
+      event: "update",
+      resource_type: "entity",
+      id: "geo-1",
+      version: 7,
+      resource: { ...area, metadata: { ...area.metadata, version: 7 } }
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(geometryUpdates).toHaveLength(1));
+    expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", ifMatchVersion: 1 });
   });
 
-  it("keeps the shell stable when the selected entity disappears", async () => {
+  it("submits map-point commands with the clicked coordinates", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    fireEvent.contextMenu(screen.getByTestId("map"));
+    await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
+    await user.type(screen.getByPlaceholderText("ATLAS_COMMAND_API_KEY"), "test-key");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({
+      submission: { entityId: "asset-1", commandId: "goto", parameters: { latitude: 47.61, longitude: -122.33 } },
+      credential: "test-key"
+    });
+  });
+
+  it("clears the selected entity when the map background is clicked", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    expect(await screen.findByRole("button", { name: /Hold Position/ })).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("map"));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Hold Position/ })).not.toBeInTheDocument());
+    expect(screen.getByText("Rover")).toBeInTheDocument();
+  });
+
+  it("clears geofeature edit state when the selected entity disappears", async () => {
     const user = userEvent.setup();
     const { fake, emit } = makeFakeDataSource();
     renderConsole(fake);
 
-    await user.click(await screen.findByText("Rover"));
-    emit({ event: "delete", resource_type: "entity", id: "asset-1", version: 2 });
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "true");
+
+    emit({ event: "delete", resource_type: "entity", id: "geo-1", version: 2 });
 
     expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-feature-count", "1"));
+    await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });
