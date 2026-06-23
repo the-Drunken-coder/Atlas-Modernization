@@ -42,6 +42,52 @@ describe("atlas command worker", () => {
     });
   });
 
+  it("includes a configured optional map style URL", async () => {
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/config"),
+      envWith({ MAP_STYLE_URL: "https://tiles.test/style.json" }),
+      executionContext()
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      atlasBaseUrl: "https://command.test/atlas",
+      mapStyleUrl: "https://tiles.test/style.json"
+    });
+  });
+
+  it("omits an empty optional map style URL", async () => {
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/config"),
+      envWith({ MAP_STYLE_URL: "   " }),
+      executionContext()
+    );
+
+    expect(response.status).toBe(200);
+    const config = (await response.json()) as Record<string, unknown>;
+    expect(config).not.toHaveProperty("mapStyleUrl");
+  });
+
+  it("omits map style URL when it is absent", async () => {
+    const response = await handleCommandRequest(new Request("https://command.test/api/config"), env(), executionContext());
+
+    expect(response.status).toBe(200);
+    const config = (await response.json()) as Record<string, unknown>;
+    expect(config).not.toHaveProperty("mapStyleUrl");
+  });
+
+  it("omits an explicit empty map style URL", async () => {
+    const response = await handleCommandRequest(
+      new Request("https://command.test/api/config"),
+      envWith({ MAP_STYLE_URL: "" }),
+      executionContext()
+    );
+
+    expect(response.status).toBe(200);
+    const config = (await response.json()) as Record<string, unknown>;
+    expect(config).not.toHaveProperty("mapStyleUrl");
+  });
+
   it("proxies Atlas HTTP requests through the Worker origin", async () => {
     let proxiedRequest: { input: Parameters<typeof fetch>[0]; init?: Parameters<typeof fetch>[1] } | undefined;
     const fetchImpl: typeof fetch = async (input, init) => {
@@ -416,6 +462,10 @@ function env(): Env {
     ATLAS_API_KEY: "worker-secret",
     ATLAS_COMMAND_API_KEY: "command-secret"
   };
+}
+
+function envWith(overrides: Partial<Env> & { MAP_STYLE_URL?: string }): Env {
+  return { ...env(), ...overrides } as Env;
 }
 
 function executionContext(): ExecutionContext {

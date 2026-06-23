@@ -85,9 +85,11 @@ export async function handleCommandRequest(request: Request, env: Env, ctx: Exec
   try {
     const url = new URL(request.url);
     if (url.pathname === "/api/config" && request.method === "GET") {
+      const mapStyleUrl = optionalString((env as Env & { MAP_STYLE_URL?: unknown }).MAP_STYLE_URL);
       return jsonResponse({
         atlasBaseUrl: new URL("/atlas", request.url).toString().replace(/\/$/, ""),
-        protocolRevision: ATLAS_PROTOCOL_REVISION
+        protocolRevision: ATLAS_PROTOCOL_REVISION,
+        ...(mapStyleUrl ? { mapStyleUrl } : {})
       });
     }
     if (url.pathname === "/api/commands" && request.method === "POST") {
@@ -425,7 +427,9 @@ function feedUrl(baseUrl: string): string {
 }
 
 function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
