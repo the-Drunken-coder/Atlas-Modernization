@@ -109,6 +109,10 @@ function resolveConfigKey(asset: AssetSymbolDescriptor, mapping: NormalizedMappi
 
   for (const candidate of candidates) {
     if (!candidate) continue;
+    const normalized = normalizeToken(candidate);
+    const directHit = mapping.find((entry) => entry.rawKey !== "default" && entry.normalized === normalized);
+    if (directHit) return directHit.configKey;
+
     const candidateTokens = splitCandidateTokens(candidate);
     const hit = mapping.find((entry) => entry.rawKey !== "default" && containsTokenSequence(candidateTokens, entry.tokens));
     if (hit) return hit.configKey;
@@ -264,9 +268,13 @@ export function renderSymbolToSvg(symbolInfo: SymbolInfo, options: SymbolRenderO
 }
 
 export function createSidcIconService(config: SidcSymbolServiceConfig) {
+  const symbolCatalog = Object.fromEntries(
+    Object.entries(config.symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])
+  );
+  const typeMapping = { ...config.typeMapping };
   const fallback = cloneSymbolInfo(config.fallback ?? DEFAULT_SYMBOL_FALLBACK);
-  const lookup = buildLookup(config.typeMapping);
-  const defaultKey = config.typeMapping.default;
+  const lookup = buildLookup(typeMapping);
+  const defaultKey = typeMapping.default;
   const renderCache = new Map<string, RenderedSymbol>();
 
   function render(symbolInfo: SymbolInfo, options: SymbolRenderOptions = {}): RenderedSymbol {
@@ -288,15 +296,15 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
   }
 
   function getAssetSymbol(asset: AssetSymbolDescriptor): SymbolInfo {
-    return deriveSymbolInfo(resolveConfigKey(asset, lookup, defaultKey), config.symbolCatalog, fallback);
+    return deriveSymbolInfo(resolveConfigKey(asset, lookup, defaultKey), symbolCatalog, fallback);
   }
 
   function getTrackSymbol(track: TrackSymbolDescriptor): SymbolInfo {
-    return deriveSymbolInfo(mapTrackTypeToConfigKey(track.type, lookup, defaultKey), config.symbolCatalog, fallback);
+    return deriveSymbolInfo(mapTrackTypeToConfigKey(track.type, lookup, defaultKey), symbolCatalog, fallback);
   }
 
   function preload(): void {
-    for (const entry of Object.values(config.symbolCatalog)) {
+    for (const entry of Object.values(symbolCatalog)) {
       if (!entry.sidc) continue;
       try {
         renderSymbol(entry.sidc, { ...entry.options, size: entry.size ?? fallback.size });
@@ -309,9 +317,9 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
   return {
     getAssetSymbol,
     getTrackSymbol,
-    getAvailableSymbols: () => Object.keys(config.typeMapping).filter((key) => key !== "default"),
+    getAvailableSymbols: () => Object.keys(typeMapping).filter((key) => key !== "default"),
     getSymbolConfigs: () =>
-      Object.fromEntries(Object.entries(config.symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])),
+      Object.fromEntries(Object.entries(symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])),
     render,
     preload
   };

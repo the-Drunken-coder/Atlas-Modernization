@@ -1,16 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_SYMBOL_CATALOG,
   DEFAULT_SYMBOL_FALLBACK,
-  DEFAULT_SYMBOL_TYPE_MAPPING
+  DEFAULT_SYMBOL_TYPE_MAPPING,
+  type SymbolConfig
 } from "./catalog.js";
 import { __internals, createSidcIconService, renderSymbolToSvg } from "./sidc-symbol-service.js";
 
 describe("SIDC symbol service", () => {
-  const service = createSidcIconService({
-    symbolCatalog: DEFAULT_SYMBOL_CATALOG,
-    typeMapping: DEFAULT_SYMBOL_TYPE_MAPPING,
-    fallback: DEFAULT_SYMBOL_FALLBACK
+  let service: ReturnType<typeof createSidcIconService>;
+
+  beforeEach(() => {
+    service = createSidcIconService({
+      symbolCatalog: DEFAULT_SYMBOL_CATALOG,
+      typeMapping: DEFAULT_SYMBOL_TYPE_MAPPING,
+      fallback: DEFAULT_SYMBOL_FALLBACK
+    });
   });
 
   it("uses the old Atlas SIDC catalog to render SVG symbols", () => {
@@ -59,6 +64,19 @@ describe("SIDC symbol service", () => {
     const second = service.render(service.getAssetSymbol({ subtype: "uas" }));
     expect(second.size.width).toBeGreaterThan(0);
     expect(second.anchor.x).toBeGreaterThan(0);
+  });
+
+  it("snapshots caller-owned config at service creation", () => {
+    const symbolCatalog: Record<string, SymbolConfig> = Object.fromEntries(
+      Object.entries(DEFAULT_SYMBOL_CATALOG).map(([key, config]) => [key, { ...config, options: config.options ? { ...config.options } : undefined }])
+    );
+    const typeMapping = { ...DEFAULT_SYMBOL_TYPE_MAPPING };
+    const localService = createSidcIconService({ symbolCatalog, typeMapping, fallback: DEFAULT_SYMBOL_FALLBACK });
+
+    symbolCatalog.DRONE = DEFAULT_SYMBOL_CATALOG.CAR;
+    typeMapping.uas = "CAR";
+
+    expect(localService.getAssetSymbol({ subtype: "uas" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.DRONE.sidc);
   });
 
   it("uses fallback markup when SIDC Kit cannot render the selected symbol", () => {

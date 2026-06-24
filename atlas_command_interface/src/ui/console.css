@@ -622,7 +622,6 @@
   color: inherit;
   line-height: 0;
   cursor: pointer;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.72));
 }
 
 .map-symbol-marker:focus-visible {

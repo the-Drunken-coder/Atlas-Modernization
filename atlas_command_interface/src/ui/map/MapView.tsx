@@ -343,12 +343,19 @@ function symbolMarkerFeatures(sources: MapSources): Array<MapFeature & { geometr
 }
 
 function isPointFeature(feature: MapFeature): feature is MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } } {
+  const [longitude, latitude] = feature.geometry.coordinates;
   return (
     feature.geometry.type === "Point" &&
     Array.isArray(feature.geometry.coordinates) &&
     feature.geometry.coordinates.length >= 2 &&
-    typeof feature.geometry.coordinates[0] === "number" &&
-    typeof feature.geometry.coordinates[1] === "number"
+    typeof longitude === "number" &&
+    Number.isFinite(longitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    typeof latitude === "number" &&
+    Number.isFinite(latitude) &&
+    latitude >= -90 &&
+    latitude <= 90
   );
 }
 
