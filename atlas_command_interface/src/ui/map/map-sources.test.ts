@@ -11,12 +11,23 @@ function entity(overrides: Partial<EntityResource>): EntityResource {
 describe("buildMapSources", () => {
   it("renders assets from telemetry as point features", () => {
     const sources = buildMapSources(
-      [entity({ entity_id: "asset-1", components: { telemetry: { latitude: 40.1, longitude: -74.2, heading_deg: 90 } } })],
+      [
+        entity({
+          entity_id: "asset-1",
+          subtype: "ground_rover",
+          components: {
+            custom_symbol: { model_id: "Atlas-Rover-01" },
+            telemetry: { latitude: 40.1, longitude: -74.2, heading_deg: 90 }
+          }
+        })
+      ],
       undefined
     );
     expect(sources.assets.features).toHaveLength(1);
     expect(sources.assets.features[0].geometry).toEqual({ type: "Point", coordinates: [-74.2, 40.1] });
     expect(sources.assets.features[0].properties.heading).toBe(90);
+    expect(sources.assets.features[0].properties.subtype).toBe("ground_rover");
+    expect(sources.assets.features[0].properties.modelId).toBe("Atlas-Rover-01");
   });
 
   it("renders tracks as read-only point features", () => {

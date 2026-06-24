@@ -2,18 +2,17 @@ import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent } from "mapli
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { addVertexAfter, geometryVertices, moveVertex, removeVertex, type Position, type UiGeometry, type VertexRef } from "../../atlas/geometry.js";
+import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
 import { defaultBlankStyle } from "./map-style.js";
 
 const COLORS = {
-  asset: "#3fb6ff",
-  track: "#f5c451",
   geofeature: "#3fd27a",
   geofeatureFill: "rgba(63,210,122,0.16)",
   selected: "#ffffff"
 };
 
-const INTERACTIVE_LAYERS = ["assets-point", "tracks-point", "geofeatures-point", "geofeatures-line", "geofeatures-fill"];
+const INTERACTIVE_LAYERS = ["geofeatures-point", "geofeatures-line", "geofeatures-fill"];
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 
@@ -39,7 +38,8 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const readyRef = useRef(false);
   const fitOnceRef = useRef(false);
   const shouldAutoFitRef = useRef(initialCenter === undefined);
-  const markersRef = useRef<Marker[]>([]);
+  const editMarkersRef = useRef<Marker[]>([]);
+  const symbolMarkersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
@@ -126,8 +126,10 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       readyRef.current = false;
       setMapReady(false);
       resizeObserver.disconnect();
-      clearMarkers(markersRef.current);
-      markersRef.current = [];
+      clearMarkers(editMarkersRef.current);
+      clearMarkers(symbolMarkersRef.current);
+      editMarkersRef.current = [];
+      symbolMarkersRef.current = [];
       map.remove();
       mapRef.current = undefined;
     };
@@ -144,13 +146,47 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     }
   }, [sources]);
 
+  // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    clearMarkers(symbolMarkersRef.current);
+    symbolMarkersRef.current = [];
+
+    for (const feature of symbolMarkerFeatures(sources)) {
+      const element = createSymbolMarkerElement(feature);
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        handlersRef.current.onSelectEntity(feature.properties.entityId);
+      });
+      element.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        handlersRef.current.onSelectEntity(feature.properties.entityId);
+        handlersRef.current.onMapContextMenu({
+          lng: feature.geometry.coordinates[0],
+          lat: feature.geometry.coordinates[1],
+          x: event.clientX,
+          y: event.clientY
+        });
+      });
+      symbolMarkersRef.current.push(new Marker({ element, anchor: "center" }).setLngLat(feature.geometry.coordinates).addTo(map));
+    }
+
+    return () => {
+      clearMarkers(symbolMarkersRef.current);
+      symbolMarkersRef.current = [];
+    };
+  }, [sources, mapReady]);
+
   // Sync the editing overlay (live geometry + draggable handles).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
 
-    clearMarkers(markersRef.current);
-    markersRef.current = [];
+    clearMarkers(editMarkersRef.current);
+    editMarkersRef.current = [];
 
     const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
     if (!editing) {
@@ -175,7 +211,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         const next = removeVertex(geometry, vertex.ref);
         if (next) onChange(next);
       });
-      markersRef.current.push(marker);
+      editMarkersRef.current.push(marker);
     }
 
     // Midpoint "add" handles between consecutive vertices.
@@ -188,7 +224,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         event.stopPropagation();
         onChange(addVertexAfter(geometry, mid.afterRef, mid.lng, mid.lat));
       });
-      markersRef.current.push(marker);
+      editMarkersRef.current.push(marker);
     }
   }, [editing, mapReady]);
 
@@ -277,8 +313,6 @@ function registerSourcesAndLayers(map: MlMap): void {
     filter: ["==", ["geometry-type"], "Point"],
     paint: circlePaint(COLORS.geofeature)
   });
-  map.addLayer({ id: "tracks-point", type: "circle", source: "tracks", paint: circlePaint(COLORS.track) });
-  map.addLayer({ id: "assets-point", type: "circle", source: "assets", paint: circlePaint(COLORS.asset) });
 
   // Editing overlay drawn above everything.
   map.addLayer({
@@ -304,6 +338,53 @@ function circlePaint(color: string): maplibregl.CircleLayerSpecification["paint"
     "circle-stroke-width": ["case", ["boolean", ["get", "selected"], false], 3, 1.5],
     "circle-stroke-color": ["case", ["boolean", ["get", "selected"], false], COLORS.selected, "rgba(0,0,0,0.65)"]
   };
+}
+
+function symbolMarkerFeatures(sources: MapSources): Array<MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } }> {
+  return [...sources.assets.features, ...sources.tracks.features].filter(isPointFeature);
+}
+
+function isPointFeature(feature: MapFeature): feature is MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } } {
+  return (
+    feature.geometry.type === "Point" &&
+    Array.isArray(feature.geometry.coordinates) &&
+    feature.geometry.coordinates.length >= 2 &&
+    typeof feature.geometry.coordinates[0] === "number" &&
+    typeof feature.geometry.coordinates[1] === "number"
+  );
+}
+
+function createSymbolMarkerElement(feature: MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } }): HTMLButtonElement {
+  const { properties } = feature;
+  const opacity = properties.linkState === "disconnected" ? 0.58 : properties.linkState === "degraded" ? 0.82 : 1;
+  const rotation = properties.kind === "asset" ? properties.heading : undefined;
+  const symbol =
+    properties.kind === "track"
+      ? defaultSidcIconService.getTrackSymbol({ type: properties.symbolType ?? properties.subtype ?? properties.classification ?? properties.name })
+      : defaultSidcIconService.getAssetSymbol({
+          id: properties.entityId,
+          modelId: properties.modelId,
+          model_id: properties.modelId,
+          assetType: properties.assetType ?? properties.symbolType,
+          asset_type: properties.assetType ?? properties.symbolType,
+          subtype: properties.subtype
+        });
+  const rendered = defaultSidcIconService.render(symbol, { selected: properties.selected, opacity, rotation });
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = [
+    "map-symbol-marker",
+    `map-symbol-marker--${properties.kind}`,
+    properties.selected ? "map-symbol-marker--selected" : "",
+    rendered.isFallback ? "map-symbol-marker--fallback" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  element.title = properties.name;
+  element.setAttribute("aria-label", `${properties.name} ${properties.kind}`);
+  element.dataset.entityId = properties.entityId;
+  element.innerHTML = rendered.html;
+  return element;
 }
 
 function clearMarkers(markers: Marker[]): void {

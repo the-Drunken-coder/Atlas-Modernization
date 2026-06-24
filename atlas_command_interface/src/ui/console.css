@@ -612,6 +612,49 @@
   border-radius: 50%;
 }
 
+/* NATO-style entity markers generated from the local SIDC catalog. */
+.map-symbol-marker {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  line-height: 0;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.72));
+}
+
+.map-symbol-marker:focus-visible {
+  outline: 2px solid var(--selected-ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.map-symbol-marker:hover .atlas-symbol-svg {
+  filter: brightness(1.1);
+}
+
+.map-symbol-marker--selected .atlas-symbol-svg {
+  filter: drop-shadow(0 0 8px var(--selected-ring));
+}
+
+.atlas-symbol-svg {
+  display: grid;
+  place-items: center;
+  transform-origin: center;
+}
+
+.atlas-symbol-svg svg {
+  display: block;
+}
+
+.atlas-symbol-svg--fallback {
+  background: var(--accent);
+  border: 2px solid var(--selected);
+  border-radius: 50%;
+}
+
 /* Map vertex handles (maplibre markers) */
 .vertex-handle {
   width: 12px;
