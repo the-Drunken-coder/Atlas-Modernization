@@ -203,7 +203,7 @@ function buildSymbolMarkup(symbolInfo: SymbolInfo, options: SymbolRenderOptions 
     x: sanitizeFiniteNumber(rendered.anchor?.x, size.width / 2),
     y: sanitizeFiniteNumber(rendered.anchor?.y, size.height / 2)
   };
-  const selectedStyle = normalized.selected ? "filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.8));" : "";
+  const selectedStyle = normalized.selected ? "filter: drop-shadow(0 0 8px var(--selected-ring));" : "";
 
   return {
     html: `
@@ -227,7 +227,7 @@ function buildSymbolMarkup(symbolInfo: SymbolInfo, options: SymbolRenderOptions 
 function buildFallbackMarkup(symbolInfo: SymbolInfo, options: SymbolRenderOptions = {}, error?: unknown): RenderedSymbol {
   const normalized = normalizeRenderOptions(options);
   const safeSize = sanitizeFiniteNumber(symbolInfo.size, DEFAULT_SYMBOL_FALLBACK.size);
-  const selectedStyle = normalized.selected ? "box-shadow: 0 0 8px rgba(255, 215, 0, 0.8); border-color: #ffd700;" : "";
+  const selectedStyle = normalized.selected ? "box-shadow: 0 0 8px var(--selected-ring); border-color: var(--selected-ring);" : "";
   const message =
     error instanceof Error
       ? error.message
