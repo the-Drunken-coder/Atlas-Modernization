@@ -96,11 +96,10 @@ function kindToSource(kind: "asset" | "track" | "geofeature"): keyof MapSources 
 
 function entitySymbolHints(entity: EntityResource): Pick<MapFeatureProperties, "modelId" | "assetType" | "symbolType"> {
   const customSymbol = recordValue(entity.components.custom_symbol);
-  const extra = entity.extra ?? {};
   return {
-    modelId: firstString(customSymbol?.modelId, customSymbol?.model_id, extra.modelId, extra.model_id),
-    assetType: firstString(customSymbol?.assetType, customSymbol?.asset_type, extra.assetType, extra.asset_type),
-    symbolType: firstString(customSymbol?.type, customSymbol?.symbol_type, extra.symbolType, extra.symbol_type, extra.type)
+    modelId: firstString(customSymbol?.model_id),
+    assetType: firstString(customSymbol?.asset_type),
+    symbolType: firstString(customSymbol?.symbol_type)
   };
 }
 

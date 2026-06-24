@@ -29,7 +29,7 @@ describe("SIDC symbol service", () => {
   it("maps current Atlas asset hints onto the inherited catalog", () => {
     expect(service.getAssetSymbol({ subtype: "ground_rover" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.ROVER.sidc);
     expect(service.getAssetSymbol({ subtype: "uas" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.DRONE.sidc);
-    expect(service.getAssetSymbol({ id: "relay-03" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.SIGNAL.sidc);
+    expect(service.getAssetSymbol({ entityId: "relay-03", entityType: "asset" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.SIGNAL.sidc);
   });
 
   it("maps track types to person, dog, and vehicle symbols", () => {
@@ -40,8 +40,32 @@ describe("SIDC symbol service", () => {
 
   it("does not match partial substrings inside larger words", () => {
     const mapping = __internals.buildLookup(DEFAULT_SYMBOL_TYPE_MAPPING);
-    const resolved = __internals.resolveConfigKey({ subtype: "cargo" }, mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default);
-    expect(resolved).toBe(DEFAULT_SYMBOL_TYPE_MAPPING.default);
+    expect(__internals.resolveConfigKey({ subtype: "cargo" }, mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(
+      DEFAULT_SYMBOL_TYPE_MAPPING.default
+    );
+    expect(__internals.mapTrackTypeToConfigKey("command", mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(
+      DEFAULT_SYMBOL_TYPE_MAPPING.default
+    );
+  });
+
+  it("returns detached copies for configs and cached renders", () => {
+    const configs = service.getSymbolConfigs();
+    configs.DRONE.options = { fill: false, frame: false };
+    expect(service.getSymbolConfigs().DRONE.options).toEqual(DEFAULT_SYMBOL_CATALOG.DRONE.options);
+
+    const first = service.render(service.getAssetSymbol({ subtype: "uas" }));
+    first.size.width = 0;
+    first.anchor.x = 0;
+    const second = service.render(service.getAssetSymbol({ subtype: "uas" }));
+    expect(second.size.width).toBeGreaterThan(0);
+    expect(second.anchor.x).toBeGreaterThan(0);
+  });
+
+  it("uses fallback markup when SIDC Kit cannot render the selected symbol", () => {
+    const result = renderSymbolToSvg({ sidc: "999999999999999999999999999999", size: 24 });
+    expect(result.isFallback).toBe(true);
+    expect(result.html).toContain("atlas-symbol-svg--fallback");
+    expect(result.error).toBeTruthy();
   });
 
   it("sanitizes numeric render options before writing inline styles", () => {

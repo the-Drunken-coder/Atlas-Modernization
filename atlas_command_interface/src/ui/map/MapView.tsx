@@ -279,13 +279,11 @@ function positionsEqual(a: Position | undefined, b: Position | undefined): boole
 }
 
 function pushSources(map: MlMap, sources: MapSources): void {
-  (map.getSource("assets") as maplibregl.GeoJSONSource | undefined)?.setData(sources.assets as never);
-  (map.getSource("tracks") as maplibregl.GeoJSONSource | undefined)?.setData(sources.tracks as never);
   (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures as never);
 }
 
 function registerSourcesAndLayers(map: MlMap): void {
-  for (const id of ["assets", "tracks", "geofeatures", "editing"]) {
+  for (const id of ["geofeatures", "editing"]) {
     map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
   }
 
@@ -362,11 +360,11 @@ function createSymbolMarkerElement(feature: MapFeature & { geometry: { type: "Po
     properties.kind === "track"
       ? defaultSidcIconService.getTrackSymbol({ type: properties.symbolType ?? properties.subtype ?? properties.classification ?? properties.name })
       : defaultSidcIconService.getAssetSymbol({
-          id: properties.entityId,
+          entityId: properties.entityId,
+          entityType: properties.entityType,
           modelId: properties.modelId,
-          model_id: properties.modelId,
-          assetType: properties.assetType ?? properties.symbolType,
-          asset_type: properties.assetType ?? properties.symbolType,
+          assetType: properties.assetType,
+          symbolType: properties.symbolType,
           subtype: properties.subtype
         });
   const rendered = defaultSidcIconService.render(symbol, { selected: properties.selected, opacity, rotation });

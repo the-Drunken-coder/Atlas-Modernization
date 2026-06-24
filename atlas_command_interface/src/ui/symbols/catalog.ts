@@ -8,7 +8,7 @@ export type SymbolConfig = {
   options?: SymbolStyleOptions;
 };
 
-export const DEFAULT_SYMBOL_CATALOG: Record<string, SymbolConfig> = {
+export const DEFAULT_SYMBOL_CATALOG = {
   DRONE: { sidc: "130301000011030000100100000000", size: 35, options: { fill: true, frame: true } },
   SENSOR: { sidc: "130315000022010000000000000000", size: 35, options: { fill: true, frame: true } },
   SIGNAL: { sidc: "130152000011010000000000000000", size: 35, options: { fill: true, frame: true } },
@@ -19,9 +19,11 @@ export const DEFAULT_SYMBOL_CATALOG: Record<string, SymbolConfig> = {
   CAR: { sidc: "130515000016010000000000000000", size: 35, options: { fill: true, frame: true } },
   ROVER: { sidc: "130310000012130001101100000000", size: 35, options: { fill: true, frame: true } },
   SERVER: { sidc: "130360000017010025001000000000", size: 35, options: { fill: true, frame: true } }
-};
+} satisfies Record<string, SymbolConfig>;
 
-export const DEFAULT_SYMBOL_TYPE_MAPPING: Record<string, string> = {
+export type SymbolCatalogKey = keyof typeof DEFAULT_SYMBOL_CATALOG;
+
+export const DEFAULT_SYMBOL_TYPE_MAPPING: Record<string, SymbolCatalogKey> = {
   drone: "DRONE",
   uav: "DRONE",
   uas: "DRONE",

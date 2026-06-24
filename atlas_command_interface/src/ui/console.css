@@ -639,6 +639,10 @@
   filter: drop-shadow(0 0 8px var(--selected-ring));
 }
 
+.map-symbol-marker--selected:hover .atlas-symbol-svg {
+  filter: brightness(1.1) drop-shadow(0 0 8px var(--selected-ring));
+}
+
 .atlas-symbol-svg {
   display: grid;
   place-items: center;

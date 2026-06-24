@@ -14,11 +14,11 @@ export type SymbolInfo = {
 };
 
 export type AssetSymbolDescriptor = {
-  id?: string;
+  entityId?: string;
+  entityType?: string;
   modelId?: string;
-  model_id?: string;
   assetType?: string;
-  asset_type?: string;
+  symbolType?: string;
   subtype?: string;
 };
 
@@ -41,7 +41,7 @@ export type RenderedSymbol = {
   error?: string;
 };
 
-type SidcSymbolServiceConfig = {
+export type SidcSymbolServiceConfig = {
   symbolCatalog: Record<string, SymbolConfig>;
   typeMapping: Record<string, string>;
   fallback?: SymbolInfo;
@@ -104,8 +104,8 @@ function buildLookup(mapping: Record<string, string>): NormalizedMappingEntry[] 
 }
 
 function resolveConfigKey(asset: AssetSymbolDescriptor, mapping: NormalizedMappingEntry[], defaultKey?: string): string | undefined {
-  const { subtype, modelId, model_id, assetType, asset_type, id } = asset;
-  const candidates = [subtype, modelId ?? model_id, assetType ?? asset_type, id];
+  const { subtype, symbolType, assetType, modelId, entityType, entityId } = asset;
+  const candidates = [subtype, symbolType, assetType, modelId, entityType, entityId];
 
   for (const candidate of candidates) {
     if (!candidate) continue;
@@ -123,23 +123,46 @@ function mapTrackTypeToConfigKey(trackType: string | undefined, mapping: Normali
   const directHit = mapping.find((entry) => entry.rawKey !== "default" && entry.normalized === normalized);
   if (directHit) return directHit.configKey;
 
-  if (/(human|person|man|woman|people|pedestrian|team|crew)/.test(normalized)) {
-    return mapping.find((entry) => entry.rawKey === "person")?.configKey ?? defaultKey;
-  }
-  if (/(dog|canine|k9)/.test(normalized)) {
-    return mapping.find((entry) => entry.rawKey === "dog")?.configKey ?? defaultKey;
-  }
-  if (/(car|vehicle|auto|sedan|truck|suv)/.test(normalized)) {
-    return mapping.find((entry) => entry.rawKey === "car")?.configKey ?? defaultKey;
-  }
+  const candidateTokens = splitCandidateTokens(trackType);
+  const tokenHit = mapping.find(
+    (entry) => entry.rawKey !== "default" && entry.tokens.length === 1 && candidateTokens.includes(entry.tokens[0])
+  );
+  if (tokenHit) return tokenHit.configKey;
 
   return defaultKey;
 }
 
+function cloneSymbolInfo(symbol: SymbolInfo): SymbolInfo {
+  return {
+    sidc: symbol.sidc,
+    size: symbol.size,
+    options: symbol.options ? { ...symbol.options } : undefined
+  };
+}
+
+function cloneSymbolConfig(config: SymbolConfig): SymbolConfig {
+  return {
+    sidc: config.sidc,
+    size: config.size,
+    options: config.options ? { ...config.options } : undefined
+  };
+}
+
+function cloneRenderedSymbol(symbol: RenderedSymbol): RenderedSymbol {
+  return {
+    html: symbol.html,
+    size: { ...symbol.size },
+    anchor: { ...symbol.anchor },
+    className: symbol.className,
+    isFallback: symbol.isFallback,
+    ...(symbol.error ? { error: symbol.error } : {})
+  };
+}
+
 function deriveSymbolInfo(configKey: string | undefined, catalog: Record<string, SymbolConfig>, fallback: SymbolInfo): SymbolInfo {
-  if (!configKey) return fallback;
+  if (!configKey) return cloneSymbolInfo(fallback);
   const config = catalog[configKey];
-  if (!config) return fallback;
+  if (!config) return cloneSymbolInfo(fallback);
   const size = config.size ?? fallback.size;
   return {
     sidc: config.sidc,
@@ -241,7 +264,7 @@ export function renderSymbolToSvg(symbolInfo: SymbolInfo, options: SymbolRenderO
 }
 
 export function createSidcIconService(config: SidcSymbolServiceConfig) {
-  const fallback = config.fallback ?? DEFAULT_SYMBOL_FALLBACK;
+  const fallback = cloneSymbolInfo(config.fallback ?? DEFAULT_SYMBOL_FALLBACK);
   const lookup = buildLookup(config.typeMapping);
   const defaultKey = config.typeMapping.default;
   const renderCache = new Map<string, RenderedSymbol>();
@@ -249,7 +272,7 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
   function render(symbolInfo: SymbolInfo, options: SymbolRenderOptions = {}): RenderedSymbol {
     const key = JSON.stringify({ sidc: symbolInfo.sidc, size: symbolInfo.size, options: symbolInfo.options, renderOptions: options });
     const cached = renderCache.get(key);
-    if (cached) return cached;
+    if (cached) return cloneRenderedSymbol(cached);
     const rendered = renderSymbolToSvg(symbolInfo, options);
     renderCache.set(key, rendered);
     if (renderCache.size > MAX_RENDER_CACHE_SIZE) {
@@ -261,7 +284,7 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
         count += 1;
       }
     }
-    return rendered;
+    return cloneRenderedSymbol(rendered);
   }
 
   function getAssetSymbol(asset: AssetSymbolDescriptor): SymbolInfo {
@@ -287,7 +310,8 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
     getAssetSymbol,
     getTrackSymbol,
     getAvailableSymbols: () => Object.keys(config.typeMapping).filter((key) => key !== "default"),
-    getSymbolConfigs: () => ({ ...config.symbolCatalog }),
+    getSymbolConfigs: () =>
+      Object.fromEntries(Object.entries(config.symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])),
     render,
     preload
   };
