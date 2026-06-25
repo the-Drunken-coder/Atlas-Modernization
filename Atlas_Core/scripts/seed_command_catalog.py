@@ -222,12 +222,19 @@ def _build_api_base_url(explicit: Optional[str] = None) -> str:
     return _validate_http_url(configured.rstrip("/"))
 
 
+def _api_auth_headers() -> dict[str, str]:
+    api_key = os.getenv("ATLAS_API_AUTH_KEY", "").strip() or os.getenv("API_AUTH_KEY", "").strip()
+    if not api_key:
+        return {}
+    return {"X-API-Key": api_key}
+
+
 def _api_request(
     method: str, url: str, payload: Optional[dict[str, Any]] = None
 ) -> tuple[int, str]:
     """Issue a JSON request to the Atlas Core API."""
     safe_url = _validate_http_url(url)
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **_api_auth_headers()}
     data: Optional[bytes] = None
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -309,6 +316,7 @@ def _ensure_catalog_uploaded(api_base_url: str) -> bool:
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Content-Length": str(len(body_bytes)),
         "Accept": "application/json",
+        **_api_auth_headers(),
     }
 
     # nosemgrep: python.django.security.injection.ssrf.ssrf-injection-urllib.ssrf-injection-urllib

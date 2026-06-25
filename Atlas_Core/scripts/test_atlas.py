@@ -7,7 +7,14 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from atlas import DEFAULT_TUNNEL_HOSTNAME, public_base_url_from_hostname, verify_tunnel_connection
+from atlas import (
+    DEFAULT_TUNNEL_HOSTNAME,
+    compose_down_command,
+    compose_up_command,
+    public_base_url_from_hostname,
+    start_containers,
+    verify_tunnel_connection,
+)
 
 
 class FakeHTTPResponse:
@@ -77,6 +84,106 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         self.assertFalse(verified)
         self.assertEqual(status, "Connection not verified (may still be starting)")
+
+    def test_compose_up_command_uses_dev_stack_by_default(self) -> None:
+        self.assertEqual(
+            compose_up_command(),
+            ["docker", "compose", "up", "-d", "--build"],
+        )
+
+    def test_compose_up_command_uses_dev_tunnel_override(self) -> None:
+        self.assertEqual(
+            compose_up_command(tunnel=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "-f",
+                "docker-compose.tunnel.yml",
+                "up",
+                "-d",
+                "--build",
+            ],
+        )
+
+    def test_compose_up_command_uses_production_stack(self) -> None:
+        self.assertEqual(
+            compose_up_command(production=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "up",
+                "-d",
+                "--build",
+            ],
+        )
+
+    def test_compose_up_command_uses_production_tunnel_profile(self) -> None:
+        self.assertEqual(
+            compose_up_command(production=True, tunnel=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "--profile",
+                "tunnel",
+                "up",
+                "-d",
+                "--build",
+            ],
+        )
+
+    def test_compose_down_command_uses_production_stack_when_requested(self) -> None:
+        self.assertEqual(
+            compose_down_command(production=True, remove_volumes=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "down",
+                "--remove-orphans",
+                "--volumes",
+                "--rmi",
+                "local",
+            ],
+        )
+
+    def test_production_db_only_does_not_require_api_auth(self) -> None:
+        with (
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.ensure_minio_secrets", return_value={}),
+            patch("atlas.ensure_postgres_password", return_value={}),
+            patch("atlas.persist_compose_env_values"),
+            patch("atlas.print_disposable_storage_notice"),
+            patch("atlas.ensure_api_auth") as ensure_api_auth,
+            patch("atlas.cleanup_containers"),
+            patch("atlas.subprocess.run") as run,
+            patch("atlas.wait_for_database_docker"),
+            patch("builtins.print"),
+        ):
+            start_containers(db_only=True, production=True)
+
+        ensure_api_auth.assert_not_called()
+        run.assert_called_once_with(
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "up",
+                "-d",
+                "--build",
+                "postgres",
+            ],
+            check=True,
+            cwd="/tmp/Atlas_Core/docker",
+        )
 
 
 if __name__ == "__main__":
