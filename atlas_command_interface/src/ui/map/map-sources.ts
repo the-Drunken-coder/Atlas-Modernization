@@ -12,12 +12,17 @@ import type { UiGeometry } from "../../atlas/geometry.js";
 
 export type MapFeatureProperties = {
   entityId: string;
+  entityType: string;
   kind: "asset" | "track" | "geofeature";
   name: string;
   selected: boolean;
   classification?: string;
   linkState?: string;
   heading?: number;
+  subtype?: string;
+  modelId?: string;
+  assetType?: string;
+  symbolType?: string;
 };
 
 export type MapFeature = {
@@ -62,12 +67,15 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
       geometry,
       properties: {
         entityId: entity.entity_id,
+        entityType: entity.entity_type,
         kind,
         name: entityDisplayName(entity),
         selected: entity.entity_id === selectedId,
         classification: entityClassification(entity),
         linkState: entityLinkState(entity),
-        heading: kind === "asset" ? entityHeading(entity) : undefined
+        heading: kind === "asset" ? entityHeading(entity) : undefined,
+        subtype: entity.subtype ?? undefined,
+        ...entitySymbolHints(entity)
       }
     };
 
@@ -84,4 +92,26 @@ function pointGeometry(entity: EntityResource): UiGeometry | undefined {
 
 function kindToSource(kind: "asset" | "track" | "geofeature"): keyof MapSources {
   return kind === "asset" ? "assets" : kind === "track" ? "tracks" : "geofeatures";
+}
+
+function entitySymbolHints(entity: EntityResource): Pick<MapFeatureProperties, "modelId" | "assetType" | "symbolType"> {
+  const customSymbol = recordValue(entity.components.custom_symbol);
+  return {
+    modelId: firstString(customSymbol?.model_id),
+    assetType: firstString(customSymbol?.asset_type),
+    symbolType: firstString(customSymbol?.symbol_type)
+  };
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
