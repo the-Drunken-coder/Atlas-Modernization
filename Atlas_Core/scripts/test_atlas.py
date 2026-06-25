@@ -7,7 +7,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from atlas import DEFAULT_TUNNEL_HOSTNAME, public_base_url_from_hostname, verify_tunnel_connection
+from atlas import (
+    DEFAULT_TUNNEL_HOSTNAME,
+    compose_down_command,
+    compose_up_command,
+    public_base_url_from_hostname,
+    verify_tunnel_connection,
+)
 
 
 class FakeHTTPResponse:
@@ -77,6 +83,74 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         self.assertFalse(verified)
         self.assertEqual(status, "Connection not verified (may still be starting)")
+
+    def test_compose_up_command_uses_dev_stack_by_default(self) -> None:
+        self.assertEqual(
+            compose_up_command(),
+            ["docker", "compose", "up", "-d", "--build"],
+        )
+
+    def test_compose_up_command_uses_dev_tunnel_override(self) -> None:
+        self.assertEqual(
+            compose_up_command(tunnel=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "-f",
+                "docker-compose.tunnel.yml",
+                "up",
+                "-d",
+                "--build",
+            ],
+        )
+
+    def test_compose_up_command_uses_production_stack(self) -> None:
+        self.assertEqual(
+            compose_up_command(production=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "up",
+                "-d",
+                "--build",
+            ],
+        )
+
+    def test_compose_up_command_uses_production_tunnel_profile(self) -> None:
+        self.assertEqual(
+            compose_up_command(production=True, tunnel=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "--profile",
+                "tunnel",
+                "up",
+                "-d",
+                "--build",
+            ],
+        )
+
+    def test_compose_down_command_uses_production_stack_when_requested(self) -> None:
+        self.assertEqual(
+            compose_down_command(production=True, remove_volumes=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "down",
+                "--remove-orphans",
+                "--volumes",
+                "--rmi",
+                "local",
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -61,6 +61,17 @@ for loopback-only local development. The production Docker target does not ship
 that settings file and refuses to start unless `ENABLE_API_AUTH=true` and
 `API_AUTH_KEY` is set to a real, non-placeholder secret.
 
+For the production-image single-host stack:
+
+```bash
+export API_AUTH_KEY='your-secure-api-key'
+python3 Atlas_Core/scripts/atlas.py --production
+```
+
+Add `--tunnel` to start the optional Cloudflare Tunnel public edge. See
+[`docs/DEPLOYMENT_RUNBOOK.md`](docs/DEPLOYMENT_RUNBOOK.md) for the full operator
+runbook.
+
 ### Local Go Run
 
 With Postgres and MinIO already reachable (e.g. after `docker compose up -d` without the `api` service, or with API stopped to avoid port 8000 conflict), from `Atlas_Core/`: ensure `DATABASE_URL` points at your DB and `MINIO_SECRET_KEY` / `MINIO_ACCESS_KEY` match your MinIO credentials (defaults in `internal/config/config.go` assume `localhost:9000` and access key `atlas`).

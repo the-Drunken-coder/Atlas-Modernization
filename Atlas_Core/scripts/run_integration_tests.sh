@@ -5,6 +5,8 @@
 #   ATLAS_CORE_API_URL=http://localhost:8000 ./Atlas_Core/scripts/run_integration_tests.sh
 # or, from within Atlas_Core/scripts/:
 #   ATLAS_CORE_API_URL=http://localhost:8000 ./run_integration_tests.sh
+# For authenticated deployments:
+#   API_AUTH_KEY=... ATLAS_CORE_API_URL=http://localhost:8000 ./Atlas_Core/scripts/run_integration_tests.sh
 #
 # Requires: curl, jq
 # The API must already be running and ready before this script is invoked.
@@ -15,6 +17,7 @@ API_URL="${ATLAS_CORE_API_URL:-${ATLAS_API_URL:-http://localhost:8000}}"
 API_URL="${API_URL%/}"
 CONNECT_TIMEOUT="${ATLAS_CONNECT_TIMEOUT:-5}"
 MAX_TIME="${ATLAS_MAX_TIME:-30}"
+API_KEY="${ATLAS_API_AUTH_KEY:-${API_AUTH_KEY:-}}"
 PASS=0
 FAIL=0
 RUN_ID="$(date +%s)-$$"
@@ -31,14 +34,19 @@ request() {
   shift 2
   local response
   local retry_args=()
+  local auth_args=()
   if [ "$method" = "GET" ] || [ "$method" = "HEAD" ]; then
     retry_args=(--retry 2 --retry-delay 1)
+  fi
+  if [ -n "$API_KEY" ]; then
+    auth_args=(-H "X-API-Key: ${API_KEY}")
   fi
   set +e
   response=$(curl -sS \
     --connect-timeout "$CONNECT_TIMEOUT" \
     --max-time "$MAX_TIME" \
-    "${retry_args[@]}" \
+    ${retry_args[@]+"${retry_args[@]}"} \
+    ${auth_args[@]+"${auth_args[@]}"} \
     -w "\n%{http_code}" \
     -X "$method" "${API_URL}${path}" "$@" 2>&1)
   local curl_exit=$?

@@ -21,6 +21,12 @@ proxies public HTTPS traffic to the local ATLAS Core API.
    python3 Atlas_Core/scripts/atlas.py --tunnel
    ```
 
+   For the production-image stack:
+
+   ```bash
+   python3 Atlas_Core/scripts/atlas.py --production --tunnel
+   ```
+
    or via Docker Compose directly:
 
    ```bash
@@ -38,6 +44,8 @@ cloudflared tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 
 The tunnel service is kept in `docker-compose.tunnel.yml` so normal non-tunnel
 Compose runs do not require or expand `CLOUDFLARE_TUNNEL_TOKEN`.
+Production mode uses the tunnel profile in `docker-compose.production.yml` for
+the same reason.
 
 Tunnel mode also forces `ENABLE_API_AUTH=true` for the API service and requires
 `API_AUTH_KEY` to be set to a real value. The committed example settings file

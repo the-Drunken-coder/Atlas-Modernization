@@ -7,6 +7,7 @@ Simple script to start Docker containers for the ATLAS Core System.
 Usage:
     python atlas.py              # Interactive menu to choose startup options
     python atlas.py --tunnel     # Start all containers with Cloudflare tunnel (non-interactive)
+    python atlas.py --production # Start production-image containers (non-interactive)
     python atlas.py --db-only    # Start only PostgreSQL container (non-interactive)
     python atlas.py --help       # Show help
 """
@@ -31,6 +32,9 @@ logger = logging.getLogger(__name__)
 API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
 DEFAULT_TUNNEL_HOSTNAME = "atlascommandapi.org"
 TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
+DEV_COMPOSE_FILE = "docker-compose.yml"
+DEV_TUNNEL_COMPOSE_FILE = "docker-compose.tunnel.yml"
+PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
 
 
 def print_banner():
@@ -345,14 +349,39 @@ def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_re
     raise Exception(f"Database schema not ready after {max_retries} attempts")
 
 
-def cleanup_containers(atlas_core_dir, remove_volumes=False):
+def compose_down_command(*, production=False, remove_volumes=False):
+    """Return the docker compose down command for the selected deployment mode."""
+    cmd = ["docker", "compose"]
+    if production:
+        cmd.extend(["-f", PRODUCTION_COMPOSE_FILE])
+    cmd.extend(["down", "--remove-orphans"])
+    if remove_volumes:
+        cmd.extend(["--volumes", "--rmi", "local"])
+    return cmd
+
+
+def compose_up_command(*, production=False, tunnel=False, service=None):
+    """Return the docker compose up command for the selected deployment mode."""
+    cmd = ["docker", "compose"]
+    if production:
+        cmd.extend(["-f", PRODUCTION_COMPOSE_FILE])
+        if tunnel:
+            cmd.extend(["--profile", "tunnel"])
+    elif tunnel:
+        cmd.extend(["-f", DEV_COMPOSE_FILE, "-f", DEV_TUNNEL_COMPOSE_FILE])
+    cmd.extend(["up", "-d", "--build"])
+    if service:
+        cmd.append(service)
+    return cmd
+
+
+def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False):
     """Stop containers and optionally delete related volumes/images."""
     print("[STOP] Stopping existing containers...")
     docker_dir = os.path.join(atlas_core_dir, "docker")
-    cmd = ["docker", "compose", "down", "--remove-orphans"]
     if remove_volumes:
         print("[STOP] Removing container volumes and local images...")
-        cmd.extend(["--volumes", "--rmi", "local"])
+    cmd = compose_down_command(production=production, remove_volumes=remove_volumes)
     result = subprocess.run(
         cmd,
         cwd=docker_dir,
@@ -383,14 +412,14 @@ def ensure_tunnel_token():
     return False
 
 
-def ensure_tunnel_api_auth():
-    """Ensure public tunnel mode cannot start with development auth defaults."""
+def ensure_api_auth(mode):
+    """Ensure public/production modes cannot start with development auth defaults."""
     api_auth_key = os.getenv("API_AUTH_KEY", "").strip()
     if not api_auth_key:
-        print("[ERROR] Tunnel mode requires API_AUTH_KEY to be set.")
+        print(f"[ERROR] {mode} requires API_AUTH_KEY to be set.")
         return False
     if api_auth_key == API_AUTH_KEY_PLACEHOLDER:
-        print("[ERROR] Tunnel mode requires a real API_AUTH_KEY, not the example placeholder.")
+        print(f"[ERROR] {mode} requires a real API_AUTH_KEY, not the example placeholder.")
         return False
 
     os.environ["ENABLE_API_AUTH"] = "true"
@@ -478,7 +507,7 @@ def verify_tunnel_connection(
     return False, "Connection not verified (may still be starting)"
 
 
-def start_containers(db_only=False, tunnel=False, reset_volumes=False):
+def start_containers(db_only=False, tunnel=False, reset_volumes=False, production=False):
     """Start Docker containers using docker compose."""
     print_banner()
 
@@ -492,18 +521,23 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         persist_compose_env_values(docker_dir, generated_compose_values)
         print_disposable_storage_notice(db_only=db_only)
 
+        if production:
+            if not ensure_api_auth("Production mode"):
+                sys.exit(1)
+        elif tunnel:
+            if not ensure_api_auth("Tunnel mode"):
+                sys.exit(1)
+
         if tunnel:
             if not ensure_tunnel_token():
                 sys.exit(1)
-            if not ensure_tunnel_api_auth():
-                sys.exit(1)
 
-        cleanup_containers(atlas_core_dir, remove_volumes=reset_volumes)
+        cleanup_containers(atlas_core_dir, remove_volumes=reset_volumes, production=production)
 
         if db_only:
             print("[START] Starting PostgreSQL container...")
             subprocess.run(
-                ["docker", "compose", "up", "-d", "--build", "postgres"],
+                compose_up_command(production=production, service="postgres"),
                 check=True,
                 cwd=docker_dir,
             )
@@ -511,17 +545,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         elif tunnel:
             print("[START] Starting all containers with Cloudflare tunnel...")
             subprocess.run(
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    "docker-compose.yml",
-                    "-f",
-                    "docker-compose.tunnel.yml",
-                    "up",
-                    "-d",
-                    "--build",
-                ],
+                compose_up_command(production=production, tunnel=True),
                 check=True,
                 cwd=docker_dir,
             )
@@ -529,7 +553,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
         else:
             print("[START] Starting all containers (PostgreSQL, MinIO, API)...")
             subprocess.run(
-                ["docker", "compose", "up", "-d", "--build"],
+                compose_up_command(production=production),
                 check=True,
                 cwd=docker_dir,
             )
@@ -557,6 +581,8 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False):
             print("  HTTP:   http://localhost:8000")
             print("  Health:    http://localhost:8000/health")
             print("  Readiness: http://localhost:8000/readiness")
+            if production:
+                print("  Auth:      X-API-Key required for API routes")
 
         print("\nPostgreSQL:")
         print("  Host:     localhost (or 127.0.0.1)")
@@ -646,6 +672,8 @@ def main():
 Examples:
   python atlas.py              # Interactive menu to choose startup options
   python atlas.py --tunnel     # Start all containers with Cloudflare tunnel (non-interactive)
+  python atlas.py --production # Start production-image containers (non-interactive)
+  python atlas.py --production --tunnel
   python atlas.py --db-only    # Start only PostgreSQL container (non-interactive)
         """,
     )
@@ -662,6 +690,11 @@ Examples:
         help="Start all containers with Cloudflare tunnel for public HTTPS access",
     )
     parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Start the production Docker Compose stack instead of the development stack",
+    )
+    parser.add_argument(
         "--reset-volumes",
         action="store_true",
         help="Remove local Docker volumes and images before starting",
@@ -674,13 +707,18 @@ Examples:
         sys.exit(1)
 
     # Interactive menu only when invoked with no flags (any flag => non-interactive).
-    if not (args.db_only or args.tunnel or args.reset_volumes):
+    if not (args.db_only or args.tunnel or args.production or args.reset_volumes):
         db_only, tunnel = show_interactive_menu()
     else:
         db_only = args.db_only
         tunnel = args.tunnel
 
-    start_containers(db_only=db_only, tunnel=tunnel, reset_volumes=args.reset_volumes)
+    start_containers(
+        db_only=db_only,
+        tunnel=tunnel,
+        reset_volumes=args.reset_volumes,
+        production=args.production,
+    )
 
 
 if __name__ == "__main__":
