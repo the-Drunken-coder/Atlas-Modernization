@@ -22,8 +22,8 @@ services:
       MINIO_SECURE: "false"
       SERVER_PORT: "8000"
       ENABLE_API_AUTH: "true"
-      # atlas.py enforces API_AUTH_KEY before managed production starts.
-      # Keep this interpolation optional so `docker compose down` works without secrets.
+      # atlas.py enforces API_AUTH_KEY before managed API production starts.
+      # Keep this optional for Compose parsing; DB/MinIO secrets remain required below.
       API_AUTH_KEY: ${API_AUTH_KEY:-}
     ports:
       - "127.0.0.1:8000:8000"

@@ -52,6 +52,14 @@ class SeedCommandCatalogValidationTest(unittest.TestCase):
         with patch.dict("os.environ", {"API_AUTH_KEY": " generic "}, clear=True):
             self.assertEqual(_api_auth_headers(), {"X-API-Key": "generic"})
 
+    def test_api_auth_headers_ignore_blank_atlas_key_for_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"ATLAS_API_AUTH_KEY": " ", "API_AUTH_KEY": " generic "},
+            clear=True,
+        ):
+            self.assertEqual(_api_auth_headers(), {"X-API-Key": "generic"})
+
     def test_api_auth_headers_omit_empty_keys(self) -> None:
         with patch.dict("os.environ", {"ATLAS_API_AUTH_KEY": " ", "API_AUTH_KEY": ""}, clear=True):
             self.assertEqual(_api_auth_headers(), {})

@@ -12,6 +12,7 @@ from atlas import (
     compose_down_command,
     compose_up_command,
     public_base_url_from_hostname,
+    start_containers,
     verify_tunnel_connection,
 )
 
@@ -150,6 +151,38 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 "--rmi",
                 "local",
             ],
+        )
+
+    def test_production_db_only_does_not_require_api_auth(self) -> None:
+        with (
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.ensure_minio_secrets", return_value={}),
+            patch("atlas.ensure_postgres_password", return_value={}),
+            patch("atlas.persist_compose_env_values"),
+            patch("atlas.print_disposable_storage_notice"),
+            patch("atlas.ensure_api_auth") as ensure_api_auth,
+            patch("atlas.cleanup_containers"),
+            patch("atlas.subprocess.run") as run,
+            patch("atlas.wait_for_database_docker"),
+            patch("builtins.print"),
+        ):
+            start_containers(db_only=True, production=True)
+
+        ensure_api_auth.assert_not_called()
+        run.assert_called_once_with(
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "up",
+                "-d",
+                "--build",
+                "postgres",
+            ],
+            check=True,
+            cwd="/tmp/Atlas_Core/docker",
         )
 
 

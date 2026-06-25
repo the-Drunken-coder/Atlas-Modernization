@@ -223,7 +223,7 @@ def _build_api_base_url(explicit: Optional[str] = None) -> str:
 
 
 def _api_auth_headers() -> dict[str, str]:
-    api_key = (os.getenv("ATLAS_API_AUTH_KEY") or os.getenv("API_AUTH_KEY") or "").strip()
+    api_key = os.getenv("ATLAS_API_AUTH_KEY", "").strip() or os.getenv("API_AUTH_KEY", "").strip()
     if not api_key:
         return {}
     return {"X-API-Key": api_key}

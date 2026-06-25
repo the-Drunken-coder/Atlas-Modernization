@@ -38,6 +38,12 @@ export MINIO_ROOT_PASSWORD='replace-with-strong-password'
 export API_AUTH_KEY='replace-with-secure-api-key'
 ```
 
+`atlas.py` loads `Atlas_Core/docker/.env` automatically during managed starts.
+Direct production `docker compose -f docker-compose.production.yml ...` commands
+parse the Compose file before contacting Docker, so run them from
+`Atlas_Core/docker` with `.env` present or re-export the same
+`POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, and `MINIO_ROOT_PASSWORD` values first.
+
 Start the production-image stack:
 
 ```bash
@@ -53,6 +59,8 @@ routes. Health and readiness endpoints remain unauthenticated.
 
 Create a Cloudflare Tunnel in the Cloudflare dashboard and copy its run token.
 Hostname routing is managed in Cloudflare, not in a local credentials file.
+Use the same production credentials from the previous section, then add the
+tunnel values:
 
 ```bash
 export CLOUDFLARE_TUNNEL_TOKEN='replace-with-cloudflare-token'
@@ -86,6 +94,9 @@ ATLAS_CORE_API_URL="https://${ATLAS_TUNNEL_HOSTNAME:-atlascommandapi.org}" \
 `ATLAS_API_AUTH_KEY` takes precedence.
 
 ## Logs And Shutdown
+
+The production commands below assume `Atlas_Core/docker/.env` exists or the same
+credential environment variables are exported in the current shell.
 
 Development logs:
 

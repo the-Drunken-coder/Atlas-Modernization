@@ -521,7 +521,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
         persist_compose_env_values(docker_dir, generated_compose_values)
         print_disposable_storage_notice(db_only=db_only)
 
-        if production:
+        if production and not db_only:
             if not ensure_api_auth("Production mode"):
                 sys.exit(1)
         elif tunnel:
