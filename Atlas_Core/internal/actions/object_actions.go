@@ -1,7 +1,6 @@
 package actions
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -69,29 +67,20 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
 	if params.SizeBytes != nil {
-		jsonData["size_bytes"] = *params.SizeBytes
+		jsonData[string(objectBlobFieldSizeBytes)] = *params.SizeBytes
 	}
 	if params.UsageHints != nil {
-		jsonData["usage_hints"] = params.UsageHints
+		jsonData[string(objectBlobFieldUsageHints)] = params.UsageHints
 	}
 	if params.ReferencedBy != nil {
-		jsonData["referenced_by"] = params.ReferencedBy
+		jsonData[string(objectBlobFieldReferencedBy)] = params.ReferencedBy
 	}
-	if params.Extra != nil {
-		for k, v := range params.Extra {
-			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" && k != "version" {
-				jsonData[k] = v
-			}
-		}
-	}
+	mergeBlobExtraFields(jsonData, params.Extra, objectPromotedBlobFields)
 	applyConfiguredObjectBucket(jsonData, a.storage)
-	if err := ValidateObjectBlob(jsonData); err != nil {
-		return nil, err
-	}
 
-	jsonBytes, err := json.Marshal(jsonData)
+	jsonBytes, err := marshalValidatedJSONBlob(jsonData, ValidateObjectBlob)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, err
 	}
 
 	tx, err := beginChangeTx(ctx, a.pool, "object create")
@@ -149,23 +138,6 @@ func normalizeOptionalObjectString(value *string) *string {
 		return nil
 	}
 	return &trimmed
-}
-
-func decodeObjectJSONForPatch(raw json.RawMessage) (map[string]interface{}, error) {
-	if raw == nil {
-		return make(map[string]interface{}), nil
-	}
-
-	var data map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := jsondecode.Decode(decoder, &data); err != nil {
-		return nil, err
-	}
-	if data == nil {
-		return make(map[string]interface{}), nil
-	}
-	return data, nil
 }
 
 // Get retrieves an object by ID.
@@ -332,29 +304,20 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 
 	// Update JSON fields
 	if params.SizeBytes != nil {
-		existingJSON["size_bytes"] = *params.SizeBytes
+		existingJSON[string(objectBlobFieldSizeBytes)] = *params.SizeBytes
 	}
 	if params.UsageHints != nil {
-		existingJSON["usage_hints"] = params.UsageHints
+		existingJSON[string(objectBlobFieldUsageHints)] = params.UsageHints
 	}
 	if params.ReferencedBy != nil {
-		existingJSON["referenced_by"] = params.ReferencedBy
+		existingJSON[string(objectBlobFieldReferencedBy)] = params.ReferencedBy
 	}
-	if params.Extra != nil {
-		for k, v := range params.Extra {
-			if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" && k != "version" {
-				existingJSON[k] = v
-			}
-		}
-	}
+	mergeBlobExtraFields(existingJSON, params.Extra, objectPromotedBlobFields)
 	applyConfiguredObjectBucket(existingJSON, a.storage)
-	if err := ValidateObjectBlob(existingJSON); err != nil {
-		return nil, err
-	}
 
-	jsonBytes, err := json.Marshal(existingJSON)
+	jsonBytes, err := marshalValidatedJSONBlob(existingJSON, ValidateObjectBlob)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, err
 	}
 
 	var out models.MediaObject
@@ -447,15 +410,15 @@ func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, o
 
 func applyConfiguredObjectBucket(blob map[string]interface{}, storageClient objectStorage) {
 	if storageClient == nil {
-		delete(blob, "bucket")
+		delete(blob, string(objectBlobFieldBucket))
 		return
 	}
 	bucket := strings.TrimSpace(storageClient.Bucket())
 	if bucket == "" {
-		delete(blob, "bucket")
+		delete(blob, string(objectBlobFieldBucket))
 		return
 	}
-	blob["bucket"] = bucket
+	blob[string(objectBlobFieldBucket)] = bucket
 }
 
 // ValidateObjectBlob validates storage-facing object metadata.

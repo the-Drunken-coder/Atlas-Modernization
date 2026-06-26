@@ -2,7 +2,6 @@ package actions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -120,22 +119,13 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
 	if params.Components != nil {
-		jsonData["components"] = params.Components
+		jsonData[string(jsonBlobFieldComponents)] = params.Components
 	}
-	if params.Extra != nil {
-		for k, v := range params.Extra {
-			if k != "status" && k != "entity_id" && k != "components" && k != "version" {
-				jsonData[k] = v
-			}
-		}
-	}
-	if err := ValidateTaskBlob(jsonData); err != nil {
-		return nil, err
-	}
+	mergeBlobExtraFields(jsonData, params.Extra, taskPromotedBlobFields)
 
-	jsonBytes, err := json.Marshal(jsonData)
+	jsonBytes, err := marshalValidatedJSONBlob(jsonData, ValidateTaskBlob)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, err
 	}
 
 	var entityID *string
@@ -532,17 +522,9 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		return &task, nil
 	}
 
-	// Parse existing JSON
-	var existingJSON map[string]interface{}
-	if task.JSON != nil {
-		if err := json.Unmarshal(task.JSON, &existingJSON); err != nil {
-			return nil, fmt.Errorf("failed to parse existing task JSON: %w", err)
-		}
-		if existingJSON == nil {
-			existingJSON = make(map[string]interface{})
-		}
-	} else {
-		existingJSON = make(map[string]interface{})
+	existingJSON, err := decodeJSONBlobForPatch(task.JSON, jsonBlobDecodeDefault)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse existing task JSON: %w", err)
 	}
 
 	// Update status if provided
@@ -578,21 +560,10 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 
 	removeTaskExtraKeys(existingJSON, params.RemoveExtraKeys...)
 
-	// Merge extra.
-	if params.Extra != nil {
-		for k, v := range params.Extra {
-			if k != "components" && k != "status" && k != "entity_id" && k != "version" {
-				existingJSON[k] = v
-			}
-		}
-	}
-	if err := ValidateTaskBlob(existingJSON); err != nil {
-		return nil, err
-	}
-
-	jsonBytes, err := json.Marshal(existingJSON)
+	mergeBlobExtraFields(existingJSON, params.Extra, taskPromotedBlobFields)
+	jsonBytes, err := marshalValidatedJSONBlob(existingJSON, ValidateTaskBlob)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, err
 	}
 
 	err = tx.QueryRow(ctx, `
@@ -734,44 +705,8 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 
 var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
 
-func mergeTaskComponents(existingJSON map[string]interface{}, components map[string]interface{}) error {
-	if components == nil {
-		return nil
-	}
-	if err := ValidateTaskComponents(components); err != nil {
-		return err
-	}
-
-	var existingComponents map[string]interface{}
-	rawStored, hadStored := existingJSON["components"]
-	if hadStored && rawStored != nil {
-		storedMap, ok := rawStored.(map[string]interface{})
-		if !ok {
-			return NewValidationError("stored task components must be an object or null")
-		}
-		existingComponents = storedMap
-	} else {
-		existingComponents = make(map[string]interface{})
-	}
-	for k, v := range components {
-		existingComponents[k] = mergeJSONValue(existingComponents[k], v)
-	}
-	if err := ValidateTaskComponents(existingComponents); err != nil {
-		return err
-	}
-	existingJSON["components"] = existingComponents
-	return nil
-}
-
 func removeTaskExtraKeys(jsonData map[string]interface{}, keys ...string) {
-	for _, key := range keys {
-		switch key {
-		case "components", "status", "entity_id", "version":
-			continue
-		default:
-			delete(jsonData, key)
-		}
-	}
+	removeBlobExtraKeys(jsonData, taskPromotedBlobFields, keys...)
 }
 
 func taskStatusTransitionUpdate(status string, progress *float64, message *string) UpdateTaskParams {
