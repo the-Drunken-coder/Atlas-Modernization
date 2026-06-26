@@ -180,22 +180,33 @@ export type DeletedResource = {
   entity_id?: string | null;
 };
 
-export type ResourceValue = EntityResource | TaskResource | ObjectResource;
+export type ResourceByType = {
+  entity: EntityResource;
+  task: TaskResource;
+  object: ObjectResource;
+};
+
+export type ResourceValue = ResourceByType[ResourceType];
+export type ResourceOf<TType extends ResourceType> = ResourceByType[TType];
 
 export type AtlasRecoveredWatchEvent = {
-  event: "recovered";
-  resource_type: ResourceType;
-  id: string;
-  version: number;
-  resource: ResourceValue;
-};
+  [TType in ResourceType]: {
+    event: "recovered";
+    resource_type: TType;
+    id: string;
+    version: number;
+    resource: ResourceOf<TType>;
+  };
+}[ResourceType];
 
 export type AtlasLocalDeleteWatchEvent = {
-  event: "local_delete";
-  resource_type: ResourceType;
-  id: string;
-  previous_version?: number;
-};
+  [TType in ResourceType]: {
+    event: "local_delete";
+    resource_type: TType;
+    id: string;
+    previous_version?: number;
+  };
+}[ResourceType];
 
 export type AtlasWatchEvent = FeedEvent | AtlasRecoveredWatchEvent | AtlasLocalDeleteWatchEvent;
 
@@ -213,7 +224,7 @@ export type ChangedSinceCursors = FullDatasetCursors & {
   deleted_object_cursor?: string;
 };
 
-export type WatchCallback<T> = (value: T | undefined, event: AtlasWatchEvent) => void;
+export type WatchCallback<T extends ResourceValue = ResourceValue> = (value: T | undefined, event: AtlasWatchEvent) => void;
 
 export type CacheEntry<T> = {
   value?: T;
