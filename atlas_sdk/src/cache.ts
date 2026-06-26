@@ -1,5 +1,5 @@
 import type { EntityResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
-import type { CacheEntry, ResourceValue } from "./types.js";
+import type { CacheEntry, ResourceOf, ResourceValue } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 
 export type CacheResourceOptions = {
@@ -39,7 +39,7 @@ export class ObjectContentCache {
 }
 
 export class ResourceCache {
-  readonly entries = {
+  readonly entries: { [TType in ResourceType]: Map<string, CacheEntry<ResourceOf<TType>>> } = {
     entity: new Map<string, CacheEntry<EntityResource>>(),
     task: new Map<string, CacheEntry<TaskResource>>(),
     object: new Map<string, CacheEntry<ObjectResource>>()
@@ -48,16 +48,20 @@ export class ResourceCache {
   readonly locallyNotifiedDeletes = new Set<string>();
   lastVersion = 0;
 
-  entry<T extends ResourceValue>(type: ResourceType, id: string): CacheEntry<T> | undefined {
-    return this.entries[type].get(id) as CacheEntry<T> | undefined;
+  entry<TType extends ResourceType>(type: TType, id: string): CacheEntry<ResourceOf<TType>> | undefined {
+    return this.entries[type].get(id);
   }
 
-  value<T extends ResourceValue>(type: ResourceType, id: string): T | undefined {
-    const entry = this.entry<T>(type, id);
+  value<TType extends ResourceType>(type: TType, id: string): ResourceOf<TType> | undefined {
+    const entry = this.entry(type, id);
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
-  cacheResource(type: ResourceType, id: string, value: ResourceValue, options?: CacheResourceOptions): boolean {
+  cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {
+    const actualID = resourceID(type, value);
+    if (actualID !== id) {
+      throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
+    }
     const version = value.metadata.version;
     const existing = this.entries[type].get(id);
     const isDetailUpgrade = type === "object" && options?.detail === true && existing?.version === version && !existing.detail;
@@ -70,14 +74,14 @@ export class ResourceCache {
     const key = resourceCacheKey(type, id);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
-    this.entries[type].set(id, { value: value as any, version, deleted: false, detail: type === "object" && options?.detail === true });
+    this.entries[type].set(id, { value, version, deleted: false, detail: type === "object" && options?.detail === true });
     if (options?.advanceCursor !== false) {
       this.lastVersion = Math.max(this.lastVersion, version);
     }
     return true;
   }
 
-  cacheWrittenResource(type: ResourceType, resource: ResourceValue): void {
+  cacheWrittenResource<TType extends ResourceType>(type: TType, resource: ResourceOf<TType>): void {
     this.cacheResource(type, resourceID(type, resource), resource);
   }
 
@@ -85,11 +89,15 @@ export class ResourceCache {
     return this.entries[type].get(id)?.version ?? 0;
   }
 
+  markRemoteDelete(type: ResourceType, id: string, version: number): void {
+    this.entries[type].set(id, { version, deleted: true });
+  }
+
   markLocalDelete(type: ResourceType, id: string): { previousVersion: number; previous?: ResourceValue } {
     const previousEntry = this.entries[type].get(id);
     const previousVersion = previousEntry?.version ?? 0;
     const previous = previousEntry?.value;
-    this.entries[type].set(id, { version: previousVersion, deleted: true });
+    this.markRemoteDelete(type, id, previousVersion);
     const key = resourceCacheKey(type, id);
     this.pendingDeletes.add(key);
     this.locallyNotifiedDeletes.add(key);

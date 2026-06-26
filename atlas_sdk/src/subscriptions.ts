@@ -1,13 +1,10 @@
 import type {
-  EntityResource,
   FeedEvent,
   FeedSubscribeMessage,
   FeedUnsubscribeMessage,
-  ObjectResource,
-  ResourceType,
-  TaskResource
+  ResourceType
 } from "./protocol.js";
-import type { AtlasLocalDeleteWatchEvent, AtlasSubscription, AtlasWatchEvent } from "./types.js";
+import type { AtlasLocalDeleteWatchEvent, AtlasSubscription, AtlasWatchEvent, ResourceOf, ResourceValue } from "./types.js";
 
 const RESOURCE_TYPES = new Set<string>(["entity", "task", "object"]);
 
@@ -58,7 +55,7 @@ export function covers(covering: AtlasSubscription, wanted: AtlasSubscription): 
   return subscriptionKey(covering) === subscriptionKey(wanted);
 }
 
-export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, previous?: EntityResource | TaskResource | ObjectResource): boolean {
+export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, previous?: ResourceValue): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -70,19 +67,23 @@ export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatch
       if (event.resource_type !== "task") {
         return false;
       }
-      return (
-        (event.event !== "delete" && event.event !== "local_delete" && (event.resource as TaskResource).entity_id === filter.entity_id) ||
-        (event as FeedEvent & { entity_id?: string | null }).entity_id === filter.entity_id ||
-        (event as FeedEvent & { previous_entity_id?: string | null }).previous_entity_id === filter.entity_id ||
-        ((previous as TaskResource | undefined)?.entity_id ?? "") === filter.entity_id
-      );
+      return taskEventEntityIDs(event, previous).some((entityID) => entityID === filter.entity_id);
   }
 }
 
-export function resourceID(type: ResourceType, resource: EntityResource | TaskResource | ObjectResource): string {
-  if (type === "entity") return (resource as EntityResource).entity_id;
-  if (type === "task") return (resource as TaskResource).task_id;
-  return (resource as ObjectResource).object_id;
+export function resourceID<TType extends ResourceType>(type: TType, resource: ResourceOf<TType>): string;
+export function resourceID(type: ResourceType, resource: ResourceValue): string {
+  switch (type) {
+    case "entity":
+      assertResourceMatchesType("entity", resource);
+      return resource.entity_id;
+    case "task":
+      assertResourceMatchesType("task", resource);
+      return resource.task_id;
+    case "object":
+      assertResourceMatchesType("object", resource);
+      return resource.object_id;
+  }
 }
 
 export function resourceCacheKey(type: ResourceType, id: string): string {
@@ -90,11 +91,67 @@ export function resourceCacheKey(type: ResourceType, id: string): string {
 }
 
 export function localDeleteEvent(type: ResourceType, id: string, previousVersion: number): AtlasLocalDeleteWatchEvent {
-  const event: AtlasLocalDeleteWatchEvent = { event: "local_delete", resource_type: type, id };
-  if (previousVersion > 0) {
-    event.previous_version = previousVersion;
+  switch (type) {
+    case "entity":
+      return previousVersion > 0
+        ? { event: "local_delete", resource_type: "entity", id, previous_version: previousVersion }
+        : { event: "local_delete", resource_type: "entity", id };
+    case "task":
+      return previousVersion > 0
+        ? { event: "local_delete", resource_type: "task", id, previous_version: previousVersion }
+        : { event: "local_delete", resource_type: "task", id };
+    case "object":
+      return previousVersion > 0
+        ? { event: "local_delete", resource_type: "object", id, previous_version: previousVersion }
+        : { event: "local_delete", resource_type: "object", id };
   }
-  return event;
+}
+
+export function resourceUpsertEvent<TType extends ResourceType>(
+  type: TType,
+  event: "create" | "update",
+  id: string,
+  version: number,
+  resource: ResourceOf<TType>
+): FeedEvent {
+  const actualID = resourceID(type, resource);
+  if (actualID !== id) {
+    throw new TypeError(`Atlas ${type} resource id ${actualID} does not match event id ${id}`);
+  }
+  switch (type) {
+    case "entity":
+      assertResourceMatchesType("entity", resource);
+      return event === "create"
+        ? { event: "create", resource_type: "entity", id, version, resource }
+        : { event: "update", resource_type: "entity", id, version, resource };
+    case "task":
+      assertResourceMatchesType("task", resource);
+      return event === "create"
+        ? { event: "create", resource_type: "task", id, version, resource }
+        : { event: "update", resource_type: "task", id, version, resource };
+    case "object":
+      assertResourceMatchesType("object", resource);
+      return event === "create"
+        ? { event: "create", resource_type: "object", id, version, resource }
+        : { event: "update", resource_type: "object", id, version, resource };
+  }
+}
+
+export function assertResourceMatchesType<TType extends ResourceType>(type: TType, resource: ResourceValue): asserts resource is ResourceOf<TType> {
+  if (!resourceMatchesType(type, resource)) {
+    throw new TypeError(`Atlas ${resourceTypeName(resource)} resource cannot be used as ${type}`);
+  }
+}
+
+export function resourceMatchesType<TType extends ResourceType>(type: TType, resource: ResourceValue): resource is ResourceOf<TType> {
+  switch (type) {
+    case "entity":
+      return "entity_id" in resource && "entity_type" in resource;
+    case "task":
+      return "task_id" in resource;
+    case "object":
+      return "object_id" in resource;
+  }
 }
 
 function isResourceType(value: string): value is ResourceType {
@@ -103,4 +160,25 @@ function isResourceType(value: string): value is ResourceType {
 
 function isNonEmptyString(value: string | undefined): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function taskEventEntityIDs(event: Extract<AtlasWatchEvent, { resource_type: "task" }>, previous?: ResourceValue): Array<string | null | undefined> {
+  const ids: Array<string | null | undefined> = [];
+  if (event.event === "delete") {
+    ids.push(event.entity_id);
+  } else if (event.event === "update") {
+    ids.push(event.resource.entity_id, event.previous_entity_id);
+  } else if (event.event === "create" || event.event === "recovered") {
+    ids.push(event.resource.entity_id);
+  }
+  if (previous && resourceMatchesType("task", previous)) {
+    ids.push(previous.entity_id);
+  }
+  return ids;
+}
+
+function resourceTypeName(resource: ResourceValue): ResourceType {
+  if ("task_id" in resource) return "task";
+  if ("object_id" in resource) return "object";
+  return "entity";
 }

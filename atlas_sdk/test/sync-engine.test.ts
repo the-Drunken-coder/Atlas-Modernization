@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient } from "../src";
+import { AtlasClient, type FeedEvent, type ResourceType } from "../src";
+import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
-import { changedSinceToEvents, type ChangedSinceResponse } from "../src/types.js";
+import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync", () => {
@@ -556,6 +557,42 @@ describe("AtlasClient sync", () => {
     expect(typeof client.entities.watch("asset-watch", vi.fn())).toBe("function");
     expect(typeof client.tasks.watch("task-watch", vi.fn())).toBe("function");
     expect(typeof client.objects.watch("object-watch", vi.fn())).toBe("function");
+  });
+
+  it("rejects resources written into the wrong cache bucket", () => {
+    const cache = new ResourceCache();
+    const cacheResource = cache.cacheResource.bind(cache) as (type: ResourceType, id: string, value: ResourceValue) => boolean;
+    const taskPayload = task("task-cache-cross-type", "asset-cache-cross-type");
+
+    expect(() => cacheResource("entity", "asset-cache-cross-type", taskPayload)).toThrow("cannot be used as entity");
+    expect(cache.entry("entity", "asset-cache-cross-type")).toBeUndefined();
+  });
+
+  it("does not deliver feed events whose resource payload crosses resource types", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.watch({ filter: "type", resource_type: "entity" }, watch);
+
+    const taskPayload = { ...task("task-watch-cross-type", null), metadata: metadata(1) };
+    const mismatchedEvent = {
+      event: "update",
+      resource_type: "entity",
+      id: "asset-watch-cross-type",
+      version: 1,
+      resource: taskPayload
+    } as unknown as FeedEvent;
+    core.emit(mismatchedEvent, { record: false });
+
+    await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true }));
+    expect(watch).not.toHaveBeenCalled();
   });
 
   it("stops delivering events after unwatch without affecting other watchers", async () => {

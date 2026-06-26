@@ -81,9 +81,9 @@ export type AtlasClientOptions = {
 export class AtlasClient {
   readonly entities = {
     get: (id: string, options?: ReadOptions) => this.engine.readEntity(id, options),
-    create: (entity: EntityCreateRequest) => this.engine.writeResource<EntityResource>("POST", "/entities", entity, "entity"),
+    create: (entity: EntityCreateRequest) => this.engine.writeResource("POST", "/entities", entity, "entity"),
     update: (id: string, patch: EntityUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource<EntityResource>("PATCH", `/entities/${encodeURIComponent(id)}`, patch, "entity", options?.ifMatchVersion),
+      this.engine.writeResource("PATCH", `/entities/${encodeURIComponent(id)}`, patch, "entity", options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`),
     checkIn: ((id: string, options?: EntityCheckInOptions) => this.checkInEntity(id, options)) as EntityCheckInMethod,
     watch: (id: string, callback: WatchCallback<EntityResource>) => this.engine.watch({ filter: "id", resource_type: "entity", id }, callback)
@@ -91,14 +91,14 @@ export class AtlasClient {
 
   readonly tasks = {
     get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
-    create: (task: TaskCreateRequest) => this.engine.writeResource<TaskResource>("POST", "/tasks", task, "task"),
+    create: (task: TaskCreateRequest) => this.engine.writeResource("POST", "/tasks", task, "task"),
     update: (id: string, patch: TaskUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource<TaskResource>("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", options?.ifMatchVersion),
+      this.engine.writeResource("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
     acknowledge: (id: string, options?: TaskLifecycleOptions) =>
-      this.engine.writeResource<TaskResource>("POST", `/tasks/${encodeURIComponent(id)}/acknowledge`, {}, "task", options?.ifMatchVersion, "update"),
+      this.engine.writeResource("POST", `/tasks/${encodeURIComponent(id)}/acknowledge`, {}, "task", options?.ifMatchVersion, "update"),
     complete: (id: string, options?: TaskCompleteOptions) =>
-      this.engine.writeResource<TaskResource>(
+      this.engine.writeResource(
         "POST",
         `/tasks/${encodeURIComponent(id)}/complete`,
         options?.result === undefined ? {} : { result: options.result },
@@ -107,7 +107,7 @@ export class AtlasClient {
         "update"
       ),
     fail: (id: string, options?: TaskFailOptions) =>
-      this.engine.writeResource<TaskResource>(
+      this.engine.writeResource(
         "POST",
         `/tasks/${encodeURIComponent(id)}/fail`,
         options?.error === undefined ? {} : { error: options.error },
@@ -116,16 +116,16 @@ export class AtlasClient {
         "update"
       ),
     setStatus: (id: string, status: TaskStatus, options?: TaskStatusOptions) =>
-      this.engine.writeResource<TaskResource>("POST", `/tasks/${encodeURIComponent(id)}/status`, taskStatusBody(status, options), "task", options?.ifMatchVersion, "update"),
+      this.engine.writeResource("POST", `/tasks/${encodeURIComponent(id)}/status`, taskStatusBody(status, options), "task", options?.ifMatchVersion, "update"),
     cancel: (id: string, options?: TaskLifecycleOptions) => this.tasks.setStatus(id, "cancelled", options),
     watch: (id: string, callback: WatchCallback<TaskResource>) => this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
   };
 
   readonly objects = {
     get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
-    create: (object: ObjectCreateRequest) => this.engine.writeResource<ObjectResponse>("POST", "/objects", object, "object"),
+    create: (object: ObjectCreateRequest) => this.engine.writeResource<"object", ObjectResponse>("POST", "/objects", object, "object"),
     update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource<ObjectResponse>("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", options?.ifMatchVersion),
+      this.engine.writeResource<"object", ObjectResponse>("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
     content: (id: string) => this.objectContent(id),
     watch: (id: string, callback: WatchCallback<ObjectResource>) => this.engine.watch({ filter: "id", resource_type: "object", id }, callback)

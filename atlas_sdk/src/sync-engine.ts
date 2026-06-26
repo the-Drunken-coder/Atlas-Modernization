@@ -9,6 +9,7 @@ import {
   parseSubscriptionKey,
   resourceCacheKey,
   resourceID,
+  resourceUpsertEvent,
   subscriptionKey
 } from "./subscriptions.js";
 import type {
@@ -23,6 +24,7 @@ import type {
   FullDatasetCursors,
   FullDatasetResponse,
   ReadOptions,
+  ResourceOf,
   ResourceValue,
   SyncStatus,
   WatchCallback
@@ -37,7 +39,7 @@ export class SyncEngine {
   private readonly cache: ResourceCache;
   private readonly pollIntervalMs: number;
   private readonly subscriptions: AtlasSubscription[] = [];
-  private readonly watchers = new Map<string, Set<WatchCallback<any>>>();
+  private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
   private syncRunning = false;
   private healthy = false;
   private degraded = false;
@@ -120,16 +122,19 @@ export class SyncEngine {
     this.feed.sendSubscription("unsubscribe", filter);
   }
 
-  watch<T extends EntityResource | TaskResource | ObjectResource>(filter: AtlasSubscription, callback: WatchCallback<T>): () => void {
+  watch<T extends ResourceValue>(filter: AtlasSubscription, callback: WatchCallback<T>): () => void {
     const key = subscriptionKey(filter);
     let callbacks = this.watchers.get(key);
     if (!callbacks) {
       callbacks = new Set();
       this.watchers.set(key, callbacks);
     }
-    callbacks.add(callback as WatchCallback<any>);
+    const wrapped: WatchCallback<ResourceValue> = (resource, event) => {
+      callback(resource as T | undefined, event);
+    };
+    callbacks.add(wrapped);
     return () => {
-      callbacks.delete(callback as WatchCallback<any>);
+      callbacks.delete(wrapped);
       if (callbacks.size === 0 && this.watchers.get(key) === callbacks) {
         this.watchers.delete(key);
       }
@@ -190,7 +195,7 @@ export class SyncEngine {
   }
 
   async readEntity(id: string, options?: ReadOptions): Promise<EntityResource> {
-    const cached = this.cache.entry<EntityResource>("entity", id);
+    const cached = this.cache.entry("entity", id);
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "entity", id }) && cached?.value && !cached.deleted) {
       return cached.value;
     }
@@ -200,7 +205,7 @@ export class SyncEngine {
   }
 
   async readTask(id: string, options?: ReadOptions): Promise<TaskResource> {
-    const cached = this.cache.entry<TaskResource>("task", id);
+    const cached = this.cache.entry("task", id);
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "task", id }) && cached?.value && !cached.deleted) {
       return cached.value;
     }
@@ -210,7 +215,7 @@ export class SyncEngine {
   }
 
   async readObject(id: string, options?: ReadOptions): Promise<ObjectResponse> {
-    const cached = this.cache.entry<ObjectResponse>("object", id);
+    const cached = this.cache.entry("object", id);
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached?.value && !cached.deleted && cached.detail) {
       return cached.value;
     }
@@ -219,18 +224,19 @@ export class SyncEngine {
     return object;
   }
 
-  async writeResource<T extends EntityResource | TaskResource | ObjectResource>(
+  async writeResource<TType extends ResourceType, TResource extends ResourceOf<TType> = ResourceOf<TType>>(
     method: string,
     path: string,
     body: unknown,
-    type: ResourceType,
+    type: TType,
     ifMatchVersion?: number,
     eventName?: "create" | "update"
-  ): Promise<T> {
-    const resource = await this.transport.json<T>(method, path, body, ifMatchVersion);
+  ): Promise<TResource> {
+    const resource = await this.transport.json<TResource>(method, path, body, ifMatchVersion);
     const id = resourceID(type, resource);
+    const event = eventName ?? (method === "POST" ? "create" : "update");
     this.applyEvent(
-      { event: eventName ?? (method === "POST" ? "create" : "update"), resource_type: type, id, version: resource.metadata.version, resource } as FeedEvent,
+      resourceUpsertEvent(type, event, id, resource.metadata.version, resource),
       { detail: type === "object", advanceCursor: false }
     );
     return resource;
@@ -391,12 +397,12 @@ export class SyncEngine {
   private applyEvent(event: FeedEvent, options?: CacheResourceOptions): void {
     const advanceCursor = options?.advanceCursor !== false;
     const key = resourceCacheKey(event.resource_type, event.id);
-    const current = this.cache.entries[event.resource_type].get(event.id);
+    const current = this.cache.entry(event.resource_type, event.id);
     const pendingDelete = this.cache.pendingDeletes.has(key);
     const previous = current?.value;
     if (pendingDelete && event.event === "delete") {
       this.cache.pendingDeletes.delete(key);
-      this.cache.entries[event.resource_type].set(event.id, { version: event.version, deleted: true });
+      this.cache.markRemoteDelete(event.resource_type, event.id, event.version);
       this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
@@ -414,7 +420,7 @@ export class SyncEngine {
     }
     if (event.event === "delete") {
       this.cache.pendingDeletes.delete(key);
-      this.cache.entries[event.resource_type].set(event.id, { version: event.version, deleted: true });
+      this.cache.markRemoteDelete(event.resource_type, event.id, event.version);
       this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
@@ -422,15 +428,14 @@ export class SyncEngine {
       }
       return;
     }
-    const resource = event.resource as EntityResource | TaskResource | ObjectResource;
-    this.cache.cacheResource(event.resource_type, event.id, resource, options);
+    this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
     this.advanceCursor(event, advanceCursor);
-    this.notify(event, resource, previous);
+    this.notify(event, event.resource, previous);
   }
 
   private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
     const key = resourceCacheKey(event.resource_type, event.id);
-    const current = this.cache.entries[event.resource_type].get(event.id);
+    const current = this.cache.entry(event.resource_type, event.id);
     const previous = current?.value;
     if (this.cache.pendingDeletes.has(key)) {
       this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
@@ -442,8 +447,7 @@ export class SyncEngine {
     }
     this.cache.pendingDeletes.delete(key);
     this.cache.locallyNotifiedDeletes.delete(key);
-    this.cache.entries[event.resource_type].set(event.id, { value: event.resource as any, version: event.version, deleted: false });
-    this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
+    this.cache.cacheResource(event.resource_type, event.id, event.resource);
     this.notify(event, event.resource, previous);
   }
 
