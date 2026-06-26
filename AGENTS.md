@@ -46,7 +46,7 @@ When working on Atlas Core, Atlas Protocol, the SDK, or the command interface, d
 - In HTTP handlers, avoid repeated anonymous request structs for non-trivial payloads and avoid handler methods that orchestrate several domain steps. Prefer named request/response types where the shape is reused or complex, and push check-in-style workflows such as `EntityCheckin` into actions/services so handlers mostly parse, call one operation, and serialize.
 - Keep protocol generators split by concern. If TypeScript generation grows, extract focused helpers and tests instead of expanding `atlas_protocol/tools/internal/artifacts/typescript.go` as a catch-all file.
 - In the SDK cache/watch path, do not normalize type mismatches by stacking `as any` or broad casts. Prefer discriminated resource helpers or generic boundaries that keep the entity/task/object type mapping explicit.
-- Treat ignored local outputs such as `node_modules/`, `dist/`, `storybook-static/`, `.wrangler/`, `worker-configuration.d.ts`, and `Atlas_Core/docker/.env` as disposable artifacts, not source. Update source, templates, or generators instead of editing or citing those paths as durable implementation.
+- Treat ignored local outputs such as `node_modules/`, `dist/`, `storybook-static/`, `.wrangler/`, and `worker-configuration.d.ts` as disposable artifacts, not source. Treat `Atlas_Core/docker/.env` as local operator config; update `.env.example`, templates, or generators instead of citing a local `.env` as durable implementation.
 
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
