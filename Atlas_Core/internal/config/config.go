@@ -204,12 +204,6 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 		cfg.CORSOrigins = origins
-	} else if _, ok := os.LookupEnv("ALLOWED_ORIGINS"); ok {
-		origins, err := parseCORSOriginsValue(os.Getenv("ALLOWED_ORIGINS"))
-		if err != nil {
-			return nil, err
-		}
-		cfg.CORSOrigins = origins
 	}
 
 	if err := validateCORSOrigins(cfg.CORSOrigins); err != nil {
@@ -387,9 +381,7 @@ func (c *Config) loadSettingsFile() error {
 	}
 	if settings.CORSOrigins != nil {
 		if _, ok := os.LookupEnv("CORS_ORIGINS"); !ok {
-			if _, ok2 := os.LookupEnv("ALLOWED_ORIGINS"); !ok2 {
-				c.CORSOrigins = settings.CORSOrigins
-			}
+			c.CORSOrigins = settings.CORSOrigins
 		}
 	}
 	if _, ok := os.LookupEnv("ENABLE_API_AUTH"); !ok {
