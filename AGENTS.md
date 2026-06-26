@@ -40,6 +40,10 @@ The Atlas Protocol runtime validator uses `cuelang.org/go` against one embedded 
 
 This project is super greenfield. It has no users and no real data yet. Prefer the simplest correct long-term design over dirty compatibility shims, duplicated paths, or preserving old architecture just because it already exists. If replacing a subsystem leads to a simpler result, take the rebuild even when the process is more involved; if the quick simple fix is also the clean long-term answer, take that instead. Keep changes scoped to the request, and do not use greenfield status as permission for unrelated refactors.
 
+Apply YAGNI aggressively: do not add extension points, configuration knobs, compatibility shims, generalized helpers, or data models for hypothetical future requirements. Build only what the current request and known architecture actually need.
+
+Use the Single-Line Coding Principles for simple behavior: when a clear one-line expression, guard clause, or direct call solves the problem, prefer it over a named abstraction, branching helper, or orchestration layer. Split code only when doing so improves readability, error handling, or reuse that already exists.
+
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
 Atlas Core's PostgreSQL database and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around.
