@@ -71,6 +71,8 @@ type jsonBlobDecodeMode int
 
 const (
 	jsonBlobDecodeDefault jsonBlobDecodeMode = iota
+	// Objects keep integer blob fields as json.Number so size_bytes can round-trip
+	// without float64 precision loss during patch-time merge/validation.
 	jsonBlobDecodeUseNumber
 )
 

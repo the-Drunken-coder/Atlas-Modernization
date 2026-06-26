@@ -93,6 +93,52 @@ func TestMergeEntityComponentsUsesSharedStoredTypeGuard(t *testing.T) {
 	}
 }
 
+func TestMergeEntityComponentsDeepMergesNestedMapsAndReplacesOtherValues(t *testing.T) {
+	blob := map[string]interface{}{
+		string(jsonBlobFieldComponents): map[string]interface{}{
+			"custom_data": map[string]interface{}{
+				"keep":           "stored",
+				"replace_scalar": "stored",
+				"replace_slice":  []interface{}{"stored"},
+				"nested": map[string]interface{}{
+					"keep":    "stored",
+					"replace": "stored",
+				},
+			},
+		},
+	}
+	incoming := map[string]interface{}{
+		"custom_data": map[string]interface{}{
+			"replace_scalar": map[string]interface{}{"now": "object"},
+			"replace_slice":  []interface{}{"incoming"},
+			"nested": map[string]interface{}{
+				"replace": "incoming",
+				"added":   "incoming",
+			},
+		},
+	}
+
+	if err := mergeEntityComponents(blob, incoming); err != nil {
+		t.Fatalf("mergeEntityComponents: %v", err)
+	}
+
+	components := blob[string(jsonBlobFieldComponents)].(map[string]interface{})
+	got := components["custom_data"]
+	want := map[string]interface{}{
+		"keep":           "stored",
+		"replace_scalar": map[string]interface{}{"now": "object"},
+		"replace_slice":  []interface{}{"incoming"},
+		"nested": map[string]interface{}{
+			"keep":    "stored",
+			"replace": "incoming",
+			"added":   "incoming",
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("custom_data = %#v, want %#v", got, want)
+	}
+}
+
 func TestDecodeObjectJSONForPatchStillPreservesNumbers(t *testing.T) {
 	blob, err := decodeJSONBlobForPatch(
 		json.RawMessage(`{"size_bytes":9007199254740993,"operator_note":"patched"}`),
