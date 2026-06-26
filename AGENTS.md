@@ -44,6 +44,14 @@ Apply YAGNI aggressively: do not add extension points, configuration knobs, comp
 
 Use the Single-Line Coding Principles for simple behavior: when a clear one-line expression, guard clause, or direct call solves the problem, prefer it over a named abstraction, branching helper, or orchestration layer. Split code only when doing so improves readability, error handling, or reuse that already exists.
 
+When working on Atlas Core, Atlas Protocol, the SDK, or the command interface, do not copy audit-era shortcuts forward:
+
+- In entity/task/object actions, avoid adding another hand-written JSON read/parse/mutate/validate/marshal/update pipeline or another string comparison list for promoted/excluded fields. Prefer a small shared helper or typed patch shape that owns merge, removal, promoted-field, and final-blob validation rules.
+- In HTTP handlers, avoid repeated anonymous request structs for non-trivial payloads and avoid handler methods that orchestrate several domain steps. Prefer named request/response types where the shape is reused or complex, and push check-in-style workflows such as `EntityCheckin` into actions/services so handlers mostly parse, call one operation, and serialize.
+- Keep protocol generators split by concern. If TypeScript generation grows, extract focused helpers and tests instead of expanding `atlas_protocol/tools/internal/artifacts/typescript.go` as a catch-all file.
+- In the SDK cache/watch path, do not normalize type mismatches by stacking `as any` or broad casts. Prefer discriminated resource helpers or generic boundaries that keep the entity/task/object type mapping explicit.
+- Treat ignored local outputs such as `node_modules/`, `dist/`, `storybook-static/`, `.wrangler/`, and `worker-configuration.d.ts` as disposable artifacts, not source. Treat `Atlas_Core/docker/.env` as local operator config; update `.env.example`, templates, or generators instead of citing a local `.env` as durable implementation.
+
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
 Atlas Core's PostgreSQL database and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around.
