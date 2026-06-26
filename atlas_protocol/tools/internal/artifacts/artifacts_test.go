@@ -411,6 +411,79 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testi
 	}
 }
 
+func TestTypeScriptSourceGeneratesExactOneOfValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"choice": {
+					"oneOf": [
+						{ "type": "string" },
+						{ "type": "string", "minLength": 2 }
+					]
+				},
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"required": ["choice", "task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		`[typeof value["choice"] === "string", typeof value["choice"] === "string" && value["choice"].length >= 2].filter((valid) => valid).length === 1`,
+		`function atlasProtocolStringMatches(value: string, pattern: string): boolean`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesStringPatternAndLengthValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"TaskCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"code": {
+					"type": "string",
+					"pattern": "^[A-Z]+$",
+					"minLength": 2,
+					"maxLength": 4
+				},
+				"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
+			},
+			"required": ["code", "task_id"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		`typeof value["code"] === "string"`,
+		`atlasProtocolStringMatches(value["code"], "^[A-Z]+$")`,
+		`value["code"].length >= 2`,
+		`value["code"].length <= 4`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `atlasProtocolIsNonEmptyString(value["code"])`) {
+		t.Fatalf("generated TypeScript collapsed code constraints to non-empty:\n%s", text)
+	}
+}
+
 func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *testing.T) {
 	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
 		"EntityCreateRequest": []byte(`{
@@ -456,11 +529,41 @@ func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *t
 		"[key: `custom_${string}`]: string;",
 		`(!atlasProtocolHasOwn(value["geometry"], "point_lat") || (atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
 		`(!atlasProtocolHasOwn(value["geometry"], "radius_m") || (atlasProtocolHasOwn(value["geometry"], "point_lat") && atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
-		`Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || (atlasProtocolKeyMatches(key, "^custom_") && typeof item === "string") || false)`,
+		`Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || ((atlasProtocolKeyMatches(key, "^custom_")) ? ((!atlasProtocolKeyMatches(key, "^custom_") || (typeof item === "string"))) : false))`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestTypeScriptSourceKeepsPatternPropertiesFromEscapingThroughFallback(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCreateRequest": []byte(`{
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
+				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" },
+				"labels": {
+					"patternProperties": {
+						"^custom_": { "type": "string" }
+					}
+				}
+			},
+			"required": ["entity_id", "entity_type"],
+			"$defs": {
+				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	want := `Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || ((atlasProtocolKeyMatches(key, "^custom_")) ? ((!atlasProtocolKeyMatches(key, "^custom_") || (typeof item === "string"))) : true))`
+	if !strings.Contains(text, want) {
+		t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
 	}
 }
 

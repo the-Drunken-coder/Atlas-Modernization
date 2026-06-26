@@ -71,7 +71,7 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 		return "(" + refExpression + " && " + siblingExpression + ")", nil
 	}
 	if oneOf, ok := schema["oneOf"].([]any); ok {
-		return g.runtimeUnionValidatorExpression(valueExpr, oneOf, seenRefs)
+		return g.runtimeOneOfValidatorExpression(valueExpr, oneOf, seenRefs)
 	}
 	if anyOf, ok := schema["anyOf"].([]any); ok {
 		return g.runtimeUnionValidatorExpression(valueExpr, anyOf, seenRefs)
@@ -148,16 +148,22 @@ func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, re
 }
 
 func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema) string {
+	checks := []string{}
 	if format, ok := schema["format"].(string); ok && format == "date-time" {
-		return "atlasProtocolIsRFC3339String(" + valueExpr + ")"
+		checks = append(checks, "atlasProtocolIsRFC3339String("+valueExpr+")")
+	} else {
+		checks = append(checks, "typeof "+valueExpr+" === \"string\"")
 	}
-	if _, ok := schema["pattern"].(string); ok {
-		return "atlasProtocolIsNonEmptyString(" + valueExpr + ")"
+	if pattern, ok := schema["pattern"].(string); ok {
+		checks = append(checks, "atlasProtocolStringMatches("+valueExpr+", "+jsonString(pattern)+")")
 	}
-	if minLength, ok := schema["minLength"].(float64); ok && minLength > 0 {
-		return "atlasProtocolIsNonEmptyString(" + valueExpr + ")"
+	if minLength, ok := schema["minLength"].(float64); ok {
+		checks = append(checks, valueExpr+".length >= "+jsonNumber(minLength))
 	}
-	return "typeof " + valueExpr + " === \"string\""
+	if maxLength, ok := schema["maxLength"].(float64); ok {
+		checks = append(checks, valueExpr+".length <= "+jsonNumber(maxLength))
+	}
+	return strings.Join(checks, " && ")
 }
 
 func runtimeNumberValidatorExpression(valueExpr string, schema typeScriptSchema, integer bool) string {
@@ -329,7 +335,8 @@ func (g *typeScriptGenerator) runtimeObjectEntriesValidatorExpression(valueExpr 
 	}
 	sort.Strings(patternKeys)
 
-	patternChecks := make([]string, 0, len(patternKeys))
+	patternMatches := make([]string, 0, len(patternKeys))
+	patternRequirements := make([]string, 0, len(patternKeys))
 	for _, pattern := range patternKeys {
 		patternSchema, ok := patterns[pattern].(map[string]any)
 		if !ok {
@@ -339,7 +346,9 @@ func (g *typeScriptGenerator) runtimeObjectEntriesValidatorExpression(valueExpr 
 		if err != nil {
 			return "", fmt.Errorf("pattern %s: %w", pattern, err)
 		}
-		patternChecks = append(patternChecks, "(atlasProtocolKeyMatches(key, "+jsonString(pattern)+") && "+itemCheck+")")
+		match := "atlasProtocolKeyMatches(key, " + jsonString(pattern) + ")"
+		patternMatches = append(patternMatches, match)
+		patternRequirements = append(patternRequirements, "(!"+match+" || ("+itemCheck+"))")
 	}
 
 	fallback := "true"
@@ -360,10 +369,10 @@ func (g *typeScriptGenerator) runtimeObjectEntriesValidatorExpression(valueExpr 
 		return "", fmt.Errorf("unsupported additionalProperties %T", additional)
 	}
 
-	parts := []string{"atlasProtocolKnownKeys(" + jsonStringSlice(propKeys) + ", key)"}
-	parts = append(parts, patternChecks...)
-	parts = append(parts, fallback)
-	return "Object.entries(" + valueExpr + ").every(([key, item]) => " + strings.Join(parts, " || ") + ")", nil
+	knownKeys := "atlasProtocolKnownKeys(" + jsonStringSlice(propKeys) + ", key)"
+	patternMatched := "(" + strings.Join(patternMatches, " || ") + ")"
+	patternValid := "(" + strings.Join(patternRequirements, " && ") + ")"
+	return "Object.entries(" + valueExpr + ").every(([key, item]) => " + knownKeys + " || (" + patternMatched + " ? " + patternValid + " : " + fallback + "))", nil
 }
 
 func (g *typeScriptGenerator) runtimeUnionValidatorExpression(valueExpr string, items []any, seenRefs map[string]bool) (string, error) {
@@ -383,6 +392,25 @@ func (g *typeScriptGenerator) runtimeUnionValidatorExpression(valueExpr string, 
 		return "", fmt.Errorf("runtime union has no schema branches")
 	}
 	return "(" + strings.Join(uniqueStrings(parts), " || ") + ")", nil
+}
+
+func (g *typeScriptGenerator) runtimeOneOfValidatorExpression(valueExpr string, items []any, seenRefs map[string]bool) (string, error) {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		schema, ok := item.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("unsupported runtime oneOf item %T", item)
+		}
+		expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, schema, seenRefs)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, expression)
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("runtime oneOf has no schema branches")
+	}
+	return "([" + strings.Join(parts, ", ") + "].filter((valid) => valid).length === 1)", nil
 }
 
 func (g *typeScriptGenerator) runtimeAllOfValidatorExpression(valueExpr string, items []any, seenRefs map[string]bool) (string, error) {
