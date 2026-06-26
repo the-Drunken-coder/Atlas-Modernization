@@ -3,7 +3,6 @@ package actions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,15 +14,6 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
-
-func isPromotedEntityExtraKey(key string) bool {
-	switch key {
-	case "type", "subtype", "alias", "components", "version":
-		return true
-	default:
-		return false
-	}
-}
 
 // ActionError is a base error for action operations.
 type ActionError struct {
@@ -248,28 +238,18 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	// Build JSON payload: merge Extra first so typed PublishedAt/UpdatedAt override duplicate keys.
 	jsonData := make(map[string]interface{})
 	if params.Components != nil {
-		jsonData["components"] = params.Components
+		jsonData[string(jsonBlobFieldComponents)] = params.Components
 	}
-	if params.Extra != nil {
-		for k, v := range params.Extra {
-			if !isPromotedEntityExtraKey(k) {
-				jsonData[k] = v
-			}
-		}
-	}
+	mergeBlobExtraFields(jsonData, params.Extra, entityPromotedBlobFields)
 	if params.PublishedAt != nil {
 		jsonData["published_at"] = params.PublishedAt.Format(time.RFC3339)
 	}
 	if params.UpdatedAt != nil {
 		jsonData["updated_at"] = params.UpdatedAt.Format(time.RFC3339)
 	}
-	if err := ValidateEntityBlob(jsonData); err != nil {
-		return nil, err
-	}
-
-	jsonBytes, err := json.Marshal(jsonData)
+	jsonBytes, err := marshalValidatedJSONBlob(jsonData, ValidateEntityBlob)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, err
 	}
 
 	var alias *string
@@ -486,17 +466,9 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return &entity, nil
 	}
 
-	// Parse existing JSON
-	var existingJSON map[string]interface{}
-	if entity.JSON != nil {
-		if err := json.Unmarshal(entity.JSON, &existingJSON); err != nil {
-			return nil, fmt.Errorf("existing entity json is corrupt or invalid: %w", err)
-		}
-		if existingJSON == nil {
-			existingJSON = make(map[string]interface{})
-		}
-	} else {
-		existingJSON = make(map[string]interface{})
+	existingJSON, err := decodeJSONBlobForPatch(entity.JSON, jsonBlobDecodeDefault)
+	if err != nil {
+		return nil, fmt.Errorf("existing entity json is corrupt or invalid: %w", err)
 	}
 
 	// Update type if provided
@@ -534,47 +506,14 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		}
 	}
 
-	// Validate and merge components
-	if params.Components != nil {
-		if err := ValidateEntityComponents(params.Components); err != nil {
-			return nil, err
-		}
-
-		var existingComponents map[string]interface{}
-		rawStored, hadStored := existingJSON["components"]
-		if hadStored && rawStored != nil {
-			storedMap, ok := rawStored.(map[string]interface{})
-			if !ok {
-				return nil, NewValidationError("stored entity components must be an object or null")
-			}
-			existingComponents = storedMap
-		} else {
-			existingComponents = make(map[string]interface{})
-		}
-		for k, v := range params.Components {
-			existingComponents[k] = mergeJSONValue(existingComponents[k], v)
-		}
-		if err := ValidateEntityComponents(existingComponents); err != nil {
-			return nil, err
-		}
-		existingJSON["components"] = existingComponents
-	}
-
-	// Merge extra
-	if params.Extra != nil {
-		for k, v := range params.Extra {
-			if !isPromotedEntityExtraKey(k) {
-				existingJSON[k] = v
-			}
-		}
-	}
-	if err := ValidateEntityBlob(existingJSON); err != nil {
+	if err := mergeEntityComponents(existingJSON, params.Components); err != nil {
 		return nil, err
 	}
 
-	jsonBytes, err := json.Marshal(existingJSON)
+	mergeBlobExtraFields(existingJSON, params.Extra, entityPromotedBlobFields)
+	jsonBytes, err := marshalValidatedJSONBlob(existingJSON, ValidateEntityBlob)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		return nil, err
 	}
 
 	var out models.Entity
@@ -610,26 +549,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	})
 
 	return &out, nil
-}
-
-// mergeJSONValue deep-merges nested map[string]interface{} values (recursive key merge).
-// Non-map values—including slices and scalars—are replaced entirely by the incoming value.
-func mergeJSONValue(existing, incoming interface{}) interface{} {
-	existingMap, existingOK := existing.(map[string]interface{})
-	incomingMap, incomingOK := incoming.(map[string]interface{})
-	if !existingOK || !incomingOK {
-		return incoming
-	}
-
-	merged := make(map[string]interface{}, len(existingMap))
-	for k, v := range existingMap {
-		merged[k] = v
-	}
-	for k, v := range incomingMap {
-		merged[k] = mergeJSONValue(merged[k], v)
-	}
-
-	return merged
 }
 
 // Delete removes an entity.
