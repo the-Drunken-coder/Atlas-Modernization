@@ -568,7 +568,7 @@ describe("AtlasClient sync", () => {
     expect(cache.entry("entity", "asset-cache-cross-type")).toBeUndefined();
   });
 
-  it("does not deliver feed events whose resource payload crosses resource types", async () => {
+  it("does not let feed events whose resource payload crosses resource types stop later events", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -593,6 +593,16 @@ describe("AtlasClient sync", () => {
 
     await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true }));
     expect(watch).not.toHaveBeenCalled();
+
+    const valid = core.upsertEntity(entity("asset-watch-cross-type-valid"));
+    core.emit(
+      { event: "update", resource_type: "entity", id: valid.entity_id, version: valid.metadata.version, resource: valid },
+      { record: false }
+    );
+
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(valid, expect.objectContaining({ resource_type: "entity", id: valid.entity_id }));
+    });
   });
 
   it("stops delivering events after unwatch without affecting other watchers", async () => {
