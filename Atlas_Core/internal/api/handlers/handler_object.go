@@ -1,11 +1,9 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
@@ -35,18 +33,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 1MB for object metadata operations
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
-	var req struct {
-		ObjectID     string                   `json:"object_id"`
-		Path         *string                  `json:"path,omitempty"`
-		Bucket       json.RawMessage          `json:"bucket,omitempty"`
-		SizeBytes    *int64                   `json:"size_bytes,omitempty"`
-		ContentType  *string                  `json:"content_type,omitempty"`
-		Type         *string                  `json:"type,omitempty"`
-		UsageHints   []string                 `json:"usage_hints,omitempty"`
-		ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
-		Extra        map[string]interface{}   `json:"extra,omitempty"`
-	}
-
+	var req createObjectRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
@@ -55,16 +42,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obj, err := h.objectActions.Create(r.Context(), actions.CreateObjectParams{
-		ObjectID:     req.ObjectID,
-		Path:         req.Path,
-		SizeBytes:    req.SizeBytes,
-		ContentType:  req.ContentType,
-		Type:         req.Type,
-		UsageHints:   req.UsageHints,
-		ReferencedBy: req.ReferencedBy,
-		Extra:        req.Extra,
-	})
+	obj, err := h.objectActions.Create(r.Context(), req.actionParams())
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -95,17 +73,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 1MB for object metadata operations
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
-	var req struct {
-		Path         *string                  `json:"path,omitempty"`
-		Bucket       json.RawMessage          `json:"bucket,omitempty"`
-		ContentType  *string                  `json:"content_type,omitempty"`
-		Type         *string                  `json:"type,omitempty"`
-		SizeBytes    *int64                   `json:"size_bytes,omitempty"`
-		UsageHints   []string                 `json:"usage_hints,omitempty"`
-		ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
-		Extra        map[string]interface{}   `json:"extra,omitempty"`
-	}
-
+	var req updateObjectRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
@@ -119,16 +87,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obj, err := h.objectActions.Update(r.Context(), objectID, actions.UpdateObjectParams{
-		Path:            req.Path,
-		ContentType:     req.ContentType,
-		Type:            req.Type,
-		SizeBytes:       req.SizeBytes,
-		UsageHints:      req.UsageHints,
-		ReferencedBy:    req.ReferencedBy,
-		Extra:           req.Extra,
-		ExpectedVersion: expectedVersion,
-	})
+	obj, err := h.objectActions.Update(r.Context(), objectID, req.actionParams(expectedVersion))
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return

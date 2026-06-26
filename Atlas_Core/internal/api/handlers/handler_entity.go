@@ -37,31 +37,12 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 1MB for entity operations
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
-	var req struct {
-		EntityID    string                 `json:"entity_id"`
-		EntityType  string                 `json:"entity_type"`
-		Subtype     string                 `json:"subtype"`
-		Alias       *string                `json:"alias,omitempty"`
-		Components  map[string]interface{} `json:"components,omitempty"`
-		PublishedAt *time.Time             `json:"published_at,omitempty"`
-		UpdatedAt   *time.Time             `json:"updated_at,omitempty"`
-		Extra       map[string]interface{} `json:"extra,omitempty"`
-	}
-
+	var req createEntityRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
-	entity, err := h.entityActions.Create(r.Context(), actions.CreateEntityParams{
-		EntityID:    req.EntityID,
-		EntityType:  req.EntityType,
-		Subtype:     req.Subtype,
-		Alias:       req.Alias,
-		Components:  req.Components,
-		PublishedAt: req.PublishedAt,
-		UpdatedAt:   req.UpdatedAt,
-		Extra:       req.Extra,
-	})
+	entity, err := h.entityActions.Create(r.Context(), req.actionParams())
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -106,14 +87,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 1MB for entity operations
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
-	var req struct {
-		EntityType *string                `json:"entity_type,omitempty"`
-		Subtype    nullablePatchString    `json:"subtype,omitempty"`
-		Alias      nullablePatchString    `json:"alias,omitempty"`
-		Components map[string]interface{} `json:"components,omitempty"`
-		Extra      map[string]interface{} `json:"extra,omitempty"`
-	}
-
+	var req updateEntityRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
@@ -122,14 +96,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
-		EntityType:      req.EntityType,
-		Subtype:         req.Subtype.actionValue(),
-		Alias:           req.Alias.actionValue(),
-		Components:      req.Components,
-		Extra:           req.Extra,
-		ExpectedVersion: expectedVersion,
-	})
+	entity, err := h.entityActions.Update(r.Context(), entityID, req.actionParams(expectedVersion))
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -188,19 +155,12 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 	// Limit request body to 256KB for telemetry updates
 	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 
-	var req struct {
-		Latitude   *float64 `json:"latitude,omitempty"`
-		Longitude  *float64 `json:"longitude,omitempty"`
-		AltitudeM  *float64 `json:"altitude_m,omitempty"`
-		SpeedMS    *float64 `json:"speed_m_s,omitempty"`
-		HeadingDeg *float64 `json:"heading_deg,omitempty"`
-	}
-
+	var req updateEntityTelemetryRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
-	telemetry := buildTelemetryComponent(req.Latitude, req.Longitude, req.AltitudeM, req.SpeedMS, req.HeadingDeg, nil)
+	telemetry := req.telemetryComponent(nil)
 	if len(telemetry) == 0 {
 		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", protocol.ErrorCodeValidationError)
 		return
@@ -262,82 +222,47 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 256KB for telemetry updates
 	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 
-	var req struct {
-		Status     *string                `json:"status,omitempty"`
-		Latitude   *float64               `json:"latitude,omitempty"`
-		Longitude  *float64               `json:"longitude,omitempty"`
-		AltitudeM  *float64               `json:"altitude_m,omitempty"`
-		SpeedMS    *float64               `json:"speed_m_s,omitempty"`
-		HeadingDeg *float64               `json:"heading_deg,omitempty"`
-		Components map[string]interface{} `json:"components,omitempty"`
-	}
-
+	var req entityCheckinRequest
 	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
 
-	// Build components update (single timestamp for all touched components)
-	now := time.Now().UTC().Format(time.RFC3339)
-	components := make(map[string]interface{})
-	for key, value := range req.Components {
-		components[key] = value
-	}
-
-	// Add status component if provided
-	if req.Status != nil {
-		components["status"] = map[string]interface{}{
-			"value":       *req.Status,
-			"last_update": now,
-		}
-	}
-
-	telemetry := buildTelemetryComponent(req.Latitude, req.Longitude, req.AltitudeM, req.SpeedMS, req.HeadingDeg, &now)
-	if len(telemetry) > 0 {
-		components["telemetry"] = telemetry
-	}
-
-	// Add heartbeat component
-	components["heartbeat"] = map[string]interface{}{
-		"last_seen": now,
-	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
 	if !ok {
 		return
 	}
 
-	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
-		Components:      components,
+	result, err := h.checkinActions.CheckIn(r.Context(), actions.EntityCheckinParams{
+		EntityID:        entityID,
+		Components:      req.componentUpdate(time.Now()),
 		ExpectedVersion: expectedVersion,
+		TaskStatuses:    parseStatusFilter(statusFilter),
+		Since:           since,
+		TaskLimit:       limit,
+		TaskCursor:      taskCursor,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	statuses := parseStatusFilter(statusFilter)
-	taskPage, err := h.taskActions.GetByEntityFiltered(r.Context(), entityID, statuses, since, limit, taskCursor)
-	if err != nil {
-		h.handleActionError(w, r, err)
-		return
-	}
-
-	serializedTasks := serializers.SerializeTasks(taskPage.Items)
+	serializedTasks := serializers.SerializeTasks(result.Tasks.Items)
 	var taskPayload interface{} = serializedTasks
 	if fields == "minimal" {
 		taskPayload = serializeCheckinTasksMinimal(serializedTasks)
 	}
 
 	response := map[string]interface{}{
-		"entity":         serializers.SerializeEntity(entity),
+		"entity":         serializers.SerializeEntity(result.Entity),
 		"tasks":          taskPayload,
 		"task_count":     len(serializedTasks),
-		"task_limit":     taskPage.Limit,
-		"has_more_tasks": taskPage.HasMore,
+		"task_limit":     result.Tasks.Limit,
+		"has_more_tasks": result.Tasks.HasMore,
 	}
-	if taskPage.NextCursor != "" {
-		response["next_task_cursor"] = taskPage.NextCursor
+	if result.Tasks.NextCursor != "" {
+		response["next_task_cursor"] = result.Tasks.NextCursor
 	}
-	setResourceETag(w, entity.Version)
+	setResourceETag(w, result.Entity.Version)
 	writeJSON(w, http.StatusOK, response)
 }
 

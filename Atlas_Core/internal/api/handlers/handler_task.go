@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
@@ -32,29 +31,12 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 512KB for task operations
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
-	var req struct {
-		TaskID     string                 `json:"task_id"`
-		Status     string                 `json:"status,omitempty"`
-		EntityID   *string                `json:"entity_id,omitempty"`
-		Components map[string]interface{} `json:"components,omitempty"`
-		Extra      map[string]interface{} `json:"extra,omitempty"`
-	}
-
+	var req createTaskRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
 
-	if req.Status == "" {
-		req.Status = "pending"
-	}
-
-	task, err := h.taskActions.Create(r.Context(), actions.CreateTaskParams{
-		TaskID:     req.TaskID,
-		Status:     req.Status,
-		EntityID:   req.EntityID,
-		Components: req.Components,
-		Extra:      req.Extra,
-	})
+	task, err := h.taskActions.Create(r.Context(), req.actionParams())
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -85,14 +67,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 512KB for task operations
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
-	var req struct {
-		Status          *string                `json:"status,omitempty"`
-		EntityID        *string                `json:"entity_id,omitempty"`
-		Components      map[string]interface{} `json:"components,omitempty"`
-		Extra           map[string]interface{} `json:"extra,omitempty"`
-		RemoveExtraKeys []string               `json:"remove_extra_keys,omitempty"`
-	}
-
+	var req updateTaskRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
@@ -101,14 +76,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskActions.Update(r.Context(), taskID, actions.UpdateTaskParams{
-		Status:          req.Status,
-		EntityID:        req.EntityID,
-		Components:      req.Components,
-		Extra:           req.Extra,
-		RemoveExtraKeys: req.RemoveExtraKeys,
-		ExpectedVersion: expectedVersion,
-	})
+	task, err := h.taskActions.Update(r.Context(), taskID, req.actionParams(expectedVersion))
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -174,10 +142,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 512KB for task operations
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
-	var req struct {
-		Result map[string]interface{} `json:"result,omitempty"`
-	}
-
+	var req completeTaskRequest
 	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
@@ -203,10 +168,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 512KB for task operations
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
-	var req struct {
-		Error map[string]interface{} `json:"error,omitempty"`
-	}
-
+	var req failTaskRequest
 	if !h.decodeJSONRequestBody(w, r, &req, true) {
 		return
 	}
@@ -232,12 +194,7 @@ func (h *Handler) TaskStatus(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 512KB for task operations
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
-	var req struct {
-		Status   string   `json:"status"`
-		Progress *float64 `json:"progress,omitempty"`
-		Message  *string  `json:"message,omitempty"`
-	}
-
+	var req taskStatusRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
