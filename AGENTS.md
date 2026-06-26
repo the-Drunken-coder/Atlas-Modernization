@@ -40,6 +40,14 @@ The Atlas Protocol runtime validator uses `cuelang.org/go` against one embedded 
 
 This project is super greenfield. It has no users and no real data yet. Prefer the simplest correct long-term design over dirty compatibility shims, duplicated paths, or preserving old architecture just because it already exists. If replacing a subsystem leads to a simpler result, take the rebuild even when the process is more involved; if the quick simple fix is also the clean long-term answer, take that instead. Keep changes scoped to the request, and do not use greenfield status as permission for unrelated refactors.
 
+When working on Atlas Core, Atlas Protocol, the SDK, or the command interface, do not copy audit-era shortcuts forward:
+
+- In entity/task/object actions, avoid adding another hand-written JSON read/parse/mutate/validate/marshal/update pipeline or another string comparison list for promoted/excluded fields. Prefer a small shared helper or typed patch shape that owns merge, removal, promoted-field, and final-blob validation rules.
+- In HTTP handlers, avoid repeated anonymous request structs for non-trivial payloads and avoid handler methods that orchestrate several domain steps. Prefer named request/response types where the shape is reused or complex, and push check-in-style workflows such as `EntityCheckin` into actions/services so handlers mostly parse, call one operation, and serialize.
+- Keep protocol generators split by concern. If TypeScript generation grows, extract focused helpers and tests instead of expanding `atlas_protocol/tools/internal/artifacts/typescript.go` as a catch-all file.
+- In the SDK cache/watch path, do not normalize type mismatches by stacking `as any` or broad casts. Prefer discriminated resource helpers or generic boundaries that keep the entity/task/object type mapping explicit.
+- Treat ignored local outputs such as `node_modules/`, `dist/`, `storybook-static/`, `.wrangler/`, `worker-configuration.d.ts`, and `Atlas_Core/docker/.env` as disposable artifacts, not source. Update source, templates, or generators instead of editing or citing those paths as durable implementation.
+
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
 Atlas Core's PostgreSQL database and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around.
