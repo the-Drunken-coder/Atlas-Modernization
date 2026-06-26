@@ -480,6 +480,63 @@ func TestNullablePatchStringDistinguishesAbsentNullAndValue(t *testing.T) {
 	}
 }
 
+func TestCreateTaskRequestDefaultsStatusToPending(t *testing.T) {
+	params := createTaskRequest{TaskID: "task-1"}.actionParams()
+	if params.Status != "pending" {
+		t.Fatalf("default Status = %q, want pending", params.Status)
+	}
+
+	params = createTaskRequest{TaskID: "task-1", Status: "acknowledged"}.actionParams()
+	if params.Status != "acknowledged" {
+		t.Fatalf("explicit Status = %q, want acknowledged", params.Status)
+	}
+}
+
+func TestEntityCheckinRequestComponentUpdate(t *testing.T) {
+	status := "online"
+	latitude := 38.5
+	heading := 91.25
+	now := time.Date(2026, 6, 26, 12, 30, 0, 0, time.FixedZone("EDT", -4*60*60))
+	wantTime := now.UTC().Format(time.RFC3339)
+
+	got := entityCheckinRequest{
+		Status:     &status,
+		Latitude:   &latitude,
+		HeadingDeg: &heading,
+		Components: map[string]interface{}{
+			"custom": "preserved",
+		},
+	}.componentUpdate(now)
+
+	if got["custom"] != "preserved" {
+		t.Fatalf("custom component = %v, want preserved", got["custom"])
+	}
+
+	statusComponent, ok := got["status"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("status component = %T, want map", got["status"])
+	}
+	if statusComponent["value"] != status || statusComponent["last_update"] != wantTime {
+		t.Fatalf("status component = %#v, want value and last_update", statusComponent)
+	}
+
+	telemetry, ok := got["telemetry"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("telemetry component = %T, want map", got["telemetry"])
+	}
+	if telemetry["latitude"] != latitude || telemetry["heading_deg"] != heading || telemetry["last_update"] != wantTime {
+		t.Fatalf("telemetry component = %#v, want latitude, heading, and last_update", telemetry)
+	}
+
+	heartbeat, ok := got["heartbeat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("heartbeat component = %T, want map", got["heartbeat"])
+	}
+	if heartbeat["last_seen"] != wantTime {
+		t.Fatalf("heartbeat last_seen = %v, want %s", heartbeat["last_seen"], wantTime)
+	}
+}
+
 func TestParseListPaginationRejectsOffset(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

@@ -12,15 +12,16 @@ import (
 
 // Handler provides HTTP request handling for the Atlas Core API.
 type Handler struct {
-	db            *database.DB
-	storage       *storage.Client
-	logger        zerolog.Logger
-	config        *config.Config
-	entityActions *actions.EntityActions
-	taskActions   *actions.TaskActions
-	objectActions *actions.ObjectActions
-	queryActions  *actions.QueryActions
-	feedHub       *feed.Hub
+	db             *database.DB
+	storage        *storage.Client
+	logger         zerolog.Logger
+	config         *config.Config
+	entityActions  *actions.EntityActions
+	taskActions    *actions.TaskActions
+	objectActions  *actions.ObjectActions
+	checkinActions *actions.EntityCheckinActions
+	queryActions   *actions.QueryActions
+	feedHub        *feed.Hub
 }
 
 // NewHandler creates a new Handler.
@@ -37,16 +38,19 @@ func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger z
 		panic("handlers.NewHandler: db with initialized pool is required")
 	}
 	changeSink := feed.NewAsyncChangeSink(feedHub, feed.AsyncChangeSinkOptions{})
+	entityActions := actions.NewEntityActionsWithChangeSink(db.Pool, changeSink)
+	taskActions := actions.NewTaskActionsWithChangeSink(db.Pool, changeSink)
 
 	return &Handler{
-		db:            db,
-		storage:       storageClient,
-		logger:        logger,
-		config:        cfg,
-		entityActions: actions.NewEntityActionsWithChangeSink(db.Pool, changeSink),
-		taskActions:   actions.NewTaskActionsWithChangeSink(db.Pool, changeSink),
-		objectActions: actions.NewObjectActionsWithChangeSink(db.Pool, storageClient, changeSink),
-		queryActions:  actions.NewQueryActions(db.Pool),
-		feedHub:       feedHub,
+		db:             db,
+		storage:        storageClient,
+		logger:         logger,
+		config:         cfg,
+		entityActions:  entityActions,
+		taskActions:    taskActions,
+		objectActions:  actions.NewObjectActionsWithChangeSink(db.Pool, storageClient, changeSink),
+		checkinActions: actions.NewEntityCheckinActions(entityActions, taskActions),
+		queryActions:   actions.NewQueryActions(db.Pool),
+		feedHub:        feedHub,
 	}
 }
