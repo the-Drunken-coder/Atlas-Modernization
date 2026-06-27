@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addVertexAfter,
   canRemoveVertex,
+  displayGeometry,
   geometryVertices,
   moveVertex,
   removeVertex,
@@ -17,37 +18,29 @@ const polygon: UiGeometry = {
   type: "Polygon",
   coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2], [-74.2, 40.1]]]
 };
+const circle: UiGeometry = {
+  type: "Feature",
+  geometry: { type: "Point", coordinates: [-74.2, 40.1] },
+  properties: { shape: "circle", radius_m: 500 }
+};
 
 describe("geometry normalisation", () => {
   it("passes through GeoJSON geometries", () => {
     expect(toUiGeometry(point)).toEqual(point);
     expect(toUiGeometry(line)).toEqual(line);
     expect(toUiGeometry(polygon)).toEqual(polygon);
+    expect(toUiGeometry({ ...point, radius_m: 500 })).toBeUndefined();
   });
 
-  it("converts legacy AtlasGeometry point/line/polygon (lat,lng) to GeoJSON (lng,lat)", () => {
-    expect(toUiGeometry({ point_lat: 40.1, point_lng: -74.2 })).toEqual(point);
-    expect(toUiGeometry({ line: [[40.1, -74.2], [40.2, -74.1]] })).toEqual({
-      type: "LineString",
-      coordinates: [[-74.2, 40.1], [-74.1, 40.2]]
-    });
-    const converted = toUiGeometry({ polygon: [[40.1, -74.2], [40.1, -74.1], [40.2, -74.1]] });
-    expect(converted).toEqual({
-      type: "Polygon",
-      coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.1]]]
-    });
-  });
-
-  it("does not double-close already closed legacy AtlasGeometry polygons", () => {
-    expect(toUiGeometry({ polygon: [[40.1, -74.2], [40.1, -74.1], [40.2, -74.1], [40.1, -74.2]] })).toEqual({
-      type: "Polygon",
-      coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.1]]]
-    });
+  it("passes through strict circle Features", () => {
+    expect(toUiGeometry(circle)).toEqual(circle);
+    expect(toUiGeometry({ ...circle, properties: { ...circle.properties, units: "meters" } })).toBeUndefined();
+    expect(toUiGeometry({ ...circle, properties: { radius_m: 500 } })).toBeUndefined();
   });
 
   it("returns undefined for geometry with non-finite coordinates", () => {
     expect(toUiGeometry({ type: "Point", coordinates: [Number.NaN, 40.1] })).toBeUndefined();
-    expect(toUiGeometry({ line: [[40.1, Number.POSITIVE_INFINITY], [40.2, -74.1]] })).toBeUndefined();
+    expect(toUiGeometry({ ...circle, geometry: { type: "Point", coordinates: [-74.2, Number.POSITIVE_INFINITY] } })).toBeUndefined();
   });
 
   it("returns undefined for missing or unsupported geometry", () => {
@@ -60,6 +53,15 @@ describe("geometry normalisation", () => {
     expect(representativePoint(point)).toEqual([-74.2, 40.1]);
     expect(representativePoint(line)).toEqual([-74.2, 40.1]);
     expect(representativePoint(polygon)).toEqual([-74.2, 40.1]);
+    expect(representativePoint(circle)).toEqual([-74.2, 40.1]);
+  });
+
+  it("derives display-only polygons for circle Features", () => {
+    const display = displayGeometry(circle);
+    if (display.type !== "Polygon") throw new Error(`Expected Polygon display geometry, got ${display.type}`);
+    const ring = display.coordinates[0];
+    expect(ring).toHaveLength(65);
+    expect(ring?.[0]).toEqual(ring?.[64]);
   });
 });
 
@@ -78,11 +80,23 @@ describe("editable vertices", () => {
       { kind: "Polygon", ring: 0, index: 3 }
     ]);
   });
+
+  it("lists the center for a circle Feature", () => {
+    expect(geometryVertices(circle)).toEqual([{ ref: { kind: "Circle" }, lng: -74.2, lat: 40.1 }]);
+  });
 });
 
 describe("vertex editing", () => {
   it("moves a point coordinate", () => {
     expect(moveVertex(point, { kind: "Point" }, -75, 41)).toEqual({ type: "Point", coordinates: [-75, 41] });
+  });
+
+  it("moves a circle center while preserving the Feature payload", () => {
+    expect(moveVertex(circle, { kind: "Circle" }, -75, 41)).toEqual({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-75, 41] },
+      properties: { shape: "circle", radius_m: 500 }
+    });
   });
 
   it("moves a line vertex while preserving validity", () => {
@@ -138,6 +152,7 @@ describe("geometry validity", () => {
     expect(validateGeometry(point)).toEqual({ valid: true });
     expect(validateGeometry(line)).toEqual({ valid: true });
     expect(validateGeometry(polygon)).toEqual({ valid: true });
+    expect(validateGeometry(circle)).toEqual({ valid: true });
   });
 
   it("rejects malformed geometries with reasons", () => {
@@ -168,5 +183,9 @@ describe("geometry validity", () => {
         ]
       })
     ).toEqual({ valid: false, reason: "Polygon ring must repeat its first coordinate to close" });
+    expect(validateGeometry({ ...circle, properties: { shape: "circle", radius_m: 0 } })).toEqual({
+      valid: false,
+      reason: "Circle radius must be greater than zero"
+    });
   });
 });

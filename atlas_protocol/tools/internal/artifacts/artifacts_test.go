@@ -143,29 +143,6 @@ func TestSchemaDetectorsAllowExtraProperties(t *testing.T) {
 		})
 	}
 
-	geometry := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"point_lat":  map[string]any{"type": "number"},
-			"point_lng":  map[string]any{"type": "number"},
-			"radius_m":   map[string]any{"type": "number"},
-			"line":       map[string]any{"type": "array"},
-			"polygon":    map[string]any{"type": "array"},
-			"confidence": map[string]any{"type": "number"},
-		},
-	}
-	if !isAtlasGeometrySchema(geometry) {
-		t.Fatal("isAtlasGeometrySchema rejected geometry schema with extra metadata property")
-	}
-	for _, requiredProperty := range []string{"point_lat", "point_lng", "radius_m", "line", "polygon"} {
-		t.Run("geometry missing "+requiredProperty, func(t *testing.T) {
-			candidate := cloneMap(geometry)
-			delete(candidate["properties"].(map[string]any), requiredProperty)
-			if isAtlasGeometrySchema(candidate) {
-				t.Fatalf("isAtlasGeometrySchema accepted schema without %s", requiredProperty)
-			}
-		})
-	}
 }
 
 func TestValidateEntityComponentSchemaKeys(t *testing.T) {
@@ -492,19 +469,15 @@ func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *t
 			"properties": {
 				"entity_id": { "$ref": "#/$defs/%23NonEmptyString" },
 				"entity_type": { "$ref": "#/$defs/%23NonEmptyString" },
-				"geometry": {
+				"reference": {
 					"type": "object",
 					"additionalProperties": false,
-					"minProperties": 1,
 					"properties": {
-						"point_lat": { "type": "number" },
-						"point_lng": { "type": "number" },
-						"radius_m": { "type": "number" }
+						"url": { "type": "string" },
+						"label": { "type": "string" }
 					},
 					"dependentRequired": {
-						"point_lat": ["point_lng"],
-						"point_lng": ["point_lat"],
-						"radius_m": ["point_lat", "point_lng"]
+						"url": ["label"]
 					}
 				},
 				"labels": {
@@ -527,8 +500,7 @@ func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *t
 	for _, want := range []string{
 		`"labels"?: {`,
 		"[key: `custom_${string}`]: string;",
-		`(!atlasProtocolHasOwn(value["geometry"], "point_lat") || (atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
-		`(!atlasProtocolHasOwn(value["geometry"], "radius_m") || (atlasProtocolHasOwn(value["geometry"], "point_lat") && atlasProtocolHasOwn(value["geometry"], "point_lng")))`,
+		`(!atlasProtocolHasOwn(value["reference"], "url") || (atlasProtocolHasOwn(value["reference"], "label")))`,
 		`Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || ((atlasProtocolKeyMatches(key, "^custom_")) ? ((!atlasProtocolKeyMatches(key, "^custom_") || (typeof item === "string"))) : false))`,
 	} {
 		if !strings.Contains(text, want) {

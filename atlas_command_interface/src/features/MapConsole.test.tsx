@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CommandSubmission } from "../atlas/data-source.js";
+import type { UiGeometry } from "../atlas/geometry.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
@@ -80,14 +81,24 @@ const area: EntityResource = {
   },
   metadata
 };
+const circleArea: EntityResource = {
+  ...area,
+  components: {
+    geometry: {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-74, 40] },
+      properties: { shape: "circle", radius_m: 500 }
+    }
+  }
+};
 
-function makeFakeDataSource() {
+function makeFakeDataSource(geofeature: EntityResource = area) {
   let emit: ((event: AtlasWatchEvent) => void) | undefined;
   const submissions: Array<{ submission: CommandSubmission; credential: string }> = [];
-  const geometryUpdates: Array<{ entityId: string; ifMatchVersion?: number }> = [];
+  const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
     async loadSnapshot() {
-      return { entities: [rover, area], tasks: [] };
+      return { entities: [rover, geofeature], tasks: [] };
     },
     async loadCommandCatalog() {
       return catalog;
@@ -115,8 +126,8 @@ function makeFakeDataSource() {
       return task;
     },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
-      geometryUpdates.push({ entityId, ifMatchVersion });
-      return { ...area, components: { ...area.components, geometry }, metadata: { ...area.metadata, version: 10 } };
+      geometryUpdates.push({ entityId, geometry, ifMatchVersion });
+      return { ...geofeature, components: { ...geofeature.components, geometry }, metadata: { ...geofeature.metadata, version: 10 } };
     },
     dispose() {}
   };
@@ -181,7 +192,22 @@ describe("MapConsole command flow", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(geometryUpdates).toHaveLength(1));
-    expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", ifMatchVersion: 1 });
+    expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", geometry: area.components.geometry, ifMatchVersion: 1 });
+  });
+
+  it("saves circle Feature drafts without replacing them with display polygons", async () => {
+    const user = userEvent.setup();
+    const { fake, geometryUpdates } = makeFakeDataSource(circleArea);
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(geometryUpdates).toHaveLength(1));
+    expect(geometryUpdates[0].geometry).toEqual(circleArea.components.geometry);
   });
 
   it("submits map-point commands with the clicked coordinates", async () => {

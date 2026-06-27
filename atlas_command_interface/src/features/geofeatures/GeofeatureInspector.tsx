@@ -5,13 +5,15 @@ import {
   formatCoordinate,
   geometrySummary,
   geometryVertices,
+  isCircleFeature,
   removeVertex,
+  updateCircleRadius,
   validateGeometry,
   type UiGeometry
 } from "../../atlas/geometry.js";
 import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
-import { Button, IconButton } from "../../ui/primitives/controls.js";
+import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { TrashIcon } from "../../ui/primitives/icons.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 
@@ -56,7 +58,10 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
               ]}
             />
             {editing ? (
-              <VertexEditor geometry={geometry} onChange={onChangeDraft} validity={validity} />
+              <>
+                {isCircleFeature(geometry) ? <CircleEditor geometry={geometry} onChange={onChangeDraft} /> : null}
+                <VertexEditor geometry={geometry} onChange={onChangeDraft} validity={validity} />
+              </>
             ) : null}
           </>
         ) : (
@@ -89,6 +94,21 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
   );
 }
 
+function CircleEditor({ geometry, onChange }: { geometry: Extract<UiGeometry, { type: "Feature" }>; onChange: (geometry: UiGeometry) => void }) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <TextField
+        label="Radius (m)"
+        type="number"
+        min={1}
+        step={1}
+        value={String(geometry.properties.radius_m)}
+        onChange={(event) => onChange(updateCircleRadius(geometry, Number(event.target.value)))}
+      />
+    </div>
+  );
+}
+
 function VertexEditor({
   geometry,
   onChange,
@@ -99,6 +119,7 @@ function VertexEditor({
   validity?: { valid: boolean; reason?: string };
 }) {
   const vertices = geometryVertices(geometry);
+  const isCircle = isCircleFeature(geometry);
   return (
     <div className="stack" style={{ marginTop: 8 }}>
       {!validity?.valid && validity?.reason ? <div className="banner banner--error">{validity.reason}</div> : null}
@@ -107,7 +128,7 @@ function VertexEditor({
         return (
           <div key={index} className="task-row" style={{ border: "1px solid var(--border)", borderRadius: 6 }}>
             <span className="task-row__main">
-              <span className="task-row__title">Vertex {index + 1}</span>
+              <span className="task-row__title">{isCircle ? "Center" : `Vertex ${index + 1}`}</span>
               <span className="task-row__sub">{formatCoordinate([vertex.lng, vertex.lat])}</span>
             </span>
             <IconButton
@@ -123,7 +144,7 @@ function VertexEditor({
           </div>
         );
       })}
-      <p className="field__hint">Drag vertices on the map to reshape. Click a mid-point handle to add one.</p>
+      <p className="field__hint">{isCircle ? "Drag the center point on the map to move the circle." : "Drag vertices on the map to reshape. Click a mid-point handle to add one."}</p>
     </div>
   );
 }

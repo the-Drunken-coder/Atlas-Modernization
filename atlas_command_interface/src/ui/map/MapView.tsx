@@ -1,7 +1,17 @@
 import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
-import { addVertexAfter, geometryVertices, moveVertex, removeVertex, type Position, type UiGeometry, type VertexRef } from "../../atlas/geometry.js";
+import {
+  addVertexAfter,
+  displayGeometry,
+  geometryVertices,
+  moveVertex,
+  removeVertex,
+  type Position,
+  type UiGeometry,
+  type UiRawGeometry,
+  type VertexRef
+} from "../../atlas/geometry.js";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
 import { defaultBlankStyle } from "./map-style.js";
@@ -194,7 +204,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       return;
     }
 
-    overlay?.setData({ type: "FeatureCollection", features: [{ type: "Feature", geometry: editing.geometry, properties: {} }] } as never);
+    overlay?.setData({ type: "FeatureCollection", features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }] } as never);
 
     const { geometry, onChange } = editing;
     for (const vertex of geometryVertices(geometry)) {
@@ -243,7 +253,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 type Midpoint = { lng: number; lat: number; afterRef: VertexRef };
 
 function midpoints(geometry: UiGeometry): Midpoint[] {
-  if (geometry.type === "Point") return [];
+  if (geometry.type === "Point" || geometry.type === "Feature") return [];
   const result: Midpoint[] = [];
   if (geometry.type === "LineString") {
     for (let index = 0; index < geometry.coordinates.length - 1; index++) {
@@ -427,7 +437,7 @@ function allFeatures(sources: MapSources): MapFeature[] {
   return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features];
 }
 
-function forEachPosition(geometry: UiGeometry, visitor: (position: [number, number]) => void): void {
+function forEachPosition(geometry: UiRawGeometry, visitor: (position: [number, number]) => void): void {
   if (geometry.type === "Point") {
     visitor(geometry.coordinates);
     return;

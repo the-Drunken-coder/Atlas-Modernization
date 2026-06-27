@@ -138,10 +138,10 @@ Do not add the legacy `speed_ms` alias to Atlas Protocol. If Core tests currentl
 
 ### Geometry Component
 
-The first slice should include both geometry formats currently accepted by Core:
+The first slice should include the geometry contract:
 
-- GeoJSON-like `Point`, `LineString`, and `Polygon` using `[longitude, latitude]` positions.
-- Atlas-specific point/radius, line, and polygon forms using explicit `point_lat`, `point_lng`, `radius_m`, `line`, and `polygon` fields.
+- GeoJSON `Point`, `LineString`, and `Polygon` using `[longitude, latitude]` positions.
+- Circle geofences as a strict GeoJSON `Feature` with Point geometry and `properties.shape = "circle"` plus positive `properties.radius_m`.
 
 Shared geometry constraints:
 
@@ -149,7 +149,7 @@ Shared geometry constraints:
 - Longitude range: `[-180, 180]`
 - Numeric coordinates must be finite.
 - Line and polygon position counts must stay at or below 10,000.
-- Atlas `radius_m` must be positive.
+- Circle Feature `properties.radius_m` must be positive.
 - GeoJSON polygon rings must be closed.
 
 ### Canonical Names

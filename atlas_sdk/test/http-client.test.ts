@@ -88,25 +88,50 @@ describe("AtlasClient HTTP", () => {
     ).toBe(true);
     expect(
       isEntityCreateRequest({
-        entity_id: "asset-missing-lng",
+        entity_id: "asset-point-radius",
         entity_type: "asset",
-        components: { geometry: { point_lat: 30.2672 } }
+        components: { geometry: { type: "Point", coordinates: [-97.7431, 30.2672], radius_m: 500 } }
       })
     ).toBe(false);
     expect(
       isEntityCreateRequest({
-        entity_id: "asset-missing-radius-center",
+        entity_id: "asset-circle",
         entity_type: "asset",
-        components: { geometry: { radius_m: 500, point_lat: 30.2672 } }
-      })
-    ).toBe(false);
-    expect(
-      isEntityCreateRequest({
-        entity_id: "asset-radius",
-        entity_type: "asset",
-        components: { geometry: { radius_m: 500, point_lat: 30.2672, point_lng: -97.7431 } }
+        components: {
+          geometry: {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [-97.7431, 30.2672] },
+            properties: { shape: "circle", radius_m: 500 }
+          }
+        }
       })
     ).toBe(true);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-circle-missing-shape",
+        entity_type: "asset",
+        components: {
+          geometry: {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [-97.7431, 30.2672] },
+            properties: { radius_m: 500 }
+          }
+        }
+      })
+    ).toBe(false);
+    expect(
+      isEntityCreateRequest({
+        entity_id: "asset-circle-missing-radius",
+        entity_type: "asset",
+        components: {
+          geometry: {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [-97.7431, 30.2672] },
+            properties: { shape: "circle" }
+          }
+        }
+      })
+    ).toBe(false);
   });
 
   it("enforces fake Core route verbs while preserving default GET semantics", async () => {

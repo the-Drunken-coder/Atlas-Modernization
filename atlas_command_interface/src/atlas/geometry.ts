@@ -1,19 +1,21 @@
-// GeoJSON is the preferred editing shape for the UI. Coordinates use GeoJSON
-// order: [longitude, latitude]. Atlas Core also accepts a legacy AtlasGeometry
-// form ([latitude, longitude] pairs); we normalise that to GeoJSON on read but
-// always write GeoJSON back.
+// GeoJSON coordinates use [longitude, latitude]. Circle geofences are persisted
+// as strict GeoJSON Feature<Point> values with strict circle properties; the map
+// renders them through a derived polygon without changing the saved payload.
 
 export type Position = [number, number];
 
 export type UiPoint = { type: "Point"; coordinates: Position };
 export type UiLineString = { type: "LineString"; coordinates: Position[] };
 export type UiPolygon = { type: "Polygon"; coordinates: Position[][] };
-export type UiGeometry = UiPoint | UiLineString | UiPolygon;
+export type UiRawGeometry = UiPoint | UiLineString | UiPolygon;
+export type UiCircleFeature = { type: "Feature"; geometry: UiPoint; properties: { shape: "circle"; radius_m: number } };
+export type UiGeometry = UiRawGeometry | UiCircleFeature;
 
 export type GeometryKind = UiGeometry["type"];
 
 export type VertexRef =
   | { kind: "Point" }
+  | { kind: "Circle" }
   | { kind: "LineString"; index: number }
   | { kind: "Polygon"; ring: number; index: number };
 
@@ -26,29 +28,47 @@ export type EditableVertex = {
 export type GeometryValidity = { valid: true } | { valid: false; reason: string };
 
 const COORDINATE_EPSILON = 1e-9;
+const EARTH_RADIUS_M = 6_371_008.8;
+const CIRCLE_DISPLAY_SEGMENTS = 64;
 
 export function isUiGeometry(value: unknown): value is UiGeometry {
   return geometryFromGeoJSON(value) !== undefined;
 }
 
 /**
- * Normalise an entity geometry component (GeoJSON or legacy AtlasGeometry) into
- * the GeoJSON shape the UI edits. Returns undefined when the geometry is absent
- * or not one of Point/LineString/Polygon.
+ * Normalise an entity geometry component into the shape the UI edits. Returns
+ * undefined when the geometry is absent or not a supported geometry.
  */
 export function toUiGeometry(value: unknown): UiGeometry | undefined {
-  return geometryFromGeoJSON(value) ?? geometryFromAtlas(value);
+  return geometryFromGeoJSON(value);
 }
 
 /** A representative [lng, lat] point used to place markers and recenter the map. */
 export function representativePoint(geometry: UiGeometry): Position | undefined {
+  if (isCircleFeature(geometry)) return geometry.geometry.coordinates;
   if (geometry.type === "Point") return geometry.coordinates;
   if (geometry.type === "LineString") return geometry.coordinates[0];
   return geometry.coordinates[0]?.[0];
 }
 
+export function displayGeometry(geometry: UiGeometry): UiRawGeometry {
+  return isCircleFeature(geometry) ? circleFeaturePolygon(geometry) : geometry;
+}
+
+export function isCircleFeature(geometry: UiGeometry): geometry is UiCircleFeature {
+  return geometry.type === "Feature" && geometry.properties.shape === "circle";
+}
+
+export function updateCircleRadius(geometry: UiCircleFeature, radius_m: number): UiCircleFeature {
+  return { ...geometry, properties: { shape: "circle", radius_m } };
+}
+
 /** Editable vertices, excluding a polygon ring's repeated closing coordinate. */
 export function geometryVertices(geometry: UiGeometry): EditableVertex[] {
+  if (isCircleFeature(geometry)) {
+    const [lng, lat] = geometry.geometry.coordinates;
+    return [{ ref: { kind: "Circle" }, lng, lat }];
+  }
   if (geometry.type === "Point") {
     return [{ ref: { kind: "Point" }, lng: geometry.coordinates[0], lat: geometry.coordinates[1] }];
   }
@@ -62,6 +82,9 @@ export function geometryVertices(geometry: UiGeometry): EditableVertex[] {
 
 export function moveVertex(geometry: UiGeometry, ref: VertexRef, lng: number, lat: number): UiGeometry {
   const next: Position = [lng, lat];
+  if (isCircleFeature(geometry) && ref.kind === "Circle") {
+    return { ...geometry, geometry: { type: "Point", coordinates: next } };
+  }
   if (geometry.type === "Point" && ref.kind === "Point") {
     return { type: "Point", coordinates: next };
   }
@@ -125,6 +148,14 @@ export function removeVertex(geometry: UiGeometry, ref: VertexRef): UiGeometry |
 }
 
 export function validateGeometry(geometry: UiGeometry): GeometryValidity {
+  if (isCircleFeature(geometry)) {
+    if (!isFinitePosition(geometry.geometry.coordinates)) {
+      return { valid: false, reason: "Circle needs one valid center coordinate" };
+    }
+    return isFiniteNumber(geometry.properties.radius_m) && geometry.properties.radius_m > 0
+      ? { valid: true }
+      : { valid: false, reason: "Circle radius must be greater than zero" };
+  }
   if (geometry.type === "Point") {
     return isFinitePosition(geometry.coordinates) ? { valid: true } : { valid: false, reason: "Point needs one valid coordinate" };
   }
@@ -152,6 +183,9 @@ export function validateGeometry(geometry: UiGeometry): GeometryValidity {
 }
 
 export function geometrySummary(geometry: UiGeometry): string {
+  if (isCircleFeature(geometry)) {
+    return `Circle · ${formatMeters(geometry.properties.radius_m)} radius · ${formatCoordinate(geometry.geometry.coordinates)}`;
+  }
   if (geometry.type === "Point") {
     return `Point · ${formatCoordinate(geometry.coordinates)}`;
   }
@@ -163,6 +197,10 @@ export function geometrySummary(geometry: UiGeometry): string {
 
 export function formatCoordinate(position: Position): string {
   return `${position[1].toFixed(5)}, ${position[0].toFixed(5)}`;
+}
+
+export function formatMeters(value: number): string {
+  return Number.isInteger(value) ? `${value} m` : `${value.toFixed(2)} m`;
 }
 
 function moveRingVertex(ring: Position[], index: number, next: Position): Position[] {
@@ -189,15 +227,20 @@ function positionsEqual(a: Position | undefined, b: Position | undefined): boole
 }
 
 function geometryFromGeoJSON(value: unknown): UiGeometry | undefined {
+  return geometryFromRawGeoJSON(value) ?? geometryFromCircleFeature(value);
+}
+
+function geometryFromRawGeoJSON(value: unknown): UiRawGeometry | undefined {
   if (!isRecord(value)) return undefined;
-  if (value.type === "Point" && isPosition(value.coordinates)) {
+  if (value.type === "Point" && onlyKnownKeys(value, ["coordinates", "type"]) && isPosition(value.coordinates)) {
     return { type: "Point", coordinates: toPosition(value.coordinates) };
   }
-  if (value.type === "LineString" && Array.isArray(value.coordinates) && value.coordinates.every(isPosition)) {
+  if (value.type === "LineString" && onlyKnownKeys(value, ["coordinates", "type"]) && Array.isArray(value.coordinates) && value.coordinates.every(isPosition)) {
     return { type: "LineString", coordinates: value.coordinates.map(toPosition) };
   }
   if (
     value.type === "Polygon" &&
+    onlyKnownKeys(value, ["coordinates", "type"]) &&
     Array.isArray(value.coordinates) &&
     value.coordinates.every((ring) => Array.isArray(ring) && ring.every(isPosition))
   ) {
@@ -206,23 +249,23 @@ function geometryFromGeoJSON(value: unknown): UiGeometry | undefined {
   return undefined;
 }
 
-function geometryFromAtlas(value: unknown): UiGeometry | undefined {
+function geometryFromCircleFeature(value: unknown): UiCircleFeature | undefined {
   if (!isRecord(value)) return undefined;
-  if (typeof value.point_lat === "number" && typeof value.point_lng === "number") {
-    return { type: "Point", coordinates: [value.point_lng, value.point_lat] };
-  }
-  if (Array.isArray(value.line) && value.line.every(isPosition)) {
-    return { type: "LineString", coordinates: value.line.map((p) => latLngToPosition(p as number[])) };
-  }
-  if (Array.isArray(value.polygon) && value.polygon.every(isPosition)) {
-    const ring = value.polygon.map((p) => latLngToPosition(p as number[]));
-    return { type: "Polygon", coordinates: [isClosedRing(ring) ? ring : closeRing(ring)] };
-  }
-  return undefined;
+  if (value.type !== "Feature" || !onlyKnownKeys(value, ["geometry", "properties", "type"])) return undefined;
+  const geometry = geometryFromRawGeoJSON(value.geometry);
+  if (geometry?.type !== "Point") return undefined;
+  const properties = value.properties;
+  if (!isRecord(properties) || !onlyKnownKeys(properties, ["radius_m", "shape"])) return undefined;
+  if (properties.shape !== "circle" || !isFiniteNumber(properties.radius_m) || properties.radius_m <= 0) return undefined;
+  return { type: "Feature", geometry, properties: { shape: "circle", radius_m: properties.radius_m } };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function onlyKnownKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
 }
 
 function isPosition(value: unknown): value is number[] {
@@ -245,6 +288,33 @@ function toPosition(value: number[]): Position {
   return [value[0], value[1]];
 }
 
-function latLngToPosition(value: number[]): Position {
-  return [value[1], value[0]];
+function circleFeaturePolygon(circle: UiCircleFeature): UiPolygon {
+  const [lng, lat] = circle.geometry.coordinates;
+  const lat1 = degreesToRadians(lat);
+  const lng1 = degreesToRadians(lng);
+  const distance = circle.properties.radius_m / EARTH_RADIUS_M;
+  const ring: Position[] = [];
+  for (let index = 0; index <= CIRCLE_DISPLAY_SEGMENTS; index++) {
+    const bearing = (2 * Math.PI * index) / CIRCLE_DISPLAY_SEGMENTS;
+    const sinLat1 = Math.sin(lat1);
+    const cosLat1 = Math.cos(lat1);
+    const sinDistance = Math.sin(distance);
+    const cosDistance = Math.cos(distance);
+    const lat2 = Math.asin(sinLat1 * cosDistance + cosLat1 * sinDistance * Math.cos(bearing));
+    const lng2 = lng1 + Math.atan2(Math.sin(bearing) * sinDistance * cosLat1, cosDistance - sinLat1 * Math.sin(lat2));
+    ring.push([normalizeLongitude(radiansToDegrees(lng2)), radiansToDegrees(lat2)]);
+  }
+  return { type: "Polygon", coordinates: [ring] };
+}
+
+function degreesToRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function radiansToDegrees(value: number): number {
+  return (value * 180) / Math.PI;
+}
+
+function normalizeLongitude(value: number): number {
+  return ((((value + 180) % 360) + 360) % 360) - 180;
 }

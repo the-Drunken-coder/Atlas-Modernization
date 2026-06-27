@@ -1,7 +1,6 @@
 package shared
 
 import (
-	"list"
 	"time"
 )
 
@@ -21,7 +20,3 @@ import (
 #PositionLimit: 10000
 
 #GeoJSONPosition: [#Longitude, #Latitude, ...#FiniteNumber]
-#AtlasPosition:   [#Latitude, #Longitude]
-
-#NonEmptyLine: [...#AtlasPosition] & list.MinItems(2) & list.MaxItems(#PositionLimit)
-#AtlasPolygon: [...#AtlasPosition] & list.MinItems(3) & list.MaxItems(#PositionLimit)

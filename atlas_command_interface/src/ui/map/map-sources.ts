@@ -8,7 +8,7 @@ import {
   entityLinkState,
   entityPosition
 } from "../../atlas/entities.js";
-import type { UiGeometry } from "../../atlas/geometry.js";
+import { displayGeometry, type UiRawGeometry } from "../../atlas/geometry.js";
 
 export type MapFeatureProperties = {
   entityId: string;
@@ -28,7 +28,7 @@ export type MapFeatureProperties = {
 export type MapFeature = {
   type: "Feature";
   id: string;
-  geometry: UiGeometry;
+  geometry: UiRawGeometry;
   properties: MapFeatureProperties;
 };
 
@@ -60,11 +60,12 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
 
     const geometry = kind === "geofeature" ? entityGeometry(entity) : pointGeometry(entity);
     if (!geometry) continue;
+    const mapGeometry = displayGeometry(geometry);
 
     const feature: MapFeature = {
       type: "Feature",
       id: entity.entity_id,
-      geometry,
+      geometry: mapGeometry,
       properties: {
         entityId: entity.entity_id,
         entityType: entity.entity_type,
@@ -85,7 +86,7 @@ export function buildMapSources(entities: EntityResource[], selectedId: string |
   return sources;
 }
 
-function pointGeometry(entity: EntityResource): UiGeometry | undefined {
+function pointGeometry(entity: EntityResource): UiRawGeometry | undefined {
   const position = entityPosition(entity);
   return position ? { type: "Point", coordinates: position } : undefined;
 }

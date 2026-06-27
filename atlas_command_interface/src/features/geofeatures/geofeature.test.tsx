@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
 import type { UiGeometry } from "../../atlas/geometry.js";
@@ -10,6 +11,11 @@ const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T0
 const polygon: UiGeometry = {
   type: "Polygon",
   coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2], [-74.2, 40.1]]]
+};
+const circle: UiGeometry = {
+  type: "Feature",
+  geometry: { type: "Point", coordinates: [-74.2, 40.1] },
+  properties: { shape: "circle", radius_m: 500 }
 };
 
 function geofeature(geometry: UiGeometry): EntityResource {
@@ -84,5 +90,41 @@ describe("GeofeatureInspector", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits circle radius while preserving the circle Feature", async () => {
+    const user = userEvent.setup();
+    const onChangeDraft = vi.fn();
+    function StatefulInspector() {
+      const [draft, setDraft] = useState(circle);
+      return (
+        <GeofeatureInspector
+          entity={geofeature(circle)}
+          editing
+          draft={draft}
+          saving={false}
+          onStartEdit={noop}
+          onChangeDraft={(next) => {
+            setDraft(next);
+            onChangeDraft(next);
+          }}
+          onSave={noop}
+          onCancel={noop}
+        />
+      );
+    }
+
+    render(<StatefulInspector />);
+
+    const radius = screen.getByLabelText("Radius (m)");
+    await user.clear(radius);
+    await user.type(radius, "750");
+
+    expect(onChangeDraft).toHaveBeenLastCalledWith({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-74.2, 40.1] },
+      properties: { shape: "circle", radius_m: 750 }
+    });
+    expect(screen.getByText("Center")).toBeInTheDocument();
   });
 });
