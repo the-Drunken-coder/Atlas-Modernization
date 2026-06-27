@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -67,6 +68,66 @@ func decodeStoredJSON(raw []byte) (map[string]interface{}, error) {
 	return data, nil
 }
 
+type jsonBlobCache struct {
+	mu   sync.Mutex
+	init bool
+	raw  []byte
+	data map[string]interface{}
+	err  error
+}
+
+func (c *jsonBlobCache) decoded(raw json.RawMessage, recordField, recordID, label string) map[string]interface{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.init && bytes.Equal(c.raw, raw) {
+		if c.err != nil {
+			return nil
+		}
+		return deepCopyMap(c.data)
+	}
+
+	c.raw = append(c.raw[:0], raw...)
+	c.data = nil
+	c.err = nil
+	c.init = false
+	if raw == nil {
+		c.init = true
+		return nil
+	}
+
+	data, err := decodeStoredJSON(raw)
+	if err != nil {
+		c.err = err
+		c.init = true
+		log.Error().
+			Err(err).
+			Str(recordField, recordID).
+			Str("json_meta", jsonLogMeta(raw, recordID)).
+			Msgf("Failed to unmarshal %s JSON - database corruption suspected", label)
+		return nil
+	}
+	c.data = data
+	c.init = true
+	return deepCopyMap(c.data)
+}
+
+func jsonFieldsExcept(data map[string]interface{}, excluded ...string) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	out := make(map[string]interface{})
+	for k, v := range data {
+		if !slices.Contains(excluded, k) {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Entity represents an entity in the system (asset, track, geofeature, etc.).
 type Entity struct {
 	EntityID  string          `json:"entity_id" db:"entity_id"`
@@ -78,47 +139,11 @@ type Entity struct {
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
 	Version   int64           `json:"version" db:"version"`
 
-	jsonMu   sync.Mutex
-	jsonInit bool
-	jsonRaw  []byte
-	jsonData map[string]interface{}
-	jsonErr  error
+	jsonCache jsonBlobCache
 }
 
 func (e *Entity) decodedJSON() map[string]interface{} {
-	e.jsonMu.Lock()
-	defer e.jsonMu.Unlock()
-
-	if e.jsonInit && bytes.Equal(e.jsonRaw, e.JSON) {
-		if e.jsonErr != nil {
-			return nil
-		}
-		return deepCopyMap(e.jsonData)
-	}
-
-	e.jsonRaw = append(e.jsonRaw[:0], e.JSON...)
-	e.jsonData = nil
-	e.jsonErr = nil
-	e.jsonInit = false
-	if e.JSON == nil {
-		e.jsonInit = true
-		return nil
-	}
-
-	data, err := decodeStoredJSON(e.JSON)
-	if err != nil {
-		e.jsonErr = err
-		e.jsonInit = true
-		log.Error().
-			Err(err).
-			Str("entity_id", e.EntityID).
-			Str("json_meta", jsonLogMeta(e.JSON, e.EntityID)).
-			Msg("Failed to unmarshal entity JSON - database corruption suspected")
-		return nil
-	}
-	e.jsonData = data
-	e.jsonInit = true
-	return deepCopyMap(e.jsonData)
+	return e.jsonCache.decoded(e.JSON, "entity_id", e.EntityID, "entity")
 }
 
 // DecodedJSON returns a deep copy of the entity JSON blob.
@@ -140,21 +165,10 @@ func (e *Entity) GetComponents() map[string]interface{} {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (e *Entity) GetExtra() map[string]interface{} {
-	data := e.decodedJSON()
-	if data == nil {
-		return nil
-	}
-	extra := make(map[string]interface{})
-	for k, v := range data {
-		if k != "components" && k != "type" && k != "subtype" && k != "alias" &&
-			k != "entity_id" && k != "task_id" && k != "object_id" && k != "created_at" && k != "updated_at" && k != "version" {
-			extra[k] = v
-		}
-	}
-	if len(extra) == 0 {
-		return nil
-	}
-	return extra
+	return jsonFieldsExcept(e.decodedJSON(),
+		"components", "type", "subtype", "alias",
+		"entity_id", "task_id", "object_id", "created_at", "updated_at", "version",
+	)
 }
 
 // Task represents a task assigned to an entity.
@@ -167,47 +181,11 @@ type Task struct {
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
 	Version   int64           `json:"version" db:"version"`
 
-	jsonMu   sync.Mutex
-	jsonInit bool
-	jsonRaw  []byte
-	jsonData map[string]interface{}
-	jsonErr  error
+	jsonCache jsonBlobCache
 }
 
 func (t *Task) decodedJSON() map[string]interface{} {
-	t.jsonMu.Lock()
-	defer t.jsonMu.Unlock()
-
-	if t.jsonInit && bytes.Equal(t.jsonRaw, t.JSON) {
-		if t.jsonErr != nil {
-			return nil
-		}
-		return deepCopyMap(t.jsonData)
-	}
-
-	t.jsonRaw = append(t.jsonRaw[:0], t.JSON...)
-	t.jsonData = nil
-	t.jsonErr = nil
-	t.jsonInit = false
-	if t.JSON == nil {
-		t.jsonInit = true
-		return nil
-	}
-
-	data, err := decodeStoredJSON(t.JSON)
-	if err != nil {
-		t.jsonErr = err
-		t.jsonInit = true
-		log.Error().
-			Err(err).
-			Str("task_id", t.TaskID).
-			Str("json_meta", jsonLogMeta(t.JSON, t.TaskID)).
-			Msg("Failed to unmarshal task JSON - database corruption suspected")
-		return nil
-	}
-	t.jsonData = data
-	t.jsonInit = true
-	return deepCopyMap(t.jsonData)
+	return t.jsonCache.decoded(t.JSON, "task_id", t.TaskID, "task")
 }
 
 // DecodedJSON returns a deep copy of the task JSON blob.
@@ -229,21 +207,10 @@ func (t *Task) GetComponents() map[string]interface{} {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (t *Task) GetExtra() map[string]interface{} {
-	data := t.decodedJSON()
-	if data == nil {
-		return nil
-	}
-	extra := make(map[string]interface{})
-	for k, v := range data {
-		if k != "components" && k != "status" && k != "entity_id" && k != "task_id" &&
-			k != "object_id" && k != "created_at" && k != "updated_at" && k != "version" {
-			extra[k] = v
-		}
-	}
-	if len(extra) == 0 {
-		return nil
-	}
-	return extra
+	return jsonFieldsExcept(t.decodedJSON(),
+		"components", "status", "entity_id", "task_id",
+		"object_id", "created_at", "updated_at", "version",
+	)
 }
 
 // MediaObject represents a stored object/file.
@@ -257,47 +224,11 @@ type MediaObject struct {
 	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
 	Version     int64           `json:"version" db:"version"`
 
-	jsonMu   sync.Mutex
-	jsonInit bool
-	jsonRaw  []byte
-	jsonData map[string]interface{}
-	jsonErr  error
+	jsonCache jsonBlobCache
 }
 
 func (o *MediaObject) decodedJSON() map[string]interface{} {
-	o.jsonMu.Lock()
-	defer o.jsonMu.Unlock()
-
-	if o.jsonInit && bytes.Equal(o.jsonRaw, o.JSON) {
-		if o.jsonErr != nil {
-			return nil
-		}
-		return deepCopyMap(o.jsonData)
-	}
-
-	o.jsonRaw = append(o.jsonRaw[:0], o.JSON...)
-	o.jsonData = nil
-	o.jsonErr = nil
-	o.jsonInit = false
-	if o.JSON == nil {
-		o.jsonInit = true
-		return nil
-	}
-
-	data, err := decodeStoredJSON(o.JSON)
-	if err != nil {
-		o.jsonErr = err
-		o.jsonInit = true
-		log.Error().
-			Err(err).
-			Str("object_id", o.ObjectID).
-			Str("json_meta", jsonLogMeta(o.JSON, o.ObjectID)).
-			Msg("Failed to unmarshal media object JSON - database corruption suspected")
-		return nil
-	}
-	o.jsonData = data
-	o.jsonInit = true
-	return deepCopyMap(o.jsonData)
+	return o.jsonCache.decoded(o.JSON, "object_id", o.ObjectID, "media object")
 }
 
 // DecodedJSON returns a deep copy of the media object JSON blob.
@@ -360,21 +291,10 @@ func (o *MediaObject) GetBucket() *string {
 
 // GetPayload returns the remaining fields from the JSON blob (excluding promoted fields).
 func (o *MediaObject) GetPayload() map[string]interface{} {
-	data := o.decodedJSON()
-	if data == nil {
-		return nil
-	}
-	payload := make(map[string]interface{})
-	for k, v := range data {
-		if k != "path" && k != "content_type" && k != "type" && k != "size_bytes" && k != "usage_hints" && k != "bucket" && k != "referenced_by" &&
-			k != "object_id" && k != "created_at" && k != "updated_at" && k != "version" {
-			payload[k] = v
-		}
-	}
-	if len(payload) == 0 {
-		return nil
-	}
-	return payload
+	return jsonFieldsExcept(o.decodedJSON(),
+		"path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by",
+		"object_id", "created_at", "updated_at", "version",
+	)
 }
 
 // GetReferencedBy returns the referenced_by from the JSON blob.

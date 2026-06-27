@@ -18,7 +18,7 @@ var loadTestEnvKeys = []string{
 	"ENABLE_API_AUTH", "MAX_UPLOAD_SIZE_MB", "MAX_VIEW_SIZE_MB",
 	"SERVER_PORT", "LOG_LEVEL", "DATABASE_URL",
 	"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_BUCKET", "MINIO_REGION",
-	"API_AUTH_KEY", "CORS_ORIGINS", "ALLOWED_ORIGINS",
+	"API_AUTH_KEY", "CORS_ORIGINS",
 }
 
 func isolateLoadEnv(t *testing.T) {
@@ -61,7 +61,6 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("SERVER_PORT", "")
 	t.Setenv("MINIO_BUCKET", "")
 	t.Setenv("CORS_ORIGINS", "")
-	t.Setenv("ALLOWED_ORIGINS", "")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -127,7 +126,6 @@ func TestParseCORSOrigins(t *testing.T) {
 			t.Setenv("SERVER_PORT", "")
 			t.Setenv("MINIO_BUCKET", "")
 			t.Setenv("CORS_ORIGINS", tt.envValue)
-			t.Setenv("ALLOWED_ORIGINS", "")
 
 			cfg, err := config.Load()
 			if err != nil {
@@ -150,7 +148,6 @@ func TestCORSOriginsRejectsWildcard(t *testing.T) {
 			t.Setenv("SERVER_PORT", "")
 			t.Setenv("MINIO_BUCKET", "")
 			t.Setenv("CORS_ORIGINS", value)
-			t.Setenv("ALLOWED_ORIGINS", "")
 
 			_, err := config.Load()
 			if err == nil {
@@ -238,7 +235,7 @@ func TestLoadCopiesDefaultCORSOrigins(t *testing.T) {
 	}
 }
 
-func TestLoadAllowedOriginsWhenCORSMissing(t *testing.T) {
+func TestLoadIgnoresAllowedOriginsAlias(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
@@ -251,8 +248,8 @@ func TestLoadAllowedOriginsWhenCORSMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if len(cfg.CORSOrigins) != 2 {
-		t.Fatalf("expected 2 CORS origins from ALLOWED_ORIGINS, got %d", len(cfg.CORSOrigins))
+	if len(cfg.CORSOrigins) != len(config.DefaultCORSOrigins) {
+		t.Fatalf("expected ALLOWED_ORIGINS to be ignored, got %d CORS origins", len(cfg.CORSOrigins))
 	}
 }
 

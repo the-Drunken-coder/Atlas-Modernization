@@ -329,24 +329,20 @@ func serializeCheckinTasksMinimal(tasks []*serializers.TaskResponse) []map[strin
 }
 
 // extractCheckinTaskFields returns compact task fields for entity check-ins.
-// command_id priority is command_id, command.id, command.type, then legacy string command.
+// command_id priority is command.id, then command.type.
 // parameters priority is top-level parameters, top-level target, command.parameters, then command.target.
 func extractCheckinTaskFields(components map[string]interface{}) (string, map[string]interface{}) {
 	if components == nil {
 		return "", nil
 	}
 
-	commandID := firstNonEmptyString(components["command_id"])
+	commandID := ""
 	parameters := firstMap(components["parameters"], components["target"])
 	if command, ok := components["command"].(map[string]interface{}); ok {
-		if commandID == "" {
-			commandID = firstNonEmptyString(command["id"], command["type"])
-		}
+		commandID = firstNonEmptyString(command["id"], command["type"])
 		if parameters == nil {
 			parameters = firstMap(command["parameters"], command["target"])
 		}
-	} else if commandID == "" {
-		commandID = firstNonEmptyString(components["command"])
 	}
 
 	return commandID, parameters

@@ -31,10 +31,9 @@ Production origins are not compiled into defaults. Configure each hosted origin 
 You can override origins with:
 
 - `CORS_ORIGINS` (JSON array string or comma-separated string)
-- `ALLOWED_ORIGINS` (legacy alias, same parsing behavior)
 - `cors_origins` in `atlas_core.settings.json` (applies when env vars are not set)
 
-When `CORS_ORIGINS` or `ALLOWED_ORIGINS` is **explicitly set to empty**, no origins are allowed (deny-all). This differs from omitting the variable, which uses the built-in default list above.
+When `CORS_ORIGINS` is **explicitly set to empty**, no origins are allowed (deny-all). This differs from omitting the variable, which uses the built-in default list above.
 
 ### Current Middleware Behavior
 
