@@ -381,7 +381,7 @@ Do not make raw JSON the main content unless the selected item has no better str
 12. Add per-selected-asset task history from Core.
 13. Add geofeature editing for Point, LineString, and Polygon.
 14. Add JSON/debug drawer.
-15. Add component stories and browser smoke tests.
+15. Add component-level tests and browser smoke tests.
 
 ## Testing Plan
 
@@ -457,4 +457,3 @@ Add new app-specific build, unit, component, and browser smoke commands as the a
 - Exact tactical color palette.
 - Asset status taxonomy beyond existing free-form `components.status.value`.
 - Whether geofeature metadata editing should include custom fields beyond geometry.
-- Whether Storybook is required immediately or after the first UI slice lands.

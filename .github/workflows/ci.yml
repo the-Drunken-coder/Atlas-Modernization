@@ -207,9 +207,6 @@ jobs:
       - name: Build command interface
         run: npm run build
 
-      - name: Build Storybook
-        run: npm run build-storybook
-
   build:
     name: build
     runs-on: ubuntu-latest

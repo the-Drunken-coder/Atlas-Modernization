@@ -10,8 +10,6 @@
   "scripts": {
     "dev": "vite",
     "dev:worker": "wrangler dev",
-    "storybook": "storybook dev -p 6006 --no-open",
-    "build-storybook": "storybook build",
     "prebuild": "wrangler types",
     "build": "vite build && wrangler deploy --dry-run --outdir dist/worker",
     "build:web": "vite build",
@@ -31,9 +29,6 @@
     "sidc-kit": "^0.3.1"
   },
   "devDependencies": {
-    "@storybook/addon-docs": "^10.4.6",
-    "@storybook/addon-vitest": "^10.4.6",
-    "@storybook/react-vite": "^10.4.6",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
@@ -42,7 +37,6 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "jsdom": "^26.0.0",
-    "storybook": "^10.4.6",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.9",
