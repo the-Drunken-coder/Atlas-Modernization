@@ -357,51 +357,19 @@ func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*models.E
 // List retrieves entities with pagination.
 func (a *EntityActions) List(ctx context.Context, limit int, cursor string) (*ListPage[*models.Entity], error) {
 	limit = ClampListLimit(limit)
-
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:   pgx.RepeatableRead,
-		AccessMode: pgx.ReadOnly,
+	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.Entity]{
+		limit:       limit,
+		cursor:      cursor,
+		cursorLabel: "cursor",
+		operation:   "entity list",
+		cursorName:  "entity",
+		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Entity, bool, error) {
+			return queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+		},
+		rowCursor: func(entity *models.Entity) (time.Time, string) {
+			return entity.CreatedAt, entity.EntityID
+		},
 	})
-	if err != nil {
-		return nil, fmt.Errorf("begin entity list transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var txUpperBound time.Time
-	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
-		return nil, fmt.Errorf("read entity list snapshot timestamp: %w", err)
-	}
-
-	parsedCursor, err := parseQueryCursor(cursor, "cursor")
-	if err != nil {
-		return nil, err
-	}
-	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
-	if err != nil {
-		return nil, err
-	}
-	entities, hasMore, err := queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit entity list transaction: %w", err)
-	}
-
-	page := &ListPage[*models.Entity]{
-		Items:   entities,
-		Limit:   limit,
-		HasMore: hasMore,
-	}
-	if hasMore && len(entities) > 0 {
-		last := entities[len(entities)-1]
-		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.EntityID, snapshotUpperBound)
-		if err != nil {
-			return nil, fmt.Errorf("encode entity cursor: %w", err)
-		}
-	}
-	return page, nil
 }
 
 // UpdateEntityParams holds parameters for updating an entity.

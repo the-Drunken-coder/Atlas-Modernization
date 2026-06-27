@@ -209,51 +209,19 @@ func (a *TaskActions) Get(ctx context.Context, taskID string) (*models.Task, err
 // List retrieves tasks with pagination.
 func (a *TaskActions) List(ctx context.Context, limit int, cursor string) (*ListPage[*models.Task], error) {
 	limit = ClampListLimit(limit)
-
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:   pgx.RepeatableRead,
-		AccessMode: pgx.ReadOnly,
+	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.Task]{
+		limit:       limit,
+		cursor:      cursor,
+		cursorLabel: "cursor",
+		operation:   "task list",
+		cursorName:  "task",
+		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Task, bool, error) {
+			return queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+		},
+		rowCursor: func(task *models.Task) (time.Time, string) {
+			return task.CreatedAt, task.TaskID
+		},
 	})
-	if err != nil {
-		return nil, fmt.Errorf("begin task list transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var txUpperBound time.Time
-	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
-		return nil, fmt.Errorf("read task list snapshot timestamp: %w", err)
-	}
-
-	parsedCursor, err := parseQueryCursor(cursor, "cursor")
-	if err != nil {
-		return nil, err
-	}
-	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
-	if err != nil {
-		return nil, err
-	}
-	tasks, hasMore, err := queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit task list transaction: %w", err)
-	}
-
-	page := &ListPage[*models.Task]{
-		Items:   tasks,
-		Limit:   limit,
-		HasMore: hasMore,
-	}
-	if hasMore && len(tasks) > 0 {
-		last := tasks[len(tasks)-1]
-		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
-		if err != nil {
-			return nil, fmt.Errorf("encode task cursor: %w", err)
-		}
-	}
-	return page, nil
 }
 
 // GetByEntity retrieves tasks for a specific entity.
@@ -264,51 +232,19 @@ func (a *TaskActions) GetByEntity(ctx context.Context, entityID string, limit in
 	entityID = SanitizeID(entityID)
 
 	limit = ClampListLimit(limit)
-
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:   pgx.RepeatableRead,
-		AccessMode: pgx.ReadOnly,
+	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.Task]{
+		limit:       limit,
+		cursor:      cursor,
+		cursorLabel: "cursor",
+		operation:   "entity task list",
+		cursorName:  "entity task",
+		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Task, bool, error) {
+			return queryTasksByEntity(ctx, tx, entityID, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+		},
+		rowCursor: func(task *models.Task) (time.Time, string) {
+			return task.CreatedAt, task.TaskID
+		},
 	})
-	if err != nil {
-		return nil, fmt.Errorf("begin entity task list transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var txUpperBound time.Time
-	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
-		return nil, fmt.Errorf("read entity task list snapshot timestamp: %w", err)
-	}
-
-	parsedCursor, err := parseQueryCursor(cursor, "cursor")
-	if err != nil {
-		return nil, err
-	}
-	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
-	if err != nil {
-		return nil, err
-	}
-	tasks, hasMore, err := queryTasksByEntity(ctx, tx, entityID, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit entity task list transaction: %w", err)
-	}
-
-	page := &ListPage[*models.Task]{
-		Items:   tasks,
-		Limit:   limit,
-		HasMore: hasMore,
-	}
-	if hasMore && len(tasks) > 0 {
-		last := tasks[len(tasks)-1]
-		page.NextCursor, err = encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
-		if err != nil {
-			return nil, fmt.Errorf("encode entity task cursor: %w", err)
-		}
-	}
-	return page, nil
 }
 
 // GetByEntityFiltered retrieves entity tasks filtered by status and updated-since timestamp.
@@ -330,32 +266,6 @@ func (a *TaskActions) GetByEntityFiltered(
 		return nil, err
 	}
 
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel:   pgx.RepeatableRead,
-		AccessMode: pgx.ReadOnly,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("begin filtered entity task list transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var txUpperBound time.Time
-	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
-		return nil, fmt.Errorf("read filtered entity task list snapshot timestamp: %w", err)
-	}
-
-	parsedCursor, err := parseQueryCursor(cursor, "task_cursor")
-	if err != nil {
-		return nil, err
-	}
-	snapshotUpperBound, _, err := continuationUpperBound(txUpperBound, parsedCursor)
-	if err != nil {
-		return nil, err
-	}
-
-	whereClauses := []string{"entity_id = $1"}
-	args := []interface{}{entityID}
-
 	normalizedStatuses := make([]string, 0, len(statusList))
 	for _, status := range statusList {
 		s := strings.ToLower(strings.TrimSpace(status))
@@ -363,6 +273,34 @@ func (a *TaskActions) GetByEntityFiltered(
 			normalizedStatuses = append(normalizedStatuses, s)
 		}
 	}
+	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.Task]{
+		limit:       limit,
+		cursor:      cursor,
+		cursorLabel: "task_cursor",
+		operation:   "filtered entity task list",
+		cursorName:  "filtered entity task",
+		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, _ bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Task, bool, error) {
+			return queryTasksByEntityFiltered(ctx, tx, entityID, normalizedStatuses, since, snapshotUpperBound, parsedCursor, limit)
+		},
+		rowCursor: func(task *models.Task) (time.Time, string) {
+			return task.UpdatedAt, task.TaskID
+		},
+	})
+}
+
+func queryTasksByEntityFiltered(
+	ctx context.Context,
+	tx pgx.Tx,
+	entityID string,
+	normalizedStatuses []string,
+	since *time.Time,
+	snapshotUpperBound time.Time,
+	parsedCursor *parsedQueryCursor,
+	limit int,
+) ([]*models.Task, bool, error) {
+	whereClauses := []string{"entity_id = $1"}
+	args := []interface{}{entityID}
+
 	if len(normalizedStatuses) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("LOWER(status) = ANY($%d)", len(args)+1))
 		args = append(args, normalizedStatuses)
@@ -399,42 +337,14 @@ func (a *TaskActions) GetByEntityFiltered(
 
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list tasks: %w", err)
+		return nil, false, fmt.Errorf("failed to list tasks: %w", err)
 	}
-	defer rows.Close()
-
-	var tasks []*models.Task
-	for rows.Next() {
-		var t models.Task
-		if err := rows.Scan(&t.TaskID, &t.Status, &t.EntityID, &t.JSON, &t.CreatedAt, &t.UpdatedAt, &t.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan task: %w", err)
-		}
-		tasks = append(tasks, &t)
+	tasks, err := collectTasks(rows)
+	if err != nil {
+		return nil, false, err
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate tasks: %w", err)
-	}
-
-	tasks, hasMore := trimToLimitWithMore(tasks, limit)
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit filtered entity task list transaction: %w", err)
-	}
-
-	page := &ListPage[*models.Task]{
-		Items:   tasks,
-		Limit:   limit,
-		HasMore: hasMore,
-	}
-	if hasMore && len(tasks) > 0 {
-		last := tasks[len(tasks)-1]
-		page.NextCursor, err = encodeRowCursor(last.UpdatedAt, last.TaskID, snapshotUpperBound)
-		if err != nil {
-			return nil, fmt.Errorf("encode filtered entity task cursor: %w", err)
-		}
-	}
-	return page, nil
+	out, hasMore := trimToLimitWithMore(tasks, limit)
+	return out, hasMore, nil
 }
 
 func normalizeCheckinTaskLimit(limit int) (int, error) {
