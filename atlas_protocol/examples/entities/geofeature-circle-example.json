@@ -1,0 +1,20 @@
+{
+  "components": {
+    "geometry": {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-74.0060, 40.7128]
+      },
+      "properties": {
+        "shape": "circle",
+        "radius_m": 500
+      }
+    },
+    "mil_view": {
+      "classification": "neutral",
+      "last_seen": "2026-05-29T10:00:00Z"
+    }
+  },
+  "published_at": "2026-05-29T10:00:00Z"
+}

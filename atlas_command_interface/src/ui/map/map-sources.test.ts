@@ -56,6 +56,27 @@ describe("buildMapSources", () => {
     expect(sources.geofeatures.features.find((f) => f.id === "geo-line")?.properties.selected).toBe(true);
   });
 
+  it("renders circle Features as display polygons", () => {
+    const sources = buildMapSources(
+      [
+        entity({
+          entity_id: "geo-circle",
+          entity_type: "geofeature",
+          components: {
+            geometry: {
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [-74.2, 40.1] },
+              properties: { shape: "circle", radius_m: 500 }
+            }
+          }
+        })
+      ],
+      undefined
+    );
+    expect(sources.geofeatures.features).toHaveLength(1);
+    expect(sources.geofeatures.features[0].geometry.type).toBe("Polygon");
+  });
+
   it("skips entities without a usable position and non-console kinds", () => {
     const sources = buildMapSources(
       [entity({ entity_id: "asset-blind", components: {} }), entity({ entity_id: "sensor", entity_type: "sensor" })],

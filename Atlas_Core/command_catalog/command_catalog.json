@@ -6,11 +6,11 @@
     {
       "id": "adsb_monitoring",
       "name": "ADSB Monitoring",
-      "description": "Monitor a geographic area for ADS-B traffic using a geofeature entity (polygon or circle shape).",
+      "description": "Monitor a geographic area for ADS-B traffic using a geofeature entity (polygon or circle Feature shape).",
       "parameters_schema": {
         "geofeature_id": {
           "type": "string",
-          "description": "The identifier of the geofeature entity to monitor. The geofeature must be a polygon or circle shape, not a point or line.",
+          "description": "The identifier of the geofeature entity to monitor. The geofeature must be a polygon or circle Feature shape, not a point or line.",
           "required": true
         }
       }

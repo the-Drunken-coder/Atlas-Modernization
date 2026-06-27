@@ -2,7 +2,6 @@ package components
 
 import (
 	"list"
-	"struct"
 
 	shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 )
@@ -25,23 +24,15 @@ import (
 	_closedRingsOK: list.MatchN(_closedRings, len(coordinates), true) & true
 })
 
-#AtlasGeometry: close({
-	point_lat?: shared.#Latitude
-	point_lng?: shared.#Longitude
-	radius_m?:  shared.#FiniteNumber & >0
-	line?:      shared.#NonEmptyLine
-	polygon?:   shared.#AtlasPolygon
+#CircleProperties: close({
+	shape!:    "circle"
+	radius_m!: shared.#FiniteNumber & >0
+})
 
-	if point_lat != _|_ {
-		point_lng!: shared.#Longitude
-	}
-	if point_lng != _|_ {
-		point_lat!: shared.#Latitude
-	}
-	if radius_m != _|_ {
-		point_lat!: shared.#Latitude
-		point_lng!: shared.#Longitude
-	}
-}) & struct.MinFields(1)
+#GeoJSONCircleFeature: close({
+	type!:       "Feature"
+	geometry!:   #GeoJSONPoint
+	properties!: #CircleProperties
+})
 
-#GeometryComponent: #GeoJSONPoint | #GeoJSONLineString | #GeoJSONPolygon | #AtlasGeometry
+#GeometryComponent: #GeoJSONPoint | #GeoJSONLineString | #GeoJSONPolygon | #GeoJSONCircleFeature

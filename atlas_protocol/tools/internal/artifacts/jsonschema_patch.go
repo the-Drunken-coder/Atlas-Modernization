@@ -232,13 +232,10 @@ func isArraySchema(node map[string]any) bool {
 func injectMinProperties(value any) {
 	switch node := value.(type) {
 	case map[string]any:
-		if isObjectReferenceSchema(node) || isAtlasGeometrySchema(node) {
+		if isObjectReferenceSchema(node) {
 			if _, exists := node["minProperties"]; !exists {
 				node["minProperties"] = 1
 			}
-		}
-		if isAtlasGeometrySchema(node) {
-			injectAtlasGeometryDependencies(node)
 		}
 		for _, child := range node {
 			injectMinProperties(child)
@@ -256,30 +253,6 @@ func isObjectReferenceSchema(node map[string]any) bool {
 		return false
 	}
 	return schemaType(node) == "object" && props["entity_id"] != nil && props["task_id"] != nil
-}
-
-func isAtlasGeometrySchema(node map[string]any) bool {
-	props, ok := node["properties"].(map[string]any)
-	if !ok {
-		return false
-	}
-	return schemaType(node) == "object" &&
-		props["point_lat"] != nil &&
-		props["point_lng"] != nil &&
-		props["radius_m"] != nil &&
-		props["line"] != nil &&
-		props["polygon"] != nil
-}
-
-func injectAtlasGeometryDependencies(node map[string]any) {
-	if _, exists := node["dependentRequired"]; exists {
-		return
-	}
-	node["dependentRequired"] = map[string]any{
-		"point_lat": []any{"point_lng"},
-		"point_lng": []any{"point_lat"},
-		"radius_m":  []any{"point_lat", "point_lng"},
-	}
 }
 
 func schemaType(node map[string]any) string {

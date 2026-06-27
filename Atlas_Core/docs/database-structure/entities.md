@@ -111,7 +111,7 @@ The JSON blob may contain fields outside `components`:
 ## Component Catalog
 
 - **telemetry**: Position/motion data. Units are meters, meters-per-second, and degrees (WGS84). Fields: `latitude`, `longitude`, `altitude_m`, `speed_m_s`, `heading_deg`.
-- **geometry**: Spatial footprint for geofeatures. Supports two formats (see [Geometry Formats](#geometry-formats) below).
+- **geometry**: Spatial footprint for geofeatures. Supports GeoJSON geometries and the Atlas circle Feature convention (see [Geometry Formats](#geometry-formats) below).
 - **task_catalog**: Lists `supported_tasks` identifiers so controllers know which work packages the asset can accept.
 - **media_refs**: Array of references to objects in MinIO. Each entry has `object_id` (required) and `role` (required). Valid roles: `camera_feed`, `thumbnail`, `heatmap_data`.
 - **mil_view**: Tacsight classification plus the last observed timestamp. `classification` must be one of: `friendly`, `hostile`, `neutral`, `unknown`, `civilian`.
@@ -129,11 +129,11 @@ Keep the blob as the canonical entity record; stable fields can be extracted int
 
 ## Geometry Formats
 
-The `geometry` component supports two input formats. Validation is in `internal/actions/geometry_validation.go`.
+The `geometry` component is validated through the generated Atlas Protocol validators used by `internal/actions/component_validation.go`.
 
 ### GeoJSON Format
 
-Standard GeoJSON with `type` and `coordinates`:
+Standard GeoJSON `Point`, `LineString`, and `Polygon` geometries with `type` and `coordinates`:
 
 ```json
 {
@@ -142,21 +142,27 @@ Standard GeoJSON with `type` and `coordinates`:
 }
 ```
 
-Supported GeoJSON types: `Point`, `LineString`, `Polygon`. Coordinates use `[longitude, latitude]` order.
+Coordinates use `[longitude, latitude]` order.
 
-### Atlas-Specific Format
+### Circle Feature Format
 
-Alternative format using explicit fields:
+Circular geofences use a strict GeoJSON Feature with Point geometry and Atlas circle properties:
 
 ```json
 {
-  "point_lat": 40.7128,
-  "point_lng": -74.0060,
-  "radius_m": 500
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-74.0060, 40.7128]
+  },
+  "properties": {
+    "shape": "circle",
+    "radius_m": 500
+  }
 }
 ```
 
-Also supports `polygon` (array of `[lat, lng]` pairs, minimum 3 points) and `line` (array of `[lat, lng]` pairs, minimum 2 points).
+The circle Feature properties are strict: `shape` must be `"circle"` and `radius_m` must be a positive finite number.
 
 ## Sensor Refs Fields
 
@@ -214,7 +220,7 @@ Validation is performed in `internal/actions/component_validation.go` and relate
 | `sensor_refs[].sensor_id` | Required, non-empty string |
 | `sensor_refs[].type` | Required, non-empty string |
 | Geometry coordinates | Lat −90–90, Lon −180–180; max 10,000 points per geometry |
-| Atlas geometry `radius_m` | > 0 |
+| Circle Feature `properties.radius_m` | > 0 |
 | Entity ID pattern | Max 50 chars; `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` |
 | Request body (create/update) | Max 1 MB |
 | Telemetry update body | Max 256 KB |

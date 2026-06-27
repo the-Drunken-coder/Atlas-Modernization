@@ -726,13 +726,28 @@ func TestGeometryValidation(t *testing.T) {
 		t.Fatalf("ValidateGeometryComponent(valid GeoJSON) errors = %v", errors)
 	}
 
-	validAtlas := map[string]any{
-		"point_lat": 40.7,
-		"point_lng": -73.9,
-		"radius_m":  25.0,
+	validCircle := map[string]any{
+		"type":     "Feature",
+		"geometry": map[string]any{"type": "Point", "coordinates": []any{-73.9, 40.7}},
+		"properties": map[string]any{
+			"shape":    "circle",
+			"radius_m": 25.0,
+		},
 	}
-	if errors := protocol.ValidateGeometryComponent(validAtlas); len(errors) > 0 {
-		t.Fatalf("ValidateGeometryComponent(valid Atlas) errors = %v", errors)
+	if errors := protocol.ValidateGeometryComponent(validCircle); len(errors) > 0 {
+		t.Fatalf("ValidateGeometryComponent(valid circle Feature) errors = %v", errors)
+	}
+
+	validCircle3D := map[string]any{
+		"type":     "Feature",
+		"geometry": map[string]any{"type": "Point", "coordinates": []any{-73.9, 40.7, 120.0}},
+		"properties": map[string]any{
+			"shape":    "circle",
+			"radius_m": 25.0,
+		},
+	}
+	if errors := protocol.ValidateGeometryComponent(validCircle3D); len(errors) > 0 {
+		t.Fatalf("ValidateGeometryComponent(valid 3D circle Feature) errors = %v", errors)
 	}
 
 	tests := []struct {
@@ -742,9 +757,29 @@ func TestGeometryValidation(t *testing.T) {
 	}{
 		{name: "bad longitude", geometry: map[string]any{"type": "Point", "coordinates": []any{181.0, 40.0}}, contains: []string{"coordinates"}},
 		{name: "non finite", geometry: map[string]any{"type": "Point", "coordinates": []any{math.Inf(1), 40.0}}, contains: []string{"coordinates[0]"}},
-		{name: "bad radius", geometry: map[string]any{"point_lat": 40.0, "point_lng": -73.0, "radius_m": 0.0}, contains: []string{"radius_m"}},
-		{name: "point latitude requires longitude", geometry: map[string]any{"point_lat": 40.0}, contains: []string{"point_lng"}},
-		{name: "radius requires point coordinates", geometry: map[string]any{"radius_m": 25.0}, contains: []string{"point_lat"}},
+		{
+			name:     "bad circle radius",
+			geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}}, "properties": map[string]any{"shape": "circle", "radius_m": 0.0}},
+			contains: []string{"radius_m"},
+		},
+		{
+			name:     "raw point rejects radius",
+			geometry: map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}, "radius_m": 25.0},
+		},
+		{
+			name:     "circle missing shape",
+			geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}}, "properties": map[string]any{"radius_m": 25.0}},
+			contains: []string{"shape"},
+		},
+		{
+			name:     "circle requires point geometry",
+			geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "LineString", "coordinates": []any{[]any{-73.0, 40.0}, []any{-73.1, 40.1}}}, "properties": map[string]any{"shape": "circle", "radius_m": 25.0}},
+			contains: []string{"geometry"},
+		},
+		{
+			name:     "circle rejects extra properties",
+			geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}}, "properties": map[string]any{"shape": "circle", "radius_m": 25.0, "units": "meters"}},
+		},
 		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: []string{"coordinates"}},
 		{name: "empty", geometry: map[string]any{}, contains: []string{"type"}},
 		{name: "unclosed polygon", geometry: map[string]any{"type": "Polygon", "coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}}}, contains: []string{"closed"}},
@@ -766,17 +801,24 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 	assertSchemaNumber(t, geoJSONPosition, "minItems", 2)
 	assertSchemaMissing(t, geoJSONPosition, "minLength")
 
-	atlasPosition := schemaObject(t, geometryDefs["#AtlasPosition"])
-	assertSchemaNumber(t, atlasPosition, "minItems", 2)
-	assertSchemaNumber(t, atlasPosition, "maxItems", 2)
-	assertSchemaMissing(t, atlasPosition, "minLength")
-	assertSchemaMissing(t, atlasPosition, "maxLength")
+	circleProperties := schemaObject(t, geometryDefs["#CircleProperties"])
+	if got, want := circleProperties["additionalProperties"], false; got != want {
+		t.Fatalf("CircleProperties additionalProperties = %v, want %v", got, want)
+	}
+	circlePropertyFields := schemaObject(t, circleProperties["properties"])
+	shape := schemaObject(t, circlePropertyFields["shape"])
+	if got, want := shape["const"], "circle"; got != want {
+		t.Fatalf("CircleProperties.shape const = %v, want %q", got, want)
+	}
+	radius := schemaObject(t, circlePropertyFields["radius_m"])
+	assertSchemaNumber(t, radius, "exclusiveMinimum", 0)
 
-	atlasGeometry := schemaObject(t, geometryDefs["#AtlasGeometry"])
-	assertSchemaNumber(t, atlasGeometry, "minProperties", 1)
-	assertDependentRequired(t, atlasGeometry, "point_lat", "point_lng")
-	assertDependentRequired(t, atlasGeometry, "point_lng", "point_lat")
-	assertDependentRequired(t, atlasGeometry, "radius_m", "point_lat", "point_lng")
+	circleFeature := schemaObject(t, geometryDefs["#GeoJSONCircleFeature"])
+	circleFeatureProps := schemaObject(t, circleFeature["properties"])
+	circleFeatureGeometry := schemaObject(t, circleFeatureProps["geometry"])
+	if got, want := circleFeatureGeometry["$ref"], "#/$defs/%23GeoJSONPoint"; got != want {
+		t.Fatalf("GeoJSONCircleFeature.geometry ref = %v, want %q", got, want)
+	}
 
 	objectReferenceSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "object-reference.schema.json"))
 	assertSchemaNumber(t, objectReferenceSchema, "minProperties", 1)
@@ -1075,24 +1117,6 @@ func assertSchemaMissing(t *testing.T, schema map[string]any, key string) {
 	t.Helper()
 	if _, ok := schema[key]; ok {
 		t.Fatalf("schema[%q] should be absent, got %v", key, schema[key])
-	}
-}
-
-func assertDependentRequired(t *testing.T, schema map[string]any, key string, want ...string) {
-	t.Helper()
-	dependencies := schemaObject(t, schema["dependentRequired"])
-	rawItems, ok := dependencies[key].([]any)
-	if !ok {
-		t.Fatalf("dependentRequired[%q] = %T, want array", key, dependencies[key])
-	}
-	if len(rawItems) != len(want) {
-		t.Fatalf("dependentRequired[%q] = %v, want %v", key, rawItems, want)
-	}
-	for i, rawItem := range rawItems {
-		item, ok := rawItem.(string)
-		if !ok || item != want[i] {
-			t.Fatalf("dependentRequired[%q][%d] = %v, want %q", key, i, rawItem, want[i])
-		}
 	}
 }
 
