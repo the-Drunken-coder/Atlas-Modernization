@@ -89,3 +89,23 @@ func TestListPageWithCursorOmitsNextCursorWhenExhausted(t *testing.T) {
 		t.Fatalf("NextCursor = %q, want empty", page.NextCursor)
 	}
 }
+
+func TestListPageWithCursorOmitsNextCursorWhenHasMoreButEmpty(t *testing.T) {
+	rowCursorCalled := false
+	page, err := listPageWithCursor([]string{}, 1, true, time.Now(), "test", func(item string) (time.Time, string) {
+		rowCursorCalled = true
+		return time.Now(), item
+	})
+	if err != nil {
+		t.Fatalf("listPageWithCursor: %v", err)
+	}
+	if !page.HasMore {
+		t.Fatalf("HasMore = false, want true")
+	}
+	if page.NextCursor != "" {
+		t.Fatalf("NextCursor = %q, want empty", page.NextCursor)
+	}
+	if rowCursorCalled {
+		t.Fatal("row cursor callback was called for an empty page")
+	}
+}
