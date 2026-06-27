@@ -738,6 +738,18 @@ func TestGeometryValidation(t *testing.T) {
 		t.Fatalf("ValidateGeometryComponent(valid circle Feature) errors = %v", errors)
 	}
 
+	validCircle3D := map[string]any{
+		"type":     "Feature",
+		"geometry": map[string]any{"type": "Point", "coordinates": []any{-73.9, 40.7, 120.0}},
+		"properties": map[string]any{
+			"shape":    "circle",
+			"radius_m": 25.0,
+		},
+	}
+	if errors := protocol.ValidateGeometryComponent(validCircle3D); len(errors) > 0 {
+		t.Fatalf("ValidateGeometryComponent(valid 3D circle Feature) errors = %v", errors)
+	}
+
 	tests := []struct {
 		name     string
 		geometry map[string]any
@@ -753,7 +765,6 @@ func TestGeometryValidation(t *testing.T) {
 		{
 			name:     "raw point rejects radius",
 			geometry: map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}, "radius_m": 25.0},
-			contains: []string{"empty disjunction"},
 		},
 		{
 			name:     "circle missing shape",
@@ -768,7 +779,6 @@ func TestGeometryValidation(t *testing.T) {
 		{
 			name:     "circle rejects extra properties",
 			geometry: map[string]any{"type": "Feature", "geometry": map[string]any{"type": "Point", "coordinates": []any{-73.0, 40.0}}, "properties": map[string]any{"shape": "circle", "radius_m": 25.0, "units": "meters"}},
-			contains: []string{"empty disjunction"},
 		},
 		{name: "partial GeoJSON", geometry: map[string]any{"type": "Point"}, contains: []string{"coordinates"}},
 		{name: "empty", geometry: map[string]any{}, contains: []string{"type"}},

@@ -300,17 +300,18 @@ function circleFeaturePolygon(circle: UiCircleFeature): UiPolygon {
   const lat1 = degreesToRadians(lat);
   const lng1 = degreesToRadians(lng);
   const distance = circle.properties.radius_m / EARTH_RADIUS_M;
+  const sinLat1 = Math.sin(lat1);
+  const cosLat1 = Math.cos(lat1);
+  const sinDistance = Math.sin(distance);
+  const cosDistance = Math.cos(distance);
   const ring: Position[] = [];
-  for (let index = 0; index <= CIRCLE_DISPLAY_SEGMENTS; index++) {
+  for (let index = 0; index < CIRCLE_DISPLAY_SEGMENTS; index++) {
     const bearing = (2 * Math.PI * index) / CIRCLE_DISPLAY_SEGMENTS;
-    const sinLat1 = Math.sin(lat1);
-    const cosLat1 = Math.cos(lat1);
-    const sinDistance = Math.sin(distance);
-    const cosDistance = Math.cos(distance);
     const lat2 = Math.asin(sinLat1 * cosDistance + cosLat1 * sinDistance * Math.cos(bearing));
     const lng2 = lng1 + Math.atan2(Math.sin(bearing) * sinDistance * cosLat1, cosDistance - sinLat1 * Math.sin(lat2));
     ring.push([normalizeLongitude(radiansToDegrees(lng2)), radiansToDegrees(lat2)]);
   }
+  ring.push(ring[0]);
   return { type: "Polygon", coordinates: [ring] };
 }
 
