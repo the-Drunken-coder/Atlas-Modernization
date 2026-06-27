@@ -23,6 +23,11 @@ const circle: UiGeometry = {
   geometry: { type: "Point", coordinates: [-74.2, 40.1] },
   properties: { shape: "circle", radius_m: 500 }
 };
+const elevatedCircle: UiGeometry = {
+  type: "Feature",
+  geometry: { type: "Point", coordinates: [-74.2, 40.1, 37] },
+  properties: { shape: "circle", radius_m: 500 }
+};
 
 describe("geometry normalisation", () => {
   it("passes through GeoJSON geometries", () => {
@@ -34,12 +39,14 @@ describe("geometry normalisation", () => {
 
   it("passes through strict circle Features", () => {
     expect(toUiGeometry(circle)).toEqual(circle);
+    expect(toUiGeometry(elevatedCircle)).toEqual(elevatedCircle);
     expect(toUiGeometry({ ...circle, properties: { ...circle.properties, units: "meters" } })).toBeUndefined();
     expect(toUiGeometry({ ...circle, properties: { radius_m: 500 } })).toBeUndefined();
   });
 
   it("returns undefined for geometry with non-finite coordinates", () => {
     expect(toUiGeometry({ type: "Point", coordinates: [Number.NaN, 40.1] })).toBeUndefined();
+    expect(toUiGeometry({ type: "Point", coordinates: [-74.2, 40.1, Number.NaN] })).toBeUndefined();
     expect(toUiGeometry({ ...circle, geometry: { type: "Point", coordinates: [-74.2, Number.POSITIVE_INFINITY] } })).toBeUndefined();
   });
 
@@ -97,11 +104,17 @@ describe("vertex editing", () => {
       geometry: { type: "Point", coordinates: [-75, 41] },
       properties: { shape: "circle", radius_m: 500 }
     });
+    expect(moveVertex(elevatedCircle, { kind: "Circle" }, -75, 41)).toEqual({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-75, 41, 37] },
+      properties: { shape: "circle", radius_m: 500 }
+    });
   });
 
   it("moves a line vertex while preserving validity", () => {
-    const moved = moveVertex(line, { kind: "LineString", index: 1 }, -73, 41);
-    expect(moved).toEqual({ type: "LineString", coordinates: [[-74.2, 40.1], [-73, 41]] });
+    const elevatedLine: UiGeometry = { type: "LineString", coordinates: [[-74.2, 40.1], [-74.1, 40.2, 12]] };
+    const moved = moveVertex(elevatedLine, { kind: "LineString", index: 1 }, -73, 41);
+    expect(moved).toEqual({ type: "LineString", coordinates: [[-74.2, 40.1], [-73, 41, 12]] });
     expect(validateGeometry(moved)).toEqual({ valid: true });
   });
 
@@ -168,6 +181,10 @@ describe("geometry validity", () => {
       validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2]]] })
     ).toEqual({ valid: false, reason: "Polygon ring must repeat its first coordinate to close" });
     expect(validateGeometry({ type: "LineString", coordinates: [[-74.2, 40.1], [Number.NaN, 40.2]] })).toEqual({
+      valid: false,
+      reason: "Line contains an invalid coordinate"
+    });
+    expect(validateGeometry({ type: "LineString", coordinates: [[-74.2, 40.1], [-74.1, 40.2, Number.NaN]] })).toEqual({
       valid: false,
       reason: "Line contains an invalid coordinate"
     });

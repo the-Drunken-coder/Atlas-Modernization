@@ -427,7 +427,8 @@ function sourceBounds(sources: MapSources): maplibregl.LngLatBounds | undefined 
   let bounds: maplibregl.LngLatBounds | undefined;
   for (const feature of allFeatures(sources)) {
     forEachPosition(feature.geometry, (position) => {
-      bounds = bounds ? bounds.extend(position) : new maplibregl.LngLatBounds(position, position);
+      const lngLat = toLngLat(position);
+      bounds = bounds ? bounds.extend(lngLat) : new maplibregl.LngLatBounds(lngLat, lngLat);
     });
   }
   return bounds;
@@ -437,7 +438,7 @@ function allFeatures(sources: MapSources): MapFeature[] {
   return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features];
 }
 
-function forEachPosition(geometry: UiRawGeometry, visitor: (position: [number, number]) => void): void {
+function forEachPosition(geometry: UiRawGeometry, visitor: (position: Position) => void): void {
   if (geometry.type === "Point") {
     visitor(geometry.coordinates);
     return;
@@ -449,6 +450,10 @@ function forEachPosition(geometry: UiRawGeometry, visitor: (position: [number, n
   for (const ring of geometry.coordinates) {
     for (const position of ring) visitor(position);
   }
+}
+
+function toLngLat(position: Position): [number, number] {
+  return [position[0], position[1]];
 }
 
 export { buildMapSources };

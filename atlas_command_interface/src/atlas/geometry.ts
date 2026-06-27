@@ -2,7 +2,7 @@
 // as strict GeoJSON Feature<Point> values with strict circle properties; the map
 // renders them through a derived polygon without changing the saved payload.
 
-export type Position = [number, number];
+export type Position = [number, number, ...number[]];
 
 export type UiPoint = { type: "Point"; coordinates: Position };
 export type UiLineString = { type: "LineString"; coordinates: Position[] };
@@ -81,19 +81,18 @@ export function geometryVertices(geometry: UiGeometry): EditableVertex[] {
 }
 
 export function moveVertex(geometry: UiGeometry, ref: VertexRef, lng: number, lat: number): UiGeometry {
-  const next: Position = [lng, lat];
   if (isCircleFeature(geometry) && ref.kind === "Circle") {
-    return { ...geometry, geometry: { type: "Point", coordinates: next } };
+    return { ...geometry, geometry: { type: "Point", coordinates: movePosition(geometry.geometry.coordinates, lng, lat) } };
   }
   if (geometry.type === "Point" && ref.kind === "Point") {
-    return { type: "Point", coordinates: next };
+    return { type: "Point", coordinates: movePosition(geometry.coordinates, lng, lat) };
   }
   if (geometry.type === "LineString" && ref.kind === "LineString") {
-    const coordinates = geometry.coordinates.map((position, index) => (index === ref.index ? next : position));
+    const coordinates = geometry.coordinates.map((position, index) => (index === ref.index ? movePosition(position, lng, lat) : position));
     return { type: "LineString", coordinates };
   }
   if (geometry.type === "Polygon" && ref.kind === "Polygon") {
-    const coordinates = geometry.coordinates.map((ring, ringIndex) => (ringIndex === ref.ring ? moveRingVertex(ring, ref.index, next) : ring));
+    const coordinates = geometry.coordinates.map((ring, ringIndex) => (ringIndex === ref.ring ? moveRingVertex(ring, ref.index, lng, lat) : ring));
     return { type: "Polygon", coordinates };
   }
   return geometry;
@@ -203,10 +202,14 @@ export function formatMeters(value: number): string {
   return Number.isInteger(value) ? `${value} m` : `${value.toFixed(2)} m`;
 }
 
-function moveRingVertex(ring: Position[], index: number, next: Position): Position[] {
+function moveRingVertex(ring: Position[], index: number, lng: number, lat: number): Position[] {
   const open = openRing(ring);
-  const updated = open.map((position, position_index) => (position_index === index ? next : position));
+  const updated = open.map((position, position_index) => (position_index === index ? movePosition(position, lng, lat) : position));
   return closeRing(updated);
+}
+
+function movePosition(position: Position, lng: number, lat: number): Position {
+  return [lng, lat, ...position.slice(2)];
 }
 
 function openRing(ring: Position[]): Position[] {
@@ -235,16 +238,16 @@ function geometryFromRawGeoJSON(value: unknown): UiRawGeometry | undefined {
   if (value.type === "Point" && onlyKnownKeys(value, ["coordinates", "type"]) && isPosition(value.coordinates)) {
     return { type: "Point", coordinates: toPosition(value.coordinates) };
   }
-  if (value.type === "LineString" && onlyKnownKeys(value, ["coordinates", "type"]) && Array.isArray(value.coordinates) && value.coordinates.every(isPosition)) {
+  if (value.type === "LineString" && onlyKnownKeys(value, ["coordinates", "type"]) && isPositionArray(value.coordinates)) {
     return { type: "LineString", coordinates: value.coordinates.map(toPosition) };
   }
   if (
     value.type === "Polygon" &&
     onlyKnownKeys(value, ["coordinates", "type"]) &&
     Array.isArray(value.coordinates) &&
-    value.coordinates.every((ring) => Array.isArray(ring) && ring.every(isPosition))
+    value.coordinates.every(isPositionArray)
   ) {
-    return { type: "Polygon", coordinates: (value.coordinates as unknown[][]).map((ring) => ring.map((p) => toPosition(p as number[]))) };
+    return { type: "Polygon", coordinates: value.coordinates.map((ring) => ring.map(toPosition)) };
   }
   return undefined;
 }
@@ -268,12 +271,16 @@ function onlyKnownKeys(value: Record<string, unknown>, keys: string[]): boolean 
   return Object.keys(value).every((key) => keys.includes(key));
 }
 
-function isPosition(value: unknown): value is number[] {
-  return Array.isArray(value) && value.length >= 2 && isFiniteNumber(value[0]) && isFiniteNumber(value[1]);
+function isPositionArray(value: unknown): value is Position[] {
+  return Array.isArray(value) && value.every(isPosition);
+}
+
+function isPosition(value: unknown): value is Position {
+  return Array.isArray(value) && value.length >= 2 && value.every(isFiniteNumber);
 }
 
 function isFinitePosition(value: Position): boolean {
-  return isFiniteNumber(value[0]) && isFiniteNumber(value[1]);
+  return value.every(isFiniteNumber);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -284,8 +291,8 @@ function isClosedRing(ring: Position[]): boolean {
   return ring.length >= 2 && positionsEqual(ring[0], ring[ring.length - 1]);
 }
 
-function toPosition(value: number[]): Position {
-  return [value[0], value[1]];
+function toPosition(value: Position): Position {
+  return [value[0], value[1], ...value.slice(2)];
 }
 
 function circleFeaturePolygon(circle: UiCircleFeature): UiPolygon {
