@@ -27,7 +27,11 @@ func readCursorListPage[T any](ctx context.Context, pool *pgxpool.Pool, opts cur
 	if err != nil {
 		return nil, fmt.Errorf("begin %s transaction: %w", opts.operation, err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
 
 	var txUpperBound time.Time
 	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
