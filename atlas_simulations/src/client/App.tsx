@@ -57,7 +57,7 @@ export function App() {
     setError(undefined);
     setMutationPending(true);
     try {
-      const run = await startRun({ scenarioId: selected.id, inputs, jsonInput });
+      const run = await startRun({ scenarioId: selected.id, inputs: submissionInputs(selected, inputs), jsonInput });
       selectRun(run);
       await refreshRuns();
     } catch (errorValue) {
@@ -95,7 +95,7 @@ export function App() {
       setEvents((current) => [...current, event]);
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
-      if (isFinalCleanupEvent(event)) closeSource();
+      if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
     };
     source.onerror = () => {
       // EventSource handles transient reconnects itself.
@@ -179,7 +179,7 @@ export function App() {
           <div className="panel-head">
             <h2>{selected?.name ?? "Scenario"}</h2>
             <div className="actions">
-              <button className="primary" type="button" title="Start run" onClick={() => void startSelectedRun()} disabled={mutationPending || !selected || currentRun?.status === "running"}>
+              <button className="primary" type="button" title="Start run" onClick={() => void startSelectedRun()} disabled={mutationPending || !selected}>
                 <Play size={16} aria-hidden="true" />
                 Start
               </button>
@@ -366,12 +366,23 @@ function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
   }
 }
 
-function isFinalCleanupEvent(event: RunEvent): boolean {
-  return event.type === "cleanup" && !event.resource;
+function isTerminalStatus(status: RunSummary["status"]): boolean {
+  return status !== "running";
 }
 
 function displayStatus(run: RunSummary | undefined): string {
   return run?.cleaned ? "cleaned" : run?.status ?? "idle";
+}
+
+function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): FieldValues {
+  return Object.fromEntries(
+    scenario.inputFields.map((field) => {
+      const value = values[field.key];
+      if (field.type !== "number" || typeof value !== "string") return [field.key, value ?? field.defaultValue];
+      const parsed = Number(value);
+      return [field.key, Number.isFinite(parsed) ? parsed : value];
+    })
+  );
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {

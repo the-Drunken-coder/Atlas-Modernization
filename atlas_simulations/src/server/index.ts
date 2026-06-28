@@ -60,6 +60,10 @@ async function handleRequest(
   eventStreams: Set<ServerResponse>
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (!hasLoopbackHost(request.headers.host)) {
+    sendJSON(response, 403, { message: "Requests require a loopback Host header" });
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/api/health") {
     const health = await atlasHealth(config);
     sendJSON(response, health.ok ? 200 : health.status ?? 503, health satisfies HealthResponse);
@@ -242,7 +246,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return event.type === "cleanup" && event.resource === undefined;
+  return event.type === "status" && event.status !== "running";
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {

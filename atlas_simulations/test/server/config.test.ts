@@ -20,6 +20,8 @@ describe("loadConfig", () => {
     const packageRoot = tempPackageRoot();
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "localhost:8000" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "ftp://atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test?bad=true" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include a query string or fragment");
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test/#bad" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include a query string or fragment");
   });
 
   it("does not let undefined env overrides erase .env values", () => {
@@ -35,14 +37,14 @@ describe("loadConfig", () => {
       path.join(packageRoot, ".env"),
       [
         "ATLAS_SIM_PORT = 5190 # local override",
-        "ATLAS_BASE_URL=https://atlascommandapi.org/#health",
+        "ATLAS_BASE_URL=https://atlascommandapi.org/api/",
         'ATLAS_API_KEY="abc # not a comment" # trailing comment'
       ].join("\n")
     );
 
     const config = loadConfig({ env: {}, packageRoot });
     expect(config.port).toBe(5190);
-    expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/#health");
+    expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/api");
     expect(config.atlasApiKey).toBe("abc # not a comment");
   });
 });

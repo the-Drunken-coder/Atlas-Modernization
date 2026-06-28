@@ -69,7 +69,7 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const streamBody = await readUntil(stream, '"status":"completed"');
+    const streamBody = await readUntilClosed(stream, '"status":"completed"');
     expect(streamBody).toContain("data:");
     expect(streamBody).toContain('"status":"completed"');
 
@@ -148,23 +148,20 @@ function mutationHeaders(headers: Record<string, string> = {}): Record<string, s
   return { "X-Atlas-Simulations-Request": "1", ...headers };
 }
 
-async function readUntil(response: Response, text: string): Promise<string> {
+async function readUntilClosed(response: Response, text: string): Promise<string> {
   const reader = response.body?.getReader();
   expect(reader).toBeDefined();
   const decoder = new TextDecoder();
   let body = "";
   const deadline = Date.now() + INTEGRATION_TIMEOUT_MS;
-  try {
-    while (!body.includes(text)) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error(`Timed out waiting for ${text}`);
-      const result = await withTimeout(reader!.read(), remaining);
-      if (result.done) break;
-      body += decoder.decode(result.value, { stream: true });
-    }
-  } finally {
-    await reader!.cancel().catch(() => undefined);
+  while (true) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`Timed out waiting for ${text}`);
+    const result = await withTimeout(reader!.read(), remaining);
+    if (result.done) break;
+    body += decoder.decode(result.value, { stream: true });
   }
+  expect(body).toContain(text);
   return body;
 }
 

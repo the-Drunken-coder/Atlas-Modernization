@@ -19,6 +19,7 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, null)).toThrow("Start request must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: 12 })).toThrow("scenarioId is required");
     expect(() => parseStartRequest(scenario, { scenarioId: "other" })).toThrow("scenarioId must be example");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: null })).toThrow("inputs must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: [] })).toThrow("inputs must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: 12 })).toThrow("jsonInput must be a string");
   });

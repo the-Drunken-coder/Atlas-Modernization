@@ -73,7 +73,11 @@ function atlasBaseUrlValue(value: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
   }
-  return value.replace(/\/+$/, "");
+  if (parsed.search || parsed.hash) {
+    throw new Error("ATLAS_BASE_URL must not include a query string or fragment");
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+  return `${parsed.origin}${parsed.pathname === "/" ? "" : parsed.pathname}`;
 }
 
 function unquote(value: string): string {

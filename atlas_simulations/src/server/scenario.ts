@@ -60,7 +60,7 @@ export function parseStartRequest(scenario: Scenario, request: unknown): ParsedS
   if (request.jsonInput !== undefined && typeof request.jsonInput !== "string") {
     throw new Error("jsonInput must be a string");
   }
-  const inputs = request.inputs ?? {};
+  const inputs = request.inputs === undefined ? {} : request.inputs;
   if (!isRecord(inputs)) {
     throw new Error("inputs must be a JSON object");
   }
@@ -182,7 +182,26 @@ function parseBoolean(field: ScenarioInputField, value: unknown): boolean {
 function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
   const trimmed = raw?.trim();
   if (!trimmed) return {};
-  return { json: JSON.parse(trimmed) as JSONValue };
+  const parsed = JSON.parse(trimmed);
+  assertJSONValue(parsed);
+  return { json: parsed };
+}
+
+function assertJSONValue(value: unknown): asserts value is JSONValue {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("JSON input must contain only finite numbers");
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) assertJSONValue(item);
+    return;
+  }
+  if (isRecord(value)) {
+    for (const item of Object.values(value)) assertJSONValue(item);
+    return;
+  }
+  throw new Error("JSON input must be JSON-serializable");
 }
 
 function rejectUnknownInputFields(fields: ScenarioInputField[], raw: Record<string, unknown>): void {

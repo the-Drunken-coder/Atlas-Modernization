@@ -91,16 +91,8 @@ describe("App", () => {
       message: "Run completed"
     });
     await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
-    expect(eventSources[0].closed).toBe(false);
-
-    eventSources[0].emit({
-      sequence: 3,
-      runId: run.id,
-      timestamp: new Date().toISOString(),
-      type: "cleanup",
-      message: "Cleanup complete"
-    });
-    await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());
     expect(eventSources[0].closed).toBe(true);
+    await user.click(screen.getByRole("button", { name: /cleanup/i }));
+    await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());
   });
 });

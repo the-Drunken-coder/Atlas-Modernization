@@ -78,8 +78,14 @@ const movingAssets: Scenario = {
       if (tick < ticks - 1) await ctx.wait(tickMs);
     }
 
-    ctx.assert("Assets created", assetIds.length === assetCount, `${assetIds.length}/${assetCount} assets created`);
-    ctx.assert("Telemetry ticks completed", true, `${ticks} ticks written`);
+    const persistedAssets = await Promise.all(assetIds.map((id) => ctx.client.entities.get(id)));
+    const finalSpeed = 12 + ticks - 1;
+    ctx.assert("Assets persisted", persistedAssets.length === assetCount, `${persistedAssets.length}/${assetCount} assets persisted`);
+    ctx.assert(
+      "Telemetry persisted",
+      persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
+      `expected final speed ${finalSpeed}`
+    );
   }
 };
 
