@@ -31,4 +31,26 @@ describe("RunStore", () => {
     expect(core.state.deleted).toEqual([`task:${started.id}-task`, `entity:${started.id}-asset`]);
     vi.useRealTimers();
   });
+
+  it("reports cancelled status immediately when a run is stopped", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "slow-run",
+      name: "Slow run",
+      summary: "Waits until stopped",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.wait(60_000);
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    const stopped = store.stop(started.id);
+
+    expect(stopped.status).toBe("cancelled");
+    expect(stopped.finishedAt).toBeDefined();
+    expect(store.get(started.id)?.status).toBe("cancelled");
+  });
 });

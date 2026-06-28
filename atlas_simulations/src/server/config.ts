@@ -19,10 +19,7 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const env = { ...fileEnv, ...(options.env ?? process.env) };
   const atlasBaseUrl = stringValue(env.ATLAS_BASE_URL) ?? "http://localhost:8000";
   const atlasApiKey = stringValue(env.ATLAS_API_KEY);
-  const port = numberValue(env.ATLAS_SIM_PORT) ?? 5180;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
-  }
+  const port = portValue(env.ATLAS_SIM_PORT);
   return {
     atlasBaseUrl: atlasBaseUrl.replace(/\/+$/, ""),
     ...(atlasApiKey ? { atlasApiKey } : {}),
@@ -49,11 +46,14 @@ function stringValue(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function numberValue(value: string | undefined): number | undefined {
+function portValue(value: string | undefined): number {
   const trimmed = stringValue(value);
-  if (!trimmed) return undefined;
+  if (!trimmed) return 5180;
   const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
+  }
+  return parsed;
 }
 
 function unquote(value: string): string {

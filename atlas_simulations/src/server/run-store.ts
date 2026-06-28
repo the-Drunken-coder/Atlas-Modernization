@@ -69,7 +69,7 @@ export class RunStore {
     const run = this.requireRun(id);
     if (run.status === "running") {
       run.controller.abort();
-      this.emit(run, { type: "status", status: "cancelled", message: "Stop requested" });
+      this.finish(run, "cancelled", "Stop requested");
     }
     return toSummary(run);
   }

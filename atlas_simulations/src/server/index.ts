@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { HealthResponse, RunListResponse, ScenarioListResponse, StartRunRequest, StartRunResponse } from "../shared/types.js";
+import type { HealthResponse, RunEvent, RunListResponse, ScenarioListResponse, StartRunRequest, StartRunResponse } from "../shared/types.js";
 import { createAtlasClientFactory } from "./atlas.js";
 import { loadConfig, type SimulationConfig } from "./config.js";
 import { RunStore } from "./run-store.js";
@@ -135,11 +135,26 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     Connection: "keep-alive"
   });
   try {
-    const unsubscribe = store.subscribe(runId, (event) => {
+    let unsubscribe: (() => void) | undefined;
+    let closeAfterSubscribe = false;
+    let closeQueued = false;
+    const close = () => {
+      unsubscribe?.();
+      if (!response.writableEnded) response.end();
+    };
+    const closeSoon = () => {
+      closeAfterSubscribe = true;
+      if (!unsubscribe || closeQueued) return;
+      closeQueued = true;
+      queueMicrotask(close);
+    };
+    unsubscribe = store.subscribe(runId, (event) => {
       response.write(`id: ${event.sequence}\n`);
       response.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (isTerminalRunEvent(event)) closeSoon();
     });
-    response.on("close", unsubscribe);
+    response.on("close", () => unsubscribe?.());
+    if (closeAfterSubscribe) close();
   } catch (error) {
     response.write(`event: error\n`);
     response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);
@@ -149,14 +164,21 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
 
 async function readJSON(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
+  let byteLength = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    if (Buffer.concat(chunks).byteLength > 1_000_000) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    byteLength += buffer.byteLength;
+    if (byteLength > 1_000_000) {
       throw new Error("Request body is too large");
     }
+    chunks.push(buffer);
   }
   const body = Buffer.concat(chunks).toString("utf8");
   return body.trim() ? JSON.parse(body) : {};
+}
+
+function isTerminalRunEvent(event: RunEvent): boolean {
+  return event.type === "status" && event.status !== undefined && event.status !== "running";
 }
 
 function sendJSON(response: ServerResponse, status: number, body: unknown): void {

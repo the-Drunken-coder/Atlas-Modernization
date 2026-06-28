@@ -37,10 +37,9 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const reader = stream.body!.getReader();
-    const firstChunk = await reader.read();
-    expect(new TextDecoder().decode(firstChunk?.value)).toContain("data:");
-    await reader.cancel();
+    const streamBody = await withTimeout(stream.text(), 1_000);
+    expect(streamBody).toContain("data:");
+    expect(streamBody).toContain('"status":"completed"');
 
     const cleaned = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST" });
     expect(cleaned.run.status).toBe("cleaned");
@@ -67,4 +66,16 @@ async function waitFor(assertion: () => Promise<void>): Promise<void> {
     }
   }
   throw lastError;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return await Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+    })
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
