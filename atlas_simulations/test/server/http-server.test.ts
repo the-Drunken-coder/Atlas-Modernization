@@ -24,7 +24,7 @@ describe("simulation HTTP server", () => {
 
     const started = await fetchJSON<{ run: { id: string; status: string } }>(`${baseUrl}/api/runs`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         scenarioId: "moving-assets",
         inputs: { assetCount: 1, ticks: 1, tickMs: 0, startLatitude: 38, startLongitude: -77 }
@@ -37,11 +37,11 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const streamBody = await withTimeout(stream.text(), 1_000);
+    const streamBody = await readUntil(stream, '"status":"completed"');
     expect(streamBody).toContain("data:");
     expect(streamBody).toContain('"status":"completed"');
 
-    const cleaned = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST" });
+    const cleaned = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
     expect(cleaned.run.status).toBe("cleaned");
     expect(core.state.deleted).toEqual([`entity:${started.run.id}-asset-1`]);
   });
@@ -54,19 +54,24 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    await expectStatus(`${baseUrl}/api/runs`, 400, {
+    await expectStatus(`${baseUrl}/api/runs`, 403, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    await expectStatus(`${baseUrl}/api/runs`, 400, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
       body: "{"
     });
     await expectStatus(`${baseUrl}/api/runs`, 400, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
       body: "null"
     });
     await expectStatus(`${baseUrl}/api/runs/missing/events`, 404);
-    await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST" });
-    await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST" });
+    await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST", headers: mutationHeaders() });
+    await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST", headers: mutationHeaders() });
   });
 });
 
@@ -79,6 +84,27 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 async function expectStatus(url: string, status: number, init?: RequestInit): Promise<void> {
   const response = await fetch(url, init);
   expect(response.status).toBe(status);
+}
+
+function mutationHeaders(headers: Record<string, string> = {}): Record<string, string> {
+  return { "X-Atlas-Simulations-Request": "1", ...headers };
+}
+
+async function readUntil(response: Response, text: string): Promise<string> {
+  const reader = response.body?.getReader();
+  expect(reader).toBeDefined();
+  const decoder = new TextDecoder();
+  let body = "";
+  try {
+    while (!body.includes(text)) {
+      const result = await withTimeout(reader!.read(), 1_000);
+      if (result.done) break;
+      body += decoder.decode(result.value, { stream: true });
+    }
+  } finally {
+    await reader!.cancel().catch(() => undefined);
+  }
+  return body;
 }
 
 async function waitFor(assertion: () => Promise<void>): Promise<void> {

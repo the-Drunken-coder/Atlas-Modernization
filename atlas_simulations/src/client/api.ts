@@ -46,10 +46,12 @@ export async function cleanupRun(id: string): Promise<RunSummary> {
 }
 
 async function apiJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const method = init?.method?.toUpperCase() ?? "GET";
   const response = await fetch(url, {
     ...init,
     headers: {
       Accept: "application/json",
+      ...(method === "GET" ? {} : { "X-Atlas-Simulations-Request": "1" }),
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...init?.headers
     }

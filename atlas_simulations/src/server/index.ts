@@ -16,11 +16,14 @@ export type SimulationServer = {
   store: RunStore;
 };
 
+const MUTATION_HEADER = "x-atlas-simulations-request";
+
 export function createSimulationServer(options: { config?: SimulationConfig; store?: RunStore } = {}): SimulationServer {
   const config = options.config ?? loadConfig();
   const store = options.store ?? new RunStore(createAtlasClientFactory(config));
+  const eventStreams = new Set<ServerResponse>();
   const server = createServer((request, response) => {
-    void handleRequest(request, response, config, store).catch((error) => {
+    void handleRequest(request, response, config, store, eventStreams).catch((error) => {
       sendJSON(response, error instanceof RequestBodyError ? error.status : 500, { message: errorMessage(error) });
     });
   });
@@ -41,12 +44,21 @@ export function createSimulationServer(options: { config?: SimulationConfig; sto
       }),
     close: () =>
       new Promise((resolve, reject) => {
+        for (const stream of eventStreams) {
+          if (!stream.writableEnded) stream.end();
+        }
         server.close((error) => (error ? reject(error) : resolve()));
       })
   };
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse, config: SimulationConfig, store: RunStore): Promise<void> {
+async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: SimulationConfig,
+  store: RunStore,
+  eventStreams: Set<ServerResponse>
+): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (request.method === "GET" && url.pathname === "/api/health") {
     sendJSON(response, 200, await atlasHealth(config) satisfies HealthResponse);
@@ -61,6 +73,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/runs") {
+    if (!requireTrustedMutation(request, response)) return;
     const body = await readRequestBody(request);
     const scenario = findScenario(body.scenarioId);
     if (!scenario) {
@@ -81,7 +94,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   if (runMatch) {
     const runId = decodeURIComponent(runMatch[1]);
     const action = runMatch[2];
-    await handleRunRoute(request, response, store, runId, action);
+    await handleRunRoute(request, response, store, runId, action, eventStreams);
     return;
   }
   if (url.pathname.startsWith("/api/")) {
@@ -91,7 +104,14 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   serveStatic(response, config.packageRoot, url.pathname);
 }
 
-async function handleRunRoute(request: IncomingMessage, response: ServerResponse, store: RunStore, runId: string, action: string | undefined): Promise<void> {
+async function handleRunRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  store: RunStore,
+  runId: string,
+  action: string | undefined,
+  eventStreams: Set<ServerResponse>
+): Promise<void> {
   if (request.method === "GET" && action === undefined) {
     const run = store.get(runId);
     if (!run) {
@@ -106,10 +126,11 @@ async function handleRunRoute(request: IncomingMessage, response: ServerResponse
       sendJSON(response, 404, { message: "Run not found" });
       return;
     }
-    streamRunEvents(response, store, runId);
+    streamRunEvents(response, store, runId, eventStreams);
     return;
   }
   if (request.method === "POST" && action === "stop") {
+    if (!requireTrustedMutation(request, response)) return;
     if (!store.get(runId)) {
       sendJSON(response, 404, { message: "Run not found" });
       return;
@@ -118,6 +139,7 @@ async function handleRunRoute(request: IncomingMessage, response: ServerResponse
     return;
   }
   if (request.method === "POST" && action === "cleanup") {
+    if (!requireTrustedMutation(request, response)) return;
     if (!store.get(runId)) {
       sendJSON(response, 404, { message: "Run not found" });
       return;
@@ -152,18 +174,23 @@ async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
   }
 }
 
-function streamRunEvents(response: ServerResponse, store: RunStore, runId: string): void {
+function streamRunEvents(response: ServerResponse, store: RunStore, runId: string, eventStreams: Set<ServerResponse>): void {
   response.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive"
   });
+  eventStreams.add(response);
   try {
     let unsubscribe: (() => void) | undefined;
     let closeAfterSubscribe = false;
     let closeQueued = false;
-    const close = () => {
+    const removeStream = () => {
       unsubscribe?.();
+      eventStreams.delete(response);
+    };
+    const close = () => {
+      removeStream();
       if (!response.writableEnded) response.end();
     };
     const closeSoon = () => {
@@ -177,9 +204,10 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
       response.write(`data: ${JSON.stringify(event)}\n\n`);
       if (isTerminalRunEvent(event)) closeSoon();
     });
-    response.on("close", () => unsubscribe?.());
+    response.on("close", removeStream);
     if (closeAfterSubscribe) close();
   } catch (error) {
+    eventStreams.delete(response);
     response.write(`event: error\n`);
     response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);
     response.end();
@@ -207,7 +235,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return event.type === "status" && event.status !== undefined && event.status !== "running";
+  return event.type === "status" && event.status !== "running";
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {
@@ -231,6 +259,28 @@ async function readRequestBody(request: IncomingMessage): Promise<StartRunReques
 function sendJSON(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "Content-Type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+function requireTrustedMutation(request: IncomingMessage, response: ServerResponse): boolean {
+  if (hasMutationHeader(request) || hasSameOrigin(request)) return true;
+  sendJSON(response, 403, { message: "Mutating simulation requests require a local UI request header" });
+  return false;
+}
+
+function hasMutationHeader(request: IncomingMessage): boolean {
+  const value = request.headers[MUTATION_HEADER];
+  return Array.isArray(value) ? value.includes("1") : value === "1";
+}
+
+function hasSameOrigin(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string): void {

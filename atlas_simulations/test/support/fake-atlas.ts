@@ -1,17 +1,18 @@
+import {
+  AtlasAPIError,
+  type EntityCreateRequest,
+  type EntityResource,
+  type EntityUpdateRequest,
+  type ObjectCreateRequest,
+  type ObjectResource,
+  type TaskCreateRequest,
+  type TaskResource
+} from "../../../atlas_sdk/src/index.js";
 import type {
   AtlasClientLike,
   AtlasClientFactory,
   ClientMode
 } from "../../src/server/atlas.js";
-import type {
-  EntityCreateRequest,
-  EntityResource,
-  EntityUpdateRequest,
-  ObjectCreateRequest,
-  ObjectResource,
-  TaskCreateRequest,
-  TaskResource
-} from "../../../atlas_sdk/src/index.js";
 
 type FakeCoreState = {
   version: number;
@@ -61,8 +62,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         return updated;
       },
       delete: async (id) => {
-        state.entities.delete(id);
-        state.deleted.push(`entity:${id}`);
+        deleteValue(state, state.entities, id, "entity");
       },
       checkIn: async (id, options) => {
         const current = requireValue(state.entities, id, "entity");
@@ -89,8 +89,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         return created;
       },
       delete: async (id) => {
-        state.tasks.delete(id);
-        state.deleted.push(`task:${id}`);
+        deleteValue(state, state.tasks, id, "task");
       },
       acknowledge: async (id) => updateTaskStatus(state, id, "acknowledged"),
       complete: async (id) => updateTaskStatus(state, id, "completed"),
@@ -105,8 +104,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         return created;
       },
       delete: async (id) => {
-        state.objects.delete(id);
-        state.deleted.push(`object:${id}`);
+        deleteValue(state, state.objects, id, "object");
       }
     },
     queries: {
@@ -181,6 +179,16 @@ function metadata(version: number, createdAt?: string) {
 
 function requireValue<T>(values: Map<string, T>, id: string, type: string): T {
   const value = values.get(id);
-  if (!value) throw new Error(`${type} ${id} not found`);
+  if (!value) throw notFound(type, id);
   return value;
+}
+
+function deleteValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): void {
+  if (!values.delete(id)) throw notFound(type, id);
+  state.deleted.push(`${type}:${id}`);
+}
+
+function notFound(type: string, id: string): AtlasAPIError {
+  const message = `${type} ${id} not found`;
+  return new AtlasAPIError(message, 404, { message });
 }

@@ -123,6 +123,9 @@ function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>)
 }
 
 function parseNumberField(field: NumberInputField, value: unknown): number {
+  if (typeof value === "string" && value.trim() === "") {
+    throw new Error(`${field.label} is required`);
+  }
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed)) {
     throw new Error(`${field.label} must be a number`);
@@ -170,6 +173,7 @@ function waitFor(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     }, ms);
     signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
   });
 }
 

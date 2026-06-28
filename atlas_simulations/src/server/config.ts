@@ -36,7 +36,7 @@ function readEnvFile(filePath: string): Record<string, string> {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
     if (!match) continue;
-    values[match[1]] = unquote(match[2].trim());
+    values[match[1]] = unquote(normalizeEnvValue(match[2]));
   }
   return values;
 }
@@ -61,4 +61,10 @@ function unquote(value: string): string {
     return value.slice(1, -1);
   }
   return value;
+}
+
+function normalizeEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) return trimmed;
+  return trimmed.replace(/\s+#.*$/, "").trim();
 }

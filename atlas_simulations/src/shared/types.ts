@@ -49,20 +49,29 @@ export type AssertionResult = {
 
 export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "cleaned";
 
-export type RunEventType = "status" | "log" | "assertion" | "resource" | "error" | "cleanup";
-
-export type RunEvent = {
+type RunEventBase = {
   sequence: number;
   runId: string;
   timestamp: string;
-  type: RunEventType;
   level?: "info" | "warn" | "error";
   message: string;
-  status?: RunStatus;
-  assertion?: AssertionResult;
-  resource?: CreatedResource;
   data?: JSONValue;
 };
+
+export type RunEvent =
+  | (RunEventBase & { type: "status"; status: RunStatus })
+  | (RunEventBase & { type: "log" })
+  | (RunEventBase & { type: "assertion"; assertion: AssertionResult })
+  | (RunEventBase & { type: "resource"; resource: CreatedResource })
+  | (RunEventBase & { type: "error"; level: "error" })
+  | (RunEventBase & { type: "cleanup"; resource: CreatedResource });
+
+export type RunEventType = RunEvent["type"];
+export type RunEventDetails = RunEvent extends infer Event
+  ? Event extends RunEvent
+    ? Omit<Event, "sequence" | "runId" | "timestamp">
+    : never
+  : never;
 
 export type RunSummary = {
   id: string;

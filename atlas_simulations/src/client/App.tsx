@@ -1,7 +1,7 @@
 import { Activity, CheckCircle2, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HealthResponse, RunEvent, RunSummary, ScenarioDescriptor } from "../shared/types.js";
-import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, startRun, stopRun } from "./api.js";
+import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } from "./api.js";
 
 type FieldValues = Record<string, string | number | boolean>;
 
@@ -78,13 +78,11 @@ export function App() {
       if (activeRunIdRef.current !== runId) return;
       const event = JSON.parse(message.data) as RunEvent;
       setEvents((current) => [...current, event]);
-      void loadRun(runId).then((run) => {
-        if (activeRunIdRef.current === runId) setCurrentRun(run);
-      }).then(refreshRuns).catch(captureError);
+      setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
+      setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
     };
     source.onerror = () => {
-      if (eventSourceRef.current === source) eventSourceRef.current = null;
-      source.close();
+      if (activeRunIdRef.current !== runId && eventSourceRef.current === source) eventSourceRef.current = null;
     };
   }
 
@@ -126,7 +124,7 @@ export function App() {
         </div>
       </header>
 
-      {error ? <div className="error-banner">{error}</div> : null}
+      {error ? <div className="error-banner" role="alert">{error}</div> : null}
 
       <section className="workspace">
         <aside className="panel scenario-panel">
@@ -305,6 +303,28 @@ function LogList({ events }: { events: RunEvent[] }) {
       ))}
     </ol>
   );
+}
+
+function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
+  switch (event.type) {
+    case "status":
+      return {
+        ...run,
+        status: event.status,
+        ...(event.status === "running" || run.finishedAt ? {} : { finishedAt: event.timestamp })
+      };
+    case "assertion":
+      if (run.assertions.some((assertion) => assertion.id === event.assertion.id)) return run;
+      return { ...run, assertions: [...run.assertions, event.assertion] };
+    case "resource":
+      if (run.createdResources.some((resource) => resource.type === event.resource.type && resource.id === event.resource.id)) return run;
+      return { ...run, createdResources: [...run.createdResources, event.resource] };
+    case "error":
+      return { ...run, lastError: event.message };
+    case "cleanup":
+    case "log":
+      return run;
+  }
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {

@@ -29,6 +29,10 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 9 } })).toThrow("Count must be at most 4");
   });
 
+  it("rejects blank numeric input before coercion", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: " " } })).toThrow("Count is required");
+  });
+
   it("rejects numeric input that does not align to the field step", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2.5 } })).toThrow("Count must align to step 1");
   });

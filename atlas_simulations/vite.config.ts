@@ -7,7 +7,7 @@ const packageRoot = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, packageRoot, "");
-  const simulationPort = env.ATLAS_SIM_PORT || "5180";
+  const simulationPort = portValue(env.ATLAS_SIM_PORT);
   return {
     plugins: [react()],
     build: {
@@ -22,3 +22,13 @@ export default defineConfig(({ mode }) => {
     }
   };
 });
+
+function portValue(value: string | undefined): number {
+  const trimmed = value?.trim();
+  if (!trimmed) return 5180;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
+  }
+  return parsed;
+}

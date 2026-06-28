@@ -1,3 +1,4 @@
+import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { isoNow, numberInput, point } from "./helpers.js";
 
@@ -72,7 +73,8 @@ async function visibleCount(reader: ScenarioContext["client"], ids: string[]): P
     try {
       const entity = await reader.entities.get(id);
       if (entity.entity_id === id) seen += 1;
-    } catch {
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       // Missing resources are expected while sync is still converging.
     }
   }

@@ -1,4 +1,4 @@
-import type { AssertionResult, CreatedResource, JSONValue, RunEvent, RunStatus, RunSummary } from "../shared/types.js";
+import type { AssertionResult, CreatedResource, JSONValue, RunEvent, RunEventDetails, RunStatus, RunSummary } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
 import { isNotFoundError } from "./atlas.js";
 import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
@@ -39,7 +39,7 @@ export class RunStore {
   }
 
   events(id: string): RunEvent[] {
-    return this.requireRun(id).events;
+    return [...this.requireRun(id).events];
   }
 
   start(scenario: Scenario, input: ScenarioInput): RunSummary {
@@ -191,13 +191,13 @@ export class RunStore {
     return assertion;
   }
 
-  private emit(run: RunRecord, details: Omit<RunEvent, "sequence" | "runId" | "timestamp">): void {
+  private emit(run: RunRecord, details: RunEventDetails): void {
     const event: RunEvent = {
       sequence: ++run.sequence,
       runId: run.id,
       timestamp: timestamp(),
       ...details
-    };
+    } as RunEvent;
     run.events.push(event);
     for (const subscriber of [...run.subscribers]) {
       try {
