@@ -97,15 +97,6 @@ func (h *Handler) Root(w http.ResponseWriter, r *http.Request) {
 			"queries":       "/queries/full",
 			"changed_since": "/queries/changed-since",
 		},
-		"links": map[string]string{
-			"health":        "/health",
-			"readiness":     "/readiness",
-			"entities":      "/entities",
-			"tasks":         "/tasks",
-			"objects":       "/objects",
-			"queries":       "/queries/full",
-			"changed_since": "/queries/changed-since",
-		},
 	}
 
 	writeJSON(w, http.StatusOK, response)

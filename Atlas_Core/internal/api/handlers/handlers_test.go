@@ -372,6 +372,9 @@ func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	if endpoints["changed_since"] != "/queries/changed-since" {
 		t.Fatalf("expected changed_since endpoint, got %v", endpoints["changed_since"])
 	}
+	if _, ok := body["links"]; ok {
+		t.Fatal("expected root response to expose endpoints without duplicate links")
+	}
 }
 
 func TestCreateEntityRejectsInvalidJSON(t *testing.T) {
