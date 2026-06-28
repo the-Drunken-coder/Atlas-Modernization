@@ -129,6 +129,17 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     throwIfCancelled();
     return result;
   };
+  const guardedWatch: AtlasClientLike["watch"] = (filter, callback) => {
+    throwIfCancelled();
+    const unsubscribe = client.watch(filter, callback);
+    try {
+      throwIfCancelled();
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
+    return unsubscribe;
+  };
   const checkIn = ((id: string, options?: Parameters<AtlasClientLike["entities"]["checkIn"]>[1]) =>
     guarded(() => client.entities.checkIn(id, options))) as AtlasClientLike["entities"]["checkIn"];
   return {
@@ -179,7 +190,7 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       stop: () => client.sync.stop(),
       status: () => guardedSync(() => client.sync.status())
     },
-    watch: (filter, callback) => guardedSync(() => client.watch(filter, callback)),
+    watch: guardedWatch,
     handshake: () => guarded(() => client.handshake())
   };
 }
@@ -306,15 +317,12 @@ function createIdFactory(runId: string): (name: string) => string {
     const existing = issued.get(name);
     if (existing) return existing;
     const base = slug(name);
-    let id = `${runId}-${base}`;
-    if (usedIds.has(id)) {
-      const hashedId = `${runId}-${base}-${hashName(name)}`;
-      id = hashedId;
-      let counter = 2;
-      while (usedIds.has(id)) {
-        id = `${hashedId}-${counter}`;
-        counter += 1;
-      }
+    const stableId = `${runId}-${base}-${hashName(name)}`;
+    let id = stableId;
+    let counter = 2;
+    while (usedIds.has(id)) {
+      id = `${stableId}-${counter}`;
+      counter += 1;
     }
     issued.set(name, id);
     usedIds.add(id);

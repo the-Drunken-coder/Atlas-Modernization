@@ -30,8 +30,11 @@ export default defineConfig(({ mode }) => {
 function portValue(value: string | undefined): number {
   const trimmed = value?.trim();
   if (!trimmed) return 5180;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed < 1 || parsed > 65535) {
     throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
   }
   return parsed;

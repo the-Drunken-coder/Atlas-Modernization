@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
+
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startRun } from "../../src/client/api.js";
+import { cleanupRun, startRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
@@ -115,8 +117,8 @@ describe("App", () => {
       message: "Run completed"
     });
     await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
-    await waitFor(() => expect(eventSources[0].closed).toBe(true));
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
+    await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(run.id));
     await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());
   });
 });

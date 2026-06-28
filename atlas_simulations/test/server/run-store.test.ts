@@ -29,7 +29,8 @@ describe("RunStore", () => {
 
       await store.cleanup(started.id);
       expect(store.get(started.id)).toMatchObject({ status: "completed", cleaned: true });
-      expect(core.state.deleted).toEqual([`task:${started.id}-task`, `entity:${started.id}-asset`]);
+      const resources = store.get(started.id)?.createdResources ?? [];
+      expect(core.state.deleted).toEqual([`task:${resources.find((resource) => resource.type === "task")?.id}`, `entity:${resources.find((resource) => resource.type === "entity")?.id}`]);
     } finally {
       vi.useRealTimers();
     }
@@ -207,7 +208,7 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
     await Promise.all([store.cleanup(started.id), store.cleanup(started.id)]);
 
-    expect(core.state.deleted).toEqual([`entity:${started.id}-asset`]);
+    expect(core.state.deleted).toEqual([`entity:${store.get(started.id)?.createdResources[0]?.id}`]);
   });
 
   it("cleans same-type resources from newest to oldest", async () => {
@@ -227,9 +228,10 @@ describe("RunStore", () => {
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    const objects = store.get(started.id)?.createdResources.filter((resource) => resource.type === "object") ?? [];
     await store.cleanup(started.id);
 
-    expect(core.state.deleted).toEqual([`object:${started.id}-object-2`, `object:${started.id}-object-1`]);
+    expect(core.state.deleted).toEqual([`object:${objects[1]?.id}`, `object:${objects[0]?.id}`]);
   });
 
   it("fake sync clients read the revision visible at their sync version", async () => {

@@ -10,6 +10,7 @@ import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 let server: SimulationServer | undefined;
 let coreServer: HttpServer | undefined;
+let coreHealthRequests: string[] = [];
 
 const INTEGRATION_TIMEOUT_MS = 5_000;
 
@@ -17,6 +18,7 @@ afterEach(async () => {
   await server?.close();
   await closeCoreServer();
   server = undefined;
+  coreHealthRequests = [];
 });
 
 describe("simulation HTTP server", () => {
@@ -30,8 +32,10 @@ describe("simulation HTTP server", () => {
 
     const healthy = await fetchJSON<{ ok: boolean; status: number }>(`${baseUrl}/api/health`);
     expect(healthy).toMatchObject({ ok: true, status: 200 });
+    expect(coreHealthRequests).toEqual(["/health"]);
 
     await closeCoreServer();
+    coreHealthRequests = [];
     const failedCoreUrl = await startCoreHealthServer(503);
     await server.close();
     server = createSimulationServer({
@@ -44,6 +48,7 @@ describe("simulation HTTP server", () => {
     expect(unhealthyResponse.status).toBe(503);
     const unhealthy = (await unhealthyResponse.json()) as { ok: boolean; status: number };
     expect(unhealthy).toMatchObject({ ok: false, status: 503 });
+    expect(coreHealthRequests).toEqual(["/health"]);
   });
 
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
@@ -76,9 +81,12 @@ describe("simulation HTTP server", () => {
     expect(streamBody).toContain("data:");
     expect(streamBody).toContain('"status":"completed"');
 
-    const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
+      `${baseUrl}/api/runs/${started.run.id}/cleanup`,
+      { method: "POST", headers: mutationHeaders() }
+    );
     expect(cleaned.run).toMatchObject({ status: "completed", cleaned: true });
-    expect(core.state.deleted).toEqual([`entity:${started.run.id}-asset-1`]);
+    expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
   });
 
   it("returns client errors for bad request bodies and missing runs", async () => {
@@ -159,7 +167,13 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function startCoreHealthServer(status: number): Promise<string> {
-  coreServer = createServer((_request, response) => {
+  coreServer = createServer((request, response) => {
+    coreHealthRequests.push(request.url ?? "");
+    if (request.url !== "/health") {
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ ok: false }));
+      return;
+    }
     response.writeHead(status, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ ok: status < 400 }));
   });

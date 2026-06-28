@@ -111,7 +111,7 @@ export function App() {
       setEvents((current) => [...current, event].slice(-MAX_CLIENT_EVENTS));
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
-      if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
+      if (event.type === "cleanup" && !event.resource) closeSource();
     };
     source.onerror = () => {
       // EventSource handles transient reconnects itself.
@@ -125,7 +125,6 @@ export function App() {
     setMutationPending(true);
     try {
       const updatedRun = await stopRun(targetRunId);
-      if (isTerminalStatus(updatedRun.status)) closeCurrentEventSource(targetRunId);
       upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       await refreshRunsBestEffort();
@@ -142,8 +141,8 @@ export function App() {
     setError(undefined);
     setMutationPending(true);
     try {
+      if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId);
       const updatedRun = await cleanupRun(targetRunId);
-      if (isTerminalStatus(updatedRun.status)) closeCurrentEventSource(targetRunId);
       upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       await refreshRunsBestEffort();
@@ -162,11 +161,6 @@ export function App() {
       next[index] = { ...next[index], ...run };
       return next;
     });
-  }
-
-  function closeCurrentEventSource(runId: string) {
-    if (activeRunIdRef.current !== runId || !eventSourceRef.current) return;
-    closeActiveEventSource();
   }
 
   function closeActiveEventSource() {

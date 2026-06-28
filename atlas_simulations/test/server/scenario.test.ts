@@ -115,12 +115,14 @@ describe("scenario input parsing", () => {
       registerClient: () => undefined
     });
 
-    await ctx.client.entities.create({ entity_id: ctx.id("asset"), entity_type: "asset" });
-    await ctx.newClient().objects.create({ object_id: ctx.id("object") });
+    const entityId = ctx.id("asset");
+    const objectId = ctx.id("object");
+    await ctx.client.entities.create({ entity_id: entityId, entity_type: "asset" });
+    await ctx.newClient().objects.create({ object_id: objectId });
 
     expect(tracked).toEqual([
-      { type: "entity", id: "sim-track-asset" },
-      { type: "object", id: "sim-track-object" }
+      { type: "entity", id: entityId },
+      { type: "object", id: objectId }
     ]);
   });
 

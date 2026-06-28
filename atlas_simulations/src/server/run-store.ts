@@ -103,6 +103,14 @@ export class RunStore {
   }
 
   private async performCleanup(run: RunRecord): Promise<RunSummary> {
+    if (run.createdResources.length === 0) {
+      run.cleaned = true;
+      run.cleanupError = undefined;
+      this.emit(run, { type: "cleanup", message: "Cleanup complete" });
+      this.pruneRuns();
+      return toSummary(run);
+    }
+
     let client: AtlasClientLike;
     try {
       client = this.clientFactory({ sync: false });
