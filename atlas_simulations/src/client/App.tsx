@@ -23,6 +23,7 @@ export function App() {
   const activeRunIdRef = useRef<string | undefined>(undefined);
   const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
   const currentRunIdRef = useRef<string | undefined>(undefined);
+  const refreshRunsRequestRef = useRef(0);
 
   useEffect(() => {
     void refreshHealth().catch(captureError);
@@ -66,8 +67,10 @@ export function App() {
   }
 
   async function refreshRuns() {
+    const requestId = ++refreshRunsRequestRef.current;
     const selectedRunAtRequestStart = selectedRunId();
     const loadedRuns = await loadRuns();
+    if (requestId !== refreshRunsRequestRef.current) return;
     setRuns((current) => mergeRunLists(current, loadedRuns));
     const selectedRunAfterLoad = selectedRunId();
     if (selectedRunAfterLoad && selectedRunAfterLoad === selectedRunAtRequestStart && !loadedRuns.some((run) => run.id === selectedRunAfterLoad)) {
@@ -81,7 +84,7 @@ export function App() {
     setCurrentRun((current) => {
       if (!current) return current;
       const refreshed = loadedRuns.find((run) => run.id === current.id);
-      return refreshed ? mergeRunSummary(current, refreshed) : undefined;
+      return refreshed ? mergeRunSummary(current, refreshed) : current;
     });
   }
 
@@ -510,7 +513,9 @@ function displayStatus(run: RunSummary | undefined): string {
 
 function mergeRunLists(current: RunSummary[], incoming: RunSummary[]): RunSummary[] {
   const byId = new Map(current.map((run) => [run.id, run]));
-  return incoming.map((run) => mergeRunSummary(byId.get(run.id), run)).sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+  const incomingIds = new Set(incoming.map((run) => run.id));
+  const retained = current.filter((run) => !incomingIds.has(run.id));
+  return [...incoming.map((run) => mergeRunSummary(byId.get(run.id), run)), ...retained].sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
 }
 
 function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary): RunSummary {

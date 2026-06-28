@@ -3,7 +3,7 @@ import multiClientSync from "../scenarios/multi-client-sync.js";
 import observationsObjects from "../scenarios/observations-objects.js";
 import type { Scenario } from "./scenario.js";
 
-const registeredScenarios: Scenario[] = [movingAssets, observationsObjects, multiClientSync];
+const registeredScenarios: Scenario[] = [movingAssets, observationsObjects, multiClientSync].map(freezeScenario);
 assertUniqueScenarioIds(registeredScenarios);
 
 export const scenarios: readonly Scenario[] = Object.freeze(registeredScenarios);
@@ -18,4 +18,11 @@ function assertUniqueScenarioIds(allScenarios: Scenario[]): void {
     if (seen.has(scenario.id)) throw new Error(`Duplicate scenario id: ${scenario.id}`);
     seen.add(scenario.id);
   }
+}
+
+function freezeScenario(scenario: Scenario): Scenario {
+  return Object.freeze({
+    ...scenario,
+    inputFields: Object.freeze(scenario.inputFields.map((field) => Object.freeze({ ...field }))) as Scenario["inputFields"]
+  });
 }

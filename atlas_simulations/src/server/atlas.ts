@@ -17,12 +17,14 @@ export type ClientMode = false | "all" | "selective";
 
 export type AtlasClientFactory = (options?: { sync?: ClientMode; pollIntervalMs?: number; signal?: AbortSignal }) => AtlasClientLike;
 
+const ATLAS_REQUEST_TIMEOUT_MS = 10_000;
+
 export function createAtlasClientFactory(config: SimulationConfig): AtlasClientFactory {
   return (options = {}) =>
     new AtlasClient({
       baseUrl: config.atlasBaseUrl,
       apiKey: config.atlasApiKey,
-      ...(options.signal ? { fetch: abortableFetch(options.signal) } : {}),
+      fetch: abortableFetch(options.signal),
       sync: options.sync ?? false,
       pollIntervalMs: options.pollIntervalMs ?? 2_000
     } satisfies AtlasClientOptions);
@@ -32,16 +34,18 @@ export function isNotFoundError(error: unknown): boolean {
   return error instanceof AtlasAPIError && error.status === 404;
 }
 
-function abortableFetch(signal: AbortSignal): typeof fetch {
+function abortableFetch(signal?: AbortSignal): typeof fetch {
   return async (input, init = {}) => {
     const upstreamSignals = [signal, requestSignal(input), init.signal].filter((value): value is AbortSignal => value != null);
     const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ATLAS_REQUEST_TIMEOUT_MS);
     const abort = () => controller.abort();
     for (const upstreamSignal of upstreamSignals) upstreamSignal.addEventListener("abort", abort, { once: true });
     if (upstreamSignals.some((upstreamSignal) => upstreamSignal.aborted)) abort();
     try {
       return await fetch(input, { ...init, signal: controller.signal });
     } finally {
+      clearTimeout(timeout);
       for (const upstreamSignal of upstreamSignals) upstreamSignal.removeEventListener("abort", abort);
     }
   };
