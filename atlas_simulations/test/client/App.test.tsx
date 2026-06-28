@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/client/App.js";
 import type { RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
@@ -43,6 +43,10 @@ class FakeEventSource {
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("loads scenarios and starts a selected run", async () => {

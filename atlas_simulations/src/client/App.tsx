@@ -41,10 +41,12 @@ export function App() {
 
   async function refreshHealth() {
     setHealth(await loadHealth());
+    setError(undefined);
   }
 
   async function refreshRuns() {
     setRuns(await loadRuns());
+    setError(undefined);
   }
 
   function captureError(errorValue: unknown) {
@@ -118,7 +120,7 @@ export function App() {
         <div className={`health ${health?.ok ? "ok" : "bad"}`}>
           <Activity size={18} aria-hidden="true" />
           <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
-          <button className="icon-button" type="button" title="Refresh Core status" onClick={() => void refreshHealth().catch(captureError)}>
+          <button className="icon-button" type="button" title="Refresh Core status" aria-label="Refresh Core status" onClick={() => void refreshHealth().catch(captureError)}>
             <RefreshCw size={16} aria-hidden="true" />
           </button>
         </div>
@@ -180,12 +182,13 @@ export function App() {
                     min={field.min}
                     max={field.max}
                     step={field.step}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const rawValue = event.target.value;
                       setInputs((current) => ({
                         ...current,
-                        [field.key]: Number(event.target.value)
-                      }))
-                    }
+                        [field.key]: rawValue === "" ? "" : Number(rawValue)
+                      }));
+                    }}
                   />
                 ) : (
                   <input

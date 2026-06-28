@@ -111,13 +111,13 @@ export function createScenarioContext(args: {
 function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
   const values: Record<string, string | number | boolean> = {};
   for (const field of fields) {
-    const value = raw[field.key] ?? field.defaultValue;
+    const value = Object.prototype.hasOwnProperty.call(raw, field.key) ? raw[field.key] : field.defaultValue;
     if (value === undefined) {
       throw new Error(`${field.label} is required`);
     }
     if (field.type === "number") values[field.key] = parseNumberField(field, value);
     if (field.type === "text") values[field.key] = String(value);
-    if (field.type === "boolean") values[field.key] = parseBoolean(value);
+    if (field.type === "boolean") values[field.key] = parseBoolean(field, value);
   }
   return values;
 }
@@ -126,10 +126,10 @@ function parseNumberField(field: NumberInputField, value: unknown): number {
   if (typeof value === "string" && value.trim() === "") {
     throw new Error(`${field.label} is required`);
   }
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${field.label} must be a number`);
   }
+  const parsed = value;
   if (field.min !== undefined && parsed < field.min) {
     throw new Error(`${field.label} must be at least ${field.min}`);
   }
@@ -147,10 +147,9 @@ function alignsToStep(value: number, step: number, base: number): boolean {
   return Math.abs(steps - Math.round(steps)) < 1e-9;
 }
 
-function parseBoolean(value: unknown): boolean {
+function parseBoolean(field: ScenarioInputField, value: unknown): boolean {
   if (typeof value === "boolean") return value;
-  if (typeof value === "string") return value === "true" || value === "on" || value === "1";
-  return Boolean(value);
+  throw new Error(`${field.label} must be a boolean`);
 }
 
 function parseJsonInput(raw: string | undefined): { json?: JSONValue } {

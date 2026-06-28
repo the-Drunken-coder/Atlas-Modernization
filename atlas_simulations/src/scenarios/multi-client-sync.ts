@@ -50,7 +50,8 @@ const multiClientSync: Scenario = {
       const seen = await waitForResources(ctx, reader, ids, Math.max(settleMs, 1000));
       const status = reader.sync.status();
       ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
-      ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.healthy ? "healthy" : "degraded or recovering");
+      ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
+      ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
     }
   }
 };

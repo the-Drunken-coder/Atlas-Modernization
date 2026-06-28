@@ -47,6 +47,7 @@ export async function cleanupRun(id: string): Promise<RunSummary> {
 
 async function apiJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const method = init?.method?.toUpperCase() ?? "GET";
+  const invalidJSON = Symbol("invalidJSON");
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -56,9 +57,16 @@ async function apiJSON<T>(url: string, init?: RequestInit): Promise<T> {
       ...init?.headers
     }
   });
-  const body = (await response.json().catch(() => undefined)) as T | { message?: string } | undefined;
+  const body = (await response.json().catch(() => invalidJSON)) as T | { message?: string } | typeof invalidJSON;
   if (!response.ok) {
-    throw new Error(typeof body === "object" && body && "message" in body && body.message ? body.message : `Request failed (${response.status})`);
+    throw new Error(
+      typeof body === "object" && body && "message" in body && typeof body.message === "string" && body.message
+        ? body.message
+        : `Request failed (${response.status})`
+    );
+  }
+  if (body === invalidJSON) {
+    throw new Error(`Expected JSON response (${response.status})`);
   }
   return body as T;
 }

@@ -35,7 +35,7 @@ describe("RunStore", () => {
     }
   });
 
-  it("reports cancelled status immediately when a run is stopped", async () => {
+  it("reports cancelled status after a stopped run unwinds", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
     const scenario: Scenario = {
@@ -52,9 +52,42 @@ describe("RunStore", () => {
     const started = store.start(scenario, { fields: {} });
     const stopped = store.stop(started.id);
 
-    expect(stopped.status).toBe("cancelled");
-    expect(stopped.finishedAt).toBeDefined();
-    expect(store.get(started.id)?.status).toBe("cancelled");
+    expect(stopped.status).toBe("running");
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("cancelled"));
+    expect(store.get(started.id)?.finishedAt).toBeDefined();
+  });
+
+  it("returns snapshots for summaries and events", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "snapshot-run",
+      name: "Snapshot run",
+      summary: "Checks snapshot isolation",
+      acceptsJson: true,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
+        ctx.assert("created", true);
+      }
+    };
+
+    const started = store.start(scenario, { fields: {}, json: { nested: { value: "original" } } });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+    const summary = store.get(started.id);
+    expect(summary).toBeDefined();
+    summary!.createdResources.push({ type: "entity", id: "mutated" });
+    summary!.assertions[0]!.passed = false;
+    (summary!.jsonInput as { nested: { value: string } }).nested.value = "mutated";
+
+    const event = store.events(started.id)[0];
+    event.message = "mutated";
+
+    expect(store.get(started.id)?.createdResources).toHaveLength(1);
+    expect(store.get(started.id)?.assertions[0]?.passed).toBe(true);
+    expect(store.get(started.id)?.jsonInput).toEqual({ nested: { value: "original" } });
+    expect(store.events(started.id)[0]?.message).not.toBe("mutated");
   });
 
   it("keeps cleanup blocked until a cancelled scenario has unwound", async () => {

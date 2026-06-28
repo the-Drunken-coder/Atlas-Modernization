@@ -41,11 +41,10 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
   state.clients.push(clientState);
   return {
     entities: {
-      get: async (id) => requireValue(state.entities, id, "entity"),
+      get: async (id) => cloneValue(requireValue(state.entities, id, "entity")),
       create: async (entity) => {
         const created = entityFromCreate(entity, ++state.version);
-        state.entities.set(created.entity_id, created);
-        return created;
+        return saveValue(state.entities, created.entity_id, created);
       },
       update: async (id, patch) => {
         const current = requireValue(state.entities, id, "entity");
@@ -58,8 +57,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           ...(patch.extra ? { extra: patch.extra } : {}),
           metadata: metadata(++state.version, current.metadata.created_at)
         };
-        state.entities.set(id, updated);
-        return updated;
+        return saveValue(state.entities, id, updated);
       },
       delete: async (id) => {
         deleteValue(state, state.entities, id, "entity");
@@ -77,16 +75,14 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           },
           metadata: metadata(++state.version, current.metadata.created_at)
         };
-        state.entities.set(id, updated);
-        return { entity: updated, tasks: [], task_count: 0, task_limit: 10, has_more_tasks: false };
+        return { entity: saveValue(state.entities, id, updated), tasks: [], task_count: 0, task_limit: 10, has_more_tasks: false };
       }
     },
     tasks: {
-      get: async (id) => requireValue(state.tasks, id, "task"),
+      get: async (id) => cloneValue(requireValue(state.tasks, id, "task")),
       create: async (task) => {
         const created = taskFromCreate(task, ++state.version);
-        state.tasks.set(created.task_id, created);
-        return created;
+        return saveValue(state.tasks, created.task_id, created);
       },
       delete: async (id) => {
         deleteValue(state, state.tasks, id, "task");
@@ -97,11 +93,10 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       setStatus: async (id, status) => updateTaskStatus(state, id, status)
     },
     objects: {
-      get: async (id) => requireValue(state.objects, id, "object"),
+      get: async (id) => cloneValue(requireValue(state.objects, id, "object")),
       create: async (object) => {
         const created = objectFromCreate(object, ++state.version);
-        state.objects.set(created.object_id, created);
-        return created;
+        return saveValue(state.objects, created.object_id, created);
       },
       delete: async (id) => {
         deleteValue(state, state.objects, id, "object");
@@ -109,9 +104,9 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     },
     queries: {
       full: async () => ({
-        entities: [...state.entities.values()],
-        tasks: [...state.tasks.values()],
-        objects: [...state.objects.values()]
+        entities: [...state.entities.values()].map(cloneValue),
+        tasks: [...state.tasks.values()].map(cloneValue),
+        objects: [...state.objects.values()].map(cloneValue)
       })
     },
     sync: {
@@ -168,8 +163,7 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
 function updateTaskStatus(state: FakeCoreState, id: string, status: string): TaskResource {
   const current = requireValue(state.tasks, id, "task");
   const updated = { ...current, status, metadata: metadata(++state.version, current.metadata.created_at) };
-  state.tasks.set(id, updated);
-  return updated;
+  return saveValue(state.tasks, id, updated);
 }
 
 function metadata(version: number, createdAt?: string) {
@@ -185,10 +179,20 @@ function requireValue<T>(values: Map<string, T>, id: string, type: string): T {
 
 function deleteValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): void {
   if (!values.delete(id)) throw notFound(type, id);
+  state.version += 1;
   state.deleted.push(`${type}:${id}`);
 }
 
 function notFound(type: string, id: string): AtlasAPIError {
   const message = `${type} ${id} not found`;
   return new AtlasAPIError(message, 404, { message });
+}
+
+function saveValue<T>(values: Map<string, T>, id: string, value: T): T {
+  values.set(id, cloneValue(value));
+  return cloneValue(value);
+}
+
+function cloneValue<T>(value: T): T {
+  return structuredClone(value);
 }

@@ -92,7 +92,11 @@ async function handleRequest(
   }
   const runMatch = /^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname);
   if (runMatch) {
-    const runId = decodeURIComponent(runMatch[1]);
+    const runId = safeDecodeURIComponent(runMatch[1]);
+    if (runId === undefined) {
+      sendJSON(response, 400, { message: "Request path must use valid URL encoding" });
+      return;
+    }
     const action = runMatch[2];
     await handleRunRoute(request, response, store, runId, action, eventStreams);
     return;
@@ -286,6 +290,11 @@ function hasSameOrigin(request: IncomingMessage): boolean {
 function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string): void {
   const staticRoot = path.join(packageRoot, "dist/client");
   const target = safeStaticPath(staticRoot, requestPath);
+  if (target === "invalid-encoding") {
+    response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Request path must use valid URL encoding");
+    return;
+  }
   const file = target && existsSync(target) && statSync(target).isFile() ? target : path.join(staticRoot, "index.html");
   if (!existsSync(file)) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -304,10 +313,20 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
   stream.pipe(response);
 }
 
-function safeStaticPath(staticRoot: string, requestPath: string): string | undefined {
-  const normalized = path.normalize(decodeURIComponent(requestPath)).replace(/^(\.\.[/\\])+/, "");
+function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | undefined {
+  const decoded = safeDecodeURIComponent(requestPath);
+  if (decoded === undefined) return "invalid-encoding";
+  const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, "");
   const target = path.join(staticRoot, normalized === "/" ? "index.html" : normalized);
   return target.startsWith(staticRoot) ? target : undefined;
+}
+
+function safeDecodeURIComponent(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function contentType(file: string): string {

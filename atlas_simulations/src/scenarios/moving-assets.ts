@@ -53,6 +53,7 @@ const movingAssets: Scenario = {
 
     for (let tick = 0; tick < ticks; tick++) {
       for (const [index, id] of assetIds.entries()) {
+        if (ctx.signal.aborted) throw new Error("Simulation cancelled");
         const latitude = startLatitude + index * 0.001 + tick * 0.0005;
         const longitude = startLongitude + index * 0.002 + tick * 0.0008;
         await ctx.client.entities.checkIn(id, {

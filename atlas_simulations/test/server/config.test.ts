@@ -22,7 +22,7 @@ describe("loadConfig", () => {
       [
         "ATLAS_SIM_PORT=5190 # local override",
         "ATLAS_BASE_URL=https://atlascommandapi.org/#health",
-        'ATLAS_API_KEY="abc # not a comment"'
+        'ATLAS_API_KEY="abc # not a comment" # trailing comment'
       ].join("\n")
     );
 

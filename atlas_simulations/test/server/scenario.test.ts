@@ -18,7 +18,7 @@ describe("scenario input parsing", () => {
   it("applies defaults and parses JSON input", () => {
     const parsed = parseStartRequest(scenario, {
       scenarioId: "example",
-      inputs: { enabled: "true" },
+      inputs: { enabled: true },
       jsonInput: '{"note":"ok"}'
     });
     expect(parsed.input.fields).toEqual({ count: 2, name: "alpha", enabled: true });
@@ -33,7 +33,15 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: " " } })).toThrow("Count is required");
   });
 
+  it("rejects string numeric input instead of coercing it", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: "2" } })).toThrow("Count must be a number");
+  });
+
   it("rejects numeric input that does not align to the field step", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2.5 } })).toThrow("Count must align to step 1");
+  });
+
+  it("rejects string boolean input instead of coercing it", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { enabled: "true" } })).toThrow("Enabled must be a boolean");
   });
 });

@@ -65,6 +65,14 @@ function unquote(value: string): string {
 
 function normalizeEnvValue(value: string): string {
   const trimmed = value.trim();
-  if (trimmed.startsWith('"') || trimmed.startsWith("'")) return trimmed;
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    const quote = trimmed[0];
+    for (let index = 1; index < trimmed.length; index += 1) {
+      if (trimmed[index] === quote && trimmed[index - 1] !== "\\") {
+        return trimmed.slice(0, index + 1);
+      }
+    }
+    return trimmed;
+  }
   return trimmed.replace(/\s+#.*$/, "").trim();
 }

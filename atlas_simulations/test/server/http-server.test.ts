@@ -72,6 +72,8 @@ describe("simulation HTTP server", () => {
     await expectStatus(`${baseUrl}/api/runs/missing/events`, 404);
     await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST", headers: mutationHeaders() });
     await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST", headers: mutationHeaders() });
+    await expectStatus(`${baseUrl}/api/runs/%E0%A4%A/events`, 400);
+    await expectStatus(`${baseUrl}/%E0%A4%A`, 400);
   });
 });
 

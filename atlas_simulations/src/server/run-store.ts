@@ -5,6 +5,9 @@ import { createScenarioContext, type Scenario, type ScenarioInput } from "./scen
 
 type EventSubscriber = (event: RunEvent) => void;
 
+const MAX_RUNS = 100;
+const MAX_EVENTS_PER_RUN = 500;
+
 type RunRecord = {
   id: string;
   scenario: Scenario;
@@ -39,7 +42,7 @@ export class RunStore {
   }
 
   events(id: string): RunEvent[] {
-    return [...this.requireRun(id).events];
+    return this.requireRun(id).events.map(cloneValue);
   }
 
   start(scenario: Scenario, input: ScenarioInput): RunSummary {
@@ -50,8 +53,8 @@ export class RunStore {
       scenario,
       status: "running",
       startedAt: now,
-      inputs: input.fields,
-      ...(input.json === undefined ? {} : { jsonInput: input.json }),
+      inputs: cloneValue(input.fields),
+      ...(input.json === undefined ? {} : { jsonInput: cloneValue(input.json) }),
       createdResources: [],
       assertions: [],
       events: [],
@@ -62,6 +65,7 @@ export class RunStore {
       sequence: 0
     };
     this.runs.set(id, run);
+    this.pruneRuns();
     this.emit(run, { type: "status", status: "running", message: `${scenario.name} started` });
     void this.execute(run, input);
     return toSummary(run);
@@ -69,9 +73,9 @@ export class RunStore {
 
   stop(id: string): RunSummary {
     const run = this.requireRun(id);
-    if (run.status === "running") {
+    if (run.status === "running" && !run.controller.signal.aborted) {
       run.controller.abort();
-      this.finish(run, "cancelled", "Stop requested");
+      this.emit(run, { type: "log", level: "warn", message: "Stop requested" });
     }
     return toSummary(run);
   }
@@ -101,6 +105,7 @@ export class RunStore {
     run.status = "cleaned";
     run.finishedAt = run.finishedAt ?? timestamp();
     this.emit(run, { type: "status", status: "cleaned", message: "Cleanup complete" });
+    this.pruneRuns();
     return toSummary(run);
   }
 
@@ -108,7 +113,7 @@ export class RunStore {
     const run = this.requireRun(id);
     for (const event of run.events) {
       try {
-        subscriber(event);
+        subscriber(cloneValue(event));
       } catch {
         return () => undefined;
       }
@@ -128,20 +133,24 @@ export class RunStore {
       assert: (name, passed, message) => this.assert(run, name, passed, message),
       track: (resource) => this.track(run, resource)
     });
+    let finalStatus: RunStatus = "completed";
+    let finalMessage = "Run completed";
+    let finalError: string | undefined;
     try {
       await run.scenario.run(context, input);
       if (run.controller.signal.aborted) {
-        this.finish(run, "cancelled", "Run cancelled");
-      } else {
-        this.finish(run, "completed", "Run completed");
+        finalStatus = "cancelled";
+        finalMessage = "Run cancelled";
       }
     } catch (error) {
       if (run.controller.signal.aborted) {
-        this.finish(run, "cancelled", "Run cancelled");
+        finalStatus = "cancelled";
+        finalMessage = "Run cancelled";
       } else {
-        run.lastError = errorMessage(error);
-        this.finish(run, "failed", run.lastError);
-        this.emit(run, { type: "error", level: "error", message: run.lastError });
+        finalError = errorMessage(error);
+        run.lastError = finalError;
+        finalStatus = "failed";
+        finalMessage = finalError;
       }
     } finally {
       for (const client of run.clients) {
@@ -156,6 +165,9 @@ export class RunStore {
         }
       }
       run.settled = true;
+      if (finalError) this.emit(run, { type: "error", level: "error", message: finalError });
+      this.finish(run, finalStatus, finalMessage);
+      this.pruneRuns();
     }
   }
 
@@ -168,8 +180,9 @@ export class RunStore {
 
   private track(run: RunRecord, resource: CreatedResource): void {
     if (!run.createdResources.some((current) => current.type === resource.type && current.id === resource.id)) {
-      run.createdResources.push(resource);
-      this.emit(run, { type: "resource", resource, message: `Created ${resource.type} ${resource.id}` });
+      const tracked = cloneValue(resource);
+      run.createdResources.push(tracked);
+      this.emit(run, { type: "resource", resource: tracked, message: `Created ${tracked.type} ${tracked.id}` });
     }
   }
 
@@ -181,14 +194,14 @@ export class RunStore {
       ...(message ? { message } : {}),
       timestamp: timestamp()
     };
-    run.assertions.push(assertion);
+    run.assertions.push(cloneValue(assertion));
     this.emit(run, {
       type: "assertion",
       level: passed ? "info" : "error",
-      assertion,
+      assertion: cloneValue(assertion),
       message: `${passed ? "PASS" : "FAIL"} ${name}${message ? `: ${message}` : ""}`
     });
-    return assertion;
+    return cloneValue(assertion);
   }
 
   private emit(run: RunRecord, details: RunEventDetails): void {
@@ -198,10 +211,11 @@ export class RunStore {
       timestamp: timestamp(),
       ...details
     } as RunEvent;
-    run.events.push(event);
+    run.events.push(cloneValue(event));
+    trimEvents(run);
     for (const subscriber of [...run.subscribers]) {
       try {
-        subscriber(event);
+        subscriber(cloneValue(event));
       } catch {
         run.subscribers.delete(subscriber);
       }
@@ -215,6 +229,14 @@ export class RunStore {
     }
     return run;
   }
+
+  private pruneRuns(): void {
+    for (const run of this.runs.values()) trimEvents(run);
+    for (const [id, run] of this.runs) {
+      if (this.runs.size <= MAX_RUNS) return;
+      if (run.status !== "running" && run.settled) this.runs.delete(id);
+    }
+  }
 }
 
 function toSummary(run: RunRecord): RunSummary {
@@ -225,12 +247,21 @@ function toSummary(run: RunRecord): RunSummary {
     status: run.status,
     startedAt: run.startedAt,
     ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
-    inputs: run.inputs,
-    ...(run.jsonInput === undefined ? {} : { jsonInput: run.jsonInput }),
-    createdResources: [...run.createdResources],
-    assertions: [...run.assertions],
+    inputs: cloneValue(run.inputs),
+    ...(run.jsonInput === undefined ? {} : { jsonInput: cloneValue(run.jsonInput) }),
+    createdResources: cloneValue(run.createdResources),
+    assertions: cloneValue(run.assertions),
     ...(run.lastError ? { lastError: run.lastError } : {})
   };
+}
+
+function trimEvents(run: RunRecord): void {
+  const overflow = run.events.length - MAX_EVENTS_PER_RUN;
+  if (overflow > 0) run.events.splice(0, overflow);
+}
+
+function cloneValue<T>(value: T): T {
+  return structuredClone(value);
 }
 
 function cleanupOrder(resources: CreatedResource[]): CreatedResource[] {
