@@ -589,7 +589,14 @@ function parseRunEvent(value: unknown): RunEvent {
       if (value.level === undefined || isRunEventLevel(value.level)) return value as RunEvent;
       break;
     case "assertion":
-      if (isRecord(value.assertion) && typeof value.assertion.id === "string" && typeof value.assertion.name === "string" && typeof value.assertion.passed === "boolean" && typeof value.assertion.timestamp === "string") return value as RunEvent;
+      if (
+        isRecord(value.assertion) &&
+        typeof value.assertion.id === "string" &&
+        typeof value.assertion.name === "string" &&
+        typeof value.assertion.passed === "boolean" &&
+        typeof value.assertion.timestamp === "string" &&
+        (value.assertion.message === undefined || typeof value.assertion.message === "string")
+      ) return value as RunEvent;
       break;
     case "resource":
       if (isCreatedResource(value.resource)) return value as RunEvent;

@@ -66,11 +66,14 @@ class FakeEventSource {
   }
 
   emit(event: RunEvent) {
+    if (this.closed) return;
     this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>);
   }
 
   close() {
     this.closed = true;
+    this.onmessage = null;
+    this.onerror = null;
   }
 }
 
