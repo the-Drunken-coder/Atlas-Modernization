@@ -255,7 +255,8 @@ describe("RunStore", () => {
           ...client.sync,
           stop: () => {
             cleanupStopCalls += 1;
-            throw new Error("cleanup stop failed");
+            if (cleanupStopCalls === 1) throw new Error("cleanup stop failed");
+            client.sync.stop();
           }
         }
       };
@@ -277,6 +278,12 @@ describe("RunStore", () => {
     await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
     expect(cleanupStopCalls).toBe(1);
     expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "cleanup stop failed" });
+    expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
+    const deletedAfterFailure = [...core.state.deleted];
+
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(cleanupStopCalls).toBe(2);
+    expect(core.state.deleted).toEqual(deletedAfterFailure);
     expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
   });
 
@@ -387,5 +394,26 @@ describe("RunStore", () => {
     expect(events).toHaveLength(500);
     expect(events[0]!.sequence).toBeGreaterThan(1);
     expect(events.at(-1)?.message).toBe("Run completed");
+  });
+
+  it("rejects oversized event data before storing the log event", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "oversized-event-data",
+      name: "Oversized event data",
+      summary: "Emits oversized data",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.log("too large", "x".repeat(200_001));
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.lastError).toBe("Run event data strings must total at most 200000 bytes");
+    expect(store.events(started.id).some((event) => event.type === "log" && event.message === "too large")).toBe(false);
   });
 });

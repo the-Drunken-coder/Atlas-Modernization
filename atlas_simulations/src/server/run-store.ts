@@ -8,6 +8,8 @@ type EventSubscriber = (event: RunEvent) => void;
 const MAX_RUNS = 100;
 const MAX_EVENTS_PER_RUN = 500;
 const MAX_EVENT_DATA_DEPTH = 200;
+const MAX_EVENT_DATA_NODES = 10_000;
+const MAX_EVENT_DATA_STRING_BYTES = 200_000;
 
 type RunRecord = {
   id: string;
@@ -335,17 +337,25 @@ function trimEvents(run: RunRecord): void {
   if (overflow > 0) run.events.splice(0, overflow);
 }
 
-function assertEventJSONValue(value: unknown, depth = 0): void {
+function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {
+  state.nodes += 1;
+  if (state.nodes > MAX_EVENT_DATA_NODES) {
+    throw new Error(`Run event data must contain at most ${MAX_EVENT_DATA_NODES} values`);
+  }
   if (depth > MAX_EVENT_DATA_DEPTH) {
     throw new Error(`Run event data must be nested at most ${MAX_EVENT_DATA_DEPTH} levels`);
   }
-  if (value === null || typeof value === "boolean" || typeof value === "string") return;
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    addEventDataStringBytes(value, state);
+    return;
+  }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error("Run event data must contain only finite numbers");
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) assertEventJSONValue(item, depth + 1);
+    for (const item of value) assertEventJSONValue(item, depth + 1, state);
     return;
   }
   if (typeof value !== "object") {
@@ -355,7 +365,17 @@ function assertEventJSONValue(value: unknown, depth = 0): void {
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error("Run event data must contain only JSON objects");
   }
-  for (const item of Object.values(value)) assertEventJSONValue(item, depth + 1);
+  for (const [key, item] of Object.entries(value)) {
+    addEventDataStringBytes(key, state);
+    assertEventJSONValue(item, depth + 1, state);
+  }
+}
+
+function addEventDataStringBytes(value: string, state: { stringBytes: number }): void {
+  state.stringBytes += Buffer.byteLength(value, "utf8");
+  if (state.stringBytes > MAX_EVENT_DATA_STRING_BYTES) {
+    throw new Error(`Run event data strings must total at most ${MAX_EVENT_DATA_STRING_BYTES} bytes`);
+  }
 }
 
 function hasFailedAssertions(run: RunRecord): boolean {

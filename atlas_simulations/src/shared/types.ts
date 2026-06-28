@@ -1,5 +1,11 @@
-export type JSONNumber = number;
+declare const jsonNumberBrand: unique symbol;
+export type JSONNumber = number & { readonly [jsonNumberBrand]: "JSONNumber" };
 export type JSONValue = null | boolean | string | JSONNumber | JSONValue[] | { [key: string]: JSONValue };
+
+export function jsonNumber(value: number): JSONNumber {
+  if (!Number.isFinite(value)) throw new Error("JSON numbers must be finite");
+  return value as JSONNumber;
+}
 
 type ScenarioInputFieldBase = {
   key: string;

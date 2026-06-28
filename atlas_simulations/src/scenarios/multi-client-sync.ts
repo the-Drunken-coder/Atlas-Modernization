@@ -1,5 +1,6 @@
 import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
+import { jsonNumber } from "../shared/types.js";
 import { isoNow, numberInput, point } from "./helpers.js";
 
 const SYNC_POLL_INTERVAL_MS = 500;
@@ -26,7 +27,13 @@ const multiClientSync: Scenario = {
         const client = ctx.newClient({ sync: "all", pollIntervalMs: SYNC_POLL_INTERVAL_MS });
         readers.push(client);
         await client.sync.start();
-        ctx.log(`Sync client ${index + 1} started`, client.sync.status());
+        const status = client.sync.status();
+        ctx.log(`Sync client ${index + 1} started`, {
+          running: status.running,
+          healthy: status.healthy,
+          degraded: status.degraded,
+          lastVersion: jsonNumber(status.lastVersion)
+        });
       }
 
       const ids: string[] = [];

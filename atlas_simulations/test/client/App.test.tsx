@@ -105,30 +105,47 @@ describe("App", () => {
     await waitFor(() => expect(screen.getAllByText("running").length).toBeGreaterThan(0));
     await waitFor(() => expect(eventSources).toHaveLength(1));
     expect(eventSources[0].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
-    eventSources[0].emit({
+    const assertionEvent: RunEvent = {
       sequence: 1,
       runId: run.id,
       timestamp: new Date().toISOString(),
       type: "assertion",
       assertion: { id: "assert-1", name: "streamed check", passed: true, timestamp: new Date().toISOString() },
       message: "PASS streamed check"
-    });
+    };
+    eventSources[0].emit(assertionEvent);
+    eventSources[0].emit(assertionEvent);
     expect(await screen.findByText("streamed check")).toBeInTheDocument();
+    expect(await screen.findByText("PASS streamed check")).toBeInTheDocument();
+    expect(screen.getAllByText("streamed check")).toHaveLength(1);
+    expect(screen.getAllByText("PASS streamed check")).toHaveLength(1);
 
-    eventSources[0].emit({
+    const completedEvent: RunEvent = {
       sequence: 2,
       runId: run.id,
       timestamp: new Date().toISOString(),
       type: "status",
       status: "completed",
       message: "Run completed"
-    });
+    };
+    eventSources[0].emit(completedEvent);
+    eventSources[0].emit(completedEvent);
     await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
+    expect(await screen.findByText("Run completed")).toBeInTheDocument();
+    expect(screen.getAllByText("Run completed")).toHaveLength(1);
     await waitFor(() => expect(eventSources[0].closed).toBe(true));
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(run.id));
     await waitFor(() => expect(screen.getAllByText("cleaned").length).toBeGreaterThan(0));
     expect(eventSources).toHaveLength(2);
+    expect(eventSources[1].closed).toBe(false);
+    eventSources[1].emit({
+      sequence: 3,
+      runId: run.id,
+      timestamp: new Date().toISOString(),
+      type: "cleanup",
+      message: "Cleanup complete"
+    });
     expect(eventSources[1].closed).toBe(true);
   });
 
@@ -166,10 +183,18 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
     expect(eventSources).toHaveLength(1);
+    expect(eventSources[0].closed).toBe(false);
+    eventSources[0].emit({
+      sequence: 1,
+      runId: syncRun.id,
+      timestamp: new Date().toISOString(),
+      type: "cleanup",
+      message: "Cleanup complete"
+    });
     expect(eventSources[0].closed).toBe(true);
   });
 
-  it("stops the active run and closes its stream", async () => {
+  it("keeps the stream open after stop until the terminal event arrives", async () => {
     const user = userEvent.setup();
     vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
 
@@ -180,6 +205,15 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /stop/i }));
 
     await waitFor(() => expect(vi.mocked(stopRun)).toHaveBeenCalledWith(run.id));
+    expect(eventSources[0].closed).toBe(false);
+    eventSources[0].emit({
+      sequence: 1,
+      runId: run.id,
+      timestamp: new Date().toISOString(),
+      type: "status",
+      status: "cancelled",
+      message: "Run cancelled"
+    });
     expect(eventSources[0].closed).toBe(true);
   });
 });

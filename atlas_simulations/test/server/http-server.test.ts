@@ -159,9 +159,9 @@ describe("simulation HTTP server", () => {
     await expectStatus(`${baseUrl}/api/runs/%E0%A4%A/events`, 400);
     await expectStatus(`${baseUrl}/%E0%A4%A`, 400);
     await expectStatus(`${baseUrl}/..%2fpackage.json`, 400);
-    const head = await fetch(`${baseUrl}/`, { method: "HEAD" });
+    const head = await rawRequest(`${baseUrl}/`, "HEAD");
     expect(head.status).toBe(404);
-    expect(await head.text()).toBe("");
+    expect(head.body).toBe("");
     await expectStatus(`${baseUrl}/`, 405, { method: "POST" });
   });
 
@@ -297,6 +297,37 @@ async function expectChunkedStatus(url: string, status: number, chunks: string[]
     request.setTimeout(INTEGRATION_TIMEOUT_MS, () => request.destroy(new Error("Timed out waiting for HTTP response")));
     request.on("error", (error) => finish(() => reject(error)));
     for (const chunk of chunks) request.write(chunk);
+    request.end();
+  });
+}
+
+async function rawRequest(url: string, method: string): Promise<{ status: number; body: string }> {
+  const target = new URL(url);
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let settled = false;
+    let request: ClientRequest;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      request.setTimeout(0);
+      callback();
+    };
+    request = httpRequest(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method
+      },
+      (response) => {
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("error", (error) => finish(() => reject(error)));
+        response.on("end", () => finish(() => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") })));
+      }
+    );
+    request.setTimeout(INTEGRATION_TIMEOUT_MS, () => request.destroy(new Error("Timed out waiting for HTTP response")));
+    request.on("error", (error) => finish(() => reject(error)));
     request.end();
   });
 }

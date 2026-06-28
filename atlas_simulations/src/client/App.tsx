@@ -170,7 +170,6 @@ export function App() {
     try {
       const updatedRun = await stopRun(targetRunId);
       upsertRun(updatedRun);
-      if (isTerminalStatus(updatedRun.status)) closeActiveEventSource();
       await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);
@@ -188,7 +187,6 @@ export function App() {
       if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId);
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);
-      if (updatedRun.cleaned) closeActiveEventSource();
       await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);
