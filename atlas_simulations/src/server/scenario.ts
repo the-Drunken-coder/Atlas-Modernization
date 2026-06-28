@@ -165,8 +165,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       get: (id) => guarded(() => client.entities.get(id)),
       create: async (entity) => {
         throwIfCancelled();
+        track({ type: "entity", id: entity.entity_id });
         const created = await client.entities.create(entity);
-        track({ type: "entity", id: created.entity_id });
         throwIfCancelled();
         return created;
       },
@@ -178,8 +178,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
         throwIfCancelled();
+        track({ type: "task", id: task.task_id });
         const created = await client.tasks.create(task);
-        track({ type: "task", id: created.task_id });
         throwIfCancelled();
         return created;
       },
@@ -193,8 +193,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       get: (id) => guarded(() => client.objects.get(id)),
       create: async (object) => {
         throwIfCancelled();
+        track({ type: "object", id: object.object_id });
         const created = await client.objects.create(object);
-        track({ type: "object", id: created.object_id });
         throwIfCancelled();
         return created;
       },
@@ -273,11 +273,12 @@ function parseBoolean(field: ScenarioInputField, value: unknown): boolean {
 }
 
 function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
-  const trimmed = raw?.trim();
-  if (!trimmed) return {};
-  if (Buffer.byteLength(trimmed, "utf8") > MAX_JSON_INPUT_BYTES) {
+  if (raw === undefined) return {};
+  if (Buffer.byteLength(raw, "utf8") > MAX_JSON_INPUT_BYTES) {
     throw new Error(`JSON input must be at most ${MAX_JSON_INPUT_BYTES} bytes`);
   }
+  const trimmed = raw.trim();
+  if (!trimmed) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);

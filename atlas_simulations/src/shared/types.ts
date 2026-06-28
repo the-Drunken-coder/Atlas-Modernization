@@ -1,4 +1,5 @@
-export type JSONValue = null | boolean | string | number | JSONValue[] | { [key: string]: JSONValue };
+export type JSONNumber = number;
+export type JSONValue = null | boolean | string | JSONNumber | JSONValue[] | { [key: string]: JSONValue };
 
 type ScenarioInputFieldBase = {
   key: string;

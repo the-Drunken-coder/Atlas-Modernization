@@ -89,6 +89,34 @@ describe("simulation HTTP server", () => {
     expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
   });
 
+  it("stops a live run through the HTTP API", async () => {
+    const core = createFakeAtlasCore();
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      store: new RunStore(core.factory)
+    });
+    const baseUrl = await server.listen();
+    const started = await fetchJSON<{ run: { id: string; status: string } }>(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        scenarioId: "moving-assets",
+        inputs: { assetCount: 1, ticks: 2, tickMs: 1000, startLatitude: 38, startLongitude: -77 }
+      })
+    });
+
+    const stopped = await fetchJSON<{ run: { id: string; status: string } }>(`${baseUrl}/api/runs/${started.run.id}/stop`, {
+      method: "POST",
+      headers: mutationHeaders()
+    });
+
+    expect(stopped.run).toMatchObject({ id: started.run.id, status: "running" });
+    await waitFor(async () => {
+      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
+      expect(current.run.status).toBe("cancelled");
+    });
+  });
+
   it("returns client errors for bad request bodies and missing runs", async () => {
     const core = createFakeAtlasCore();
     const packageRoot = tempPackageRoot();

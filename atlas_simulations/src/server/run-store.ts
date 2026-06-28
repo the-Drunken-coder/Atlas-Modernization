@@ -7,6 +7,7 @@ type EventSubscriber = (event: RunEvent) => void;
 
 const MAX_RUNS = 100;
 const MAX_EVENTS_PER_RUN = 500;
+const MAX_EVENT_DATA_DEPTH = 200;
 
 type RunRecord = {
   id: string;
@@ -148,8 +149,9 @@ export class RunStore {
       this.emit(run, { type: "error", level: "error", message });
     }
     if (cleanupFailure) throw cleanupFailure;
+    if (stopFailure) throw stopFailure;
     run.cleaned = true;
-    if (!stopFailure) run.cleanupError = undefined;
+    run.cleanupError = undefined;
     this.emit(run, { type: "cleanup", message: "Cleanup complete" });
     this.pruneRuns();
     return toSummary(run);
@@ -267,6 +269,7 @@ export class RunStore {
   }
 
   private emit(run: RunRecord, details: RunEventDetails): void {
+    if ("data" in details && details.data !== undefined) assertEventJSONValue(details.data);
     const event: RunEvent = {
       sequence: ++run.sequence,
       runId: run.id,
@@ -329,6 +332,22 @@ function toSummary(run: RunRecord): RunSummary {
 function trimEvents(run: RunRecord): void {
   const overflow = run.events.length - MAX_EVENTS_PER_RUN;
   if (overflow > 0) run.events.splice(0, overflow);
+}
+
+function assertEventJSONValue(value: JSONValue, depth = 0): void {
+  if (depth > MAX_EVENT_DATA_DEPTH) {
+    throw new Error(`Run event data must be nested at most ${MAX_EVENT_DATA_DEPTH} levels`);
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "string") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Run event data must contain only finite numbers");
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) assertEventJSONValue(item, depth + 1);
+    return;
+  }
+  for (const item of Object.values(value)) assertEventJSONValue(item, depth + 1);
 }
 
 function hasFailedAssertions(run: RunRecord): boolean {

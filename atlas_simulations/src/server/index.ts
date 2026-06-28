@@ -261,7 +261,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
+  return event.type === "cleanup" && !event.resource;
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {

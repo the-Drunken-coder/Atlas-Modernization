@@ -7,7 +7,7 @@ const packageRoot = path.dirname(fileURLToPath(import.meta.url));
 const VITE_PORT = 5174;
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, packageRoot, "");
+  const env = loadEnv(mode, packageRoot, "ATLAS_SIM_");
   const simulationPort = portValue(env.ATLAS_SIM_PORT);
   if (simulationPort === VITE_PORT) {
     throw new Error("ATLAS_SIM_PORT must differ from the Vite dev server port 5174");

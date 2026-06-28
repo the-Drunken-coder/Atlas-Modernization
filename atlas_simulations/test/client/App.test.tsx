@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadRuns, loadScenarios, startRun } from "../../src/client/api.js";
+import { cleanupRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
@@ -86,6 +86,7 @@ describe("App", () => {
 
   it("loads scenarios and starts a selected run", async () => {
     const user = userEvent.setup();
+    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Atlas Simulations" })).toBeInTheDocument();
     expect((await screen.findAllByText("Moving assets")).length).toBeGreaterThan(0);
@@ -146,10 +147,24 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: syncScenario.name }));
 
     expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute("aria-pressed", "true");
-    expect(eventSources).toHaveLength(0);
+    expect(eventSources).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
     expect(eventSources).toHaveLength(1);
+    expect(eventSources[0].closed).toBe(true);
+  });
+
+  it("stops the active run and closes its stream", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /start/i }));
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+
+    await user.click(screen.getByRole("button", { name: /stop/i }));
+
+    await waitFor(() => expect(vi.mocked(stopRun)).toHaveBeenCalledWith(run.id));
     expect(eventSources[0].closed).toBe(true);
   });
 });

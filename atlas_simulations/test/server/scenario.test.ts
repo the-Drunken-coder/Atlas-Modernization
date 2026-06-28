@@ -49,6 +49,7 @@ describe("scenario input parsing", () => {
     const largeJson = JSON.stringify("x".repeat(200_000));
 
     expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: largeJson })).toThrow("JSON input must be at most 200000 bytes");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: `${" ".repeat(200_001)}{}` })).toThrow("JSON input must be at most 200000 bytes");
   });
 
   it("rejects JSON input with too many values", () => {

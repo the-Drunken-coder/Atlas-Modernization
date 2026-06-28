@@ -54,7 +54,11 @@ export function App() {
   async function refreshRuns() {
     const loadedRuns = await loadRuns();
     setRuns((current) => mergeRunLists(current, loadedRuns));
-    setCurrentRun((current) => (current ? mergeRunSummary(current, loadedRuns.find((run) => run.id === current.id) ?? current) : current));
+    setCurrentRun((current) => {
+      if (!current) return current;
+      const refreshed = loadedRuns.find((run) => run.id === current.id);
+      return refreshed ? mergeRunSummary(current, refreshed) : undefined;
+    });
   }
 
   async function refreshRunsBestEffort() {
@@ -103,17 +107,12 @@ export function App() {
   function activateRun(run: RunSummary) {
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
-      if (run.status === "running" && activeRunIdRef.current !== run.id) connectEvents(run.id);
-      if (run.status !== "running") closeActiveEventSource();
+      if (activeRunIdRef.current !== run.id) connectEvents(run.id);
       return;
     }
     setEvents([]);
     setCurrentRun(run);
-    if (run.status === "running") {
-      connectEvents(run.id);
-    } else {
-      closeActiveEventSource();
-    }
+    connectEvents(run.id);
   }
 
   function clearRunSelection() {
@@ -460,10 +459,7 @@ function displayStatus(run: RunSummary | undefined): string {
 
 function mergeRunLists(current: RunSummary[], incoming: RunSummary[]): RunSummary[] {
   const byId = new Map(current.map((run) => [run.id, run]));
-  for (const run of incoming) {
-    byId.set(run.id, mergeRunSummary(byId.get(run.id), run));
-  }
-  return [...byId.values()].sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+  return incoming.map((run) => mergeRunSummary(byId.get(run.id), run)).sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
 }
 
 function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary): RunSummary {
