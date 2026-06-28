@@ -228,8 +228,10 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     };
     response.on("close", removeStream);
     unsubscribe = store.subscribe(runId, (event) => {
-      response.write(`id: ${event.sequence}\n`);
-      response.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (!response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)) {
+        closeSoon();
+        return;
+      }
       if (isTerminalRunEvent(event)) closeSoon();
     });
     if (closeAfterSubscribe) close();

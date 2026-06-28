@@ -55,6 +55,7 @@ export function parseStartRequest(scenario: Scenario, request: unknown): ParsedS
   if (!isRecord(request)) {
     throw new Error("Start request must be a JSON object");
   }
+  rejectUnknownStartRequestFields(request);
   if (typeof request.scenarioId !== "string") {
     throw new Error("scenarioId is required");
   }
@@ -78,6 +79,14 @@ export function parseStartRequest(scenario: Scenario, request: unknown): ParsedS
       ...(scenario.acceptsJson ? parseJsonInput(request.jsonInput) : {})
     }
   };
+}
+
+function rejectUnknownStartRequestFields(raw: Record<string, unknown>): void {
+  const allowed = new Set(["scenarioId", "inputs", "jsonInput"]);
+  const unknown = Object.keys(raw).find((key) => !allowed.has(key));
+  if (unknown !== undefined) {
+    throw new Error(`Unknown start request field: ${unknown}`);
+  }
 }
 
 export function createScenarioContext(args: {

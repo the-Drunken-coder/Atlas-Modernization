@@ -48,7 +48,7 @@ export function createFakeAtlasCore() {
 }
 
 function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
-  const clientState: FakeClientState = { sync, running: false, visibleVersion: sync ? 0 : Number.POSITIVE_INFINITY };
+  const clientState: FakeClientState = { sync, running: false, visibleVersion: 0 };
   state.clients.push(clientState);
   return {
     entities: {

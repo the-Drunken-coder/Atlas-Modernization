@@ -3,6 +3,7 @@ import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { isoNow, numberInput, point } from "./helpers.js";
 
 const SYNC_POLL_INTERVAL_MS = 500;
+const MIN_SETTLE_MS = SYNC_POLL_INTERVAL_MS * 3;
 
 const multiClientSync: Scenario = {
   id: "multi-client-sync",
@@ -12,12 +13,12 @@ const multiClientSync: Scenario = {
   inputFields: [
     { key: "clientCount", label: "Client count", type: "number", defaultValue: 2, min: 1, max: 8, step: 1 },
     { key: "writes", label: "Writes", type: "number", defaultValue: 3, min: 1, max: 20, step: 1 },
-    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: 1000, min: SYNC_POLL_INTERVAL_MS, max: 10000, step: 50 }
+    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: MIN_SETTLE_MS, min: MIN_SETTLE_MS, max: 10000, step: 50 }
   ],
   async run(ctx, input) {
     const clientCount = numberInput(input, "clientCount");
     const writes = numberInput(input, "writes");
-    const settleMs = numberInput(input, "settleMs");
+    const settleMs = Math.max(numberInput(input, "settleMs"), MIN_SETTLE_MS);
     const readers: ScenarioContext["client"][] = [];
     try {
       for (let index = 0; index < clientCount; index++) {

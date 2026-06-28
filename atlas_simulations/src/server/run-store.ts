@@ -228,6 +228,7 @@ export class RunStore {
           });
         }
       }
+      run.clients = [];
       run.settled = true;
       if (finalError) this.emit(run, { type: "error", level: "error", message: finalError });
       this.finish(run, finalStatus, finalMessage);
@@ -334,7 +335,7 @@ function trimEvents(run: RunRecord): void {
   if (overflow > 0) run.events.splice(0, overflow);
 }
 
-function assertEventJSONValue(value: JSONValue, depth = 0): void {
+function assertEventJSONValue(value: unknown, depth = 0): void {
   if (depth > MAX_EVENT_DATA_DEPTH) {
     throw new Error(`Run event data must be nested at most ${MAX_EVENT_DATA_DEPTH} levels`);
   }
@@ -346,6 +347,13 @@ function assertEventJSONValue(value: JSONValue, depth = 0): void {
   if (Array.isArray(value)) {
     for (const item of value) assertEventJSONValue(item, depth + 1);
     return;
+  }
+  if (typeof value !== "object") {
+    throw new Error("Run event data must contain only JSON values");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error("Run event data must contain only JSON objects");
   }
   for (const item of Object.values(value)) assertEventJSONValue(item, depth + 1);
 }

@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
+import { createServer, request as httpRequest, type ClientRequest, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -234,7 +234,15 @@ function mutationHeaders(headers: Record<string, string> = {}): Record<string, s
 async function requestStatusWithHost(url: string, host: string): Promise<number> {
   const target = new URL(url);
   return await new Promise((resolve, reject) => {
-    const request = httpRequest(
+    let settled = false;
+    let request: ClientRequest;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      request.setTimeout(0);
+      callback();
+    };
+    request = httpRequest(
       {
         hostname: target.hostname,
         port: target.port,
@@ -244,10 +252,12 @@ async function requestStatusWithHost(url: string, host: string): Promise<number>
       },
       (response) => {
         response.resume();
-        response.on("end", () => resolve(response.statusCode ?? 0));
+        response.on("error", (error) => finish(() => reject(error)));
+        response.on("end", () => finish(() => resolve(response.statusCode ?? 0)));
       }
     );
-    request.on("error", reject);
+    request.setTimeout(INTEGRATION_TIMEOUT_MS, () => request.destroy(new Error("Timed out waiting for HTTP response")));
+    request.on("error", (error) => finish(() => reject(error)));
     request.end();
   });
 }
@@ -255,7 +265,15 @@ async function requestStatusWithHost(url: string, host: string): Promise<number>
 async function expectChunkedStatus(url: string, status: number, chunks: string[], headers: Record<string, string>): Promise<void> {
   const target = new URL(url);
   await new Promise<void>((resolve, reject) => {
-    const request = httpRequest(
+    let settled = false;
+    let request: ClientRequest;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      request.setTimeout(0);
+      callback();
+    };
+    request = httpRequest(
       {
         hostname: target.hostname,
         port: target.port,
@@ -265,17 +283,19 @@ async function expectChunkedStatus(url: string, status: number, chunks: string[]
       },
       (response) => {
         response.resume();
+        response.on("error", (error) => finish(() => reject(error)));
         response.on("end", () => {
           const actual = response.statusCode ?? 0;
           if (actual === status) {
-            resolve();
+            finish(resolve);
             return;
           }
-          reject(new Error(`Expected ${status}, received ${actual}`));
+          finish(() => reject(new Error(`Expected ${status}, received ${actual}`)));
         });
       }
     );
-    request.on("error", reject);
+    request.setTimeout(INTEGRATION_TIMEOUT_MS, () => request.destroy(new Error("Timed out waiting for HTTP response")));
+    request.on("error", (error) => finish(() => reject(error)));
     for (const chunk of chunks) request.write(chunk);
     request.end();
   });
@@ -291,17 +311,18 @@ async function readUntilRunEvent(response: Response, predicate: (event: RunEvent
   const decoder = new TextDecoder();
   let body = "";
   const deadline = Date.now() + INTEGRATION_TIMEOUT_MS;
-  while (true) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error("Timed out waiting for run event");
-    const result = await withTimeout(reader!.read(), remaining);
-    if (result.done) throw new Error("Stream closed before run event");
-    body += decoder.decode(result.value, { stream: true });
-    const event = parseRunEvents(body).find(predicate);
-    if (event) {
-      await reader!.cancel();
-      return event;
+  try {
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("Timed out waiting for run event");
+      const result = await withTimeout(reader!.read(), remaining);
+      if (result.done) throw new Error("Stream closed before run event");
+      body += decoder.decode(result.value, { stream: true });
+      const event = parseRunEvents(body).find(predicate);
+      if (event) return event;
     }
+  } finally {
+    await reader!.cancel().catch(() => undefined);
   }
 }
 

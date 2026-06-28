@@ -23,6 +23,7 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: null })).toThrow("inputs must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: [] })).toThrow("inputs must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: 12 })).toThrow("jsonInput must be a string");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: {}, typo: true })).toThrow("Unknown start request field: typo");
   });
 
   it("applies defaults and parses JSON input", () => {

@@ -132,6 +132,21 @@ describe("App", () => {
     expect(eventSources[1].closed).toBe(true);
   });
 
+  it("omits blank JSON input from start requests", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("JSON input"), { target: { value: "   " } });
+    await user.click(screen.getByRole("button", { name: /start/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(startRun)).toHaveBeenCalledWith({
+        scenarioId: scenario.id,
+        inputs: { assetCount: 2 }
+      })
+    );
+  });
+
   it("keeps selected scenario and selected run synchronized", async () => {
     const user = userEvent.setup();
     const syncRun = cloneRun({

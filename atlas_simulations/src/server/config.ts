@@ -19,7 +19,7 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const runtimeEnv = options.env ?? process.env;
   const env = {
     ...fileEnv,
-    ...Object.fromEntries(Object.entries(runtimeEnv).filter(([, value]) => value !== undefined))
+    ...Object.fromEntries(Object.entries(runtimeEnv).filter(([, value]) => stringValue(value) !== undefined))
   };
   const atlasBaseUrl = atlasBaseUrlValue(stringValue(env.ATLAS_BASE_URL) ?? "http://localhost:8000");
   const atlasApiKey = stringValue(env.ATLAS_API_KEY);

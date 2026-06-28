@@ -42,13 +42,13 @@ describe("loadConfig", () => {
     expect(loadConfig({ env: { ATLAS_SIM_PORT: undefined }, packageRoot }).port).toBe(5192);
   });
 
-  it("lets blank env overrides clear .env values", () => {
+  it("does not let blank env overrides erase .env values", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(path.join(packageRoot, ".env"), "ATLAS_API_KEY=file-key\nATLAS_BASE_URL=https://atlascommandapi.org/api\n");
 
     const config = loadConfig({ env: { ATLAS_API_KEY: "", ATLAS_BASE_URL: " " }, packageRoot });
-    expect(config.atlasApiKey).toBeUndefined();
-    expect(config.atlasBaseUrl).toBe("http://localhost:8000");
+    expect(config.atlasApiKey).toBe("file-key");
+    expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/api");
   });
 
   it("strips inline comments from unquoted .env values only", () => {

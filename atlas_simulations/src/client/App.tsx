@@ -78,7 +78,12 @@ export function App() {
     setError(undefined);
     setMutationPending(true);
     try {
-      const run = await startRun({ scenarioId: selected.id, inputs: submissionInputs(selected, inputs), jsonInput });
+      const normalizedJsonInput = selected.acceptsJson && jsonInput.trim() !== "" ? jsonInput : undefined;
+      const run = await startRun({
+        scenarioId: selected.id,
+        inputs: submissionInputs(selected, inputs),
+        ...(normalizedJsonInput ? { jsonInput: normalizedJsonInput } : {})
+      });
       upsertRun(run);
       selectRun(run);
       await refreshRunsBestEffort();
@@ -467,23 +472,23 @@ function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary)
   return {
     ...incoming,
     status: isTerminalStatus(existing.status) ? existing.status : incoming.status,
-    ...(existing.finishedAt || incoming.finishedAt ? { finishedAt: existing.finishedAt ?? incoming.finishedAt } : {}),
-    assertions: mergeAssertions(incoming.assertions, existing.assertions),
-    createdResources: mergeResources(incoming.createdResources, existing.createdResources),
+    ...(existing.finishedAt || incoming.finishedAt ? { finishedAt: incoming.finishedAt ?? existing.finishedAt } : {}),
+    assertions: mergeAssertions(existing.assertions, incoming.assertions),
+    createdResources: mergeResources(existing.createdResources, incoming.createdResources),
     cleaned: existing.cleaned || incoming.cleaned,
-    ...(existing.lastError || incoming.lastError ? { lastError: existing.lastError ?? incoming.lastError } : {})
+    ...(existing.lastError || incoming.lastError ? { lastError: incoming.lastError ?? existing.lastError } : {})
   };
 }
 
-function mergeAssertions(primary: RunSummary["assertions"], secondary: RunSummary["assertions"]): RunSummary["assertions"] {
-  const byId = new Map(primary.map((assertion) => [assertion.id, assertion]));
-  for (const assertion of secondary) byId.set(assertion.id, assertion);
+function mergeAssertions(existing: RunSummary["assertions"], incoming: RunSummary["assertions"]): RunSummary["assertions"] {
+  const byId = new Map(existing.map((assertion) => [assertion.id, assertion]));
+  for (const assertion of incoming) byId.set(assertion.id, assertion);
   return [...byId.values()];
 }
 
-function mergeResources(primary: RunSummary["createdResources"], secondary: RunSummary["createdResources"]): RunSummary["createdResources"] {
-  const byId = new Map(primary.map((resource) => [`${resource.type}:${resource.id}`, resource]));
-  for (const resource of secondary) byId.set(`${resource.type}:${resource.id}`, resource);
+function mergeResources(existing: RunSummary["createdResources"], incoming: RunSummary["createdResources"]): RunSummary["createdResources"] {
+  const byId = new Map(existing.map((resource) => [`${resource.type}:${resource.id}`, resource]));
+  for (const resource of incoming) byId.set(`${resource.type}:${resource.id}`, resource);
   return [...byId.values()];
 }
 
