@@ -252,12 +252,12 @@ function visibleValue<T extends { metadata: { version: number } }>(
   return cloneValue(value);
 }
 
-function visibleValues<T extends VersionedResource>(clientState: FakeClientState, values: ResourceHistory<T>, state?: FakeCoreState, type?: string): T[] {
-  const version = state ? visibleVersion(state, clientState) : clientState.visibleVersion;
+function visibleValues<T extends VersionedResource>(clientState: FakeClientState, values: ResourceHistory<T>, state: FakeCoreState, type: string): T[] {
+  const version = visibleVersion(state, clientState);
   return [...values.values()]
     .map((history) => visibleSnapshot(history, version))
     .filter((value): value is T => value !== undefined)
-    .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version, value.metadata.version))
+    .filter((value) => !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version, value.metadata.version))
     .map(cloneValue);
 }
 

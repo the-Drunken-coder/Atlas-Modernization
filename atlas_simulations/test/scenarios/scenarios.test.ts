@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RunStore } from "../../src/server/run-store.js";
 import { scenarios } from "../../src/server/scenario-registry.js";
 import { parseStartRequest } from "../../src/server/scenario.js";
-import { numberInput, point } from "../../src/scenarios/helpers.js";
+import { boundedNumberInput, numberInput, point } from "../../src/scenarios/helpers.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("v1 scenarios", () => {
@@ -43,5 +43,10 @@ describe("v1 scenarios", () => {
   it("rejects non-finite scenario number inputs", () => {
     expect(() => numberInput({ fields: { tickMs: Number.NaN } }, "tickMs")).toThrow("tickMs must be a finite number");
     expect(() => numberInput({ fields: { tickMs: Number.POSITIVE_INFINITY } }, "tickMs")).toThrow("tickMs must be a finite number");
+  });
+
+  it("rejects scenario number inputs outside runtime bounds", () => {
+    expect(() => boundedNumberInput({ fields: { tickMs: -1 } }, "tickMs", 0, 10000)).toThrow("tickMs must be between 0 and 10000");
+    expect(() => boundedNumberInput({ fields: { startLatitude: 91 } }, "startLatitude", -90, 90)).toThrow("startLatitude must be between -90 and 90");
   });
 });

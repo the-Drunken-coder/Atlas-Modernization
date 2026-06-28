@@ -28,6 +28,7 @@ type RunRecord = {
   jsonInput?: JSONValue;
   createdResources: CreatedResource[];
   cleanupResources: CreatedResource[];
+  overflowCleanupResource?: CreatedResource;
   assertions: AssertionResult[];
   assertionHistoryBytes: number;
   events: RunEvent[];
@@ -123,7 +124,8 @@ export class RunStore {
   }
 
   private async performCleanup(run: RunRecord): Promise<RunSummary> {
-    if (run.cleanupResources.length === 0) {
+    const cleanupResources = cleanupResourcesForRun(run);
+    if (cleanupResources.length === 0) {
       run.cleaned = true;
       run.cleanupError = undefined;
       this.emit(run, { type: "cleanup", message: "Cleanup complete" });
@@ -141,7 +143,7 @@ export class RunStore {
       throw error;
     }
     let cleanupFailure: unknown;
-    for (const resource of cleanupOrder(run.cleanupResources)) {
+    for (const resource of cleanupOrder(cleanupResources)) {
       try {
         const resourceType = resource.type as string;
         if (resourceType === "task") {
@@ -269,14 +271,12 @@ export class RunStore {
 
   private track(run: RunRecord, resource: CreatedResource): void {
     const tracked = cloneValue(resource);
-    if (!hasResource(run.cleanupResources, tracked)) {
-      if (run.cleanupResources.length > MAX_CREATED_RESOURCES_PER_RUN) {
+    if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {
+      if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
+        run.overflowCleanupResource ??= cloneValue(tracked);
         throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
       }
       run.cleanupResources.push(cloneValue(tracked));
-      if (run.cleanupResources.length > MAX_CREATED_RESOURCES_PER_RUN) {
-        throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
-      }
     }
     if (!hasResource(run.createdResources, tracked)) {
       if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
@@ -421,8 +421,16 @@ function assertionBytes(assertion: AssertionResult): number {
   return Buffer.byteLength(JSON.stringify(assertion), "utf8");
 }
 
+function cleanupResourcesForRun(run: RunRecord): CreatedResource[] {
+  return run.overflowCleanupResource ? [...run.cleanupResources, run.overflowCleanupResource] : run.cleanupResources;
+}
+
 function hasResource(resources: CreatedResource[], resource: CreatedResource): boolean {
-  return resources.some((current) => current.type === resource.type && current.id === resource.id);
+  return resources.some((current) => sameResource(current, resource));
+}
+
+function sameResource(left: CreatedResource | undefined, right: CreatedResource): boolean {
+  return left?.type === right.type && left.id === right.id;
 }
 
 async function withCleanupTimeout(operation: Promise<void>, controller: AbortController, resource: CreatedResource): Promise<void> {

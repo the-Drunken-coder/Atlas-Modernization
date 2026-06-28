@@ -74,7 +74,6 @@ export function App() {
 
   async function refreshRuns() {
     const requestId = ++refreshRunsRequestRef.current;
-    const selectedRunAtRequestStart = selectedRunId();
     const runIdsAtRequestStart = new Set(runsRef.current.map((run) => run.id));
     const loadedRuns = await loadRuns();
     if (requestId !== refreshRunsRequestRef.current) return;
@@ -86,7 +85,7 @@ export function App() {
     runsRef.current = mergedRuns;
     setRuns(mergedRuns);
     const selectedRunAfterLoad = selectedRunId();
-    if (selectedRunAfterLoad && selectedRunAfterLoad === selectedRunAtRequestStart && !mergedRuns.some((run) => run.id === selectedRunAfterLoad)) {
+    if (selectedRunAfterLoad && !mergedRuns.some((run) => run.id === selectedRunAfterLoad)) {
       clearRunSelection();
       return;
     }

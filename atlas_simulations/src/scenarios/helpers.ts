@@ -9,6 +9,14 @@ export function numberInput(input: ScenarioInput, key: string): number {
   return value;
 }
 
+export function boundedNumberInput(input: ScenarioInput, key: string, min: number, max: number): number {
+  const value = numberInput(input, key);
+  if (value < min || value > max) {
+    throw new Error(`${key} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
 export function positiveIntegerInput(input: ScenarioInput, key: string): number {
   const value = numberInput(input, key);
   if (!Number.isInteger(value) || value < 1) {

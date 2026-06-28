@@ -73,6 +73,18 @@ describe("client API", () => {
     expect(headers.get("X-Atlas-Simulations-Request")).toBe("1");
   });
 
+  it("sends trusted mutation headers when stopping runs", async () => {
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(stopRun(run.id)).resolves.toEqual(run);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(`/api/runs/${encodeURIComponent(run.id)}/stop`);
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("X-Atlas-Simulations-Request")).toBe("1");
+  });
+
   it("preserves HTTP status errors for non-JSON failures", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
 

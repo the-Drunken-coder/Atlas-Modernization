@@ -1,6 +1,6 @@
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { isoNow, jsonObject, numberInput, point, positiveIntegerInput } from "./helpers.js";
+import { boundedNumberInput, isoNow, jsonObject, point, positiveIntegerInput } from "./helpers.js";
 
 const observationsObjects: Scenario = {
   id: "observations-objects",
@@ -17,9 +17,9 @@ const observationsObjects: Scenario = {
   async run(ctx, input) {
     const assetCount = positiveIntegerInput(input, "assetCount");
     const observations = positiveIntegerInput(input, "observations");
-    const tickMs = numberInput(input, "tickMs");
-    const startLatitude = numberInput(input, "startLatitude");
-    const startLongitude = numberInput(input, "startLongitude");
+    const tickMs = boundedNumberInput(input, "tickMs", 0, 10000);
+    const startLatitude = boundedNumberInput(input, "startLatitude", -90, 89.9557);
+    const startLongitude = boundedNumberInput(input, "startLongitude", -180, 179.9459);
     const extra = jsonObject(input);
     const assetIds: string[] = [];
     const trackIds: string[] = [];
