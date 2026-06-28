@@ -1,7 +1,5 @@
 export type JSONValue = null | boolean | string | number | JSONValue[] | { [key: string]: JSONValue };
 
-export type ScenarioInputType = "number" | "text" | "boolean";
-
 type ScenarioInputFieldBase = {
   key: string;
   label: string;
@@ -23,6 +21,8 @@ export type ScenarioInputField =
       type: "boolean";
       defaultValue: boolean;
     });
+
+export type ScenarioInputType = ScenarioInputField["type"];
 
 export type ScenarioDescriptor = {
   id: string;

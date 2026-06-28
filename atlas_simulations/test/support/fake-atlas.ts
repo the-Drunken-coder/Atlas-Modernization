@@ -20,7 +20,13 @@ type FakeCoreState = {
   tasks: Map<string, TaskResource>;
   objects: Map<string, ObjectResource>;
   deleted: string[];
-  clients: Array<{ sync: ClientMode; running: boolean }>;
+  clients: FakeClientState[];
+};
+
+type FakeClientState = {
+  sync: ClientMode;
+  running: boolean;
+  visibleVersion: number;
 };
 
 export function createFakeAtlasCore() {
@@ -37,11 +43,11 @@ export function createFakeAtlasCore() {
 }
 
 function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
-  const clientState = { sync, running: false };
+  const clientState: FakeClientState = { sync, running: false, visibleVersion: sync ? 0 : Number.POSITIVE_INFINITY };
   state.clients.push(clientState);
   return {
     entities: {
-      get: async (id) => cloneValue(requireValue(state.entities, id, "entity")),
+      get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
       create: async (entity) => {
         const created = entityFromCreate(entity, ++state.version);
         return saveValue(state.entities, created.entity_id, created);
@@ -79,7 +85,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       }
     },
     tasks: {
-      get: async (id) => cloneValue(requireValue(state.tasks, id, "task")),
+      get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
       create: async (task) => {
         const created = taskFromCreate(task, ++state.version);
         return saveValue(state.tasks, created.task_id, created);
@@ -93,7 +99,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       setStatus: async (id, status) => updateTaskStatus(state, id, status)
     },
     objects: {
-      get: async (id) => cloneValue(requireValue(state.objects, id, "object")),
+      get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
       create: async (object) => {
         const created = objectFromCreate(object, ++state.version);
         return saveValue(state.objects, created.object_id, created);
@@ -104,19 +110,23 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     },
     queries: {
       full: async () => ({
-        entities: [...state.entities.values()].map(cloneValue),
-        tasks: [...state.tasks.values()].map(cloneValue),
-        objects: [...state.objects.values()].map(cloneValue)
+        entities: visibleValues(clientState, state.entities),
+        tasks: visibleValues(clientState, state.tasks),
+        objects: visibleValues(clientState, state.objects)
       })
     },
     sync: {
       start: async () => {
         clientState.running = true;
+        clientState.visibleVersion = state.version;
       },
       stop: () => {
         clientState.running = false;
       },
-      status: () => ({ running: clientState.running, healthy: clientState.running, degraded: false, lastVersion: state.version })
+      status: () => {
+        if (clientState.running) clientState.visibleVersion = state.version;
+        return { running: clientState.running, healthy: clientState.running, degraded: false, lastVersion: visibleVersion(state, clientState) };
+      }
     },
     watch: () => () => undefined,
     handshake: async () => undefined
@@ -175,6 +185,26 @@ function requireValue<T>(values: Map<string, T>, id: string, type: string): T {
   const value = values.get(id);
   if (!value) throw notFound(type, id);
   return value;
+}
+
+function visibleValue<T extends { metadata: { version: number } }>(
+  state: FakeCoreState,
+  clientState: FakeClientState,
+  values: Map<string, T>,
+  id: string,
+  type: string
+): T {
+  const value = requireValue(values, id, type);
+  if (value.metadata.version > visibleVersion(state, clientState)) throw notFound(type, id);
+  return cloneValue(value);
+}
+
+function visibleValues<T extends { metadata: { version: number } }>(clientState: FakeClientState, values: Map<string, T>): T[] {
+  return [...values.values()].filter((value) => value.metadata.version <= clientState.visibleVersion).map(cloneValue);
+}
+
+function visibleVersion(state: FakeCoreState, clientState: FakeClientState): number {
+  return clientState.sync ? clientState.visibleVersion : state.version;
 }
 
 function deleteValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): void {

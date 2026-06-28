@@ -3,8 +3,7 @@ import type {
   CreatedResource,
   JSONValue,
   ScenarioDescriptor,
-  ScenarioInputField,
-  StartRunRequest
+  ScenarioInputField
 } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js";
 
@@ -48,7 +47,16 @@ export function descriptorForScenario(scenario: Scenario): ScenarioDescriptor {
   };
 }
 
-export function parseStartRequest(scenario: Scenario, request: StartRunRequest): ParsedStart {
+export function parseStartRequest(scenario: Scenario, request: unknown): ParsedStart {
+  if (!isRecord(request)) {
+    throw new Error("Start request must be a JSON object");
+  }
+  if (typeof request.scenarioId !== "string") {
+    throw new Error("scenarioId is required");
+  }
+  if (request.jsonInput !== undefined && typeof request.jsonInput !== "string") {
+    throw new Error("jsonInput must be a string");
+  }
   const inputs = request.inputs ?? {};
   if (!isRecord(inputs)) {
     throw new Error("inputs must be a JSON object");

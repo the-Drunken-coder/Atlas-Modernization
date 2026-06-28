@@ -138,20 +138,20 @@ export class RunStore {
   }
 
   private async execute(run: RunRecord, input: ScenarioInput): Promise<void> {
-    const registerClient = (client: AtlasClientLike) => run.clients.push(client);
-    const context = createScenarioContext({
-      runId: run.id,
-      signal: run.controller.signal,
-      clientFactory: this.clientFactory,
-      registerClient,
-      log: (message, data) => this.emit(run, { type: "log", message, data }),
-      assert: (name, passed, message) => this.assert(run, name, passed, message),
-      track: (resource) => this.track(run, resource)
-    });
     let finalStatus: RunStatus = "completed";
     let finalMessage = "Run completed";
     let finalError: string | undefined;
     try {
+      const registerClient = (client: AtlasClientLike) => run.clients.push(client);
+      const context = createScenarioContext({
+        runId: run.id,
+        signal: run.controller.signal,
+        clientFactory: this.clientFactory,
+        registerClient,
+        log: (message, data) => this.emit(run, { type: "log", message, data }),
+        assert: (name, passed, message) => this.assert(run, name, passed, message),
+        track: (resource) => this.track(run, resource)
+      });
       await run.scenario.run(context, input);
       if (run.controller.signal.aborted) {
         finalStatus = "cancelled";
@@ -177,10 +177,12 @@ export class RunStore {
           client.sync.stop();
         } catch (error) {
           const message = `Failed to stop client sync: ${errorMessage(error)}`;
-          run.lastError = message;
           if (finalStatus === "completed") {
+            run.lastError = message;
             finalStatus = "failed";
             finalMessage = message;
+          } else if (!run.lastError) {
+            run.lastError = message;
           }
           this.emit(run, {
             type: "error",

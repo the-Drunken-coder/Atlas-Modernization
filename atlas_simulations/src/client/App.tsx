@@ -15,6 +15,7 @@ export function App() {
   const [currentRun, setCurrentRun] = useState<RunSummary | undefined>();
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState<string | undefined>();
+  const [mutationPending, setMutationPending] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const activeRunIdRef = useRef<string | undefined>(undefined);
 
@@ -54,14 +55,17 @@ export function App() {
   }
 
   async function startSelectedRun() {
-    if (!selected) return;
+    if (!selected || mutationPending) return;
     setError(undefined);
+    setMutationPending(true);
     try {
       const run = await startRun({ scenarioId: selected.id, inputs, jsonInput });
       selectRun(run);
       await refreshRuns();
     } catch (errorValue) {
       captureError(errorValue);
+    } finally {
+      setMutationPending(false);
     }
   }
 
@@ -97,24 +101,30 @@ export function App() {
   }
 
   async function stopCurrentRun() {
-    if (!currentRun) return;
+    if (!currentRun || mutationPending) return;
     setError(undefined);
+    setMutationPending(true);
     try {
       setCurrentRun(await stopRun(currentRun.id));
       await refreshRuns();
     } catch (errorValue) {
       captureError(errorValue);
+    } finally {
+      setMutationPending(false);
     }
   }
 
   async function cleanupCurrentRun() {
-    if (!currentRun) return;
+    if (!currentRun || mutationPending) return;
     setError(undefined);
+    setMutationPending(true);
     try {
       setCurrentRun(await cleanupRun(currentRun.id));
       await refreshRuns();
     } catch (errorValue) {
       captureError(errorValue);
+    } finally {
+      setMutationPending(false);
     }
   }
 
@@ -158,15 +168,15 @@ export function App() {
           <div className="panel-head">
             <h2>{selected?.name ?? "Scenario"}</h2>
             <div className="actions">
-              <button className="primary" type="button" title="Start run" onClick={() => void startSelectedRun()} disabled={!selected || currentRun?.status === "running"}>
+              <button className="primary" type="button" title="Start run" onClick={() => void startSelectedRun()} disabled={mutationPending || !selected || currentRun?.status === "running"}>
                 <Play size={16} aria-hidden="true" />
                 Start
               </button>
-              <button type="button" title="Stop run" onClick={() => void stopCurrentRun()} disabled={currentRun?.status !== "running"}>
+              <button type="button" title="Stop run" onClick={() => void stopCurrentRun()} disabled={mutationPending || currentRun?.status !== "running"}>
                 <Square size={16} aria-hidden="true" />
                 Stop
               </button>
-              <button type="button" title="Cleanup run resources" onClick={() => void cleanupCurrentRun()} disabled={!currentRun || currentRun.status === "running" || currentRun.status === "cleaned"}>
+              <button type="button" title="Cleanup run resources" onClick={() => void cleanupCurrentRun()} disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.status === "cleaned"}>
                 <Trash2 size={16} aria-hidden="true" />
                 Cleanup
               </button>
@@ -194,7 +204,7 @@ export function App() {
                       const rawValue = event.target.value;
                       setInputs((current) => ({
                         ...current,
-                        [field.key]: rawValue === "" ? "" : Number(rawValue)
+                        [field.key]: rawValue
                       }));
                     }}
                   />
@@ -344,7 +354,7 @@ function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
 }
 
 function isTerminalStatus(status: RunSummary["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled" || status === "cleaned";
+  return status === "cleaned";
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {

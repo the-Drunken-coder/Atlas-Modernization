@@ -61,7 +61,8 @@ async function handleRequest(
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (request.method === "GET" && url.pathname === "/api/health") {
-    sendJSON(response, 200, await atlasHealth(config) satisfies HealthResponse);
+    const health = await atlasHealth(config);
+    sendJSON(response, health.ok ? 200 : health.status ?? 503, health satisfies HealthResponse);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/scenarios") {
@@ -103,6 +104,10 @@ async function handleRequest(
   }
   if (url.pathname.startsWith("/api/")) {
     sendJSON(response, 404, { message: "Not found" });
+    return;
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    sendJSON(response, 405, { message: "Method not allowed" });
     return;
   }
   serveStatic(response, config.packageRoot, url.pathname);
@@ -239,7 +244,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return event.type === "status" && event.status !== "running";
+  return event.type === "status" && event.status === "cleaned";
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {

@@ -35,7 +35,9 @@ describe("simulation HTTP server", () => {
     });
     const failedBaseUrl = await server.listen();
 
-    const unhealthy = await fetchJSON<{ ok: boolean; status: number }>(`${failedBaseUrl}/api/health`);
+    const unhealthyResponse = await fetch(`${failedBaseUrl}/api/health`);
+    expect(unhealthyResponse.status).toBe(503);
+    const unhealthy = (await unhealthyResponse.json()) as { ok: boolean; status: number };
     expect(unhealthy).toMatchObject({ ok: false, status: 503 });
   });
 
@@ -107,6 +109,7 @@ describe("simulation HTTP server", () => {
     await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST", headers: mutationHeaders() });
     await expectStatus(`${baseUrl}/api/runs/%E0%A4%A/events`, 400);
     await expectStatus(`${baseUrl}/%E0%A4%A`, 400);
+    await expectStatus(`${baseUrl}/`, 405, { method: "POST" });
   });
 });
 

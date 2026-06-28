@@ -53,8 +53,9 @@ const multiClientSync: Scenario = {
       ctx.log(`Writer created ${id}`);
     }
 
+    const settleDeadline = Date.now() + settleMs;
     for (const [readerIndex, reader] of readers.entries()) {
-      const seen = await waitForResources(ctx, reader, ids, settleMs);
+      const seen = await waitForResources(ctx, reader, ids, Math.max(0, settleDeadline - Date.now()));
       const status = reader.sync.status();
       ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
       ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
@@ -76,6 +77,7 @@ async function waitForResources(ctx: ScenarioContext, reader: ScenarioContext["c
 }
 
 async function visibleCount(reader: ScenarioContext["client"], ids: string[]): Promise<number> {
+  reader.sync.status();
   let seen = 0;
   for (const id of ids) {
     try {

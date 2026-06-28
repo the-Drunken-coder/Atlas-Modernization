@@ -15,6 +15,13 @@ const scenario: Scenario = {
 };
 
 describe("scenario input parsing", () => {
+  it("rejects malformed start request shapes", () => {
+    expect(() => parseStartRequest(scenario, null)).toThrow("Start request must be a JSON object");
+    expect(() => parseStartRequest(scenario, { scenarioId: 12 })).toThrow("scenarioId is required");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: [] })).toThrow("inputs must be a JSON object");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: 12 })).toThrow("jsonInput must be a string");
+  });
+
   it("applies defaults and parses JSON input", () => {
     const parsed = parseStartRequest(scenario, {
       scenarioId: "example",

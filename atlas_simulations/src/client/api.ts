@@ -9,7 +9,7 @@ import type {
 } from "../shared/types.js";
 
 export async function loadHealth(): Promise<HealthResponse> {
-  return apiJSON<HealthResponse>("/api/health");
+  return apiJSON<HealthResponse>("/api/health", { allowErrorBody: true });
 }
 
 export async function loadScenarios(): Promise<ScenarioDescriptor[]> {
@@ -45,20 +45,21 @@ export async function cleanupRun(id: string): Promise<RunSummary> {
   return response.run;
 }
 
-async function apiJSON<T>(url: string, init?: RequestInit): Promise<T> {
+async function apiJSON<T>(url: string, init?: RequestInit & { allowErrorBody?: boolean }): Promise<T> {
   const method = init?.method?.toUpperCase() ?? "GET";
   const invalidJSON = Symbol("invalidJSON");
+  const { allowErrorBody: _allowErrorBody, ...fetchInit } = init ?? {};
   const response = await fetch(url, {
-    ...init,
+    ...fetchInit,
     headers: {
       Accept: "application/json",
       ...(method === "GET" ? {} : { "X-Atlas-Simulations-Request": "1" }),
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...init?.headers
+      ...(fetchInit.body ? { "Content-Type": "application/json" } : {}),
+      ...fetchInit.headers
     }
   });
   const body = (await response.json().catch(() => invalidJSON)) as T | { message?: string } | typeof invalidJSON;
-  if (!response.ok) {
+  if (!response.ok && !init?.allowErrorBody) {
     throw new Error(
       typeof body === "object" && body && "message" in body && typeof body.message === "string" && body.message
         ? body.message
