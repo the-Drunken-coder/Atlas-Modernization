@@ -323,6 +323,7 @@ function toSummary(run: RunRecord): RunSummary {
     status: run.status,
     startedAt: run.startedAt,
     ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
+    updatedAt: run.events.at(-1)?.timestamp ?? run.finishedAt ?? run.startedAt,
     inputs: wireInputs(run.inputs),
     ...(run.jsonInput === undefined ? {} : { jsonInput: cloneValue(run.jsonInput) }),
     createdResources: cloneValue(run.createdResources),
@@ -371,7 +372,10 @@ function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, str
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error("Run event data must contain only JSON objects");
   }
-  for (const [key, item] of Object.entries(value)) {
+  const record = value as Record<string, unknown>;
+  for (const key in record) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+    const item = record[key];
     addEventDataStringBytes(key, state);
     assertEventJSONValue(item, depth + 1, state);
   }

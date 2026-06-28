@@ -214,7 +214,7 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     },
     sync: {
       start: () => guarded(() => client.sync.start()),
-      stop: () => client.sync.stop(),
+      stop: () => guardedSync(() => client.sync.stop()),
       status: () => guardedSync(() => client.sync.status())
     },
     watch: guardedWatch,

@@ -439,21 +439,22 @@ function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
       return {
         ...run,
         status: event.status,
+        updatedAt: event.timestamp,
         ...(event.status === "running" || run.finishedAt ? {} : { finishedAt: event.timestamp })
       };
     case "assertion":
       if (run.assertions.some((assertion) => assertion.id === event.assertion.id)) return run;
-      return { ...run, assertions: [...run.assertions, event.assertion] };
+      return { ...run, assertions: [...run.assertions, event.assertion], updatedAt: event.timestamp };
     case "resource":
       if (run.createdResources.some((resource) => resource.type === event.resource.type && resource.id === event.resource.id)) return run;
-      return { ...run, createdResources: [...run.createdResources, event.resource] };
+      return { ...run, createdResources: [...run.createdResources, event.resource], updatedAt: event.timestamp };
     case "error":
-      return { ...run, lastError: event.message };
+      return { ...run, lastError: event.message, updatedAt: event.timestamp };
     case "cleanup":
-      if (!event.resource) return { ...run, cleaned: true };
-      return run;
+      if (!event.resource) return { ...run, cleaned: true, updatedAt: event.timestamp };
+      return { ...run, updatedAt: event.timestamp };
     case "log":
-      return run;
+      return { ...run, updatedAt: event.timestamp };
   }
 }
 
@@ -472,15 +473,27 @@ function mergeRunLists(current: RunSummary[], incoming: RunSummary[]): RunSummar
 
 function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary): RunSummary {
   if (!existing) return incoming;
+  const existingIsNewer = runRecency(existing) >= runRecency(incoming);
+  const fresher = existingIsNewer ? existing : incoming;
   return {
-    ...incoming,
-    status: isTerminalStatus(existing.status) ? existing.status : incoming.status,
-    ...(existing.finishedAt || incoming.finishedAt ? { finishedAt: incoming.finishedAt ?? existing.finishedAt } : {}),
+    id: incoming.id,
+    scenarioId: incoming.scenarioId,
+    scenarioName: incoming.scenarioName,
+    status: fresher.status,
+    startedAt: incoming.startedAt,
+    ...(fresher.finishedAt ? { finishedAt: fresher.finishedAt } : {}),
+    ...(fresher.updatedAt ? { updatedAt: fresher.updatedAt } : {}),
+    inputs: incoming.inputs,
+    ...(incoming.jsonInput === undefined ? {} : { jsonInput: incoming.jsonInput }),
     assertions: mergeAssertions(existing.assertions, incoming.assertions),
     createdResources: mergeResources(existing.createdResources, incoming.createdResources),
     cleaned: existing.cleaned || incoming.cleaned,
-    ...(existing.lastError || incoming.lastError ? { lastError: incoming.lastError ?? existing.lastError } : {})
+    ...(fresher.lastError ? { lastError: fresher.lastError } : {})
   };
+}
+
+function runRecency(run: RunSummary): number {
+  return Date.parse(run.updatedAt ?? run.finishedAt ?? run.startedAt);
 }
 
 function mergeAssertions(existing: RunSummary["assertions"], incoming: RunSummary["assertions"]): RunSummary["assertions"] {

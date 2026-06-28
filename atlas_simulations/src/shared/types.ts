@@ -84,6 +84,7 @@ export type RunSummary = {
   status: RunStatus;
   startedAt: string;
   finishedAt?: string;
+  updatedAt?: string;
   inputs: Record<string, string | JSONNumber | boolean>;
   jsonInput?: JSONValue;
   createdResources: CreatedResource[];
