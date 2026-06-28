@@ -55,6 +55,14 @@ export function App() {
     setRuns(await loadRuns());
   }
 
+  async function refreshRunsBestEffort() {
+    try {
+      await refreshRuns();
+    } catch (errorValue) {
+      captureError(errorValue);
+    }
+  }
+
   function captureError(errorValue: unknown) {
     setError(errorMessage(errorValue));
   }
@@ -65,8 +73,9 @@ export function App() {
     setMutationPending(true);
     try {
       const run = await startRun({ scenarioId: selected.id, inputs: submissionInputs(selected, inputs), jsonInput });
+      upsertRun(run);
       selectRun(run);
-      await refreshRuns();
+      await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);
     } finally {
@@ -116,8 +125,9 @@ export function App() {
     setMutationPending(true);
     try {
       const updatedRun = await stopRun(targetRunId);
+      upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
-      await refreshRuns();
+      await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);
     } finally {
@@ -132,13 +142,24 @@ export function App() {
     setMutationPending(true);
     try {
       const updatedRun = await cleanupRun(targetRunId);
+      upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
-      await refreshRuns();
+      await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);
     } finally {
       setMutationPending(false);
     }
+  }
+
+  function upsertRun(run: RunSummary) {
+    setRuns((current) => {
+      const index = current.findIndex((existing) => existing.id === run.id);
+      if (index === -1) return [run, ...current];
+      const next = [...current];
+      next[index] = { ...next[index], ...run };
+      return next;
+    });
   }
 
   return (

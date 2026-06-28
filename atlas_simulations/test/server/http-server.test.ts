@@ -141,6 +141,8 @@ describe("simulation HTTP server", () => {
     const route = await fetch(`${baseUrl}/runs/sim-example`);
     expect(route.status).toBe(200);
     expect(route.headers.get("content-type")).toContain("text/html");
+    expect(route.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+    expect(route.headers.get("x-frame-options")).toBe("DENY");
 
     await expectStatus(`${baseUrl}/assets/missing.js`, 404);
     await expectStatus(`${baseUrl}/favicon.ico`, 404);

@@ -78,9 +78,11 @@ const movingAssets: Scenario = {
       if (tick < ticks - 1) await ctx.wait(tickMs);
     }
 
-    const persistedAssets = fulfilledValues(await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id))));
+    const persistedAssetResults = await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id)));
+    const persistedAssets = fulfilledValues(persistedAssetResults);
     const finalSpeed = 12 + ticks - 1;
     ctx.assert("Assets persisted", persistedAssets.length === assetCount, `${persistedAssets.length}/${assetCount} assets persisted`);
+    throwFirstRejected(persistedAssetResults);
     ctx.assert(
       "Telemetry persisted",
       persistedAssets.length === assetCount && persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
@@ -93,4 +95,9 @@ export default movingAssets;
 
 function fulfilledValues<T>(results: Array<PromiseSettledResult<T>>): T[] {
   return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}
+
+function throwFirstRejected(results: Array<PromiseSettledResult<unknown>>): void {
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (rejected) throw rejected.reason;
 }

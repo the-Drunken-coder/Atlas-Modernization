@@ -115,4 +115,22 @@ describe("scenario input parsing", () => {
       { type: "object", id: "sim-track-object" }
     ]);
   });
+
+  it("blocks exposed client operations after cancellation", async () => {
+    const controller = new AbortController();
+    const ctx = createScenarioContext({
+      runId: "sim-cancelled",
+      signal: controller.signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: () => undefined,
+      registerClient: () => undefined
+    });
+
+    controller.abort();
+
+    await expect(ctx.client.entities.get("missing")).rejects.toThrow("Simulation cancelled");
+    expect(() => ctx.client.sync.status()).toThrow("Simulation cancelled");
+  });
 });

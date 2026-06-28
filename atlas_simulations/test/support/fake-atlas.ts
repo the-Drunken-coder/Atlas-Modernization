@@ -224,7 +224,7 @@ function visibleValues<T extends VersionedResource>(clientState: FakeClientState
   return [...values.values()]
     .map((history) => visibleSnapshot(history, version))
     .filter((value): value is T => value !== undefined)
-    .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }), version))
+    .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version))
     .map(cloneValue);
 }
 
@@ -273,6 +273,9 @@ function resourceKey(type: string, id: string): string {
   return `${type}:${id}`;
 }
 
-function resourceId(value: { entity_id?: string; task_id?: string; object_id?: string }): string {
-  return value.entity_id ?? value.task_id ?? value.object_id ?? "";
+function resourceId(value: { entity_id?: string; task_id?: string; object_id?: string }, type: string): string {
+  if (type === "entity") return value.entity_id ?? "";
+  if (type === "task") return value.task_id ?? "";
+  if (type === "object") return value.object_id ?? "";
+  return "";
 }

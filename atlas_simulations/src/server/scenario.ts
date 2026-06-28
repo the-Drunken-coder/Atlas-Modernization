@@ -92,9 +92,9 @@ export function createScenarioContext(args: {
   };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
-    const client = trackClientCreates(args.clientFactory(options), args.track, throwIfCancelled);
-    args.registerClient(client);
-    return client;
+    const rawClient = args.clientFactory(options);
+    args.registerClient(rawClient);
+    return trackClientCreates(rawClient, args.track, throwIfCancelled);
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -115,41 +115,68 @@ export function createScenarioContext(args: {
 }
 
 function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedResource) => void, throwIfCancelled: () => void): AtlasClientLike {
+  const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
+    throwIfCancelled();
+    const result = await operation();
+    throwIfCancelled();
+    return result;
+  };
+  const guardedSync = <T>(operation: () => T): T => {
+    throwIfCancelled();
+    const result = operation();
+    throwIfCancelled();
+    return result;
+  };
   return {
     entities: {
-      ...client.entities,
+      get: (id) => guarded(() => client.entities.get(id)),
       create: async (entity) => {
         throwIfCancelled();
         const created = await client.entities.create(entity);
         track({ type: "entity", id: created.entity_id });
         throwIfCancelled();
         return created;
-      }
+      },
+      update: (id, patch) => guarded(() => client.entities.update(id, patch)),
+      delete: (id) => guarded(() => client.entities.delete(id)),
+      checkIn: (id, options) => guarded(() => client.entities.checkIn(id, options))
     },
     tasks: {
-      ...client.tasks,
+      get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
         throwIfCancelled();
         const created = await client.tasks.create(task);
         track({ type: "task", id: created.task_id });
         throwIfCancelled();
         return created;
-      }
+      },
+      delete: (id) => guarded(() => client.tasks.delete(id)),
+      acknowledge: (id, options) => guarded(() => client.tasks.acknowledge(id, options)),
+      complete: (id, options) => guarded(() => client.tasks.complete(id, options)),
+      fail: (id, options) => guarded(() => client.tasks.fail(id, options)),
+      setStatus: (id, status, options) => guarded(() => client.tasks.setStatus(id, status, options))
     },
     objects: {
-      ...client.objects,
+      get: (id) => guarded(() => client.objects.get(id)),
       create: async (object) => {
         throwIfCancelled();
         const created = await client.objects.create(object);
         track({ type: "object", id: created.object_id });
         throwIfCancelled();
         return created;
-      }
+      },
+      delete: (id) => guarded(() => client.objects.delete(id))
     },
-    queries: client.queries,
-    sync: client.sync,
-    watch: (...args) => client.watch(...args),
-    handshake: () => client.handshake()
+    queries: {
+      full: () => guarded(() => client.queries.full())
+    },
+    sync: {
+      start: () => guarded(() => client.sync.start()),
+      stop: () => client.sync.stop(),
+      status: () => guardedSync(() => client.sync.status())
+    },
+    watch: (filter, callback) => guardedSync(() => client.watch(filter, callback)),
+    handshake: () => guarded(() => client.handshake())
   };
 }
 

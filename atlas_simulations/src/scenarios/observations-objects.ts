@@ -94,9 +94,12 @@ const observationsObjects: Scenario = {
       if (index < observations - 1) await ctx.wait(tickMs);
     }
 
-    const persistedObservers = fulfilledValues(await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id))));
-    const persistedTracks = fulfilledValues(await Promise.allSettled(trackIds.map((id) => ctx.client.entities.get(id))));
-    const persistedObjects = fulfilledValues(await Promise.allSettled(objectIds.map((id) => ctx.client.objects.get(id))));
+    const observerResults = await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id)));
+    const trackResults = await Promise.allSettled(trackIds.map((id) => ctx.client.entities.get(id)));
+    const objectResults = await Promise.allSettled(objectIds.map((id) => ctx.client.objects.get(id)));
+    const persistedObservers = fulfilledValues(observerResults);
+    const persistedTracks = fulfilledValues(trackResults);
+    const persistedObjects = fulfilledValues(objectResults);
     ctx.assert("Observer assets persisted", persistedObservers.length === assetCount, `${persistedObservers.length}/${assetCount} observers persisted`);
     ctx.assert(
       "Tracks persisted",
@@ -109,6 +112,7 @@ const observationsObjects: Scenario = {
         persistedObjects.every((object, index) => (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])),
       `${persistedObjects.length}/${observations} objects linked`
     );
+    throwFirstRejected([...observerResults, ...trackResults, ...objectResults]);
   }
 };
 
@@ -116,4 +120,9 @@ export default observationsObjects;
 
 function fulfilledValues<T>(results: Array<PromiseSettledResult<T>>): T[] {
   return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}
+
+function throwFirstRejected(results: Array<PromiseSettledResult<unknown>>): void {
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (rejected) throw rejected.reason;
 }

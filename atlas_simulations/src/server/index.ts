@@ -17,6 +17,10 @@ export type SimulationServer = {
 };
 
 const MUTATION_HEADER = "x-atlas-simulations-request";
+const UI_SECURITY_HEADERS = {
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Frame-Options": "DENY"
+};
 
 export function createSimulationServer(options: { config?: SimulationConfig; store?: RunStore } = {}): SimulationServer {
   const config = options.config ?? loadConfig();
@@ -323,27 +327,27 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
   const staticRoot = path.join(packageRoot, "dist/client");
   const target = safeStaticPath(staticRoot, requestPath);
   if (target === "invalid-encoding") {
-    response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    response.writeHead(400, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
     response.end(headOnly ? undefined : "Request path must use valid URL encoding");
     return;
   }
   if (target === "invalid-path") {
-    response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    response.writeHead(400, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
     response.end(headOnly ? undefined : "Request path must stay inside the client root");
     return;
   }
   const file = target && existsSync(target) && statSync(target).isFile() ? target : allowSpaFallback ? path.join(staticRoot, "index.html") : undefined;
   if (!file) {
-    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
     response.end(headOnly ? undefined : "Static asset not found");
     return;
   }
   if (!existsSync(file)) {
-    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
     response.end(headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
     return;
   }
-  response.writeHead(200, { "Content-Type": contentType(file) });
+  response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
   if (headOnly) {
     response.end();
     return;
