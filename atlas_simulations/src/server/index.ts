@@ -114,7 +114,7 @@ async function handleRequest(
     sendJSON(response, 405, { message: "Method not allowed" });
     return;
   }
-  serveStatic(response, config.packageRoot, url.pathname, request.method === "HEAD");
+  serveStatic(response, config.packageRoot, url.pathname, request.method === "HEAD", shouldServeSpaShell(url.pathname));
 }
 
 async function handleRunRoute(
@@ -319,7 +319,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
-function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string, headOnly = false): void {
+function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string, headOnly = false, allowSpaFallback = true): void {
   const staticRoot = path.join(packageRoot, "dist/client");
   const target = safeStaticPath(staticRoot, requestPath);
   if (target === "invalid-encoding") {
@@ -332,7 +332,12 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     response.end(headOnly ? undefined : "Request path must stay inside the client root");
     return;
   }
-  const file = target && existsSync(target) && statSync(target).isFile() ? target : path.join(staticRoot, "index.html");
+  const file = target && existsSync(target) && statSync(target).isFile() ? target : allowSpaFallback ? path.join(staticRoot, "index.html") : undefined;
+  if (!file) {
+    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end(headOnly ? undefined : "Static asset not found");
+    return;
+  }
   if (!existsSync(file)) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end(headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
@@ -352,6 +357,10 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     response.destroy(error);
   });
   stream.pipe(response);
+}
+
+function shouldServeSpaShell(requestPath: string): boolean {
+  return !requestPath.startsWith("/assets/") && !/\/[^/]+\.[^/]+$/.test(requestPath);
 }
 
 function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | "invalid-path" | undefined {

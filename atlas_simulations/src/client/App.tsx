@@ -5,6 +5,8 @@ import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } fr
 
 type FieldValues = Record<string, string | number | boolean>;
 
+const MAX_CLIENT_EVENTS = 500;
+
 export function App() {
   const [health, setHealth] = useState<HealthResponse | undefined>();
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
@@ -92,7 +94,7 @@ export function App() {
     source.onmessage = (message) => {
       if (activeRunIdRef.current !== runId) return;
       const event = JSON.parse(message.data) as RunEvent;
-      setEvents((current) => [...current, event]);
+      setEvents((current) => [...current, event].slice(-MAX_CLIENT_EVENTS));
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
       if (event.type === "status" && isTerminalStatus(event.status)) closeSource();

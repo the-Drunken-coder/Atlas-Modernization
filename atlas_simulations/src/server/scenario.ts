@@ -237,15 +237,23 @@ function waitFor(ms: number, signal: AbortSignal): Promise<void> {
 
 function createIdFactory(runId: string): (name: string) => string {
   const issued = new Map<string, string>();
-  const usedSlugs = new Set<string>();
+  const usedIds = new Set<string>();
   return (name) => {
     const existing = issued.get(name);
     if (existing) return existing;
     const base = slug(name);
-    const suffix = usedSlugs.has(base) ? `-${hashName(name)}` : "";
-    const id = `${runId}-${base}${suffix}`;
+    let id = `${runId}-${base}`;
+    if (usedIds.has(id)) {
+      const hashedId = `${runId}-${base}-${hashName(name)}`;
+      id = hashedId;
+      let counter = 2;
+      while (usedIds.has(id)) {
+        id = `${hashedId}-${counter}`;
+        counter += 1;
+      }
+    }
     issued.set(name, id);
-    usedSlugs.add(base);
+    usedIds.add(id);
     return id;
   };
 }

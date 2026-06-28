@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
@@ -122,6 +125,25 @@ describe("simulation HTTP server", () => {
     expect(await head.text()).toBe("");
     await expectStatus(`${baseUrl}/`, 405, { method: "POST" });
   });
+
+  it("serves SPA routes without masking missing static assets", async () => {
+    const packageRoot = tempPackageRoot();
+    mkdirSync(path.join(packageRoot, "dist/client/assets"), { recursive: true });
+    writeFileSync(path.join(packageRoot, "dist/client/index.html"), "<html><body>Atlas Simulations</body></html>");
+
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://atlas.test", port: 0, packageRoot },
+      store: new RunStore(createFakeAtlasCore().factory)
+    });
+    const baseUrl = await server.listen();
+
+    const route = await fetch(`${baseUrl}/runs/sim-example`);
+    expect(route.status).toBe(200);
+    expect(route.headers.get("content-type")).toContain("text/html");
+
+    await expectStatus(`${baseUrl}/assets/missing.js`, 404);
+    await expectStatus(`${baseUrl}/favicon.ico`, 404);
+  });
 });
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -155,6 +177,10 @@ async function expectStatus(url: string, status: number, init?: RequestInit): Pr
 
 function mutationHeaders(headers: Record<string, string> = {}): Record<string, string> {
   return { "X-Atlas-Simulations-Request": "1", ...headers };
+}
+
+function tempPackageRoot(): string {
+  return mkdtempSync(path.join(tmpdir(), "atlas-simulations-http-"));
 }
 
 async function readUntilClosed(response: Response, text: string): Promise<string> {

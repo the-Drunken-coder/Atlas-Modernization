@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseStartRequest, type Scenario } from "../../src/server/scenario.js";
+import { createScenarioContext, parseStartRequest, type Scenario } from "../../src/server/scenario.js";
+import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 const scenario: Scenario = {
   id: "example",
@@ -72,5 +73,25 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest({ ...scenario, acceptsJson: false }, { scenarioId: "example", jsonInput: '{"nope":true}' })).toThrow(
       "Example does not accept JSON input"
     );
+  });
+
+  it("keeps generated resource IDs unique after slug and hash collisions", () => {
+    const ctx = createScenarioContext({
+      runId: "sim-collision",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: () => undefined,
+      registerClient: () => undefined
+    });
+
+    const direct = ctx.id("a-b-212u");
+    const base = ctx.id("a b");
+    const hashed = ctx.id("a-b");
+
+    expect(new Set([direct, base, hashed]).size).toBe(3);
+    expect(hashed).toBe("sim-collision-a-b-212u-2");
+    expect(ctx.id("a-b")).toBe(hashed);
   });
 });

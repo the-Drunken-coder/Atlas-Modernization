@@ -73,6 +73,9 @@ function atlasBaseUrlValue(value: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
   }
+  if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
+    throw new Error("ATLAS_BASE_URL must use HTTPS unless it targets loopback");
+  }
   if (parsed.username || parsed.password) {
     throw new Error("ATLAS_BASE_URL must not include embedded credentials");
   }
@@ -81,6 +84,11 @@ function atlasBaseUrlValue(value: string): string {
   }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
   return `${parsed.origin}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }
 
 function unquote(value: string): string {
