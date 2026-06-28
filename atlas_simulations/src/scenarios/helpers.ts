@@ -55,6 +55,29 @@ export function point(longitude: number, latitude: number): { type: "Point"; coo
   return { type: "Point", coordinates: [longitude, latitude] };
 }
 
+export async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | undefined> {
+  if (!Number.isFinite(deadline)) return await operation();
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => resolve(undefined), remaining);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function requireBeforeDeadline<T>(operation: () => Promise<T>, deadline: number, label: string): Promise<T> {
+  const result = await withDeadline(operation, deadline);
+  if (result === undefined) throw new Error(`${label} read timed out`);
+  return result;
+}
+
 function isRecord(value: JSONValue | undefined): value is Record<string, JSONValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

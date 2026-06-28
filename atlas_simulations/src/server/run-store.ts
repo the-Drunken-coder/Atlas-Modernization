@@ -203,6 +203,7 @@ export class RunStore {
       }
     }
     if (run.cleaned) return () => undefined;
+    // Completed runs can still emit cleanup events after an explicit cleanup request.
     run.subscribers.add(subscriber);
     return () => run.subscribers.delete(subscriber);
   }
@@ -283,6 +284,7 @@ export class RunStore {
     run.status = status;
     run.finishedAt = timestamp();
     this.emit(run, { type: "status", status, message });
+    run.subscribers.clear();
   }
 
   private track(run: RunRecord, resource: CreatedResource): void {

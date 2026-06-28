@@ -56,7 +56,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
       create: async (entity) => {
         assertCanCreate(state, state.entities, entity.entity_id, "entity");
-        const created = entityFromCreate(entity, ++state.version);
+        const created = entityFromCreate(entity, commitVersion(state, clientState));
         return saveValue(state.entities, created.entity_id, created);
       },
       update: async (id, patch) => {
@@ -68,12 +68,12 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           ...("alias" in patch ? { alias: patch.alias ?? null } : {}),
           ...(patch.components ? { components: { ...current.components, ...patch.components } } : {}),
           ...("extra" in patch ? { extra: patch.extra } : {}),
-          metadata: metadata(++state.version, current.metadata.created_at)
+          metadata: metadata(commitVersion(state, clientState), current.metadata.created_at)
         };
         return saveValue(state.entities, id, updated);
       },
       delete: async (id) => {
-        deleteValue(state, state.entities, id, "entity");
+        deleteValue(state, clientState, state.entities, id, "entity");
       },
       checkIn: (async (id, options) => {
         const current = requireActiveValue(state, state.entities, id, "entity");
@@ -86,7 +86,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
             ...(options?.status ? { status: { value: options.status, last_update: new Date().toISOString() } } : {}),
             ...(telemetry ? { telemetry: { ...current.components.telemetry, ...telemetry, last_update: new Date().toISOString() } } : {})
           },
-          metadata: metadata(++state.version, current.metadata.created_at)
+          metadata: metadata(commitVersion(state, clientState), current.metadata.created_at)
         };
         const entity = saveValue(state.entities, id, updated);
         const taskLimit = options?.limit ?? 10;
@@ -108,26 +108,26 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
       create: async (task) => {
         assertCanCreate(state, state.tasks, task.task_id, "task");
-        const created = taskFromCreate(task, ++state.version);
+        const created = taskFromCreate(task, commitVersion(state, clientState));
         return saveValue(state.tasks, created.task_id, created);
       },
       delete: async (id) => {
-        deleteValue(state, state.tasks, id, "task");
+        deleteValue(state, clientState, state.tasks, id, "task");
       },
-      acknowledge: async (id) => updateTaskStatus(state, id, "acknowledged"),
-      complete: async (id) => updateTaskStatus(state, id, "completed"),
-      fail: async (id) => updateTaskStatus(state, id, "failed"),
-      setStatus: async (id, status) => updateTaskStatus(state, id, status)
+      acknowledge: async (id) => updateTaskStatus(state, clientState, id, "acknowledged"),
+      complete: async (id) => updateTaskStatus(state, clientState, id, "completed"),
+      fail: async (id) => updateTaskStatus(state, clientState, id, "failed"),
+      setStatus: async (id, status) => updateTaskStatus(state, clientState, id, status)
     },
     objects: {
       get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
       create: async (object) => {
         assertCanCreate(state, state.objects, object.object_id, "object");
-        const created = objectFromCreate(object, ++state.version);
+        const created = objectFromCreate(object, commitVersion(state, clientState));
         return saveValue(state.objects, created.object_id, created);
       },
       delete: async (id) => {
-        deleteValue(state, state.objects, id, "object");
+        deleteValue(state, clientState, state.objects, id, "object");
       }
     },
     queries: {
@@ -206,9 +206,9 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
   };
 }
 
-function updateTaskStatus(state: FakeCoreState, id: string, status: string): TaskResource {
+function updateTaskStatus(state: FakeCoreState, clientState: FakeClientState, id: string, status: string): TaskResource {
   const current = requireActiveValue(state, state.tasks, id, "task");
-  const updated = { ...current, status, metadata: metadata(++state.version, current.metadata.created_at) };
+  const updated = { ...current, status, metadata: metadata(commitVersion(state, clientState), current.metadata.created_at) };
   return saveValue(state.tasks, id, updated);
 }
 
@@ -273,13 +273,19 @@ function visibleVersion(state: FakeCoreState, clientState: FakeClientState): num
   return clientState.sync ? clientState.visibleVersion : state.version;
 }
 
-function deleteValue<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): void {
+function deleteValue<T extends VersionedResource>(state: FakeCoreState, clientState: FakeClientState, values: ResourceHistory<T>, id: string, type: string): void {
   const value = requireValue(values, id, type);
   if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
-  state.version += 1;
+  commitVersion(state, clientState);
   const key = resourceKey(type, id);
   state.tombstones.set(key, [...(state.tombstones.get(key) ?? []), state.version]);
   state.deleted.push(`${type}:${id}`);
+}
+
+function commitVersion(state: FakeCoreState, clientState: FakeClientState): number {
+  state.version += 1;
+  clientState.visibleVersion = state.version;
+  return state.version;
 }
 
 function notFound(type: string, id: string): AtlasAPIError {

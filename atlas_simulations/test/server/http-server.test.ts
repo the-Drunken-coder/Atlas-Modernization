@@ -78,7 +78,8 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const completedEvent = await readUntilRunEvent(stream, (event) => event.type === "status" && event.status === "completed");
+    const replayEvents = await readRunStream(stream);
+    const completedEvent = replayEvents.find((event) => event.type === "status" && event.status === "completed");
     expect(completedEvent).toMatchObject({ type: "status", status: "completed" });
 
     const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
@@ -89,7 +90,8 @@ describe("simulation HTTP server", () => {
     expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
 
     const cleanupReplay = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
-    const cleanupEvent = await readUntilRunEvent(cleanupReplay, (event) => event.type === "cleanup" && !event.resource);
+    const cleanupReplayEvents = await readRunStream(cleanupReplay);
+    const cleanupEvent = cleanupReplayEvents.find((event) => event.type === "cleanup" && !event.resource);
     expect(cleanupEvent).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
   });
 
@@ -353,7 +355,7 @@ function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-http-"));
 }
 
-async function readUntilRunEvent(response: Response, predicate: (event: RunEvent) => boolean): Promise<RunEvent> {
+async function readRunStream(response: Response): Promise<RunEvent[]> {
   const reader = response.body?.getReader();
   expect(reader).toBeDefined();
   const decoder = new TextDecoder();
@@ -362,17 +364,17 @@ async function readUntilRunEvent(response: Response, predicate: (event: RunEvent
   try {
     while (true) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error("Timed out waiting for run event");
+      if (remaining <= 0) throw new Error("Timed out waiting for run stream to close");
       const result = await withTimeout(reader!.read(), remaining);
-      if (result.done) throw new Error("Stream closed before run event");
-      body += decoder.decode(result.value, { stream: true });
-      const event = parseRunEvents(body).find(predicate);
-      if (event) {
-        return event;
+      if (result.done) {
+        body += decoder.decode();
+        return parseRunEvents(body);
       }
+      body += decoder.decode(result.value, { stream: true });
     }
-  } finally {
+  } catch (error) {
     await reader!.cancel().catch(() => undefined);
+    throw error;
   }
 }
 

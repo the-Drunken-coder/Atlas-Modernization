@@ -1,6 +1,8 @@
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point } from "./helpers.js";
+import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point, requireBeforeDeadline } from "./helpers.js";
+
+const VERIFY_READ_TIMEOUT_MS = 5_000;
 
 const observationsObjects: Scenario = {
   id: "observations-objects",
@@ -96,9 +98,16 @@ const observationsObjects: Scenario = {
     }
 
     const verifier = ctx.newClient({ sync: false });
-    const observerResults = await Promise.allSettled(assetIds.map((id) => verifier.entities.get(id)));
-    const trackResults = await Promise.allSettled(trackIds.map((id) => verifier.entities.get(id)));
-    const objectResults = await Promise.allSettled(objectIds.map((id) => verifier.objects.get(id)));
+    const readDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
+    const observerResults = await Promise.allSettled(
+      assetIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `observer ${id}`))
+    );
+    const trackResults = await Promise.allSettled(
+      trackIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `track ${id}`))
+    );
+    const objectResults = await Promise.allSettled(
+      objectIds.map((id) => requireBeforeDeadline(() => verifier.objects.get(id), readDeadline, `object ${id}`))
+    );
     const persistedObservers = fulfilledValues(observerResults);
     const persistedTracks = fulfilledValues(trackResults);
     const persistedObjects = fulfilledValues(objectResults);

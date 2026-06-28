@@ -124,8 +124,10 @@ describe("App", () => {
       assertion: { id: "assert-1", name: "streamed check", passed: true, timestamp: new Date().toISOString() },
       message: "PASS streamed check"
     };
-    eventSources[0].emit(assertionEvent);
-    eventSources[0].emit(assertionEvent);
+    act(() => {
+      eventSources[0].emit(assertionEvent);
+      eventSources[0].emit(assertionEvent);
+    });
     expect(await screen.findByText("streamed check")).toBeInTheDocument();
     expect(await screen.findByText("PASS streamed check")).toBeInTheDocument();
     expect(screen.getAllByText("streamed check")).toHaveLength(1);
@@ -139,8 +141,10 @@ describe("App", () => {
       status: "completed",
       message: "Run completed"
     };
-    eventSources[0].emit(completedEvent);
-    eventSources[0].emit(completedEvent);
+    act(() => {
+      eventSources[0].emit(completedEvent);
+      eventSources[0].emit(completedEvent);
+    });
     await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
     expect(await screen.findByText("Run completed")).toBeInTheDocument();
     expect(screen.getAllByText("Run completed")).toHaveLength(1);
@@ -212,13 +216,15 @@ describe("App", () => {
 
     await waitFor(() => expect(vi.mocked(stopRun)).toHaveBeenCalledWith(run.id));
     expect(eventSources[0].closed).toBe(false);
-    eventSources[0].emit({
-      sequence: jsonNumber(1),
-      runId: run.id,
-      timestamp: new Date().toISOString(),
-      type: "status",
-      status: "cancelled",
-      message: "Run cancelled"
+    act(() => {
+      eventSources[0].emit({
+        sequence: jsonNumber(1),
+        runId: run.id,
+        timestamp: new Date().toISOString(),
+        type: "status",
+        status: "cancelled",
+        message: "Run cancelled"
+      });
     });
     await waitFor(() => expect(eventSources[0].closed).toBe(true));
   });
@@ -236,7 +242,9 @@ describe("App", () => {
     await waitFor(() => expect(eventSources).toHaveLength(1));
     await waitFor(() => expect(vi.mocked(loadRuns).mock.calls.length).toBeGreaterThanOrEqual(2));
 
-    eventSources[0].onerror?.();
+    act(() => {
+      eventSources[0].onerror?.();
+    });
 
     await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
     await waitFor(() => expect(eventSources[0].closed).toBe(true));
@@ -251,15 +259,17 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() => expect(eventSources).toHaveLength(1));
 
-    eventSources[0].onmessage?.({
-      data: JSON.stringify({
-        sequence: 1.5,
-        runId: run.id,
-        timestamp: "not-a-date",
-        type: "log",
-        message: "bad event"
-      })
-    } as MessageEvent<string>);
+    act(() => {
+      eventSources[0].onmessage?.({
+        data: JSON.stringify({
+          sequence: 1.5,
+          runId: run.id,
+          timestamp: "not-a-date",
+          type: "log",
+          message: "bad event"
+        })
+      } as MessageEvent<string>);
+    });
 
     expect(await screen.findByRole("alert")).toHaveTextContent(`Invalid event payload for run ${run.id}`);
     expect(eventSources[0].closed).toBe(true);
@@ -276,12 +286,14 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() => expect(eventSources).toHaveLength(1));
-    eventSources[0].emit({
-      sequence: jsonNumber(1),
-      runId: startedRun.id,
-      timestamp: new Date().toISOString(),
-      type: "log",
-      message: "remembered log"
+    act(() => {
+      eventSources[0].emit({
+        sequence: jsonNumber(1),
+        runId: startedRun.id,
+        timestamp: new Date().toISOString(),
+        type: "log",
+        message: "remembered log"
+      });
     });
     expect(await screen.findByText("remembered log")).toBeInTheDocument();
 
@@ -304,7 +316,9 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Pruned run" }));
     await waitFor(() => expect(eventSources).toHaveLength(1));
 
-    eventSources[0].onerror?.();
+    act(() => {
+      eventSources[0].onerror?.();
+    });
 
     await waitFor(() => expect(screen.getByText("No run selected")).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText("No runs")).toBeInTheDocument());

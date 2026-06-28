@@ -267,9 +267,9 @@ export function App() {
       setCleanupRunId(targetRunId);
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);
-      if (cleanupStreamRunIdRef.current === targetRunId) {
+      if (updatedRun.cleaned && cleanupStreamRunIdRef.current === targetRunId) {
         cleanupStreamRunIdRef.current = undefined;
-        if (updatedRun.cleaned && activeRunIdRef.current === targetRunId) closeActiveEventSource();
+        if (activeRunIdRef.current === targetRunId) closeActiveEventSource();
       }
       if (updatedRun.cleaned) setCleanupRunId(undefined);
       await refreshRunsBestEffort();

@@ -1,6 +1,8 @@
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point } from "./helpers.js";
+import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point, requireBeforeDeadline } from "./helpers.js";
+
+const VERIFY_READ_TIMEOUT_MS = 5_000;
 
 const movingAssets: Scenario = {
   id: "moving-assets",
@@ -82,7 +84,10 @@ const movingAssets: Scenario = {
     }
 
     const verifier = ctx.newClient({ sync: false });
-    const persistedAssetResults = await Promise.allSettled(assetIds.map((id) => verifier.entities.get(id)));
+    const readDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
+    const persistedAssetResults = await Promise.allSettled(
+      assetIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `asset ${id}`))
+    );
     const persistedAssets = fulfilledValues(persistedAssetResults);
     const rejectedAssetRead = persistedAssetResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
     const finalSpeed = 12 + ticks;

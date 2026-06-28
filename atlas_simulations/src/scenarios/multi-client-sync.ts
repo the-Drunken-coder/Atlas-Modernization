@@ -1,7 +1,7 @@
 import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, point } from "./helpers.js";
+import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, point, withDeadline } from "./helpers.js";
 
 const SYNC_POLL_INTERVAL_MS = 500;
 const MIN_SETTLE_MS = SYNC_POLL_INTERVAL_MS * 3;
@@ -126,22 +126,5 @@ async function readVersion(reader: ScenarioContext["client"], id: string, deadli
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
     return undefined;
-  }
-}
-
-async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | undefined> {
-  if (!Number.isFinite(deadline)) return await operation();
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) return undefined;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      operation(),
-      new Promise<undefined>((resolve) => {
-        timeout = setTimeout(() => resolve(undefined), remaining);
-      })
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
   }
 }

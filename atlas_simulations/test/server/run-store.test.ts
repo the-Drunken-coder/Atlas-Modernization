@@ -465,27 +465,33 @@ describe("RunStore", () => {
     expect(deleted).toHaveLength(1_001);
   });
 
-  it("cleans same-type resources from newest to oldest", async () => {
+  it("cleans resources by dependency type and newest-to-oldest within a type", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
     const scenario: Scenario = {
       id: "cleanup-order",
       name: "Cleanup order",
-      summary: "Creates same-type resources",
+      summary: "Creates mixed resources",
       acceptsJson: false,
       inputFields: [],
       async run(ctx) {
+        const entityId = ctx.id("asset");
+        await ctx.createEntity({ entity_id: entityId, entity_type: "asset" });
         await ctx.createObject({ object_id: ctx.id("object-1") });
         await ctx.createObject({ object_id: ctx.id("object-2") });
+        await ctx.createTask({ task_id: ctx.id("task"), entity_id: entityId });
       }
     };
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
-    const objects = store.get(started.id)?.createdResources.filter((resource) => resource.type === "object") ?? [];
+    const resources = store.get(started.id)?.createdResources ?? [];
+    const entity = resources.find((resource) => resource.type === "entity");
+    const task = resources.find((resource) => resource.type === "task");
+    const objects = resources.filter((resource) => resource.type === "object");
     await store.cleanup(started.id);
 
-    expect(core.state.deleted).toEqual([`object:${objects[1]?.id}`, `object:${objects[0]?.id}`]);
+    expect(core.state.deleted).toEqual([`task:${task?.id}`, `object:${objects[1]?.id}`, `object:${objects[0]?.id}`, `entity:${entity?.id}`]);
   });
 
   it("fake sync clients read the revision visible at their sync version", async () => {
@@ -500,6 +506,19 @@ describe("RunStore", () => {
     expect((await reader.entities.get("asset-1")).alias).toBe("old");
     reader.sync.status();
     expect((await reader.entities.get("asset-1")).alias).toBe("new");
+  });
+
+  it("fake sync writers immediately see their own mutations", async () => {
+    const core = createFakeAtlasCore();
+    const writer = core.factory({ sync: "all" });
+    await writer.sync.start();
+
+    await writer.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: "created" });
+    expect((await writer.entities.get("asset-1")).alias).toBe("created");
+    await writer.entities.update("asset-1", { alias: "updated" });
+    expect((await writer.entities.get("asset-1")).alias).toBe("updated");
+    await writer.entities.delete("asset-1");
+    await expect(writer.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
   });
 
   it("fake sync deletion snapshots stay deleted after resource recreation", async () => {
@@ -623,6 +642,31 @@ describe("RunStore", () => {
     await store.cleanup(started.id);
 
     expect(replayed).toContain("Cleanup complete");
+  });
+
+  it("clears live subscribers after terminal status", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "terminal-live-subscribe",
+      name: "Terminal live subscribe",
+      summary: "Creates a cleanup target after a short wait",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createObject({ object_id: ctx.id("object") });
+        await ctx.wait(20);
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    const messages: string[] = [];
+    store.subscribe(started.id, (event) => messages.push(event.message));
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    await store.cleanup(started.id);
+
+    expect(messages).toContain("Run completed");
+    expect(messages).not.toContain("Cleanup complete");
   });
 
   it("rejects overly deep structured event data before storing the log event", async () => {
