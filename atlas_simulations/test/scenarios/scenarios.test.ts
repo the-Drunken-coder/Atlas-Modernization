@@ -17,7 +17,9 @@ describe("v1 scenarios", () => {
       });
       const run = store.start(scenario, parsed.input);
       await vi.waitFor(() => expect(store.get(run.id)?.status).toBe("completed"), { timeout: 5000 });
-      expect(store.get(run.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
+      const assertions = store.get(run.id)?.assertions ?? [];
+      expect(assertions.length).toBeGreaterThan(0);
+      expect(assertions.every((assertion) => assertion.passed)).toBe(true);
       expect(core.state.entities.size + core.state.objects.size + core.state.tasks.size).toBeGreaterThan(0);
     } finally {
       vi.useRealTimers();

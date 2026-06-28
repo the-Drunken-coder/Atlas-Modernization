@@ -221,6 +221,7 @@ textarea {
 }
 
 .status-pill.failed,
+.status-pill.cancelled,
 .status-dot.failed,
 .status-dot.cancelled {
   background: #fff0eb;

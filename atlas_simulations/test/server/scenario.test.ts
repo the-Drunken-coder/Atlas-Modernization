@@ -7,7 +7,7 @@ const scenario: Scenario = {
   summary: "Example scenario",
   acceptsJson: true,
   inputFields: [
-    { key: "count", label: "Count", type: "number", defaultValue: 2, min: 1, max: 4 },
+    { key: "count", label: "Count", type: "number", defaultValue: 2, min: 1, max: 4, step: 1 },
     { key: "name", label: "Name", type: "text", defaultValue: "alpha" },
     { key: "enabled", label: "Enabled", type: "boolean", defaultValue: false }
   ],
@@ -27,5 +27,9 @@ describe("scenario input parsing", () => {
 
   it("rejects numeric input outside field bounds", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 9 } })).toThrow("Count must be at most 4");
+  });
+
+  it("rejects numeric input that does not align to the field step", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2.5 } })).toThrow("Count must align to step 1");
   });
 });
