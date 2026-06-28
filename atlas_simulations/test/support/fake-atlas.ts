@@ -1,5 +1,6 @@
 import {
   AtlasAPIError,
+  type EntityCheckInMinimalTask,
   type EntityCreateRequest,
   type EntityResource,
   type EntityUpdateRequest,
@@ -74,7 +75,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       delete: async (id) => {
         deleteValue(state, state.entities, id, "entity");
       },
-      checkIn: async (id, options) => {
+      checkIn: (async (id, options) => {
         const current = requireActiveValue(state, state.entities, id, "entity");
         const telemetry = options?.telemetry;
         const updated: EntityResource = {
@@ -87,8 +88,21 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           },
           metadata: metadata(++state.version, current.metadata.created_at)
         };
-        return { entity: saveValue(state.entities, id, updated), tasks: [], task_count: 0, task_limit: 10, has_more_tasks: false };
-      }
+        const entity = saveValue(state.entities, id, updated);
+        const taskLimit = options?.limit ?? 10;
+        const statusFilter = new Set<string>(options?.statusFilter ?? ["pending"]);
+        const matchingTasks = visibleValues({ sync: false, running: false, visibleVersion: state.version }, state.tasks, state, "task").filter(
+          (task) => task.entity_id === id && statusFilter.has(task.status)
+        );
+        const tasks = matchingTasks.slice(0, taskLimit);
+        return {
+          entity,
+          tasks: options?.fields === "minimal" ? tasks.map(minimalTask) : tasks,
+          task_count: matchingTasks.length,
+          task_limit: taskLimit,
+          has_more_tasks: matchingTasks.length > taskLimit
+        };
+      }) as AtlasClientLike["entities"]["checkIn"]
     },
     tasks: {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
@@ -167,6 +181,14 @@ function taskFromCreate(request: TaskCreateRequest, version: number): TaskResour
     components: request.components ?? {},
     ...("extra" in request ? { extra: request.extra } : {}),
     metadata: metadata(version)
+  };
+}
+
+function minimalTask(task: TaskResource): EntityCheckInMinimalTask {
+  return {
+    task_id: task.task_id,
+    status: task.status,
+    ...(task.entity_id ? { entity_id: task.entity_id } : {})
   };
 }
 

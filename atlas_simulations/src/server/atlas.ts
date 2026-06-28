@@ -34,20 +34,19 @@ export function isNotFoundError(error: unknown): boolean {
 
 function abortableFetch(signal: AbortSignal): typeof fetch {
   return async (input, init = {}) => {
-    const upstreamSignal = init.signal;
-    if (!upstreamSignal) return await fetch(input, { ...init, signal });
+    const upstreamSignals = [signal, requestSignal(input), init.signal].filter((value): value is AbortSignal => value !== undefined);
     const controller = new AbortController();
     const abort = () => controller.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    upstreamSignal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted || upstreamSignal.aborted) {
-      abort();
-    }
+    for (const upstreamSignal of upstreamSignals) upstreamSignal.addEventListener("abort", abort, { once: true });
+    if (upstreamSignals.some((upstreamSignal) => upstreamSignal.aborted)) abort();
     try {
       return await fetch(input, { ...init, signal: controller.signal });
     } finally {
-      signal.removeEventListener("abort", abort);
-      upstreamSignal.removeEventListener("abort", abort);
+      for (const upstreamSignal of upstreamSignals) upstreamSignal.removeEventListener("abort", abort);
     }
   };
+}
+
+function requestSignal(input: Parameters<typeof fetch>[0]): AbortSignal | undefined {
+  return input instanceof Request ? input.signal : undefined;
 }

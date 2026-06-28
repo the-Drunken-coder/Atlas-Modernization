@@ -10,6 +10,8 @@ const MAX_EVENTS_PER_RUN = 500;
 const MAX_EVENT_HISTORY_BYTES_PER_RUN = 1_000_000;
 const MAX_CREATED_RESOURCES_PER_RUN = 1_000;
 const MAX_ASSERTIONS_PER_RUN = 1_000;
+const MAX_ASSERTION_HISTORY_BYTES_PER_RUN = 500_000;
+const MAX_ASSERTION_FIELD_BYTES = 8_000;
 const MAX_EVENT_DATA_DEPTH = 200;
 const MAX_EVENT_DATA_NODES = 10_000;
 const MAX_EVENT_DATA_STRING_BYTES = 200_000;
@@ -133,9 +135,16 @@ export class RunStore {
     let cleanupFailure: unknown;
     for (const resource of cleanupOrder(run.createdResources)) {
       try {
-        if (resource.type === "task") await client.tasks.delete(resource.id);
-        if (resource.type === "object") await client.objects.delete(resource.id);
-        if (resource.type === "entity") await client.entities.delete(resource.id);
+        const resourceType = resource.type as string;
+        if (resourceType === "task") {
+          await client.tasks.delete(resource.id);
+        } else if (resourceType === "object") {
+          await client.objects.delete(resource.id);
+        } else if (resourceType === "entity") {
+          await client.entities.delete(resource.id);
+        } else {
+          throw new Error(`Unsupported cleanup resource type: ${resourceType}`);
+        }
         this.emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
       } catch (error) {
         if (isNotFoundError(error)) {
@@ -264,8 +273,8 @@ export class RunStore {
     if (run.assertions.length >= MAX_ASSERTIONS_PER_RUN) {
       throw new Error(`Simulation can record at most ${MAX_ASSERTIONS_PER_RUN} assertions`);
     }
-    const boundedName = boundedEventMessage(name);
-    const boundedMessage = message === undefined ? undefined : boundedEventMessage(message);
+    const boundedName = boundedAssertionText(name);
+    const boundedMessage = message === undefined ? undefined : boundedAssertionText(message);
     const assertion: AssertionResult = {
       id: `assert-${run.assertions.length + 1}`,
       name: boundedName,
@@ -273,6 +282,9 @@ export class RunStore {
       ...(boundedMessage ? { message: boundedMessage } : {}),
       timestamp: timestamp()
     };
+    if (assertionHistoryBytes(run.assertions) + assertionBytes(assertion) > MAX_ASSERTION_HISTORY_BYTES_PER_RUN) {
+      throw new Error(`Simulation can store at most ${MAX_ASSERTION_HISTORY_BYTES_PER_RUN} bytes of assertion history`);
+    }
     run.assertions.push(cloneValue(assertion));
     this.emit(run, {
       type: "assertion",
@@ -364,6 +376,14 @@ function eventHistoryBytes(events: RunEvent[]): number {
   return events.reduce((total, event) => total + Buffer.byteLength(JSON.stringify(event), "utf8"), 0);
 }
 
+function assertionHistoryBytes(assertions: AssertionResult[]): number {
+  return assertions.reduce((total, assertion) => total + assertionBytes(assertion), 0);
+}
+
+function assertionBytes(assertion: AssertionResult): number {
+  return Buffer.byteLength(JSON.stringify(assertion), "utf8");
+}
+
 function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {
   state.nodes += 1;
   if (state.nodes > MAX_EVENT_DATA_NODES) {
@@ -409,8 +429,16 @@ function addEventDataStringBytes(value: string, state: { stringBytes: number }):
 }
 
 function boundedEventMessage(message: string): string {
-  if (Buffer.byteLength(message, "utf8") <= MAX_EVENT_DATA_STRING_BYTES) return message;
-  const budget = MAX_EVENT_DATA_STRING_BYTES - Buffer.byteLength(EVENT_MESSAGE_TRUNCATION_SUFFIX, "utf8");
+  return boundedText(message, MAX_EVENT_DATA_STRING_BYTES);
+}
+
+function boundedAssertionText(message: string): string {
+  return boundedText(message, MAX_ASSERTION_FIELD_BYTES);
+}
+
+function boundedText(message: string, maxBytes: number): string {
+  if (Buffer.byteLength(message, "utf8") <= maxBytes) return message;
+  const budget = maxBytes - Buffer.byteLength(EVENT_MESSAGE_TRUNCATION_SUFFIX, "utf8");
   let bytes = 0;
   let result = "";
   for (const char of message) {
@@ -453,8 +481,12 @@ function cleanupOrder(resources: CreatedResource[]): CreatedResource[] {
   const order: Record<CreatedResource["type"], number> = { task: 0, object: 1, entity: 2 };
   return resources
     .map((resource, index) => ({ resource, index }))
-    .sort((a, b) => order[a.resource.type] - order[b.resource.type] || b.index - a.index)
+    .sort((a, b) => cleanupRank(a.resource, order) - cleanupRank(b.resource, order) || b.index - a.index)
     .map(({ resource }) => resource);
+}
+
+function cleanupRank(resource: CreatedResource, order: Record<CreatedResource["type"], number>): number {
+  return order[resource.type] ?? 3;
 }
 
 function runId(): string {

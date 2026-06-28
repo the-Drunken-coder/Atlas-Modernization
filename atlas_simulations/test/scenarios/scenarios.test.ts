@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RunStore } from "../../src/server/run-store.js";
 import { scenarios } from "../../src/server/scenario-registry.js";
 import { parseStartRequest } from "../../src/server/scenario.js";
-import { point } from "../../src/scenarios/helpers.js";
+import { numberInput, point } from "../../src/scenarios/helpers.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("v1 scenarios", () => {
@@ -36,5 +36,10 @@ describe("v1 scenarios", () => {
   it("rejects invalid point coordinates", () => {
     expect(() => point(181, 0)).toThrow("longitude must be between -180 and 180");
     expect(() => point(0, -91)).toThrow("latitude must be between -90 and 90");
+  });
+
+  it("rejects non-finite scenario number inputs", () => {
+    expect(() => numberInput({ fields: { tickMs: Number.NaN } }, "tickMs")).toThrow("tickMs must be a finite number");
+    expect(() => numberInput({ fields: { tickMs: Number.POSITIVE_INFINITY } }, "tickMs")).toThrow("tickMs must be a finite number");
   });
 });

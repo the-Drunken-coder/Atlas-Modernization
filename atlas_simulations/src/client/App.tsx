@@ -38,6 +38,7 @@ export function App() {
   }, []);
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
+  const hasRunningRuns = useMemo(() => runs.some((run) => run.status === "running"), [runs]);
 
   useEffect(() => {
     currentRunIdRef.current = currentRun?.id;
@@ -50,10 +51,10 @@ export function App() {
   }, [selected]);
 
   useEffect(() => {
-    if (!runs.some((run) => run.status === "running")) return;
+    if (!hasRunningRuns) return;
     const interval = window.setInterval(() => void refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
     return () => window.clearInterval(interval);
-  }, [runs]);
+  }, [hasRunningRuns]);
 
   async function refreshHealth() {
     try {
@@ -585,7 +586,8 @@ function parseRunEvent(value: unknown): RunEvent {
       if (value.status === "running" || value.status === "completed" || value.status === "failed" || value.status === "cancelled") return value as RunEvent;
       break;
     case "log":
-      return value as RunEvent;
+      if (value.level === undefined || isRunEventLevel(value.level)) return value as RunEvent;
+      break;
     case "assertion":
       if (isRecord(value.assertion) && typeof value.assertion.id === "string" && typeof value.assertion.name === "string" && typeof value.assertion.passed === "boolean" && typeof value.assertion.timestamp === "string") return value as RunEvent;
       break;
@@ -604,6 +606,10 @@ function parseRunEvent(value: unknown): RunEvent {
 
 function isCreatedResource(value: unknown): boolean {
   return isRecord(value) && (value.type === "entity" || value.type === "task" || value.type === "object") && typeof value.id === "string";
+}
+
+function isRunEventLevel(value: unknown): boolean {
+  return value === "info" || value === "warn" || value === "error";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

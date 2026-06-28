@@ -3,8 +3,8 @@ import type { ScenarioInput } from "../server/scenario.js";
 
 export function numberInput(input: ScenarioInput, key: string): number {
   const value = input.fields[key];
-  if (typeof value !== "number") {
-    throw new Error(`${key} must be a number`);
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${key} must be a finite number`);
   }
   return value;
 }

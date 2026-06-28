@@ -78,6 +78,29 @@ describe("RunStore", () => {
     expect(store.get(started.id)?.lastError).toBe("Run completed with failed assertions");
   });
 
+  it("fails runs that exceed the assertion history byte cap", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "assertion-byte-cap",
+      name: "Assertion byte cap",
+      summary: "Records oversized assertion history",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        for (let index = 0; index < 40; index += 1) {
+          ctx.assert("x".repeat(8_100), true, "y".repeat(8_100));
+        }
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+    expect(store.get(started.id)?.lastError).toContain("assertion history");
+    expect(store.get(started.id)!.assertions.length).toBeLessThan(40);
+  });
+
   it("marks the run failed when sync teardown fails", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore((options) => {
@@ -300,6 +323,28 @@ describe("RunStore", () => {
     expect(cleanupStopCalls).toBe(2);
     expect(core.state.deleted).toEqual(deletedAfterFailure);
     expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
+  });
+
+  it("does not mark unsupported cleanup resource types as deleted", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "unsupported-cleanup",
+      name: "Unsupported cleanup",
+      summary: "Tracks an unsupported resource type",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.track({ type: "track", id: ctx.id("track") } as unknown as Parameters<typeof ctx.track>[0]);
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+    await expect(store.cleanup(started.id)).rejects.toThrow("Unsupported cleanup resource type: track");
+    expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "Unsupported cleanup resource type: track" });
+    expect(store.events(started.id).some((event) => event.type === "cleanup" && event.message.includes("Deleted track"))).toBe(false);
   });
 
   it("cleans same-type resources from newest to oldest", async () => {
