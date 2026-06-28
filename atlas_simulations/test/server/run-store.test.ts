@@ -600,7 +600,7 @@ describe("RunStore", () => {
     expect(events.at(-1)).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
   });
 
-  it("does not retain subscribers added after a run is terminal", async () => {
+  it("keeps subscribers added after completion until cleanup finishes", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
     const scenario: Scenario = {
@@ -618,11 +618,9 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
     const replayed: string[] = [];
     store.subscribe(started.id, (event) => replayed.push(event.message));
-    const replayCount = replayed.length;
     await store.cleanup(started.id);
 
-    expect(replayed).toHaveLength(replayCount);
-    expect(replayed).not.toContain("Cleanup complete");
+    expect(replayed).toContain("Cleanup complete");
   });
 
   it("rejects overly deep structured event data before storing the log event", async () => {

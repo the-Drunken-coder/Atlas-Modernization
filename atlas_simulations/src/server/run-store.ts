@@ -191,7 +191,7 @@ export class RunStore {
         return () => undefined;
       }
     }
-    if (run.status !== "running") return () => undefined;
+    if (run.cleaned) return () => undefined;
     run.subscribers.add(subscriber);
     return () => run.subscribers.delete(subscriber);
   }

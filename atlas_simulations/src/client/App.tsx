@@ -152,11 +152,12 @@ export function App() {
   }
 
   function activateRun(run: RunSummary) {
+    const needsCleanupStream = cleanupStreamRunIdRef.current === run.id && !run.cleaned;
     currentRunIdRef.current = run.id;
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
-      if (run.status === "running") {
-        if (activeRunIdRef.current !== run.id) connectEvents(run.id);
+      if (run.status === "running" || needsCleanupStream) {
+        if (activeRunIdRef.current !== run.id) connectEvents(run.id, { preserveCleanup: needsCleanupStream });
       } else if (activeRunIdRef.current === run.id && cleanupStreamRunIdRef.current !== run.id) {
         closeActiveEventSource({ preserveCleanup: true });
       }
@@ -164,8 +165,8 @@ export function App() {
     }
     setEvents(eventsByRunIdRef.current.get(run.id) ?? []);
     setCurrentRun(run);
-    if (run.status === "running") {
-      connectEvents(run.id);
+    if (run.status === "running" || needsCleanupStream) {
+      connectEvents(run.id, { preserveCleanup: needsCleanupStream });
     } else {
       closeActiveEventSource({ preserveCleanup: true });
     }
@@ -178,10 +179,10 @@ export function App() {
     closeActiveEventSource({ preserveCleanup: true });
   }
 
-  function connectEvents(runId: string) {
-    closeActiveEventSource();
+  function connectEvents(runId: string, options: { preserveCleanup?: boolean } = {}) {
+    closeActiveEventSource({ preserveCleanup: options.preserveCleanup });
     activeRunIdRef.current = runId;
-    cleanupStreamRunIdRef.current = undefined;
+    if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
     eventSourceRef.current = source;
     const closeSource = () => {
