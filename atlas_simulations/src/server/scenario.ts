@@ -10,6 +10,8 @@ import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js
 type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
 
 const MAX_JSON_INPUT_DEPTH = 200;
+const MAX_JSON_INPUT_BYTES = 200_000;
+const MAX_JSON_INPUT_NODES = 10_000;
 
 export type ScenarioInput = {
   fields: Record<string, string | number | boolean>;
@@ -247,6 +249,9 @@ function parseBoolean(field: ScenarioInputField, value: unknown): boolean {
 function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
   const trimmed = raw?.trim();
   if (!trimmed) return {};
+  if (Buffer.byteLength(trimmed, "utf8") > MAX_JSON_INPUT_BYTES) {
+    throw new Error(`JSON input must be at most ${MAX_JSON_INPUT_BYTES} bytes`);
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
@@ -257,7 +262,11 @@ function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
   return { json: parsed };
 }
 
-function assertJSONValue(value: unknown, depth = 0): asserts value is JSONValue {
+function assertJSONValue(value: unknown, depth = 0, state = { nodes: 0 }): asserts value is JSONValue {
+  state.nodes += 1;
+  if (state.nodes > MAX_JSON_INPUT_NODES) {
+    throw new Error(`JSON input must contain at most ${MAX_JSON_INPUT_NODES} values`);
+  }
   if (depth > MAX_JSON_INPUT_DEPTH) {
     throw new Error(`JSON input must be nested at most ${MAX_JSON_INPUT_DEPTH} levels`);
   }
@@ -267,11 +276,11 @@ function assertJSONValue(value: unknown, depth = 0): asserts value is JSONValue 
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) assertJSONValue(item, depth + 1);
+    for (const item of value) assertJSONValue(item, depth + 1, state);
     return;
   }
   if (isRecord(value)) {
-    for (const item of Object.values(value)) assertJSONValue(item, depth + 1);
+    for (const item of Object.values(value)) assertJSONValue(item, depth + 1, state);
     return;
   }
   throw new Error("JSON input must be JSON-serializable");

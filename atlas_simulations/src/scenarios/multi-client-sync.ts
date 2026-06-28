@@ -55,8 +55,8 @@ const multiClientSync: Scenario = {
       }
 
       const writerSnapshot = await snapshotVersions(ctx.client, ids);
-      const settleDeadline = Date.now() + settleMs;
-      for (const [readerIndex, reader] of readers.entries()) {
+      await Promise.all(readers.map(async (reader, readerIndex) => {
+        const settleDeadline = Date.now() + settleMs;
         const seen = await waitForResources(ctx, reader, ids, settleDeadline);
         const readerSnapshot = await snapshotVersions(reader, ids);
         const status = reader.sync.status();
@@ -68,7 +68,7 @@ const multiClientSync: Scenario = {
         );
         ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
         ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
-      }
+      }));
     } finally {
       for (const reader of readers) {
         try {

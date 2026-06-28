@@ -124,6 +124,7 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders({ "Content-Type": "application/json" }),
       body: "x".repeat(1_000_001)
     });
+    await expectChunkedStatus(`${baseUrl}/api/runs`, 413, ["x".repeat(500_001), "x".repeat(500_001)], mutationHeaders({ "Content-Type": "application/json" }));
     await expectStatus(`${baseUrl}/api/runs/missing/events`, 404);
     await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST", headers: mutationHeaders() });
     await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST", headers: mutationHeaders() });
@@ -218,6 +219,35 @@ async function requestStatusWithHost(url: string, host: string): Promise<number>
       }
     );
     request.on("error", reject);
+    request.end();
+  });
+}
+
+async function expectChunkedStatus(url: string, status: number, chunks: string[], headers: Record<string, string>): Promise<void> {
+  const target = new URL(url);
+  await new Promise<void>((resolve, reject) => {
+    const request = httpRequest(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "POST",
+        headers
+      },
+      (response) => {
+        response.resume();
+        response.on("end", () => {
+          const actual = response.statusCode ?? 0;
+          if (actual === status) {
+            resolve();
+            return;
+          }
+          reject(new Error(`Expected ${status}, received ${actual}`));
+        });
+      }
+    );
+    request.on("error", reject);
+    for (const chunk of chunks) request.write(chunk);
     request.end();
   });
 }

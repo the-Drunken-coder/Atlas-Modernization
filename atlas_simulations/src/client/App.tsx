@@ -101,11 +101,17 @@ export function App() {
   function activateRun(run: RunSummary) {
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
+      if (run.status === "running" && activeRunIdRef.current !== run.id) connectEvents(run.id);
+      if (run.status !== "running") closeActiveEventSource();
       return;
     }
     setEvents([]);
     setCurrentRun(run);
-    connectEvents(run.id);
+    if (run.status === "running") {
+      connectEvents(run.id);
+    } else {
+      closeActiveEventSource();
+    }
   }
 
   function clearRunSelection() {
@@ -132,6 +138,7 @@ export function App() {
       setEvents((current) => [...current, event].slice(-MAX_CLIENT_EVENTS));
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
+      if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
       if (event.type === "cleanup" && !event.resource) closeSource();
     };
     source.onerror = () => {
@@ -148,6 +155,7 @@ export function App() {
       const updatedRun = await stopRun(targetRunId);
       upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
+      if (isTerminalStatus(updatedRun.status)) closeActiveEventSource();
       await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);
@@ -166,6 +174,7 @@ export function App() {
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
+      if (updatedRun.cleaned) closeActiveEventSource();
       await refreshRunsBestEffort();
     } catch (errorValue) {
       captureError(errorValue);

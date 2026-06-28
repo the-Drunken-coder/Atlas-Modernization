@@ -45,6 +45,18 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: deepJson })).toThrow("JSON input must be nested at most 200 levels");
   });
 
+  it("rejects oversized JSON input before parsing", () => {
+    const largeJson = JSON.stringify("x".repeat(200_000));
+
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: largeJson })).toThrow("JSON input must be at most 200000 bytes");
+  });
+
+  it("rejects JSON input with too many values", () => {
+    const wideJson = JSON.stringify(Array.from({ length: 10_001 }, () => null));
+
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: wideJson })).toThrow("JSON input must contain at most 10000 values");
+  });
+
   it("rejects numeric input outside field bounds", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 9 } })).toThrow("Count must be at most 4");
   });
