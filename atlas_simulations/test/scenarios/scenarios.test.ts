@@ -20,6 +20,7 @@ describe("v1 scenarios", () => {
       const assertions = store.get(run.id)?.assertions ?? [];
       expect(assertions.length).toBeGreaterThan(0);
       expect(assertions.every((assertion) => assertion.passed)).toBe(true);
+      await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
     } finally {
       vi.useRealTimers();
     }

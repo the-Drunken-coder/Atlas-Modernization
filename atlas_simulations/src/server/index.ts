@@ -114,7 +114,7 @@ async function handleRequest(
     sendJSON(response, 405, { message: "Method not allowed" });
     return;
   }
-  serveStatic(response, config.packageRoot, url.pathname);
+  serveStatic(response, config.packageRoot, url.pathname, request.method === "HEAD");
 }
 
 async function handleRunRoute(
@@ -319,23 +319,28 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
-function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string): void {
+function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string, headOnly = false): void {
   const staticRoot = path.join(packageRoot, "dist/client");
   const target = safeStaticPath(staticRoot, requestPath);
   if (target === "invalid-encoding") {
     response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Request path must use valid URL encoding");
+    response.end(headOnly ? undefined : "Request path must use valid URL encoding");
     return;
   }
   if (target === "invalid-path") {
     response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Request path must stay inside the client root");
+    response.end(headOnly ? undefined : "Request path must stay inside the client root");
     return;
   }
   const file = target && existsSync(target) && statSync(target).isFile() ? target : path.join(staticRoot, "index.html");
   if (!existsSync(file)) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
+    response.end(headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
+    return;
+  }
+  response.writeHead(200, { "Content-Type": contentType(file) });
+  if (headOnly) {
+    response.end();
     return;
   }
   const stream = createReadStream(file);
@@ -346,7 +351,6 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     }
     response.destroy(error);
   });
-  response.writeHead(200, { "Content-Type": contentType(file) });
   stream.pipe(response);
 }
 

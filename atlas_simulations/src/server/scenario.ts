@@ -109,21 +109,21 @@ export function createScenarioContext(args: {
     track: args.track,
     createEntity: async (entity) => {
       throwIfCancelled();
-      const created = await abortable(client.entities.create(entity), args.signal);
+      const created = await client.entities.create(entity);
       args.track({ type: "entity", id: created.entity_id });
       throwIfCancelled();
       return created;
     },
     createTask: async (task) => {
       throwIfCancelled();
-      const created = await abortable(client.tasks.create(task), args.signal);
+      const created = await client.tasks.create(task);
       args.track({ type: "task", id: created.task_id });
       throwIfCancelled();
       return created;
     },
     createObject: async (object) => {
       throwIfCancelled();
-      const created = await abortable(client.objects.create(object), args.signal);
+      const created = await client.objects.create(object);
       args.track({ type: "object", id: created.object_id });
       throwIfCancelled();
       return created;
@@ -231,16 +231,6 @@ function waitFor(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     }, ms);
     signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-  });
-}
-
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new Error("Simulation cancelled"));
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(new Error("Simulation cancelled"));
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
 }

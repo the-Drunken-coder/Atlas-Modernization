@@ -103,7 +103,14 @@ export class RunStore {
   }
 
   private async performCleanup(run: RunRecord): Promise<RunSummary> {
-    const client = this.clientFactory({ sync: false });
+    let client: AtlasClientLike;
+    try {
+      client = this.clientFactory({ sync: false });
+    } catch (error) {
+      run.cleanupError = errorMessage(error);
+      this.emit(run, { type: "error", level: "error", message: run.cleanupError });
+      throw error;
+    }
     for (const resource of cleanupOrder(run.createdResources)) {
       try {
         if (resource.type === "task") await client.tasks.delete(resource.id);

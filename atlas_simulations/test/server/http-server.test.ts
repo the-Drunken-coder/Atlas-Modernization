@@ -106,12 +106,20 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders({ "Content-Type": "application/json" }),
       body: "null"
     });
+    await expectStatus(`${baseUrl}/api/runs`, 413, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: "x".repeat(1_000_001)
+    });
     await expectStatus(`${baseUrl}/api/runs/missing/events`, 404);
     await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST", headers: mutationHeaders() });
     await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST", headers: mutationHeaders() });
     await expectStatus(`${baseUrl}/api/runs/%E0%A4%A/events`, 400);
     await expectStatus(`${baseUrl}/%E0%A4%A`, 400);
     await expectStatus(`${baseUrl}/..%2fpackage.json`, 400);
+    const head = await fetch(`${baseUrl}/`, { method: "HEAD" });
+    expect([200, 404]).toContain(head.status);
+    expect(await head.text()).toBe("");
     await expectStatus(`${baseUrl}/`, 405, { method: "POST" });
   });
 });

@@ -52,6 +52,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
       create: async (entity) => {
         const created = entityFromCreate(entity, ++state.version);
+        state.tombstones.delete(resourceKey("entity", created.entity_id));
         return saveValue(state.entities, created.entity_id, created);
       },
       update: async (id, patch) => {
@@ -90,6 +91,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
       create: async (task) => {
         const created = taskFromCreate(task, ++state.version);
+        state.tombstones.delete(resourceKey("task", created.task_id));
         return saveValue(state.tasks, created.task_id, created);
       },
       delete: async (id) => {
@@ -104,6 +106,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
       create: async (object) => {
         const created = objectFromCreate(object, ++state.version);
+        state.tombstones.delete(resourceKey("object", created.object_id));
         return saveValue(state.objects, created.object_id, created);
       },
       delete: async (id) => {
