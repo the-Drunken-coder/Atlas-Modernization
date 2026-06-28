@@ -1,6 +1,6 @@
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { isoNow, jsonObject, numberInput, point } from "./helpers.js";
+import { isoNow, jsonObject, numberInput, point, positiveIntegerInput } from "./helpers.js";
 
 const movingAssets: Scenario = {
   id: "moving-assets",
@@ -15,8 +15,8 @@ const movingAssets: Scenario = {
     { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: jsonNumber(-77.0353), min: jsonNumber(-180), max: jsonNumber(179.872), step: jsonNumber(0.0001) }
   ],
   async run(ctx, input) {
-    const assetCount = numberInput(input, "assetCount");
-    const ticks = numberInput(input, "ticks");
+    const assetCount = positiveIntegerInput(input, "assetCount");
+    const ticks = positiveIntegerInput(input, "ticks");
     const tickMs = numberInput(input, "tickMs");
     const startLatitude = numberInput(input, "startLatitude");
     const startLongitude = numberInput(input, "startLongitude");

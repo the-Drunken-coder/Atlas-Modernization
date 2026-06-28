@@ -74,6 +74,13 @@ describe("loadConfig", () => {
 
     expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBe("abc 'quoted' key");
   });
+
+  it("rejects malformed quoted .env values", () => {
+    const packageRoot = tempPackageRoot();
+    writeFileSync(path.join(packageRoot, ".env"), 'ATLAS_BASE_URL="https://atlascommandapi.org"junk\n');
+
+    expect(() => loadConfig({ env: {}, packageRoot })).toThrow("Invalid quoted value in .env");
+  });
 });
 
 function tempPackageRoot(): string {

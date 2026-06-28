@@ -224,7 +224,7 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
 }
 
 function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
-  const values: Record<string, string | number | boolean> = {};
+  const values = Object.create(null) as Record<string, string | number | boolean>;
   for (const field of fields) {
     const value = Object.prototype.hasOwnProperty.call(raw, field.key) ? raw[field.key] : field.defaultValue;
     if (value === undefined) {

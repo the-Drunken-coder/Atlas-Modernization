@@ -106,10 +106,14 @@ function normalizeEnvValue(value: string): string {
     const quote = trimmed[0];
     for (let index = 1; index < trimmed.length; index += 1) {
       if (trimmed[index] === quote && trimmed[index - 1] !== "\\") {
+        const remainder = trimmed.slice(index + 1).trim();
+        if (remainder && !remainder.startsWith("#")) {
+          throw new Error("Invalid quoted value in .env");
+        }
         return trimmed.slice(0, index + 1);
       }
     }
-    return trimmed;
+    throw new Error("Unterminated quoted value in .env");
   }
   return trimmed.replace(/\s+#.*$/, "").trim();
 }

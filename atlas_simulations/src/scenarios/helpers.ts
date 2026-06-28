@@ -9,6 +9,14 @@ export function numberInput(input: ScenarioInput, key: string): number {
   return value;
 }
 
+export function positiveIntegerInput(input: ScenarioInput, key: string): number {
+  const value = numberInput(input, key);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+  return value;
+}
+
 export function jsonObject(input: ScenarioInput): Record<string, JSONValue> {
   if (input.json === undefined) return {};
   if (!isRecord(input.json)) {

@@ -6,6 +6,7 @@ import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } fr
 type FieldValues = Record<string, string | number | boolean>;
 
 const MAX_CLIENT_EVENTS = 500;
+const ACTIVE_RUN_REFRESH_MS = 2_000;
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | undefined>();
@@ -41,6 +42,12 @@ export function App() {
     setInputs(Object.fromEntries(selected.inputFields.map((field) => [field.key, field.defaultValue])));
     setJsonInput("");
   }, [selected]);
+
+  useEffect(() => {
+    if (!runs.some((run) => run.status === "running")) return;
+    const interval = window.setInterval(() => void refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [runs]);
 
   async function refreshHealth() {
     try {
