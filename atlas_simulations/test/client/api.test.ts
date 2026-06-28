@@ -33,9 +33,9 @@ describe("client API", () => {
     await expect(loadRuns()).rejects.toThrow("Expected run list response");
   });
 
-  it("rejects invalid health and run response shapes at the API boundary", async () => {
+  it("normalizes invalid health responses and rejects invalid run response shapes at the API boundary", async () => {
     stubJSON({ ok: "yes" });
-    await expect(loadHealth()).rejects.toThrow("Expected health response");
+    await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(200), message: "Unexpected health response (200)" });
 
     stubJSON({ run: { id: "missing-fields" } });
     await expect(loadRun(run.id)).rejects.toThrow("Expected run response");
@@ -50,6 +50,12 @@ describe("client API", () => {
     }));
 
     await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(0), message: "connection refused" });
+  });
+
+  it("resolves health as unhealthy for unexpected success bodies", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not json", { status: 200 })));
+
+    await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(200), message: "Unexpected health response (200)" });
   });
 
   it("normalizes transport failures for JSON APIs", async () => {

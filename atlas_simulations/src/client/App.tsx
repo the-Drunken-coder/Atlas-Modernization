@@ -162,19 +162,21 @@ export function App() {
 
   function activateRun(run: RunSummary) {
     const needsCleanupStream = cleanupStreamRunIdRef.current === run.id && !run.cleaned;
+    const cachedEvents = eventsByRunIdRef.current.get(run.id) ?? [];
+    const needsReplayStream = run.status !== "running" && cachedEvents.length === 0;
     currentRunIdRef.current = run.id;
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
-      if (run.status === "running" || needsCleanupStream) {
+      if (run.status === "running" || needsCleanupStream || needsReplayStream) {
         if (activeRunIdRef.current !== run.id) connectEvents(run.id, { preserveCleanup: needsCleanupStream });
       } else if (activeRunIdRef.current === run.id && cleanupStreamRunIdRef.current !== run.id) {
         closeActiveEventSource({ preserveCleanup: true });
       }
       return;
     }
-    setEvents(eventsByRunIdRef.current.get(run.id) ?? []);
+    setEvents(cachedEvents);
     setCurrentRun(run);
-    if (run.status === "running" || needsCleanupStream) {
+    if (run.status === "running" || needsCleanupStream || needsReplayStream) {
       connectEvents(run.id, { preserveCleanup: needsCleanupStream });
     } else {
       closeActiveEventSource({ preserveCleanup: true });
@@ -260,8 +262,8 @@ export function App() {
     setError(undefined);
     setMutationPending(true);
     try {
-      if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId);
       cleanupStreamRunIdRef.current = targetRunId;
+      if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId, { preserveCleanup: true });
       setCleanupRunId(targetRunId);
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);

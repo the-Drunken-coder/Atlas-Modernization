@@ -457,7 +457,8 @@ describe("RunStore", () => {
     };
 
     const started = store.start(scenario, { fields: {} });
-    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+    expect(store.get(started.id)?.lastError).toBe("Simulation can track at most 1000 created resources");
     expect(store.get(started.id)?.createdResources).toHaveLength(1_000);
 
     await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });

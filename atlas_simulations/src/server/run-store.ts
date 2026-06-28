@@ -43,6 +43,7 @@ type RunRecord = {
   cleanupPromise?: Promise<RunSummary>;
   sequence: number;
   lastError?: string;
+  trackingError?: string;
   cleanupError?: string;
 };
 
@@ -229,6 +230,10 @@ export class RunStore {
       if (run.controller.signal.aborted) {
         finalStatus = "cancelled";
         finalMessage = "Run cancelled";
+      } else if (run.trackingError) {
+        finalStatus = "failed";
+        finalMessage = run.trackingError;
+        run.lastError = run.trackingError;
       } else if (hasFailedAssertions(run)) {
         finalStatus = "failed";
         finalMessage = "Run completed with failed assertions";
@@ -245,6 +250,7 @@ export class RunStore {
         finalMessage = finalError;
       }
     } finally {
+      if (!run.controller.signal.aborted) run.controller.abort(new Error("Simulation finished"));
       for (const client of run.clients) {
         try {
           client.sync.stop();
@@ -285,7 +291,10 @@ export class RunStore {
     if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {
       if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
         run.overflowCleanupResource ??= cloneValue(tracked);
-        throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
+        const message = `Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`;
+        run.trackingError = message;
+        run.lastError = message;
+        throw new Error(message);
       }
       run.cleanupResources.push(cloneValue(tracked));
     }

@@ -17,15 +17,13 @@ export async function loadHealth(): Promise<HealthResponse> {
   } catch (error) {
     return { ok: false, status: jsonNumber(0), message: transportErrorMessage(error) };
   }
-  const body = await responseJSON(response).catch((error: unknown) => {
-    if (!response.ok) return undefined;
-    throw error;
-  });
+  const body = await responseJSON(response).catch(() => undefined);
   if (!isHealthResponse(body)) {
-    if (!response.ok) {
-      return { ok: false, status: jsonNumber(response.status), message: `Request failed (${response.status})` };
-    }
-    throw new Error(`Expected health response (${response.status})`);
+    return {
+      ok: false,
+      status: jsonNumber(response.status),
+      message: response.ok ? `Unexpected health response (${response.status})` : `Request failed (${response.status})`
+    };
   }
   if (!response.ok) {
     return {

@@ -169,6 +169,7 @@ describe("App", () => {
     const user = userEvent.setup();
     render(<App />);
 
+    await waitFor(() => expect(screen.getByLabelText("Asset count")).toHaveValue(2));
     fireEvent.change(await screen.findByLabelText("JSON input"), { target: { value: "{" } });
     await user.click(screen.getByRole("button", { name: /start/i }));
 
@@ -192,7 +193,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: syncScenario.name }));
 
     expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute("aria-pressed", "true");
-    expect(eventSources).toHaveLength(0);
+    expect(eventSources).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
     await waitFor(() => expect(screen.getAllByText("cleaned").length).toBeGreaterThan(0));
