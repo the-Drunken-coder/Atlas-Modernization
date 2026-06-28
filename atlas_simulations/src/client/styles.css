@@ -190,12 +190,17 @@ h2 {
   font-weight: 650;
 }
 
-input,
+input:not([type="checkbox"]),
 textarea {
   border: 1px solid #c9c6bf;
   border-radius: 6px;
   min-width: 0;
   padding: 8px 9px;
+}
+
+input[type="checkbox"] {
+  min-width: auto;
+  padding: 0;
 }
 
 textarea {

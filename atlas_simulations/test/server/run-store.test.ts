@@ -151,11 +151,42 @@ describe("RunStore", () => {
     };
 
     const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     store.stop(started.id);
 
     await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the run to finish before cleanup");
     release();
-    await vi.waitFor(() => expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true }));
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("cancelled"));
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true });
+  });
+
+  it("retries when a generated run ID collides with an existing run", () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const random = vi.spyOn(Math, "random").mockReturnValueOnce(0.123456).mockReturnValueOnce(0.123456).mockReturnValueOnce(0.654321);
+    const scenario: Scenario = {
+      id: "id-collision",
+      name: "ID collision",
+      summary: "Completes immediately",
+      acceptsJson: false,
+      inputFields: [],
+      async run() {
+        return undefined;
+      }
+    };
+
+    try {
+      const first = store.start(scenario, { fields: {} });
+      const second = store.start(scenario, { fields: {} });
+
+      expect(second.id).not.toBe(first.id);
+      expect(store.get(first.id)).toBeDefined();
+      expect(store.get(second.id)).toBeDefined();
+    } finally {
+      random.mockRestore();
+      dateNow.mockRestore();
+    }
   });
 
   it("shares concurrent cleanup calls for a run", async () => {

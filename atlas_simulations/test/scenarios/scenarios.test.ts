@@ -20,7 +20,13 @@ describe("v1 scenarios", () => {
       const assertions = store.get(run.id)?.assertions ?? [];
       expect(assertions.length).toBeGreaterThan(0);
       expect(assertions.every((assertion) => assertion.passed)).toBe(true);
+      const beforeCleanup = await core.factory().queries.full();
+      expect(beforeCleanup.entities.length + beforeCleanup.tasks.length + beforeCleanup.objects.length).toBeGreaterThan(0);
+
       await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
+      const afterCleanup = await core.factory().queries.full();
+      expect(afterCleanup).toMatchObject({ entities: [], tasks: [], objects: [] });
+      expect(core.state.deleted.length).toBeGreaterThan(0);
     } finally {
       vi.useRealTimers();
     }

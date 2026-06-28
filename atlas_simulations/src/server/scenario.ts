@@ -91,6 +91,7 @@ export function createScenarioContext(args: {
     }
   };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
+    throwIfCancelled();
     const client = args.clientFactory(options);
     args.registerClient(client);
     return client;
@@ -183,7 +184,12 @@ function parseBoolean(field: ScenarioInputField, value: unknown): boolean {
 function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
   const trimmed = raw?.trim();
   if (!trimmed) return {};
-  const parsed = JSON.parse(trimmed);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error("jsonInput must be valid JSON");
+  }
   assertJSONValue(parsed);
   return { json: parsed };
 }

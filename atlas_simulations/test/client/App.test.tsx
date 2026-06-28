@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { startRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
@@ -67,6 +68,7 @@ class FakeEventSource {
 describe("App", () => {
   beforeEach(() => {
     eventSources = [];
+    vi.clearAllMocks();
     vi.stubGlobal("EventSource", FakeEventSource);
   });
 
@@ -79,9 +81,22 @@ describe("App", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Atlas Simulations" })).toBeInTheDocument();
     expect((await screen.findAllByText("Moving assets")).length).toBeGreaterThan(0);
+    const assetCount = screen.getByLabelText("Asset count");
+    const jsonInput = screen.getByLabelText("JSON input");
+    await user.clear(assetCount);
+    await user.type(assetCount, "3");
+    fireEvent.change(jsonInput, { target: { value: '{"note":"ok"}' } });
     await user.click(screen.getByRole("button", { name: /start/i }));
+    await waitFor(() =>
+      expect(vi.mocked(startRun)).toHaveBeenCalledWith({
+        scenarioId: scenario.id,
+        inputs: { assetCount: 3 },
+        jsonInput: '{"note":"ok"}'
+      })
+    );
     await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
     expect(eventSources).toHaveLength(1);
+    expect(eventSources[0].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
     eventSources[0].emit({
       sequence: 1,
       runId: run.id,

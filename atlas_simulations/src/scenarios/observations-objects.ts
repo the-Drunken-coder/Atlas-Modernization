@@ -94,17 +94,26 @@ const observationsObjects: Scenario = {
       if (index < observations - 1) await ctx.wait(tickMs);
     }
 
-    const persistedObservers = await Promise.all(assetIds.map((id) => ctx.client.entities.get(id)));
-    const persistedTracks = await Promise.all(trackIds.map((id) => ctx.client.entities.get(id)));
-    const persistedObjects = await Promise.all(objectIds.map((id) => ctx.client.objects.get(id)));
+    const persistedObservers = fulfilledValues(await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id))));
+    const persistedTracks = fulfilledValues(await Promise.allSettled(trackIds.map((id) => ctx.client.entities.get(id))));
+    const persistedObjects = fulfilledValues(await Promise.allSettled(objectIds.map((id) => ctx.client.objects.get(id))));
     ctx.assert("Observer assets persisted", persistedObservers.length === assetCount, `${persistedObservers.length}/${assetCount} observers persisted`);
-    ctx.assert("Tracks persisted", persistedTracks.every((track) => track.entity_type === "track"), `${persistedTracks.length}/${observations} tracks persisted`);
+    ctx.assert(
+      "Tracks persisted",
+      persistedTracks.length === observations && persistedTracks.every((track) => track.entity_type === "track"),
+      `${persistedTracks.length}/${observations} tracks persisted`
+    );
     ctx.assert(
       "Object references persisted",
-      persistedObjects.every((object, index) => (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])),
+      persistedObjects.length === observations &&
+        persistedObjects.every((object, index) => (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])),
       `${persistedObjects.length}/${observations} objects linked`
     );
   }
 };
 
 export default observationsObjects;
+
+function fulfilledValues<T>(results: Array<PromiseSettledResult<T>>): T[] {
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}

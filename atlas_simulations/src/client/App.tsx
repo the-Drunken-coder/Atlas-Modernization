@@ -43,7 +43,12 @@ export function App() {
   }, [selected]);
 
   async function refreshHealth() {
-    setHealth(await loadHealth());
+    try {
+      setHealth(await loadHealth());
+    } catch (errorValue) {
+      setHealth({ ok: false, message: errorMessage(errorValue) });
+      throw errorValue;
+    }
   }
 
   async function refreshRuns() {
@@ -51,7 +56,7 @@ export function App() {
   }
 
   function captureError(errorValue: unknown) {
-    setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+    setError(errorMessage(errorValue));
   }
 
   async function startSelectedRun() {
@@ -418,4 +423,8 @@ function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSum
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
+}
+
+function errorMessage(errorValue: unknown): string {
+  return errorValue instanceof Error ? errorValue.message : String(errorValue);
 }

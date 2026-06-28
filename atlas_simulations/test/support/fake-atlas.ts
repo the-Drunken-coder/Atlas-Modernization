@@ -56,7 +56,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         return saveValue(state.entities, created.entity_id, created);
       },
       update: async (id, patch) => {
-        const current = requireValue(state.entities, id, "entity");
+        const current = requireActiveValue(state, state.entities, id, "entity");
         const updated: EntityResource = {
           ...current,
           ...("entity_type" in patch && patch.entity_type !== undefined ? { entity_type: patch.entity_type } : {}),
@@ -72,7 +72,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         deleteValue(state, state.entities, id, "entity");
       },
       checkIn: async (id, options) => {
-        const current = requireValue(state.entities, id, "entity");
+        const current = requireActiveValue(state, state.entities, id, "entity");
         const telemetry = options?.telemetry;
         const updated: EntityResource = {
           ...current,
@@ -176,7 +176,7 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
 }
 
 function updateTaskStatus(state: FakeCoreState, id: string, status: string): TaskResource {
-  const current = requireValue(state.tasks, id, "task");
+  const current = requireActiveValue(state, state.tasks, id, "task");
   const updated = { ...current, status, metadata: metadata(++state.version, current.metadata.created_at) };
   return saveValue(state.tasks, id, updated);
 }
@@ -189,6 +189,12 @@ function metadata(version: number, createdAt?: string) {
 function requireValue<T>(values: Map<string, T>, id: string, type: string): T {
   const value = values.get(id);
   if (!value) throw notFound(type, id);
+  return value;
+}
+
+function requireActiveValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): T {
+  const value = requireValue(values, id, type);
+  if (isDeletedAt(state, type, id, state.version)) throw notFound(type, id);
   return value;
 }
 

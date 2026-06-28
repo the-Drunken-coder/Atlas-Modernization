@@ -53,7 +53,7 @@ export class RunStore {
     if (this.runs.size >= MAX_RUNS) {
       throw new Error("Clean up existing simulation runs before starting another run");
     }
-    const id = runId();
+    const id = this.nextRunId();
     const now = timestamp();
     const run: RunRecord = {
       id,
@@ -273,6 +273,14 @@ export class RunStore {
       if (this.runs.size <= targetSize) return;
       if (run.cleaned && run.settled) this.runs.delete(id);
     }
+  }
+
+  private nextRunId(): string {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const id = runId();
+      if (!this.runs.has(id)) return id;
+    }
+    throw new Error("Could not allocate a unique simulation run ID");
   }
 }
 

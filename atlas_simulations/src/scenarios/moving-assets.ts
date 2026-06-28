@@ -78,15 +78,19 @@ const movingAssets: Scenario = {
       if (tick < ticks - 1) await ctx.wait(tickMs);
     }
 
-    const persistedAssets = await Promise.all(assetIds.map((id) => ctx.client.entities.get(id)));
+    const persistedAssets = fulfilledValues(await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id))));
     const finalSpeed = 12 + ticks - 1;
     ctx.assert("Assets persisted", persistedAssets.length === assetCount, `${persistedAssets.length}/${assetCount} assets persisted`);
     ctx.assert(
       "Telemetry persisted",
-      persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
+      persistedAssets.length === assetCount && persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
       `expected final speed ${finalSpeed}`
     );
   }
 };
 
 export default movingAssets;
+
+function fulfilledValues<T>(results: Array<PromiseSettledResult<T>>): T[] {
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}

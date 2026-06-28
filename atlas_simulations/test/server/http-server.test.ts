@@ -49,7 +49,7 @@ describe("simulation HTTP server", () => {
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://atlas.test", port: 0, packageRoot: process.cwd() },
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -84,7 +84,7 @@ describe("simulation HTTP server", () => {
   it("returns client errors for bad request bodies and missing runs", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://atlas.test", port: 0, packageRoot: process.cwd() },
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -132,7 +132,7 @@ describe("simulation HTTP server", () => {
     writeFileSync(path.join(packageRoot, "dist/client/index.html"), "<html><body>Atlas Simulations</body></html>");
 
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://atlas.test", port: 0, packageRoot },
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot },
       store: new RunStore(createFakeAtlasCore().factory)
     });
     const baseUrl = await server.listen();
