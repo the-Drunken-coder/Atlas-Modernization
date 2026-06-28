@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,7 +18,7 @@ import (
 func TestDevelopmentAdminSeedLoginAndLogout(t *testing.T) {
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
-	cleanupAdminRows(t, ctx, pool)
+	cleanupAdminRows(ctx, t, pool)
 
 	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
 	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
@@ -66,7 +67,7 @@ func TestDevelopmentAdminSeedLoginAndLogout(t *testing.T) {
 func TestInvalidLoginFailuresShareUnauthorizedShapeAtServiceBoundary(t *testing.T) {
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
-	cleanupAdminRows(t, ctx, pool)
+	cleanupAdminRows(ctx, t, pool)
 
 	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
 	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
@@ -81,7 +82,7 @@ func TestInvalidLoginFailuresShareUnauthorizedShapeAtServiceBoundary(t *testing.
 		{"admin", "wrong"},
 	} {
 		_, _, err := service.Login(ctx, tc.username, tc.password, "127.0.0.1", time.Now().UTC())
-		if err != ErrInvalidCredentials {
+		if !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("Login(%q) error = %v, want ErrInvalidCredentials", tc.username, err)
 		}
 	}
@@ -115,7 +116,7 @@ func openAdminTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func cleanupAdminRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func cleanupAdminRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `DELETE FROM admin_records`); err != nil {
 		t.Fatalf("cleanup admin records: %v", err)

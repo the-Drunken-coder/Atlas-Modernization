@@ -1,3 +1,4 @@
+// Package commandcatalog loads and validates Atlas Core command definitions.
 package commandcatalog
 
 import (

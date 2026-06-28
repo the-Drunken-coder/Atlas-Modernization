@@ -1,3 +1,4 @@
+// Package admin owns Atlas Core browser account and session authentication.
 package admin
 
 import (
@@ -30,6 +31,8 @@ const (
 	sessionTTL    = 7 * 24 * time.Hour
 	loginWindow   = 15 * time.Minute
 	loginMaxFails = 8
+
+	maxArgon2HashLength = 1<<32 - 1
 )
 
 var (
@@ -120,7 +123,8 @@ func (s *Service) GetAccount(ctx context.Context, id string) (AccountRecord, err
 	if err != nil {
 		return account, err
 	}
-	return account, json.Unmarshal(payload, &account)
+	err = json.Unmarshal(payload, &account)
+	return account, err
 }
 
 func (s *Service) Login(ctx context.Context, username, password, ip string, now time.Time) (string, SessionRecord, error) {
@@ -185,6 +189,7 @@ func (s *Service) AuthenticateRequest(ctx context.Context, r *http.Request) (Aut
 }
 
 func (s *Service) SetSessionCookie(w http.ResponseWriter, token string, expires time.Time) {
+	//nolint:gosec // Cookie is explicitly HttpOnly, Secure, and SameSite-configured.
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    token,
@@ -197,6 +202,7 @@ func (s *Service) SetSessionCookie(w http.ResponseWriter, token string, expires 
 }
 
 func (s *Service) ClearSessionCookie(w http.ResponseWriter) {
+	//nolint:gosec // Clearing cookie preserves HttpOnly, Secure, and SameSite attributes.
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
@@ -209,11 +215,16 @@ func (s *Service) ClearSessionCookie(w http.ResponseWriter) {
 }
 
 func (s *Service) Logout(ctx context.Context, r *http.Request) error {
-	cookie, err := r.Cookie(CookieName)
-	if err != nil {
+	cookie, ok := requestSessionCookie(r)
+	if !ok {
 		return nil
 	}
 	return s.deleteSession(ctx, cookie.Value)
+}
+
+func requestSessionCookie(r *http.Request) (*http.Cookie, bool) {
+	cookie, err := r.Cookie(CookieName)
+	return cookie, err == nil
 }
 
 func (s *Service) storeSession(ctx context.Context, token string, session SessionRecord) error {
@@ -236,7 +247,8 @@ func (s *Service) getSession(ctx context.Context, token string) (SessionRecord, 
 	if err != nil {
 		return session, err
 	}
-	return session, json.Unmarshal(payload, &session)
+	err = json.Unmarshal(payload, &session)
+	return session, err
 }
 
 func (s *Service) deleteSession(ctx context.Context, token string) error {
@@ -290,7 +302,8 @@ func (s *Service) getLoginFailure(ctx context.Context, key string) (LoginFailure
 	if err != nil {
 		return record, err
 	}
-	return record, json.Unmarshal(payload, &record)
+	err = json.Unmarshal(payload, &record)
+	return record, err
 }
 
 func (s *Service) upsertLoginFailure(ctx context.Context, key string, now time.Time) error {
@@ -330,7 +343,8 @@ func getLoginFailureForUpdate(ctx context.Context, tx pgx.Tx, key string) (Login
 	if err != nil {
 		return record, err
 	}
-	return record, json.Unmarshal(payload, &record)
+	err = json.Unmarshal(payload, &record)
+	return record, err
 }
 
 func HashPassword(password string) (PasswordHash, error) {
@@ -364,7 +378,12 @@ func VerifyPassword(password string, stored PasswordHash) bool {
 	if err != nil {
 		return false
 	}
-	actual := argon2.IDKey([]byte(password), salt, stored.Time, stored.MemoryKiB, stored.Parallelism, uint32(len(expected)))
+	if len(expected) > maxArgon2HashLength {
+		return false
+	}
+	//nolint:gosec // bounded by maxArgon2HashLength immediately above.
+	keyLength := uint32(len(expected))
+	actual := argon2.IDKey([]byte(password), salt, stored.Time, stored.MemoryKiB, stored.Parallelism, keyLength)
 	return subtle.ConstantTimeCompare(actual, expected) == 1
 }
 
@@ -411,7 +430,7 @@ func sameSiteMode(cfg *config.Config) http.SameSite {
 
 func developmentPassword() (string, error) {
 	if path := strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD_FILE")); path != "" {
-		// #nosec G304 -- operator-selected local secret file.
+		//nolint:gosec // operator-selected local secret file path.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("read ATLAS_ADMIN_PASSWORD_FILE: %w", err)
