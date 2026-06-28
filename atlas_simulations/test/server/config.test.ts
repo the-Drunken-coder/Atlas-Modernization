@@ -57,6 +57,13 @@ describe("loadConfig", () => {
     expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/api");
     expect(config.atlasApiKey).toBe("abc # not a comment");
   });
+
+  it("unescapes matching quotes inside quoted .env values", () => {
+    const packageRoot = tempPackageRoot();
+    writeFileSync(path.join(packageRoot, ".env"), String.raw`ATLAS_API_KEY='abc \'quoted\' key'`);
+
+    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBe("abc 'quoted' key");
+  });
 });
 
 function tempPackageRoot(): string {

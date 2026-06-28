@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -94,6 +94,7 @@ describe("simulation HTTP server", () => {
       headers: { "Content-Type": "application/json" },
       body: "{}"
     });
+    expect(await requestStatusWithHost(`${baseUrl}/api/scenarios`, "example.test")).toBe(403);
     await expectStatus(`${baseUrl}/api/runs`, 403, {
       method: "POST",
       headers: mutationHeaders({ "Content-Type": "application/json", Origin: "http://example.test" }),
@@ -177,6 +178,27 @@ async function expectStatus(url: string, status: number, init?: RequestInit): Pr
 
 function mutationHeaders(headers: Record<string, string> = {}): Record<string, string> {
   return { "X-Atlas-Simulations-Request": "1", ...headers };
+}
+
+async function requestStatusWithHost(url: string, host: string): Promise<number> {
+  const target = new URL(url);
+  return await new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "GET",
+        headers: { Host: host }
+      },
+      (response) => {
+        response.resume();
+        response.on("end", () => resolve(response.statusCode ?? 0));
+      }
+    );
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 function tempPackageRoot(): string {

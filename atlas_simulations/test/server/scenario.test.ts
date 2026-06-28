@@ -94,4 +94,25 @@ describe("scenario input parsing", () => {
     expect(hashed).toBe("sim-collision-a-b-212u-2");
     expect(ctx.id("a-b")).toBe(hashed);
   });
+
+  it("tracks resources created through exposed clients", async () => {
+    const tracked: Array<{ type: string; id: string }> = [];
+    const ctx = createScenarioContext({
+      runId: "sim-track",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      registerClient: () => undefined
+    });
+
+    await ctx.client.entities.create({ entity_id: ctx.id("asset"), entity_type: "asset" });
+    await ctx.newClient().objects.create({ object_id: ctx.id("object") });
+
+    expect(tracked).toEqual([
+      { type: "entity", id: "sim-track-asset" },
+      { type: "object", id: "sim-track-object" }
+    ]);
+  });
 });

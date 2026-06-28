@@ -387,7 +387,7 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): Fi
       const value = values[field.key];
       if (field.type !== "number" || typeof value !== "string") return [field.key, value ?? field.defaultValue];
       const trimmed = value.trim();
-      if (trimmed === "") return [field.key, value];
+      if (trimmed === "") return [field.key, field.defaultValue];
       const parsed = Number(trimmed);
       return [field.key, Number.isFinite(parsed) ? parsed : value];
     })
@@ -422,7 +422,7 @@ function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSum
 }
 
 function formatTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "medium" }).format(new Date(value));
 }
 
 function errorMessage(errorValue: unknown): string {

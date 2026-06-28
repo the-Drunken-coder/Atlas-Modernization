@@ -9,7 +9,12 @@ import type {
 } from "../shared/types.js";
 
 export async function loadHealth(): Promise<HealthResponse> {
-  return apiJSON<HealthResponse>("/api/health", { allowErrorBody: true });
+  const response = await fetch("/api/health", { headers: { Accept: "application/json" } });
+  const body = await responseJSON(response);
+  if (!isHealthResponse(body)) {
+    throw new Error(`Expected health response (${response.status})`);
+  }
+  return { ...body, status: body.status ?? response.status };
 }
 
 export async function loadScenarios(): Promise<ScenarioDescriptor[]> {
@@ -45,10 +50,9 @@ export async function cleanupRun(id: string): Promise<RunSummary> {
   return response.run;
 }
 
-async function apiJSON<T>(url: string, init?: RequestInit & { allowErrorBody?: boolean }): Promise<T> {
+async function apiJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const method = init?.method?.toUpperCase() ?? "GET";
-  const invalidJSON = Symbol("invalidJSON");
-  const { allowErrorBody: _allowErrorBody, ...fetchInit } = init ?? {};
+  const fetchInit = init ?? {};
   const response = await fetch(url, {
     ...fetchInit,
     headers: {
@@ -58,16 +62,33 @@ async function apiJSON<T>(url: string, init?: RequestInit & { allowErrorBody?: b
       ...fetchInit.headers
     }
   });
-  const body = (await response.json().catch(() => invalidJSON)) as T | { message?: string } | typeof invalidJSON;
-  if (!response.ok && !init?.allowErrorBody) {
+  const body = await responseJSON(response);
+  if (!response.ok) {
     throw new Error(
       typeof body === "object" && body && "message" in body && typeof body.message === "string" && body.message
         ? body.message
         : `Request failed (${response.status})`
     );
   }
+  return body as T;
+}
+
+async function responseJSON(response: Response): Promise<unknown> {
+  const invalidJSON = Symbol("invalidJSON");
+  const body = (await response.json().catch(() => invalidJSON)) as unknown | typeof invalidJSON;
   if (body === invalidJSON) {
     throw new Error(`Expected JSON response (${response.status})`);
   }
-  return body as T;
+  return body;
+}
+
+function isHealthResponse(value: unknown): value is HealthResponse {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    typeof value.ok === "boolean" &&
+    (!("status" in value) || value.status === undefined || typeof value.status === "number") &&
+    (!("message" in value) || value.message === undefined || typeof value.message === "string")
+  );
 }

@@ -93,7 +93,8 @@ function isLoopbackHost(hostname: string): boolean {
 
 function unquote(value: string): string {
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
+    const quote = value[0];
+    return value.slice(1, -1).replace(new RegExp(`\\\\${quote}`, "g"), quote);
   }
   return value;
 }

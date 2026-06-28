@@ -92,7 +92,7 @@ export function createScenarioContext(args: {
   };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
-    const client = args.clientFactory(options);
+    const client = trackClientCreates(args.clientFactory(options), args.track, throwIfCancelled);
     args.registerClient(client);
     return client;
   };
@@ -108,27 +108,48 @@ export function createScenarioContext(args: {
     assert: args.assert,
     wait: (ms) => waitFor(ms, args.signal),
     track: args.track,
-    createEntity: async (entity) => {
-      throwIfCancelled();
-      const created = await client.entities.create(entity);
-      args.track({ type: "entity", id: created.entity_id });
-      throwIfCancelled();
-      return created;
+    createEntity: (entity) => client.entities.create(entity),
+    createTask: (task) => client.tasks.create(task),
+    createObject: (object) => client.objects.create(object)
+  };
+}
+
+function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedResource) => void, throwIfCancelled: () => void): AtlasClientLike {
+  return {
+    entities: {
+      ...client.entities,
+      create: async (entity) => {
+        throwIfCancelled();
+        const created = await client.entities.create(entity);
+        track({ type: "entity", id: created.entity_id });
+        throwIfCancelled();
+        return created;
+      }
     },
-    createTask: async (task) => {
-      throwIfCancelled();
-      const created = await client.tasks.create(task);
-      args.track({ type: "task", id: created.task_id });
-      throwIfCancelled();
-      return created;
+    tasks: {
+      ...client.tasks,
+      create: async (task) => {
+        throwIfCancelled();
+        const created = await client.tasks.create(task);
+        track({ type: "task", id: created.task_id });
+        throwIfCancelled();
+        return created;
+      }
     },
-    createObject: async (object) => {
-      throwIfCancelled();
-      const created = await client.objects.create(object);
-      args.track({ type: "object", id: created.object_id });
-      throwIfCancelled();
-      return created;
-    }
+    objects: {
+      ...client.objects,
+      create: async (object) => {
+        throwIfCancelled();
+        const created = await client.objects.create(object);
+        track({ type: "object", id: created.object_id });
+        throwIfCancelled();
+        return created;
+      }
+    },
+    queries: client.queries,
+    sync: client.sync,
+    watch: (...args) => client.watch(...args),
+    handshake: () => client.handshake()
   };
 }
 
