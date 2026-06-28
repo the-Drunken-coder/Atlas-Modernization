@@ -39,12 +39,20 @@ export type ScenarioDescriptor = {
   acceptsJson: boolean;
 };
 
-export type CreatedResourceType = "entity" | "task" | "object";
+export const CREATED_RESOURCE_TYPES = ["entity", "task", "object"] as const;
+
+export type CreatedResourceType = (typeof CREATED_RESOURCE_TYPES)[number];
 
 export type CreatedResource = {
   type: CreatedResourceType;
   id: string;
 };
+
+const CREATED_RESOURCE_TYPE_SET = new Set<string>(CREATED_RESOURCE_TYPES);
+
+export function isCreatedResource(value: unknown): value is CreatedResource {
+  return isRecord(value) && typeof value.type === "string" && CREATED_RESOURCE_TYPE_SET.has(value.type) && typeof value.id === "string";
+}
 
 export type AssertionResult = {
   id: string;
@@ -102,6 +110,10 @@ export type StartRunRequest = {
 export type StartRunResponse = {
   run: RunSummary;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export type HealthResponse = {
   ok: boolean;

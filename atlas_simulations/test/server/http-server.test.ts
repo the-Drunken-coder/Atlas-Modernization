@@ -24,7 +24,7 @@ afterEach(async () => {
 
 describe("simulation HTTP server", () => {
   it("reports Atlas health success and upstream failures", async () => {
-    const coreUrl = await startCoreHealthServer(200);
+    const coreUrl = await startCoreHealthServer(200, "/api");
     server = createSimulationServer({
       config: { atlasBaseUrl: coreUrl, port: 0, packageRoot: process.cwd() },
       store: new RunStore(createFakeAtlasCore().factory)
@@ -33,11 +33,11 @@ describe("simulation HTTP server", () => {
 
     const healthy = await fetchJSON<{ ok: boolean; status: number }>(`${baseUrl}/api/health`);
     expect(healthy).toMatchObject({ ok: true, status: 200 });
-    expect(coreHealthRequests).toEqual(["/health"]);
+    expect(coreHealthRequests).toEqual(["/api/health"]);
 
     await closeCoreServer();
     coreHealthRequests = [];
-    const failedCoreUrl = await startCoreHealthServer(503);
+    const failedCoreUrl = await startCoreHealthServer(503, "/api");
     await server.close();
     server = createSimulationServer({
       config: { atlasBaseUrl: failedCoreUrl, port: 0, packageRoot: process.cwd() },
@@ -49,7 +49,7 @@ describe("simulation HTTP server", () => {
     expect(unhealthyResponse.status).toBe(503);
     const unhealthy = (await unhealthyResponse.json()) as { ok: boolean; status: number };
     expect(unhealthy).toMatchObject({ ok: false, status: 503 });
-    expect(coreHealthRequests).toEqual(["/health"]);
+    expect(coreHealthRequests).toEqual(["/api/health"]);
   });
 
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
@@ -205,10 +205,11 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function startCoreHealthServer(status: number): Promise<string> {
+async function startCoreHealthServer(status: number, basePath = ""): Promise<string> {
+  const expectedPath = `${basePath}/health`;
   coreServer = createServer((request, response) => {
     coreHealthRequests.push(request.url ?? "");
-    if (request.url !== "/health") {
+    if (request.url !== expectedPath) {
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ ok: false }));
       return;
@@ -218,7 +219,7 @@ async function startCoreHealthServer(status: number): Promise<string> {
   });
   await new Promise<void>((resolve) => coreServer!.listen(0, "127.0.0.1", resolve));
   const address = coreServer.address() as AddressInfo;
-  return `http://127.0.0.1:${address.port}`;
+  return `http://127.0.0.1:${address.port}${basePath}`;
 }
 
 async function closeCoreServer(): Promise<void> {

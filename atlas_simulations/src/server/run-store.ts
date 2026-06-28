@@ -26,6 +26,7 @@ type RunRecord = {
   inputs: Record<string, string | number | boolean>;
   jsonInput?: JSONValue;
   createdResources: CreatedResource[];
+  cleanupResources: CreatedResource[];
   assertions: AssertionResult[];
   events: RunEvent[];
   subscribers: Set<EventSubscriber>;
@@ -76,6 +77,7 @@ export class RunStore {
       inputs: cloneValue(runInput.fields),
       ...(runInput.json === undefined ? {} : { jsonInput: cloneValue(runInput.json) }),
       createdResources: [],
+      cleanupResources: [],
       assertions: [],
       events: [],
       subscribers: new Set(),
@@ -116,7 +118,7 @@ export class RunStore {
   }
 
   private async performCleanup(run: RunRecord): Promise<RunSummary> {
-    if (run.createdResources.length === 0) {
+    if (run.cleanupResources.length === 0) {
       run.cleaned = true;
       run.cleanupError = undefined;
       this.emit(run, { type: "cleanup", message: "Cleanup complete" });
@@ -133,7 +135,7 @@ export class RunStore {
       throw error;
     }
     let cleanupFailure: unknown;
-    for (const resource of cleanupOrder(run.createdResources)) {
+    for (const resource of cleanupOrder(run.cleanupResources)) {
       try {
         const resourceType = resource.type as string;
         if (resourceType === "task") {
@@ -259,12 +261,13 @@ export class RunStore {
   }
 
   private track(run: RunRecord, resource: CreatedResource): void {
-    if (!run.createdResources.some((current) => current.type === resource.type && current.id === resource.id)) {
-      if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
-        throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
-      }
-      const tracked = cloneValue(resource);
-      run.createdResources.push(tracked);
+    const tracked = cloneValue(resource);
+    if (!hasResource(run.cleanupResources, tracked)) {
+      run.cleanupResources.push(cloneValue(tracked));
+    }
+    if (!hasResource(run.createdResources, tracked)) {
+      if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
+      run.createdResources.push(cloneValue(tracked));
       this.emit(run, { type: "resource", resource: tracked, message: `Created ${tracked.type} ${tracked.id}` });
     }
   }
@@ -382,6 +385,10 @@ function assertionHistoryBytes(assertions: AssertionResult[]): number {
 
 function assertionBytes(assertion: AssertionResult): number {
   return Buffer.byteLength(JSON.stringify(assertion), "utf8");
+}
+
+function hasResource(resources: CreatedResource[], resource: CreatedResource): boolean {
+  return resources.some((current) => current.type === resource.type && current.id === resource.id);
 }
 
 function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {

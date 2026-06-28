@@ -1,6 +1,6 @@
 import { Activity, CheckCircle2, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { jsonNumber, type HealthResponse, type RunEvent, type RunSummary, type ScenarioDescriptor, type StartRunRequest } from "../shared/types.js";
+import { isCreatedResource, jsonNumber, type HealthResponse, type RunEvent, type RunSummary, type ScenarioDescriptor, type StartRunRequest } from "../shared/types.js";
 import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } from "./api.js";
 
 type FieldValues = Record<string, string | number | boolean>;
@@ -604,10 +604,6 @@ function parseRunEvent(value: unknown): RunEvent {
   throw new Error("Invalid run event");
 }
 
-function isCreatedResource(value: unknown): boolean {
-  return isRecord(value) && (value.type === "entity" || value.type === "task" || value.type === "object") && typeof value.id === "string";
-}
-
 function isRunEventLevel(value: unknown): boolean {
   return value === "info" || value === "warn" || value === "error";
 }
@@ -644,7 +640,9 @@ function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSum
 }
 
 function formatTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "medium" }).format(new Date(value));
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "medium" }).format(parsed);
 }
 
 function errorMessage(errorValue: unknown): string {

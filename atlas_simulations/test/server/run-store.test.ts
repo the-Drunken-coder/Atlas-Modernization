@@ -347,6 +347,42 @@ describe("RunStore", () => {
     expect(store.events(started.id).some((event) => event.type === "cleanup" && event.message.includes("Deleted track"))).toBe(false);
   });
 
+  it("keeps cleanup ownership after the displayed resource list reaches its cap", async () => {
+    const core = createFakeAtlasCore();
+    const deleted: string[] = [];
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      return {
+        ...client,
+        entities: {
+          ...client.entities,
+          delete: async (id: string) => {
+            deleted.push(id);
+          }
+        }
+      };
+    });
+    const scenario: Scenario = {
+      id: "cleanup-resource-cap",
+      name: "Cleanup resource cap",
+      summary: "Tracks many cleanup resources",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        for (let index = 0; index < 1_005; index += 1) {
+          ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) });
+        }
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    expect(store.get(started.id)?.createdResources).toHaveLength(1_000);
+
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(deleted).toHaveLength(1_005);
+  });
+
   it("cleans same-type resources from newest to oldest", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
@@ -456,6 +492,48 @@ describe("RunStore", () => {
     expect(events).toHaveLength(500);
     expect(events[0]!.sequence).toBeGreaterThan(1);
     expect(events.at(-1)?.message).toBe("Run completed");
+  });
+
+  it("rejects overly deep structured event data before storing the log event", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "deep-event-data",
+      name: "Deep event data",
+      summary: "Emits nested data",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.log("too deep", JSON.parse(`${"[".repeat(202)}null${"]".repeat(202)}`));
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.lastError).toBe("Run event data must be nested at most 200 levels");
+    expect(store.events(started.id).some((event) => event.type === "log" && event.message === "too deep")).toBe(false);
+  });
+
+  it("rejects event data with too many structured values before storing the log event", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "wide-event-data",
+      name: "Wide event data",
+      summary: "Emits wide data",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.log("too wide", Array.from({ length: 10_001 }, () => null));
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.lastError).toBe("Run event data must contain at most 10000 values");
+    expect(store.events(started.id).some((event) => event.type === "log" && event.message === "too wide")).toBe(false);
   });
 
   it("rejects oversized event data before storing the log event", async () => {

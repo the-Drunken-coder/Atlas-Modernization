@@ -154,7 +154,7 @@ describe("App", () => {
       type: "cleanup",
       message: "Cleanup complete"
     });
-    expect(eventSources[1].closed).toBe(true);
+    await waitFor(() => expect(eventSources[1].closed).toBe(true));
   });
 
   it("omits blank JSON input from start requests", async () => {
@@ -209,7 +209,7 @@ describe("App", () => {
       type: "cleanup",
       message: "Cleanup complete"
     });
-    expect(eventSources[0].closed).toBe(true);
+    await waitFor(() => expect(eventSources[0].closed).toBe(true));
   });
 
   it("keeps the stream open after stop until the terminal event arrives", async () => {
@@ -232,7 +232,7 @@ describe("App", () => {
       status: "cancelled",
       message: "Run cancelled"
     });
-    expect(eventSources[0].closed).toBe(true);
+    await waitFor(() => expect(eventSources[0].closed).toBe(true));
   });
 
   it("closes the stream when refresh reports the selected run completed", async () => {

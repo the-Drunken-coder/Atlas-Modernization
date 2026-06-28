@@ -34,7 +34,7 @@ export function isNotFoundError(error: unknown): boolean {
 
 function abortableFetch(signal: AbortSignal): typeof fetch {
   return async (input, init = {}) => {
-    const upstreamSignals = [signal, requestSignal(input), init.signal].filter((value): value is AbortSignal => value !== undefined);
+    const upstreamSignals = [signal, requestSignal(input), init.signal].filter((value): value is AbortSignal => value != null);
     const controller = new AbortController();
     const abort = () => controller.abort();
     for (const upstreamSignal of upstreamSignals) upstreamSignal.addEventListener("abort", abort, { once: true });
