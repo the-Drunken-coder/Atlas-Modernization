@@ -325,6 +325,45 @@ describe("RunStore", () => {
     expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
   });
 
+  it("fails cleanup when a resource delete times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const core = createFakeAtlasCore();
+      const store = new RunStore((options) => {
+        const client = core.factory(options);
+        return {
+          ...client,
+          entities: {
+            ...client.entities,
+            delete: async () => new Promise<void>(() => undefined)
+          }
+        };
+      });
+      const scenario: Scenario = {
+        id: "cleanup-timeout",
+        name: "Cleanup timeout",
+        summary: "Creates one resource",
+        acceptsJson: false,
+        inputFields: [],
+        async run(ctx) {
+          await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
+        }
+      };
+
+      const started = store.start(scenario, { fields: {} });
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+      const cleanupPromise = expect(store.cleanup(started.id)).rejects.toThrow("Timed out deleting entity");
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await cleanupPromise;
+      expect(store.get(started.id)).toMatchObject({ cleaned: false });
+      expect(store.get(started.id)?.lastError).toContain("Timed out deleting entity");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not mark unsupported cleanup resource types as deleted", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
@@ -347,7 +386,7 @@ describe("RunStore", () => {
     expect(store.events(started.id).some((event) => event.type === "cleanup" && event.message.includes("Deleted track"))).toBe(false);
   });
 
-  it("keeps cleanup ownership after the displayed resource list reaches its cap", async () => {
+  it("keeps the overflowing cleanup resource when resource tracking exceeds its cap", async () => {
     const core = createFakeAtlasCore();
     const deleted: string[] = [];
     const store = new RunStore((options) => {
@@ -376,11 +415,12 @@ describe("RunStore", () => {
     };
 
     const started = store.start(scenario, { fields: {} });
-    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+    expect(store.get(started.id)?.lastError).toBe("Simulation can track at most 1000 created resources");
     expect(store.get(started.id)?.createdResources).toHaveLength(1_000);
 
     await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
-    expect(deleted).toHaveLength(1_005);
+    expect(deleted).toHaveLength(1_001);
   });
 
   it("cleans same-type resources from newest to oldest", async () => {

@@ -123,6 +123,20 @@ describe("scenario input parsing", () => {
     expect(ctx.id("a-b")).toBe(hashed);
   });
 
+  it("bounds the readable slug in generated resource IDs", () => {
+    const ctx = createScenarioContext({
+      runId: "sim-long",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: () => undefined,
+      registerClient: () => undefined
+    });
+
+    expect(ctx.id("a".repeat(200))).toMatch(/^sim-long-a{64}-[a-z0-9]+$/);
+  });
+
   it("tracks resources created through exposed clients", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const ctx = createScenarioContext({

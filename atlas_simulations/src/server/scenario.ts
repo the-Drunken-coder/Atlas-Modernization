@@ -12,6 +12,7 @@ type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
 const MAX_JSON_INPUT_DEPTH = 200;
 const MAX_JSON_INPUT_BYTES = 200_000;
 const MAX_JSON_INPUT_NODES = 10_000;
+const MAX_ID_SLUG_LENGTH = 64;
 
 export type ScenarioInput = {
   fields: Record<string, string | number | boolean>;
@@ -389,7 +390,7 @@ function createIdFactory(runId: string): (name: string) => string {
 
 function slug(value: string): string {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return cleaned || "resource";
+  return cleaned.slice(0, MAX_ID_SLUG_LENGTH).replace(/-+$/g, "") || "resource";
 }
 
 function hashName(value: string): string {

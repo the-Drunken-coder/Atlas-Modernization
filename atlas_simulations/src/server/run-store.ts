@@ -12,6 +12,7 @@ const MAX_CREATED_RESOURCES_PER_RUN = 1_000;
 const MAX_ASSERTIONS_PER_RUN = 1_000;
 const MAX_ASSERTION_HISTORY_BYTES_PER_RUN = 500_000;
 const MAX_ASSERTION_FIELD_BYTES = 8_000;
+const CLEANUP_DELETE_TIMEOUT_MS = 10_000;
 const MAX_EVENT_DATA_DEPTH = 200;
 const MAX_EVENT_DATA_NODES = 10_000;
 const MAX_EVENT_DATA_STRING_BYTES = 200_000;
@@ -127,8 +128,9 @@ export class RunStore {
     }
 
     let client: AtlasClientLike;
+    const cleanupController = new AbortController();
     try {
-      client = this.clientFactory({ sync: false });
+      client = this.clientFactory({ sync: false, signal: cleanupController.signal });
     } catch (error) {
       run.cleanupError = errorMessage(error);
       this.emit(run, { type: "error", level: "error", message: run.cleanupError });
@@ -139,11 +141,11 @@ export class RunStore {
       try {
         const resourceType = resource.type as string;
         if (resourceType === "task") {
-          await client.tasks.delete(resource.id);
+          await withCleanupTimeout(client.tasks.delete(resource.id), cleanupController, resource);
         } else if (resourceType === "object") {
-          await client.objects.delete(resource.id);
+          await withCleanupTimeout(client.objects.delete(resource.id), cleanupController, resource);
         } else if (resourceType === "entity") {
-          await client.entities.delete(resource.id);
+          await withCleanupTimeout(client.entities.delete(resource.id), cleanupController, resource);
         } else {
           throw new Error(`Unsupported cleanup resource type: ${resourceType}`);
         }
@@ -264,6 +266,9 @@ export class RunStore {
     const tracked = cloneValue(resource);
     if (!hasResource(run.cleanupResources, tracked)) {
       run.cleanupResources.push(cloneValue(tracked));
+      if (run.cleanupResources.length > MAX_CREATED_RESOURCES_PER_RUN) {
+        throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
+      }
     }
     if (!hasResource(run.createdResources, tracked)) {
       if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
@@ -389,6 +394,23 @@ function assertionBytes(assertion: AssertionResult): number {
 
 function hasResource(resources: CreatedResource[], resource: CreatedResource): boolean {
   return resources.some((current) => current.type === resource.type && current.id === resource.id);
+}
+
+async function withCleanupTimeout(operation: Promise<void>, controller: AbortController, resource: CreatedResource): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`Timed out deleting ${resource.type} ${resource.id}`));
+        }, CLEANUP_DELETE_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {

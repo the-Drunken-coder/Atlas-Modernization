@@ -41,10 +41,9 @@ describe("client API", () => {
 
     await expect(loadScenarios()).resolves.toEqual([scenario]);
     await expect(cleanupRun(run.id)).resolves.toEqual(run);
-    expect(fetchMock).toHaveBeenLastCalledWith(`/api/runs/${encodeURIComponent(run.id)}/cleanup`, expect.objectContaining({
-      method: "POST",
-      headers: expect.any(Headers)
-    }));
+    const [, init] = fetchMock.mock.calls.at(-1)!;
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("X-Atlas-Simulations-Request")).toBe("1");
   });
 });
 
