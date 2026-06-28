@@ -95,7 +95,7 @@ func (s *Service) SeedDevelopmentAdmin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.upsertAccount(ctx, "account:"+defaultUser, AccountRecord{
+	return s.createAccountIfMissing(ctx, "account:"+defaultUser, AccountRecord{
 		Username: defaultUser,
 		Password: hash,
 		Role:     defaultRole,
@@ -103,7 +103,7 @@ func (s *Service) SeedDevelopmentAdmin(ctx context.Context) error {
 	})
 }
 
-func (s *Service) upsertAccount(ctx context.Context, id string, account AccountRecord) error {
+func (s *Service) createAccountIfMissing(ctx context.Context, id string, account AccountRecord) error {
 	payload, err := json.Marshal(account)
 	if err != nil {
 		return err
@@ -111,7 +111,7 @@ func (s *Service) upsertAccount(ctx context.Context, id string, account AccountR
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO admin_records (id, type, json)
 		VALUES ($1, 'account', $2)
-		ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, updated_at = clock_timestamp()
+		ON CONFLICT (id) DO NOTHING
 	`, id, payload)
 	return err
 }
@@ -388,12 +388,6 @@ func VerifyPassword(password string, stored PasswordHash) bool {
 }
 
 func ClientIP(r *http.Request) string {
-	if value := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); value != "" {
-		return strings.TrimSpace(strings.Split(value, ",")[0])
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host

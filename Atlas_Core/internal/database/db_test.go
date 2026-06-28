@@ -166,6 +166,15 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 	}
 }
 
+func TestCoreSchemaDropDDLIncludesAllCoreTables(t *testing.T) {
+	ddl := strings.Join(coreSchemaDropDDL(), "\n")
+	for _, table := range coreSchemaTables {
+		if !strings.Contains(ddl, "DROP TABLE IF EXISTS "+table+" CASCADE") {
+			t.Fatalf("expected drop DDL to include %q, got:\n%s", table, ddl)
+		}
+	}
+}
+
 func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
 	query := &recordingSchemaCheckQuery{
 		tableCount:      len(coreSchemaTables),

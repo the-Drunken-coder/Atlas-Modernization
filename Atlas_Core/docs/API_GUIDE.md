@@ -16,14 +16,14 @@ Atlas Core treats PostgreSQL and the configured MinIO bucket as disposable runti
 
 ### Authentication
 
-Local development usually runs with API auth disabled. When `ENABLE_API_AUTH=true`, every Core route except `GET /health`, `GET /readiness`, and the websocket upgrade path `GET /feed` requires one of:
+Protected Core routes require authentication even when API-key auth is disabled. Local browser development uses the seeded admin session cookie. Machine clients should set `ENABLE_API_AUTH=true` and send one of:
 
 ```text
 X-API-Key: <API_AUTH_KEY>
 Authorization: Bearer <API_AUTH_KEY>
 ```
 
-The `/feed` websocket authenticates with a first JSON message instead of HTTP headers when Core auth is enabled:
+The `/feed` websocket accepts the browser session cookie during upgrade. Machine clients authenticate with a first JSON message when API-key auth is enabled:
 
 ```json
 { "action": "auth", "api_key": "example-api-key" }

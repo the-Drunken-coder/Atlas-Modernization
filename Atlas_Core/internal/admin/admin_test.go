@@ -88,6 +88,44 @@ func TestInvalidLoginFailuresShareUnauthorizedShapeAtServiceBoundary(t *testing.
 	}
 }
 
+func TestDevelopmentAdminSeedDoesNotOverwriteExistingAccount(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
+		t.Fatalf("seed dev admin: %v", err)
+	}
+
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "changed-password")
+	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
+		t.Fatalf("seed dev admin again: %v", err)
+	}
+
+	account, err := service.GetAccount(ctx, "account:admin")
+	if err != nil {
+		t.Fatalf("get seeded account: %v", err)
+	}
+	if !VerifyPassword("password", account.Password) {
+		t.Fatal("expected existing admin password to be preserved")
+	}
+	if VerifyPassword("changed-password", account.Password) {
+		t.Fatal("expected second seed not to overwrite existing admin password")
+	}
+}
+
+func TestClientIPIgnoresSpoofableForwardedHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/login", nil)
+	req.RemoteAddr = "203.0.113.10:4242"
+	req.Header.Set("CF-Connecting-IP", "198.51.100.20")
+	req.Header.Set("X-Forwarded-For", "198.51.100.30, 198.51.100.31")
+
+	if got := ClientIP(req); got != "203.0.113.10" {
+		t.Fatalf("ClientIP() = %q, want remote address", got)
+	}
+}
+
 func openAdminTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicit := adminTestDatabaseURL()

@@ -59,7 +59,7 @@ The development startup path seeds a disposable admin account:
 - password: `password`
 - role: `admin`
 
-This is for development scratch storage only. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core, or otherwise replace/disable the development credential.
+This is for development scratch storage only. Core creates the seeded account only when it is missing, so production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before first startup of a scratch store, or otherwise replace/disable the development credential before exposing Core.
 
 Optional API key auth is controlled by:
 
