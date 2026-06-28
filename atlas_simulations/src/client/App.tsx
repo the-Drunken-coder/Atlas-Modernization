@@ -90,11 +90,15 @@ export function App() {
     }
     setEvents([]);
     setCurrentRun(run);
-    connectEvents(run.id);
+    if (isTerminalStatus(run.status)) {
+      closeActiveEventSource();
+    } else {
+      connectEvents(run.id);
+    }
   }
 
   function connectEvents(runId: string) {
-    eventSourceRef.current?.close();
+    closeActiveEventSource();
     activeRunIdRef.current = runId;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
     eventSourceRef.current = source;
@@ -166,6 +170,11 @@ export function App() {
 
   function closeCurrentEventSource(runId: string) {
     if (activeRunIdRef.current !== runId || !eventSourceRef.current) return;
+    closeActiveEventSource();
+  }
+
+  function closeActiveEventSource() {
+    if (!eventSourceRef.current) return;
     const source = eventSourceRef.current;
     activeRunIdRef.current = undefined;
     eventSourceRef.current = null;

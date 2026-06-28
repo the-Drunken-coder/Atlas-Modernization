@@ -1,59 +1,16 @@
 import {
   AtlasAPIError,
   AtlasClient,
-  type AtlasClientOptions,
-  type AtlasSubscription,
-  type AtlasWatchEvent,
-  type EntityCheckInOptions,
-  type EntityCheckInResponse,
-  type EntityCreateRequest,
-  type EntityResource,
-  type EntityUpdateRequest,
-  type FullDatasetResponse,
-  type ObjectCreateRequest,
-  type ObjectResource,
-  type TaskCompleteOptions,
-  type TaskCreateRequest,
-  type TaskFailOptions,
-  type TaskLifecycleOptions,
-  type TaskResource,
-  type TaskStatus,
-  type TaskStatusOptions
+  type AtlasClientOptions
 } from "../../../atlas_sdk/src/index.js";
 import type { SimulationConfig } from "./config.js";
 
-export type AtlasClientLike = {
-  entities: {
-    get(id: string): Promise<EntityResource>;
-    create(entity: EntityCreateRequest): Promise<EntityResource>;
-    update(id: string, patch: EntityUpdateRequest): Promise<EntityResource>;
-    delete(id: string): Promise<void>;
-    checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
-  };
-  tasks: {
-    get(id: string): Promise<TaskResource>;
-    create(task: TaskCreateRequest): Promise<TaskResource>;
-    delete(id: string): Promise<void>;
-    acknowledge(id: string, options?: TaskLifecycleOptions): Promise<TaskResource>;
-    complete(id: string, options?: TaskCompleteOptions): Promise<TaskResource>;
-    fail(id: string, options?: TaskFailOptions): Promise<TaskResource>;
-    setStatus(id: string, status: TaskStatus, options?: TaskStatusOptions): Promise<TaskResource>;
-  };
-  objects: {
-    get(id: string): Promise<ObjectResource>;
-    create(object: ObjectCreateRequest): Promise<ObjectResource>;
-    delete(id: string): Promise<void>;
-  };
-  queries: {
-    full(): Promise<FullDatasetResponse>;
-  };
-  sync: {
-    start(): Promise<void>;
-    stop(): void;
-    status(): { running: boolean; healthy: boolean; degraded: boolean; lastVersion: number };
-  };
-  watch<T extends EntityResource | TaskResource | ObjectResource>(filter: AtlasSubscription, callback: (value: T | undefined, event: AtlasWatchEvent) => void): () => void;
-  handshake(): Promise<void>;
+export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
+  entities: Pick<AtlasClient["entities"], "get" | "create" | "update" | "delete" | "checkIn">;
+  tasks: Pick<AtlasClient["tasks"], "get" | "create" | "delete" | "acknowledge" | "complete" | "fail" | "setStatus">;
+  objects: Pick<AtlasClient["objects"], "get" | "create" | "delete">;
+  queries: Pick<AtlasClient["queries"], "full">;
+  sync: Pick<AtlasClient["sync"], "start" | "stop" | "status">;
 };
 
 export type ClientMode = false | "all" | "selective";

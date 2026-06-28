@@ -54,6 +54,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     entities: {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
       create: async (entity) => {
+        assertCanCreate(state, state.entities, entity.entity_id, "entity");
         const created = entityFromCreate(entity, ++state.version);
         return saveValue(state.entities, created.entity_id, created);
       },
@@ -92,6 +93,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     tasks: {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
       create: async (task) => {
+        assertCanCreate(state, state.tasks, task.task_id, "task");
         const created = taskFromCreate(task, ++state.version);
         return saveValue(state.tasks, created.task_id, created);
       },
@@ -106,6 +108,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     objects: {
       get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
       create: async (object) => {
+        assertCanCreate(state, state.objects, object.object_id, "object");
         const created = objectFromCreate(object, ++state.version);
         return saveValue(state.objects, created.object_id, created);
       },
@@ -130,7 +133,13 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       },
       status: () => {
         if (clientState.running) clientState.visibleVersion = state.version;
-        return { running: clientState.running, healthy: clientState.running, degraded: false, lastVersion: visibleVersion(state, clientState) };
+        return {
+          running: clientState.running,
+          healthy: clientState.running,
+          degraded: false,
+          lastVersion: visibleVersion(state, clientState),
+          subscriptions: clientState.sync === "all" ? [{ filter: "all" }] : []
+        };
       }
     },
     watch: () => () => undefined,
@@ -202,6 +211,11 @@ function requireActiveValue<T extends VersionedResource>(state: FakeCoreState, v
   return value;
 }
 
+function assertCanCreate<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): void {
+  const current = values.get(id)?.at(-1);
+  if (current && !isDeletedAt(state, type, id, state.version, current.metadata.version)) throw conflict(type, id);
+}
+
 function visibleValue<T extends { metadata: { version: number } }>(
   state: FakeCoreState,
   clientState: FakeClientState,
@@ -249,6 +263,11 @@ function deleteValue<T extends VersionedResource>(state: FakeCoreState, values: 
 function notFound(type: string, id: string): AtlasAPIError {
   const message = `${type} ${id} not found`;
   return new AtlasAPIError(message, 404, { message });
+}
+
+function conflict(type: string, id: string): AtlasAPIError {
+  const message = `${type} ${id} already exists`;
+  return new AtlasAPIError(message, 409, { message });
 }
 
 function saveValue<T extends VersionedResource>(values: ResourceHistory<T>, id: string, value: T): T {

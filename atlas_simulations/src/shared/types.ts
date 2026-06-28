@@ -87,7 +87,7 @@ export type RunSummary = {
 
 export type StartRunRequest = {
   scenarioId: string;
-  inputs?: Record<string, unknown>;
+  inputs?: Record<string, string | number | boolean>;
   jsonInput?: string;
 };
 

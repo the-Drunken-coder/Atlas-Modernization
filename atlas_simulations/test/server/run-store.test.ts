@@ -260,6 +260,16 @@ describe("RunStore", () => {
     expect((await writer.entities.get("asset-1")).alias).toBe("new");
   });
 
+  it("fake core rejects duplicate creates until a resource is deleted", async () => {
+    const core = createFakeAtlasCore();
+    const client = core.factory();
+
+    await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({ status: 409 });
+    await client.entities.delete("asset-1");
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-1" });
+  });
+
   it("evicts cleaned runs before refusing new runs at capacity", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);

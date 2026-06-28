@@ -16,6 +16,11 @@ export type SimulationServer = {
   store: RunStore;
 };
 
+type EventStream = {
+  response: ServerResponse;
+  close(): void;
+};
+
 const MUTATION_HEADER = "x-atlas-simulations-request";
 const UI_SECURITY_HEADERS = {
   "Content-Security-Policy": "frame-ancestors 'none'",
@@ -25,7 +30,7 @@ const UI_SECURITY_HEADERS = {
 export function createSimulationServer(options: { config?: SimulationConfig; store?: RunStore } = {}): SimulationServer {
   const config = options.config ?? loadConfig();
   const store = options.store ?? new RunStore(createAtlasClientFactory(config));
-  const eventStreams = new Set<ServerResponse>();
+  const eventStreams = new Set<EventStream>();
   const server = createServer((request, response) => {
     void handleRequest(request, response, config, store, eventStreams).catch((error) => {
       sendJSON(response, error instanceof RequestBodyError ? error.status : 500, { message: errorMessage(error) });
@@ -48,9 +53,7 @@ export function createSimulationServer(options: { config?: SimulationConfig; sto
       }),
     close: () =>
       new Promise((resolve, reject) => {
-        for (const stream of eventStreams) {
-          if (!stream.writableEnded) stream.end();
-        }
+        for (const stream of [...eventStreams]) stream.close();
         server.close((error) => (error ? reject(error) : resolve()));
       })
   };
@@ -61,7 +64,7 @@ async function handleRequest(
   response: ServerResponse,
   config: SimulationConfig,
   store: RunStore,
-  eventStreams: Set<ServerResponse>
+  eventStreams: Set<EventStream>
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (!hasLoopbackHost(request.headers.host)) {
@@ -127,7 +130,7 @@ async function handleRunRoute(
   store: RunStore,
   runId: string,
   action: string | undefined,
-  eventStreams: Set<ServerResponse>
+  eventStreams: Set<EventStream>
 ): Promise<void> {
   if (request.method === "GET" && action === undefined) {
     const run = store.get(runId);
@@ -189,25 +192,28 @@ async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
   }
 }
 
-function streamRunEvents(response: ServerResponse, store: RunStore, runId: string, eventStreams: Set<ServerResponse>): void {
+function streamRunEvents(response: ServerResponse, store: RunStore, runId: string, eventStreams: Set<EventStream>): void {
   response.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive"
   });
-  eventStreams.add(response);
   try {
     let unsubscribe: (() => void) | undefined;
+    let stream: EventStream | undefined;
     let closeAfterSubscribe = false;
     let closeQueued = false;
     const removeStream = () => {
       unsubscribe?.();
-      eventStreams.delete(response);
+      unsubscribe = undefined;
+      if (stream) eventStreams.delete(stream);
     };
     const close = () => {
       removeStream();
       if (!response.writableEnded) response.end();
     };
+    stream = { response, close };
+    eventStreams.add(stream);
     const closeSoon = () => {
       closeAfterSubscribe = true;
       if (!unsubscribe || closeQueued) return;
@@ -222,7 +228,6 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     response.on("close", removeStream);
     if (closeAfterSubscribe) close();
   } catch (error) {
-    eventStreams.delete(response);
     response.write(`event: error\n`);
     response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);
     response.end();

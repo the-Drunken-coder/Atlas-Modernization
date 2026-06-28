@@ -129,6 +129,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     throwIfCancelled();
     return result;
   };
+  const checkIn = ((id: string, options?: Parameters<AtlasClientLike["entities"]["checkIn"]>[1]) =>
+    guarded(() => client.entities.checkIn(id, options))) as AtlasClientLike["entities"]["checkIn"];
   return {
     entities: {
       get: (id) => guarded(() => client.entities.get(id)),
@@ -141,7 +143,7 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       },
       update: (id, patch) => guarded(() => client.entities.update(id, patch)),
       delete: (id) => guarded(() => client.entities.delete(id)),
-      checkIn: (id, options) => guarded(() => client.entities.checkIn(id, options))
+      checkIn
     },
     tasks: {
       get: (id) => guarded(() => client.tasks.get(id)),

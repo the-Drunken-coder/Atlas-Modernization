@@ -111,27 +111,31 @@ export class RunStore {
       this.emit(run, { type: "error", level: "error", message: run.cleanupError });
       throw error;
     }
-    for (const resource of cleanupOrder(run.createdResources)) {
-      try {
-        if (resource.type === "task") await client.tasks.delete(resource.id);
-        if (resource.type === "object") await client.objects.delete(resource.id);
-        if (resource.type === "entity") await client.entities.delete(resource.id);
-        this.emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
-      } catch (error) {
-        if (isNotFoundError(error)) {
-          this.emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
-          continue;
+    try {
+      for (const resource of cleanupOrder(run.createdResources)) {
+        try {
+          if (resource.type === "task") await client.tasks.delete(resource.id);
+          if (resource.type === "object") await client.objects.delete(resource.id);
+          if (resource.type === "entity") await client.entities.delete(resource.id);
+          this.emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
+        } catch (error) {
+          if (isNotFoundError(error)) {
+            this.emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
+            continue;
+          }
+          run.cleanupError = errorMessage(error);
+          this.emit(run, { type: "error", level: "error", message: run.cleanupError });
+          throw error;
         }
-        run.cleanupError = errorMessage(error);
-        this.emit(run, { type: "error", level: "error", message: run.cleanupError });
-        throw error;
       }
+      run.cleaned = true;
+      run.cleanupError = undefined;
+      this.emit(run, { type: "cleanup", message: "Cleanup complete" });
+      this.pruneRuns();
+      return toSummary(run);
+    } finally {
+      client.sync.stop();
     }
-    run.cleaned = true;
-    run.cleanupError = undefined;
-    this.emit(run, { type: "cleanup", message: "Cleanup complete" });
-    this.pruneRuns();
-    return toSummary(run);
   }
 
   subscribe(id: string, subscriber: EventSubscriber): () => void {

@@ -83,8 +83,7 @@ describe("App", () => {
     expect((await screen.findAllByText("Moving assets")).length).toBeGreaterThan(0);
     const assetCount = screen.getByLabelText("Asset count");
     const jsonInput = screen.getByLabelText("JSON input");
-    await user.clear(assetCount);
-    await user.type(assetCount, "3");
+    fireEvent.change(assetCount, { target: { value: "3" } });
     fireEvent.change(jsonInput, { target: { value: '{"note":"ok"}' } });
     await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() =>
@@ -95,7 +94,7 @@ describe("App", () => {
       })
     );
     await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
-    expect(eventSources).toHaveLength(1);
+    await waitFor(() => expect(eventSources).toHaveLength(1));
     expect(eventSources[0].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
     eventSources[0].emit({
       sequence: 1,
@@ -116,7 +115,7 @@ describe("App", () => {
       message: "Run completed"
     });
     await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
-    expect(eventSources[0].closed).toBe(true);
+    await waitFor(() => expect(eventSources[0].closed).toBe(true));
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());
   });

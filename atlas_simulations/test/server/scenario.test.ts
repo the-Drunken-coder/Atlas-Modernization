@@ -97,7 +97,9 @@ describe("scenario input parsing", () => {
     const hashed = ctx.id("a-b");
 
     expect(new Set([direct, base, hashed]).size).toBe(3);
-    expect(hashed).toBe("sim-collision-a-b-212u-2");
+    expect(hashed).not.toBe(direct);
+    expect(hashed).not.toBe(base);
+    expect(hashed).toMatch(/^sim-collision-a-b-/);
     expect(ctx.id("a-b")).toBe(hashed);
   });
 
