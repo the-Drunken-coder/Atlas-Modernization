@@ -57,3 +57,5 @@ When working on Atlas Core, Atlas Protocol, the SDK, or the command interface, d
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
 Atlas Core's PostgreSQL database and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around.
+
+The Cloudflare-hosted Atlas command interface uses Worker code plus a static asset binding from `atlas_command_interface/dist/client`. A Git-linked Worker deploy can update the Worker script while leaving old browser assets live if the Wrangler config does not run the Vite build first. Keep `atlas_command_interface/wrangler.jsonc`'s `build.command` wired to the Vite client build so dashboard/Git deploys regenerate the client asset manifest before uploading assets.
