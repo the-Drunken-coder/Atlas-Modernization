@@ -66,7 +66,7 @@ const multiClientSync: Scenario = {
       await Promise.all(readers.map(async (reader, readerIndex) => {
         const settleDeadline = Date.now() + settleMs;
         const seen = await waitForResources(ctx, reader, ids, settleDeadline);
-        const readerSnapshot = await snapshotVersions(reader, ids);
+        const readerSnapshot = await snapshotVersions(reader, ids, settleDeadline);
         const status = reader.sync.status();
         ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
         ctx.assert(
@@ -92,25 +92,17 @@ const multiClientSync: Scenario = {
 export default multiClientSync;
 
 async function waitForResources(ctx: ScenarioContext, reader: ScenarioContext["client"], ids: string[], deadline: number): Promise<number> {
-  let seen = await visibleCount(reader, ids);
+  let seen = await visibleCount(reader, ids, deadline);
   while (seen < ids.length && Date.now() < deadline) {
     await ctx.wait(Math.min(250, Math.max(1, deadline - Date.now())));
-    seen = await visibleCount(reader, ids);
+    seen = await visibleCount(reader, ids, deadline);
   }
   return seen;
 }
 
-async function snapshotVersions(reader: ScenarioContext["client"], ids: string[]): Promise<Array<[string, number]>> {
-  const snapshot: Array<[string, number]> = [];
-  for (const id of ids) {
-    try {
-      const entity = await reader.entities.get(id);
-      snapshot.push([entity.entity_id, entity.metadata.version]);
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-    }
-  }
-  return snapshot;
+async function snapshotVersions(reader: ScenarioContext["client"], ids: string[], deadline = Number.POSITIVE_INFINITY): Promise<Array<[string, number]>> {
+  const snapshot = await Promise.all(ids.map((id) => readVersion(reader, id, deadline)));
+  return snapshot.flatMap((version) => (version ? [version] : []));
 }
 
 function snapshotsMatch(left: Array<[string, number]>, right: Array<[string, number]>): boolean {
@@ -121,17 +113,35 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function visibleCount(reader: ScenarioContext["client"], ids: string[]): Promise<number> {
+async function visibleCount(reader: ScenarioContext["client"], ids: string[], deadline: number): Promise<number> {
   reader.sync.status();
-  let seen = 0;
-  for (const id of ids) {
-    try {
-      const entity = await reader.entities.get(id);
-      if (entity.entity_id === id) seen += 1;
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-      // Missing resources are expected while sync is still converging.
-    }
+  const visible = await Promise.all(ids.map(async (id) => (await readVersion(reader, id, deadline))?.[0] === id));
+  return visible.filter(Boolean).length;
+}
+
+async function readVersion(reader: ScenarioContext["client"], id: string, deadline: number): Promise<[string, number] | undefined> {
+  try {
+    const entity = await withDeadline(reader.entities.get(id), deadline);
+    return entity ? [entity.entity_id, entity.metadata.version] : undefined;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    return undefined;
   }
-  return seen;
+}
+
+async function withDeadline<T>(operation: Promise<T>, deadline: number): Promise<T | undefined> {
+  if (!Number.isFinite(deadline)) return await operation;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => resolve(undefined), remaining);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }

@@ -198,6 +198,7 @@ describe("scenario input parsing", () => {
     const stop = ctx.client.watch({ filter: "all" } as Parameters<typeof ctx.client.watch>[0], () => undefined);
 
     controller.abort();
+    expect(unsubscribed).toBe(1);
     stop();
 
     expect(unsubscribed).toBe(1);

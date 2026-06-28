@@ -16,11 +16,19 @@ export async function loadHealth(): Promise<HealthResponse> {
     if (!response.ok) return undefined;
     throw error;
   });
-  if (!response.ok && !isHealthResponse(body)) {
-    return { ok: false, status: jsonNumber(response.status), message: `Request failed (${response.status})` };
-  }
   if (!isHealthResponse(body)) {
+    if (!response.ok) {
+      return { ok: false, status: jsonNumber(response.status), message: `Request failed (${response.status})` };
+    }
     throw new Error(`Expected health response (${response.status})`);
+  }
+  if (!response.ok) {
+    return {
+      ...body,
+      ok: false,
+      status: jsonNumber(response.status),
+      message: body.message || `Request failed (${response.status})`
+    };
   }
   return { ...body, status: jsonNumber(body.status ?? response.status) };
 }

@@ -126,7 +126,7 @@ async function handleRequest(
     await handleRunRoute(request, response, store, runId, action, eventStreams);
     return;
   }
-  if (url.pathname.startsWith("/api/")) {
+  if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
     sendJSON(response, 404, { message: "Not found" });
     return;
   }
