@@ -219,6 +219,7 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     "Cache-Control": "no-cache",
     Connection: "keep-alive"
   });
+  response.flushHeaders();
   try {
     let unsubscribe: (() => void) | undefined;
     let stream: EventStream | undefined;

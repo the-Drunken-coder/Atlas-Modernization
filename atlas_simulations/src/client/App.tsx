@@ -74,9 +74,10 @@ export function App() {
   async function refreshRuns() {
     const requestId = ++refreshRunsRequestRef.current;
     const selectedRunAtRequestStart = selectedRunId();
+    const runIdsAtRequestStart = new Set(runsRef.current.map((run) => run.id));
     const loadedRuns = await loadRuns();
     if (requestId !== refreshRunsRequestRef.current) return;
-    const mergedRuns = mergeRunLists(runsRef.current, loadedRuns);
+    const mergedRuns = mergeRunLists(runsRef.current, loadedRuns, runIdsAtRequestStart);
     runsRef.current = mergedRuns;
     setRuns(mergedRuns);
     const selectedRunAfterLoad = selectedRunId();
@@ -213,7 +214,7 @@ export function App() {
       if (event.type === "cleanup" && !event.resource) closeSource();
     };
     source.onerror = () => {
-      // EventSource handles transient reconnects itself.
+      void refreshRunsBestEffort();
     };
   }
 
@@ -243,6 +244,10 @@ export function App() {
       cleanupStreamRunIdRef.current = targetRunId;
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);
+      if (cleanupStreamRunIdRef.current === targetRunId) {
+        cleanupStreamRunIdRef.current = undefined;
+        if (updatedRun.cleaned && activeRunIdRef.current === targetRunId) closeActiveEventSource();
+      }
       await refreshRunsBestEffort();
     } catch (errorValue) {
       if (cleanupStreamRunIdRef.current === targetRunId) {
@@ -531,10 +536,10 @@ function displayStatus(run: RunSummary | undefined): string {
   return run?.cleaned ? "cleaned" : run?.status ?? "idle";
 }
 
-function mergeRunLists(current: RunSummary[], incoming: RunSummary[]): RunSummary[] {
+function mergeRunLists(current: RunSummary[], incoming: RunSummary[], runIdsAtRequestStart: Set<string>): RunSummary[] {
   const byId = new Map(current.map((run) => [run.id, run]));
   const incomingIds = new Set(incoming.map((run) => run.id));
-  const retained = current.filter((run) => !incomingIds.has(run.id));
+  const retained = current.filter((run) => !incomingIds.has(run.id) && !runIdsAtRequestStart.has(run.id));
   return [...incoming.map((run) => mergeRunSummary(byId.get(run.id), run)), ...retained].sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
 }
 

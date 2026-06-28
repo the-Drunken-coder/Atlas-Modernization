@@ -29,7 +29,9 @@ type RunRecord = {
   createdResources: CreatedResource[];
   cleanupResources: CreatedResource[];
   assertions: AssertionResult[];
+  assertionHistoryBytes: number;
   events: RunEvent[];
+  eventHistoryBytes: number;
   subscribers: Set<EventSubscriber>;
   controller: AbortController;
   clients: AtlasClientLike[];
@@ -80,7 +82,9 @@ export class RunStore {
       createdResources: [],
       cleanupResources: [],
       assertions: [],
+      assertionHistoryBytes: 0,
       events: [],
+      eventHistoryBytes: 0,
       subscribers: new Set(),
       controller: new AbortController(),
       clients: [],
@@ -290,10 +294,12 @@ export class RunStore {
       ...(boundedMessage ? { message: boundedMessage } : {}),
       timestamp: timestamp()
     };
-    if (assertionHistoryBytes(run.assertions) + assertionBytes(assertion) > MAX_ASSERTION_HISTORY_BYTES_PER_RUN) {
+    const bytes = assertionBytes(assertion);
+    if (run.assertionHistoryBytes + bytes > MAX_ASSERTION_HISTORY_BYTES_PER_RUN) {
       throw new Error(`Simulation can store at most ${MAX_ASSERTION_HISTORY_BYTES_PER_RUN} bytes of assertion history`);
     }
     run.assertions.push(cloneValue(assertion));
+    run.assertionHistoryBytes += bytes;
     this.emit(run, {
       type: "assertion",
       level: passed ? "info" : "error",
@@ -312,10 +318,12 @@ export class RunStore {
       ...details,
       message: boundedEventMessage(details.message)
     } as RunEvent;
-    if (eventBytes(event) > MAX_EVENT_HISTORY_BYTES_PER_RUN) {
+    const bytes = eventBytes(event);
+    if (bytes > MAX_EVENT_HISTORY_BYTES_PER_RUN) {
       throw new Error(`Run event must be at most ${MAX_EVENT_HISTORY_BYTES_PER_RUN} bytes`);
     }
     run.events.push(cloneValue(event));
+    run.eventHistoryBytes += bytes;
     trimEvents(run);
     for (const subscriber of [...run.subscribers]) {
       try {
@@ -377,22 +385,19 @@ function wireInputs(inputs: Record<string, string | number | boolean>): Record<s
 
 function trimEvents(run: RunRecord): void {
   const overflow = run.events.length - MAX_EVENTS_PER_RUN;
-  if (overflow > 0) run.events.splice(0, overflow);
-  while (eventHistoryBytes(run.events) > MAX_EVENT_HISTORY_BYTES_PER_RUN && run.events.length > 1) {
-    run.events.shift();
+  if (overflow > 0) {
+    for (const event of run.events.splice(0, overflow)) {
+      run.eventHistoryBytes -= eventBytes(event);
+    }
   }
-}
-
-function eventHistoryBytes(events: RunEvent[]): number {
-  return events.reduce((total, event) => total + eventBytes(event), 0);
+  while (run.eventHistoryBytes > MAX_EVENT_HISTORY_BYTES_PER_RUN && run.events.length > 1) {
+    const event = run.events.shift();
+    if (event) run.eventHistoryBytes -= eventBytes(event);
+  }
 }
 
 function eventBytes(event: RunEvent): number {
   return Buffer.byteLength(JSON.stringify(event), "utf8");
-}
-
-function assertionHistoryBytes(assertions: AssertionResult[]): number {
-  return assertions.reduce((total, assertion) => total + assertionBytes(assertion), 0);
 }
 
 function assertionBytes(assertion: AssertionResult): number {

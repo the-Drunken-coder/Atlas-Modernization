@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadRuns, loadScenarios, startRun } from "../../src/client/api.js";
+import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
 import { jsonNumber, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
@@ -31,6 +31,25 @@ describe("client API", () => {
     stubJSON({ runs: [{ id: "missing-fields" }] });
 
     await expect(loadRuns()).rejects.toThrow("Expected run list response");
+  });
+
+  it("rejects invalid health and run response shapes at the API boundary", async () => {
+    stubJSON({ ok: "yes" });
+    await expect(loadHealth()).rejects.toThrow("Expected health response");
+
+    stubJSON({ run: { id: "missing-fields" } });
+    await expect(loadRun(run.id)).rejects.toThrow("Expected run response");
+
+    stubJSON({ run: { id: "missing-fields" } });
+    await expect(stopRun(run.id)).rejects.toThrow("Expected run response");
+  });
+
+  it("resolves health as offline when the local server cannot be reached", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connection refused");
+    }));
+
+    await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(0), message: "connection refused" });
   });
 
   it("rejects invalid start payloads before serialization", async () => {

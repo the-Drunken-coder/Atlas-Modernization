@@ -192,7 +192,8 @@ describe("App", () => {
     vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: /start/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() => expect(eventSources).toHaveLength(1));
 
     await user.click(screen.getByRole("button", { name: /stop/i }));
@@ -208,6 +209,44 @@ describe("App", () => {
       message: "Run cancelled"
     });
     await waitFor(() => expect(eventSources[0].closed).toBe(true));
+  });
+
+  it("refreshes the selected run when the event stream errors before a terminal event", async () => {
+    const user = userEvent.setup();
+    const completedRun = cloneRun({
+      status: "completed",
+      finishedAt: new Date().toISOString()
+    });
+    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValueOnce([cloneRun()]).mockResolvedValue([completedRun]);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /start/i }));
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+    await waitFor(() => expect(vi.mocked(loadRuns).mock.calls.length).toBeGreaterThanOrEqual(2));
+
+    eventSources[0].onerror?.();
+
+    await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
+    await waitFor(() => expect(eventSources[0].closed).toBe(true));
+  });
+
+  it("clears the selected run when refresh reports it missing", async () => {
+    const missingRun = cloneRun({
+      id: "sim-pruned",
+      scenarioName: "Pruned run",
+      status: "running"
+    });
+    vi.mocked(loadRuns).mockResolvedValueOnce([missingRun]).mockResolvedValue([]);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pruned run" }));
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+
+    eventSources[0].onerror?.();
+
+    await waitFor(() => expect(screen.getByText("No run selected")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("No runs")).toBeInTheDocument());
+    expect(eventSources[0].closed).toBe(true);
   });
 
   it("closes the stream when refresh reports the selected run completed", async () => {

@@ -11,7 +11,12 @@ import type {
 import { isCreatedResource, jsonNumber } from "../shared/types.js";
 
 export async function loadHealth(): Promise<HealthResponse> {
-  const response = await fetch("/api/health", { headers: { Accept: "application/json" } });
+  let response: Response;
+  try {
+    response = await fetch("/api/health", { headers: { Accept: "application/json" } });
+  } catch (error) {
+    return { ok: false, status: jsonNumber(0), message: transportErrorMessage(error) };
+  }
   const body = await responseJSON(response).catch((error: unknown) => {
     if (!response.ok) return undefined;
     throw error;
@@ -227,4 +232,9 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function transportErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return "Unable to reach simulation server";
 }

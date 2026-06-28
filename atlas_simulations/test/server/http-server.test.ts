@@ -141,6 +141,13 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders({ "Content-Type": "application/json", Origin: "http://example.test" }),
       body: "{}"
     });
+    for (const action of ["stop", "cleanup"]) {
+      await expectStatus(`${baseUrl}/api/runs/missing/${action}`, 403, { method: "POST" });
+      await expectStatus(`${baseUrl}/api/runs/missing/${action}`, 403, {
+        method: "POST",
+        headers: mutationHeaders({ Origin: "http://example.test" })
+      });
+    }
     await expectStatus(`${baseUrl}/api/runs`, 400, {
       method: "POST",
       headers: mutationHeaders({ "Content-Type": "application/json" }),
