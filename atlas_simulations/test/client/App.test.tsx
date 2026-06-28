@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
@@ -239,18 +239,28 @@ describe("App", () => {
   });
 
   it("closes the stream when refresh reports the selected run completed", async () => {
-    const user = userEvent.setup();
-    const completedRun = cloneRun({
-      status: "completed",
-      finishedAt: new Date().toISOString()
-    });
-    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValueOnce([completedRun]).mockResolvedValue([completedRun]);
+    vi.useFakeTimers();
+    try {
+      const completedRun = cloneRun({
+        status: "completed",
+        finishedAt: new Date().toISOString()
+      });
+      vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValueOnce([completedRun]).mockResolvedValue([completedRun]);
 
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: /start/i }));
+      render(<App />);
+      await vi.waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /start/i }));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
 
-    await waitFor(() => expect(eventSources).toHaveLength(1));
-    await waitFor(() => expect(eventSources[0].closed).toBe(true));
-    await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
+      await vi.waitFor(() => expect(eventSources).toHaveLength(1));
+      await vi.waitFor(() => expect(eventSources[0].closed).toBe(true));
+      await vi.waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

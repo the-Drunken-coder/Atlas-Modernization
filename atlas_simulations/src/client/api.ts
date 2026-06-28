@@ -12,7 +12,13 @@ import { isCreatedResource, jsonNumber } from "../shared/types.js";
 
 export async function loadHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health", { headers: { Accept: "application/json" } });
-  const body = await responseJSON(response);
+  const body = await responseJSON(response).catch((error: unknown) => {
+    if (!response.ok) return undefined;
+    throw error;
+  });
+  if (!response.ok && !isHealthResponse(body)) {
+    return { ok: false, status: jsonNumber(response.status), message: `Request failed (${response.status})` };
+  }
   if (!isHealthResponse(body)) {
     throw new Error(`Expected health response (${response.status})`);
   }
@@ -30,6 +36,9 @@ export async function loadRuns(): Promise<RunSummary[]> {
 }
 
 export async function startRun(request: StartRunRequest): Promise<RunSummary> {
+  if (!isStartRunRequest(request)) {
+    throw new Error("Invalid start run request");
+  }
   const response = await apiJSON<StartRunResponse>(
     "/api/runs",
     {
@@ -68,12 +77,15 @@ async function apiJSON<T>(url: string, init: RequestInit | undefined, guard: (va
     ...fetchInit,
     headers
   });
-  const body = await responseJSON(response);
+  const body = await responseJSON(response).catch((error: unknown) => {
+    if (!response.ok) return undefined;
+    throw error;
+  });
   if (!response.ok) {
     throw new Error(
-      typeof body === "object" && body && "message" in body && typeof body.message === "string" && body.message
+      isRecord(body) && typeof body.message === "string" && body.message
         ? body.message
-      : `Request failed (${response.status})`
+        : `Request failed (${response.status})`
     );
   }
   if (!guard(body)) {
@@ -104,6 +116,15 @@ function isHealthResponse(value: unknown): value is HealthResponse {
 
 function isScenarioListResponse(value: unknown): value is ScenarioListResponse {
   return isRecord(value) && Array.isArray(value.scenarios) && value.scenarios.every(isScenarioDescriptor);
+}
+
+function isStartRunRequest(value: unknown): value is StartRunRequest {
+  return (
+    isRecord(value) &&
+    typeof value.scenarioId === "string" &&
+    (value.inputs === undefined || isInputRecord(value.inputs)) &&
+    (value.jsonInput === undefined || typeof value.jsonInput === "string")
+  );
 }
 
 function isScenarioDescriptor(value: unknown): value is ScenarioDescriptor {

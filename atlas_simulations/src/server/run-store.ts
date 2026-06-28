@@ -312,6 +312,9 @@ export class RunStore {
       ...details,
       message: boundedEventMessage(details.message)
     } as RunEvent;
+    if (eventBytes(event) > MAX_EVENT_HISTORY_BYTES_PER_RUN) {
+      throw new Error(`Run event must be at most ${MAX_EVENT_HISTORY_BYTES_PER_RUN} bytes`);
+    }
     run.events.push(cloneValue(event));
     trimEvents(run);
     for (const subscriber of [...run.subscribers]) {
@@ -381,7 +384,11 @@ function trimEvents(run: RunRecord): void {
 }
 
 function eventHistoryBytes(events: RunEvent[]): number {
-  return events.reduce((total, event) => total + Buffer.byteLength(JSON.stringify(event), "utf8"), 0);
+  return events.reduce((total, event) => total + eventBytes(event), 0);
+}
+
+function eventBytes(event: RunEvent): number {
+  return Buffer.byteLength(JSON.stringify(event), "utf8");
 }
 
 function assertionHistoryBytes(assertions: AssertionResult[]): number {

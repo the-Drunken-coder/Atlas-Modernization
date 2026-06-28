@@ -23,10 +23,10 @@ describe("v1 scenarios", () => {
       expect(assertions.every((assertion) => assertion.passed)).toBe(true);
       const beforeCleanup = await core.factory().queries.full();
       expect(beforeCleanup.entities.length + beforeCleanup.tasks.length + beforeCleanup.objects.length).toBeGreaterThan(0);
+      const expectedDeletes = new Set((store.get(run.id)?.createdResources ?? []).map((resource) => `${resource.type}:${resource.id}`));
 
       await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
       const afterCleanup = await core.factory().queries.full();
-      const expectedDeletes = new Set((store.get(run.id)?.createdResources ?? []).map((resource) => `${resource.type}:${resource.id}`));
       expect(afterCleanup).toMatchObject({ entities: [], tasks: [], objects: [] });
       expect(new Set(core.state.deleted)).toEqual(expectedDeletes);
     } finally {

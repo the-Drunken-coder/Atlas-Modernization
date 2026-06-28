@@ -26,10 +26,10 @@ describe("RunStore", () => {
       await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
       expect(store.get(started.id)?.createdResources).toHaveLength(2);
       expect(store.get(started.id)?.assertions[0]?.passed).toBe(true);
+      const resources = store.get(started.id)?.createdResources ?? [];
 
       await store.cleanup(started.id);
       expect(store.get(started.id)).toMatchObject({ status: "completed", cleaned: true });
-      const resources = store.get(started.id)?.createdResources ?? [];
       expect(core.state.deleted).toEqual([`task:${resources.find((resource) => resource.type === "task")?.id}`, `entity:${resources.find((resource) => resource.type === "entity")?.id}`]);
     } finally {
       vi.useRealTimers();

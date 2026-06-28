@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadRuns, loadScenarios } from "../../src/client/api.js";
+import { cleanupRun, loadRuns, loadScenarios, startRun } from "../../src/client/api.js";
 import { jsonNumber, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
@@ -31,6 +31,18 @@ describe("client API", () => {
     stubJSON({ runs: [{ id: "missing-fields" }] });
 
     await expect(loadRuns()).rejects.toThrow("Expected run list response");
+  });
+
+  it("rejects invalid start payloads before serialization", async () => {
+    await expect(startRun({ scenarioId: "moving-assets", inputs: { assetCount: Number.NaN } } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
+      "Invalid start run request"
+    );
+  });
+
+  it("preserves HTTP status errors for non-JSON failures", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
+
+    await expect(loadRuns()).rejects.toThrow("Request failed (500)");
   });
 
   it("validates scenario and mutation response shapes", async () => {
