@@ -25,6 +25,14 @@ export function positiveIntegerInput(input: ScenarioInput, key: string): number 
   return value;
 }
 
+export function boundedPositiveIntegerInput(input: ScenarioInput, key: string, max: number): number {
+  const value = positiveIntegerInput(input, key);
+  if (value > max) {
+    throw new Error(`${key} must be <= ${max}`);
+  }
+  return value;
+}
+
 export function jsonObject(input: ScenarioInput): Record<string, JSONValue> {
   if (input.json === undefined) return {};
   if (!isRecord(input.json)) {

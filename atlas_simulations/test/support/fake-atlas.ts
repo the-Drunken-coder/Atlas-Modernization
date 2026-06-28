@@ -91,7 +91,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         const entity = saveValue(state.entities, id, updated);
         const taskLimit = options?.limit ?? 10;
         const statusFilter = new Set<string>(options?.statusFilter ?? ["pending"]);
-        const matchingTasks = visibleValues({ sync: false, running: false, visibleVersion: state.version }, state.tasks, state, "task").filter(
+        const matchingTasks = visibleValues(state, { sync: false, running: false, visibleVersion: state.version }, state.tasks, "task").filter(
           (task) => task.entity_id === id && statusFilter.has(task.status)
         );
         const tasks = matchingTasks.slice(0, taskLimit);
@@ -132,9 +132,9 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     },
     queries: {
       full: async () => ({
-        entities: visibleValues(clientState, state.entities, state, "entity"),
-        tasks: visibleValues(clientState, state.tasks, state, "task"),
-        objects: visibleValues(clientState, state.objects, state, "object")
+        entities: visibleValues(state, clientState, state.entities, "entity"),
+        tasks: visibleValues(state, clientState, state.tasks, "task"),
+        objects: visibleValues(state, clientState, state.objects, "object")
       })
     },
     sync: {
@@ -252,7 +252,7 @@ function visibleValue<T extends { metadata: { version: number } }>(
   return cloneValue(value);
 }
 
-function visibleValues<T extends VersionedResource>(clientState: FakeClientState, values: ResourceHistory<T>, state: FakeCoreState, type: string): T[] {
+function visibleValues<T extends VersionedResource>(state: FakeCoreState, clientState: FakeClientState, values: ResourceHistory<T>, type: string): T[] {
   const version = visibleVersion(state, clientState);
   return [...values.values()]
     .map((history) => visibleSnapshot(history, version))

@@ -2,13 +2,14 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
+import { loadConfig } from "./src/server/config.js";
 
 const packageRoot = path.dirname(fileURLToPath(import.meta.url));
 const VITE_PORT = 5174;
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, packageRoot, "ATLAS_SIM_");
-  const simulationPort = portValue(env.ATLAS_SIM_PORT);
+  const simulationPort = loadConfig({ env, packageRoot }).port;
   if (simulationPort === VITE_PORT) {
     throw new Error("ATLAS_SIM_PORT must differ from the Vite dev server port 5174");
   }
@@ -27,16 +28,3 @@ export default defineConfig(({ mode }) => {
     }
   };
 });
-
-function portValue(value: string | undefined): number {
-  const trimmed = value?.trim();
-  if (!trimmed) return 5180;
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
-  }
-  const parsed = Number.parseInt(trimmed, 10);
-  if (parsed < 1 || parsed > 65535) {
-    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
-  }
-  return parsed;
-}

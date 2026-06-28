@@ -104,8 +104,8 @@ async function handleRequest(
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/runs") {
-    const bodyText = await readRequestText(request);
     if (!requireTrustedMutation(request, response)) return;
+    const bodyText = await readRequestText(request);
     const body = readRequestBody(bodyText);
     const scenario = findScenario(body.scenarioId);
     if (!scenario) {
@@ -170,8 +170,8 @@ async function handleRunRoute(
     return;
   }
   if (request.method === "POST" && action === "stop") {
-    await drainRequestBody(request);
     if (!requireTrustedMutation(request, response)) return;
+    await drainRequestBody(request);
     if (!store.get(runId)) {
       sendJSON(response, 404, { message: "Run not found" });
       return;
@@ -180,8 +180,8 @@ async function handleRunRoute(
     return;
   }
   if (request.method === "POST" && action === "cleanup") {
-    await drainRequestBody(request);
     if (!requireTrustedMutation(request, response)) return;
+    await drainRequestBody(request);
     if (!store.get(runId)) {
       sendJSON(response, 404, { message: "Run not found" });
       return;
@@ -330,6 +330,7 @@ function sendJSON(response: ServerResponse, status: number, body: unknown): void
 
 function requireTrustedMutation(request: IncomingMessage, response: ServerResponse): boolean {
   if (hasTrustedMutation(request)) return true;
+  response.setHeader("Connection", "close");
   sendJSON(response, 403, { message: "Mutating simulation requests require a local UI request header" });
   return false;
 }

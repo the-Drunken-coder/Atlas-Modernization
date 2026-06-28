@@ -65,7 +65,9 @@ export function App() {
 
   async function refreshHealth() {
     try {
-      setHealth(await loadHealth());
+      const nextHealth = await loadHealth();
+      setHealth(nextHealth);
+      setError(undefined);
     } catch (errorValue) {
       setHealth({ ok: false, message: errorMessage(errorValue) });
       throw errorValue;
@@ -84,6 +86,7 @@ export function App() {
     }
     runsRef.current = mergedRuns;
     setRuns(mergedRuns);
+    setError(undefined);
     const selectedRunAfterLoad = selectedRunId();
     if (selectedRunAfterLoad && !mergedRuns.some((run) => run.id === selectedRunAfterLoad)) {
       clearRunSelection();
@@ -155,7 +158,7 @@ export function App() {
       if (run.status === "running") {
         if (activeRunIdRef.current !== run.id) connectEvents(run.id);
       } else if (activeRunIdRef.current === run.id && cleanupStreamRunIdRef.current !== run.id) {
-        closeActiveEventSource();
+        closeActiveEventSource({ preserveCleanup: true });
       }
       return;
     }
@@ -164,7 +167,7 @@ export function App() {
     if (run.status === "running") {
       connectEvents(run.id);
     } else {
-      closeActiveEventSource();
+      closeActiveEventSource({ preserveCleanup: true });
     }
   }
 
@@ -172,7 +175,7 @@ export function App() {
     currentRunIdRef.current = undefined;
     setEvents([]);
     setCurrentRun(undefined);
-    closeActiveEventSource();
+    closeActiveEventSource({ preserveCleanup: true });
   }
 
   function connectEvents(runId: string) {
@@ -280,11 +283,11 @@ export function App() {
     setCurrentRun((current) => (current?.id === run.id ? mergeRunSummary(current, run) : current));
   }
 
-  function closeActiveEventSource() {
+  function closeActiveEventSource(options: { preserveCleanup?: boolean } = {}) {
     if (!eventSourceRef.current) return;
     const source = eventSourceRef.current;
     activeRunIdRef.current = undefined;
-    cleanupStreamRunIdRef.current = undefined;
+    if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
     eventSourceRef.current = null;
     source.close();
   }

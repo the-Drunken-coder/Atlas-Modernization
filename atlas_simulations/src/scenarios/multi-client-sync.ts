@@ -1,7 +1,7 @@
 import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { isoNow, numberInput, point, positiveIntegerInput } from "./helpers.js";
+import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, point } from "./helpers.js";
 
 const SYNC_POLL_INTERVAL_MS = 500;
 const MIN_SETTLE_MS = SYNC_POLL_INTERVAL_MS * 3;
@@ -17,9 +17,9 @@ const multiClientSync: Scenario = {
     { key: "settleMs", label: "Settle ms", type: "number", defaultValue: jsonNumber(MIN_SETTLE_MS), min: jsonNumber(MIN_SETTLE_MS), max: jsonNumber(10000), step: jsonNumber(50) }
   ],
   async run(ctx, input) {
-    const clientCount = positiveIntegerInput(input, "clientCount");
-    const writes = positiveIntegerInput(input, "writes");
-    const settleMs = Math.max(numberInput(input, "settleMs"), MIN_SETTLE_MS);
+    const clientCount = boundedPositiveIntegerInput(input, "clientCount", 8);
+    const writes = boundedPositiveIntegerInput(input, "writes", 20);
+    const settleMs = boundedNumberInput(input, "settleMs", MIN_SETTLE_MS, 10000);
     const readers: ScenarioContext["client"][] = [];
     try {
       for (let index = 0; index < clientCount; index++) {
