@@ -165,6 +165,17 @@ describe("App", () => {
     );
   });
 
+  it("blocks invalid JSON input before starting a run", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("JSON input"), { target: { value: "{" } });
+    await user.click(screen.getByRole("button", { name: /start/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("JSON input must be valid JSON");
+    expect(vi.mocked(startRun)).not.toHaveBeenCalled();
+  });
+
   it("keeps selected scenario and selected run synchronized", async () => {
     const user = userEvent.setup();
     const syncRun = cloneRun({

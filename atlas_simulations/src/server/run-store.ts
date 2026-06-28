@@ -38,6 +38,7 @@ type RunRecord = {
   controller: AbortController;
   clients: AtlasClientLike[];
   settled: boolean;
+  cleanupStarted: boolean;
   cleaned: boolean;
   cleanupPromise?: Promise<RunSummary>;
   sequence: number;
@@ -91,6 +92,7 @@ export class RunStore {
       controller: new AbortController(),
       clients: [],
       settled: false,
+      cleanupStarted: false,
       cleaned: false,
       sequence: 0
     };
@@ -125,6 +127,7 @@ export class RunStore {
   }
 
   private async performCleanup(run: RunRecord): Promise<RunSummary> {
+    run.cleanupStarted = true;
     const cleanupResources = cleanupResourcesForRun(run);
     if (cleanupResources.length === 0) {
       run.cleaned = true;
@@ -219,7 +222,7 @@ export class RunStore {
         },
         assert: (name, passed, message) => (run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message)),
         track: (resource) => {
-          if (!run.cleaned) this.track(run, resource);
+          if (!run.cleanupStarted && !run.cleaned) this.track(run, resource);
         }
       });
       await run.scenario.run(context, input);
@@ -277,6 +280,7 @@ export class RunStore {
   }
 
   private track(run: RunRecord, resource: CreatedResource): void {
+    if (run.cleanupStarted || run.cleaned) return;
     const tracked = cloneValue(resource);
     if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {
       if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {

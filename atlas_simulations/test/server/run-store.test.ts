@@ -144,11 +144,12 @@ describe("RunStore", () => {
 
     const summary = store.get(started.id);
     expect(summary).toBeDefined();
-    summary!.createdResources.push({ type: "entity", id: "mutated" });
-    summary!.assertions[0]!.passed = false;
-    (summary!.jsonInput as { nested: { value: string } }).nested.value = "mutated";
+    const mutatedSummary = structuredClone(summary!);
+    mutatedSummary.createdResources.push({ type: "entity", id: "mutated" });
+    mutatedSummary.assertions[0]!.passed = false;
+    (mutatedSummary.jsonInput as { nested: { value: string } }).nested.value = "mutated";
 
-    const event = store.events(started.id)[0];
+    const event = structuredClone(store.events(started.id)[0]!);
     event.message = "mutated";
 
     expect(store.get(started.id)?.createdResources).toHaveLength(1);

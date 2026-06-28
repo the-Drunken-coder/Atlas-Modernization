@@ -123,6 +123,13 @@ export function App() {
     setMutationPending(true);
     try {
       const normalizedJsonInput = selected.acceptsJson && jsonInput.trim() !== "" ? jsonInput : undefined;
+      if (normalizedJsonInput !== undefined) {
+        try {
+          JSON.parse(normalizedJsonInput);
+        } catch {
+          throw new Error("JSON input must be valid JSON");
+        }
+      }
       const run = await startRun({
         scenarioId: selected.id,
         inputs: submissionInputs(selected, inputs),
