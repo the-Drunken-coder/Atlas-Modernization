@@ -15,13 +15,14 @@ export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
 
 export type ClientMode = false | "all" | "selective";
 
-export type AtlasClientFactory = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => AtlasClientLike;
+export type AtlasClientFactory = (options?: { sync?: ClientMode; pollIntervalMs?: number; signal?: AbortSignal }) => AtlasClientLike;
 
 export function createAtlasClientFactory(config: SimulationConfig): AtlasClientFactory {
   return (options = {}) =>
     new AtlasClient({
       baseUrl: config.atlasBaseUrl,
       apiKey: config.atlasApiKey,
+      ...(options.signal ? { fetch: abortableFetch(options.signal) } : {}),
       sync: options.sync ?? false,
       pollIntervalMs: options.pollIntervalMs ?? 2_000
     } satisfies AtlasClientOptions);
@@ -29,4 +30,25 @@ export function createAtlasClientFactory(config: SimulationConfig): AtlasClientF
 
 export function isNotFoundError(error: unknown): boolean {
   return error instanceof AtlasAPIError && error.status === 404;
+}
+
+function abortableFetch(signal: AbortSignal): typeof fetch {
+  return async (input, init = {}) => {
+    const upstreamSignal = init.signal;
+    if (!upstreamSignal) return await fetch(input, { ...init, signal });
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal.aborted || upstreamSignal.aborted) {
+      abort();
+    } else {
+      signal.addEventListener("abort", abort, { once: true });
+      upstreamSignal.addEventListener("abort", abort, { once: true });
+    }
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      signal.removeEventListener("abort", abort);
+      upstreamSignal.removeEventListener("abort", abort);
+    }
+  };
 }

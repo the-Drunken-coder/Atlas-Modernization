@@ -53,6 +53,9 @@ export function createSimulationServer(options: { config?: SimulationConfig; sto
       }),
     close: () =>
       new Promise((resolve, reject) => {
+        for (const run of store.list()) {
+          if (run.status === "running") store.stop(run.id);
+        }
         for (const stream of [...eventStreams]) stream.close();
         server.close((error) => (error ? reject(error) : resolve()));
       })
@@ -173,10 +176,11 @@ async function handleRunRoute(
 async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3_000);
+  let response: Response | undefined;
   try {
     const headers = new Headers();
     if (config.atlasApiKey) headers.set("X-API-Key", config.atlasApiKey);
-    const response = await fetch(`${config.atlasBaseUrl}/health`, { headers, signal: controller.signal });
+    response = await fetch(`${config.atlasBaseUrl}/health`, { headers, signal: controller.signal });
     return {
       ok: response.ok,
       status: response.status,
@@ -188,6 +192,7 @@ async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
       message: errorMessage(error)
     };
   } finally {
+    await response?.body?.cancel().catch(() => undefined);
     clearTimeout(timeout);
   }
 }

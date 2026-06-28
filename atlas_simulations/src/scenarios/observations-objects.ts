@@ -94,9 +94,10 @@ const observationsObjects: Scenario = {
       if (index < observations - 1) await ctx.wait(tickMs);
     }
 
-    const observerResults = await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id)));
-    const trackResults = await Promise.allSettled(trackIds.map((id) => ctx.client.entities.get(id)));
-    const objectResults = await Promise.allSettled(objectIds.map((id) => ctx.client.objects.get(id)));
+    const verifier = ctx.newClient({ sync: false });
+    const observerResults = await Promise.allSettled(assetIds.map((id) => verifier.entities.get(id)));
+    const trackResults = await Promise.allSettled(trackIds.map((id) => verifier.entities.get(id)));
+    const objectResults = await Promise.allSettled(objectIds.map((id) => verifier.objects.get(id)));
     const persistedObservers = fulfilledValues(observerResults);
     const persistedTracks = fulfilledValues(trackResults);
     const persistedObjects = fulfilledValues(objectResults);

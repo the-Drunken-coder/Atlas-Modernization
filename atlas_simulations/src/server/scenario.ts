@@ -94,7 +94,7 @@ export function createScenarioContext(args: {
   };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
-    const rawClient = args.clientFactory(options);
+    const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
     return trackClientCreates(rawClient, args.track, throwIfCancelled);
   };

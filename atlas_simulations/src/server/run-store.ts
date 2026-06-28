@@ -111,6 +111,7 @@ export class RunStore {
       this.emit(run, { type: "error", level: "error", message: run.cleanupError });
       throw error;
     }
+    let stopped = false;
     try {
       for (const resource of cleanupOrder(run.createdResources)) {
         try {
@@ -128,13 +129,22 @@ export class RunStore {
           throw error;
         }
       }
+      stopCleanupClient(run, client);
+      stopped = true;
       run.cleaned = true;
       run.cleanupError = undefined;
       this.emit(run, { type: "cleanup", message: "Cleanup complete" });
       this.pruneRuns();
       return toSummary(run);
     } finally {
-      client.sync.stop();
+      if (!stopped) {
+        try {
+          client.sync.stop();
+        } catch (error) {
+          run.cleanupError ??= errorMessage(error);
+          this.emit(run, { type: "error", level: "error", message: errorMessage(error) });
+        }
+      }
     }
   }
 
@@ -326,6 +336,15 @@ function lateAssertion(name: string, passed: boolean, message?: string): Asserti
     ...(message ? { message } : {}),
     timestamp: timestamp()
   };
+}
+
+function stopCleanupClient(run: RunRecord, client: AtlasClientLike): void {
+  try {
+    client.sync.stop();
+  } catch (error) {
+    run.cleanupError = errorMessage(error);
+    throw error;
+  }
 }
 
 function cloneValue<T>(value: T): T {

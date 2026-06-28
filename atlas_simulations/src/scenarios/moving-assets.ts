@@ -78,7 +78,8 @@ const movingAssets: Scenario = {
       if (tick < ticks - 1) await ctx.wait(tickMs);
     }
 
-    const persistedAssetResults = await Promise.allSettled(assetIds.map((id) => ctx.client.entities.get(id)));
+    const verifier = ctx.newClient({ sync: false });
+    const persistedAssetResults = await Promise.allSettled(assetIds.map((id) => verifier.entities.get(id)));
     const persistedAssets = fulfilledValues(persistedAssetResults);
     const finalSpeed = 12 + ticks - 1;
     ctx.assert("Assets persisted", persistedAssets.length === assetCount, `${persistedAssets.length}/${assetCount} assets persisted`);
