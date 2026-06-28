@@ -178,4 +178,52 @@ describe("RunStore", () => {
 
     expect(core.state.deleted).toEqual([`entity:${started.id}-asset`]);
   });
+
+  it("evicts cleaned runs before refusing new runs at capacity", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "capacity",
+      name: "Capacity",
+      summary: "Completes immediately",
+      acceptsJson: false,
+      inputFields: [],
+      async run() {
+        return undefined;
+      }
+    };
+    const runs = Array.from({ length: 100 }, () => store.start(scenario, { fields: {} }));
+    await vi.waitFor(() => expect(store.get(runs[0]!.id)?.status).toBe("completed"));
+    await store.cleanup(runs[0]!.id);
+
+    const extra = store.start(scenario, { fields: {} });
+
+    expect(store.get(runs[0]!.id)).toBeUndefined();
+    expect(store.get(extra.id)).toBeDefined();
+  });
+
+  it("trims old events from long runs", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "event-cap",
+      name: "Event cap",
+      summary: "Emits many events",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        for (let index = 0; index < 510; index += 1) {
+          ctx.log(`event ${index}`);
+        }
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    const events = store.events(started.id);
+
+    expect(events).toHaveLength(500);
+    expect(events[0]!.sequence).toBeGreaterThan(1);
+    expect(events.at(-1)?.message).toBe("Run completed");
+  });
 });

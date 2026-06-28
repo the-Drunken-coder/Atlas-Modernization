@@ -282,7 +282,7 @@ function toSummary(run: RunRecord): RunSummary {
     createdResources: cloneValue(run.createdResources),
     assertions: cloneValue(run.assertions),
     cleaned: run.cleaned,
-    ...(run.lastError || run.cleanupError ? { lastError: run.lastError ?? run.cleanupError } : {})
+    ...(run.cleanupError || run.lastError ? { lastError: run.cleanupError ?? run.lastError } : {})
   };
 }
 

@@ -20,6 +20,7 @@ describe("loadConfig", () => {
     const packageRoot = tempPackageRoot();
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "localhost:8000" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "ftp://atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://user:pass@atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include embedded credentials");
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test?bad=true" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include a query string or fragment");
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test/#bad" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include a query string or fragment");
   });

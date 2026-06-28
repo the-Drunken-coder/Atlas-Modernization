@@ -379,7 +379,9 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): Fi
     scenario.inputFields.map((field) => {
       const value = values[field.key];
       if (field.type !== "number" || typeof value !== "string") return [field.key, value ?? field.defaultValue];
-      const parsed = Number(value);
+      const trimmed = value.trim();
+      if (trimmed === "") return [field.key, value];
+      const parsed = Number(trimmed);
       return [field.key, Number.isFinite(parsed) ? parsed : value];
     })
   );

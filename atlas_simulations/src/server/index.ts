@@ -327,6 +327,11 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     response.end("Request path must use valid URL encoding");
     return;
   }
+  if (target === "invalid-path") {
+    response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Request path must stay inside the client root");
+    return;
+  }
   const file = target && existsSync(target) && statSync(target).isFile() ? target : path.join(staticRoot, "index.html");
   if (!existsSync(file)) {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -345,9 +350,10 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
   stream.pipe(response);
 }
 
-function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | undefined {
+function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | "invalid-path" | undefined {
   const decoded = safeDecodeURIComponent(requestPath);
   if (decoded === undefined) return "invalid-encoding";
+  if (decoded.split(/[\\/]+/).includes("..")) return "invalid-path";
   const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, "");
   const target = path.join(staticRoot, normalized === "/" ? "index.html" : normalized);
   return target.startsWith(staticRoot) ? target : undefined;

@@ -73,6 +73,9 @@ function atlasBaseUrlValue(value: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
   }
+  if (parsed.username || parsed.password) {
+    throw new Error("ATLAS_BASE_URL must not include embedded credentials");
+  }
   if (parsed.search || parsed.hash) {
     throw new Error("ATLAS_BASE_URL must not include a query string or fragment");
   }

@@ -96,33 +96,34 @@ export function createScenarioContext(args: {
     return client;
   };
   const client = newClient({ sync: false });
+  const idForName = createIdFactory(args.runId);
   return {
     runId: args.runId,
     signal: args.signal,
     client,
     newClient,
-    id: (name) => `${args.runId}-${slug(name)}`,
+    id: idForName,
     log: args.log,
     assert: args.assert,
     wait: (ms) => waitFor(ms, args.signal),
     track: args.track,
     createEntity: async (entity) => {
       throwIfCancelled();
-      const created = await client.entities.create(entity);
+      const created = await abortable(client.entities.create(entity), args.signal);
       args.track({ type: "entity", id: created.entity_id });
       throwIfCancelled();
       return created;
     },
     createTask: async (task) => {
       throwIfCancelled();
-      const created = await client.tasks.create(task);
+      const created = await abortable(client.tasks.create(task), args.signal);
       args.track({ type: "task", id: created.task_id });
       throwIfCancelled();
       return created;
     },
     createObject: async (object) => {
       throwIfCancelled();
-      const created = await client.objects.create(object);
+      const created = await abortable(client.objects.create(object), args.signal);
       args.track({ type: "object", id: created.object_id });
       throwIfCancelled();
       return created;
@@ -234,7 +235,40 @@ function waitFor(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error("Simulation cancelled"));
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new Error("Simulation cancelled"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+  });
+}
+
+function createIdFactory(runId: string): (name: string) => string {
+  const issued = new Map<string, string>();
+  const usedSlugs = new Set<string>();
+  return (name) => {
+    const existing = issued.get(name);
+    if (existing) return existing;
+    const base = slug(name);
+    const suffix = usedSlugs.has(base) ? `-${hashName(name)}` : "";
+    const id = `${runId}-${base}${suffix}`;
+    issued.set(name, id);
+    usedSlugs.add(base);
+    return id;
+  };
+}
+
 function slug(value: string): string {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "resource";
+}
+
+function hashName(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
 }

@@ -26,14 +26,24 @@ const run: RunSummary = {
 
 let eventSources: FakeEventSource[] = [];
 
+function cloneRun(overrides: Partial<RunSummary> = {}): RunSummary {
+  return {
+    ...run,
+    inputs: { ...run.inputs },
+    createdResources: [...run.createdResources],
+    assertions: [...run.assertions],
+    ...overrides
+  };
+}
+
 vi.mock("../../src/client/api.js", () => ({
   loadHealth: vi.fn(async () => ({ ok: true, status: 200, message: "ok" })),
   loadScenarios: vi.fn(async () => [scenario]),
   loadRuns: vi.fn(async () => []),
-  startRun: vi.fn(async () => run),
-  loadRun: vi.fn(async () => run),
-  stopRun: vi.fn(async () => ({ ...run, status: "cancelled" })),
-  cleanupRun: vi.fn(async () => ({ ...run, cleaned: true }))
+  startRun: vi.fn(async () => cloneRun()),
+  loadRun: vi.fn(async () => cloneRun()),
+  stopRun: vi.fn(async () => cloneRun({ status: "cancelled" })),
+  cleanupRun: vi.fn(async () => cloneRun({ status: "completed", cleaned: true }))
 }));
 
 class FakeEventSource {

@@ -67,11 +67,8 @@ export type RunEvent =
   | (RunEventBase & { type: "cleanup"; resource?: CreatedResource });
 
 export type RunEventType = RunEvent["type"];
-export type RunEventDetails = RunEvent extends infer Event
-  ? Event extends RunEvent
-    ? Omit<Event, "sequence" | "runId" | "timestamp">
-    : never
-  : never;
+type RunEventDetailsFor<Event extends RunEvent> = Event extends RunEvent ? Omit<Event, "sequence" | "runId" | "timestamp"> : never;
+export type RunEventDetails = RunEventDetailsFor<RunEvent>;
 
 export type RunSummary = {
   id: string;
