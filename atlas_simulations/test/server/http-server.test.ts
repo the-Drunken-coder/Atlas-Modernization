@@ -381,8 +381,12 @@ function parseRunEvents(body: string): RunEvent[] {
   const blocks = normalized.split("\n\n");
   if (!normalized.endsWith("\n\n")) blocks.pop();
   return blocks.flatMap((block) => {
-    const line = block.split("\n").find((current) => current.startsWith("data: "));
-    return line ? [JSON.parse(line.slice("data: ".length)) as RunEvent] : [];
+    const data = block
+      .split("\n")
+      .filter((current) => current.startsWith("data:"))
+      .map((current) => current.slice(current.startsWith("data: ") ? "data: ".length : "data:".length))
+      .join("\n");
+    return data ? [JSON.parse(data) as RunEvent] : [];
   });
 }
 

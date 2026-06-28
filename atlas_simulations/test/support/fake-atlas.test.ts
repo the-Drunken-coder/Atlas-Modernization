@@ -36,9 +36,9 @@ describe("fake Atlas core", () => {
     const client = core.factory();
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
 
-    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toThrow();
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({ status: 409 });
     await client.entities.delete("asset-1");
-    await expect(client.entities.get("asset-1")).rejects.toThrow();
+    await expect(client.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
     expect(core.state.deleted).toEqual(["entity:asset-1"]);
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
 

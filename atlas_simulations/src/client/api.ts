@@ -86,10 +86,15 @@ async function apiJSON<T>(url: string, init: RequestInit | undefined, guard: (va
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   if (method !== "GET" && !headers.has("X-Atlas-Simulations-Request")) headers.set("X-Atlas-Simulations-Request", "1");
   if (fetchInit.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const response = await fetch(url, {
-    ...fetchInit,
-    headers
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...fetchInit,
+      headers
+    });
+  } catch (error) {
+    throw new Error(transportErrorMessage(error));
+  }
   const body = await responseJSON(response).catch((error: unknown) => {
     if (!response.ok) return undefined;
     throw error;

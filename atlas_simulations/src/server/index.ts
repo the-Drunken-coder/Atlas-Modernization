@@ -43,6 +43,10 @@ export function createSimulationServer(options: { config?: SimulationConfig; sto
   const eventStreams = new Set<EventStream>();
   const server = createServer((request, response) => {
     void handleRequest(request, response, config, store, eventStreams).catch((error) => {
+      if (response.headersSent || response.writableEnded) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
       sendJSON(response, error instanceof RequestBodyError ? error.status : 500, { message: errorMessage(error) });
     });
   });

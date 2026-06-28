@@ -52,6 +52,14 @@ describe("client API", () => {
     await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(0), message: "connection refused" });
   });
 
+  it("normalizes transport failures for JSON APIs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("server offline");
+    }));
+
+    await expect(loadRuns()).rejects.toThrow("server offline");
+  });
+
   it("rejects invalid start payloads before serialization", async () => {
     await expect(startRun({ scenarioId: "moving-assets", inputs: { assetCount: Number.NaN } } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
       "Invalid start run request"

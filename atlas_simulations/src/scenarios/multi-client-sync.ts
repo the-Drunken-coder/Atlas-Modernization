@@ -66,7 +66,7 @@ const multiClientSync: Scenario = {
       await Promise.all(readers.map(async (reader, readerIndex) => {
         const settleDeadline = Date.now() + settleMs;
         const seen = await waitForResources(ctx, reader, ids, settleDeadline);
-        const readerSnapshot = await snapshotVersions(reader, ids, settleDeadline);
+        const readerSnapshot = await snapshotVersions(reader, ids, Date.now() + settleMs);
         const status = reader.sync.status();
         ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
         ctx.assert(

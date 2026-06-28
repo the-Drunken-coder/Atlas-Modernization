@@ -17,8 +17,13 @@ describe("v1 scenarios", () => {
         jsonInput: scenario.acceptsJson ? '{"test":"yes"}' : undefined
       });
       const run = store.start(scenario, parsed.input);
-      await vi.waitFor(() => expect(store.get(run.id)?.status).toBe("completed"), { timeout: 5000 });
-      const assertions = store.get(run.id)?.assertions ?? [];
+      await vi.waitFor(() => {
+        const current = store.get(run.id);
+        expect(["completed", "failed"]).toContain(current?.status);
+      }, { timeout: 5000 });
+      const current = store.get(run.id);
+      expect(current?.status, current?.lastError).toBe("completed");
+      const assertions = current?.assertions ?? [];
       expect(assertions.length).toBeGreaterThan(0);
       expect(assertions.every((assertion) => assertion.passed)).toBe(true);
       const beforeCleanup = await core.factory().queries.full();

@@ -13,6 +13,7 @@ const MAX_ASSERTIONS_PER_RUN = 1_000;
 const MAX_ASSERTION_HISTORY_BYTES_PER_RUN = 500_000;
 const MAX_ASSERTION_FIELD_BYTES = 8_000;
 const CLEANUP_DELETE_TIMEOUT_MS = 10_000;
+const CLEANUP_TOTAL_TIMEOUT_MS = 30_000;
 const MAX_EVENT_DATA_DEPTH = 200;
 const MAX_EVENT_DATA_NODES = 10_000;
 const MAX_EVENT_DATA_STRING_BYTES = 200_000;
@@ -143,15 +144,21 @@ export class RunStore {
       throw error;
     }
     let cleanupFailure: unknown;
+    const cleanupDeadline = Date.now() + CLEANUP_TOTAL_TIMEOUT_MS;
     for (const resource of cleanupOrder(cleanupResources)) {
       try {
+        const remainingCleanupMs = cleanupDeadline - Date.now();
+        if (remainingCleanupMs <= 0) {
+          throw new Error(`Timed out cleaning up run resources after ${CLEANUP_TOTAL_TIMEOUT_MS}ms`);
+        }
+        const timeoutMs = Math.min(CLEANUP_DELETE_TIMEOUT_MS, remainingCleanupMs);
         const resourceType = resource.type as string;
         if (resourceType === "task") {
-          await withCleanupTimeout(client.tasks.delete(resource.id), cleanupController, resource);
+          await withCleanupTimeout(client.tasks.delete(resource.id), cleanupController, resource, timeoutMs);
         } else if (resourceType === "object") {
-          await withCleanupTimeout(client.objects.delete(resource.id), cleanupController, resource);
+          await withCleanupTimeout(client.objects.delete(resource.id), cleanupController, resource, timeoutMs);
         } else if (resourceType === "entity") {
-          await withCleanupTimeout(client.entities.delete(resource.id), cleanupController, resource);
+          await withCleanupTimeout(client.entities.delete(resource.id), cleanupController, resource, timeoutMs);
         } else {
           throw new Error(`Unsupported cleanup resource type: ${resourceType}`);
         }
@@ -212,7 +219,7 @@ export class RunStore {
         },
         assert: (name, passed, message) => (run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message)),
         track: (resource) => {
-          if (!run.settled) this.track(run, resource);
+          if (!run.cleaned) this.track(run, resource);
         }
       });
       await run.scenario.run(context, input);
@@ -433,7 +440,7 @@ function sameResource(left: CreatedResource | undefined, right: CreatedResource)
   return left?.type === right.type && left.id === right.id;
 }
 
-async function withCleanupTimeout(operation: Promise<void>, controller: AbortController, resource: CreatedResource): Promise<void> {
+async function withCleanupTimeout(operation: Promise<void>, controller: AbortController, resource: CreatedResource, timeoutMs = CLEANUP_DELETE_TIMEOUT_MS): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -442,7 +449,7 @@ async function withCleanupTimeout(operation: Promise<void>, controller: AbortCon
         timeout = setTimeout(() => {
           controller.abort();
           reject(new Error(`Timed out deleting ${resource.type} ${resource.id}`));
-        }, CLEANUP_DELETE_TIMEOUT_MS);
+        }, timeoutMs);
       })
     ]);
   } finally {
