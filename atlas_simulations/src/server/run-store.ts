@@ -189,6 +189,7 @@ export class RunStore {
         return () => undefined;
       }
     }
+    if (run.status !== "running") return () => undefined;
     run.subscribers.add(subscriber);
     return () => run.subscribers.delete(subscriber);
   }
@@ -384,16 +385,29 @@ function wireInputs(inputs: Record<string, string | number | boolean>): Record<s
 }
 
 function trimEvents(run: RunRecord): void {
-  const overflow = run.events.length - MAX_EVENTS_PER_RUN;
-  if (overflow > 0) {
-    for (const event of run.events.splice(0, overflow)) {
-      run.eventHistoryBytes -= eventBytes(event);
-    }
-  }
+  const protectedSequence = latestTerminalStatusSequence(run.events);
   while (run.eventHistoryBytes > MAX_EVENT_HISTORY_BYTES_PER_RUN && run.events.length > 1) {
-    const event = run.events.shift();
-    if (event) run.eventHistoryBytes -= eventBytes(event);
+    if (!removeOldestTrimmableEvent(run, protectedSequence)) break;
   }
+  while (run.events.length > MAX_EVENTS_PER_RUN) {
+    if (!removeOldestTrimmableEvent(run, protectedSequence)) break;
+  }
+}
+
+function removeOldestTrimmableEvent(run: RunRecord, protectedSequence: number | undefined): boolean {
+  const index = run.events.findIndex((event) => event.sequence !== protectedSequence);
+  if (index === -1) return false;
+  const [event] = run.events.splice(index, 1);
+  if (event) run.eventHistoryBytes -= eventBytes(event);
+  return true;
+}
+
+function latestTerminalStatusSequence(events: RunEvent[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === "status" && event.status !== "running") return event.sequence;
+  }
+  return undefined;
 }
 
 function eventBytes(event: RunEvent): number {

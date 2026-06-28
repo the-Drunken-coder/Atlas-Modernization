@@ -41,15 +41,56 @@ function abortableFetch(signal?: AbortSignal): typeof fetch {
     const timeout = setTimeout(() => controller.abort(new Error(`Atlas request timed out after ${ATLAS_REQUEST_TIMEOUT_MS}ms`)), ATLAS_REQUEST_TIMEOUT_MS);
     const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason);
     for (const upstreamSignal of upstreamSignals) upstreamSignal.addEventListener("abort", abort, { once: true });
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      clearTimeout(timeout);
+      for (const upstreamSignal of upstreamSignals) upstreamSignal.removeEventListener("abort", abort);
+    };
     const abortedSignal = upstreamSignals.find((upstreamSignal) => upstreamSignal.aborted);
     if (abortedSignal) controller.abort(abortedSignal.reason);
     try {
-      return await fetch(input, { ...init, signal: controller.signal });
-    } finally {
-      clearTimeout(timeout);
-      for (const upstreamSignal of upstreamSignals) upstreamSignal.removeEventListener("abort", abort);
+      const response = await fetch(input, { ...init, signal: controller.signal });
+      return responseWithCleanup(response, cleanup);
+    } catch (error) {
+      cleanup();
+      throw error;
     }
   };
+}
+
+function responseWithCleanup(response: Response, cleanup: () => void): Response {
+  if (!response.body) {
+    cleanup();
+    return response;
+  }
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          cleanup();
+          controller.close();
+          return;
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        cleanup();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      cleanup();
+      await reader.cancel(reason);
+    }
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  });
 }
 
 function requestSignal(input: Parameters<typeof fetch>[0]): AbortSignal | undefined {

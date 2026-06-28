@@ -28,6 +28,7 @@ describe("v1 scenarios", () => {
       await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
       const afterCleanup = await core.factory().queries.full();
       expect(afterCleanup).toMatchObject({ entities: [], tasks: [], objects: [] });
+      expect(core.state.deleted).toHaveLength(expectedDeletes.size);
       expect(new Set(core.state.deleted)).toEqual(expectedDeletes);
     } finally {
       vi.useRealTimers();

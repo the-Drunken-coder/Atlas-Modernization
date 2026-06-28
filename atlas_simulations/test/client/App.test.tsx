@@ -230,6 +230,29 @@ describe("App", () => {
     await waitFor(() => expect(eventSources[0].closed).toBe(true));
   });
 
+  it("rejects malformed stream event envelopes", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: /start/i }));
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+
+    eventSources[0].onmessage?.({
+      data: JSON.stringify({
+        sequence: 1.5,
+        runId: run.id,
+        timestamp: "not-a-date",
+        type: "log",
+        message: "bad event"
+      })
+    } as MessageEvent<string>);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(`Invalid event payload for run ${run.id}`);
+    expect(eventSources[0].closed).toBe(true);
+  });
+
   it("clears the selected run when refresh reports it missing", async () => {
     const missingRun = cloneRun({
       id: "sim-pruned",

@@ -25,6 +25,7 @@ export function App() {
   const currentRunIdRef = useRef<string | undefined>(undefined);
   const refreshRunsRequestRef = useRef(0);
   const runsRef = useRef<RunSummary[]>([]);
+  const seenEventKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     void refreshHealth().catch(captureError);
@@ -155,6 +156,7 @@ export function App() {
       }
       return;
     }
+    seenEventKeysRef.current = new Set();
     setEvents([]);
     setCurrentRun(run);
     if (run.status === "running") {
@@ -166,13 +168,16 @@ export function App() {
 
   function clearRunSelection() {
     currentRunIdRef.current = undefined;
+    seenEventKeysRef.current = new Set();
     setEvents([]);
     setCurrentRun(undefined);
     closeActiveEventSource();
   }
 
   function connectEvents(runId: string) {
+    const previousRunId = activeRunIdRef.current ?? currentRunIdRef.current;
     closeActiveEventSource();
+    if (previousRunId !== runId) seenEventKeysRef.current = new Set();
     activeRunIdRef.current = runId;
     cleanupStreamRunIdRef.current = undefined;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
@@ -200,8 +205,10 @@ export function App() {
         closeSource();
         return;
       }
+      const eventKey = `${event.runId}:${event.sequence}`;
+      if (seenEventKeysRef.current.has(eventKey)) return;
+      seenEventKeysRef.current.add(eventKey);
       setEvents((current) => {
-        if (current.some((existing) => existing.runId === event.runId && existing.sequence === event.sequence)) return current;
         return [...current, event].slice(-MAX_CLIENT_EVENTS);
       });
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
@@ -608,7 +615,16 @@ function alignsToStep(value: number, step: number, base: number): boolean {
 }
 
 function parseRunEvent(value: unknown): RunEvent {
-  if (!isRecord(value) || typeof value.sequence !== "number" || typeof value.runId !== "string" || typeof value.timestamp !== "string" || typeof value.message !== "string") {
+  if (
+    !isRecord(value) ||
+    typeof value.sequence !== "number" ||
+    !Number.isSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    typeof value.runId !== "string" ||
+    typeof value.timestamp !== "string" ||
+    Number.isNaN(Date.parse(value.timestamp)) ||
+    typeof value.message !== "string"
+  ) {
     throw new Error("Invalid run event");
   }
   switch (value.type) {

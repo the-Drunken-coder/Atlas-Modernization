@@ -131,7 +131,17 @@ async function readVersion(reader: ScenarioContext["client"], id: string, deadli
 
 async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | undefined> {
   if (!Number.isFinite(deadline)) return await operation();
-  if (Date.now() >= deadline) return undefined;
-  const result = await operation();
-  return Date.now() <= deadline ? result : undefined;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => resolve(undefined), remaining);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }

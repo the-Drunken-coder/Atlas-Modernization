@@ -534,6 +534,57 @@ describe("RunStore", () => {
     expect(events.at(-1)?.message).toBe("Run completed");
   });
 
+  it("keeps the terminal status event when cleanup events trim history", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "cleanup-event-cap",
+      name: "Cleanup event cap",
+      summary: "Creates enough resources to trim cleanup events",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        for (let index = 0; index < 510; index += 1) {
+          await ctx.createObject({ object_id: ctx.id(`object-${index}`) });
+        }
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    const events = store.events(started.id);
+
+    expect(events).toHaveLength(500);
+    expect(events.some((event) => event.type === "status" && event.status === "completed")).toBe(true);
+    expect(events.at(-1)).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
+  });
+
+  it("does not retain subscribers added after a run is terminal", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "terminal-subscribe",
+      name: "Terminal subscribe",
+      summary: "Creates a cleanup target",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createObject({ object_id: ctx.id("object") });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    const replayed: string[] = [];
+    store.subscribe(started.id, (event) => replayed.push(event.message));
+    const replayCount = replayed.length;
+    await store.cleanup(started.id);
+
+    expect(replayed).toHaveLength(replayCount);
+    expect(replayed).not.toContain("Cleanup complete");
+  });
+
   it("rejects overly deep structured event data before storing the log event", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);

@@ -74,6 +74,13 @@ describe("loadConfig", () => {
     expect(config.atlasApiKey).toBe("abc # not a comment");
   });
 
+  it("treats comment-only .env values as blank", () => {
+    const packageRoot = tempPackageRoot();
+    writeFileSync(path.join(packageRoot, ".env"), "ATLAS_API_KEY=# replace locally\n");
+
+    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBeUndefined();
+  });
+
   it("unescapes matching quotes inside quoted .env values", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(path.join(packageRoot, ".env"), String.raw`ATLAS_API_KEY='abc \'quoted\' key'`);
