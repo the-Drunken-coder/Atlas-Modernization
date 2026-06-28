@@ -210,6 +210,42 @@ describe("RunStore", () => {
     expect(core.state.deleted).toEqual([`entity:${started.id}-asset`]);
   });
 
+  it("cleans same-type resources from newest to oldest", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "cleanup-order",
+      name: "Cleanup order",
+      summary: "Creates same-type resources",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createObject({ object_id: ctx.id("object-1") });
+        await ctx.createObject({ object_id: ctx.id("object-2") });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    await store.cleanup(started.id);
+
+    expect(core.state.deleted).toEqual([`object:${started.id}-object-2`, `object:${started.id}-object-1`]);
+  });
+
+  it("fake sync clients read the revision visible at their sync version", async () => {
+    const core = createFakeAtlasCore();
+    const writer = core.factory();
+    const reader = core.factory({ sync: "all" });
+
+    await writer.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: "old" });
+    await reader.sync.start();
+    await writer.entities.update("asset-1", { alias: "new" });
+
+    expect((await reader.entities.get("asset-1")).alias).toBe("old");
+    reader.sync.status();
+    expect((await reader.entities.get("asset-1")).alias).toBe("new");
+  });
+
   it("evicts cleaned runs before refusing new runs at capacity", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);

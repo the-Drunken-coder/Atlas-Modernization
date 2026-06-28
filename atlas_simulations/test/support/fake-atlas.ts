@@ -16,13 +16,16 @@ import type {
 
 type FakeCoreState = {
   version: number;
-  entities: Map<string, EntityResource>;
-  tasks: Map<string, TaskResource>;
-  objects: Map<string, ObjectResource>;
+  entities: ResourceHistory<EntityResource>;
+  tasks: ResourceHistory<TaskResource>;
+  objects: ResourceHistory<ObjectResource>;
   tombstones: Map<string, number>;
   deleted: string[];
   clients: FakeClientState[];
 };
+
+type VersionedResource = { metadata: { version: number } };
+type ResourceHistory<T extends VersionedResource> = Map<string, T[]>;
 
 type FakeClientState = {
   sync: ClientMode;
@@ -186,13 +189,17 @@ function metadata(version: number, createdAt?: string) {
   return { created_at: createdAt ?? now, updated_at: now, version };
 }
 
-function requireValue<T>(values: Map<string, T>, id: string, type: string): T {
-  const value = values.get(id);
-  if (!value) throw notFound(type, id);
-  return value;
+function requireHistory<T extends VersionedResource>(values: ResourceHistory<T>, id: string, type: string): T[] {
+  const history = values.get(id);
+  if (!history?.length) throw notFound(type, id);
+  return history;
 }
 
-function requireActiveValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): T {
+function requireValue<T extends VersionedResource>(values: ResourceHistory<T>, id: string, type: string): T {
+  return requireHistory(values, id, type).at(-1)!;
+}
+
+function requireActiveValue<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): T {
   const value = requireValue(values, id, type);
   if (isDeletedAt(state, type, id, state.version)) throw notFound(type, id);
   return value;
@@ -201,29 +208,39 @@ function requireActiveValue<T>(state: FakeCoreState, values: Map<string, T>, id:
 function visibleValue<T extends { metadata: { version: number } }>(
   state: FakeCoreState,
   clientState: FakeClientState,
-  values: Map<string, T>,
+  values: ResourceHistory<T>,
   id: string,
   type: string
 ): T {
-  const value = requireValue(values, id, type);
+  const history = requireHistory(values, id, type);
   const version = visibleVersion(state, clientState);
-  if (value.metadata.version > version || isDeletedAt(state, type, id, version)) throw notFound(type, id);
+  const value = visibleSnapshot(history, version);
+  if (!value || isDeletedAt(state, type, id, version)) throw notFound(type, id);
   return cloneValue(value);
 }
 
-function visibleValues<T extends { metadata: { version: number } }>(clientState: FakeClientState, values: Map<string, T>, state?: FakeCoreState, type?: string): T[] {
+function visibleValues<T extends VersionedResource>(clientState: FakeClientState, values: ResourceHistory<T>, state?: FakeCoreState, type?: string): T[] {
   const version = state ? visibleVersion(state, clientState) : clientState.visibleVersion;
   return [...values.values()]
-    .filter((value) => value.metadata.version <= version)
+    .map((history) => visibleSnapshot(history, version))
+    .filter((value): value is T => value !== undefined)
     .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }), version))
     .map(cloneValue);
+}
+
+function visibleSnapshot<T extends VersionedResource>(history: T[], version: number): T | undefined {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const value = history[index]!;
+    if (value.metadata.version <= version) return value;
+  }
+  return undefined;
 }
 
 function visibleVersion(state: FakeCoreState, clientState: FakeClientState): number {
   return clientState.sync ? clientState.visibleVersion : state.version;
 }
 
-function deleteValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): void {
+function deleteValue<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): void {
   requireValue(values, id, type);
   if (isDeletedAt(state, type, id, state.version)) throw notFound(type, id);
   state.version += 1;
@@ -236,8 +253,10 @@ function notFound(type: string, id: string): AtlasAPIError {
   return new AtlasAPIError(message, 404, { message });
 }
 
-function saveValue<T>(values: Map<string, T>, id: string, value: T): T {
-  values.set(id, cloneValue(value));
+function saveValue<T extends VersionedResource>(values: ResourceHistory<T>, id: string, value: T): T {
+  const history = values.get(id) ?? [];
+  history.push(cloneValue(value));
+  values.set(id, history);
   return cloneValue(value);
 }
 

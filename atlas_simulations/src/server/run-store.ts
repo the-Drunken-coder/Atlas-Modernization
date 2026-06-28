@@ -316,7 +316,10 @@ function cloneValue<T>(value: T): T {
 
 function cleanupOrder(resources: CreatedResource[]): CreatedResource[] {
   const order: Record<CreatedResource["type"], number> = { task: 0, object: 1, entity: 2 };
-  return [...resources].sort((a, b) => order[a.type] - order[b.type]);
+  return resources
+    .map((resource, index) => ({ resource, index }))
+    .sort((a, b) => order[a.resource.type] - order[b.resource.type] || b.index - a.index)
+    .map(({ resource }) => resource);
 }
 
 function runId(): string {

@@ -52,7 +52,7 @@ export type AtlasClientLike = {
     stop(): void;
     status(): { running: boolean; healthy: boolean; degraded: boolean; lastVersion: number };
   };
-  watch<T>(filter: AtlasSubscription, callback: (value: T, event: AtlasWatchEvent) => void): () => void;
+  watch<T extends EntityResource | TaskResource | ObjectResource>(filter: AtlasSubscription, callback: (value: T | undefined, event: AtlasWatchEvent) => void): () => void;
   handshake(): Promise<void>;
 };
 
@@ -67,7 +67,7 @@ export function createAtlasClientFactory(config: SimulationConfig): AtlasClientF
       apiKey: config.atlasApiKey,
       sync: options.sync ?? false,
       pollIntervalMs: options.pollIntervalMs ?? 2_000
-    } satisfies AtlasClientOptions) as AtlasClientLike;
+    } satisfies AtlasClientOptions);
 }
 
 export function isNotFoundError(error: unknown): boolean {

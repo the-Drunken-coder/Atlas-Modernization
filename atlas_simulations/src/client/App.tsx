@@ -111,10 +111,12 @@ export function App() {
 
   async function stopCurrentRun() {
     if (!currentRun || mutationPending) return;
+    const targetRunId = currentRun.id;
     setError(undefined);
     setMutationPending(true);
     try {
-      setCurrentRun(await stopRun(currentRun.id));
+      const updatedRun = await stopRun(targetRunId);
+      setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       await refreshRuns();
     } catch (errorValue) {
       captureError(errorValue);
@@ -125,10 +127,12 @@ export function App() {
 
   async function cleanupCurrentRun() {
     if (!currentRun || mutationPending) return;
+    const targetRunId = currentRun.id;
     setError(undefined);
     setMutationPending(true);
     try {
-      setCurrentRun(await cleanupRun(currentRun.id));
+      const updatedRun = await cleanupRun(targetRunId);
+      setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       await refreshRuns();
     } catch (errorValue) {
       captureError(errorValue);
