@@ -92,7 +92,7 @@ export function App() {
       if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
     };
     source.onerror = () => {
-      closeSource();
+      // EventSource handles transient reconnects itself.
     };
   }
 

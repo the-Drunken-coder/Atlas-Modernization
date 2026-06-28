@@ -12,7 +12,7 @@ describe("v1 scenarios", () => {
       const store = new RunStore(core.factory);
       const parsed = parseStartRequest(scenario, {
         scenarioId: scenario.id,
-        inputs: Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.key === "tickMs" || field.key === "settleMs" ? 0 : field.defaultValue])),
+        inputs: Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.defaultValue])),
         jsonInput: scenario.acceptsJson ? '{"test":"yes"}' : undefined
       });
       const run = store.start(scenario, parsed.input);

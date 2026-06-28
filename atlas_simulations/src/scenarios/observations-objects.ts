@@ -10,8 +10,8 @@ const observationsObjects: Scenario = {
     { key: "assetCount", label: "Asset count", type: "number", defaultValue: 2, min: 1, max: 10, step: 1 },
     { key: "observations", label: "Observations", type: "number", defaultValue: 4, min: 1, max: 50, step: 1 },
     { key: "tickMs", label: "Tick ms", type: "number", defaultValue: 200, min: 0, max: 10000, step: 50 },
-    { key: "startLatitude", label: "Start latitude", type: "number", defaultValue: 38.88, min: -90, max: 90, step: 0.0001 },
-    { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: -77.04, min: -180, max: 180, step: 0.0001 }
+    { key: "startLatitude", label: "Start latitude", type: "number", defaultValue: 38.88, min: -90, max: 89.9557, step: 0.0001 },
+    { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: -77.04, min: -180, max: 179.9459, step: 0.0001 }
   ],
   async run(ctx, input) {
     const assetCount = numberInput(input, "assetCount");

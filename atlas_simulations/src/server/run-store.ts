@@ -47,7 +47,7 @@ export class RunStore {
   }
 
   start(scenario: Scenario, input: ScenarioInput): RunSummary {
-    this.pruneRuns();
+    this.pruneRuns(MAX_RUNS - 1);
     if (this.runs.size >= MAX_RUNS) {
       throw new Error("Clean up existing simulation runs before starting another run");
     }
@@ -255,10 +255,10 @@ export class RunStore {
     return run;
   }
 
-  private pruneRuns(): void {
+  private pruneRuns(targetSize = MAX_RUNS): void {
     for (const run of this.runs.values()) trimEvents(run);
     for (const [id, run] of this.runs) {
-      if (this.runs.size <= MAX_RUNS) return;
+      if (this.runs.size <= targetSize) return;
       if (run.status === "cleaned" && run.settled) this.runs.delete(id);
     }
   }

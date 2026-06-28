@@ -49,9 +49,17 @@ export function descriptorForScenario(scenario: Scenario): ScenarioDescriptor {
 }
 
 export function parseStartRequest(scenario: Scenario, request: StartRunRequest): ParsedStart {
+  const inputs = request.inputs ?? {};
+  if (!isRecord(inputs)) {
+    throw new Error("inputs must be a JSON object");
+  }
+  rejectUnknownInputFields(scenario.inputFields, inputs);
+  if (!scenario.acceptsJson && request.jsonInput?.trim()) {
+    throw new Error(`${scenario.name} does not accept JSON input`);
+  }
   return {
     input: {
-      fields: parseFields(scenario.inputFields, request.inputs ?? {}),
+      fields: parseFields(scenario.inputFields, inputs),
       ...(scenario.acceptsJson ? parseJsonInput(request.jsonInput) : {})
     }
   };
@@ -91,18 +99,21 @@ export function createScenarioContext(args: {
       throwIfCancelled();
       const created = await client.entities.create(entity);
       args.track({ type: "entity", id: created.entity_id });
+      throwIfCancelled();
       return created;
     },
     createTask: async (task) => {
       throwIfCancelled();
       const created = await client.tasks.create(task);
       args.track({ type: "task", id: created.task_id });
+      throwIfCancelled();
       return created;
     },
     createObject: async (object) => {
       throwIfCancelled();
       const created = await client.objects.create(object);
       args.track({ type: "object", id: created.object_id });
+      throwIfCancelled();
       return created;
     }
   };
@@ -161,6 +172,18 @@ function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
   const trimmed = raw?.trim();
   if (!trimmed) return {};
   return { json: JSON.parse(trimmed) as JSONValue };
+}
+
+function rejectUnknownInputFields(fields: ScenarioInputField[], raw: Record<string, unknown>): void {
+  const allowed = new Set(fields.map((field) => field.key));
+  const unknown = Object.keys(raw).find((key) => !allowed.has(key));
+  if (unknown) {
+    throw new Error(`Unknown input field: ${unknown}`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function waitFor(ms: number, signal: AbortSignal): Promise<void> {

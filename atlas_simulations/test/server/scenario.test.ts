@@ -50,4 +50,14 @@ describe("scenario input parsing", () => {
   it("rejects non-string text input instead of coercing it", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { name: 12 } })).toThrow("Name must be a string");
   });
+
+  it("rejects unknown input fields", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2, unknown: true } })).toThrow("Unknown input field: unknown");
+  });
+
+  it("rejects JSON input for scenarios that do not accept it", () => {
+    expect(() => parseStartRequest({ ...scenario, acceptsJson: false }, { scenarioId: "example", jsonInput: '{"nope":true}' })).toThrow(
+      "Example does not accept JSON input"
+    );
+  });
 });

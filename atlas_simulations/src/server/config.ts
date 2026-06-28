@@ -21,11 +21,11 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
     ...fileEnv,
     ...Object.fromEntries(Object.entries(runtimeEnv).filter(([, value]) => value !== undefined))
   };
-  const atlasBaseUrl = stringValue(env.ATLAS_BASE_URL) ?? "http://localhost:8000";
+  const atlasBaseUrl = atlasBaseUrlValue(stringValue(env.ATLAS_BASE_URL) ?? "http://localhost:8000");
   const atlasApiKey = stringValue(env.ATLAS_API_KEY);
   const port = portValue(env.ATLAS_SIM_PORT);
   return {
-    atlasBaseUrl: atlasBaseUrl.replace(/\/+$/, ""),
+    atlasBaseUrl,
     ...(atlasApiKey ? { atlasApiKey } : {}),
     port,
     packageRoot
@@ -53,11 +53,27 @@ function stringValue(value: string | undefined): string | undefined {
 function portValue(value: string | undefined): number {
   const trimmed = stringValue(value);
   if (!trimmed) return 5180;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed < 1 || parsed > 65535) {
     throw new Error("ATLAS_SIM_PORT must be a valid TCP port");
   }
   return parsed;
+}
+
+function atlasBaseUrlValue(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+  }
+  return value.replace(/\/+$/, "");
 }
 
 function unquote(value: string): string {

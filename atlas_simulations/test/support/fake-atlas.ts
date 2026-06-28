@@ -54,7 +54,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           ...("subtype" in patch ? { subtype: patch.subtype ?? null } : {}),
           ...("alias" in patch ? { alias: patch.alias ?? null } : {}),
           ...(patch.components ? { components: { ...current.components, ...patch.components } } : {}),
-          ...(patch.extra ? { extra: patch.extra } : {}),
+          ...("extra" in patch ? { extra: patch.extra } : {}),
           metadata: metadata(++state.version, current.metadata.created_at)
         };
         return saveValue(state.entities, id, updated);
@@ -130,7 +130,7 @@ function entityFromCreate(request: EntityCreateRequest, version: number): Entity
     alias: request.alias ?? null,
     subtype: request.subtype ?? null,
     components: request.components ?? {},
-    ...(request.extra ? { extra: request.extra } : {}),
+    ...("extra" in request ? { extra: request.extra } : {}),
     metadata: metadata(version)
   };
 }
@@ -141,7 +141,7 @@ function taskFromCreate(request: TaskCreateRequest, version: number): TaskResour
     entity_id: request.entity_id ?? null,
     status: request.status ?? "pending",
     components: request.components ?? {},
-    ...(request.extra ? { extra: request.extra } : {}),
+    ...("extra" in request ? { extra: request.extra } : {}),
     metadata: metadata(version)
   };
 }

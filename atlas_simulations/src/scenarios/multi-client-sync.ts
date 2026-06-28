@@ -2,6 +2,8 @@ import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { isoNow, numberInput, point } from "./helpers.js";
 
+const SYNC_POLL_INTERVAL_MS = 500;
+
 const multiClientSync: Scenario = {
   id: "multi-client-sync",
   name: "Multi-client sync",
@@ -10,20 +12,24 @@ const multiClientSync: Scenario = {
   inputFields: [
     { key: "clientCount", label: "Client count", type: "number", defaultValue: 2, min: 1, max: 8, step: 1 },
     { key: "writes", label: "Writes", type: "number", defaultValue: 3, min: 1, max: 20, step: 1 },
-    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: 500, min: 0, max: 10000, step: 50 }
+    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: 1000, min: SYNC_POLL_INTERVAL_MS, max: 10000, step: 50 }
   ],
   async run(ctx, input) {
     const clientCount = numberInput(input, "clientCount");
     const writes = numberInput(input, "writes");
     const settleMs = numberInput(input, "settleMs");
-    const readers = Array.from({ length: clientCount }, () => ctx.newClient({ sync: "all", pollIntervalMs: 500 }));
-    for (const [index, client] of readers.entries()) {
+    const readers: ScenarioContext["client"][] = [];
+    for (let index = 0; index < clientCount; index++) {
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
+      const client = ctx.newClient({ sync: "all", pollIntervalMs: SYNC_POLL_INTERVAL_MS });
+      readers.push(client);
       await client.sync.start();
       ctx.log(`Sync client ${index + 1} started`, client.sync.status());
     }
 
     const ids: string[] = [];
     for (let index = 0; index < writes; index++) {
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       const id = ctx.id(`sync-asset-${index + 1}`);
       ids.push(id);
       await ctx.createEntity({
@@ -43,6 +49,7 @@ const multiClientSync: Scenario = {
           custom_simulation: { run_id: ctx.runId, write_index: index + 1 }
         }
       });
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       ctx.log(`Writer created ${id}`);
     }
 

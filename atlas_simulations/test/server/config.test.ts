@@ -13,6 +13,13 @@ describe("loadConfig", () => {
   it("rejects non-numeric ATLAS_SIM_PORT values", () => {
     const packageRoot = tempPackageRoot();
     expect(() => loadConfig({ env: { ATLAS_SIM_PORT: "abc" }, packageRoot })).toThrow("ATLAS_SIM_PORT must be a valid TCP port");
+    expect(() => loadConfig({ env: { ATLAS_SIM_PORT: "0x143c" }, packageRoot })).toThrow("ATLAS_SIM_PORT must be a valid TCP port");
+  });
+
+  it("rejects invalid ATLAS_BASE_URL values", () => {
+    const packageRoot = tempPackageRoot();
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "localhost:8000" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "ftp://atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
   });
 
   it("does not let undefined env overrides erase .env values", () => {
