@@ -14,7 +14,7 @@ import {
 } from "../../atlas/geometry.js";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
-import { defaultBlankStyle } from "./map-style.js";
+import { defaultMapStyle } from "./map-style.js";
 
 const COLORS = {
   geofeature: "#3fd27a",
@@ -68,7 +68,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl ?? defaultBlankStyle(),
+        style: styleUrl ?? defaultMapStyle(),
         center: initialCenter ?? [0, 20],
         zoom: initialCenter ? 11 : 1.6,
         attributionControl: { compact: true }

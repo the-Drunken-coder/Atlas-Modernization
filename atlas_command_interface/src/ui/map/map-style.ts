@@ -1,11 +1,28 @@
 import type { StyleSpecification } from "maplibre-gl";
 
-// Local fallback used when MAP_STYLE_URL is not configured. It keeps MapLibre
-// available for overlays without making an implicit public tile-provider choice.
-export function defaultBlankStyle(): StyleSpecification {
+export function defaultMapStyle(): StyleSpecification {
   return {
     version: 8,
-    sources: {},
-    layers: [{ id: "background", type: "background", paint: { "background-color": "#070a0f" } }]
+    sources: {
+      openstreetmap: {
+        type: "raster",
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        attribution: "OpenStreetMap contributors"
+      }
+    },
+    layers: [
+      { id: "background", type: "background", paint: { "background-color": "#070a0f" } },
+      {
+        id: "openstreetmap",
+        type: "raster",
+        source: "openstreetmap",
+        paint: {
+          "raster-opacity": 0.72,
+          "raster-saturation": -0.6,
+          "raster-contrast": 0.15
+        }
+      }
+    ]
   };
 }
