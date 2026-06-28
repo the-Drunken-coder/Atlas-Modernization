@@ -10,7 +10,11 @@ export function numberInput(input: ScenarioInput, key: string): number {
 }
 
 export function jsonObject(input: ScenarioInput): Record<string, JSONValue> {
-  return isRecord(input.json) ? input.json : {};
+  if (input.json === undefined) return {};
+  if (!isRecord(input.json)) {
+    throw new Error("JSON input must be an object");
+  }
+  return input.json;
 }
 
 export function isoNow(): string {

@@ -266,9 +266,14 @@ function sendJSON(response: ServerResponse, status: number, body: unknown): void
 }
 
 function requireTrustedMutation(request: IncomingMessage, response: ServerResponse): boolean {
-  if (hasMutationHeader(request) || hasSameOrigin(request)) return true;
+  if (hasTrustedMutation(request)) return true;
   sendJSON(response, 403, { message: "Mutating simulation requests require a local UI request header" });
   return false;
+}
+
+function hasTrustedMutation(request: IncomingMessage): boolean {
+  if (!hasLoopbackHost(request.headers.host)) return false;
+  return request.headers.origin ? hasSameOrigin(request) : hasMutationHeader(request);
 }
 
 function hasMutationHeader(request: IncomingMessage): boolean {
@@ -278,13 +283,33 @@ function hasMutationHeader(request: IncomingMessage): boolean {
 
 function hasSameOrigin(request: IncomingMessage): boolean {
   const origin = request.headers.origin;
-  const host = request.headers.host;
-  if (!origin || !host) return false;
+  const hostUrl = urlForHost(request.headers.host);
+  if (!origin || !hostUrl) return false;
   try {
-    return new URL(origin).host === host;
+    const originUrl = new URL(origin);
+    return originUrl.protocol === "http:" && originUrl.host === hostUrl.host && isLoopbackHostname(originUrl.hostname);
   } catch {
     return false;
   }
+}
+
+function hasLoopbackHost(host: string | undefined): boolean {
+  const hostUrl = urlForHost(host);
+  return !!hostUrl && isLoopbackHostname(hostUrl.hostname);
+}
+
+function urlForHost(host: string | undefined): URL | undefined {
+  if (!host) return undefined;
+  try {
+    return new URL(`http://${host}`);
+  } catch {
+    return undefined;
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
 function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string): void {

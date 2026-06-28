@@ -341,6 +341,13 @@ tbody tr {
   width: 10px;
 }
 
+.result-cell,
+.status-cell {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
 @media (max-width: 1100px) {
   .workspace,
   .lower-grid {

@@ -25,6 +25,7 @@ const observationsObjects: Scenario = {
     const objectIds: string[] = [];
 
     for (let index = 0; index < assetCount; index++) {
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       const id = ctx.id(`observer-${index + 1}`);
       assetIds.push(id);
       await ctx.createEntity({
@@ -47,9 +48,11 @@ const observationsObjects: Scenario = {
           custom_simulation: { ...extra, run_id: ctx.runId }
         }
       });
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
     }
 
     for (let index = 0; index < observations; index++) {
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       const observerId = assetIds[index % assetIds.length];
       const trackId = ctx.id(`track-${index + 1}`);
       const objectId = ctx.id(`observation-object-${index + 1}`);
@@ -77,6 +80,7 @@ const observationsObjects: Scenario = {
         }
       });
 
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       await ctx.createObject({
         object_id: objectId,
         type: "observation",
@@ -85,6 +89,7 @@ const observationsObjects: Scenario = {
         usage_hints: ["thumbnail"],
         referenced_by: [{ entity_id: trackId }]
       });
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       ctx.log(`Observation ${index + 1} linked ${observerId} to ${trackId}`);
       if (index < observations - 1) await ctx.wait(tickMs);
     }

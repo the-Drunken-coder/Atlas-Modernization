@@ -15,6 +15,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ env: { ATLAS_SIM_PORT: "abc" }, packageRoot })).toThrow("ATLAS_SIM_PORT must be a valid TCP port");
   });
 
+  it("does not let undefined env overrides erase .env values", () => {
+    const packageRoot = tempPackageRoot();
+    writeFileSync(path.join(packageRoot, ".env"), "ATLAS_SIM_PORT=5192\n");
+
+    expect(loadConfig({ env: { ATLAS_SIM_PORT: undefined }, packageRoot }).port).toBe(5192);
+  });
+
   it("strips inline comments from unquoted .env values only", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(

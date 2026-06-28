@@ -44,4 +44,8 @@ describe("scenario input parsing", () => {
   it("rejects string boolean input instead of coercing it", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { enabled: "true" } })).toThrow("Enabled must be a boolean");
   });
+
+  it("rejects non-string text input instead of coercing it", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { name: 12 } })).toThrow("Name must be a string");
+  });
 });

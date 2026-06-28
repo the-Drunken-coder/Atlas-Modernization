@@ -117,7 +117,7 @@ export function App() {
           <h1>Atlas Simulations</h1>
           <div className="subtle">{health?.atlasBaseUrl ?? "Atlas Core"}</div>
         </div>
-        <div className={`health ${health?.ok ? "ok" : "bad"}`}>
+        <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`}>
           <Activity size={18} aria-hidden="true" />
           <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
           <button className="icon-button" type="button" title="Refresh Core status" aria-label="Refresh Core status" onClick={() => void refreshHealth().catch(captureError)}>
@@ -267,7 +267,12 @@ function AssertionTable({ run }: { run: RunSummary | undefined }) {
       <tbody>
         {run.assertions.map((assertion) => (
           <tr key={assertion.id}>
-            <td>{assertion.passed ? <CheckCircle2 className="pass" size={17} /> : <CircleAlert className="fail" size={17} />}</td>
+            <td>
+              <span className="result-cell">
+                {assertion.passed ? <CheckCircle2 className="pass" size={17} aria-hidden="true" /> : <CircleAlert className="fail" size={17} aria-hidden="true" />}
+                {assertion.passed ? "Pass" : "Fail"}
+              </span>
+            </td>
             <td>{assertion.name}</td>
             <td>{assertion.message ?? ""}</td>
           </tr>
@@ -338,7 +343,12 @@ function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSum
       <tbody>
         {runs.map((run) => (
           <tr key={run.id}>
-            <td><span className={`status-dot ${run.status}`} /></td>
+            <td>
+              <span className="status-cell">
+                <span className={`status-dot ${run.status}`} aria-hidden="true" />
+                {run.status}
+              </span>
+            </td>
             <td>
               <button className="run-select-button" type="button" onClick={() => onSelect(run)}>
                 {run.scenarioName}

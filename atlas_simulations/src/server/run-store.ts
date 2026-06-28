@@ -234,7 +234,7 @@ export class RunStore {
     for (const run of this.runs.values()) trimEvents(run);
     for (const [id, run] of this.runs) {
       if (this.runs.size <= MAX_RUNS) return;
-      if (run.status !== "running" && run.settled) this.runs.delete(id);
+      if (run.status === "cleaned" && run.settled) this.runs.delete(id);
     }
   }
 }

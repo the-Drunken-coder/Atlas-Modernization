@@ -23,6 +23,7 @@ const movingAssets: Scenario = {
     const assetIds: string[] = [];
 
     for (let index = 0; index < assetCount; index++) {
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       const id = ctx.id(`asset-${index + 1}`);
       assetIds.push(id);
       await ctx.createEntity({
@@ -48,6 +49,7 @@ const movingAssets: Scenario = {
           custom_simulation: { ...extra, run_id: ctx.runId }
         }
       });
+      if (ctx.signal.aborted) throw new Error("Simulation cancelled");
     }
     ctx.log(`Created ${assetIds.length} assets`);
 

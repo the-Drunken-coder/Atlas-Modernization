@@ -116,7 +116,12 @@ function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>)
       throw new Error(`${field.label} is required`);
     }
     if (field.type === "number") values[field.key] = parseNumberField(field, value);
-    if (field.type === "text") values[field.key] = String(value);
+    if (field.type === "text") {
+      if (typeof value !== "string") {
+        throw new Error(`${field.label} must be a string`);
+      }
+      values[field.key] = value;
+    }
     if (field.type === "boolean") values[field.key] = parseBoolean(field, value);
   }
   return values;

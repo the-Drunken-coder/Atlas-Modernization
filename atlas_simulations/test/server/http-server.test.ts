@@ -59,6 +59,11 @@ describe("simulation HTTP server", () => {
       headers: { "Content-Type": "application/json" },
       body: "{}"
     });
+    await expectStatus(`${baseUrl}/api/runs`, 403, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json", Origin: "http://example.test" }),
+      body: "{}"
+    });
     await expectStatus(`${baseUrl}/api/runs`, 400, {
       method: "POST",
       headers: mutationHeaders({ "Content-Type": "application/json" }),
@@ -97,9 +102,12 @@ async function readUntil(response: Response, text: string): Promise<string> {
   expect(reader).toBeDefined();
   const decoder = new TextDecoder();
   let body = "";
+  const deadline = Date.now() + 1_000;
   try {
     while (!body.includes(text)) {
-      const result = await withTimeout(reader!.read(), 1_000);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`Timed out waiting for ${text}`);
+      const result = await withTimeout(reader!.read(), remaining);
       if (result.done) break;
       body += decoder.decode(result.value, { stream: true });
     }

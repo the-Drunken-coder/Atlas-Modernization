@@ -16,7 +16,11 @@ export function packageRootFromModule(metaUrl: string = import.meta.url): string
 export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: string } = {}): SimulationConfig {
   const packageRoot = options.packageRoot ?? packageRootFromModule();
   const fileEnv = readEnvFile(path.join(packageRoot, ".env"));
-  const env = { ...fileEnv, ...(options.env ?? process.env) };
+  const runtimeEnv = options.env ?? process.env;
+  const env = {
+    ...fileEnv,
+    ...Object.fromEntries(Object.entries(runtimeEnv).filter(([, value]) => value !== undefined))
+  };
   const atlasBaseUrl = stringValue(env.ATLAS_BASE_URL) ?? "http://localhost:8000";
   const atlasApiKey = stringValue(env.ATLAS_API_KEY);
   const port = portValue(env.ATLAS_SIM_PORT);
