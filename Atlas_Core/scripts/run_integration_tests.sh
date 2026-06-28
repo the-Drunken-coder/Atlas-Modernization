@@ -18,6 +18,10 @@ API_URL="${API_URL%/}"
 CONNECT_TIMEOUT="${ATLAS_CONNECT_TIMEOUT:-5}"
 MAX_TIME="${ATLAS_MAX_TIME:-30}"
 API_KEY="${ATLAS_API_AUTH_KEY:-${API_AUTH_KEY:-}}"
+ADMIN_USERNAME="${ATLAS_ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ATLAS_ADMIN_PASSWORD:-password}"
+UI_ORIGIN="${ATLAS_UI_ORIGIN:-http://localhost:5173}"
+SESSION_COOKIE_HEADER=""
 PASS=0
 FAIL=0
 RUN_ID="$(date +%s)-$$"
@@ -40,6 +44,8 @@ request() {
   fi
   if [ -n "$API_KEY" ]; then
     auth_args=(-H "X-API-Key: ${API_KEY}")
+  elif [ -n "$SESSION_COOKIE_HEADER" ]; then
+    auth_args=(-H "Cookie: ${SESSION_COOKIE_HEADER}" -H "Origin: ${UI_ORIGIN}")
   fi
   set +e
   response=$(curl -sS \
@@ -98,6 +104,54 @@ pass() {
   PASS=$((PASS + 1))
 }
 
+login_admin_session() {
+  if [ -n "$API_KEY" ]; then
+    return 0
+  fi
+
+  local headers_file body_file http_code
+  headers_file="$(mktemp)"
+  body_file="$(mktemp)"
+  set +e
+  http_code=$(curl -sS \
+    --connect-timeout "$CONNECT_TIMEOUT" \
+    --max-time "$MAX_TIME" \
+    -D "$headers_file" \
+    -o "$body_file" \
+    -w "%{http_code}" \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    -X POST "${API_URL}/admin/auth/login" \
+    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>&1)
+  local curl_exit=$?
+  set -e
+
+  if [ "$curl_exit" -ne 0 ] || [ "$http_code" != "200" ]; then
+    echo "FAIL  POST /admin/auth/login: expected HTTP 200, got ${http_code}"
+    echo "      body: $(cat "$body_file")"
+    rm -f "$headers_file" "$body_file"
+    FAIL=$((FAIL + 1))
+    return 1
+  fi
+
+  SESSION_COOKIE_HEADER="$(
+    awk 'tolower($0) ~ /^set-cookie:[[:space:]]*atlas_session=/ {
+      sub(/\r$/, "");
+      sub(/^[^:]+:[[:space:]]*/, "");
+      split($0, parts, ";");
+      print parts[1];
+      exit;
+    }' "$headers_file"
+  )"
+  rm -f "$headers_file" "$body_file"
+  if [ -z "$SESSION_COOKIE_HEADER" ]; then
+    echo "FAIL  POST /admin/auth/login: atlas_session cookie missing"
+    FAIL=$((FAIL + 1))
+    return 1
+  fi
+  pass "POST /admin/auth/login — dev admin session established"
+}
+
 # ── tests ────────────────────────────────────────────────────────────────────
 
 echo "Running Atlas Core integration tests against ${API_URL}"
@@ -114,6 +168,8 @@ request GET /readiness
 assert_status 200 "GET /readiness" && \
   assert_json '.status == "healthy" or .status == "degraded"' "GET /readiness body" && \
   pass "GET /readiness — dependency checks OK"
+
+login_admin_session
 
 # 2. Root endpoint
 request GET /

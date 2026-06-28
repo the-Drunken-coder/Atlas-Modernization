@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import uuid
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Optional
 from urllib import error, request
@@ -24,8 +25,12 @@ COMMAND_CATALOG_FILE = (
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 API_REQUEST_TIMEOUT = 10.0
 CATALOG_UPLOAD_FILENAME = "command_catalog"
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "password"
+DEFAULT_UI_ORIGIN = "http://localhost:5173"
 
 logger = logging.getLogger(__name__)
+_SESSION_COOKIE_HEADER: Optional[str] = None
 
 SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 CATALOG_TOP_LEVEL_FIELDS = {"type", "name", "description", "commands"}
@@ -229,12 +234,65 @@ def _api_auth_headers() -> dict[str, str]:
     return {"X-API-Key": api_key}
 
 
+def _api_session_headers() -> dict[str, str]:
+    if not _SESSION_COOKIE_HEADER:
+        return {}
+    origin = os.getenv("ATLAS_UI_ORIGIN", "").strip() or DEFAULT_UI_ORIGIN
+    return {"Cookie": _SESSION_COOKIE_HEADER, "Origin": origin}
+
+
+def _api_headers() -> dict[str, str]:
+    return {**_api_auth_headers(), **_api_session_headers()}
+
+
+def _admin_seed_credentials() -> tuple[str, str]:
+    username = os.getenv("ATLAS_ADMIN_USERNAME", "").strip() or DEFAULT_ADMIN_USERNAME
+    password = os.getenv("ATLAS_ADMIN_PASSWORD", "") or DEFAULT_ADMIN_PASSWORD
+    return username, password
+
+
+def _ensure_admin_session(api_base_url: str) -> bool:
+    global _SESSION_COOKIE_HEADER
+    if _api_auth_headers() or _SESSION_COOKIE_HEADER:
+        return True
+
+    username, password = _admin_seed_credentials()
+    login_url = _validate_http_url(f"{api_base_url}/admin/auth/login")
+    payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = request.Request(
+        login_url,
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        with request.urlopen(req, timeout=API_REQUEST_TIMEOUT) as response:
+            cookie = SimpleCookie()
+            cookie.load(response.headers.get("Set-Cookie", ""))
+            session = cookie.get("atlas_session")
+            if session is None or not session.value:
+                print("[CATALOG] Admin login did not return an atlas_session cookie")
+                return False
+            _SESSION_COOKIE_HEADER = f"atlas_session={session.value}"
+            return True
+    except error.HTTPError as exc:
+        print(f"[CATALOG] Admin login failed (POST {login_url}): {exc}")
+        try:
+            print(f"[CATALOG] Error details: {exc.read().decode('utf-8')}")
+        except Exception:
+            pass
+    except error.URLError as exc:
+        print(f"[CATALOG] API unreachable during admin login {login_url}: {exc}")
+    return False
+
+
 def _api_request(
     method: str, url: str, payload: Optional[dict[str, Any]] = None
 ) -> tuple[int, str]:
     """Issue a JSON request to the Atlas Core API."""
     safe_url = _validate_http_url(url)
-    headers = {"Accept": "application/json", **_api_auth_headers()}
+    headers = {"Accept": "application/json", **_api_headers()}
     data: Optional[bytes] = None
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -316,7 +374,7 @@ def _ensure_catalog_uploaded(api_base_url: str) -> bool:
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Content-Length": str(len(body_bytes)),
         "Accept": "application/json",
-        **_api_auth_headers(),
+        **_api_headers(),
     }
 
     # nosemgrep: python.django.security.injection.ssrf.ssrf-injection-urllib.ssrf-injection-urllib
@@ -358,6 +416,9 @@ def publish_command_catalog(*, api_base_url: Optional[str] = None) -> bool:
         base_url = _build_api_base_url(api_base_url)
     except ValueError as exc:
         print(f"[CATALOG] Invalid API base URL: {exc}")
+        return False
+
+    if not _ensure_admin_session(base_url):
         return False
 
     if not _ensure_catalog_uploaded(base_url):
