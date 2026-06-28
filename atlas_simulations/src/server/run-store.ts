@@ -55,13 +55,17 @@ export class RunStore {
     }
     const id = this.nextRunId();
     const now = timestamp();
+    const runInput: ScenarioInput = {
+      fields: cloneValue(input.fields),
+      ...(input.json === undefined ? {} : { json: cloneValue(input.json) })
+    };
     const run: RunRecord = {
       id,
       scenario,
       status: "running",
       startedAt: now,
-      inputs: cloneValue(input.fields),
-      ...(input.json === undefined ? {} : { jsonInput: cloneValue(input.json) }),
+      inputs: cloneValue(runInput.fields),
+      ...(runInput.json === undefined ? {} : { jsonInput: cloneValue(runInput.json) }),
       createdResources: [],
       assertions: [],
       events: [],
@@ -74,7 +78,7 @@ export class RunStore {
     };
     this.runs.set(id, run);
     this.emit(run, { type: "status", status: "running", message: `${scenario.name} started` });
-    void this.execute(run, input);
+    void this.execute(run, runInput);
     return toSummary(run);
   }
 
@@ -119,41 +123,37 @@ export class RunStore {
       this.emit(run, { type: "error", level: "error", message: run.cleanupError });
       throw error;
     }
-    let stopped = false;
-    try {
-      for (const resource of cleanupOrder(run.createdResources)) {
-        try {
-          if (resource.type === "task") await client.tasks.delete(resource.id);
-          if (resource.type === "object") await client.objects.delete(resource.id);
-          if (resource.type === "entity") await client.entities.delete(resource.id);
-          this.emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
-        } catch (error) {
-          if (isNotFoundError(error)) {
-            this.emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
-            continue;
-          }
-          run.cleanupError = errorMessage(error);
-          this.emit(run, { type: "error", level: "error", message: run.cleanupError });
-          throw error;
+    let cleanupFailure: unknown;
+    for (const resource of cleanupOrder(run.createdResources)) {
+      try {
+        if (resource.type === "task") await client.tasks.delete(resource.id);
+        if (resource.type === "object") await client.objects.delete(resource.id);
+        if (resource.type === "entity") await client.entities.delete(resource.id);
+        this.emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          this.emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
+          continue;
         }
-      }
-      stopCleanupClient(run, client);
-      stopped = true;
-      run.cleaned = true;
-      run.cleanupError = undefined;
-      this.emit(run, { type: "cleanup", message: "Cleanup complete" });
-      this.pruneRuns();
-      return toSummary(run);
-    } finally {
-      if (!stopped) {
-        try {
-          client.sync.stop();
-        } catch (error) {
-          run.cleanupError ??= errorMessage(error);
-          this.emit(run, { type: "error", level: "error", message: errorMessage(error) });
-        }
+        run.cleanupError = errorMessage(error);
+        this.emit(run, { type: "error", level: "error", message: run.cleanupError });
+        cleanupFailure = error;
+        break;
       }
     }
+    const stopFailure = stopClientSync(client);
+    if (stopFailure) {
+      const message = errorMessage(stopFailure);
+      run.cleanupError ??= message;
+      this.emit(run, { type: "error", level: "error", message });
+    }
+    if (cleanupFailure) throw cleanupFailure;
+    if (stopFailure) throw stopFailure;
+    run.cleaned = true;
+    run.cleanupError = undefined;
+    this.emit(run, { type: "cleanup", message: "Cleanup complete" });
+    this.pruneRuns();
+    return toSummary(run);
   }
 
   subscribe(id: string, subscriber: EventSubscriber): () => void {
@@ -346,12 +346,12 @@ function lateAssertion(name: string, passed: boolean, message?: string): Asserti
   };
 }
 
-function stopCleanupClient(run: RunRecord, client: AtlasClientLike): void {
+function stopClientSync(client: AtlasClientLike): unknown {
   try {
     client.sync.stop();
+    return undefined;
   } catch (error) {
-    run.cleanupError = errorMessage(error);
-    throw error;
+    return error;
   }
 }
 

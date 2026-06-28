@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { RunStore } from "../../src/server/run-store.js";
-import type { Scenario } from "../../src/server/scenario.js";
+import type { Scenario, ScenarioInput } from "../../src/server/scenario.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("RunStore", () => {
@@ -134,6 +134,36 @@ describe("RunStore", () => {
     expect(store.events(started.id)[0]?.message).not.toBe("mutated");
   });
 
+  it("isolates running scenarios from later input mutations", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    let release!: () => void;
+    let observedInput: ScenarioInput | undefined;
+    const scenario: Scenario = {
+      id: "input-isolation",
+      name: "Input isolation",
+      summary: "Reads inputs after start returns",
+      acceptsJson: true,
+      inputFields: [],
+      async run(_ctx, input) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        observedInput = input;
+      }
+    };
+    const input: ScenarioInput = { fields: { name: "original" }, json: { nested: { value: "original" } } };
+
+    const started = store.start(scenario, input);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    input.fields.name = "mutated";
+    (input.json as { nested: { value: string } }).nested.value = "mutated";
+    release();
+
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    expect(observedInput).toEqual({ fields: { name: "original" }, json: { nested: { value: "original" } } });
+  });
+
   it("keeps cleanup blocked until a cancelled scenario has unwound", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
@@ -209,6 +239,45 @@ describe("RunStore", () => {
     await Promise.all([store.cleanup(started.id), store.cleanup(started.id)]);
 
     expect(core.state.deleted).toEqual([`entity:${store.get(started.id)?.createdResources[0]?.id}`]);
+  });
+
+  it("does not retry cleanup sync teardown after a stop failure", async () => {
+    const core = createFakeAtlasCore();
+    let factoryCalls = 0;
+    let cleanupStopCalls = 0;
+    const store = new RunStore((options) => {
+      factoryCalls += 1;
+      const client = core.factory(options);
+      if (factoryCalls < 2) return client;
+      return {
+        ...client,
+        sync: {
+          ...client.sync,
+          stop: () => {
+            cleanupStopCalls += 1;
+            throw new Error("cleanup stop failed");
+          }
+        }
+      };
+    });
+    const scenario: Scenario = {
+      id: "cleanup-stop-failure",
+      name: "Cleanup stop failure",
+      summary: "Creates one resource",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+    await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
+    expect(cleanupStopCalls).toBe(1);
+    expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "cleanup stop failed" });
+    expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
   });
 
   it("cleans same-type resources from newest to oldest", async () => {

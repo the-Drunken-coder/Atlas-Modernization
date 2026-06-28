@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { RunEvent } from "../../src/shared/types.js";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
@@ -77,9 +78,8 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const streamBody = await readUntilContains(stream, '"status":"completed"');
-    expect(streamBody).toContain("data:");
-    expect(streamBody).toContain('"status":"completed"');
+    const completedEvent = await readUntilRunEvent(stream, (event) => event.type === "status" && event.status === "completed");
+    expect(completedEvent).toMatchObject({ type: "status", status: "completed" });
 
     const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
       `${baseUrl}/api/runs/${started.run.id}/cleanup`,
@@ -91,8 +91,9 @@ describe("simulation HTTP server", () => {
 
   it("returns client errors for bad request bodies and missing runs", async () => {
     const core = createFakeAtlasCore();
+    const packageRoot = tempPackageRoot();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot },
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -130,7 +131,7 @@ describe("simulation HTTP server", () => {
     await expectStatus(`${baseUrl}/%E0%A4%A`, 400);
     await expectStatus(`${baseUrl}/..%2fpackage.json`, 400);
     const head = await fetch(`${baseUrl}/`, { method: "HEAD" });
-    expect([200, 404]).toContain(head.status);
+    expect(head.status).toBe(404);
     expect(await head.text()).toBe("");
     await expectStatus(`${baseUrl}/`, 405, { method: "POST" });
   });
@@ -225,7 +226,7 @@ function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-http-"));
 }
 
-async function readUntilContains(response: Response, text: string): Promise<string> {
+async function readUntilRunEvent(response: Response, predicate: (event: RunEvent) => boolean): Promise<RunEvent> {
   const reader = response.body?.getReader();
   expect(reader).toBeDefined();
   const decoder = new TextDecoder();
@@ -233,15 +234,25 @@ async function readUntilContains(response: Response, text: string): Promise<stri
   const deadline = Date.now() + INTEGRATION_TIMEOUT_MS;
   while (true) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`Timed out waiting for ${text}`);
+    if (remaining <= 0) throw new Error("Timed out waiting for run event");
     const result = await withTimeout(reader!.read(), remaining);
-    if (result.done) throw new Error(`Stream closed before ${text}`);
+    if (result.done) throw new Error("Stream closed before run event");
     body += decoder.decode(result.value, { stream: true });
-    if (body.includes(text)) {
+    const event = parseRunEvents(body).find(predicate);
+    if (event) {
       await reader!.cancel();
-      return body;
+      return event;
     }
   }
+}
+
+function parseRunEvents(body: string): RunEvent[] {
+  const blocks = body.split("\n\n");
+  if (!body.endsWith("\n\n")) blocks.pop();
+  return blocks.flatMap((block) => {
+    const line = block.split("\n").find((current) => current.startsWith("data: "));
+    return line ? [JSON.parse(line.slice("data: ".length)) as RunEvent] : [];
+  });
 }
 
 async function waitFor(assertion: () => Promise<void>): Promise<void> {

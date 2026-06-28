@@ -386,6 +386,7 @@ function LogList({ events }: { events: RunEvent[] }) {
 function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
   switch (event.type) {
     case "status":
+      if (event.status === "running" && isTerminalStatus(run.status)) return run;
       return {
         ...run,
         status: event.status,
