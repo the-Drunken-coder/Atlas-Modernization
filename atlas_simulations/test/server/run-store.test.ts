@@ -416,4 +416,26 @@ describe("RunStore", () => {
     expect(store.get(started.id)?.lastError).toBe("Run event data strings must total at most 200000 bytes");
     expect(store.events(started.id).some((event) => event.type === "log" && event.message === "too large")).toBe(false);
   });
+
+  it("truncates oversized event messages before storing them", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "oversized-event-message",
+      name: "Oversized event message",
+      summary: "Emits an oversized message",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.log("x".repeat(200_001));
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    const logEvent = store.events(started.id).find((event) => event.type === "log" && event.message.endsWith("...[truncated]"));
+
+    expect(logEvent).toBeDefined();
+    expect(Buffer.byteLength(logEvent!.message, "utf8")).toBeLessThanOrEqual(200_000);
+  });
 });

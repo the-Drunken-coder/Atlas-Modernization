@@ -12,7 +12,7 @@ ATLAS_API_KEY=replace-with-local-core-key
 ATLAS_SIM_PORT=5180
 ```
 
-Keep normal simulation work pointed at a local Atlas Core (`ATLAS_BASE_URL=http://localhost:8000`). The config also accepts HTTPS Atlas Core targets, including `ATLAS_BASE_URL=https://atlascommandapi.org`, for isolated, disposable tenants because run state is local to this workbench and cleanup can only remove resources while the run remains in memory. Plain HTTP is only accepted for loopback development URLs.
+Keep normal simulation work pointed at a local Atlas Core (`ATLAS_BASE_URL=http://localhost:8000`). The config also accepts HTTPS Atlas Core targets, including `ATLAS_BASE_URL=https://atlascommandapi.org`, for isolated, disposable tenants because run state is local to this workbench and cleanup can only remove resources while the run remains in memory. If the workbench restarts before cleanup, remote resources from that run may be left behind. Plain HTTP is only accepted for loopback development URLs.
 
 The API key is read only by the local Node server. Browser code calls same-origin simulation routes and never receives the key.
 

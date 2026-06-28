@@ -52,7 +52,7 @@ vi.mock("../../src/client/api.js", () => ({
   loadRuns: vi.fn(async () => []),
   startRun: vi.fn(async () => cloneRun()),
   loadRun: vi.fn(async () => cloneRun()),
-  stopRun: vi.fn(async () => cloneRun({ status: "cancelled" })),
+  stopRun: vi.fn(async () => cloneRun({ status: "running" })),
   cleanupRun: vi.fn(async () => cloneRun({ status: "completed", cleaned: true }))
 }));
 
@@ -174,7 +174,7 @@ describe("App", () => {
       status: "completed"
     });
     vi.mocked(loadScenarios).mockResolvedValueOnce([scenario, syncScenario]);
-    vi.mocked(loadRuns).mockResolvedValueOnce([syncRun]);
+    vi.mocked(loadRuns).mockResolvedValueOnce([syncRun]).mockResolvedValue([syncRun]);
 
     render(<App />);
     await user.click(await screen.findByRole("button", { name: syncScenario.name }));

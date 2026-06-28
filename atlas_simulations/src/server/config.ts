@@ -18,8 +18,8 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const fileEnv = readEnvFile(path.join(packageRoot, ".env"));
   const runtimeEnv = options.env ?? process.env;
   const atlasBaseUrl = atlasBaseUrlValue(stringValue(runtimeEnv.ATLAS_BASE_URL) ?? stringValue(fileEnv.ATLAS_BASE_URL) ?? "http://localhost:8000");
-  const atlasApiKey = runtimeEnv.ATLAS_API_KEY === undefined ? stringValue(fileEnv.ATLAS_API_KEY) : stringValue(runtimeEnv.ATLAS_API_KEY);
-  const port = portValue(runtimeEnv.ATLAS_SIM_PORT === undefined ? fileEnv.ATLAS_SIM_PORT : runtimeEnv.ATLAS_SIM_PORT);
+  const atlasApiKey = stringValue(runtimeEnv.ATLAS_API_KEY) ?? stringValue(fileEnv.ATLAS_API_KEY);
+  const port = portValue(stringValue(runtimeEnv.ATLAS_SIM_PORT) ?? stringValue(fileEnv.ATLAS_SIM_PORT));
   return {
     atlasBaseUrl,
     ...(atlasApiKey ? { atlasApiKey } : {}),

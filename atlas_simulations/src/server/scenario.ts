@@ -214,7 +214,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     },
     sync: {
       start: () => guarded(() => client.sync.start()),
-      stop: () => guardedSync(() => client.sync.stop()),
+      // Stop must still run from scenario finally blocks after cancellation.
+      stop: () => client.sync.stop(),
       status: () => guardedSync(() => client.sync.status())
     },
     watch: guardedWatch,

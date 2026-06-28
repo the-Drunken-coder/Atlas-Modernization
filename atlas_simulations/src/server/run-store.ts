@@ -10,6 +10,7 @@ const MAX_EVENTS_PER_RUN = 500;
 const MAX_EVENT_DATA_DEPTH = 200;
 const MAX_EVENT_DATA_NODES = 10_000;
 const MAX_EVENT_DATA_STRING_BYTES = 200_000;
+const EVENT_MESSAGE_TRUNCATION_SUFFIX = "...[truncated]";
 
 type RunRecord = {
   id: string;
@@ -277,7 +278,8 @@ export class RunStore {
       sequence: jsonNumber(++run.sequence),
       runId: run.id,
       timestamp: timestamp(),
-      ...details
+      ...details,
+      message: boundedEventMessage(details.message)
     } as RunEvent;
     run.events.push(cloneValue(event));
     trimEvents(run);
@@ -386,6 +388,20 @@ function addEventDataStringBytes(value: string, state: { stringBytes: number }):
   if (state.stringBytes > MAX_EVENT_DATA_STRING_BYTES) {
     throw new Error(`Run event data strings must total at most ${MAX_EVENT_DATA_STRING_BYTES} bytes`);
   }
+}
+
+function boundedEventMessage(message: string): string {
+  if (Buffer.byteLength(message, "utf8") <= MAX_EVENT_DATA_STRING_BYTES) return message;
+  const budget = MAX_EVENT_DATA_STRING_BYTES - Buffer.byteLength(EVENT_MESSAGE_TRUNCATION_SUFFIX, "utf8");
+  let bytes = 0;
+  let result = "";
+  for (const char of message) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (bytes + charBytes > budget) break;
+    bytes += charBytes;
+    result += char;
+  }
+  return `${result}${EVENT_MESSAGE_TRUNCATION_SUFFIX}`;
 }
 
 function hasFailedAssertions(run: RunRecord): boolean {

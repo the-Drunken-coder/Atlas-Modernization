@@ -54,6 +54,11 @@ export function App() {
   async function refreshRuns() {
     const loadedRuns = await loadRuns();
     setRuns((current) => mergeRunLists(current, loadedRuns));
+    const selectedRunId = activeRunIdRef.current ?? currentRun?.id;
+    if (selectedRunId && !loadedRuns.some((run) => run.id === selectedRunId)) {
+      clearRunSelection();
+      return;
+    }
     setCurrentRun((current) => {
       if (!current) return current;
       const refreshed = loadedRuns.find((run) => run.id === current.id);

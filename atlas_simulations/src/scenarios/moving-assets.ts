@@ -72,6 +72,7 @@ const movingAssets: Scenario = {
           components: {
             heartbeat: { last_seen: isoNow() },
             status: { value: "moving", last_update: isoNow() },
+            telemetry: { last_update: isoNow() },
             geometry: point(longitude, latitude)
           }
         });

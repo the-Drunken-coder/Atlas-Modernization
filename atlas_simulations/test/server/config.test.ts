@@ -42,12 +42,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ env: { ATLAS_SIM_PORT: undefined }, packageRoot }).port).toBe(5192);
   });
 
-  it("keeps blank base URL fallback but lets blank runtime API keys clear .env secrets", () => {
+  it("treats blank env overrides as unset", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(path.join(packageRoot, ".env"), "ATLAS_API_KEY=file-key\nATLAS_BASE_URL=https://atlascommandapi.org/api\n");
 
     const config = loadConfig({ env: { ATLAS_API_KEY: "", ATLAS_BASE_URL: " " }, packageRoot });
-    expect(config.atlasApiKey).toBeUndefined();
+    expect(config.atlasApiKey).toBe("file-key");
     expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/api");
   });
 
