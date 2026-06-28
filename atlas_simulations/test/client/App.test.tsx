@@ -101,7 +101,7 @@ describe("App", () => {
         jsonInput: '{"note":"ok"}'
       })
     );
-    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("running").length).toBeGreaterThan(0));
     await waitFor(() => expect(eventSources).toHaveLength(1));
     expect(eventSources[0].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
     eventSources[0].emit({
@@ -122,11 +122,11 @@ describe("App", () => {
       status: "completed",
       message: "Run completed"
     });
-    await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
     await waitFor(() => expect(eventSources[0].closed).toBe(true));
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(run.id));
-    await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("cleaned").length).toBeGreaterThan(0));
     expect(eventSources).toHaveLength(2);
     expect(eventSources[1].closed).toBe(true);
   });

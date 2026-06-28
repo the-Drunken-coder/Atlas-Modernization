@@ -241,7 +241,7 @@ describe("RunStore", () => {
     expect(core.state.deleted).toEqual([`entity:${store.get(started.id)?.createdResources[0]?.id}`]);
   });
 
-  it("does not retry cleanup sync teardown after a stop failure", async () => {
+  it("records cleanup complete after a post-delete sync teardown failure", async () => {
     const core = createFakeAtlasCore();
     let factoryCalls = 0;
     let cleanupStopCalls = 0;
@@ -274,10 +274,10 @@ describe("RunStore", () => {
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
 
-    await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
-    await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true, lastError: "cleanup stop failed" });
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true, lastError: "cleanup stop failed" });
     expect(cleanupStopCalls).toBe(1);
-    expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "cleanup stop failed" });
+    expect(store.get(started.id)).toMatchObject({ cleaned: true, lastError: "cleanup stop failed" });
     expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
   });
 

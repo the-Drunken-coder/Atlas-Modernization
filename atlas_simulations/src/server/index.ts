@@ -24,6 +24,7 @@ type EventStream = {
 const MUTATION_HEADER = "x-atlas-simulations-request";
 const UI_SECURITY_HEADERS = {
   "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY"
 };
 

@@ -85,6 +85,7 @@ describe("scenario input parsing", () => {
 
   it("rejects unknown input fields", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2, unknown: true } })).toThrow("Unknown input field: unknown");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2, "": true } })).toThrow("Unknown input field: ");
   });
 
   it("rejects JSON input for scenarios that do not accept it", () => {

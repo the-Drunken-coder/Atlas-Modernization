@@ -154,6 +154,7 @@ describe("simulation HTTP server", () => {
     expect(route.status).toBe(200);
     expect(route.headers.get("content-type")).toContain("text/html");
     expect(route.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+    expect(route.headers.get("x-content-type-options")).toBe("nosniff");
     expect(route.headers.get("x-frame-options")).toBe("DENY");
 
     await expectStatus(`${baseUrl}/assets/missing.js`, 404);
@@ -277,8 +278,9 @@ async function readUntilRunEvent(response: Response, predicate: (event: RunEvent
 }
 
 function parseRunEvents(body: string): RunEvent[] {
-  const blocks = body.split("\n\n");
-  if (!body.endsWith("\n\n")) blocks.pop();
+  const normalized = body.replace(/\r\n/g, "\n");
+  const blocks = normalized.split("\n\n");
+  if (!normalized.endsWith("\n\n")) blocks.pop();
   return blocks.flatMap((block) => {
     const line = block.split("\n").find((current) => current.startsWith("data: "));
     return line ? [JSON.parse(line.slice("data: ".length)) as RunEvent] : [];

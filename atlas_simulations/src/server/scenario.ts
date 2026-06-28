@@ -220,14 +220,24 @@ function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>)
     if (value === undefined) {
       throw new Error(`${field.label} is required`);
     }
-    if (field.type === "number") values[field.key] = parseNumberField(field, value);
-    if (field.type === "text") {
-      if (typeof value !== "string") {
-        throw new Error(`${field.label} must be a string`);
+    switch (field.type) {
+      case "number":
+        values[field.key] = parseNumberField(field, value);
+        break;
+      case "text":
+        if (typeof value !== "string") {
+          throw new Error(`${field.label} must be a string`);
+        }
+        values[field.key] = value;
+        break;
+      case "boolean":
+        values[field.key] = parseBoolean(field, value);
+        break;
+      default: {
+        const exhaustive: never = field;
+        throw new Error(`Unsupported input field type: ${String((exhaustive as ScenarioInputField).type)}`);
       }
-      values[field.key] = value;
     }
-    if (field.type === "boolean") values[field.key] = parseBoolean(field, value);
   }
   return values;
 }
@@ -305,7 +315,7 @@ function assertJSONValue(value: unknown, depth = 0, state = { nodes: 0 }): asser
 function rejectUnknownInputFields(fields: ScenarioInputField[], raw: Record<string, unknown>): void {
   const allowed = new Set(fields.map((field) => field.key));
   const unknown = Object.keys(raw).find((key) => !allowed.has(key));
-  if (unknown) {
+  if (unknown !== undefined) {
     throw new Error(`Unknown input field: ${unknown}`);
   }
 }

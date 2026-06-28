@@ -52,7 +52,9 @@ export function App() {
   }
 
   async function refreshRuns() {
-    setRuns(await loadRuns());
+    const loadedRuns = await loadRuns();
+    setRuns((current) => mergeRunLists(current, loadedRuns));
+    setCurrentRun((current) => (current ? mergeRunSummary(current, loadedRuns.find((run) => run.id === current.id) ?? current) : current));
   }
 
   async function refreshRunsBestEffort() {
@@ -134,7 +136,14 @@ export function App() {
     };
     source.onmessage = (message) => {
       if (activeRunIdRef.current !== runId) return;
-      const event = JSON.parse(message.data) as RunEvent;
+      let event: RunEvent;
+      try {
+        event = JSON.parse(message.data) as RunEvent;
+      } catch {
+        captureError(new Error(`Invalid event payload for run ${runId}`));
+        closeSource();
+        return;
+      }
       setEvents((current) => {
         if (current.some((existing) => existing.runId === event.runId && existing.sequence === event.sequence)) return current;
         return [...current, event].slice(-MAX_CLIENT_EVENTS);
@@ -157,7 +166,6 @@ export function App() {
     try {
       const updatedRun = await stopRun(targetRunId);
       upsertRun(updatedRun);
-      setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       if (isTerminalStatus(updatedRun.status)) closeActiveEventSource();
       await refreshRunsBestEffort();
     } catch (errorValue) {
@@ -176,7 +184,6 @@ export function App() {
       if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId);
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);
-      setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       if (updatedRun.cleaned) closeActiveEventSource();
       await refreshRunsBestEffort();
     } catch (errorValue) {
@@ -191,9 +198,10 @@ export function App() {
       const index = current.findIndex((existing) => existing.id === run.id);
       if (index === -1) return [run, ...current];
       const next = [...current];
-      next[index] = { ...next[index], ...run };
+      next[index] = mergeRunSummary(next[index], run);
       return next;
     });
+    setCurrentRun((current) => (current?.id === run.id ? mergeRunSummary(current, run) : current));
   }
 
   function closeActiveEventSource() {
@@ -448,6 +456,39 @@ function isTerminalStatus(status: RunSummary["status"]): boolean {
 
 function displayStatus(run: RunSummary | undefined): string {
   return run?.cleaned ? "cleaned" : run?.status ?? "idle";
+}
+
+function mergeRunLists(current: RunSummary[], incoming: RunSummary[]): RunSummary[] {
+  const byId = new Map(current.map((run) => [run.id, run]));
+  for (const run of incoming) {
+    byId.set(run.id, mergeRunSummary(byId.get(run.id), run));
+  }
+  return [...byId.values()].sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+}
+
+function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary): RunSummary {
+  if (!existing) return incoming;
+  return {
+    ...incoming,
+    status: isTerminalStatus(existing.status) ? existing.status : incoming.status,
+    ...(existing.finishedAt || incoming.finishedAt ? { finishedAt: existing.finishedAt ?? incoming.finishedAt } : {}),
+    assertions: mergeAssertions(incoming.assertions, existing.assertions),
+    createdResources: mergeResources(incoming.createdResources, existing.createdResources),
+    cleaned: existing.cleaned || incoming.cleaned,
+    ...(existing.lastError || incoming.lastError ? { lastError: existing.lastError ?? incoming.lastError } : {})
+  };
+}
+
+function mergeAssertions(primary: RunSummary["assertions"], secondary: RunSummary["assertions"]): RunSummary["assertions"] {
+  const byId = new Map(primary.map((assertion) => [assertion.id, assertion]));
+  for (const assertion of secondary) byId.set(assertion.id, assertion);
+  return [...byId.values()];
+}
+
+function mergeResources(primary: RunSummary["createdResources"], secondary: RunSummary["createdResources"]): RunSummary["createdResources"] {
+  const byId = new Map(primary.map((resource) => [`${resource.type}:${resource.id}`, resource]));
+  for (const resource of secondary) byId.set(`${resource.type}:${resource.id}`, resource);
+  return [...byId.values()];
 }
 
 function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): FieldValues {
