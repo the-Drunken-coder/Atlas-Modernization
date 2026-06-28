@@ -7,6 +7,7 @@ import type {
   StartRunRequest,
   StartRunResponse
 } from "../shared/types.js";
+import { jsonNumber } from "../shared/types.js";
 
 export async function loadHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health", { headers: { Accept: "application/json" } });
@@ -14,7 +15,7 @@ export async function loadHealth(): Promise<HealthResponse> {
   if (!isHealthResponse(body)) {
     throw new Error(`Expected health response (${response.status})`);
   }
-  return { ...body, status: body.status ?? response.status };
+  return { ...body, status: jsonNumber(body.status ?? response.status) };
 }
 
 export async function loadScenarios(): Promise<ScenarioDescriptor[]> {

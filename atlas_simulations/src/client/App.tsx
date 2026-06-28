@@ -1,6 +1,6 @@
 import { Activity, CheckCircle2, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { HealthResponse, RunEvent, RunSummary, ScenarioDescriptor } from "../shared/types.js";
+import { jsonNumber, type HealthResponse, type RunEvent, type RunSummary, type ScenarioDescriptor, type StartRunRequest } from "../shared/types.js";
 import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } from "./api.js";
 
 type FieldValues = Record<string, string | number | boolean>;
@@ -145,6 +145,11 @@ export function App() {
         event = JSON.parse(message.data) as RunEvent;
       } catch {
         captureError(new Error(`Invalid event payload for run ${runId}`));
+        closeSource();
+        return;
+      }
+      if (event.runId !== runId) {
+        captureError(new Error(`Received event for ${event.runId} on stream for ${runId}`));
         closeSource();
         return;
       }
@@ -304,7 +309,7 @@ export function App() {
                       }));
                     }}
                   />
-                ) : (
+                ) : field.type === "text" ? (
                   <input
                     type="text"
                     value={String(inputs[field.key] ?? "")}
@@ -315,7 +320,7 @@ export function App() {
                       }))
                     }
                   />
-                )}
+                ) : null}
               </label>
             ))}
           </div>
@@ -490,16 +495,19 @@ function mergeResources(existing: RunSummary["createdResources"], incoming: RunS
   return [...byId.values()];
 }
 
-function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): FieldValues {
+function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): NonNullable<StartRunRequest["inputs"]> {
   return Object.fromEntries(
-    scenario.inputFields.map((field) => {
+    scenario.inputFields.map((field): [string, string | boolean | ReturnType<typeof jsonNumber>] => {
       const value = values[field.key];
-      if (field.type !== "number" || typeof value !== "string") return [field.key, value ?? field.defaultValue];
+      if (field.type === "text") return [field.key, typeof value === "string" ? value : field.defaultValue];
+      if (field.type === "boolean") return [field.key, typeof value === "boolean" ? value : field.defaultValue];
+      if (typeof value === "number") return [field.key, jsonNumber(value)];
+      if (typeof value !== "string") return [field.key, field.defaultValue];
       const trimmed = value.trim();
       if (trimmed === "") return [field.key, field.defaultValue];
       const parsed = Number(trimmed);
       if (!Number.isFinite(parsed)) throw new Error(`${field.label} must be a number`);
-      return [field.key, parsed];
+      return [field.key, jsonNumber(parsed)];
     })
   );
 }

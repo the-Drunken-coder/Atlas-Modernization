@@ -15,10 +15,10 @@ type ScenarioInputFieldBase = {
 export type ScenarioInputField =
   | (ScenarioInputFieldBase & {
       type: "number";
-      defaultValue: number;
-      min?: number;
-      max?: number;
-      step?: number;
+      defaultValue: JSONNumber;
+      min?: JSONNumber;
+      max?: JSONNumber;
+      step?: JSONNumber;
     })
   | (ScenarioInputFieldBase & {
       type: "text";
@@ -57,7 +57,7 @@ export type AssertionResult = {
 export type RunStatus = "running" | "completed" | "failed" | "cancelled";
 
 type RunEventBase = {
-  sequence: number;
+  sequence: JSONNumber;
   runId: string;
   timestamp: string;
   level?: "info" | "warn" | "error";
@@ -84,7 +84,7 @@ export type RunSummary = {
   status: RunStatus;
   startedAt: string;
   finishedAt?: string;
-  inputs: Record<string, string | number | boolean>;
+  inputs: Record<string, string | JSONNumber | boolean>;
   jsonInput?: JSONValue;
   createdResources: CreatedResource[];
   assertions: AssertionResult[];
@@ -94,7 +94,7 @@ export type RunSummary = {
 
 export type StartRunRequest = {
   scenarioId: string;
-  inputs?: Record<string, string | number | boolean>;
+  inputs?: Record<string, string | JSONNumber | boolean>;
   jsonInput?: string;
 };
 
@@ -104,7 +104,7 @@ export type StartRunResponse = {
 
 export type HealthResponse = {
   ok: boolean;
-  status?: number;
+  status?: JSONNumber;
   message?: string;
 };
 

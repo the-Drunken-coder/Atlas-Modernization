@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createScenarioContext, parseStartRequest, type Scenario } from "../../src/server/scenario.js";
+import { jsonNumber } from "../../src/shared/types.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 const scenario: Scenario = {
@@ -8,7 +9,7 @@ const scenario: Scenario = {
   summary: "Example scenario",
   acceptsJson: true,
   inputFields: [
-    { key: "count", label: "Count", type: "number", defaultValue: 2, min: 1, max: 4, step: 1 },
+    { key: "count", label: "Count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(4), step: jsonNumber(1) },
     { key: "name", label: "Name", type: "text", defaultValue: "alpha" },
     { key: "enabled", label: "Enabled", type: "boolean", defaultValue: false }
   ],

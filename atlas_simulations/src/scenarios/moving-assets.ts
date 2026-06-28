@@ -1,4 +1,5 @@
 import type { Scenario } from "../server/scenario.js";
+import { jsonNumber } from "../shared/types.js";
 import { isoNow, jsonObject, numberInput, point } from "./helpers.js";
 
 const movingAssets: Scenario = {
@@ -7,11 +8,11 @@ const movingAssets: Scenario = {
   summary: "Creates assets and updates their telemetry through Atlas check-ins.",
   acceptsJson: true,
   inputFields: [
-    { key: "assetCount", label: "Asset count", type: "number", defaultValue: 4, min: 1, max: 25, step: 1 },
-    { key: "ticks", label: "Ticks", type: "number", defaultValue: 5, min: 1, max: 100, step: 1 },
-    { key: "tickMs", label: "Tick ms", type: "number", defaultValue: 250, min: 0, max: 10000, step: 50 },
-    { key: "startLatitude", label: "Start latitude", type: "number", defaultValue: 38.8895, min: -90, max: 89.926, step: 0.0001 },
-    { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: -77.0353, min: -180, max: 179.872, step: 0.0001 }
+    { key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(4), min: jsonNumber(1), max: jsonNumber(25), step: jsonNumber(1) },
+    { key: "ticks", label: "Ticks", type: "number", defaultValue: jsonNumber(5), min: jsonNumber(1), max: jsonNumber(100), step: jsonNumber(1) },
+    { key: "tickMs", label: "Tick ms", type: "number", defaultValue: jsonNumber(250), min: jsonNumber(0), max: jsonNumber(10000), step: jsonNumber(50) },
+    { key: "startLatitude", label: "Start latitude", type: "number", defaultValue: jsonNumber(38.8895), min: jsonNumber(-90), max: jsonNumber(89.926), step: jsonNumber(0.0001) },
+    { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: jsonNumber(-77.0353), min: jsonNumber(-180), max: jsonNumber(179.872), step: jsonNumber(0.0001) }
   ],
   async run(ctx, input) {
     const assetCount = numberInput(input, "assetCount");

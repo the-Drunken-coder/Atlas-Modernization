@@ -1,4 +1,4 @@
-import type { AssertionResult, CreatedResource, JSONValue, RunEvent, RunEventDetails, RunStatus, RunSummary } from "../shared/types.js";
+import { jsonNumber, type AssertionResult, type CreatedResource, type JSONNumber, type JSONValue, type RunEvent, type RunEventDetails, type RunStatus, type RunSummary } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
 import { isNotFoundError } from "./atlas.js";
 import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
@@ -274,7 +274,7 @@ export class RunStore {
   private emit(run: RunRecord, details: RunEventDetails): void {
     if ("data" in details && details.data !== undefined) assertEventJSONValue(details.data);
     const event: RunEvent = {
-      sequence: ++run.sequence,
+      sequence: jsonNumber(++run.sequence),
       runId: run.id,
       timestamp: timestamp(),
       ...details
@@ -323,13 +323,19 @@ function toSummary(run: RunRecord): RunSummary {
     status: run.status,
     startedAt: run.startedAt,
     ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
-    inputs: cloneValue(run.inputs),
+    inputs: wireInputs(run.inputs),
     ...(run.jsonInput === undefined ? {} : { jsonInput: cloneValue(run.jsonInput) }),
     createdResources: cloneValue(run.createdResources),
     assertions: cloneValue(run.assertions),
     cleaned: run.cleaned,
     ...(run.cleanupError || run.lastError ? { lastError: run.cleanupError ?? run.lastError } : {})
   };
+}
+
+function wireInputs(inputs: Record<string, string | number | boolean>): Record<string, string | JSONNumber | boolean> {
+  return Object.fromEntries(
+    Object.entries(inputs).map(([key, value]) => [key, typeof value === "number" ? jsonNumber(value) : value])
+  );
 }
 
 function trimEvents(run: RunRecord): void {

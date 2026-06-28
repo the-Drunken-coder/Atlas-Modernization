@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { HealthResponse, RunEvent, RunListResponse, ScenarioListResponse, StartRunRequest, StartRunResponse } from "../shared/types.js";
+import { jsonNumber, type HealthResponse, type RunEvent, type RunListResponse, type ScenarioListResponse, type StartRunRequest, type StartRunResponse } from "../shared/types.js";
 import { createAtlasClientFactory } from "./atlas.js";
 import { loadConfig, type SimulationConfig } from "./config.js";
 import { RunStore } from "./run-store.js";
@@ -23,7 +23,16 @@ type EventStream = {
 
 const MUTATION_HEADER = "x-atlas-simulations-request";
 const UI_SECURITY_HEADERS = {
-  "Content-Security-Policy": "frame-ancestors 'none'",
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "connect-src 'self'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'"
+  ].join("; "),
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY"
 };
@@ -184,7 +193,7 @@ async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
     response = await fetch(`${config.atlasBaseUrl}/health`, { headers, signal: controller.signal });
     return {
       ok: response.ok,
-      status: response.status,
+      status: jsonNumber(response.status),
       message: response.ok ? "Atlas Core reachable" : `Atlas Core returned ${response.status}`
     };
   } catch (error) {
@@ -228,11 +237,13 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     };
     response.on("close", removeStream);
     unsubscribe = store.subscribe(runId, (event) => {
-      if (!response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)) {
+      const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
+      if (!isTerminalRunEvent(event)) return;
+      if (wrote) {
         closeSoon();
         return;
       }
-      if (isTerminalRunEvent(event)) closeSoon();
+      response.once("drain", closeSoon);
     });
     if (closeAfterSubscribe) close();
   } catch (error) {

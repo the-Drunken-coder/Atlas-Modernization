@@ -3,8 +3,10 @@ import multiClientSync from "../scenarios/multi-client-sync.js";
 import observationsObjects from "../scenarios/observations-objects.js";
 import type { Scenario } from "./scenario.js";
 
-export const scenarios: Scenario[] = [movingAssets, observationsObjects, multiClientSync];
-assertUniqueScenarioIds(scenarios);
+const registeredScenarios: Scenario[] = [movingAssets, observationsObjects, multiClientSync];
+assertUniqueScenarioIds(registeredScenarios);
+
+export const scenarios: readonly Scenario[] = Object.freeze(registeredScenarios);
 
 export function findScenario(id: string): Scenario | undefined {
   return scenarios.find((scenario) => scenario.id === id);

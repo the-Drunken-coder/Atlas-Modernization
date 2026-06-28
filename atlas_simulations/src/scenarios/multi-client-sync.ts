@@ -12,9 +12,9 @@ const multiClientSync: Scenario = {
   summary: "Runs multiple SDK sync clients and checks whether they converge after writes.",
   acceptsJson: false,
   inputFields: [
-    { key: "clientCount", label: "Client count", type: "number", defaultValue: 2, min: 1, max: 8, step: 1 },
-    { key: "writes", label: "Writes", type: "number", defaultValue: 3, min: 1, max: 20, step: 1 },
-    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: MIN_SETTLE_MS, min: MIN_SETTLE_MS, max: 10000, step: 50 }
+    { key: "clientCount", label: "Client count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(8), step: jsonNumber(1) },
+    { key: "writes", label: "Writes", type: "number", defaultValue: jsonNumber(3), min: jsonNumber(1), max: jsonNumber(20), step: jsonNumber(1) },
+    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: jsonNumber(MIN_SETTLE_MS), min: jsonNumber(MIN_SETTLE_MS), max: jsonNumber(10000), step: jsonNumber(50) }
   ],
   async run(ctx, input) {
     const clientCount = numberInput(input, "clientCount");

@@ -181,7 +181,11 @@ describe("simulation HTTP server", () => {
     const route = await fetch(`${baseUrl}/runs/sim-example`);
     expect(route.status).toBe(200);
     expect(route.headers.get("content-type")).toContain("text/html");
-    expect(route.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+    const csp = route.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
     expect(route.headers.get("x-content-type-options")).toBe("nosniff");
     expect(route.headers.get("x-frame-options")).toBe("DENY");
 

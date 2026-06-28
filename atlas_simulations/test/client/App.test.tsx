@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanupRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
+import { jsonNumber } from "../../src/shared/types.js";
 import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
@@ -10,7 +11,7 @@ const scenario: ScenarioDescriptor = {
   name: "Moving assets",
   summary: "Creates assets",
   acceptsJson: true,
-  inputFields: [{ key: "assetCount", label: "Asset count", type: "number", defaultValue: 2, min: 1, max: 4 }]
+  inputFields: [{ key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(4) }]
 };
 
 const syncScenario: ScenarioDescriptor = {
@@ -27,7 +28,7 @@ const run: RunSummary = {
   scenarioName: "Moving assets",
   status: "running",
   startedAt: new Date().toISOString(),
-  inputs: { assetCount: 2 },
+  inputs: { assetCount: jsonNumber(2) },
   createdResources: [],
   assertions: [],
   cleaned: false
@@ -106,7 +107,7 @@ describe("App", () => {
     await waitFor(() => expect(eventSources).toHaveLength(1));
     expect(eventSources[0].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
     const assertionEvent: RunEvent = {
-      sequence: 1,
+      sequence: jsonNumber(1),
       runId: run.id,
       timestamp: new Date().toISOString(),
       type: "assertion",
@@ -121,7 +122,7 @@ describe("App", () => {
     expect(screen.getAllByText("PASS streamed check")).toHaveLength(1);
 
     const completedEvent: RunEvent = {
-      sequence: 2,
+      sequence: jsonNumber(2),
       runId: run.id,
       timestamp: new Date().toISOString(),
       type: "status",
@@ -140,7 +141,7 @@ describe("App", () => {
     expect(eventSources).toHaveLength(2);
     expect(eventSources[1].closed).toBe(false);
     eventSources[1].emit({
-      sequence: 3,
+      sequence: jsonNumber(3),
       runId: run.id,
       timestamp: new Date().toISOString(),
       type: "cleanup",
@@ -185,7 +186,7 @@ describe("App", () => {
     expect(eventSources).toHaveLength(1);
     expect(eventSources[0].closed).toBe(false);
     eventSources[0].emit({
-      sequence: 1,
+      sequence: jsonNumber(1),
       runId: syncRun.id,
       timestamp: new Date().toISOString(),
       type: "cleanup",
@@ -207,7 +208,7 @@ describe("App", () => {
     await waitFor(() => expect(vi.mocked(stopRun)).toHaveBeenCalledWith(run.id));
     expect(eventSources[0].closed).toBe(false);
     eventSources[0].emit({
-      sequence: 1,
+      sequence: jsonNumber(1),
       runId: run.id,
       timestamp: new Date().toISOString(),
       type: "status",
