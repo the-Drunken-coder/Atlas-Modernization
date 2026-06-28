@@ -1,6 +1,8 @@
 import type { JSONValue } from "../shared/types.js";
 import type { ScenarioInput } from "../server/scenario.js";
 
+const DEADLINE_EXCEEDED = Symbol("deadlineExceeded");
+
 export function numberInput(input: ScenarioInput, key: string): number {
   const value = input.fields[key];
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -55,16 +57,16 @@ export function point(longitude: number, latitude: number): { type: "Point"; coo
   return { type: "Point", coordinates: [longitude, latitude] };
 }
 
-export async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | undefined> {
+export async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | typeof DEADLINE_EXCEEDED> {
   if (!Number.isFinite(deadline)) return await operation();
   const remaining = deadline - Date.now();
-  if (remaining <= 0) return undefined;
+  if (remaining <= 0) return DEADLINE_EXCEEDED;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       operation(),
-      new Promise<undefined>((resolve) => {
-        timeout = setTimeout(() => resolve(undefined), remaining);
+      new Promise<typeof DEADLINE_EXCEEDED>((resolve) => {
+        timeout = setTimeout(() => resolve(DEADLINE_EXCEEDED), remaining);
       })
     ]);
   } finally {
@@ -74,8 +76,12 @@ export async function withDeadline<T>(operation: () => Promise<T>, deadline: num
 
 export async function requireBeforeDeadline<T>(operation: () => Promise<T>, deadline: number, label: string): Promise<T> {
   const result = await withDeadline(operation, deadline);
-  if (result === undefined) throw new Error(`${label} read timed out`);
+  if (deadlineExceeded(result)) throw new Error(`${label} read timed out`);
   return result;
+}
+
+export function deadlineExceeded(value: unknown): value is typeof DEADLINE_EXCEEDED {
+  return value === DEADLINE_EXCEEDED;
 }
 
 function isRecord(value: JSONValue | undefined): value is Record<string, JSONValue> {

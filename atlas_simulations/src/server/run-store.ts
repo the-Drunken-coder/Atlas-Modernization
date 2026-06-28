@@ -21,7 +21,7 @@ const EVENT_MESSAGE_TRUNCATION_SUFFIX = "...[truncated]";
 
 type RunRecord = {
   id: string;
-  scenario: Scenario;
+  scenario: Readonly<Scenario>;
   status: RunStatus;
   startedAt: string;
   finishedAt?: string;
@@ -65,7 +65,7 @@ export class RunStore {
     return this.requireRun(id).events.map(cloneValue);
   }
 
-  start(scenario: Scenario, input: ScenarioInput): RunSummary {
+  start(scenario: Readonly<Scenario>, input: ScenarioInput): RunSummary {
     this.pruneRuns(MAX_RUNS - 1);
     if (this.runs.size >= MAX_RUNS) {
       throw new Error("Clean up existing simulation runs before starting another run");
@@ -134,6 +134,7 @@ export class RunStore {
       run.cleaned = true;
       run.cleanupError = undefined;
       this.emit(run, { type: "cleanup", message: "Cleanup complete" });
+      run.subscribers.clear();
       this.pruneRuns();
       return toSummary(run);
     }
@@ -189,6 +190,7 @@ export class RunStore {
     run.cleaned = true;
     run.cleanupError = undefined;
     this.emit(run, { type: "cleanup", message: "Cleanup complete" });
+    run.subscribers.clear();
     this.pruneRuns();
     return toSummary(run);
   }
@@ -224,7 +226,7 @@ export class RunStore {
         },
         assert: (name, passed, message) => (run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message)),
         track: (resource) => {
-          if (!run.cleanupStarted && !run.cleaned) this.track(run, resource);
+          if (!run.settled && !run.cleanupStarted && !run.cleaned) this.track(run, resource);
         }
       });
       await run.scenario.run(context, input);

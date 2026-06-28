@@ -142,14 +142,12 @@ describe("RunStore", () => {
     const started = store.start(scenario, { fields: {}, json: { nested: { value: "original" } } });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
 
-    const summary = store.get(started.id);
-    expect(summary).toBeDefined();
-    const mutatedSummary = structuredClone(summary!);
-    mutatedSummary.createdResources.push({ type: "entity", id: "mutated" });
-    mutatedSummary.assertions[0]!.passed = false;
-    (mutatedSummary.jsonInput as { nested: { value: string } }).nested.value = "mutated";
+    const summary = store.get(started.id)!;
+    summary.createdResources.push({ type: "entity", id: "mutated" });
+    summary.assertions[0]!.passed = false;
+    (summary.jsonInput as { nested: { value: string } }).nested.value = "mutated";
 
-    const event = structuredClone(store.events(started.id)[0]!);
+    const event = store.events(started.id)[0]!;
     event.message = "mutated";
 
     expect(store.get(started.id)?.createdResources).toHaveLength(1);
@@ -504,7 +502,7 @@ describe("RunStore", () => {
     await writer.entities.update("asset-1", { alias: "new" });
 
     expect((await reader.entities.get("asset-1")).alias).toBe("old");
-    reader.sync.status();
+    await reader.sync.status();
     expect((await reader.entities.get("asset-1")).alias).toBe("new");
   });
 

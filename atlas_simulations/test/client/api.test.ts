@@ -46,7 +46,7 @@ describe("client API", () => {
 
   it("resolves health as offline when the local server cannot be reached", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("connection refused");
+      throw new TypeError("connection refused");
     }));
 
     await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(0), message: "connection refused" });
@@ -113,7 +113,8 @@ describe("client API", () => {
 
     await expect(loadScenarios()).resolves.toEqual([scenario]);
     await expect(cleanupRun(run.id)).resolves.toEqual(run);
-    const [, init] = fetchMock.mock.calls.at(-1)!;
+    const [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe(`/api/runs/${encodeURIComponent(run.id)}/cleanup`);
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("X-Atlas-Simulations-Request")).toBe("1");
   });

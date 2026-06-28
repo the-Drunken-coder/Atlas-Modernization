@@ -26,7 +26,7 @@ describe("fake Atlas core", () => {
     await writer.entities.create({ entity_id: "asset-1", entity_type: "asset" });
 
     await expect(reader.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
-    reader.sync.status();
+    await reader.sync.status();
     await expect(reader.entities.get("asset-1")).resolves.toMatchObject({ entity_id: "asset-1" });
     await expect(reader.queries.full()).resolves.toMatchObject({ entities: [expect.objectContaining({ entity_id: "asset-1" })] });
   });

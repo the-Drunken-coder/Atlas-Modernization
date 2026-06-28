@@ -275,6 +275,42 @@ describe("App", () => {
     expect(eventSources[0].closed).toBe(true);
   });
 
+  it("reconnects a selected running run after a malformed stream event", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([cloneRun()]);
+
+      render(<App />);
+      await vi.waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /start/i }));
+      });
+      await vi.waitFor(() => expect(eventSources).toHaveLength(1));
+
+      act(() => {
+        eventSources[0].onmessage?.({
+          data: JSON.stringify({
+            sequence: 1.5,
+            runId: run.id,
+            timestamp: "not-a-date",
+            type: "log",
+            message: "bad event"
+          })
+        } as MessageEvent<string>);
+      });
+      expect(eventSources[0].closed).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+
+      await vi.waitFor(() => expect(eventSources).toHaveLength(2));
+      expect(eventSources[1].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores remembered log events when reselecting a run", async () => {
     const user = userEvent.setup();
     const startedRun = cloneRun({ scenarioName: "Started run" });

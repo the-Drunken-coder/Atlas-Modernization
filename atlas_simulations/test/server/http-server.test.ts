@@ -45,9 +45,9 @@ describe("simulation HTTP server", () => {
     });
     const failedBaseUrl = await server.listen();
 
-    const unhealthyResponse = await fetch(`${failedBaseUrl}/api/health`);
+    const unhealthyResponse = await fetchWithIntegrationTimeout(`${failedBaseUrl}/api/health`);
     expect(unhealthyResponse.status).toBe(503);
-    const unhealthy = (await unhealthyResponse.json()) as { ok: boolean; status: number };
+    const unhealthy = await responseJSON<{ ok: boolean; status: number }>(unhealthyResponse);
     expect(unhealthy).toMatchObject({ ok: false, status: 503 });
     expect(coreHealthRequests).toEqual(["/api/health"]);
   });
@@ -76,7 +76,7 @@ describe("simulation HTTP server", () => {
       expect(current.run.status).toBe("completed");
     });
 
-    const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
+    const stream = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     const replayEvents = await readRunStream(stream);
     const completedEvent = replayEvents.find((event) => event.type === "status" && event.status === "completed");
@@ -89,7 +89,7 @@ describe("simulation HTTP server", () => {
     expect(cleaned.run).toMatchObject({ status: "completed", cleaned: true });
     expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
 
-    const cleanupReplay = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
+    const cleanupReplay = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/events`);
     const cleanupReplayEvents = await readRunStream(cleanupReplay);
     const cleanupEvent = cleanupReplayEvents.find((event) => event.type === "cleanup" && !event.resource);
     expect(cleanupEvent).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
@@ -192,7 +192,7 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    const route = await fetch(`${baseUrl}/runs/sim-example`);
+    const route = await fetchWithIntegrationTimeout(`${baseUrl}/runs/sim-example`);
     expect(route.status).toBe(200);
     expect(route.headers.get("content-type")).toContain("text/html");
     const csp = route.headers.get("content-security-policy") ?? "";
@@ -210,9 +210,26 @@ describe("simulation HTTP server", () => {
 });
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetchWithIntegrationTimeout(url, init);
   expect(response.ok).toBe(true);
-  return (await response.json()) as T;
+  return await responseJSON<T>(response);
+}
+
+async function fetchWithIntegrationTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), INTEGRATION_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`Timed out waiting for HTTP response after ${INTEGRATION_TIMEOUT_MS}ms`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function responseJSON<T>(response: Response): Promise<T> {
+  return (await withTimeout(response.json() as Promise<T>, INTEGRATION_TIMEOUT_MS)) as T;
 }
 
 async function startCoreHealthServer(status: number, basePath = ""): Promise<string> {
@@ -241,9 +258,9 @@ async function closeCoreServer(): Promise<void> {
 }
 
 async function expectStatus(url: string, status: number, init?: RequestInit): Promise<void> {
-  const response = await fetch(url, init);
+  const response = await fetchWithIntegrationTimeout(url, init);
   expect(response.status).toBe(status);
-  await response.arrayBuffer();
+  await withTimeout(response.arrayBuffer(), INTEGRATION_TIMEOUT_MS);
 }
 
 function mutationHeaders(headers: Record<string, string> = {}): Record<string, string> {

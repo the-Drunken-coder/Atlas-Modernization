@@ -98,11 +98,21 @@ export function App() {
     if (refreshedSelection?.status !== "running" && activeRunIdRef.current === selectedRunAfterLoad && cleanupStreamRunIdRef.current !== selectedRunAfterLoad) {
       closeActiveEventSource();
     }
+    const needsCleanupReconnect = cleanupRunId === selectedRunAfterLoad && !!refreshedSelection && !refreshedSelection.cleaned;
     setCurrentRun((current) => {
       if (!current) return current;
       const refreshed = mergedRuns.find((run) => run.id === current.id);
       return refreshed ? mergeRunSummary(current, refreshed) : current;
     });
+    if (
+      selectedRunAfterLoad &&
+      refreshedSelection &&
+      activeRunIdRef.current !== selectedRunAfterLoad &&
+      (refreshedSelection.status === "running" || needsCleanupReconnect)
+    ) {
+      if (needsCleanupReconnect) cleanupStreamRunIdRef.current = selectedRunAfterLoad;
+      connectEvents(selectedRunAfterLoad, { preserveCleanup: needsCleanupReconnect });
+    }
   }
 
   async function refreshRunsBestEffort() {

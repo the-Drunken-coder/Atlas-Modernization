@@ -93,9 +93,11 @@ function isIPv4Loopback(hostname: string): boolean {
 }
 
 function unquote(value: string): string {
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    const quote = value[0];
-    return value.slice(1, -1).replace(new RegExp(`\\\\${quote}`, "g"), quote);
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+  if (value.startsWith('"') && value.endsWith('"')) {
+    return unescapeDoubleQuotedValue(value.slice(1, -1));
   }
   return value;
 }
@@ -106,7 +108,7 @@ function normalizeEnvValue(value: string): string {
   if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
     const quote = trimmed[0];
     for (let index = 1; index < trimmed.length; index += 1) {
-      if (trimmed[index] === quote && !isEscaped(trimmed, index)) {
+      if (trimmed[index] === quote && (quote === "'" || !isEscaped(trimmed, index))) {
         const remainder = trimmed.slice(index + 1).trim();
         if (remainder && !remainder.startsWith("#")) {
           throw new Error("Invalid quoted value in .env");
@@ -117,6 +119,15 @@ function normalizeEnvValue(value: string): string {
     throw new Error("Unterminated quoted value in .env");
   }
   return trimmed.replace(/\s+#.*$/, "").trim();
+}
+
+function unescapeDoubleQuotedValue(value: string): string {
+  return value.replace(/\\([\\"nrt])/g, (_match, escaped: string) => {
+    if (escaped === "n") return "\n";
+    if (escaped === "r") return "\r";
+    if (escaped === "t") return "\t";
+    return escaped;
+  });
 }
 
 function isEscaped(value: string, index: number): boolean {

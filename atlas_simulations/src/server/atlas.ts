@@ -52,6 +52,7 @@ function abortableFetch(signal?: AbortSignal): typeof fetch {
     if (abortedSignal) controller.abort(abortedSignal.reason);
     try {
       const response = await fetch(input, { ...init, signal: controller.signal });
+      clearTimeout(timeout);
       return responseWithCleanup(response, cleanup);
     } catch (error) {
       cleanup();

@@ -1,7 +1,7 @@
 import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, point, withDeadline } from "./helpers.js";
+import { boundedNumberInput, boundedPositiveIntegerInput, deadlineExceeded, isoNow, point, withDeadline } from "./helpers.js";
 
 const SYNC_POLL_INTERVAL_MS = 500;
 const MIN_SETTLE_MS = SYNC_POLL_INTERVAL_MS * 3;
@@ -63,7 +63,7 @@ const multiClientSync: Scenario = {
       }
 
       const writerSnapshot = await snapshotVersions(ctx.client, ids);
-      await Promise.all(readers.map(async (reader, readerIndex) => {
+      const verificationResults = await Promise.allSettled(readers.map(async (reader, readerIndex) => {
         const settleDeadline = Date.now() + settleMs;
         const seen = await waitForResources(ctx, reader, ids, settleDeadline);
         const readerSnapshot = await snapshotVersions(reader, ids, Date.now() + settleMs);
@@ -77,6 +77,8 @@ const multiClientSync: Scenario = {
         ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
         ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
       }));
+      const rejectedVerification = verificationResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (rejectedVerification) throw rejectedVerification.reason;
     } finally {
       for (const reader of readers) {
         try {
@@ -122,6 +124,7 @@ async function visibleCount(reader: ScenarioContext["client"], ids: string[], de
 async function readVersion(reader: ScenarioContext["client"], id: string, deadline: number): Promise<[string, number] | undefined> {
   try {
     const entity = await withDeadline(() => reader.entities.get(id), deadline);
+    if (deadlineExceeded(entity)) return undefined;
     return entity ? [entity.entity_id, entity.metadata.version] : undefined;
   } catch (error) {
     if (!isNotFoundError(error)) throw error;

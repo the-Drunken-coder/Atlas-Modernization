@@ -3,16 +3,18 @@ import multiClientSync from "../scenarios/multi-client-sync.js";
 import observationsObjects from "../scenarios/observations-objects.js";
 import type { Scenario } from "./scenario.js";
 
-const registeredScenarios: Scenario[] = [movingAssets, observationsObjects, multiClientSync].map(freezeScenario);
+export type RegisteredScenario = Readonly<Scenario>;
+
+const registeredScenarios: RegisteredScenario[] = [movingAssets, observationsObjects, multiClientSync].map(freezeScenario);
 assertUniqueScenarioIds(registeredScenarios);
 
-export const scenarios: readonly Scenario[] = Object.freeze(registeredScenarios);
+export const scenarios: readonly RegisteredScenario[] = Object.freeze(registeredScenarios);
 
-export function findScenario(id: string): Scenario | undefined {
+export function findScenario(id: string): RegisteredScenario | undefined {
   return scenarios.find((scenario) => scenario.id === id);
 }
 
-function assertUniqueScenarioIds(allScenarios: Scenario[]): void {
+function assertUniqueScenarioIds(allScenarios: readonly RegisteredScenario[]): void {
   const seen = new Set<string>();
   for (const scenario of allScenarios) {
     if (seen.has(scenario.id)) throw new Error(`Duplicate scenario id: ${scenario.id}`);
@@ -20,7 +22,7 @@ function assertUniqueScenarioIds(allScenarios: Scenario[]): void {
   }
 }
 
-function freezeScenario(scenario: Scenario): Scenario {
+function freezeScenario(scenario: Scenario): RegisteredScenario {
   return Object.freeze({
     ...scenario,
     inputFields: deepFreeze(scenario.inputFields.map((field) => ({ ...field }))) as Scenario["inputFields"]

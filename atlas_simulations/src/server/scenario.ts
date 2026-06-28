@@ -42,7 +42,7 @@ export type ParsedStart = {
   input: ScenarioInput;
 };
 
-export function descriptorForScenario(scenario: Scenario): ScenarioDescriptor {
+export function descriptorForScenario(scenario: Readonly<Scenario>): ScenarioDescriptor {
   return {
     id: scenario.id,
     name: scenario.name,
@@ -52,7 +52,7 @@ export function descriptorForScenario(scenario: Scenario): ScenarioDescriptor {
   };
 }
 
-export function parseStartRequest(scenario: Scenario, request: unknown): ParsedStart {
+export function parseStartRequest(scenario: Readonly<Scenario>, request: unknown): ParsedStart {
   if (!isRecord(request)) {
     throw new Error("Start request must be a JSON object");
   }
@@ -278,15 +278,21 @@ function parseNumberField(field: NumberInputField, value: unknown): number {
   if (field.max !== undefined && parsed > field.max) {
     throw new Error(`${field.label} must be at most ${field.max}`);
   }
-  if (field.step !== undefined && field.step > 0 && !alignsToStep(parsed, field.step, field.min ?? 0)) {
-    throw new Error(`${field.label} must align to step ${field.step}`);
+  if (field.step !== undefined && field.step > 0) {
+    const aligned = alignToStep(parsed, field.step, field.min ?? 0);
+    if (aligned === undefined) {
+      throw new Error(`${field.label} must align to step ${field.step}`);
+    }
+    parsed = aligned;
   }
   return parsed;
 }
 
-function alignsToStep(value: number, step: number, base: number): boolean {
+function alignToStep(value: number, step: number, base: number): number | undefined {
   const steps = (value - base) / step;
-  return Math.abs(steps - Math.round(steps)) < 1e-9;
+  const rounded = Math.round(steps);
+  if (Math.abs(steps - rounded) >= 1e-9) return undefined;
+  return base + rounded * step;
 }
 
 function parseBoolean(field: ScenarioInputField, value: unknown): boolean {
