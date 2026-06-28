@@ -28,6 +28,7 @@ type RunRecord = {
   sequence: number;
   lastError?: string;
   cleanupError?: string;
+  cleanupStopFailed: boolean;
 };
 
 export class RunStore {
@@ -74,6 +75,7 @@ export class RunStore {
       clients: [],
       settled: false,
       cleaned: false,
+      cleanupStopFailed: false,
       sequence: 0
     };
     this.runs.set(id, run);
@@ -94,6 +96,9 @@ export class RunStore {
   async cleanup(id: string): Promise<RunSummary> {
     const run = this.requireRun(id);
     if (run.cleaned) return toSummary(run);
+    if (run.cleanupStopFailed && run.cleanupError) {
+      throw new Error(run.cleanupError);
+    }
     if (run.status === "running" || !run.settled) {
       throw new Error("Wait for the run to finish before cleanup");
     }
@@ -145,12 +150,14 @@ export class RunStore {
     if (stopFailure) {
       const message = errorMessage(stopFailure);
       run.cleanupError ??= message;
+      if (!cleanupFailure) run.cleanupStopFailed = true;
       this.emit(run, { type: "error", level: "error", message });
     }
     if (cleanupFailure) throw cleanupFailure;
     if (stopFailure) throw stopFailure;
     run.cleaned = true;
     run.cleanupError = undefined;
+    run.cleanupStopFailed = false;
     this.emit(run, { type: "cleanup", message: "Cleanup complete" });
     this.pruneRuns();
     return toSummary(run);

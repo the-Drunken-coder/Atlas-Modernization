@@ -275,6 +275,7 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
 
     await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
+    await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
     expect(cleanupStopCalls).toBe(1);
     expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "cleanup stop failed" });
     expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);

@@ -260,7 +260,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return event.type === "cleanup" && !event.resource;
+  return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {
@@ -362,12 +362,16 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     response.end(headOnly ? undefined : "Static asset not found");
     return;
   }
-  response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
   if (headOnly) {
+    response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
     response.end();
     return;
   }
   const stream = createReadStream(file);
+  stream.once("open", () => {
+    response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
+    stream.pipe(response);
+  });
   stream.on("error", (error) => {
     if (!response.headersSent) {
       sendJSON(response, 500, { message: errorMessage(error) });
@@ -375,7 +379,6 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     }
     response.destroy(error);
   });
-  stream.pipe(response);
 }
 
 function shouldServeSpaShell(requestPath: string): boolean {

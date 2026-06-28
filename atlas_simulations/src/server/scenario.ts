@@ -98,7 +98,7 @@ export function createScenarioContext(args: {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(rawClient, args.track, throwIfCancelled);
+    return trackClientCreates(rawClient, args.track, throwIfCancelled, args.signal);
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -118,7 +118,7 @@ export function createScenarioContext(args: {
   };
 }
 
-function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedResource) => void, throwIfCancelled: () => void): AtlasClientLike {
+function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedResource) => void, throwIfCancelled: () => void, signal: AbortSignal): AtlasClientLike {
   const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
     throwIfCancelled();
     const result = await operation();
@@ -133,14 +133,30 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
   };
   const guardedWatch: AtlasClientLike["watch"] = (filter, callback) => {
     throwIfCancelled();
-    const unsubscribe = client.watch(filter, callback);
+    let active = true;
+    let unsubscribe: () => void = () => undefined;
+    const stop = () => {
+      if (!active) return;
+      active = false;
+      signal.removeEventListener("abort", stop);
+      unsubscribe();
+    };
+    const guardedCallback = ((value: Parameters<typeof callback>[0], event: Parameters<typeof callback>[1]) => {
+      if (!active || signal.aborted) {
+        stop();
+        return;
+      }
+      callback(value, event);
+    }) as typeof callback;
+    unsubscribe = client.watch(filter, guardedCallback);
+    signal.addEventListener("abort", stop, { once: true });
     try {
       throwIfCancelled();
     } catch (error) {
-      unsubscribe();
+      stop();
       throw error;
     }
-    return unsubscribe;
+    return stop;
   };
   const checkIn = ((id: string, options?: Parameters<AtlasClientLike["entities"]["checkIn"]>[1]) =>
     guarded(() => client.entities.checkIn(id, options))) as AtlasClientLike["entities"]["checkIn"];

@@ -54,18 +54,19 @@ const movingAssets: Scenario = {
     ctx.log(`Created ${assetIds.length} assets`);
 
     for (let tick = 0; tick < ticks; tick++) {
+      const step = tick + 1;
       for (const [index, id] of assetIds.entries()) {
         if (ctx.signal.aborted) throw new Error("Simulation cancelled");
-        const latitude = startLatitude + index * 0.001 + tick * 0.0005;
-        const longitude = startLongitude + index * 0.002 + tick * 0.0008;
+        const latitude = startLatitude + index * 0.001 + step * 0.0005;
+        const longitude = startLongitude + index * 0.002 + step * 0.0008;
         await ctx.client.entities.checkIn(id, {
           status: "moving",
           telemetry: {
             latitude,
             longitude,
             altitude_m: 120 + index * 5,
-            speed_m_s: 12 + tick,
-            heading_deg: (45 + tick * 7) % 360
+            speed_m_s: 12 + step,
+            heading_deg: (45 + step * 7) % 360
           },
           components: {
             heartbeat: { last_seen: isoNow() },
@@ -81,7 +82,7 @@ const movingAssets: Scenario = {
     const verifier = ctx.newClient({ sync: false });
     const persistedAssetResults = await Promise.allSettled(assetIds.map((id) => verifier.entities.get(id)));
     const persistedAssets = fulfilledValues(persistedAssetResults);
-    const finalSpeed = 12 + ticks - 1;
+    const finalSpeed = 12 + ticks;
     ctx.assert("Assets persisted", persistedAssets.length === assetCount, `${persistedAssets.length}/${assetCount} assets persisted`);
     throwFirstRejected(persistedAssetResults);
     ctx.assert(

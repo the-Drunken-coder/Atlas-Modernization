@@ -104,7 +104,11 @@ const observationsObjects: Scenario = {
     ctx.assert("Observer assets persisted", persistedObservers.length === assetCount, `${persistedObservers.length}/${assetCount} observers persisted`);
     ctx.assert(
       "Tracks persisted",
-      persistedTracks.length === observations && persistedTracks.every((track) => track.entity_type === "track"),
+      persistedTracks.length === observations &&
+        persistedTracks.every((track, index) => {
+          const simulation = track.components.custom_simulation as { observer_id?: string; observation_index?: number } | undefined;
+          return track.entity_type === "track" && simulation?.observer_id === assetIds[index % assetIds.length] && simulation?.observation_index === index + 1;
+        }),
       `${persistedTracks.length}/${observations} tracks persisted`
     );
     ctx.assert(

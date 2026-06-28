@@ -88,7 +88,12 @@ function atlasBaseUrlValue(value: string): string {
 
 function isLoopbackHost(hostname: string): boolean {
   const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+  return normalized === "localhost" || normalized === "::1" || isIPv4Loopback(normalized);
+}
+
+function isIPv4Loopback(hostname: string): boolean {
+  const parts = hostname.split(".");
+  return parts.length === 4 && parts[0] === "127" && parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
 }
 
 function unquote(value: string): string {

@@ -156,6 +156,31 @@ describe("scenario input parsing", () => {
     expect(() => ctx.client.sync.status()).toThrow("Simulation cancelled");
   });
 
+  it("unsubscribes watches after cancellation", () => {
+    const controller = new AbortController();
+    let unsubscribed = 0;
+    const ctx = createScenarioContext({
+      runId: "sim-watch-cancelled",
+      signal: controller.signal,
+      clientFactory: () => ({
+        ...createFakeAtlasCore().factory(),
+        watch: () => () => {
+          unsubscribed += 1;
+        }
+      }),
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: () => undefined,
+      registerClient: () => undefined
+    });
+    const stop = ctx.client.watch({ filter: "all" } as Parameters<typeof ctx.client.watch>[0], () => undefined);
+
+    controller.abort();
+    stop();
+
+    expect(unsubscribed).toBe(1);
+  });
+
   it("rejects invalid wait durations", async () => {
     const ctx = createScenarioContext({
       runId: "sim-wait",

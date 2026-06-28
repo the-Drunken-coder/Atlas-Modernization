@@ -31,6 +31,7 @@ describe("loadConfig", () => {
 
     expect(loadConfig({ env: { ATLAS_BASE_URL: "http://localhost:8000" }, packageRoot }).atlasBaseUrl).toBe("http://localhost:8000");
     expect(loadConfig({ env: { ATLAS_BASE_URL: "http://127.0.0.1:8000/" }, packageRoot }).atlasBaseUrl).toBe("http://127.0.0.1:8000");
+    expect(loadConfig({ env: { ATLAS_BASE_URL: "http://127.0.0.2:8000/" }, packageRoot }).atlasBaseUrl).toBe("http://127.0.0.2:8000");
     expect(loadConfig({ env: { ATLAS_BASE_URL: "http://[::1]:8000" }, packageRoot }).atlasBaseUrl).toBe("http://[::1]:8000");
   });
 

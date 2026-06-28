@@ -135,7 +135,10 @@ export function App() {
     source.onmessage = (message) => {
       if (activeRunIdRef.current !== runId) return;
       const event = JSON.parse(message.data) as RunEvent;
-      setEvents((current) => [...current, event].slice(-MAX_CLIENT_EVENTS));
+      setEvents((current) => {
+        if (current.some((existing) => existing.runId === event.runId && existing.sequence === event.sequence)) return current;
+        return [...current, event].slice(-MAX_CLIENT_EVENTS);
+      });
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
       if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
@@ -455,7 +458,8 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): Fi
       const trimmed = value.trim();
       if (trimmed === "") return [field.key, field.defaultValue];
       const parsed = Number(trimmed);
-      return [field.key, Number.isFinite(parsed) ? parsed : value];
+      if (!Number.isFinite(parsed)) throw new Error(`${field.label} must be a number`);
+      return [field.key, parsed];
     })
   );
 }
