@@ -158,9 +158,13 @@ export class RunStore {
         signal: run.controller.signal,
         clientFactory: this.clientFactory,
         registerClient,
-        log: (message, data) => this.emit(run, { type: "log", message, data }),
-        assert: (name, passed, message) => this.assert(run, name, passed, message),
-        track: (resource) => this.track(run, resource)
+        log: (message, data) => {
+          if (!run.settled) this.emit(run, { type: "log", message, data });
+        },
+        assert: (name, passed, message) => (run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message)),
+        track: (resource) => {
+          if (!run.settled) this.track(run, resource);
+        }
       });
       await run.scenario.run(context, input);
       if (run.controller.signal.aborted) {
@@ -308,6 +312,16 @@ function trimEvents(run: RunRecord): void {
 
 function hasFailedAssertions(run: RunRecord): boolean {
   return run.assertions.some((assertion) => !assertion.passed);
+}
+
+function lateAssertion(name: string, passed: boolean, message?: string): AssertionResult {
+  return {
+    id: "assert-late",
+    name,
+    passed,
+    ...(message ? { message } : {}),
+    timestamp: timestamp()
+  };
 }
 
 function cloneValue<T>(value: T): T {

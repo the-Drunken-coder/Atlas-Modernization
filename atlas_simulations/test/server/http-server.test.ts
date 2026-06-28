@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -131,6 +131,8 @@ describe("simulation HTTP server", () => {
     const packageRoot = tempPackageRoot();
     mkdirSync(path.join(packageRoot, "dist/client/assets"), { recursive: true });
     writeFileSync(path.join(packageRoot, "dist/client/index.html"), "<html><body>Atlas Simulations</body></html>");
+    writeFileSync(path.join(packageRoot, "secret.txt"), "secret");
+    symlinkSync(path.join(packageRoot, "secret.txt"), path.join(packageRoot, "dist/client/assets/secret.txt"));
 
     server = createSimulationServer({
       config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot },
@@ -146,6 +148,7 @@ describe("simulation HTTP server", () => {
 
     await expectStatus(`${baseUrl}/assets/missing.js`, 404);
     await expectStatus(`${baseUrl}/favicon.ico`, 404);
+    await expectStatus(`${baseUrl}/assets/secret.txt`, 404);
   });
 });
 
@@ -229,7 +232,7 @@ async function waitFor(assertion: () => Promise<void>): Promise<void> {
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      await assertion();
+      await withTimeout(assertion(), Math.max(1, deadline - Date.now()));
       return;
     } catch (error) {
       lastError = error;

@@ -273,6 +273,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function waitFor(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(new Error("Simulation cancelled"));
+  if (!Number.isFinite(ms) || ms < 0 || ms > 2_147_483_647) {
+    return Promise.reject(new Error("Wait duration must be between 0 and 2147483647 milliseconds"));
+  }
   return new Promise((resolve, reject) => {
     let timeout: ReturnType<typeof setTimeout>;
     const abort = () => {

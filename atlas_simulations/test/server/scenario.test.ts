@@ -133,4 +133,19 @@ describe("scenario input parsing", () => {
     await expect(ctx.client.entities.get("missing")).rejects.toThrow("Simulation cancelled");
     expect(() => ctx.client.sync.status()).toThrow("Simulation cancelled");
   });
+
+  it("rejects invalid wait durations", async () => {
+    const ctx = createScenarioContext({
+      runId: "sim-wait",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: () => undefined,
+      registerClient: () => undefined
+    });
+
+    await expect(ctx.wait(-1)).rejects.toThrow("Wait duration must be between 0 and 2147483647 milliseconds");
+    await expect(ctx.wait(Number.POSITIVE_INFINITY)).rejects.toThrow("Wait duration must be between 0 and 2147483647 milliseconds");
+  });
 });

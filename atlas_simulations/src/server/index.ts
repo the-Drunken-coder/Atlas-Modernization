@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -347,6 +347,11 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     response.end(headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
     return;
   }
+  if (!isRealPathInsideRoot(staticRoot, file)) {
+    response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
+    response.end(headOnly ? undefined : "Static asset not found");
+    return;
+  }
   response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
   if (headOnly) {
     response.end();
@@ -365,6 +370,13 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
 
 function shouldServeSpaShell(requestPath: string): boolean {
   return !requestPath.startsWith("/assets/") && !/\/[^/]+\.[^/]+$/.test(requestPath);
+}
+
+function isRealPathInsideRoot(staticRoot: string, file: string): boolean {
+  const realStaticRoot = realpathSync(staticRoot);
+  const realFile = realpathSync(file);
+  const relative = path.relative(realStaticRoot, realFile);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | "invalid-path" | undefined {
