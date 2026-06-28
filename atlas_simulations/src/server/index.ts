@@ -79,9 +79,15 @@ async function handleRequest(
   store: RunStore,
   eventStreams: Set<EventStream>
 ): Promise<void> {
-  const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (!hasLoopbackHost(request.headers.host)) {
     sendJSON(response, 403, { message: "Requests require a loopback Host header" });
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(request.url ?? "/", "http://127.0.0.1");
+  } catch {
+    sendJSON(response, 400, { message: "Request target must be a valid URL" });
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/health") {
@@ -303,7 +309,11 @@ async function readRequestBody(request: IncomingMessage): Promise<StartRunReques
 }
 
 function sendJSON(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { "Content-Type": "application/json" });
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff"
+  });
   response.end(JSON.stringify(body));
 }
 

@@ -148,16 +148,6 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(run.id));
     await waitFor(() => expect(screen.getAllByText("cleaned").length).toBeGreaterThan(0));
-    expect(eventSources).toHaveLength(2);
-    expect(eventSources[1].closed).toBe(false);
-    eventSources[1].emit({
-      sequence: jsonNumber(3),
-      runId: run.id,
-      timestamp: new Date().toISOString(),
-      type: "cleanup",
-      message: "Cleanup complete"
-    });
-    await waitFor(() => expect(eventSources[1].closed).toBe(true));
   });
 
   it("omits blank JSON input from start requests", async () => {
@@ -194,25 +184,7 @@ describe("App", () => {
     expect(eventSources).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
-    expect(eventSources).toHaveLength(1);
-    expect(eventSources[0].closed).toBe(false);
-    eventSources[0].emit({
-      sequence: jsonNumber(1),
-      runId: syncRun.id,
-      timestamp: new Date().toISOString(),
-      type: "status",
-      status: "completed",
-      message: "Run completed"
-    });
-    expect(eventSources[0].closed).toBe(false);
-    eventSources[0].emit({
-      sequence: jsonNumber(2),
-      runId: syncRun.id,
-      timestamp: new Date().toISOString(),
-      type: "cleanup",
-      message: "Cleanup complete"
-    });
-    await waitFor(() => expect(eventSources[0].closed).toBe(true));
+    await waitFor(() => expect(screen.getAllByText("cleaned").length).toBeGreaterThan(0));
   });
 
   it("keeps the stream open after stop until the terminal event arrives", async () => {

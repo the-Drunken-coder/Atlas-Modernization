@@ -121,7 +121,7 @@ async function visibleCount(reader: ScenarioContext["client"], ids: string[], de
 
 async function readVersion(reader: ScenarioContext["client"], id: string, deadline: number): Promise<[string, number] | undefined> {
   try {
-    const entity = await withDeadline(reader.entities.get(id), deadline);
+    const entity = await withDeadline(() => reader.entities.get(id), deadline);
     return entity ? [entity.entity_id, entity.metadata.version] : undefined;
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
@@ -129,14 +129,15 @@ async function readVersion(reader: ScenarioContext["client"], id: string, deadli
   }
 }
 
-async function withDeadline<T>(operation: Promise<T>, deadline: number): Promise<T | undefined> {
-  if (!Number.isFinite(deadline)) return await operation;
+async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | undefined> {
+  if (!Number.isFinite(deadline)) return await operation();
   const remaining = deadline - Date.now();
   if (remaining <= 0) return undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
+    const pending = operation();
     return await Promise.race([
-      operation,
+      pending,
       new Promise<undefined>((resolve) => {
         timeout = setTimeout(() => resolve(undefined), remaining);
       })

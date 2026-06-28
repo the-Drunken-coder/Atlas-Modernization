@@ -16,4 +16,32 @@ describe("fake Atlas core", () => {
     expect(checkIn.task_limit).toBe(10);
     expect(checkIn.has_more_tasks).toBe(false);
   });
+
+  it("advances running sync client snapshots when status is polled", async () => {
+    const core = createFakeAtlasCore();
+    const writer = core.factory();
+    const reader = core.factory({ sync: "all" });
+    await reader.sync.start();
+
+    await writer.entities.create({ entity_id: "asset-1", entity_type: "asset" });
+
+    await expect(reader.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
+    reader.sync.status();
+    await expect(reader.entities.get("asset-1")).resolves.toMatchObject({ entity_id: "asset-1" });
+    await expect(reader.queries.full()).resolves.toMatchObject({ entities: [expect.objectContaining({ entity_id: "asset-1" })] });
+  });
+
+  it("enforces conflicts, tombstone reads, deletion logging, and re-create", async () => {
+    const core = createFakeAtlasCore();
+    const client = core.factory();
+    await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
+
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toThrow();
+    await client.entities.delete("asset-1");
+    await expect(client.entities.get("asset-1")).rejects.toThrow();
+    expect(core.state.deleted).toEqual(["entity:asset-1"]);
+    await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
+
+    await expect(client.entities.get("asset-1")).resolves.toMatchObject({ entity_id: "asset-1" });
+  });
 });

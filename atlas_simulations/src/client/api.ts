@@ -26,7 +26,7 @@ export async function loadHealth(): Promise<HealthResponse> {
     return {
       ...body,
       ok: false,
-      status: jsonNumber(response.status),
+      status: jsonNumber(body.status ?? response.status),
       message: body.message || `Request failed (${response.status})`
     };
   }
@@ -150,10 +150,13 @@ function isScenarioDescriptor(value: unknown): value is ScenarioDescriptor {
 function isScenarioInputField(value: unknown): boolean {
   if (!isRecord(value) || typeof value.key !== "string" || typeof value.label !== "string") return false;
   if (value.type === "number") {
-    return isFiniteNumber(value.defaultValue) &&
-      (value.min === undefined || isFiniteNumber(value.min)) &&
-      (value.max === undefined || isFiniteNumber(value.max)) &&
-      (value.step === undefined || isFiniteNumber(value.step));
+    if (!isFiniteNumber(value.defaultValue)) return false;
+    if (value.min !== undefined && !isFiniteNumber(value.min)) return false;
+    if (value.max !== undefined && !isFiniteNumber(value.max)) return false;
+    if (value.min !== undefined && value.max !== undefined && value.min > value.max) return false;
+    if (value.defaultValue < (value.min ?? value.defaultValue)) return false;
+    if (value.defaultValue > (value.max ?? value.defaultValue)) return false;
+    return value.step === undefined || (isFiniteNumber(value.step) && value.step > 0);
   }
   if (value.type === "text") return typeof value.defaultValue === "string";
   if (value.type === "boolean") return typeof value.defaultValue === "boolean";
