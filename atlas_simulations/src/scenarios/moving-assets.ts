@@ -58,8 +58,8 @@ const movingAssets: Scenario = {
       const step = tick + 1;
       for (const [index, id] of assetIds.entries()) {
         if (ctx.signal.aborted) throw new Error("Simulation cancelled");
-        const latitude = startLatitude + index * 0.001 + step * 0.0005;
-        const longitude = startLongitude + index * 0.002 + step * 0.0008;
+        const latitude = Number((startLatitude + index * 0.001 + step * 0.0005).toFixed(6));
+        const longitude = Number((startLongitude + index * 0.002 + step * 0.0008).toFixed(6));
         await ctx.client.entities.checkIn(id, {
           status: "moving",
           telemetry: {

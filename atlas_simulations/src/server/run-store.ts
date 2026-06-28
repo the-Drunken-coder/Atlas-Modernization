@@ -7,6 +7,7 @@ type EventSubscriber = (event: RunEvent) => void;
 
 const MAX_RUNS = 100;
 const MAX_EVENTS_PER_RUN = 500;
+const MAX_EVENT_HISTORY_BYTES_PER_RUN = 1_000_000;
 const MAX_CREATED_RESOURCES_PER_RUN = 1_000;
 const MAX_ASSERTIONS_PER_RUN = 1_000;
 const MAX_EVENT_DATA_DEPTH = 200;
@@ -354,6 +355,13 @@ function wireInputs(inputs: Record<string, string | number | boolean>): Record<s
 function trimEvents(run: RunRecord): void {
   const overflow = run.events.length - MAX_EVENTS_PER_RUN;
   if (overflow > 0) run.events.splice(0, overflow);
+  while (eventHistoryBytes(run.events) > MAX_EVENT_HISTORY_BYTES_PER_RUN && run.events.length > 1) {
+    run.events.shift();
+  }
+}
+
+function eventHistoryBytes(events: RunEvent[]): number {
+  return events.reduce((total, event) => total + Buffer.byteLength(JSON.stringify(event), "utf8"), 0);
 }
 
 function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {

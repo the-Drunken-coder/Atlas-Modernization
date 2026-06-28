@@ -57,8 +57,8 @@ const observationsObjects: Scenario = {
       const observerId = assetIds[index % assetIds.length];
       const trackId = ctx.id(`track-${index + 1}`);
       const objectId = ctx.id(`observation-object-${index + 1}`);
-      const latitude = startLatitude + 0.01 + index * 0.0007;
-      const longitude = startLongitude + 0.01 + index * 0.0009;
+      const latitude = Number((startLatitude + 0.01 + index * 0.0007).toFixed(6));
+      const longitude = Number((startLongitude + 0.01 + index * 0.0009).toFixed(6));
       trackIds.push(trackId);
       objectIds.push(objectId);
 

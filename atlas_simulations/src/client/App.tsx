@@ -124,12 +124,16 @@ export function App() {
   function activateRun(run: RunSummary) {
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
-      if (activeRunIdRef.current !== run.id) connectEvents(run.id);
+      if (activeRunIdRef.current !== run.id && run.status === "running") connectEvents(run.id);
       return;
     }
     setEvents([]);
     setCurrentRun(run);
-    connectEvents(run.id);
+    if (run.status === "running") {
+      connectEvents(run.id);
+    } else {
+      closeActiveEventSource();
+    }
   }
 
   function clearRunSelection() {
@@ -154,7 +158,7 @@ export function App() {
       if (activeRunIdRef.current !== runId) return;
       let event: RunEvent;
       try {
-        event = JSON.parse(message.data) as RunEvent;
+        event = parseRunEvent(JSON.parse(message.data));
       } catch {
         captureError(new Error(`Invalid event payload for run ${runId}`));
         closeSource();
@@ -545,6 +549,40 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): No
 function alignsToStep(value: number, step: number, base: number): boolean {
   const steps = (value - base) / step;
   return Math.abs(steps - Math.round(steps)) < 1e-9;
+}
+
+function parseRunEvent(value: unknown): RunEvent {
+  if (!isRecord(value) || typeof value.sequence !== "number" || typeof value.runId !== "string" || typeof value.timestamp !== "string" || typeof value.message !== "string") {
+    throw new Error("Invalid run event");
+  }
+  switch (value.type) {
+    case "status":
+      if (value.status === "running" || value.status === "completed" || value.status === "failed" || value.status === "cancelled") return value as RunEvent;
+      break;
+    case "log":
+      return value as RunEvent;
+    case "assertion":
+      if (isRecord(value.assertion) && typeof value.assertion.id === "string" && typeof value.assertion.name === "string" && typeof value.assertion.passed === "boolean" && typeof value.assertion.timestamp === "string") return value as RunEvent;
+      break;
+    case "resource":
+      if (isCreatedResource(value.resource)) return value as RunEvent;
+      break;
+    case "error":
+      if (value.level === "error") return value as RunEvent;
+      break;
+    case "cleanup":
+      if (value.resource === undefined || isCreatedResource(value.resource)) return value as RunEvent;
+      break;
+  }
+  throw new Error("Invalid run event");
+}
+
+function isCreatedResource(value: unknown): boolean {
+  return isRecord(value) && (value.type === "entity" || value.type === "task" || value.type === "object") && typeof value.id === "string";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {

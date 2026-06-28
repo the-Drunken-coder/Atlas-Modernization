@@ -187,7 +187,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: syncScenario.name }));
 
     expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute("aria-pressed", "true");
-    expect(eventSources).toHaveLength(1);
+    expect(eventSources).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
     expect(eventSources).toHaveLength(1);
