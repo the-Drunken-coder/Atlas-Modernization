@@ -8,6 +8,8 @@ import type {
 } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js";
 
+type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
+
 export type ScenarioInput = {
   fields: Record<string, string | number | boolean>;
   json?: JSONValue;
@@ -64,6 +66,11 @@ export function createScenarioContext(args: {
   track(resource: CreatedResource): void;
   registerClient(client: AtlasClientLike): void;
 }): ScenarioContext {
+  const throwIfCancelled = () => {
+    if (args.signal.aborted) {
+      throw new Error("Simulation cancelled");
+    }
+  };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     const client = args.clientFactory(options);
     args.registerClient(client);
@@ -81,16 +88,19 @@ export function createScenarioContext(args: {
     wait: (ms) => waitFor(ms, args.signal),
     track: args.track,
     createEntity: async (entity) => {
+      throwIfCancelled();
       const created = await client.entities.create(entity);
       args.track({ type: "entity", id: created.entity_id });
       return created;
     },
     createTask: async (task) => {
+      throwIfCancelled();
       const created = await client.tasks.create(task);
       args.track({ type: "task", id: created.task_id });
       return created;
     },
     createObject: async (object) => {
+      throwIfCancelled();
       const created = await client.objects.create(object);
       args.track({ type: "object", id: created.object_id });
       return created;
@@ -102,6 +112,9 @@ function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>)
   const values: Record<string, string | number | boolean> = {};
   for (const field of fields) {
     const value = raw[field.key] ?? field.defaultValue;
+    if (value === undefined) {
+      throw new Error(`${field.label} is required`);
+    }
     if (field.type === "number") values[field.key] = parseNumberField(field, value);
     if (field.type === "text") values[field.key] = String(value);
     if (field.type === "boolean") values[field.key] = parseBoolean(value);
@@ -109,7 +122,7 @@ function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>)
   return values;
 }
 
-function parseNumberField(field: ScenarioInputField, value: unknown): number {
+function parseNumberField(field: NumberInputField, value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed)) {
     throw new Error(`${field.label} must be a number`);
@@ -138,11 +151,16 @@ function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
 function waitFor(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(new Error("Simulation cancelled"));
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(resolve, ms);
+    let timeout: ReturnType<typeof setTimeout>;
     const abort = () => {
       clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
       reject(new Error("Simulation cancelled"));
     };
+    timeout = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
     signal.addEventListener("abort", abort, { once: true });
   });
 }

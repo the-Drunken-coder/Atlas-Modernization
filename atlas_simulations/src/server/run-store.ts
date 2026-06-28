@@ -19,6 +19,7 @@ type RunRecord = {
   subscribers: Set<EventSubscriber>;
   controller: AbortController;
   clients: AtlasClientLike[];
+  settled: boolean;
   sequence: number;
   lastError?: string;
 };
@@ -57,6 +58,7 @@ export class RunStore {
       subscribers: new Set(),
       controller: new AbortController(),
       clients: [],
+      settled: false,
       sequence: 0
     };
     this.runs.set(id, run);
@@ -76,8 +78,8 @@ export class RunStore {
 
   async cleanup(id: string): Promise<RunSummary> {
     const run = this.requireRun(id);
-    if (run.status === "running") {
-      throw new Error("Stop the run before cleanup");
+    if (run.status === "running" || !run.settled) {
+      throw new Error("Wait for the run to finish before cleanup");
     }
     const client = this.clientFactory({ sync: false });
     for (const resource of cleanupOrder(run.createdResources)) {
@@ -104,7 +106,13 @@ export class RunStore {
 
   subscribe(id: string, subscriber: EventSubscriber): () => void {
     const run = this.requireRun(id);
-    for (const event of run.events) subscriber(event);
+    for (const event of run.events) {
+      try {
+        subscriber(event);
+      } catch {
+        return () => undefined;
+      }
+    }
     run.subscribers.add(subscriber);
     return () => run.subscribers.delete(subscriber);
   }
@@ -137,8 +145,17 @@ export class RunStore {
       }
     } finally {
       for (const client of run.clients) {
-        client.sync.stop();
+        try {
+          client.sync.stop();
+        } catch (error) {
+          this.emit(run, {
+            type: "error",
+            level: "error",
+            message: `Failed to stop client sync: ${errorMessage(error)}`
+          });
+        }
       }
+      run.settled = true;
     }
   }
 
@@ -182,7 +199,13 @@ export class RunStore {
       ...details
     };
     run.events.push(event);
-    for (const subscriber of run.subscribers) subscriber(event);
+    for (const subscriber of [...run.subscribers]) {
+      try {
+        subscriber(event);
+      } catch {
+        run.subscribers.delete(subscriber);
+      }
+    }
   }
 
   private requireRun(id: string): RunRecord {

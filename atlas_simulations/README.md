@@ -7,10 +7,12 @@ Local workbench for running trusted Atlas simulation scenarios against Atlas Cor
 Copy `.env.example` to `.env` and set the local Core connection values:
 
 ```text
-ATLAS_BASE_URL=https://atlascommandapi.org
+ATLAS_BASE_URL=http://localhost:8000
 ATLAS_API_KEY=replace-with-local-core-key
 ATLAS_SIM_PORT=5180
 ```
+
+Use `ATLAS_BASE_URL=https://atlascommandapi.org` when intentionally testing against the hosted Atlas API.
 
 The API key is read only by the local Node server. Browser code calls same-origin simulation routes and never receives the key.
 

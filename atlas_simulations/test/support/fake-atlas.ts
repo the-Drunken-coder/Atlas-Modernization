@@ -55,7 +55,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           ...("alias" in patch ? { alias: patch.alias ?? null } : {}),
           ...(patch.components ? { components: { ...current.components, ...patch.components } } : {}),
           ...(patch.extra ? { extra: patch.extra } : {}),
-          metadata: metadata(++state.version)
+          metadata: metadata(++state.version, current.metadata.created_at)
         };
         state.entities.set(id, updated);
         return updated;
@@ -75,7 +75,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
             ...(options?.status ? { status: { value: options.status, last_update: new Date().toISOString() } } : {}),
             ...(telemetry ? { telemetry: { ...current.components.telemetry, ...telemetry, last_update: new Date().toISOString() } } : {})
           },
-          metadata: metadata(++state.version)
+          metadata: metadata(++state.version, current.metadata.created_at)
         };
         state.entities.set(id, updated);
         return { entity: updated, tasks: [], task_count: 0, task_limit: 10, has_more_tasks: false };
@@ -169,14 +169,14 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
 
 function updateTaskStatus(state: FakeCoreState, id: string, status: string): TaskResource {
   const current = requireValue(state.tasks, id, "task");
-  const updated = { ...current, status, metadata: metadata(++state.version) };
+  const updated = { ...current, status, metadata: metadata(++state.version, current.metadata.created_at) };
   state.tasks.set(id, updated);
   return updated;
 }
 
-function metadata(version: number) {
+function metadata(version: number, createdAt?: string) {
   const now = new Date().toISOString();
-  return { created_at: now, updated_at: now, version };
+  return { created_at: createdAt ?? now, updated_at: now, version };
 }
 
 function requireValue<T>(values: Map<string, T>, id: string, type: string): T {

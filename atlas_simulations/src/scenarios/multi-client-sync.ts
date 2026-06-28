@@ -1,4 +1,4 @@
-import type { Scenario } from "../server/scenario.js";
+import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { isoNow, numberInput, point } from "./helpers.js";
 
 const multiClientSync: Scenario = {
@@ -45,13 +45,8 @@ const multiClientSync: Scenario = {
       ctx.log(`Writer created ${id}`);
     }
 
-    await ctx.wait(settleMs);
     for (const [readerIndex, reader] of readers.entries()) {
-      let seen = 0;
-      for (const id of ids) {
-        const entity = await reader.entities.get(id);
-        if (entity.entity_id === id) seen += 1;
-      }
+      const seen = await waitForResources(ctx, reader, ids, Math.max(settleMs, 1000));
       const status = reader.sync.status();
       ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
       ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.healthy ? "healthy" : "degraded or recovering");
@@ -60,3 +55,26 @@ const multiClientSync: Scenario = {
 };
 
 export default multiClientSync;
+
+async function waitForResources(ctx: ScenarioContext, reader: ScenarioContext["client"], ids: string[], timeoutMs: number): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = await visibleCount(reader, ids);
+  while (seen < ids.length && Date.now() < deadline) {
+    await ctx.wait(Math.min(250, Math.max(1, deadline - Date.now())));
+    seen = await visibleCount(reader, ids);
+  }
+  return seen;
+}
+
+async function visibleCount(reader: ScenarioContext["client"], ids: string[]): Promise<number> {
+  let seen = 0;
+  for (const id of ids) {
+    try {
+      const entity = await reader.entities.get(id);
+      if (entity.entity_id === id) seen += 1;
+    } catch {
+      // Missing resources are expected while sync is still converging.
+    }
+  }
+  return seen;
+}

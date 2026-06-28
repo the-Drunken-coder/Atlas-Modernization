@@ -2,15 +2,27 @@ export type JSONValue = null | boolean | string | number | JSONValue[] | { [key:
 
 export type ScenarioInputType = "number" | "text" | "boolean";
 
-export type ScenarioInputField = {
+type ScenarioInputFieldBase = {
   key: string;
   label: string;
-  type: ScenarioInputType;
-  defaultValue: string | number | boolean;
-  min?: number;
-  max?: number;
-  step?: number;
 };
+
+export type ScenarioInputField =
+  | (ScenarioInputFieldBase & {
+      type: "number";
+      defaultValue: number;
+      min?: number;
+      max?: number;
+      step?: number;
+    })
+  | (ScenarioInputFieldBase & {
+      type: "text";
+      defaultValue: string;
+    })
+  | (ScenarioInputFieldBase & {
+      type: "boolean";
+      defaultValue: boolean;
+    });
 
 export type ScenarioDescriptor = {
   id: string;

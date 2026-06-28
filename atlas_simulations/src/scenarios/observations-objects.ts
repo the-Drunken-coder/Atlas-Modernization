@@ -44,7 +44,7 @@ const observationsObjects: Scenario = {
           heartbeat: { last_seen: isoNow() },
           status: { value: "observing", last_update: isoNow() },
           sensor_refs: [{ sensor_id: `${id}-camera`, type: "camera", horizontal_fov: 60 }],
-          custom_simulation: { run_id: ctx.runId, ...extra }
+          custom_simulation: { ...extra, run_id: ctx.runId }
         }
       });
     }
@@ -69,10 +69,10 @@ const observationsObjects: Scenario = {
           mil_view: { classification: index % 2 === 0 ? "unknown" : "neutral", last_seen: isoNow() },
           status: { value: "observed", last_update: isoNow() },
           custom_simulation: {
+            ...extra,
             run_id: ctx.runId,
             observer_id: observerId,
-            observation_index: index + 1,
-            ...extra
+            observation_index: index + 1
           }
         }
       });

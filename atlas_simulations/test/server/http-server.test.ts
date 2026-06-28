@@ -45,12 +45,40 @@ describe("simulation HTTP server", () => {
     expect(cleaned.run.status).toBe("cleaned");
     expect(core.state.deleted).toEqual([`entity:${started.run.id}-asset-1`]);
   });
+
+  it("returns client errors for bad request bodies and missing runs", async () => {
+    const core = createFakeAtlasCore();
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://atlas.test", port: 0, packageRoot: process.cwd() },
+      store: new RunStore(core.factory)
+    });
+    const baseUrl = await server.listen();
+
+    await expectStatus(`${baseUrl}/api/runs`, 400, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{"
+    });
+    await expectStatus(`${baseUrl}/api/runs`, 400, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "null"
+    });
+    await expectStatus(`${baseUrl}/api/runs/missing/events`, 404);
+    await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST" });
+    await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST" });
+  });
 });
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   expect(response.ok).toBe(true);
   return (await response.json()) as T;
+}
+
+async function expectStatus(url: string, status: number, init?: RequestInit): Promise<void> {
+  const response = await fetch(url, init);
+  expect(response.status).toBe(status);
 }
 
 async function waitFor(assertion: () => Promise<void>): Promise<void> {

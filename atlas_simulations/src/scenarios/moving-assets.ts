@@ -45,7 +45,7 @@ const movingAssets: Scenario = {
           status: { value: "moving", last_update: isoNow() },
           health: { battery_percent: Math.max(10, 95 - index * 3) },
           task_catalog: { supported_tasks: ["move", "observe"] },
-          custom_simulation: { run_id: ctx.runId, ...extra }
+          custom_simulation: { ...extra, run_id: ctx.runId }
         }
       });
     }

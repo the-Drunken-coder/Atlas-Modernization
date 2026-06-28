@@ -16,15 +16,19 @@ export function App() {
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState<string | undefined>();
   const eventSourceRef = useRef<EventSource | null>(null);
+  const activeRunIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    void refreshHealth();
+    void refreshHealth().catch(captureError);
     void loadScenarios().then((loaded) => {
       setScenarios(loaded);
       setSelectedId((current) => current || loaded[0]?.id || "");
     }).catch(captureError);
-    void refreshRuns();
-    return () => eventSourceRef.current?.close();
+    void refreshRuns().catch(captureError);
+    return () => {
+      activeRunIdRef.current = undefined;
+      eventSourceRef.current?.close();
+    };
   }, []);
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
@@ -50,27 +54,38 @@ export function App() {
   async function startSelectedRun() {
     if (!selected) return;
     setError(undefined);
-    setEvents([]);
-    eventSourceRef.current?.close();
     try {
       const run = await startRun({ scenarioId: selected.id, inputs, jsonInput });
-      setCurrentRun(run);
+      selectRun(run);
       await refreshRuns();
-      connectEvents(run.id);
     } catch (errorValue) {
       captureError(errorValue);
     }
   }
 
+  function selectRun(run: RunSummary) {
+    setEvents([]);
+    setCurrentRun(run);
+    connectEvents(run.id);
+  }
+
   function connectEvents(runId: string) {
+    eventSourceRef.current?.close();
+    activeRunIdRef.current = runId;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
     eventSourceRef.current = source;
     source.onmessage = (message) => {
+      if (activeRunIdRef.current !== runId) return;
       const event = JSON.parse(message.data) as RunEvent;
       setEvents((current) => [...current, event]);
-      void loadRun(runId).then(setCurrentRun).then(refreshRuns).catch(captureError);
+      void loadRun(runId).then((run) => {
+        if (activeRunIdRef.current === runId) setCurrentRun(run);
+      }).then(refreshRuns).catch(captureError);
     };
-    source.onerror = () => source.close();
+    source.onerror = () => {
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
+      source.close();
+    };
   }
 
   async function stopCurrentRun() {
@@ -105,7 +120,7 @@ export function App() {
         <div className={`health ${health?.ok ? "ok" : "bad"}`}>
           <Activity size={18} aria-hidden="true" />
           <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
-          <button className="icon-button" type="button" title="Refresh Core status" onClick={() => void refreshHealth()}>
+          <button className="icon-button" type="button" title="Refresh Core status" onClick={() => void refreshHealth().catch(captureError)}>
             <RefreshCw size={16} aria-hidden="true" />
           </button>
         </div>
@@ -160,9 +175,9 @@ export function App() {
                     checked={Boolean(inputs[field.key])}
                     onChange={(event) => setInputs((current) => ({ ...current, [field.key]: event.target.checked }))}
                   />
-                ) : (
+                ) : field.type === "number" ? (
                   <input
-                    type={field.type === "number" ? "number" : "text"}
+                    type="number"
                     value={String(inputs[field.key] ?? "")}
                     min={field.min}
                     max={field.max}
@@ -170,7 +185,18 @@ export function App() {
                     onChange={(event) =>
                       setInputs((current) => ({
                         ...current,
-                        [field.key]: field.type === "number" ? Number(event.target.value) : event.target.value
+                        [field.key]: Number(event.target.value)
+                      }))
+                    }
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={String(inputs[field.key] ?? "")}
+                    onChange={(event) =>
+                      setInputs((current) => ({
+                        ...current,
+                        [field.key]: event.target.value
                       }))
                     }
                   />
@@ -211,7 +237,7 @@ export function App() {
         </section>
         <section className="panel">
           <h2>Recent Runs</h2>
-          <RunTable runs={runs} onSelect={(run) => setCurrentRun(run)} />
+          <RunTable runs={runs} onSelect={selectRun} />
         </section>
       </section>
     </main>
@@ -288,9 +314,13 @@ function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSum
       <thead><tr><th>Status</th><th>Scenario</th><th>Started</th></tr></thead>
       <tbody>
         {runs.map((run) => (
-          <tr key={run.id} onClick={() => onSelect(run)}>
+          <tr key={run.id}>
             <td><span className={`status-dot ${run.status}`} /></td>
-            <td>{run.scenarioName}</td>
+            <td>
+              <button className="run-select-button" type="button" onClick={() => onSelect(run)}>
+                {run.scenarioName}
+              </button>
+            </td>
             <td>{formatTime(run.startedAt)}</td>
           </tr>
         ))}

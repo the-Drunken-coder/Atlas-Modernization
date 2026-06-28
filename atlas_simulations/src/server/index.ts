@@ -7,7 +7,7 @@ import type { HealthResponse, RunEvent, RunListResponse, ScenarioListResponse, S
 import { createAtlasClientFactory } from "./atlas.js";
 import { loadConfig, type SimulationConfig } from "./config.js";
 import { RunStore } from "./run-store.js";
-import { descriptorForScenario, parseStartRequest } from "./scenario.js";
+import { descriptorForScenario, parseStartRequest, type ParsedStart } from "./scenario.js";
 import { findScenario, scenarios } from "./scenario-registry.js";
 
 export type SimulationServer = {
@@ -21,14 +21,20 @@ export function createSimulationServer(options: { config?: SimulationConfig; sto
   const store = options.store ?? new RunStore(createAtlasClientFactory(config));
   const server = createServer((request, response) => {
     void handleRequest(request, response, config, store).catch((error) => {
-      sendJSON(response, 500, { message: errorMessage(error) });
+      sendJSON(response, error instanceof RequestBodyError ? error.status : 500, { message: errorMessage(error) });
     });
   });
   return {
     store,
     listen: () =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
+        const onError = (error: Error) => {
+          server.off("error", onError);
+          reject(error);
+        };
+        server.once("error", onError);
         server.listen(config.port, "127.0.0.1", () => {
+          server.off("error", onError);
           const address = server.address() as AddressInfo;
           resolve(`http://127.0.0.1:${address.port}`);
         });
@@ -55,13 +61,19 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/runs") {
-    const body = (await readJSON(request)) as StartRunRequest;
+    const body = await readRequestBody(request);
     const scenario = findScenario(body.scenarioId);
     if (!scenario) {
       sendJSON(response, 404, { message: "Scenario not found" });
       return;
     }
-    const parsed = parseStartRequest(scenario, body);
+    let parsed: ParsedStart;
+    try {
+      parsed = parseStartRequest(scenario, body);
+    } catch (error) {
+      sendJSON(response, 400, { message: errorMessage(error) });
+      return;
+    }
     sendJSON(response, 201, { run: store.start(scenario, parsed.input) } satisfies StartRunResponse);
     return;
   }
@@ -90,14 +102,26 @@ async function handleRunRoute(request: IncomingMessage, response: ServerResponse
     return;
   }
   if (request.method === "GET" && action === "events") {
+    if (!store.get(runId)) {
+      sendJSON(response, 404, { message: "Run not found" });
+      return;
+    }
     streamRunEvents(response, store, runId);
     return;
   }
   if (request.method === "POST" && action === "stop") {
+    if (!store.get(runId)) {
+      sendJSON(response, 404, { message: "Run not found" });
+      return;
+    }
     sendJSON(response, 200, { run: store.stop(runId) });
     return;
   }
   if (request.method === "POST" && action === "cleanup") {
+    if (!store.get(runId)) {
+      sendJSON(response, 404, { message: "Run not found" });
+      return;
+    }
     sendJSON(response, 200, { run: await store.cleanup(runId) });
     return;
   }
@@ -169,16 +193,39 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     byteLength += buffer.byteLength;
     if (byteLength > 1_000_000) {
-      throw new Error("Request body is too large");
+      throw new RequestBodyError(413, "Request body is too large");
     }
     chunks.push(buffer);
   }
   const body = Buffer.concat(chunks).toString("utf8");
-  return body.trim() ? JSON.parse(body) : {};
+  if (!body.trim()) return {};
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new RequestBodyError(400, "Request body must be valid JSON");
+  }
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
   return event.type === "status" && event.status !== undefined && event.status !== "running";
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {
+  try {
+    const body = await readJSON(request);
+    if (!isRecord(body)) {
+      throw new RequestBodyError(400, "Request body must be a JSON object");
+    }
+    if (typeof body.scenarioId !== "string") {
+      throw new RequestBodyError(400, "scenarioId is required");
+    }
+    return body as StartRunRequest;
+  } catch (error) {
+    if (error instanceof RequestBodyError) {
+      throw error;
+    }
+    throw new RequestBodyError(400, errorMessage(error));
+  }
 }
 
 function sendJSON(response: ServerResponse, status: number, body: unknown): void {
@@ -195,8 +242,16 @@ function serveStatic(response: ServerResponse, packageRoot: string, requestPath:
     response.end("Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
     return;
   }
+  const stream = createReadStream(file);
+  stream.on("error", (error) => {
+    if (!response.headersSent) {
+      sendJSON(response, 500, { message: errorMessage(error) });
+      return;
+    }
+    response.destroy(error);
+  });
   response.writeHead(200, { "Content-Type": contentType(file) });
-  createReadStream(file).pipe(response);
+  stream.pipe(response);
 }
 
 function safeStaticPath(staticRoot: string, requestPath: string): string | undefined {
@@ -217,9 +272,22 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+class RequestBodyError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const app = createSimulationServer();
   app.listen().then((url) => {
     console.log(`Atlas Simulations server listening on ${url}`);
+  }).catch((error) => {
+    console.error(errorMessage(error));
+    process.exitCode = 1;
   });
 }
