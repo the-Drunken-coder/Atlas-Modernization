@@ -105,7 +105,7 @@ function normalizeEnvValue(value: string): string {
   if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
     const quote = trimmed[0];
     for (let index = 1; index < trimmed.length; index += 1) {
-      if (trimmed[index] === quote && trimmed[index - 1] !== "\\") {
+      if (trimmed[index] === quote && !isEscaped(trimmed, index)) {
         const remainder = trimmed.slice(index + 1).trim();
         if (remainder && !remainder.startsWith("#")) {
           throw new Error("Invalid quoted value in .env");
@@ -116,4 +116,12 @@ function normalizeEnvValue(value: string): string {
     throw new Error("Unterminated quoted value in .env");
   }
   return trimmed.replace(/\s+#.*$/, "").trim();
+}
+
+function isEscaped(value: string, index: number): boolean {
+  let backslashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    backslashCount += 1;
+  }
+  return backslashCount % 2 === 1;
 }

@@ -35,6 +35,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ env: { ATLAS_BASE_URL: "http://[::1]:8000" }, packageRoot }).atlasBaseUrl).toBe("http://[::1]:8000");
   });
 
+  it("allows HTTPS Atlas URLs for remote disposable targets", () => {
+    const packageRoot = tempPackageRoot();
+
+    expect(loadConfig({ env: { ATLAS_BASE_URL: "https://atlascommandapi.org/" }, packageRoot }).atlasBaseUrl).toBe("https://atlascommandapi.org");
+  });
+
   it("does not let undefined env overrides erase .env values", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(path.join(packageRoot, ".env"), "ATLAS_SIM_PORT=5192\n");
@@ -73,6 +79,13 @@ describe("loadConfig", () => {
     writeFileSync(path.join(packageRoot, ".env"), String.raw`ATLAS_API_KEY='abc \'quoted\' key'`);
 
     expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBe("abc 'quoted' key");
+  });
+
+  it("closes quoted .env values after even-length backslash runs", () => {
+    const packageRoot = tempPackageRoot();
+    writeFileSync(path.join(packageRoot, ".env"), String.raw`ATLAS_API_KEY="abc\\" # trailing comment`);
+
+    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBe(String.raw`abc\\`);
   });
 
   it("rejects malformed quoted .env values", () => {

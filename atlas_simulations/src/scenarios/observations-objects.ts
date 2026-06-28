@@ -102,26 +102,30 @@ const observationsObjects: Scenario = {
     const persistedObservers = fulfilledValues(observerResults);
     const persistedTracks = fulfilledValues(trackResults);
     const persistedObjects = fulfilledValues(objectResults);
-    const rejectedRead = [...observerResults, ...trackResults, ...objectResults].find((result): result is PromiseRejectedResult => result.status === "rejected");
+    const rejectedObserverRead = observerResults.find(isRejected);
+    const rejectedTrackRead = trackResults.find(isRejected);
+    const rejectedObjectRead = objectResults.find(isRejected);
     ctx.assert(
       "Observer assets persisted",
-      persistedObservers.length === assetCount && !rejectedRead,
-      rejectedRead ? "readback failed" : `${persistedObservers.length}/${assetCount} observers persisted`
+      persistedObservers.length === assetCount && !rejectedObserverRead,
+      rejectedObserverRead ? "readback failed" : `${persistedObservers.length}/${assetCount} observers persisted`
     );
     ctx.assert(
       "Tracks persisted",
-      persistedTracks.length === observations &&
+      !rejectedTrackRead &&
+        persistedTracks.length === observations &&
         persistedTracks.every((track, index) => {
           const simulation = track.components.custom_simulation as { observer_id?: string; observation_index?: number } | undefined;
           return track.entity_type === "track" && simulation?.observer_id === assetIds[index % assetIds.length] && simulation?.observation_index === index + 1;
         }),
-      `${persistedTracks.length}/${observations} tracks persisted`
+      rejectedTrackRead ? "readback failed" : `${persistedTracks.length}/${observations} tracks persisted`
     );
     ctx.assert(
       "Object references persisted",
-      persistedObjects.length === observations &&
+      !rejectedObjectRead &&
+        persistedObjects.length === observations &&
         persistedObjects.every((object, index) => (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])),
-      rejectedRead ? "readback failed" : `${persistedObjects.length}/${observations} objects linked`
+      rejectedObjectRead ? "readback failed" : `${persistedObjects.length}/${observations} objects linked`
     );
   }
 };
@@ -130,4 +134,8 @@ export default observationsObjects;
 
 function fulfilledValues<T>(results: Array<PromiseSettledResult<T>>): T[] {
   return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}
+
+function isRejected(result: PromiseSettledResult<unknown>): result is PromiseRejectedResult {
+  return result.status === "rejected";
 }

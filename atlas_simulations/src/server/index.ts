@@ -216,8 +216,10 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
   try {
     let unsubscribe: (() => void) | undefined;
     let stream: EventStream | undefined;
-    let closeAfterSubscribe = false;
-    let closeQueued = false;
+    let replaying = true;
+    let closeAfterReplay = false;
+    let closeScheduled = false;
+    let dropFurtherEvents = false;
     const removeStream = () => {
       unsubscribe?.();
       unsubscribe = undefined;
@@ -229,23 +231,28 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     };
     stream = { response, close };
     eventStreams.add(stream);
-    const closeSoon = () => {
-      closeAfterSubscribe = true;
-      if (!unsubscribe || closeQueued) return;
-      closeQueued = true;
+    const scheduleClose = () => {
+      if (closeScheduled) return;
+      closeScheduled = true;
       queueMicrotask(close);
+    };
+    const closeAfterCurrentReplay = () => {
+      closeAfterReplay = true;
+      if (!replaying && unsubscribe) scheduleClose();
     };
     response.on("close", removeStream);
     unsubscribe = store.subscribe(runId, (event) => {
-      if (closeAfterSubscribe || closeQueued || response.writableEnded) return;
+      if (dropFurtherEvents || closeScheduled || response.writableEnded) return;
       const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
       if (!wrote) {
-        closeSoon();
+        dropFurtherEvents = true;
+        closeAfterCurrentReplay();
         return;
       }
-      if (isTerminalRunEvent(event)) closeSoon();
+      if (isTerminalRunEvent(event)) closeAfterCurrentReplay();
     });
-    if (closeAfterSubscribe) close();
+    replaying = false;
+    if (closeAfterReplay) scheduleClose();
   } catch (error) {
     response.write(`event: error\n`);
     response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);

@@ -21,6 +21,8 @@ export function App() {
   const [mutationPending, setMutationPending] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const activeRunIdRef = useRef<string | undefined>(undefined);
+  const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
+  const currentRunIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     void refreshHealth().catch(captureError);
@@ -36,6 +38,10 @@ export function App() {
   }, []);
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
+
+  useEffect(() => {
+    currentRunIdRef.current = currentRun?.id;
+  }, [currentRun?.id]);
 
   useEffect(() => {
     if (!selected) return;
@@ -59,12 +65,17 @@ export function App() {
   }
 
   async function refreshRuns() {
+    const selectedRunAtRequestStart = selectedRunId();
     const loadedRuns = await loadRuns();
     setRuns((current) => mergeRunLists(current, loadedRuns));
-    const selectedRunId = activeRunIdRef.current ?? currentRun?.id;
-    if (selectedRunId && !loadedRuns.some((run) => run.id === selectedRunId)) {
+    const selectedRunAfterLoad = selectedRunId();
+    if (selectedRunAfterLoad && selectedRunAfterLoad === selectedRunAtRequestStart && !loadedRuns.some((run) => run.id === selectedRunAfterLoad)) {
       clearRunSelection();
       return;
+    }
+    const refreshedSelection = selectedRunAfterLoad ? loadedRuns.find((run) => run.id === selectedRunAfterLoad) : undefined;
+    if (refreshedSelection?.status !== "running" && activeRunIdRef.current === selectedRunAfterLoad && cleanupStreamRunIdRef.current !== selectedRunAfterLoad) {
+      closeActiveEventSource();
     }
     setCurrentRun((current) => {
       if (!current) return current;
@@ -122,9 +133,14 @@ export function App() {
   }
 
   function activateRun(run: RunSummary) {
+    currentRunIdRef.current = run.id;
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
-      if (activeRunIdRef.current !== run.id && run.status === "running") connectEvents(run.id);
+      if (run.status === "running") {
+        if (activeRunIdRef.current !== run.id) connectEvents(run.id);
+      } else if (activeRunIdRef.current === run.id && cleanupStreamRunIdRef.current !== run.id) {
+        closeActiveEventSource();
+      }
       return;
     }
     setEvents([]);
@@ -137,6 +153,7 @@ export function App() {
   }
 
   function clearRunSelection() {
+    currentRunIdRef.current = undefined;
     setEvents([]);
     setCurrentRun(undefined);
     closeActiveEventSource();
@@ -145,11 +162,13 @@ export function App() {
   function connectEvents(runId: string) {
     closeActiveEventSource();
     activeRunIdRef.current = runId;
+    cleanupStreamRunIdRef.current = undefined;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
     eventSourceRef.current = source;
     const closeSource = () => {
       if (activeRunIdRef.current === runId && eventSourceRef.current === source) {
         activeRunIdRef.current = undefined;
+        if (cleanupStreamRunIdRef.current === runId) cleanupStreamRunIdRef.current = undefined;
         eventSourceRef.current = null;
         source.close();
       }
@@ -175,7 +194,7 @@ export function App() {
       });
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
-      if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
+      if (event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId) closeSource();
       if (event.type === "cleanup" && !event.resource) closeSource();
     };
     source.onerror = () => {
@@ -206,6 +225,7 @@ export function App() {
     setMutationPending(true);
     try {
       if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId);
+      cleanupStreamRunIdRef.current = targetRunId;
       const updatedRun = await cleanupRun(targetRunId);
       upsertRun(updatedRun);
       await refreshRunsBestEffort();
@@ -231,8 +251,13 @@ export function App() {
     if (!eventSourceRef.current) return;
     const source = eventSourceRef.current;
     activeRunIdRef.current = undefined;
+    cleanupStreamRunIdRef.current = undefined;
     eventSourceRef.current = null;
     source.close();
+  }
+
+  function selectedRunId(): string | undefined {
+    return activeRunIdRef.current ?? currentRunIdRef.current;
   }
 
   return (

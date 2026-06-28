@@ -87,6 +87,10 @@ describe("simulation HTTP server", () => {
     );
     expect(cleaned.run).toMatchObject({ status: "completed", cleaned: true });
     expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
+
+    const cleanupReplay = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
+    const cleanupEvent = await readUntilRunEvent(cleanupReplay, (event) => event.type === "cleanup" && !event.resource);
+    expect(cleanupEvent).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
   });
 
   it("stops a live run through the HTTP API", async () => {

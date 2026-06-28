@@ -196,6 +196,15 @@ describe("App", () => {
       sequence: jsonNumber(1),
       runId: syncRun.id,
       timestamp: new Date().toISOString(),
+      type: "status",
+      status: "completed",
+      message: "Run completed"
+    });
+    expect(eventSources[0].closed).toBe(false);
+    eventSources[0].emit({
+      sequence: jsonNumber(2),
+      runId: syncRun.id,
+      timestamp: new Date().toISOString(),
       type: "cleanup",
       message: "Cleanup complete"
     });
@@ -223,5 +232,21 @@ describe("App", () => {
       message: "Run cancelled"
     });
     expect(eventSources[0].closed).toBe(true);
+  });
+
+  it("closes the stream when refresh reports the selected run completed", async () => {
+    const user = userEvent.setup();
+    const completedRun = cloneRun({
+      status: "completed",
+      finishedAt: new Date().toISOString()
+    });
+    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValueOnce([completedRun]).mockResolvedValue([completedRun]);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /start/i }));
+
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+    await waitFor(() => expect(eventSources[0].closed).toBe(true));
+    await waitFor(() => expect(screen.getAllByText("completed").length).toBeGreaterThan(0));
   });
 });
