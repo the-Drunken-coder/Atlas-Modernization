@@ -270,6 +270,9 @@ export class RunStore {
   private track(run: RunRecord, resource: CreatedResource): void {
     const tracked = cloneValue(resource);
     if (!hasResource(run.cleanupResources, tracked)) {
+      if (run.cleanupResources.length > MAX_CREATED_RESOURCES_PER_RUN) {
+        throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
+      }
       run.cleanupResources.push(cloneValue(tracked));
       if (run.cleanupResources.length > MAX_CREATED_RESOURCES_PER_RUN) {
         throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);

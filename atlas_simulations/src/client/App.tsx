@@ -25,7 +25,7 @@ export function App() {
   const currentRunIdRef = useRef<string | undefined>(undefined);
   const refreshRunsRequestRef = useRef(0);
   const runsRef = useRef<RunSummary[]>([]);
-  const seenEventKeysRef = useRef<Set<string>>(new Set());
+  const eventsByRunIdRef = useRef<Map<string, RunEvent[]>>(new Map());
 
   useEffect(() => {
     void refreshHealth().catch(captureError);
@@ -79,6 +79,10 @@ export function App() {
     const loadedRuns = await loadRuns();
     if (requestId !== refreshRunsRequestRef.current) return;
     const mergedRuns = mergeRunLists(runsRef.current, loadedRuns, runIdsAtRequestStart);
+    const mergedRunIds = new Set(mergedRuns.map((run) => run.id));
+    for (const runId of eventsByRunIdRef.current.keys()) {
+      if (!mergedRunIds.has(runId)) eventsByRunIdRef.current.delete(runId);
+    }
     runsRef.current = mergedRuns;
     setRuns(mergedRuns);
     const selectedRunAfterLoad = selectedRunId();
@@ -156,8 +160,7 @@ export function App() {
       }
       return;
     }
-    seenEventKeysRef.current = new Set();
-    setEvents([]);
+    setEvents(eventsByRunIdRef.current.get(run.id) ?? []);
     setCurrentRun(run);
     if (run.status === "running") {
       connectEvents(run.id);
@@ -168,16 +171,13 @@ export function App() {
 
   function clearRunSelection() {
     currentRunIdRef.current = undefined;
-    seenEventKeysRef.current = new Set();
     setEvents([]);
     setCurrentRun(undefined);
     closeActiveEventSource();
   }
 
   function connectEvents(runId: string) {
-    const previousRunId = activeRunIdRef.current ?? currentRunIdRef.current;
     closeActiveEventSource();
-    if (previousRunId !== runId) seenEventKeysRef.current = new Set();
     activeRunIdRef.current = runId;
     cleanupStreamRunIdRef.current = undefined;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
@@ -205,12 +205,10 @@ export function App() {
         closeSource();
         return;
       }
-      const eventKey = `${event.runId}:${event.sequence}`;
-      if (seenEventKeysRef.current.has(eventKey)) return;
-      seenEventKeysRef.current.add(eventKey);
-      setEvents((current) => {
-        return [...current, event].slice(-MAX_CLIENT_EVENTS);
-      });
+      const nextEvents = appendRunEvent(eventsByRunIdRef.current.get(runId) ?? [], event);
+      if (!nextEvents) return;
+      eventsByRunIdRef.current.set(runId, nextEvents);
+      if (currentRunIdRef.current === runId) setEvents(nextEvents);
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => {
         const next = current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run));
@@ -507,6 +505,11 @@ function LogList({ events }: { events: RunEvent[] }) {
       ))}
     </ol>
   );
+}
+
+function appendRunEvent(current: RunEvent[], event: RunEvent): RunEvent[] | undefined {
+  if (current.some((existing) => existing.runId === event.runId && existing.sequence === event.sequence)) return undefined;
+  return [...current, event].slice(-MAX_CLIENT_EVENTS);
 }
 
 function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {

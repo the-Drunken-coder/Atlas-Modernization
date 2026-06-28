@@ -58,6 +58,21 @@ describe("client API", () => {
     );
   });
 
+  it("serializes valid start payloads with trusted mutation headers", async () => {
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(startRun({ scenarioId: scenario.id, inputs: { assetCount: jsonNumber(1) } })).resolves.toEqual(run);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/runs");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ scenarioId: scenario.id, inputs: { assetCount: 1 } });
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Atlas-Simulations-Request")).toBe("1");
+  });
+
   it("preserves HTTP status errors for non-JSON failures", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
 

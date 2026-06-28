@@ -104,8 +104,9 @@ async function handleRequest(
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/runs") {
+    const bodyText = await readRequestText(request);
     if (!requireTrustedMutation(request, response)) return;
-    const body = await readRequestBody(request);
+    const body = readRequestBody(bodyText);
     const scenario = findScenario(body.scenarioId);
     if (!scenario) {
       sendJSON(response, 404, { message: "Scenario not found" });
@@ -169,6 +170,7 @@ async function handleRunRoute(
     return;
   }
   if (request.method === "POST" && action === "stop") {
+    await drainRequestBody(request);
     if (!requireTrustedMutation(request, response)) return;
     if (!store.get(runId)) {
       sendJSON(response, 404, { message: "Run not found" });
@@ -178,6 +180,7 @@ async function handleRunRoute(
     return;
   }
   if (request.method === "POST" && action === "cleanup") {
+    await drainRequestBody(request);
     if (!requireTrustedMutation(request, response)) return;
     if (!store.get(runId)) {
       sendJSON(response, 404, { message: "Run not found" });
@@ -267,7 +270,7 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
   }
 }
 
-async function readJSON(request: IncomingMessage): Promise<unknown> {
+async function readRequestText(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let byteLength = 0;
   for await (const chunk of request) {
@@ -278,7 +281,14 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
     }
     chunks.push(buffer);
   }
-  const body = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function drainRequestBody(request: IncomingMessage): Promise<void> {
+  await readRequestText(request);
+}
+
+function readJSON(body: string): unknown {
   if (!body.trim()) return {};
   try {
     return JSON.parse(body);
@@ -287,13 +297,9 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-function isTerminalRunEvent(event: RunEvent): boolean {
-  return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
-}
-
-async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {
+function readRequestBody(bodyText: string): StartRunRequest {
   try {
-    const body = await readJSON(request);
+    const body = readJSON(bodyText);
     if (!isRecord(body)) {
       throw new RequestBodyError(400, "Request body must be a JSON object");
     }
@@ -307,6 +313,10 @@ async function readRequestBody(request: IncomingMessage): Promise<StartRunReques
     }
     throw new RequestBodyError(400, errorMessage(error));
   }
+}
+
+function isTerminalRunEvent(event: RunEvent): boolean {
+  return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
 }
 
 function sendJSON(response: ServerResponse, status: number, body: unknown): void {

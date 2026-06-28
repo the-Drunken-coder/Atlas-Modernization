@@ -253,6 +253,33 @@ describe("App", () => {
     expect(eventSources[0].closed).toBe(true);
   });
 
+  it("restores remembered log events when reselecting a run", async () => {
+    const user = userEvent.setup();
+    const startedRun = cloneRun({ scenarioName: "Started run" });
+    vi.mocked(loadScenarios).mockResolvedValueOnce([scenario, syncScenario]);
+    vi.mocked(startRun).mockResolvedValueOnce(startedRun);
+    vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValue([startedRun]);
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: /start/i }));
+    await waitFor(() => expect(eventSources).toHaveLength(1));
+    eventSources[0].emit({
+      sequence: jsonNumber(1),
+      runId: startedRun.id,
+      timestamp: new Date().toISOString(),
+      type: "log",
+      message: "remembered log"
+    });
+    expect(await screen.findByText("remembered log")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /multi-client sync checks sync/i }));
+    await waitFor(() => expect(screen.getByText("No run selected")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Started run" }));
+
+    expect(screen.getByText("remembered log")).toBeInTheDocument();
+  });
+
   it("clears the selected run when refresh reports it missing", async () => {
     const missingRun = cloneRun({
       id: "sim-pruned",

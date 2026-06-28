@@ -135,6 +135,7 @@ describe("simulation HTTP server", () => {
       headers: { "Content-Type": "application/json" },
       body: "{}"
     });
+    await expectChunkedStatus(`${baseUrl}/api/runs`, 413, ["x".repeat(500_001), "x".repeat(500_001)], { "Content-Type": "application/json" });
     expect(await requestStatusWithHost(`${baseUrl}/api/scenarios`, "example.test")).toBe(403);
     await expectStatus(`${baseUrl}/api/runs`, 403, {
       method: "POST",
@@ -147,6 +148,7 @@ describe("simulation HTTP server", () => {
         method: "POST",
         headers: mutationHeaders({ Origin: "http://example.test" })
       });
+      await expectChunkedStatus(`${baseUrl}/api/runs/missing/${action}`, 413, ["x".repeat(500_001), "x".repeat(500_001)], mutationHeaders());
     }
     await expectStatus(`${baseUrl}/api/runs`, 400, {
       method: "POST",

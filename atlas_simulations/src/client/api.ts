@@ -122,7 +122,7 @@ function isHealthResponse(value: unknown): value is HealthResponse {
     value !== null &&
     "ok" in value &&
     typeof value.ok === "boolean" &&
-    (!("status" in value) || value.status === undefined || typeof value.status === "number") &&
+    (!("status" in value) || value.status === undefined || isFiniteNumber(value.status)) &&
     (!("message" in value) || value.message === undefined || typeof value.message === "string")
   );
 }

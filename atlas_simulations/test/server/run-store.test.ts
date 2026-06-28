@@ -423,6 +423,46 @@ describe("RunStore", () => {
     expect(deleted).toHaveLength(1_001);
   });
 
+  it("does not retain repeated cleanup resource overflows", async () => {
+    const core = createFakeAtlasCore();
+    const deleted: string[] = [];
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      return {
+        ...client,
+        entities: {
+          ...client.entities,
+          delete: async (id: string) => {
+            deleted.push(id);
+          }
+        }
+      };
+    });
+    const scenario: Scenario = {
+      id: "repeated-cleanup-resource-cap",
+      name: "Repeated cleanup resource cap",
+      summary: "Keeps trying after cleanup tracking overflows",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        for (let index = 0; index < 1_005; index += 1) {
+          try {
+            ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) });
+          } catch {
+            // Keep exercising the guard after the first overflow.
+          }
+        }
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    expect(store.get(started.id)?.createdResources).toHaveLength(1_000);
+
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(deleted).toHaveLength(1_001);
+  });
+
   it("cleans same-type resources from newest to oldest", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
