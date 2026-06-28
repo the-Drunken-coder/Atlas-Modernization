@@ -246,6 +246,20 @@ describe("RunStore", () => {
     expect((await reader.entities.get("asset-1")).alias).toBe("new");
   });
 
+  it("fake sync deletion snapshots stay deleted after resource recreation", async () => {
+    const core = createFakeAtlasCore();
+    const writer = core.factory();
+
+    await writer.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: "old" });
+    await writer.entities.delete("asset-1");
+    const deletedSnapshot = core.factory({ sync: "all" });
+    await deletedSnapshot.sync.start();
+    await writer.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: "new" });
+
+    await expect(deletedSnapshot.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
+    expect((await writer.entities.get("asset-1")).alias).toBe("new");
+  });
+
   it("evicts cleaned runs before refusing new runs at capacity", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);

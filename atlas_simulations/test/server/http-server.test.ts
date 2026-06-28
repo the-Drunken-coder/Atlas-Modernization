@@ -72,7 +72,7 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetch(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const streamBody = await readUntilClosed(stream, '"status":"completed"');
+    const streamBody = await readUntilContains(stream, '"status":"completed"');
     expect(streamBody).toContain("data:");
     expect(streamBody).toContain('"status":"completed"');
 
@@ -210,7 +210,7 @@ function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-http-"));
 }
 
-async function readUntilClosed(response: Response, text: string): Promise<string> {
+async function readUntilContains(response: Response, text: string): Promise<string> {
   const reader = response.body?.getReader();
   expect(reader).toBeDefined();
   const decoder = new TextDecoder();
@@ -220,11 +220,13 @@ async function readUntilClosed(response: Response, text: string): Promise<string
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error(`Timed out waiting for ${text}`);
     const result = await withTimeout(reader!.read(), remaining);
-    if (result.done) break;
+    if (result.done) throw new Error(`Stream closed before ${text}`);
     body += decoder.decode(result.value, { stream: true });
+    if (body.includes(text)) {
+      await reader!.cancel();
+      return body;
+    }
   }
-  expect(body).toContain(text);
-  return body;
 }
 
 async function waitFor(assertion: () => Promise<void>): Promise<void> {

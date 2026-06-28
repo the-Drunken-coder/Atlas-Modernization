@@ -36,7 +36,13 @@ describe("scenario input parsing", () => {
   });
 
   it("rejects malformed JSON input", () => {
-    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: "{" })).toThrow();
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: "{" })).toThrow("jsonInput must be valid JSON");
+  });
+
+  it("rejects overly deep JSON input", () => {
+    const deepJson = `${"[".repeat(202)}null${"]".repeat(202)}`;
+
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: deepJson })).toThrow("JSON input must be nested at most 200 levels");
   });
 
   it("rejects numeric input outside field bounds", () => {

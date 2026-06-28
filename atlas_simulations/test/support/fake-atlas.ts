@@ -19,7 +19,7 @@ type FakeCoreState = {
   entities: ResourceHistory<EntityResource>;
   tasks: ResourceHistory<TaskResource>;
   objects: ResourceHistory<ObjectResource>;
-  tombstones: Map<string, number>;
+  tombstones: Map<string, number[]>;
   deleted: string[];
   clients: FakeClientState[];
 };
@@ -55,7 +55,6 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
       create: async (entity) => {
         const created = entityFromCreate(entity, ++state.version);
-        state.tombstones.delete(resourceKey("entity", created.entity_id));
         return saveValue(state.entities, created.entity_id, created);
       },
       update: async (id, patch) => {
@@ -94,7 +93,6 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
       create: async (task) => {
         const created = taskFromCreate(task, ++state.version);
-        state.tombstones.delete(resourceKey("task", created.task_id));
         return saveValue(state.tasks, created.task_id, created);
       },
       delete: async (id) => {
@@ -109,7 +107,6 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       get: async (id) => visibleValue(state, clientState, state.objects, id, "object"),
       create: async (object) => {
         const created = objectFromCreate(object, ++state.version);
-        state.tombstones.delete(resourceKey("object", created.object_id));
         return saveValue(state.objects, created.object_id, created);
       },
       delete: async (id) => {
@@ -201,7 +198,7 @@ function requireValue<T extends VersionedResource>(values: ResourceHistory<T>, i
 
 function requireActiveValue<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): T {
   const value = requireValue(values, id, type);
-  if (isDeletedAt(state, type, id, state.version)) throw notFound(type, id);
+  if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
   return value;
 }
 
@@ -215,7 +212,7 @@ function visibleValue<T extends { metadata: { version: number } }>(
   const history = requireHistory(values, id, type);
   const version = visibleVersion(state, clientState);
   const value = visibleSnapshot(history, version);
-  if (!value || isDeletedAt(state, type, id, version)) throw notFound(type, id);
+  if (!value || isDeletedAt(state, type, id, version, value.metadata.version)) throw notFound(type, id);
   return cloneValue(value);
 }
 
@@ -224,7 +221,7 @@ function visibleValues<T extends VersionedResource>(clientState: FakeClientState
   return [...values.values()]
     .map((history) => visibleSnapshot(history, version))
     .filter((value): value is T => value !== undefined)
-    .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version))
+    .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version, value.metadata.version))
     .map(cloneValue);
 }
 
@@ -241,10 +238,11 @@ function visibleVersion(state: FakeCoreState, clientState: FakeClientState): num
 }
 
 function deleteValue<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): void {
-  requireValue(values, id, type);
-  if (isDeletedAt(state, type, id, state.version)) throw notFound(type, id);
+  const value = requireValue(values, id, type);
+  if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
   state.version += 1;
-  state.tombstones.set(resourceKey(type, id), state.version);
+  const key = resourceKey(type, id);
+  state.tombstones.set(key, [...(state.tombstones.get(key) ?? []), state.version]);
   state.deleted.push(`${type}:${id}`);
 }
 
@@ -264,9 +262,8 @@ function cloneValue<T>(value: T): T {
   return structuredClone(value);
 }
 
-function isDeletedAt(state: FakeCoreState, type: string, id: string, visibleVersionValue: number): boolean {
-  const deletedVersion = state.tombstones.get(resourceKey(type, id));
-  return deletedVersion !== undefined && deletedVersion <= visibleVersionValue;
+function isDeletedAt(state: FakeCoreState, type: string, id: string, visibleVersionValue: number, resourceVersion: number): boolean {
+  return (state.tombstones.get(resourceKey(type, id)) ?? []).some((deletedVersion) => deletedVersion > resourceVersion && deletedVersion <= visibleVersionValue);
 }
 
 function resourceKey(type: string, id: string): string {

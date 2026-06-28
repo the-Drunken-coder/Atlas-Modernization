@@ -125,6 +125,7 @@ export function App() {
     setMutationPending(true);
     try {
       const updatedRun = await stopRun(targetRunId);
+      if (isTerminalStatus(updatedRun.status)) closeCurrentEventSource(targetRunId);
       upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       await refreshRunsBestEffort();
@@ -142,6 +143,7 @@ export function App() {
     setMutationPending(true);
     try {
       const updatedRun = await cleanupRun(targetRunId);
+      if (isTerminalStatus(updatedRun.status)) closeCurrentEventSource(targetRunId);
       upsertRun(updatedRun);
       setCurrentRun((current) => (current?.id === targetRunId ? updatedRun : current));
       await refreshRunsBestEffort();
@@ -160,6 +162,14 @@ export function App() {
       next[index] = { ...next[index], ...run };
       return next;
     });
+  }
+
+  function closeCurrentEventSource(runId: string) {
+    if (activeRunIdRef.current !== runId || !eventSourceRef.current) return;
+    const source = eventSourceRef.current;
+    activeRunIdRef.current = undefined;
+    eventSourceRef.current = null;
+    source.close();
   }
 
   return (

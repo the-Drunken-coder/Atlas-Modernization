@@ -9,6 +9,8 @@ import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js
 
 type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
 
+const MAX_JSON_INPUT_DEPTH = 200;
+
 export type ScenarioInput = {
   fields: Record<string, string | number | boolean>;
   json?: JSONValue;
@@ -242,18 +244,21 @@ function parseJsonInput(raw: string | undefined): { json?: JSONValue } {
   return { json: parsed };
 }
 
-function assertJSONValue(value: unknown): asserts value is JSONValue {
+function assertJSONValue(value: unknown, depth = 0): asserts value is JSONValue {
+  if (depth > MAX_JSON_INPUT_DEPTH) {
+    throw new Error(`JSON input must be nested at most ${MAX_JSON_INPUT_DEPTH} levels`);
+  }
   if (value === null || typeof value === "boolean" || typeof value === "string") return;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error("JSON input must contain only finite numbers");
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) assertJSONValue(item);
+    for (const item of value) assertJSONValue(item, depth + 1);
     return;
   }
   if (isRecord(value)) {
-    for (const item of Object.values(value)) assertJSONValue(item);
+    for (const item of Object.values(value)) assertJSONValue(item, depth + 1);
     return;
   }
   throw new Error("JSON input must be JSON-serializable");
