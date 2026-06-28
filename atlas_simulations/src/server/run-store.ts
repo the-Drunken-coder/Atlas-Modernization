@@ -23,6 +23,7 @@ type RunRecord = {
   controller: AbortController;
   clients: AtlasClientLike[];
   settled: boolean;
+  cleanupPromise?: Promise<RunSummary>;
   sequence: number;
   lastError?: string;
 };
@@ -46,6 +47,10 @@ export class RunStore {
   }
 
   start(scenario: Scenario, input: ScenarioInput): RunSummary {
+    this.pruneRuns();
+    if (this.runs.size >= MAX_RUNS) {
+      throw new Error("Clean up existing simulation runs before starting another run");
+    }
     const id = runId();
     const now = timestamp();
     const run: RunRecord = {
@@ -65,7 +70,6 @@ export class RunStore {
       sequence: 0
     };
     this.runs.set(id, run);
-    this.pruneRuns();
     this.emit(run, { type: "status", status: "running", message: `${scenario.name} started` });
     void this.execute(run, input);
     return toSummary(run);
@@ -82,9 +86,20 @@ export class RunStore {
 
   async cleanup(id: string): Promise<RunSummary> {
     const run = this.requireRun(id);
+    if (run.status === "cleaned") return toSummary(run);
     if (run.status === "running" || !run.settled) {
       throw new Error("Wait for the run to finish before cleanup");
     }
+    if (run.cleanupPromise) return run.cleanupPromise;
+    run.cleanupPromise = this.performCleanup(run);
+    try {
+      return await run.cleanupPromise;
+    } finally {
+      run.cleanupPromise = undefined;
+    }
+  }
+
+  private async performCleanup(run: RunRecord): Promise<RunSummary> {
     const client = this.clientFactory({ sync: false });
     for (const resource of cleanupOrder(run.createdResources)) {
       try {
@@ -141,6 +156,10 @@ export class RunStore {
       if (run.controller.signal.aborted) {
         finalStatus = "cancelled";
         finalMessage = "Run cancelled";
+      } else if (hasFailedAssertions(run)) {
+        finalStatus = "failed";
+        finalMessage = "Run completed with failed assertions";
+        run.lastError = finalMessage;
       }
     } catch (error) {
       if (run.controller.signal.aborted) {
@@ -157,10 +176,16 @@ export class RunStore {
         try {
           client.sync.stop();
         } catch (error) {
+          const message = `Failed to stop client sync: ${errorMessage(error)}`;
+          run.lastError = message;
+          if (finalStatus === "completed") {
+            finalStatus = "failed";
+            finalMessage = message;
+          }
           this.emit(run, {
             type: "error",
             level: "error",
-            message: `Failed to stop client sync: ${errorMessage(error)}`
+            message
           });
         }
       }
@@ -258,6 +283,10 @@ function toSummary(run: RunRecord): RunSummary {
 function trimEvents(run: RunRecord): void {
   const overflow = run.events.length - MAX_EVENTS_PER_RUN;
   if (overflow > 0) run.events.splice(0, overflow);
+}
+
+function hasFailedAssertions(run: RunRecord): boolean {
+  return run.assertions.some((assertion) => !assertion.passed);
 }
 
 function cloneValue<T>(value: T): T {

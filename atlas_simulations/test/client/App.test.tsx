@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/client/App.js";
-import type { RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
+import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -23,6 +23,8 @@ const run: RunSummary = {
   assertions: []
 };
 
+let eventSources: FakeEventSource[] = [];
+
 vi.mock("../../src/client/api.js", () => ({
   loadHealth: vi.fn(async () => ({ ok: true, atlasBaseUrl: "http://localhost:8000", status: 200, message: "ok" })),
   loadScenarios: vi.fn(async () => [scenario]),
@@ -36,12 +38,24 @@ vi.mock("../../src/client/api.js", () => ({
 class FakeEventSource {
   onmessage: ((message: MessageEvent<string>) => void) | null = null;
   onerror: (() => void) | null = null;
-  constructor(readonly url: string) {}
-  close() {}
+  closed = false;
+
+  constructor(readonly url: string) {
+    eventSources.push(this);
+  }
+
+  emit(event: RunEvent) {
+    this.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>);
+  }
+
+  close() {
+    this.closed = true;
+  }
 }
 
 describe("App", () => {
   beforeEach(() => {
+    eventSources = [];
     vi.stubGlobal("EventSource", FakeEventSource);
   });
 
@@ -56,5 +70,26 @@ describe("App", () => {
     expect((await screen.findAllByText("Moving assets")).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: /start/i }));
     await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    expect(eventSources).toHaveLength(1);
+    eventSources[0].emit({
+      sequence: 1,
+      runId: run.id,
+      timestamp: new Date().toISOString(),
+      type: "assertion",
+      assertion: { id: "assert-1", name: "streamed check", passed: true, timestamp: new Date().toISOString() },
+      message: "PASS streamed check"
+    });
+    expect(await screen.findByText("streamed check")).toBeInTheDocument();
+
+    eventSources[0].emit({
+      sequence: 2,
+      runId: run.id,
+      timestamp: new Date().toISOString(),
+      type: "status",
+      status: "completed",
+      message: "Run completed"
+    });
+    await waitFor(() => expect(screen.getByText("completed")).toBeInTheDocument());
+    expect(eventSources[0].closed).toBe(true);
   });
 });

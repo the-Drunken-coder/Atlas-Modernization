@@ -131,10 +131,10 @@ function parseNumberField(field: NumberInputField, value: unknown): number {
   if (typeof value === "string" && value.trim() === "") {
     throw new Error(`${field.label} is required`);
   }
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(parsed)) {
     throw new Error(`${field.label} must be a number`);
   }
-  const parsed = value;
   if (field.min !== undefined && parsed < field.min) {
     throw new Error(`${field.label} must be at least ${field.min}`);
   }

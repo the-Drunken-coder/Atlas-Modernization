@@ -57,6 +57,49 @@ describe("RunStore", () => {
     expect(store.get(started.id)?.finishedAt).toBeDefined();
   });
 
+  it("marks the run failed when a scenario records a failed assertion", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "failed-assertion",
+      name: "Failed assertion",
+      summary: "Records a failed assertion",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.assert("expected convergence", false, "not converged");
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+    expect(store.get(started.id)?.lastError).toBe("Run completed with failed assertions");
+  });
+
+  it("marks the run failed when sync teardown fails", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      return { ...client, sync: { ...client.sync, stop: () => { throw new Error("stop failed"); } } };
+    });
+    const scenario: Scenario = {
+      id: "teardown-failure",
+      name: "Teardown failure",
+      summary: "Fails during client cleanup",
+      acceptsJson: false,
+      inputFields: [],
+      async run() {
+        return undefined;
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+    expect(store.get(started.id)?.lastError).toContain("Failed to stop client sync");
+  });
+
   it("returns snapshots for summaries and events", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
@@ -113,5 +156,26 @@ describe("RunStore", () => {
     await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the run to finish before cleanup");
     release();
     await vi.waitFor(() => expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cleaned" }));
+  });
+
+  it("shares concurrent cleanup calls for a run", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "concurrent-cleanup",
+      name: "Concurrent cleanup",
+      summary: "Creates one resource",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    await Promise.all([store.cleanup(started.id), store.cleanup(started.id)]);
+
+    expect(core.state.deleted).toEqual([`entity:${started.id}-asset`]);
   });
 });

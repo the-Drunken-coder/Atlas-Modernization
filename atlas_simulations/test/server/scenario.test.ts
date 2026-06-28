@@ -33,8 +33,10 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: " " } })).toThrow("Count is required");
   });
 
-  it("rejects string numeric input instead of coercing it", () => {
-    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: "2" } })).toThrow("Count must be a number");
+  it("parses non-blank string numeric input", () => {
+    const parsed = parseStartRequest(scenario, { scenarioId: "example", inputs: { count: "2" } });
+
+    expect(parsed.input.fields.count).toBe(2);
   });
 
   it("rejects numeric input that does not align to the field step", () => {

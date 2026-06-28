@@ -47,7 +47,7 @@ const multiClientSync: Scenario = {
     }
 
     for (const [readerIndex, reader] of readers.entries()) {
-      const seen = await waitForResources(ctx, reader, ids, Math.max(settleMs, 1000));
+      const seen = await waitForResources(ctx, reader, ids, settleMs);
       const status = reader.sync.status();
       ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
       ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");

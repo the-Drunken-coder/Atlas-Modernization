@@ -76,15 +76,23 @@ export function App() {
     activeRunIdRef.current = runId;
     const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
     eventSourceRef.current = source;
+    const closeSource = () => {
+      if (activeRunIdRef.current === runId && eventSourceRef.current === source) {
+        activeRunIdRef.current = undefined;
+        eventSourceRef.current = null;
+        source.close();
+      }
+    };
     source.onmessage = (message) => {
       if (activeRunIdRef.current !== runId) return;
       const event = JSON.parse(message.data) as RunEvent;
       setEvents((current) => [...current, event]);
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
+      if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
     };
     source.onerror = () => {
-      if (activeRunIdRef.current !== runId && eventSourceRef.current === source) eventSourceRef.current = null;
+      closeSource();
     };
   }
 
@@ -333,6 +341,10 @@ function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
     case "log":
       return run;
   }
+}
+
+function isTerminalStatus(status: RunSummary["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled" || status === "cleaned";
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {
