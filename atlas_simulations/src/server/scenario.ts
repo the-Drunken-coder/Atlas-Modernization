@@ -224,7 +224,7 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
   };
 }
 
-function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
+function parseFields(fields: readonly ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
   const values = Object.create(null) as Record<string, string | number | boolean>;
   for (const field of fields) {
     const value = Object.prototype.hasOwnProperty.call(raw, field.key) ? raw[field.key] : field.defaultValue;
@@ -335,7 +335,7 @@ function assertJSONValue(value: unknown, depth = 0, state = { nodes: 0 }): asser
   throw new Error("JSON input must be JSON-serializable");
 }
 
-function rejectUnknownInputFields(fields: ScenarioInputField[], raw: Record<string, unknown>): void {
+function rejectUnknownInputFields(fields: readonly ScenarioInputField[], raw: Record<string, unknown>): void {
   const allowed = new Set(fields.map((field) => field.key));
   const unknown = Object.keys(raw).find((key) => !allowed.has(key));
   if (unknown !== undefined) {

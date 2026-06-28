@@ -35,7 +35,7 @@ export type ScenarioDescriptor = {
   id: string;
   name: string;
   summary: string;
-  inputFields: ScenarioInputField[];
+  inputFields: readonly ScenarioInputField[];
   acceptsJson: boolean;
 };
 

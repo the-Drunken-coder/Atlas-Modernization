@@ -38,10 +38,11 @@ function abortableFetch(signal?: AbortSignal): typeof fetch {
   return async (input, init = {}) => {
     const upstreamSignals = [signal, requestSignal(input), init.signal].filter((value): value is AbortSignal => value != null);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ATLAS_REQUEST_TIMEOUT_MS);
-    const abort = () => controller.abort();
+    const timeout = setTimeout(() => controller.abort(new Error(`Atlas request timed out after ${ATLAS_REQUEST_TIMEOUT_MS}ms`)), ATLAS_REQUEST_TIMEOUT_MS);
+    const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason);
     for (const upstreamSignal of upstreamSignals) upstreamSignal.addEventListener("abort", abort, { once: true });
-    if (upstreamSignals.some((upstreamSignal) => upstreamSignal.aborted)) abort();
+    const abortedSignal = upstreamSignals.find((upstreamSignal) => upstreamSignal.aborted);
+    if (abortedSignal) controller.abort(abortedSignal.reason);
     try {
       return await fetch(input, { ...init, signal: controller.signal });
     } finally {

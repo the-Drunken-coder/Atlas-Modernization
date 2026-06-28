@@ -24,6 +24,7 @@ export function App() {
   const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
   const currentRunIdRef = useRef<string | undefined>(undefined);
   const refreshRunsRequestRef = useRef(0);
+  const runsRef = useRef<RunSummary[]>([]);
 
   useEffect(() => {
     void refreshHealth().catch(captureError);
@@ -40,6 +41,10 @@ export function App() {
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
   const hasRunningRuns = useMemo(() => runs.some((run) => run.status === "running"), [runs]);
+
+  useEffect(() => {
+    runsRef.current = runs;
+  }, [runs]);
 
   useEffect(() => {
     currentRunIdRef.current = currentRun?.id;
@@ -71,19 +76,21 @@ export function App() {
     const selectedRunAtRequestStart = selectedRunId();
     const loadedRuns = await loadRuns();
     if (requestId !== refreshRunsRequestRef.current) return;
-    setRuns((current) => mergeRunLists(current, loadedRuns));
+    const mergedRuns = mergeRunLists(runsRef.current, loadedRuns);
+    runsRef.current = mergedRuns;
+    setRuns(mergedRuns);
     const selectedRunAfterLoad = selectedRunId();
-    if (selectedRunAfterLoad && selectedRunAfterLoad === selectedRunAtRequestStart && !loadedRuns.some((run) => run.id === selectedRunAfterLoad)) {
+    if (selectedRunAfterLoad && selectedRunAfterLoad === selectedRunAtRequestStart && !mergedRuns.some((run) => run.id === selectedRunAfterLoad)) {
       clearRunSelection();
       return;
     }
-    const refreshedSelection = selectedRunAfterLoad ? loadedRuns.find((run) => run.id === selectedRunAfterLoad) : undefined;
+    const refreshedSelection = selectedRunAfterLoad ? mergedRuns.find((run) => run.id === selectedRunAfterLoad) : undefined;
     if (refreshedSelection?.status !== "running" && activeRunIdRef.current === selectedRunAfterLoad && cleanupStreamRunIdRef.current !== selectedRunAfterLoad) {
       closeActiveEventSource();
     }
     setCurrentRun((current) => {
       if (!current) return current;
-      const refreshed = loadedRuns.find((run) => run.id === current.id);
+      const refreshed = mergedRuns.find((run) => run.id === current.id);
       return refreshed ? mergeRunSummary(current, refreshed) : current;
     });
   }
@@ -197,7 +204,11 @@ export function App() {
         return [...current, event].slice(-MAX_CLIENT_EVENTS);
       });
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
-      setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
+      setRuns((current) => {
+        const next = current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run));
+        runsRef.current = next;
+        return next;
+      });
       if (event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId) closeSource();
       if (event.type === "cleanup" && !event.resource) closeSource();
     };
@@ -234,6 +245,10 @@ export function App() {
       upsertRun(updatedRun);
       await refreshRunsBestEffort();
     } catch (errorValue) {
+      if (cleanupStreamRunIdRef.current === targetRunId) {
+        cleanupStreamRunIdRef.current = undefined;
+        if (activeRunIdRef.current === targetRunId) closeActiveEventSource();
+      }
       captureError(errorValue);
     } finally {
       setMutationPending(false);
@@ -243,9 +258,14 @@ export function App() {
   function upsertRun(run: RunSummary) {
     setRuns((current) => {
       const index = current.findIndex((existing) => existing.id === run.id);
-      if (index === -1) return [run, ...current];
+      if (index === -1) {
+        const next = [run, ...current];
+        runsRef.current = next;
+        return next;
+      }
       const next = [...current];
       next[index] = mergeRunSummary(next[index], run);
+      runsRef.current = next;
       return next;
     });
     setCurrentRun((current) => (current?.id === run.id ? mergeRunSummary(current, run) : current));

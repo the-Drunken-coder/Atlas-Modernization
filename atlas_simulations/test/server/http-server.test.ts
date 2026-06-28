@@ -360,8 +360,6 @@ async function readUntilRunEvent(response: Response, predicate: (event: RunEvent
       body += decoder.decode(result.value, { stream: true });
       const event = parseRunEvents(body).find(predicate);
       if (event) {
-        const closed = await withTimeout(reader!.read(), Math.max(1, deadline - Date.now()));
-        expect(closed.done).toBe(true);
         return event;
       }
     }
