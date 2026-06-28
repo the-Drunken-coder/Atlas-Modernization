@@ -30,6 +30,11 @@
       "types": "./dist/atlas_sdk/src/index.d.ts",
       "import": "./dist/atlas_sdk/src/index.js",
       "default": "./dist/atlas_sdk/src/index.js"
+    },
+    "./admin": {
+      "types": "./dist/atlas_sdk/src/admin.d.ts",
+      "import": "./dist/atlas_sdk/src/admin.js",
+      "default": "./dist/atlas_sdk/src/admin.js"
     }
   },
   "bin": {

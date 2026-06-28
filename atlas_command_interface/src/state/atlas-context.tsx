@@ -15,7 +15,7 @@ export type AtlasContextValue = {
   snapshot: AtlasSnapshot;
   catalog?: CommandCatalog;
   health: ConnectionHealth;
-  submitCommand: (submission: CommandSubmission, credential: string) => Promise<TaskResource>;
+  submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
 
@@ -25,6 +25,7 @@ const DEFAULT_HEALTH: ConnectionHealth = { running: false, healthy: false, degra
 
 export type AtlasProviderProps = {
   children: ReactNode;
+  config?: AppConfig;
   loadConfig?: () => Promise<AppConfig>;
   createDataSource?: (config: AppConfig) => AtlasDataSource;
 };
@@ -33,7 +34,7 @@ export function AtlasStaticProvider({ children, value }: { children: ReactNode; 
   return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;
 }
 
-export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDataSource = createSdkDataSource }: AtlasProviderProps) {
+export function AtlasProvider({ children, config: providedConfig, loadConfig = fetchAppConfig, createDataSource = createSdkDataSource }: AtlasProviderProps) {
   const [status, setStatus] = useState<AtlasStatus>("loading");
   const [error, setError] = useState<string>();
   const [config, setConfig] = useState<AppConfig>();
@@ -61,7 +62,7 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
 
     (async () => {
       try {
-        const resolvedConfig = await loadConfig();
+        const resolvedConfig = providedConfig ?? (await loadConfig());
         if (cancelled) return;
         setConfig(resolvedConfig);
 
@@ -116,7 +117,7 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
       cancelled = true;
       cleanup();
     };
-  }, [loadConfig, createDataSource]);
+  }, [providedConfig, loadConfig, createDataSource]);
 
   const value = useMemo<AtlasContextValue>(
     () => ({
@@ -126,10 +127,10 @@ export function AtlasProvider({ children, loadConfig = fetchAppConfig, createDat
       snapshot,
       catalog,
       health,
-      submitCommand: async (submission, credential) => {
+      submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
-        const task = await dataSource.submitCommand(submission, credential);
+        const task = await dataSource.submitCommand(submission);
         setSnapshot((current) => applyWatchEvent(current, { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task }));
         return task;
       },

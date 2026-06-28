@@ -40,6 +40,7 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 		zerolog.Nop(),
 		&config.Config{},
 		hub,
+		nil,
 	)
 
 	router := chi.NewRouter()

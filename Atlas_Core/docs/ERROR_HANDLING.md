@@ -9,7 +9,7 @@ implemented in `internal/api/handlers/handler_http.go` (`handleActionError`, `wr
 `writeValidationError`). The canonical error-code enum lives in Atlas Protocol as `#ErrorCode`
 and is generated for Go as `atlasprotocol.ErrorCode`.
 
-**Exception:** `APIKeyAuth` (`internal/api/middleware/middleware.go`) returns **401 Unauthorized** with a small JSON body (`success`, `message`, `error_code`) and does **not** include `error_id`, `timestamp`, or `path`. Treat auth failures separately from handler-generated errors.
+**Exception:** auth middleware (`internal/api/middleware/middleware.go`) returns **401 Unauthorized** with a small JSON body (`success`, `message`, `error_code`) and does **not** include `error_id`, `timestamp`, or `path`. Treat API-key and browser-session auth failures separately from handler-generated errors.
 
 ## Error Types Used by the Go Service
 

@@ -51,7 +51,7 @@ Common statuses:
 | Status | Meaning |
 | --- | --- |
 | `400` | Invalid JSON, invalid query parameter, or validation failure. |
-| `401` | API key is missing or wrong. |
+| `401` | API key is missing/wrong, or the browser session is missing/invalid. |
 | `404` | Entity, alias, task, object, bucket, or route was not found. |
 | `409` | Duplicate resource or unique constraint conflict. |
 | `412` | `If-Match` expected an older resource version than the server has. |
@@ -528,51 +528,90 @@ Response includes changed resources, tombstones, per-stream `has_more_*` boolean
 }
 ```
 
-## Atlas Command Interface Worker
+## Browser Admin Auth And Command Interface
 
-The `atlas_command_interface/` Worker is a small same-origin layer in front of Core. It has its own endpoints:
+Atlas Core owns browser authentication. Admin routes live under `/admin/*` and are separate from the Atlas resource plane (`entities`, `tasks`, `objects`, `queries`, sync, and feed). Admin records are stored in `admin_records`; they are not returned by full dataset or changed-since queries and do not produce resource feed events.
+
+Core seeds a development admin account on startup:
+
+- username: `admin`
+- password: `password`
+- role: `admin`
+
+This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/config` | `200` | Returns browser-safe config: `atlasBaseUrl` and `protocolRevision`. |
-| `POST` | `/api/commands` | `201` | Validates a command request and creates a Core task. |
-| any | `/atlas` or `/atlas/*` | upstream status | Proxies HTTP requests to Atlas Core after removing the `/atlas` prefix. |
-| websocket | `/atlas/feed` | `101` | Bridges browser websocket traffic to Core `/feed`. |
+| `POST` | `/admin/auth/login` | `200` | Creates a Core-owned browser session from an admin username/password. |
+| `POST` | `/admin/auth/logout` | `204` | Deletes the current browser session and clears the session cookie. |
+| `GET` | `/admin/auth/me` | `200` | Reports the current browser session user. |
 
-`POST /api/commands` requires `ATLAS_COMMAND_API_KEY`, supplied as `Authorization: Bearer <ATLAS_COMMAND_API_KEY>`. Body:
+The session token is random and stored only as `session:<sha256(token)>` in Core. The browser receives it in the `atlas_session` cookie with `HttpOnly; Secure`. Same-site deployments use the default `SameSite=Lax`; cross-site UI/Core deployments must use `ATLAS_ADMIN_COOKIE_SAMESITE=none` and HTTPS.
+
+The command interface Worker is intentionally thin. It hosts static assets and `GET /api/config`, which returns only browser-safe configuration:
+
+```json
+{
+  "atlasBaseUrl": "https://core.example",
+  "protocolRevision": "sha256:...",
+  "mapStyleUrl": "https://maps.example/style.json"
+}
+```
+
+The Worker does not own `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, Core API-key injection, or command validation. The browser Atlas SDK calls Core directly with `credentials: "include"`.
+
+Command task validation happens in Core `POST /tasks`. Command submissions omit `task_id`; Core generates `command-<uuid>`, loads the command catalog, loads the target entity, checks `components.task_catalog.supported_tasks`, and validates/coerces command parameters. Non-command task creation keeps the existing client-supplied `task_id` contract.
 
 ```json
 {
   "entity_id": "asset-1",
-  "command_id": "move_to_location",
-  "parameters": {
-    "latitude": 38.8977,
-    "longitude": -77.0365,
-    "altitude_m": 120.5
+  "components": {
+    "command": {
+      "type": "move_to_location",
+      "id": "move_to_location"
+    },
+    "parameters": {
+      "latitude": 38.8977,
+      "longitude": -77.0365,
+      "altitude_m": 120.5
+    }
   }
 }
 ```
 
-The Worker reads the `command_catalog` object from Core, checks that the target is an asset whose `components.task_catalog.supported_tasks` explicitly lists the command, coerces parameters against the catalog schema, and creates a pending task in Core.
+Smoke browser auth and command task creation against Core:
+
+```bash
+CORE_URL=http://localhost:8000
+COOKIE_JAR=/tmp/atlas-core-admin.cookies
+
+curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"password"}'
+
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
+  -H 'Content-Type: application/json' \
+  -d '{"entity_id":"asset-1","components":{"command":{"type":"move_to_location","id":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
+```
 
 Response:
 
 ```json
 {
-  "task": {
-    "task_id": "command-...",
-    "status": "pending",
-    "entity_id": "asset-1",
-    "components": {
-      "command": {
-        "type": "move_to_location",
-        "id": "move_to_location"
-      },
-      "parameters": {
-        "latitude": 38.8977,
-        "longitude": -77.0365,
-        "altitude_m": 120.5
-      }
+  "task_id": "command-...",
+  "status": "pending",
+  "entity_id": "asset-1",
+  "components": {
+    "command": {
+      "type": "move_to_location",
+      "id": "move_to_location"
+    },
+    "parameters": {
+      "latitude": 38.8977,
+      "longitude": -77.0365,
+      "altitude_m": 120.5
     }
   }
 }

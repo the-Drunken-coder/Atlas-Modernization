@@ -123,9 +123,9 @@ func TestRequestLoggerLogsMethodPathStatusAndResponseSize(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthValidKeyCallsNextHandler(t *testing.T) {
+func TestCombinedAuthValidKeyCallsNextHandler(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -143,9 +143,9 @@ func TestAPIKeyAuthValidKeyCallsNextHandler(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthRejectsInvalidKeyAndDoesNotCallNext(t *testing.T) {
+func TestCombinedAuthRejectsInvalidKeyAndDoesNotCallNext(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -174,9 +174,9 @@ func TestAPIKeyAuthRejectsInvalidKeyAndDoesNotCallNext(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthAcceptsBearerToken(t *testing.T) {
+func TestCombinedAuthAcceptsBearerToken(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -194,9 +194,9 @@ func TestAPIKeyAuthAcceptsBearerToken(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
+func TestCombinedAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("secret", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -214,13 +214,13 @@ func TestAPIKeyAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthSkipsHealthAndReadiness(t *testing.T) {
+func TestCombinedAuthSkipsHealthAndReadiness(t *testing.T) {
 	tests := []string{"/health", "/health/", "/readiness", "/readiness/"}
 
 	for _, path := range tests {
 		t.Run(path, func(t *testing.T) {
 			called := false
-			handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -239,9 +239,9 @@ func TestAPIKeyAuthSkipsHealthAndReadiness(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthProtectsRootPath(t *testing.T) {
+func TestCombinedAuthProtectsRootPath(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -258,9 +258,9 @@ func TestAPIKeyAuthProtectsRootPath(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
+func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -277,11 +277,11 @@ func TestAPIKeyAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
+func TestCombinedAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
 	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/"} {
 		t.Run(path, func(t *testing.T) {
 			called := false
-			handler := middleware.APIKeyAuth("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := middleware.CombinedAuth("", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusOK)
 			}))

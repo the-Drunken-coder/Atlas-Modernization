@@ -111,12 +111,21 @@ func SkipIfSystemNotAvailable(t *testing.T) {
 	if !SystemAvailable(t) {
 		t.Skip("Skipping integration test: Atlas Core system not ready locally")
 	}
+	client := NewAPIClient()
+	resp, err := client.Get(context.Background(), "/")
+	if err == nil && resp != nil {
+		defer drainClose(resp)
+		if resp.StatusCode == http.StatusUnauthorized && client.APIKey == "" {
+			t.Skip("Skipping integration test: Atlas Core requires API auth; set ATLAS_CORE_API_KEY or API_AUTH_KEY")
+		}
+	}
 }
 
 // APIClient provides methods for interacting with the Atlas Core API
 type APIClient struct {
 	BaseURL string
 	Client  *http.Client
+	APIKey  string
 }
 
 // NewAPIClient creates a new API client
@@ -124,6 +133,7 @@ func NewAPIClient() *APIClient {
 	return &APIClient{
 		BaseURL: GetAPIURL(),
 		Client:  &http.Client{Timeout: 30 * time.Second},
+		APIKey:  strings.TrimSpace(firstEnv("ATLAS_CORE_API_KEY", "API_AUTH_KEY")),
 	}
 }
 
@@ -152,8 +162,20 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body inter
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("X-API-Key", c.APIKey)
+	}
 
 	return c.Client.Do(req)
+}
+
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // Get makes a GET request

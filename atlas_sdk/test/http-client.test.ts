@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, isEntityCreateRequest, isTaskCreateRequest } from "../src";
+import { AtlasAdminClient } from "../src/admin.js";
 import { entity, FakeCore, object, task } from "./support/fake-core.js";
 
 async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
@@ -55,6 +56,34 @@ describe("AtlasClient HTTP", () => {
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: -1 })).toThrow("positive finite");
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.NaN })).toThrow("positive finite");
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.POSITIVE_INFINITY })).toThrow("positive finite");
+  });
+
+  it("passes browser credentials through resource requests without adding admin methods", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl: typeof fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ entities: [], tasks: [], objects: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, credentials: "include" });
+
+    await client.queries.full();
+
+    expect(calls[0]).toMatchObject({ url: "http://atlas.test/queries/full", init: { credentials: "include" } });
+    expect("auth" in client).toBe(false);
+  });
+
+  it("keeps admin auth on AtlasAdminClient", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl: typeof fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ user: { username: "admin", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    const admin = new AtlasAdminClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, credentials: "include" });
+
+    await admin.auth.login({ username: "admin", password: "password" });
+
+    expect(calls[0]).toMatchObject({ url: "http://atlas.test/admin/auth/login", init: { method: "POST", credentials: "include" } });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ username: "admin", password: "password" });
   });
 
   it("accepts plain records and rejects non-plain records in task create requests", async () => {

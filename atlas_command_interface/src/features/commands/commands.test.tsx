@@ -68,8 +68,6 @@ describe("CommandForm", () => {
         targeting="map_point"
         formParameters={params}
         mapPoint={{ lat: 40.1, lng: -74.2 }}
-        credential="secret"
-        onCredentialChange={() => {}}
         submitting={false}
         onCancel={() => {}}
         onSubmit={onSubmit}
@@ -94,8 +92,6 @@ describe("CommandForm", () => {
         targeting="map_point"
         formParameters={params}
         mapPoint={{ lat: 40.1, lng: -74.2 }}
-        credential="secret"
-        onCredentialChange={() => {}}
         submitting={false}
         onCancel={() => {}}
         onSubmit={() => {}}
@@ -113,23 +109,6 @@ describe("CommandForm", () => {
     expect(screen.getByText("Must be <= 500")).toBeInTheDocument();
   });
 
-  it("keeps submit disabled without a command key", () => {
-    render(
-      <CommandForm
-        command={command}
-        targeting="map_point"
-        formParameters={params}
-        mapPoint={{ lat: 1, lng: 2 }}
-        credential=""
-        onCredentialChange={() => {}}
-        submitting={false}
-        onCancel={() => {}}
-        onSubmit={() => {}}
-      />
-    );
-    expect(screen.getByRole("button", { name: "Send command" })).toBeDisabled();
-  });
-
   it("keeps submit disabled without finite map coordinates", async () => {
     const user = userEvent.setup();
     render(
@@ -138,8 +117,6 @@ describe("CommandForm", () => {
         targeting="map_point"
         formParameters={params}
         mapPoint={{ lat: Number.NaN, lng: -74.2 }}
-        credential="secret"
-        onCredentialChange={() => {}}
         submitting={false}
         onCancel={() => {}}
         onSubmit={() => {}}
@@ -167,8 +144,6 @@ describe("CommandForm", () => {
         command={booleanCommand}
         targeting="none"
         formParameters={[["flag", booleanCommand.parameters_schema.flag]]}
-        credential="secret"
-        onCredentialChange={() => {}}
         submitting={false}
         onCancel={() => {}}
         onSubmit={onSubmit}

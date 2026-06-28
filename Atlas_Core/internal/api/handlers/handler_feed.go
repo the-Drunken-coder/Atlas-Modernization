@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -23,6 +24,16 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serverConfig := feedServerConfig(h.config)
+	if h.adminAuth != nil {
+		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
+			serverConfig.EnableAPIAuth = false
+			serverConfig.APIKey = ""
+		}
+	}
+	if serverConfig.EnableAPIAuth && custommiddleware.ValidAPIKey(r, serverConfig.APIKey) {
+		serverConfig.EnableAPIAuth = false
+		serverConfig.APIKey = ""
+	}
 	if serverConfig.EnableAPIAuth && serverConfig.APIKey == "" {
 		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler has auth enabled without an API key")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)

@@ -4,6 +4,7 @@ package handlers
 import (
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
@@ -22,15 +23,16 @@ type Handler struct {
 	checkinActions *actions.EntityCheckinActions
 	queryActions   *actions.QueryActions
 	feedHub        *feed.Hub
+	adminAuth      *admin.Service
 }
 
 // NewHandler creates a new Handler.
 func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config) *Handler {
-	return NewHandlerWithFeed(db, storageClient, logger, cfg, nil)
+	return NewHandlerWithFeed(db, storageClient, logger, cfg, nil, nil)
 }
 
 // NewHandlerWithFeed creates a new Handler and wires committed writes into feedHub.
-func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub) *Handler {
+func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub, adminAuth *admin.Service) *Handler {
 	if cfg == nil {
 		panic("handlers.NewHandler: config is required")
 	}
@@ -52,5 +54,6 @@ func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger z
 		checkinActions: actions.NewEntityCheckinActions(entityActions, taskActions),
 		queryActions:   actions.NewQueryActions(db.Pool),
 		feedHub:        feedHub,
+		adminAuth:      adminAuth,
 	}
 }

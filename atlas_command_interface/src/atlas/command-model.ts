@@ -1,4 +1,4 @@
-import type { EntityResource, JSONValue, ObjectResponse, TaskCreateRequest, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, JSONValue, ObjectResponse } from "../../../atlas_sdk/src/index.js";
 
 export const COMMAND_CATALOG_OBJECT_ID = "command_catalog";
 
@@ -26,21 +26,13 @@ export type CommandCatalog = {
   commands: CommandDefinition[];
 };
 
-export type CommandSubmitRequest = {
+export type CommandTaskCreateRequest = {
+  status: "pending";
   entity_id: string;
-  command_id: string;
-  parameters?: Record<string, unknown>;
-};
-
-export type CommandSubmitResponse = {
-  task: TaskResource;
-};
-
-export type APIErrorResponse = {
-  success: false;
-  error_code: string;
-  message: string;
-  details?: Record<string, JSONValue>;
+  components: {
+    command: { type: string; id: string };
+    parameters: Record<string, JSONValue>;
+  };
 };
 
 type CommandModelErrorCode = "INVALID_CATALOG" | "INVALID_PARAMETERS";
@@ -177,13 +169,11 @@ export function coerceParameters(command: CommandDefinition, rawParameters: unkn
 }
 
 export function buildCommandTaskRequest(options: {
-  taskId: string;
   entityId: string;
   command: CommandDefinition;
   parameters: Record<string, JSONValue>;
-}): TaskCreateRequest {
+}): CommandTaskCreateRequest {
   return {
-    task_id: options.taskId,
     status: "pending",
     entity_id: options.entityId,
     components: {

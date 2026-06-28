@@ -37,22 +37,36 @@ When `CORS_ORIGINS` is **explicitly set to empty**, no origins are allowed (deny
 
 ### Current Middleware Behavior
 
-- `AllowCredentials` is disabled.
+- `AllowCredentials` is enabled so trusted browser origins can send Core-owned session cookies.
 - Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
 - Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID`
 - Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
-Operators must still choose safe origins and use explicit hosts over wildcards.
+Operators must choose exact trusted origins and use explicit hosts over wildcards. Unsafe cookie-authenticated browser methods are rejected unless the `Origin` header exactly matches configured CORS origins.
 
-## API Authentication
+## Authentication
+
+Atlas Core supports two protected-route auth modes:
+
+- Machine clients can use API-key auth.
+- Browser clients can use Core-owned admin sessions.
+
+Browser sessions use an `atlas_session` cookie with `HttpOnly; Secure`. The default SameSite mode is `Lax`; set `ATLAS_ADMIN_COOKIE_SAMESITE=none` only for cross-site UI/Core deployments, and only with HTTPS.
+
+The development startup path seeds a disposable admin account:
+
+- username: `admin`
+- password: `password`
+- role: `admin`
+
+This is for development scratch storage only. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core, or otherwise replace/disable the development credential.
 
 Optional API key auth is controlled by:
 
 - `ENABLE_API_AUTH` and `API_AUTH_KEY` environment variables (take precedence)
 - `enable_api_auth` and `api_auth_key` in `atlas_core.settings.json`
 
-If enabled, middleware requires a valid API key (`X-API-Key` or `Authorization: Bearer ...`)
-before serving protected routes.
+If enabled, middleware accepts a valid API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes.
 
 ### Production Docker image
 
@@ -71,7 +85,7 @@ The process refuses to start when:
 
 ### Public unauthenticated paths
 
-`/health` and `/readiness` skip API key auth (and request logging).
+`/health`, `/readiness`, `OPTIONS`, and `/admin/auth/*` skip protected-route auth. `POST /admin/auth/login` is public so the browser can establish a session.
 
 ## Configuration Checklist
 
@@ -79,4 +93,6 @@ The process refuses to start when:
 - [ ] Restrict network ingress to trusted operators.
 - [ ] Set explicit `CORS_ORIGINS` for production.
 - [ ] Set `ENABLE_API_AUTH=true` and a real `API_AUTH_KEY` for production.
+- [ ] Override the development `admin` / `password` seed with `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE`.
+- [ ] Use `ATLAS_ADMIN_COOKIE_SAMESITE=none` only when the UI and Core are intentionally cross-site.
 - [ ] Audit environment variables and settings file before release.

@@ -10,7 +10,7 @@ describe("fetchAppConfig", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            atlasBaseUrl: "https://command.test/atlas/",
+            atlasBaseUrl: "https://core.test/",
             protocolRevision: "rev",
             mapStyleUrl: " /styles/dark.json "
           }),
@@ -21,7 +21,7 @@ describe("fetchAppConfig", () => {
     vi.stubGlobal("location", { origin: "https://command.test" });
 
     await expect(fetchAppConfig()).resolves.toEqual({
-      atlasBaseUrl: "https://command.test/atlas",
+      atlasBaseUrl: "https://core.test",
       protocolRevision: "rev",
       mapStyleUrl: "https://command.test/styles/dark.json"
     });
@@ -31,21 +31,21 @@ describe("fetchAppConfig", () => {
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" }), {
+        new Response(JSON.stringify({ atlasBaseUrl: "https://core.test", protocolRevision: "rev" }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         })
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev", mapStyleUrl: "   " }), {
+        new Response(JSON.stringify({ atlasBaseUrl: "https://core.test", protocolRevision: "rev", mapStyleUrl: "   " }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         })
       );
     vi.stubGlobal("fetch", fetch);
 
-    await expect(fetchAppConfig()).resolves.toStrictEqual({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" });
-    await expect(fetchAppConfig()).resolves.toStrictEqual({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev" });
+    await expect(fetchAppConfig()).resolves.toStrictEqual({ atlasBaseUrl: "https://core.test", protocolRevision: "rev" });
+    await expect(fetchAppConfig()).resolves.toStrictEqual({ atlasBaseUrl: "https://core.test", protocolRevision: "rev" });
   });
 
   it("rejects invalid URL fields", async () => {
@@ -66,7 +66,7 @@ describe("fetchAppConfig", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(JSON.stringify({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev", mapStyleUrl: "http://[bad" }), {
+        new Response(JSON.stringify({ atlasBaseUrl: "https://core.test", protocolRevision: "rev", mapStyleUrl: "http://[bad" }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         })
@@ -80,7 +80,7 @@ describe("fetchAppConfig", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(JSON.stringify({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "rev", mapStyleUrl: 42 }), {
+        new Response(JSON.stringify({ atlasBaseUrl: "https://core.test", protocolRevision: "rev", mapStyleUrl: 42 }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         })
@@ -94,7 +94,7 @@ describe("fetchAppConfig", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(JSON.stringify({ atlasBaseUrl: "https://command.test/atlas", protocolRevision: "   " }), {
+        new Response(JSON.stringify({ atlasBaseUrl: "https://core.test", protocolRevision: "   " }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         })

@@ -22,7 +22,7 @@ var ErrNilPool = errors.New("database: nil pool")
 var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
 
 // coreSchemaTables are required when destructive recreate is disabled.
-var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
+var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "admin_records"}
 
 const coreSchemaDeletionsContextSQL = `
 	SELECT
@@ -126,6 +126,15 @@ func coreSchemaCreateDDL() []string {
 			UNIQUE (bucket, path)
 		)`,
 		`CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)`,
+
+		`CREATE TABLE admin_records (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			json JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+		)`,
+		`CREATE INDEX idx_admin_records_type ON admin_records(type)`,
 	}
 }
 
