@@ -53,11 +53,18 @@ const multiClientSync: Scenario = {
       ctx.log(`Writer created ${id}`);
     }
 
+    const writerSnapshot = await snapshotVersions(ctx.client, ids);
     const settleDeadline = Date.now() + settleMs;
     for (const [readerIndex, reader] of readers.entries()) {
       const seen = await waitForResources(ctx, reader, ids, Math.max(0, settleDeadline - Date.now()));
+      const readerSnapshot = await snapshotVersions(reader, ids);
       const status = reader.sync.status();
       ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
+      ctx.assert(
+        `Client ${readerIndex + 1} matched writer versions`,
+        snapshotsMatch(readerSnapshot, writerSnapshot),
+        `${readerSnapshot.length}/${writerSnapshot.length} versions matched`
+      );
       ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
       ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
     }
@@ -74,6 +81,23 @@ async function waitForResources(ctx: ScenarioContext, reader: ScenarioContext["c
     seen = await visibleCount(reader, ids);
   }
   return seen;
+}
+
+async function snapshotVersions(reader: ScenarioContext["client"], ids: string[]): Promise<Array<[string, number]>> {
+  const snapshot: Array<[string, number]> = [];
+  for (const id of ids) {
+    try {
+      const entity = await reader.entities.get(id);
+      snapshot.push([entity.entity_id, entity.metadata.version]);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return snapshot;
+}
+
+function snapshotsMatch(left: Array<[string, number]>, right: Array<[string, number]>): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function visibleCount(reader: ScenarioContext["client"], ids: string[]): Promise<number> {

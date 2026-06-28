@@ -54,6 +54,9 @@ export function parseStartRequest(scenario: Scenario, request: unknown): ParsedS
   if (typeof request.scenarioId !== "string") {
     throw new Error("scenarioId is required");
   }
+  if (request.scenarioId !== scenario.id) {
+    throw new Error(`scenarioId must be ${scenario.id}`);
+  }
   if (request.jsonInput !== undefined && typeof request.jsonInput !== "string") {
     throw new Error("jsonInput must be a string");
   }

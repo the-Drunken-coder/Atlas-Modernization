@@ -19,6 +19,7 @@ type FakeCoreState = {
   entities: Map<string, EntityResource>;
   tasks: Map<string, TaskResource>;
   objects: Map<string, ObjectResource>;
+  tombstones: Map<string, number>;
   deleted: string[];
   clients: FakeClientState[];
 };
@@ -35,6 +36,7 @@ export function createFakeAtlasCore() {
     entities: new Map(),
     tasks: new Map(),
     objects: new Map(),
+    tombstones: new Map(),
     deleted: [],
     clients: []
   };
@@ -110,9 +112,9 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     },
     queries: {
       full: async () => ({
-        entities: visibleValues(clientState, state.entities),
-        tasks: visibleValues(clientState, state.tasks),
-        objects: visibleValues(clientState, state.objects)
+        entities: visibleValues(clientState, state.entities, state, "entity"),
+        tasks: visibleValues(clientState, state.tasks, state, "task"),
+        objects: visibleValues(clientState, state.objects, state, "object")
       })
     },
     sync: {
@@ -195,12 +197,17 @@ function visibleValue<T extends { metadata: { version: number } }>(
   type: string
 ): T {
   const value = requireValue(values, id, type);
-  if (value.metadata.version > visibleVersion(state, clientState)) throw notFound(type, id);
+  const version = visibleVersion(state, clientState);
+  if (value.metadata.version > version || isDeletedAt(state, type, id, version)) throw notFound(type, id);
   return cloneValue(value);
 }
 
-function visibleValues<T extends { metadata: { version: number } }>(clientState: FakeClientState, values: Map<string, T>): T[] {
-  return [...values.values()].filter((value) => value.metadata.version <= clientState.visibleVersion).map(cloneValue);
+function visibleValues<T extends { metadata: { version: number } }>(clientState: FakeClientState, values: Map<string, T>, state?: FakeCoreState, type?: string): T[] {
+  const version = state ? visibleVersion(state, clientState) : clientState.visibleVersion;
+  return [...values.values()]
+    .filter((value) => value.metadata.version <= version)
+    .filter((value) => !state || !type || !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }), version))
+    .map(cloneValue);
 }
 
 function visibleVersion(state: FakeCoreState, clientState: FakeClientState): number {
@@ -208,8 +215,10 @@ function visibleVersion(state: FakeCoreState, clientState: FakeClientState): num
 }
 
 function deleteValue<T>(state: FakeCoreState, values: Map<string, T>, id: string, type: string): void {
-  if (!values.delete(id)) throw notFound(type, id);
+  requireValue(values, id, type);
+  if (isDeletedAt(state, type, id, state.version)) throw notFound(type, id);
   state.version += 1;
+  state.tombstones.set(resourceKey(type, id), state.version);
   state.deleted.push(`${type}:${id}`);
 }
 
@@ -225,4 +234,17 @@ function saveValue<T>(values: Map<string, T>, id: string, value: T): T {
 
 function cloneValue<T>(value: T): T {
   return structuredClone(value);
+}
+
+function isDeletedAt(state: FakeCoreState, type: string, id: string, visibleVersionValue: number): boolean {
+  const deletedVersion = state.tombstones.get(resourceKey(type, id));
+  return deletedVersion !== undefined && deletedVersion <= visibleVersionValue;
+}
+
+function resourceKey(type: string, id: string): string {
+  return `${type}:${id}`;
+}
+
+function resourceId(value: { entity_id?: string; task_id?: string; object_id?: string }): string {
+  return value.entity_id ?? value.task_id ?? value.object_id ?? "";
 }

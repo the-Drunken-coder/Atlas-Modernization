@@ -47,7 +47,7 @@ export type AssertionResult = {
   timestamp: string;
 };
 
-export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "cleaned";
+export type RunStatus = "running" | "completed" | "failed" | "cancelled";
 
 type RunEventBase = {
   sequence: number;
@@ -64,7 +64,7 @@ export type RunEvent =
   | (RunEventBase & { type: "assertion"; assertion: AssertionResult })
   | (RunEventBase & { type: "resource"; resource: CreatedResource })
   | (RunEventBase & { type: "error"; level: "error" })
-  | (RunEventBase & { type: "cleanup"; resource: CreatedResource });
+  | (RunEventBase & { type: "cleanup"; resource?: CreatedResource });
 
 export type RunEventType = RunEvent["type"];
 export type RunEventDetails = RunEvent extends infer Event
@@ -84,6 +84,7 @@ export type RunSummary = {
   jsonInput?: JSONValue;
   createdResources: CreatedResource[];
   assertions: AssertionResult[];
+  cleaned: boolean;
   lastError?: string;
 };
 
@@ -99,7 +100,6 @@ export type StartRunResponse = {
 
 export type HealthResponse = {
   ok: boolean;
-  atlasBaseUrl: string;
   status?: number;
   message?: string;
 };

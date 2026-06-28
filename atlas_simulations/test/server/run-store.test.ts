@@ -28,7 +28,7 @@ describe("RunStore", () => {
       expect(store.get(started.id)?.assertions[0]?.passed).toBe(true);
 
       await store.cleanup(started.id);
-      expect(store.get(started.id)?.status).toBe("cleaned");
+      expect(store.get(started.id)).toMatchObject({ status: "completed", cleaned: true });
       expect(core.state.deleted).toEqual([`task:${started.id}-task`, `entity:${started.id}-asset`]);
     } finally {
       vi.useRealTimers();
@@ -155,7 +155,7 @@ describe("RunStore", () => {
 
     await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the run to finish before cleanup");
     release();
-    await vi.waitFor(() => expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cleaned" }));
+    await vi.waitFor(() => expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true }));
   });
 
   it("shares concurrent cleanup calls for a run", async () => {

@@ -168,14 +168,12 @@ async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
     const response = await fetch(`${config.atlasBaseUrl}/health`, { headers, signal: controller.signal });
     return {
       ok: response.ok,
-      atlasBaseUrl: config.atlasBaseUrl,
       status: response.status,
       message: response.ok ? "Atlas Core reachable" : `Atlas Core returned ${response.status}`
     };
   } catch (error) {
     return {
       ok: false,
-      atlasBaseUrl: config.atlasBaseUrl,
       message: errorMessage(error)
     };
   } finally {
@@ -244,7 +242,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return event.type === "status" && event.status === "cleaned";
+  return event.type === "cleanup" && event.resource === undefined;
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {

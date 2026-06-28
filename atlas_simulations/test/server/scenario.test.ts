@@ -18,6 +18,7 @@ describe("scenario input parsing", () => {
   it("rejects malformed start request shapes", () => {
     expect(() => parseStartRequest(scenario, null)).toThrow("Start request must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: 12 })).toThrow("scenarioId is required");
+    expect(() => parseStartRequest(scenario, { scenarioId: "other" })).toThrow("scenarioId must be example");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: [] })).toThrow("inputs must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: 12 })).toThrow("jsonInput must be a string");
   });
@@ -30,6 +31,10 @@ describe("scenario input parsing", () => {
     });
     expect(parsed.input.fields).toEqual({ count: 2, name: "alpha", enabled: true });
     expect(parsed.input.json).toEqual({ note: "ok" });
+  });
+
+  it("rejects malformed JSON input", () => {
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: "{" })).toThrow();
   });
 
   it("rejects numeric input outside field bounds", () => {

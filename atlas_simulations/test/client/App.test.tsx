@@ -20,19 +20,20 @@ const run: RunSummary = {
   startedAt: new Date().toISOString(),
   inputs: { assetCount: 2 },
   createdResources: [],
-  assertions: []
+  assertions: [],
+  cleaned: false
 };
 
 let eventSources: FakeEventSource[] = [];
 
 vi.mock("../../src/client/api.js", () => ({
-  loadHealth: vi.fn(async () => ({ ok: true, atlasBaseUrl: "http://localhost:8000", status: 200, message: "ok" })),
+  loadHealth: vi.fn(async () => ({ ok: true, status: 200, message: "ok" })),
   loadScenarios: vi.fn(async () => [scenario]),
   loadRuns: vi.fn(async () => []),
   startRun: vi.fn(async () => run),
   loadRun: vi.fn(async () => run),
   stopRun: vi.fn(async () => ({ ...run, status: "cancelled" })),
-  cleanupRun: vi.fn(async () => ({ ...run, status: "cleaned" }))
+  cleanupRun: vi.fn(async () => ({ ...run, cleaned: true }))
 }));
 
 class FakeEventSource {
@@ -96,8 +97,7 @@ describe("App", () => {
       sequence: 3,
       runId: run.id,
       timestamp: new Date().toISOString(),
-      type: "status",
-      status: "cleaned",
+      type: "cleanup",
       message: "Cleanup complete"
     });
     await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());

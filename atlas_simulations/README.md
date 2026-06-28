@@ -12,7 +12,7 @@ ATLAS_API_KEY=replace-with-local-core-key
 ATLAS_SIM_PORT=5180
 ```
 
-Use `ATLAS_BASE_URL=https://atlascommandapi.org` when intentionally testing against the hosted Atlas API.
+Use `ATLAS_BASE_URL=https://atlascommandapi.org` only when intentionally testing against the hosted Atlas command API service. Set `ATLAS_API_KEY` to a key issued for that hosted service; do not reuse a local-only Core key there.
 
 The API key is read only by the local Node server. Browser code calls same-origin simulation routes and never receives the key.
 

@@ -23,9 +23,11 @@ type RunRecord = {
   controller: AbortController;
   clients: AtlasClientLike[];
   settled: boolean;
+  cleaned: boolean;
   cleanupPromise?: Promise<RunSummary>;
   sequence: number;
   lastError?: string;
+  cleanupError?: string;
 };
 
 export class RunStore {
@@ -67,6 +69,7 @@ export class RunStore {
       controller: new AbortController(),
       clients: [],
       settled: false,
+      cleaned: false,
       sequence: 0
     };
     this.runs.set(id, run);
@@ -86,7 +89,7 @@ export class RunStore {
 
   async cleanup(id: string): Promise<RunSummary> {
     const run = this.requireRun(id);
-    if (run.status === "cleaned") return toSummary(run);
+    if (run.cleaned) return toSummary(run);
     if (run.status === "running" || !run.settled) {
       throw new Error("Wait for the run to finish before cleanup");
     }
@@ -112,14 +115,14 @@ export class RunStore {
           this.emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
           continue;
         }
-        run.lastError = errorMessage(error);
-        this.emit(run, { type: "error", level: "error", message: run.lastError });
+        run.cleanupError = errorMessage(error);
+        this.emit(run, { type: "error", level: "error", message: run.cleanupError });
         throw error;
       }
     }
-    run.status = "cleaned";
-    run.finishedAt = run.finishedAt ?? timestamp();
-    this.emit(run, { type: "status", status: "cleaned", message: "Cleanup complete" });
+    run.cleaned = true;
+    run.cleanupError = undefined;
+    this.emit(run, { type: "cleanup", message: "Cleanup complete" });
     this.pruneRuns();
     return toSummary(run);
   }
@@ -261,7 +264,7 @@ export class RunStore {
     for (const run of this.runs.values()) trimEvents(run);
     for (const [id, run] of this.runs) {
       if (this.runs.size <= targetSize) return;
-      if (run.status === "cleaned" && run.settled) this.runs.delete(id);
+      if (run.cleaned && run.settled) this.runs.delete(id);
     }
   }
 }
@@ -278,7 +281,8 @@ function toSummary(run: RunRecord): RunSummary {
     ...(run.jsonInput === undefined ? {} : { jsonInput: cloneValue(run.jsonInput) }),
     createdResources: cloneValue(run.createdResources),
     assertions: cloneValue(run.assertions),
-    ...(run.lastError ? { lastError: run.lastError } : {})
+    cleaned: run.cleaned,
+    ...(run.lastError || run.cleanupError ? { lastError: run.lastError ?? run.cleanupError } : {})
   };
 }
 

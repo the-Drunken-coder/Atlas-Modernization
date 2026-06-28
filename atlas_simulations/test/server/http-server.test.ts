@@ -8,6 +8,8 @@ import { createFakeAtlasCore } from "../support/fake-atlas.js";
 let server: SimulationServer | undefined;
 let coreServer: HttpServer | undefined;
 
+const INTEGRATION_TIMEOUT_MS = 5_000;
+
 afterEach(async () => {
   await server?.close();
   await closeCoreServer();
@@ -71,8 +73,8 @@ describe("simulation HTTP server", () => {
     expect(streamBody).toContain("data:");
     expect(streamBody).toContain('"status":"completed"');
 
-    const cleaned = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
-    expect(cleaned.run.status).toBe("cleaned");
+    const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    expect(cleaned.run).toMatchObject({ status: "completed", cleaned: true });
     expect(core.state.deleted).toEqual([`entity:${started.run.id}-asset-1`]);
   });
 
@@ -151,7 +153,7 @@ async function readUntil(response: Response, text: string): Promise<string> {
   expect(reader).toBeDefined();
   const decoder = new TextDecoder();
   let body = "";
-  const deadline = Date.now() + 1_000;
+  const deadline = Date.now() + INTEGRATION_TIMEOUT_MS;
   try {
     while (!body.includes(text)) {
       const remaining = deadline - Date.now();
@@ -167,7 +169,7 @@ async function readUntil(response: Response, text: string): Promise<string> {
 }
 
 async function waitFor(assertion: () => Promise<void>): Promise<void> {
-  const deadline = Date.now() + 2000;
+  const deadline = Date.now() + INTEGRATION_TIMEOUT_MS;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {

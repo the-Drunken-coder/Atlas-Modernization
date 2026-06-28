@@ -42,12 +42,10 @@ export function App() {
 
   async function refreshHealth() {
     setHealth(await loadHealth());
-    setError(undefined);
   }
 
   async function refreshRuns() {
     setRuns(await loadRuns());
-    setError(undefined);
   }
 
   function captureError(errorValue: unknown) {
@@ -70,6 +68,10 @@ export function App() {
   }
 
   function selectRun(run: RunSummary) {
+    if (currentRun?.id === run.id) {
+      setCurrentRun((current) => (current ? { ...current, ...run } : run));
+      return;
+    }
     setEvents([]);
     setCurrentRun(run);
     connectEvents(run.id);
@@ -93,7 +95,7 @@ export function App() {
       setEvents((current) => [...current, event]);
       setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
       setRuns((current) => current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run)));
-      if (event.type === "status" && isTerminalStatus(event.status)) closeSource();
+      if (isFinalCleanupEvent(event)) closeSource();
     };
     source.onerror = () => {
       // EventSource handles transient reconnects itself.
@@ -133,12 +135,21 @@ export function App() {
       <header className="topbar">
         <div>
           <h1>Atlas Simulations</h1>
-          <div className="subtle">{health?.atlasBaseUrl ?? "Atlas Core"}</div>
+          <div className="subtle">Atlas Core</div>
         </div>
         <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`}>
           <Activity size={18} aria-hidden="true" />
           <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
-          <button className="icon-button" type="button" title="Refresh Core status" aria-label="Refresh Core status" onClick={() => void refreshHealth().catch(captureError)}>
+          <button
+            className="icon-button"
+            type="button"
+            title="Refresh Core status"
+            aria-label="Refresh Core status"
+            onClick={() => {
+              setError(undefined);
+              void refreshHealth().catch(captureError);
+            }}
+          >
             <RefreshCw size={16} aria-hidden="true" />
           </button>
         </div>
@@ -176,7 +187,7 @@ export function App() {
                 <Square size={16} aria-hidden="true" />
                 Stop
               </button>
-              <button type="button" title="Cleanup run resources" onClick={() => void cleanupCurrentRun()} disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.status === "cleaned"}>
+              <button type="button" title="Cleanup run resources" onClick={() => void cleanupCurrentRun()} disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.cleaned}>
                 <Trash2 size={16} aria-hidden="true" />
                 Cleanup
               </button>
@@ -235,7 +246,7 @@ export function App() {
         <section className="panel run-panel">
           <div className="panel-head">
             <h2>Run</h2>
-            <span className={`status-pill ${currentRun?.status ?? "idle"}`}>{currentRun?.status ?? "idle"}</span>
+            <span className={`status-pill ${displayStatus(currentRun)}`}>{displayStatus(currentRun)}</span>
           </div>
           <RunDetails run={currentRun} />
         </section>
@@ -348,13 +359,19 @@ function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
     case "error":
       return { ...run, lastError: event.message };
     case "cleanup":
+      if (!event.resource) return { ...run, cleaned: true };
+      return run;
     case "log":
       return run;
   }
 }
 
-function isTerminalStatus(status: RunSummary["status"]): boolean {
-  return status === "cleaned";
+function isFinalCleanupEvent(event: RunEvent): boolean {
+  return event.type === "cleanup" && !event.resource;
+}
+
+function displayStatus(run: RunSummary | undefined): string {
+  return run?.cleaned ? "cleaned" : run?.status ?? "idle";
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {
@@ -367,8 +384,8 @@ function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSum
           <tr key={run.id}>
             <td>
               <span className="status-cell">
-                <span className={`status-dot ${run.status}`} aria-hidden="true" />
-                {run.status}
+                <span className={`status-dot ${displayStatus(run)}`} aria-hidden="true" />
+                {displayStatus(run)}
               </span>
             </td>
             <td>
