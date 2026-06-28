@@ -79,6 +79,7 @@ describe("scenario input parsing", () => {
 
   it("rejects numeric input that does not align to the field step", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: 2.5 } })).toThrow("Count must align to step 1");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: { count: "0x2" } })).toThrow("Count must be a number");
   });
 
   it("rejects string boolean input instead of coercing it", () => {

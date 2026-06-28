@@ -237,13 +237,13 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
     };
     response.on("close", removeStream);
     unsubscribe = store.subscribe(runId, (event) => {
+      if (closeAfterSubscribe || closeQueued || response.writableEnded) return;
       const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
-      if (!isTerminalRunEvent(event)) return;
-      if (wrote) {
+      if (!wrote) {
         closeSoon();
         return;
       }
-      response.once("drain", closeSoon);
+      if (isTerminalRunEvent(event)) closeSoon();
     });
     if (closeAfterSubscribe) close();
   } catch (error) {
@@ -274,7 +274,7 @@ async function readJSON(request: IncomingMessage): Promise<unknown> {
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {
-  return event.type === "cleanup" && !event.resource;
+  return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<StartRunRequest> {

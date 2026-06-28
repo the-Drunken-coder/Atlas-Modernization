@@ -354,7 +354,11 @@ async function readUntilRunEvent(response: Response, predicate: (event: RunEvent
       if (result.done) throw new Error("Stream closed before run event");
       body += decoder.decode(result.value, { stream: true });
       const event = parseRunEvents(body).find(predicate);
-      if (event) return event;
+      if (event) {
+        const closed = await withTimeout(reader!.read(), Math.max(1, deadline - Date.now()));
+        expect(closed.done).toBe(true);
+        return event;
+      }
     }
   } finally {
     await reader!.cancel().catch(() => undefined);

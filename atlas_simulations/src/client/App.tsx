@@ -525,6 +525,8 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): No
       if (trimmed === "") return [field.key, field.defaultValue];
       const parsed = Number(trimmed);
       if (!Number.isFinite(parsed)) throw new Error(`${field.label} must be a number`);
+      if (field.min !== undefined && parsed < field.min) throw new Error(`${field.label} must be at least ${field.min}`);
+      if (field.max !== undefined && parsed > field.max) throw new Error(`${field.label} must be at most ${field.max}`);
       return [field.key, jsonNumber(parsed)];
     })
   );

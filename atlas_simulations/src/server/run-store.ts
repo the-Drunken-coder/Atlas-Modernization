@@ -255,11 +255,13 @@ export class RunStore {
   }
 
   private assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult {
+    const boundedName = boundedEventMessage(name);
+    const boundedMessage = message === undefined ? undefined : boundedEventMessage(message);
     const assertion: AssertionResult = {
       id: `assert-${run.assertions.length + 1}`,
-      name,
+      name: boundedName,
       passed,
-      ...(message ? { message } : {}),
+      ...(boundedMessage ? { message: boundedMessage } : {}),
       timestamp: timestamp()
     };
     run.assertions.push(cloneValue(assertion));
@@ -267,7 +269,7 @@ export class RunStore {
       type: "assertion",
       level: passed ? "info" : "error",
       assertion: cloneValue(assertion),
-      message: `${passed ? "PASS" : "FAIL"} ${name}${message ? `: ${message}` : ""}`
+      message: `${passed ? "PASS" : "FAIL"} ${boundedName}${boundedMessage ? `: ${boundedMessage}` : ""}`
     });
     return cloneValue(assertion);
   }
@@ -448,5 +450,9 @@ function timestamp(): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return boundedEventMessage(error instanceof Error ? error.message : String(error));
+  } catch {
+    return "Unknown error";
+  }
 }

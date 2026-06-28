@@ -253,10 +253,21 @@ function parseFields(fields: ScenarioInputField[], raw: Record<string, unknown>)
 }
 
 function parseNumberField(field: NumberInputField, value: unknown): number {
-  if (typeof value === "string" && value.trim() === "") {
-    throw new Error(`${field.label} is required`);
+  let parsed: number;
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      throw new Error(`${field.label} is required`);
+    }
+    if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) {
+      throw new Error(`${field.label} must be a number`);
+    }
+    parsed = Number(trimmed);
+  } else {
+    parsed = NaN;
   }
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(parsed)) {
     throw new Error(`${field.label} must be a number`);
   }

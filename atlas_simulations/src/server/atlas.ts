@@ -38,11 +38,10 @@ function abortableFetch(signal: AbortSignal): typeof fetch {
     if (!upstreamSignal) return await fetch(input, { ...init, signal });
     const controller = new AbortController();
     const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    upstreamSignal.addEventListener("abort", abort, { once: true });
     if (signal.aborted || upstreamSignal.aborted) {
       abort();
-    } else {
-      signal.addEventListener("abort", abort, { once: true });
-      upstreamSignal.addEventListener("abort", abort, { once: true });
     }
     try {
       return await fetch(input, { ...init, signal: controller.signal });

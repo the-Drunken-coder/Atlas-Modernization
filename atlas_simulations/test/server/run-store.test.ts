@@ -222,7 +222,20 @@ describe("RunStore", () => {
 
   it("shares concurrent cleanup calls for a run", async () => {
     const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
+    let cleanupStopCalls = 0;
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      return {
+        ...client,
+        sync: {
+          ...client.sync,
+          stop: () => {
+            cleanupStopCalls += 1;
+            client.sync.stop();
+          }
+        }
+      };
+    });
     const scenario: Scenario = {
       id: "concurrent-cleanup",
       name: "Concurrent cleanup",
@@ -236,8 +249,10 @@ describe("RunStore", () => {
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    cleanupStopCalls = 0;
     await Promise.all([store.cleanup(started.id), store.cleanup(started.id)]);
 
+    expect(cleanupStopCalls).toBe(1);
     expect(core.state.deleted).toEqual([`entity:${store.get(started.id)?.createdResources[0]?.id}`]);
   });
 
@@ -363,11 +378,13 @@ describe("RunStore", () => {
     };
     const runs = Array.from({ length: 100 }, () => store.start(scenario, { fields: {} }));
     await vi.waitFor(() => expect(store.get(runs[0]!.id)?.status).toBe("completed"));
-    await store.cleanup(runs[0]!.id);
+    await vi.waitFor(() => expect(store.get(runs[50]!.id)?.status).toBe("completed"));
+    await store.cleanup(runs[50]!.id);
 
     const extra = store.start(scenario, { fields: {} });
 
-    expect(store.get(runs[0]!.id)).toBeUndefined();
+    expect(store.get(runs[0]!.id)).toBeDefined();
+    expect(store.get(runs[50]!.id)).toBeUndefined();
     expect(store.get(extra.id)).toBeDefined();
   });
 

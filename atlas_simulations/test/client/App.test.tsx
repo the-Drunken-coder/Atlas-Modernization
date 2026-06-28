@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
+import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import { jsonNumber } from "../../src/shared/types.js";
 import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
@@ -77,7 +77,13 @@ class FakeEventSource {
 describe("App", () => {
   beforeEach(() => {
     eventSources = [];
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    vi.mocked(loadHealth).mockResolvedValue({ ok: true, status: jsonNumber(200), message: "ok" });
+    vi.mocked(loadScenarios).mockResolvedValue([scenario]);
+    vi.mocked(loadRuns).mockResolvedValue([]);
+    vi.mocked(startRun).mockResolvedValue(cloneRun());
+    vi.mocked(stopRun).mockResolvedValue(cloneRun({ status: "running" }));
+    vi.mocked(cleanupRun).mockResolvedValue(cloneRun({ status: "completed", cleaned: true }));
     vi.stubGlobal("EventSource", FakeEventSource);
   });
 
