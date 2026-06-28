@@ -55,8 +55,9 @@ const multiClientSync: Scenario = {
       }
 
       const writerSnapshot = await snapshotVersions(ctx.client, ids);
+      const settleDeadline = Date.now() + settleMs;
       for (const [readerIndex, reader] of readers.entries()) {
-        const seen = await waitForResources(ctx, reader, ids, settleMs);
+        const seen = await waitForResources(ctx, reader, ids, settleDeadline);
         const readerSnapshot = await snapshotVersions(reader, ids);
         const status = reader.sync.status();
         ctx.assert(`Client ${readerIndex + 1} saw writer resources`, seen === ids.length, `${seen}/${ids.length} resources visible`);
@@ -82,8 +83,7 @@ const multiClientSync: Scenario = {
 
 export default multiClientSync;
 
-async function waitForResources(ctx: ScenarioContext, reader: ScenarioContext["client"], ids: string[], timeoutMs: number): Promise<number> {
-  const deadline = Date.now() + timeoutMs;
+async function waitForResources(ctx: ScenarioContext, reader: ScenarioContext["client"], ids: string[], deadline: number): Promise<number> {
   let seen = await visibleCount(reader, ids);
   while (seen < ids.length && Date.now() < deadline) {
     await ctx.wait(Math.min(250, Math.max(1, deadline - Date.now())));

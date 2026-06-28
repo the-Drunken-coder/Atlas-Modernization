@@ -1,9 +1,7 @@
-// @vitest-environment jsdom
-
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, startRun } from "../../src/client/api.js";
+import { cleanupRun, loadRuns, loadScenarios, startRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
@@ -13,6 +11,14 @@ const scenario: ScenarioDescriptor = {
   summary: "Creates assets",
   acceptsJson: true,
   inputFields: [{ key: "assetCount", label: "Asset count", type: "number", defaultValue: 2, min: 1, max: 4 }]
+};
+
+const syncScenario: ScenarioDescriptor = {
+  id: "multi-client-sync",
+  name: "Multi-client sync",
+  summary: "Checks sync",
+  acceptsJson: false,
+  inputFields: []
 };
 
 const run: RunSummary = {
@@ -120,5 +126,24 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(run.id));
     await waitFor(() => expect(screen.getByText("cleaned")).toBeInTheDocument());
+  });
+
+  it("keeps selected scenario and selected run synchronized", async () => {
+    const user = userEvent.setup();
+    const syncRun = cloneRun({
+      id: "sim-sync",
+      scenarioId: syncScenario.id,
+      scenarioName: syncScenario.name,
+      status: "completed"
+    });
+    vi.mocked(loadScenarios).mockResolvedValueOnce([scenario, syncScenario]);
+    vi.mocked(loadRuns).mockResolvedValueOnce([syncRun]);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: syncScenario.name }));
+
+    expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: /cleanup/i }));
+    await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
   });
 });

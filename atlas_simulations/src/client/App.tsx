@@ -84,6 +84,21 @@ export function App() {
   }
 
   function selectRun(run: RunSummary) {
+    setSelectedId(run.scenarioId);
+    activateRun(run);
+  }
+
+  function selectScenario(scenarioId: string) {
+    setSelectedId(scenarioId);
+    const scenarioRun = runs.find((run) => run.scenarioId === scenarioId);
+    if (scenarioRun) {
+      activateRun(scenarioRun);
+      return;
+    }
+    clearRunSelection();
+  }
+
+  function activateRun(run: RunSummary) {
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
       return;
@@ -91,6 +106,12 @@ export function App() {
     setEvents([]);
     setCurrentRun(run);
     connectEvents(run.id);
+  }
+
+  function clearRunSelection() {
+    setEvents([]);
+    setCurrentRun(undefined);
+    closeActiveEventSource();
   }
 
   function connectEvents(runId: string) {
@@ -207,7 +228,8 @@ export function App() {
                 className={`scenario-option ${scenario.id === selectedId ? "selected" : ""}`}
                 type="button"
                 key={scenario.id}
-                onClick={() => setSelectedId(scenario.id)}
+                aria-pressed={scenario.id === selectedId}
+                onClick={() => selectScenario(scenario.id)}
               >
                 <span>{scenario.name}</span>
                 <small>{scenario.summary}</small>
