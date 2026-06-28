@@ -166,6 +166,27 @@ describe("scenario input parsing", () => {
     ]);
   });
 
+  it("rejects created and tracked resources outside the run ID prefix", async () => {
+    const tracked: Array<{ type: string; id: string }> = [];
+    const ctx = createScenarioContext({
+      runId: "sim-owned",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      registerClient: () => undefined
+    });
+
+    await expect(ctx.client.entities.create({ entity_id: "external-entity", entity_type: "asset" })).rejects.toThrow(
+      "entity ID must start with run ID prefix sim-owned-"
+    );
+    await expect(ctx.client.tasks.create({ task_id: "external-task" })).rejects.toThrow("task ID must start with run ID prefix sim-owned-");
+    await expect(ctx.client.objects.create({ object_id: "external-object" })).rejects.toThrow("object ID must start with run ID prefix sim-owned-");
+    expect(() => ctx.track({ type: "entity", id: "external-track" })).toThrow("entity ID must start with run ID prefix sim-owned-");
+    expect(tracked).toEqual([]);
+  });
+
   it("blocks exposed client operations after cancellation", async () => {
     const controller = new AbortController();
     const ctx = createScenarioContext({

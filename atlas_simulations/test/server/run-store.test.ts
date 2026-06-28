@@ -36,6 +36,32 @@ describe("RunStore", () => {
     }
   });
 
+  it("does not clean up an external resource after a non-run create ID is rejected", async () => {
+    const core = createFakeAtlasCore();
+    const writer = core.factory();
+    await writer.entities.create({ entity_id: "external-asset", entity_type: "asset" });
+    const store = new RunStore(core.factory);
+    const scenario: Scenario = {
+      id: "external-id",
+      name: "External ID",
+      summary: "Attempts to create an existing non-run resource",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createEntity({ entity_id: "external-asset", entity_type: "asset" });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.lastError).toContain("entity ID must start with run ID prefix");
+    expect(store.get(started.id)?.createdResources).toEqual([]);
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    await expect(writer.entities.get("external-asset")).resolves.toMatchObject({ entity_id: "external-asset" });
+    expect(core.state.deleted).toEqual([]);
+  });
+
   it("reports cancelled status after a stopped run unwinds", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);

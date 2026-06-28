@@ -104,11 +104,15 @@ export function createScenarioContext(args: {
       throw new Error("Simulation cancelled");
     }
   };
+  const track = (resource: CreatedResource) => {
+    assertRunOwnedResourceId(args.runId, resource);
+    args.track(resource);
+  };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(rawClient, args.track, throwIfCancelled, args.signal);
+    return trackClientCreates(rawClient, track, throwIfCancelled, args.signal);
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -121,11 +125,18 @@ export function createScenarioContext(args: {
     log: args.log,
     assert: args.assert,
     wait: (ms) => waitFor(ms, args.signal),
-    track: args.track,
+    track,
     createEntity: (entity) => client.entities.create(entity),
     createTask: (task) => client.tasks.create(task),
     createObject: (object) => client.objects.create(object)
   };
+}
+
+function assertRunOwnedResourceId(runId: string, resource: CreatedResource): void {
+  const prefix = `${runId}-`;
+  if (!resource.id.startsWith(prefix)) {
+    throw new Error(`${resource.type} ID must start with run ID prefix ${prefix}`);
+  }
 }
 
 function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedResource) => void, throwIfCancelled: () => void, signal: AbortSignal): AtlasClientLike {
