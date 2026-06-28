@@ -179,6 +179,7 @@ async function closeCoreServer(): Promise<void> {
 async function expectStatus(url: string, status: number, init?: RequestInit): Promise<void> {
   const response = await fetch(url, init);
   expect(response.status).toBe(status);
+  await response.arrayBuffer();
 }
 
 function mutationHeaders(headers: Record<string, string> = {}): Record<string, string> {

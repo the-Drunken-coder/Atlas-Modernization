@@ -90,11 +90,7 @@ export function App() {
     }
     setEvents([]);
     setCurrentRun(run);
-    if (isTerminalStatus(run.status)) {
-      closeActiveEventSource();
-    } else {
-      connectEvents(run.id);
-    }
+    connectEvents(run.id);
   }
 
   function connectEvents(runId: string) {

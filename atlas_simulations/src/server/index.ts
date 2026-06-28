@@ -220,12 +220,12 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
       closeQueued = true;
       queueMicrotask(close);
     };
+    response.on("close", removeStream);
     unsubscribe = store.subscribe(runId, (event) => {
       response.write(`id: ${event.sequence}\n`);
       response.write(`data: ${JSON.stringify(event)}\n\n`);
       if (isTerminalRunEvent(event)) closeSoon();
     });
-    response.on("close", removeStream);
     if (closeAfterSubscribe) close();
   } catch (error) {
     response.write(`event: error\n`);
