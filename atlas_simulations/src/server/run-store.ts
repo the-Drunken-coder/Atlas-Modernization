@@ -7,6 +7,8 @@ type EventSubscriber = (event: RunEvent) => void;
 
 const MAX_RUNS = 100;
 const MAX_EVENTS_PER_RUN = 500;
+const MAX_CREATED_RESOURCES_PER_RUN = 1_000;
+const MAX_ASSERTIONS_PER_RUN = 1_000;
 const MAX_EVENT_DATA_DEPTH = 200;
 const MAX_EVENT_DATA_NODES = 10_000;
 const MAX_EVENT_DATA_STRING_BYTES = 200_000;
@@ -248,6 +250,9 @@ export class RunStore {
 
   private track(run: RunRecord, resource: CreatedResource): void {
     if (!run.createdResources.some((current) => current.type === resource.type && current.id === resource.id)) {
+      if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
+        throw new Error(`Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`);
+      }
       const tracked = cloneValue(resource);
       run.createdResources.push(tracked);
       this.emit(run, { type: "resource", resource: tracked, message: `Created ${tracked.type} ${tracked.id}` });
@@ -255,6 +260,9 @@ export class RunStore {
   }
 
   private assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult {
+    if (run.assertions.length >= MAX_ASSERTIONS_PER_RUN) {
+      throw new Error(`Simulation can record at most ${MAX_ASSERTIONS_PER_RUN} assertions`);
+    }
     const boundedName = boundedEventMessage(name);
     const boundedMessage = message === undefined ? undefined : boundedEventMessage(message);
     const assertion: AssertionResult = {

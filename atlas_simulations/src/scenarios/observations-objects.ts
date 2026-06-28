@@ -102,7 +102,12 @@ const observationsObjects: Scenario = {
     const persistedObservers = fulfilledValues(observerResults);
     const persistedTracks = fulfilledValues(trackResults);
     const persistedObjects = fulfilledValues(objectResults);
-    ctx.assert("Observer assets persisted", persistedObservers.length === assetCount, `${persistedObservers.length}/${assetCount} observers persisted`);
+    const rejectedRead = [...observerResults, ...trackResults, ...objectResults].find((result): result is PromiseRejectedResult => result.status === "rejected");
+    ctx.assert(
+      "Observer assets persisted",
+      persistedObservers.length === assetCount && !rejectedRead,
+      rejectedRead ? "readback failed" : `${persistedObservers.length}/${assetCount} observers persisted`
+    );
     ctx.assert(
       "Tracks persisted",
       persistedTracks.length === observations &&
@@ -116,9 +121,8 @@ const observationsObjects: Scenario = {
       "Object references persisted",
       persistedObjects.length === observations &&
         persistedObjects.every((object, index) => (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])),
-      `${persistedObjects.length}/${observations} objects linked`
+      rejectedRead ? "readback failed" : `${persistedObjects.length}/${observations} objects linked`
     );
-    throwFirstRejected([...observerResults, ...trackResults, ...objectResults]);
   }
 };
 
@@ -126,9 +130,4 @@ export default observationsObjects;
 
 function fulfilledValues<T>(results: Array<PromiseSettledResult<T>>): T[] {
   return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-}
-
-function throwFirstRejected(results: Array<PromiseSettledResult<unknown>>): void {
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-  if (rejected) throw rejected.reason;
 }

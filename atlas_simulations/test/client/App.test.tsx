@@ -181,6 +181,7 @@ describe("App", () => {
     });
     vi.mocked(loadScenarios).mockResolvedValueOnce([scenario, syncScenario]);
     vi.mocked(loadRuns).mockResolvedValueOnce([syncRun]).mockResolvedValue([syncRun]);
+    vi.mocked(cleanupRun).mockResolvedValueOnce({ ...syncRun, cleaned: true });
 
     render(<App />);
     await user.click(await screen.findByRole("button", { name: syncScenario.name }));

@@ -174,8 +174,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       get: (id) => guarded(() => client.entities.get(id)),
       create: async (entity) => {
         throwIfCancelled();
+        track({ type: "entity", id: entity.entity_id });
         const created = await client.entities.create(entity);
-        track({ type: "entity", id: created.entity_id });
         throwIfCancelled();
         return created;
       },
@@ -187,8 +187,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
         throwIfCancelled();
+        track({ type: "task", id: task.task_id });
         const created = await client.tasks.create(task);
-        track({ type: "task", id: created.task_id });
         throwIfCancelled();
         return created;
       },
@@ -202,8 +202,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
       get: (id) => guarded(() => client.objects.get(id)),
       create: async (object) => {
         throwIfCancelled();
+        track({ type: "object", id: object.object_id });
         const created = await client.objects.create(object);
-        track({ type: "object", id: created.object_id });
         throwIfCancelled();
         return created;
       },

@@ -534,9 +534,17 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): No
       if (!Number.isFinite(parsed)) throw new Error(`${field.label} must be a number`);
       if (field.min !== undefined && parsed < field.min) throw new Error(`${field.label} must be at least ${field.min}`);
       if (field.max !== undefined && parsed > field.max) throw new Error(`${field.label} must be at most ${field.max}`);
+      if (field.step !== undefined && field.step > 0 && !alignsToStep(parsed, field.step, field.min ?? 0)) {
+        throw new Error(`${field.label} must align to step ${field.step}`);
+      }
       return [field.key, jsonNumber(parsed)];
     })
   );
+}
+
+function alignsToStep(value: number, step: number, base: number): boolean {
+  const steps = (value - base) / step;
+  return Math.abs(steps - Math.round(steps)) < 1e-9;
 }
 
 function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {
