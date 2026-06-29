@@ -22,6 +22,7 @@ import {
 import type { UiGeometry } from "./geometry.js";
 
 const MAX_SNAPSHOT_PAGES = 100;
+const COMMAND_REQUEST_TIMEOUT_MS = 30_000;
 
 export type CommandSubmission = {
   entityId: string;
@@ -109,13 +110,20 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 }
 
 async function createCommandTask(config: AppConfig, entityId: string, command: CommandDefinition, parameters: Record<string, JSONValue>): Promise<TaskResource> {
-  const response = await atlasFetch(`${config.atlasBaseUrl.replace(/\/+$/, "")}/tasks`, {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(buildCommandTaskRequest({ entityId, command, parameters }))
-  });
-  if (!response.ok) throw await atlasResponseError(response);
-  return (await response.json()) as TaskResource;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), COMMAND_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await atlasFetch(`${config.atlasBaseUrl.replace(/\/+$/, "")}/tasks`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(buildCommandTaskRequest({ entityId, command, parameters })),
+      signal: controller.signal
+    });
+    if (!response.ok) throw await atlasResponseError(response);
+    return (await response.json()) as TaskResource;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function atlasFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

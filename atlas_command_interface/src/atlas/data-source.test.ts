@@ -112,6 +112,7 @@ describe("sdk data source", () => {
     expect(task.task_id).toBe("t1");
     expect(calls[0].input).toBe("https://core.test/tasks");
     expect(calls[0].init).toMatchObject({ method: "POST", credentials: "include" });
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       entity_id: "asset-1",
       components: {
