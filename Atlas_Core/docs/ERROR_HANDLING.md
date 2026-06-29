@@ -68,7 +68,7 @@ Some handlers call `writeError` directly (same envelope, not via `handleActionEr
 | `INVALID_JSON` | 400 | Malformed or empty JSON body |
 | `BODY_TOO_LARGE` | 413 | Request body exceeds handler limit |
 | `VALIDATION_ERROR` | 400 | Invalid query params or required field missing |
-| `UNAUTHORIZED` | 401 | API-key middleware rejected a request |
+| `UNAUTHORIZED` | 401 | API-key or browser-session auth rejected a request |
 | `FEED_UNAVAILABLE` | 503 | Change-feed hub or config is not available |
 | `STORAGE_UNAVAILABLE` | 503 | MinIO not configured |
 | `CONTENT_TYPE_NOT_VIEWABLE` | 400 | Object view on non-text content type |

@@ -59,7 +59,7 @@ The development startup path seeds a disposable admin account:
 - password: `password`
 - role: `admin`
 
-This is for development scratch storage only. Core creates the seeded account only when it is missing, so production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before first startup of a scratch store, or otherwise replace/disable the development credential before exposing Core.
+This is for development scratch storage only. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 
 Optional API key auth is controlled by:
 
@@ -82,10 +82,11 @@ The process refuses to start when:
 
 - `ENABLE_API_AUTH` / `enable_api_auth` is true and the key is empty
 - The key is still the example placeholder `REPLACE_WITH_SECURE_KEY`
+- `ENABLE_API_AUTH` / `enable_api_auth` is true and neither `ATLAS_ADMIN_PASSWORD` nor `ATLAS_ADMIN_PASSWORD_FILE` replaces the default development admin password
 
 ### Public unauthenticated paths
 
-`/health`, `/readiness`, `OPTIONS`, and `/admin/auth/*` skip protected-route auth. `POST /admin/auth/login` is public so the browser can establish a session.
+`/health`, `/readiness`, `OPTIONS`, and `/admin/auth/*` skip protected-route auth. `POST /admin/auth/login` is public so the browser can establish a session, but cookie-mutating admin auth POSTs still require a trusted `Origin`.
 
 ## Configuration Checklist
 

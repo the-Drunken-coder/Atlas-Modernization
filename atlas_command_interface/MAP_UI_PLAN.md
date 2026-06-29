@@ -24,7 +24,7 @@ This should feel like a dark tactical map console: closer to Anduril Lattice / A
 
 ## Package Placement
 
-The UI work belongs to this interface package. The current package already owns the Worker command interface, proxy routes, and command model helpers, so the web app should grow from here unless a later split becomes clearly necessary.
+The UI work belongs to this interface package. The current package already owns the thin Worker/static host and command model helpers, so the web app should grow from here unless a later split becomes clearly necessary.
 
 Recommended structure:
 

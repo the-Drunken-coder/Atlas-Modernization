@@ -39,10 +39,18 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
         ...(mapStyleUrl ? { mapStyleUrl } : {})
       });
     }
-    if (url.pathname.startsWith("/api/")) {
+    if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "API route not found", { path: url.pathname });
     }
-    if (url.pathname === "/auth" || url.pathname.startsWith("/auth/") || url.pathname === "/me/settings" || url.pathname === "/atlas" || url.pathname.startsWith("/atlas/")) {
+    if (
+      url.pathname === "/auth" ||
+      url.pathname.startsWith("/auth/") ||
+      url.pathname === "/admin/auth" ||
+      url.pathname.startsWith("/admin/auth/") ||
+      url.pathname === "/me/settings" ||
+      url.pathname === "/atlas" ||
+      url.pathname.startsWith("/atlas/")
+    ) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "Route is owned by Atlas Core or has been removed", { path: url.pathname });
     }
     return env.ASSETS.fetch(request);

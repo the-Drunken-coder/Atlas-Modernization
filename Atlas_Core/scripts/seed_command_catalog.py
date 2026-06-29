@@ -247,7 +247,12 @@ def _api_headers() -> dict[str, str]:
 
 def _admin_seed_credentials() -> tuple[str, str]:
     username = os.getenv("ATLAS_ADMIN_USERNAME", "").strip() or DEFAULT_ADMIN_USERNAME
-    password = os.getenv("ATLAS_ADMIN_PASSWORD", "") or DEFAULT_ADMIN_PASSWORD
+    password_file = os.getenv("ATLAS_ADMIN_PASSWORD_FILE", "").strip()
+    if password_file:
+        password = Path(password_file).read_text(encoding="utf-8").rstrip("\r\n")
+    else:
+        raw_password = os.getenv("ATLAS_ADMIN_PASSWORD", "")
+        password = raw_password if raw_password.strip() else DEFAULT_ADMIN_PASSWORD
     return username, password
 
 
@@ -262,7 +267,11 @@ def _ensure_admin_session(api_base_url: str) -> bool:
     req = request.Request(
         login_url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Origin": os.getenv("ATLAS_UI_ORIGIN", "").strip() or DEFAULT_UI_ORIGIN,
+        },
         method="POST",
     )
     try:

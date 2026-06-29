@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
@@ -79,6 +80,45 @@ func routeRequest(method, target, body string) *http.Request {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func TestAdminAuthPostRejectsUntrustedOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target string
+		serve  func(*Handler, http.ResponseWriter, *http.Request)
+		body   string
+	}{
+		{
+			name:   "login",
+			target: "/admin/auth/login",
+			serve:  (*Handler).AdminLogin,
+			body:   `{"username":"admin","password":"password"}`,
+		},
+		{
+			name:   "logout",
+			target: "/admin/auth/logout",
+			serve:  (*Handler).AdminLogout,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHandler()
+			h.config.CORSOrigins = []string{"https://ui.test"}
+			h.adminAuth = admin.NewService(nil, h.config)
+
+			rec := httptest.NewRecorder()
+			req := routeRequest(http.MethodPost, tc.target, tc.body)
+			req.Header.Set("Origin", "https://evil.test")
+			tc.serve(h, rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d", rec.Code)
+			}
+			if body := decodeBody(t, rec); body["error_code"] != string(protocol.ErrorCodeUnauthorized) {
+				t.Fatalf("expected UNAUTHORIZED code, got %v", body["error_code"])
+			}
+		})
+	}
 }
 
 func multipartUploadRequest(t *testing.T, fields map[string]string, fileSize int) *http.Request {

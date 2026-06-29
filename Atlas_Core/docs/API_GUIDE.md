@@ -44,7 +44,7 @@ Most non-streaming endpoints return JSON. Handler-generated errors use this shap
 }
 ```
 
-API-key middleware errors are smaller and only include `success`, `message`, and `error_code`.
+Auth middleware errors are smaller and only include `success`, `message`, and `error_code`.
 
 Common statuses:
 
@@ -326,13 +326,13 @@ Create body:
   "status": "pending",
   "entity_id": "asset-1",
   "components": {
-    "command": {
-      "type": "move_to_location"
-    },
-    "parameters": {
+    "target": {
       "latitude": 38.8977,
       "longitude": -77.0365,
       "altitude_m": 120.5
+    },
+    "custom_note": {
+      "text": "inspect target area"
     }
   },
   "extra": {
@@ -538,7 +538,7 @@ Core seeds a development admin account on startup:
 - password: `password`
 - role: `admin`
 
-This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
+This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
@@ -586,12 +586,14 @@ CORE_URL=http://localhost:8000
 COOKIE_JAR=/tmp/atlas-core-admin.cookies
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
+  -H 'Origin: http://localhost:5173' \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"password"}'
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
 
 curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
+  -H 'Origin: http://localhost:5173' \
   -H 'Content-Type: application/json' \
   -d '{"entity_id":"asset-1","components":{"command":{"type":"move_to_location","id":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
 ```
@@ -622,7 +624,17 @@ Response:
 Create an entity:
 
 ```bash
-curl -sS -X POST http://localhost:8000/entities \
+CORE_URL=http://localhost:8000
+COOKIE_JAR=/tmp/atlas-core-admin.cookies
+UI_ORIGIN=http://localhost:5173
+
+curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
+  -H "Origin: $UI_ORIGIN" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"password"}'
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"entity_id":"asset-1","entity_type":"asset","subtype":"drone","alias":"alpha","components":{}}'
 ```
@@ -630,15 +642,17 @@ curl -sS -X POST http://localhost:8000/entities \
 Create a task:
 
 ```bash
-curl -sS -X POST http://localhost:8000/tasks \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"command":{"type":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
+  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"target":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
 ```
 
 Check in and fetch pending work:
 
 ```bash
-curl -sS -X POST 'http://localhost:8000/entities/asset-1/checkin?fields=minimal' \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/checkin?fields=minimal" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"status":"online","latitude":38.8977,"longitude":-77.0365}'
 ```
@@ -646,7 +660,8 @@ curl -sS -X POST 'http://localhost:8000/entities/asset-1/checkin?fields=minimal'
 Complete the task:
 
 ```bash
-curl -sS -X POST http://localhost:8000/tasks/task-1/complete \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks/task-1/complete" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"result":{"summary":"done"}}'
 ```
@@ -654,5 +669,5 @@ curl -sS -X POST http://localhost:8000/tasks/task-1/complete \
 Poll changes since version zero:
 
 ```bash
-curl -sS 'http://localhost:8000/queries/changed-since?since_version=0'
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/queries/changed-since?since_version=0"
 ```

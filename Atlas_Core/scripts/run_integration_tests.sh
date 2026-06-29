@@ -109,7 +109,8 @@ login_admin_session() {
     return 0
   fi
 
-  local headers_file body_file http_code
+  local headers_file body_file http_code login_payload
+  login_payload="$(jq -n --arg username "$ADMIN_USERNAME" --arg password "$ADMIN_PASSWORD" '{username:$username,password:$password}')"
   headers_file="$(mktemp)"
   body_file="$(mktemp)"
   set +e
@@ -121,8 +122,9 @@ login_admin_session() {
     -w "%{http_code}" \
     -H "Accept: application/json" \
     -H "Content-Type: application/json" \
+    -H "Origin: ${UI_ORIGIN}" \
     -X POST "${API_URL}/admin/auth/login" \
-    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>&1)
+    -d "$login_payload" 2>&1)
   local curl_exit=$?
   set -e
 

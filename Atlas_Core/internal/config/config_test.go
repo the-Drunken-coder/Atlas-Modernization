@@ -238,6 +238,36 @@ func TestLoadCopiesDefaultCORSOrigins(t *testing.T) {
 	}
 }
 
+func TestLoadAdminCookieSameSiteFromSettingsWithEnvPrecedence(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{AdminCookieSameSite: "lax"}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.AdminCookieSameSite != "lax" {
+		t.Fatalf("AdminCookieSameSite = %q, want lax", cfg.AdminCookieSameSite)
+	}
+
+	t.Setenv("ATLAS_ADMIN_COOKIE_SAMESITE", "strict")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.AdminCookieSameSite != "strict" {
+		t.Fatalf("AdminCookieSameSite with env = %q, want strict", cfg.AdminCookieSameSite)
+	}
+}
+
 func TestLoadIgnoresAllowedOriginsAlias(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)

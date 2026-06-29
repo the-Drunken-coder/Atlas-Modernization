@@ -104,12 +104,16 @@ func (s *Service) SeedDevelopmentAdmin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.createAccountIfMissing(ctx, "account:"+defaultUser, AccountRecord{
+	account := AccountRecord{
 		Username: defaultUser,
 		Password: hash,
 		Role:     defaultRole,
 		Disabled: false,
-	})
+	}
+	if UsesDefaultDevelopmentPassword() {
+		return s.createAccountIfMissing(ctx, "account:"+defaultUser, account)
+	}
+	return s.upsertAccount(ctx, "account:"+defaultUser, account)
 }
 
 func (s *Service) createAccountIfMissing(ctx context.Context, id string, account AccountRecord) error {
@@ -121,6 +125,19 @@ func (s *Service) createAccountIfMissing(ctx context.Context, id string, account
 		INSERT INTO admin_records (id, type, json)
 		VALUES ($1, 'account', $2)
 		ON CONFLICT (id) DO NOTHING
+	`, id, payload)
+	return err
+}
+
+func (s *Service) upsertAccount(ctx context.Context, id string, account AccountRecord) error {
+	payload, err := json.Marshal(account)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO admin_records (id, type, json)
+		VALUES ($1, 'account', $2)
+		ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, updated_at = clock_timestamp()
 	`, id, payload)
 	return err
 }
@@ -149,16 +166,32 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 
 	accountID := "account:" + username
 	account, err := s.GetAccount(ctx, accountID)
-	if err != nil || account.Disabled {
+	if err != nil {
 		_ = VerifyPassword(password, dummyPasswordHash)
-		_ = s.recordLoginFailure(ctx, username, ip, now)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", SessionRecord{}, err
+		}
+		if err := s.recordLoginFailure(ctx, username, ip, now); err != nil {
+			return "", SessionRecord{}, err
+		}
+		return "", SessionRecord{}, ErrInvalidCredentials
+	}
+	if account.Disabled {
+		_ = VerifyPassword(password, account.Password)
+		if err := s.recordLoginFailure(ctx, username, ip, now); err != nil {
+			return "", SessionRecord{}, err
+		}
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}
 	if !VerifyPassword(password, account.Password) {
-		_ = s.recordLoginFailure(ctx, username, ip, now)
+		if err := s.recordLoginFailure(ctx, username, ip, now); err != nil {
+			return "", SessionRecord{}, err
+		}
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}
-	_ = s.clearLoginFailures(ctx, username, ip)
+	if err := s.clearLoginFailures(ctx, username, ip); err != nil {
+		return "", SessionRecord{}, err
+	}
 
 	token, err := randomToken()
 	if err != nil {
@@ -321,45 +354,23 @@ func (s *Service) getLoginFailure(ctx context.Context, key string) (LoginFailure
 }
 
 func (s *Service) upsertLoginFailure(ctx context.Context, key string, now time.Time) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	record, err := getLoginFailureForUpdate(ctx, tx, key)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	if errors.Is(err, pgx.ErrNoRows) || record.ResetAt.Before(now) {
-		record = LoginFailureRecord{Count: 1, ResetAt: now.Add(loginWindow)}
-	} else {
-		record.Count++
-	}
-
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `
+	_, err := s.pool.Exec(ctx, `
 		INSERT INTO admin_records (id, type, json)
-		VALUES ($1, 'login_fail', $2)
-		ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, updated_at = clock_timestamp()
-	`, key, payload); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-func getLoginFailureForUpdate(ctx context.Context, tx pgx.Tx, key string) (LoginFailureRecord, error) {
-	var record LoginFailureRecord
-	var payload []byte
-	err := tx.QueryRow(ctx, `SELECT json FROM admin_records WHERE id = $1 AND type = 'login_fail' FOR UPDATE`, key).Scan(&payload)
-	if err != nil {
-		return record, err
-	}
-	err = json.Unmarshal(payload, &record)
-	return record, err
+		VALUES ($1, 'login_fail', jsonb_build_object('count', 1, 'reset_at', $2::timestamptz))
+		ON CONFLICT (id) DO UPDATE SET
+			json = CASE
+				WHEN COALESCE((admin_records.json->>'reset_at')::timestamptz, '-infinity'::timestamptz) <= $3::timestamptz THEN
+					jsonb_build_object('count', 1, 'reset_at', $2::timestamptz)
+				ELSE
+					jsonb_build_object(
+						'count', COALESCE((admin_records.json->>'count')::int, 0) + 1,
+						'reset_at', (admin_records.json->>'reset_at')::timestamptz
+					)
+			END,
+			updated_at = clock_timestamp()
+		WHERE admin_records.type = 'login_fail'
+	`, key, now.Add(loginWindow), now)
+	return err
 }
 
 func HashPassword(password string) (PasswordHash, error) {
@@ -444,14 +455,18 @@ func developmentPassword() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read ATLAS_ADMIN_PASSWORD_FILE: %w", err)
 		}
-		return strings.TrimRight(string(data), "\r\n"), nil
+		password := strings.TrimRight(string(data), "\r\n")
+		if strings.TrimSpace(password) == "" {
+			return "", fmt.Errorf("ATLAS_ADMIN_PASSWORD_FILE must not be empty")
+		}
+		return password, nil
 	}
-	if password := os.Getenv("ATLAS_ADMIN_PASSWORD"); password != "" {
+	if password := os.Getenv("ATLAS_ADMIN_PASSWORD"); strings.TrimSpace(password) != "" {
 		return password, nil
 	}
 	return defaultPass, nil
 }
 
 func UsesDefaultDevelopmentPassword() bool {
-	return strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD_FILE")) == "" && os.Getenv("ATLAS_ADMIN_PASSWORD") == ""
+	return strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD_FILE")) == "" && strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD")) == ""
 }

@@ -57,13 +57,14 @@ type Config struct {
 
 // SettingsFile represents the atlas_core.settings.json file structure.
 type SettingsFile struct {
-	Debug           bool     `json:"debug"`
-	LogLevel        string   `json:"log_level"`
-	CORSOrigins     []string `json:"cors_origins"`
-	EnableAPIAuth   bool     `json:"enable_api_auth"`
-	APIAuthKey      string   `json:"api_auth_key"`
-	MaxUploadSizeMB int64    `json:"max_upload_size_mb"`
-	MaxViewSizeMB   int64    `json:"max_view_size_mb"`
+	Debug               bool     `json:"debug"`
+	LogLevel            string   `json:"log_level"`
+	CORSOrigins         []string `json:"cors_origins"`
+	EnableAPIAuth       bool     `json:"enable_api_auth"`
+	APIAuthKey          string   `json:"api_auth_key"`
+	AdminCookieSameSite string   `json:"admin_cookie_samesite"`
+	MaxUploadSizeMB     int64    `json:"max_upload_size_mb"`
+	MaxViewSizeMB       int64    `json:"max_view_size_mb"`
 }
 
 // DefaultCORSOrigins are the default allowed origins for CORS.
@@ -402,6 +403,9 @@ func (c *Config) loadSettingsFile() error {
 	}
 	if _, ok := os.LookupEnv("API_AUTH_KEY"); !ok {
 		c.APIAuthKey = settings.APIAuthKey
+	}
+	if _, ok := os.LookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && settings.AdminCookieSameSite != "" {
+		c.AdminCookieSameSite = settings.AdminCookieSameSite
 	}
 	// Load upload limits from settings (env vars take precedence)
 	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && settings.MaxUploadSizeMB > 0 {

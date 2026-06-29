@@ -20,9 +20,17 @@ describe("thin Worker", () => {
   });
 
   it("does not own auth, settings, or Atlas proxy routes", async () => {
-    for (const path of ["/auth/login", "/me/settings", "/atlas/entities"]) {
+    for (const path of ["/auth/login", "/admin/auth/login", "/me/settings", "/atlas/entities"]) {
       const response = await handleCommandRequest(new Request(`https://command.test${path}`), env());
       expect(response.status).toBe(404);
+    }
+  });
+
+  it("returns JSON 404 for unknown API routes", async () => {
+    for (const path of ["/api", "/api/missing"]) {
+      const response = await handleCommandRequest(new Request(`https://command.test${path}`), env());
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({ success: false, error_code: "NOT_FOUND" });
     }
   });
 

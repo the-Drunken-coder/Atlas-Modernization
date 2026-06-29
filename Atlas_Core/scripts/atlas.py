@@ -421,6 +421,9 @@ def ensure_api_auth(mode):
     if api_auth_key == API_AUTH_KEY_PLACEHOLDER:
         print(f"[ERROR] {mode} requires a real API_AUTH_KEY, not the example placeholder.")
         return False
+    if not (os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or os.getenv("ATLAS_ADMIN_PASSWORD_FILE", "").strip()):
+        print(f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE to replace the development admin/password seed.")
+        return False
 
     os.environ["ENABLE_API_AUTH"] = "true"
     return True

@@ -16,6 +16,8 @@ import (
 )
 
 func TestDevelopmentAdminSeedLoginAndLogout(t *testing.T) {
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
 	cleanupAdminRows(ctx, t, pool)
@@ -65,6 +67,8 @@ func TestDevelopmentAdminSeedLoginAndLogout(t *testing.T) {
 }
 
 func TestInvalidLoginFailuresShareUnauthorizedShapeAtServiceBoundary(t *testing.T) {
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
 	cleanupAdminRows(ctx, t, pool)
@@ -88,7 +92,9 @@ func TestInvalidLoginFailuresShareUnauthorizedShapeAtServiceBoundary(t *testing.
 	}
 }
 
-func TestDevelopmentAdminSeedDoesNotOverwriteExistingAccount(t *testing.T) {
+func TestDevelopmentAdminSeedRotatesExplicitOverride(t *testing.T) {
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
 	cleanupAdminRows(ctx, t, pool)
@@ -108,10 +114,35 @@ func TestDevelopmentAdminSeedDoesNotOverwriteExistingAccount(t *testing.T) {
 		t.Fatalf("get seeded account: %v", err)
 	}
 	if !VerifyPassword("password", account.Password) {
-		t.Fatal("expected existing admin password to be preserved")
+		t.Fatal("expected initial admin password to be the development default")
 	}
-	if VerifyPassword("changed-password", account.Password) {
-		t.Fatal("expected second seed not to overwrite existing admin password")
+	if !VerifyPassword("changed-password", account.Password) {
+		t.Fatal("expected explicit admin password override to rotate seeded admin password")
+	}
+}
+
+func TestLoginThrottleBoundary(t *testing.T) {
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
+		t.Fatalf("seed dev admin: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for i := 0; i < loginMaxFails; i++ {
+		_, _, err := service.Login(ctx, "admin", "wrong", "198.51.100.10", now.Add(time.Duration(i)*time.Second))
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("failure %d error = %v, want ErrInvalidCredentials", i+1, err)
+		}
+	}
+	_, _, err := service.Login(ctx, "admin", "wrong", "198.51.100.10", now.Add(time.Duration(loginMaxFails)*time.Second))
+	if !errors.Is(err, ErrTooManyAttempts) {
+		t.Fatalf("post-boundary error = %v, want ErrTooManyAttempts", err)
 	}
 }
 
@@ -133,7 +164,20 @@ func TestUsesDefaultDevelopmentPassword(t *testing.T) {
 		t.Fatal("expected default development password to be active without overrides")
 	}
 
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "   ")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+	if !UsesDefaultDevelopmentPassword() {
+		t.Fatal("expected whitespace password override to leave default development password active")
+	}
+
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "   ")
+	if !UsesDefaultDevelopmentPassword() {
+		t.Fatal("expected whitespace password file override to leave default development password active")
+	}
+
 	t.Setenv("ATLAS_ADMIN_PASSWORD", "changed-password")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
 	if UsesDefaultDevelopmentPassword() {
 		t.Fatal("expected explicit password to disable default development password")
 	}

@@ -107,6 +107,9 @@ func main() {
 	}
 	adminAuth := admin.NewService(db.Pool, cfg)
 	if admin.UsesDefaultDevelopmentPassword() {
+		if cfg.EnableAPIAuth {
+			logger.Fatal().Msg("API auth is enabled but development admin seed would use admin/password — set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE")
+		}
 		logger.Warn().Msg("Development admin seed is using the default admin/password credential; set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE before exposing Core")
 	}
 	if err := adminAuth.SeedDevelopmentAdmin(ensureCtx); err != nil {

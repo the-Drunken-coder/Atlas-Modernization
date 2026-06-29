@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
+	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -26,7 +27,10 @@ type adminMeResponse struct {
 
 func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	if h.adminAuth == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "admin auth is not configured", protocol.ErrorCodeFeedUnavailable)
+		h.writeError(w, r, http.StatusServiceUnavailable, "admin auth is not configured", protocol.ErrorCodeInternalServerError)
+		return
+	}
+	if !h.requireTrustedAdminOrigin(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
@@ -58,7 +62,10 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) AdminLogout(w http.ResponseWriter, r *http.Request) {
 	if h.adminAuth == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "admin auth is not configured", protocol.ErrorCodeFeedUnavailable)
+		h.writeError(w, r, http.StatusServiceUnavailable, "admin auth is not configured", protocol.ErrorCodeInternalServerError)
+		return
+	}
+	if !h.requireTrustedAdminOrigin(w, r) {
 		return
 	}
 	if err := h.adminAuth.Logout(r.Context(), r); err != nil {
@@ -70,7 +77,7 @@ func (h *Handler) AdminLogout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) AdminMe(w http.ResponseWriter, r *http.Request) {
 	if h.adminAuth == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "admin auth is not configured", protocol.ErrorCodeFeedUnavailable)
+		h.writeError(w, r, http.StatusServiceUnavailable, "admin auth is not configured", protocol.ErrorCodeInternalServerError)
 		return
 	}
 	session, err := h.adminAuth.AuthenticateRequest(r.Context(), r)
@@ -83,4 +90,12 @@ func (h *Handler) AdminMe(w http.ResponseWriter, r *http.Request) {
 		Role:      session.Role,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 	}})
+}
+
+func (h *Handler) requireTrustedAdminOrigin(w http.ResponseWriter, r *http.Request) bool {
+	if custommiddleware.TrustedOrigin(r.Header.Get("Origin"), h.config.CORSOrigins) {
+		return true
+	}
+	h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
+	return false
 }

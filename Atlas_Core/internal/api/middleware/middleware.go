@@ -207,6 +207,10 @@ func trustedOriginSet(origins []string) map[string]struct{} {
 	return out
 }
 
+func TrustedOrigin(origin string, trustedOrigins []string) bool {
+	return trustedOrigin(origin, trustedOriginSet(trustedOrigins))
+}
+
 func trustedOrigin(origin string, trusted map[string]struct{}) bool {
 	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
 	if origin == "" {
