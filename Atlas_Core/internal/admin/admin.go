@@ -39,6 +39,15 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrTooManyAttempts    = errors.New("too many login attempts")
 	ErrInvalidSession     = errors.New("invalid session")
+
+	dummyPasswordHash = PasswordHash{
+		Algorithm:   "argon2id",
+		MemoryKiB:   19 * 1024,
+		Time:        2,
+		Parallelism: 1,
+		Salt:        "AAAAAAAAAAAAAAAAAAAAAA",
+		Hash:        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+	}
 )
 
 type PasswordHash struct {
@@ -140,7 +149,12 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 
 	accountID := "account:" + username
 	account, err := s.GetAccount(ctx, accountID)
-	if err != nil || account.Disabled || !VerifyPassword(password, account.Password) {
+	if err != nil || account.Disabled {
+		_ = VerifyPassword(password, dummyPasswordHash)
+		_ = s.recordLoginFailure(ctx, username, ip, now)
+		return "", SessionRecord{}, ErrInvalidCredentials
+	}
+	if !VerifyPassword(password, account.Password) {
 		_ = s.recordLoginFailure(ctx, username, ip, now)
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}

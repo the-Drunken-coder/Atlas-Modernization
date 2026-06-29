@@ -26,7 +26,7 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 
 	switch normalized {
-	case "/health", "/readiness", "/admin/auth/login", "/admin/auth/logout":
+	case "/health", "/readiness", "/admin/auth/login":
 		return true
 	default:
 		return false
@@ -71,6 +71,11 @@ func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 func isUnloggedHealthPath(path string) bool {
 	normalized := strings.TrimRight(path, "/")
 	return normalized == "/health" || normalized == "/readiness"
+}
+
+func isLogoutPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	return normalized == "/admin/auth/logout"
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
@@ -119,6 +124,14 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodOptions || IsPublicUnauthenticatedPath(r.URL.Path) || r.URL.Path == "/feed" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if isLogoutPath(r.URL.Path) {
+				if unsafeMethod(r.Method) && !trustedOrigin(r.Header.Get("Origin"), trusted) {
+					writeUnauthorized(w)
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}

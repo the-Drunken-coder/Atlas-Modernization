@@ -39,7 +39,7 @@ func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 		"/admin/auth/login":          true,
 		"/admin/auth/login/":         true,
 		"/admin/auth/me":             false,
-		"/admin/auth/logout":         true,
+		"/admin/auth/logout":         false,
 		"/admin/auth/reset-password": false,
 	}
 
@@ -322,6 +322,46 @@ func TestCombinedAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
 				t.Fatalf("expected 200, got %d", rec.Code)
 			}
 		})
+	}
+}
+
+func TestCombinedAuthAllowsLogoutFromTrustedOriginWithoutSession(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("", false, nil, []string{"https://ui.test"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/logout", nil)
+	req.Header.Set("Origin", "https://ui.test")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("expected trusted-origin logout to reach handler")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestCombinedAuthRejectsLogoutFromUntrustedOrigin(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("", false, nil, []string{"https://ui.test"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/logout", nil)
+	req.Header.Set("Origin", "https://evil.test")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("expected untrusted-origin logout to be blocked")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 }
 
