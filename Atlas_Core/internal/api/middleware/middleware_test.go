@@ -36,6 +36,11 @@ func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 		"/":            false,
 		"/entities/":   false,
 		"/health/live": false,
+		"/admin/auth/login":          true,
+		"/admin/auth/login/":         true,
+		"/admin/auth/me":             false,
+		"/admin/auth/logout":         false,
+		"/admin/auth/reset-password": false,
 	}
 
 	for path, want := range tests {

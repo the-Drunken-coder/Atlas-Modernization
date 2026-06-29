@@ -26,10 +26,10 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 
 	switch normalized {
-	case "/health", "/readiness":
+	case "/health", "/readiness", "/admin/auth/login":
 		return true
 	default:
-		return strings.HasPrefix(normalized, "/admin/auth/")
+		return false
 	}
 }
 

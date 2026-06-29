@@ -47,7 +47,7 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
     }
     return env.ASSETS.fetch(request);
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, request);
   }
 }
 
@@ -66,8 +66,15 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
-function errorResponse(error: unknown): Response {
+function errorResponse(error: unknown, request: Request): Response {
   if (error instanceof WorkerHTTPError) {
+    if (error.status >= 500) {
+      console.error("Atlas command interface Worker error", {
+        code: error.code,
+        message: error.message,
+        path: new URL(request.url).pathname
+      });
+    }
     const body: APIErrorResponse = {
       success: false,
       error_code: error.code,
@@ -76,6 +83,10 @@ function errorResponse(error: unknown): Response {
     };
     return jsonResponse(body, { status: error.status });
   }
+  console.error("Atlas command interface Worker unhandled error", {
+    message: error instanceof Error ? error.message : String(error),
+    path: new URL(request.url).pathname
+  });
   return jsonResponse(
     {
       success: false,

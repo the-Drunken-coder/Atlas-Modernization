@@ -33,6 +33,22 @@ describe("thin Worker", () => {
     expect(await response.text()).toBe("asset");
     expect(assets).toHaveBeenCalledOnce();
   });
+
+  it("logs 5xx worker errors", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await handleCommandRequest(new Request("https://command.test/api/config"), env({ ATLAS_CORE_BASE_URL: "" }));
+
+      expect(response.status).toBe(500);
+      expect(log).toHaveBeenCalledWith(
+        "Atlas command interface Worker error",
+        expect.objectContaining({ code: "CONFIGURATION_ERROR", path: "/api/config" })
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 function env(overrides: Partial<Env> = {}): Env {
