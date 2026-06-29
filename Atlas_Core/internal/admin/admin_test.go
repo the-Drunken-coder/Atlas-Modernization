@@ -104,17 +104,25 @@ func TestDevelopmentAdminSeedRotatesExplicitOverride(t *testing.T) {
 		t.Fatalf("seed dev admin: %v", err)
 	}
 
-	t.Setenv("ATLAS_ADMIN_PASSWORD", "changed-password")
-	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
-		t.Fatalf("seed dev admin again: %v", err)
-	}
-
 	account, err := service.GetAccount(ctx, "account:admin")
 	if err != nil {
 		t.Fatalf("get seeded account: %v", err)
 	}
 	if !VerifyPassword("password", account.Password) {
 		t.Fatal("expected initial admin password to be the development default")
+	}
+
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "changed-password")
+	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
+		t.Fatalf("seed dev admin again: %v", err)
+	}
+
+	account, err = service.GetAccount(ctx, "account:admin")
+	if err != nil {
+		t.Fatalf("get seeded account: %v", err)
+	}
+	if VerifyPassword("password", account.Password) {
+		t.Fatal("expected explicit admin password override to replace the development default")
 	}
 	if !VerifyPassword("changed-password", account.Password) {
 		t.Fatal("expected explicit admin password override to rotate seeded admin password")
