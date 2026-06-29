@@ -106,6 +106,9 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
 	adminAuth := admin.NewService(db.Pool, cfg)
+	if admin.UsesDefaultDevelopmentPassword() {
+		logger.Warn().Msg("Development admin seed is using the default admin/password credential; set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE before exposing Core")
+	}
 	if err := adminAuth.SeedDevelopmentAdmin(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to seed development admin account")
 	}

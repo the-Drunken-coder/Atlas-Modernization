@@ -314,12 +314,13 @@ func (s *Service) upsertLoginFailure(ctx context.Context, key string, now time.T
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	record, err := getLoginFailureForUpdate(ctx, tx, key)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	if errors.Is(err, pgx.ErrNoRows) || record.ResetAt.Before(now) {
 		record = LoginFailureRecord{Count: 1, ResetAt: now.Add(loginWindow)}
-	} else if err == nil {
-		record.Count++
 	} else {
-		return err
+		record.Count++
 	}
 
 	payload, err := json.Marshal(record)
@@ -435,4 +436,8 @@ func developmentPassword() (string, error) {
 		return password, nil
 	}
 	return defaultPass, nil
+}
+
+func UsesDefaultDevelopmentPassword() bool {
+	return strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD_FILE")) == "" && os.Getenv("ATLAS_ADMIN_PASSWORD") == ""
 }

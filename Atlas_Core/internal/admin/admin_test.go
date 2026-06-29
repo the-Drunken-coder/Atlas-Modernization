@@ -126,6 +126,25 @@ func TestClientIPIgnoresSpoofableForwardedHeaders(t *testing.T) {
 	}
 }
 
+func TestUsesDefaultDevelopmentPassword(t *testing.T) {
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+	if !UsesDefaultDevelopmentPassword() {
+		t.Fatal("expected default development password to be active without overrides")
+	}
+
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "changed-password")
+	if UsesDefaultDevelopmentPassword() {
+		t.Fatal("expected explicit password to disable default development password")
+	}
+
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "/tmp/admin-password")
+	if UsesDefaultDevelopmentPassword() {
+		t.Fatal("expected password file to disable default development password")
+	}
+}
+
 func openAdminTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicit := adminTestDatabaseURL()
