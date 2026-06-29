@@ -26,6 +26,10 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	serverConfig := feedServerConfig(h.config)
 	if h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
+			if !websocketOriginAllowed(r.Header.Get("Origin"), serverConfig.OriginPatterns) {
+				h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
+				return
+			}
 			serverConfig.EnableAPIAuth = false
 			serverConfig.APIKey = ""
 		}
@@ -69,4 +73,22 @@ func websocketOriginPatterns(origins []string) []string {
 		patterns = append(patterns, origin)
 	}
 	return patterns
+}
+
+func websocketOriginAllowed(origin string, patterns []string) bool {
+	origin = strings.TrimSpace(origin)
+	if origin == "" || len(patterns) == 0 {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	host := origin
+	if err == nil && parsed.Host != "" {
+		host = parsed.Host
+	}
+	for _, pattern := range patterns {
+		if host == pattern {
+			return true
+		}
+	}
+	return false
 }

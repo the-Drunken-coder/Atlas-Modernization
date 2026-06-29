@@ -24,7 +24,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         }
       }
     };
-    const expireSession = () => setState({ status: "unauthenticated" });
+    const expireSession = () => setState({ status: "unauthenticated", error: "Your session has expired. Please sign in again." });
 
     void checkSession();
     window.addEventListener("atlas-auth-expired", expireSession);

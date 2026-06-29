@@ -8,6 +8,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	"BODY_TOO_LARGE" |
 	"INVALID_FORM" |
 	"UNAUTHORIZED" |
+	"TOO_MANY_ATTEMPTS" |
 	"FEED_UNAVAILABLE" |
 	"STORAGE_UNAVAILABLE" |
 	"STORAGE_ERROR" |

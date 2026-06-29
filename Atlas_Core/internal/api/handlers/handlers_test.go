@@ -277,6 +277,23 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 	}
 }
 
+func TestWebsocketOriginAllowedRequiresConfiguredOrigin(t *testing.T) {
+	patterns := []string{"localhost:5173", "atlas.example:8443"}
+
+	if !websocketOriginAllowed("https://atlas.example:8443", patterns) {
+		t.Fatal("expected configured websocket origin to be allowed")
+	}
+	if websocketOriginAllowed("https://evil.example", patterns) {
+		t.Fatal("expected unconfigured websocket origin to be rejected")
+	}
+	if websocketOriginAllowed("", patterns) {
+		t.Fatal("expected missing websocket origin to be rejected")
+	}
+	if websocketOriginAllowed("https://atlas.example:8443", nil) {
+		t.Fatal("expected empty origin patterns to reject session-cookie websocket auth")
+	}
+}
+
 func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

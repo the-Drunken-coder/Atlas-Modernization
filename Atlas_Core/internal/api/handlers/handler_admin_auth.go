@@ -41,7 +41,7 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, admin.ErrTooManyAttempts) {
-			h.writeError(w, r, http.StatusTooManyRequests, "too many login attempts, try again later", protocol.ErrorCodeUnauthorized)
+			h.writeError(w, r, http.StatusTooManyRequests, "too many login attempts, try again later", protocol.ErrorCodeTooManyAttempts)
 			return
 		}
 		h.logger.Error().Err(err).Msg("admin login failed")

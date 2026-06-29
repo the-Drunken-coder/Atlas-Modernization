@@ -66,6 +66,7 @@ describe("AuthGate", () => {
     fireEvent(window, new Event("atlas-auth-expired"));
 
     await waitFor(() => expect(screen.getByLabelText("Username")).toBeInTheDocument());
+    expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 });

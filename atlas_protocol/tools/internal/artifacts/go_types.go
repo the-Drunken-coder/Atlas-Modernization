@@ -54,6 +54,7 @@ const (
 	ErrorCodeBodyTooLarge           ErrorCode = "BODY_TOO_LARGE"
 	ErrorCodeInvalidForm            ErrorCode = "INVALID_FORM"
 	ErrorCodeUnauthorized           ErrorCode = "UNAUTHORIZED"
+	ErrorCodeTooManyAttempts        ErrorCode = "TOO_MANY_ATTEMPTS"
 	ErrorCodeFeedUnavailable        ErrorCode = "FEED_UNAVAILABLE"
 	ErrorCodeStorageUnavailable     ErrorCode = "STORAGE_UNAVAILABLE"
 	ErrorCodeStorageError           ErrorCode = "STORAGE_ERROR"
