@@ -24,6 +24,8 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
+const feedIntegrationAPIKey = "feed-integration-key"
+
 func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	pool := openFeedIntegrationPool(t)
 	ctx := context.Background()
@@ -38,7 +40,7 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 		&atlasdb.DB{Pool: pool},
 		nil,
 		zerolog.Nop(),
-		&config.Config{},
+		&config.Config{EnableAPIAuth: true, APIAuthKey: feedIntegrationAPIKey},
 		hub,
 		nil,
 	)
@@ -227,7 +229,9 @@ func postEntityIntegration(t *testing.T, serverURL, entityID string, wantStatus 
 
 func dialFeedIntegration(t *testing.T, serverURL string) *websocket.Conn {
 	t.Helper()
-	conn, response, err := websocket.Dial(context.Background(), "ws"+serverURL[len("http"):]+"/feed", nil)
+	conn, response, err := websocket.Dial(context.Background(), "ws"+serverURL[len("http"):]+"/feed", &websocket.DialOptions{
+		HTTPHeader: http.Header{"X-API-Key": []string{feedIntegrationAPIKey}},
+	})
 	if response != nil && response.Body != nil {
 		defer func() {
 			_, _ = io.Copy(io.Discard, response.Body)

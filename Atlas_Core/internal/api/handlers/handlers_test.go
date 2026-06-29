@@ -290,6 +290,32 @@ func TestFeedAuthEnabledWithEmptyKeyReturnsServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestFeedRejectsUnauthenticatedWhenAPIAuthDisabled(t *testing.T) {
+	hub := feed.NewHub(1, feed.Options{})
+	defer hub.Close()
+	handler := &Handler{
+		feedHub: hub,
+		config: &config.Config{
+			EnableAPIAuth: false,
+		},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	handler.Feed(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	var body ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ErrorCode != protocol.ErrorCodeUnauthorized {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
 func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 	cfg := &config.Config{
 		EnableAPIAuth: true,
