@@ -28,13 +28,11 @@ proxies public HTTPS traffic to the local ATLAS Core API.
    python3 Atlas_Core/scripts/atlas.py --production --tunnel
    ```
 
-   or via Docker Compose directly:
+   or via Docker Compose directly from `Atlas_Core/docker`:
 
    ```bash
-   docker compose \
-     -f Atlas_Core/docker/docker-compose.yml \
-     -f Atlas_Core/docker/docker-compose.tunnel.yml \
-     up -d
+   cd Atlas_Core/docker
+   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
    ```
 
 The `cloudflared` service runs:
@@ -78,4 +76,4 @@ dashboard for the tunnel — not via a local credentials file.
 - Confirm the API container is healthy before starting the tunnel profile.
 - For `atlas.py --tunnel`, verify the token, API key, and admin password override
   are exported in the shell or present in `Atlas_Core/docker/.env`.
-- Check tunnel logs: `docker compose -f Atlas_Core/docker/docker-compose.yml -f Atlas_Core/docker/docker-compose.tunnel.yml logs cloudflared`
+- Check tunnel logs: `cd Atlas_Core/docker && docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs cloudflared`

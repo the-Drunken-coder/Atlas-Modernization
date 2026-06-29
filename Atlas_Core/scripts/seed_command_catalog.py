@@ -22,6 +22,7 @@ COMMAND_CATALOG_OBJECT_ID = "command_catalog"
 COMMAND_CATALOG_FILE = (
     Path(__file__).resolve().parents[1] / "command_catalog" / "command_catalog.json"
 )
+DOCKER_ENV_DIR = Path(__file__).resolve().parents[1] / "docker"
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 API_REQUEST_TIMEOUT = 10.0
 CATALOG_UPLOAD_FILENAME = "command_catalog"
@@ -249,11 +250,19 @@ def _admin_seed_credentials() -> tuple[str, str]:
     username = os.getenv("ATLAS_ADMIN_USERNAME", "").strip() or DEFAULT_ADMIN_USERNAME
     password_file = os.getenv("ATLAS_ADMIN_PASSWORD_FILE", "").strip()
     if password_file:
-        password = Path(password_file).read_text(encoding="utf-8").rstrip("\r\n")
+        password = _admin_password_file_path(password_file).read_text(encoding="utf-8").rstrip("\r\n")
     else:
         raw_password = os.getenv("ATLAS_ADMIN_PASSWORD", "")
         password = raw_password if raw_password.strip() else DEFAULT_ADMIN_PASSWORD
     return username, password
+
+
+def _admin_password_file_path(password_file: str) -> Path:
+    path = Path(password_file)
+    if path.is_absolute():
+        return path
+    docker_env_path = DOCKER_ENV_DIR / path
+    return docker_env_path if docker_env_path.exists() else path
 
 
 def _ensure_admin_session(api_base_url: str) -> bool:

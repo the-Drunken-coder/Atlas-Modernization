@@ -86,7 +86,7 @@ The process refuses to start when:
 
 ### Public unauthenticated paths
 
-`/health`, `/readiness`, `OPTIONS`, and `/admin/auth/*` skip protected-route auth. `POST /admin/auth/login` is public so the browser can establish a session, but cookie-mutating admin auth POSTs still require a trusted `Origin`.
+`/health`, `/readiness`, and `OPTIONS` skip protected-route auth. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
 
 ## Configuration Checklist
 
