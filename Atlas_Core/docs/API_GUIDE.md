@@ -16,7 +16,7 @@ Atlas Core treats PostgreSQL and the configured MinIO bucket as disposable runti
 
 ### Authentication
 
-Protected Core routes require authentication even when API-key auth is disabled. Local browser development uses the seeded admin session cookie. Machine clients should set `ENABLE_API_AUTH=true` and send one of:
+Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session; machine clients should set `ENABLE_API_AUTH=true` and send one of:
 
 ```text
 X-API-Key: <API_AUTH_KEY>
@@ -166,8 +166,8 @@ Object detail responses:
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/` | `200` | Returns service metadata and top-level endpoint links. |
-| `GET` | `/health` | `200` | Liveness only. Skips API-key auth. |
-| `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips API-key auth. |
+| `GET` | `/health` | `200` | Liveness only. Skips auth. |
+| `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
