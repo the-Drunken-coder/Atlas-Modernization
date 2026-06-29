@@ -235,11 +235,10 @@ describe("command model", () => {
     expect(commandsForEntity(catalog, track(["hold_position"]))).toEqual([]);
   });
 
-  it("builds command task payloads with command type and id", () => {
+  it("builds command task payloads without client-supplied task IDs", () => {
     const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
 
-    expect(buildCommandTaskRequest({ taskId: "command-1", entityId: "asset-1", command, parameters: { latitude: 40.1, longitude: -74.2 } })).toEqual({
-      task_id: "command-1",
+    expect(buildCommandTaskRequest({ entityId: "asset-1", command, parameters: { latitude: 40.1, longitude: -74.2 } })).toEqual({
       status: "pending",
       entity_id: "asset-1",
       components: {

@@ -130,7 +130,7 @@ func TestCloseHandlesNilPool(t *testing.T) {
 }
 
 func TestCoreSchemaTables(t *testing.T) {
-	want := []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
+	want := []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "admin_records"}
 	if len(coreSchemaTables) != len(want) {
 		t.Fatalf("expected %d core tables, got %d", len(want), len(coreSchemaTables))
 	}
@@ -162,6 +162,15 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 	for _, stmt := range want {
 		if !strings.Contains(ddl, stmt) {
 			t.Fatalf("expected core schema DDL to include %q", stmt)
+		}
+	}
+}
+
+func TestCoreSchemaDropDDLIncludesAllCoreTables(t *testing.T) {
+	ddl := strings.Join(coreSchemaDropDDL(), "\n")
+	for _, table := range coreSchemaTables {
+		if !strings.Contains(ddl, "DROP TABLE IF EXISTS "+table+" CASCADE") {
+			t.Fatalf("expected drop DDL to include %q, got:\n%s", table, ddl)
 		}
 	}
 }

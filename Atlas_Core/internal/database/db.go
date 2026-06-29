@@ -22,7 +22,7 @@ var ErrNilPool = errors.New("database: nil pool")
 var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
 
 // coreSchemaTables are required when destructive recreate is disabled.
-var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox"}
+var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "admin_records"}
 
 const coreSchemaDeletionsContextSQL = `
 	SELECT
@@ -126,6 +126,27 @@ func coreSchemaCreateDDL() []string {
 			UNIQUE (bucket, path)
 		)`,
 		`CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)`,
+
+		`CREATE TABLE admin_records (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			json JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+		)`,
+		`CREATE INDEX idx_admin_records_type ON admin_records(type)`,
+	}
+}
+
+func coreSchemaDropDDL() []string {
+	return []string{
+		`DROP TABLE IF EXISTS storage_deletion_outbox CASCADE`,
+		`DROP TABLE IF EXISTS admin_records CASCADE`,
+		`DROP TABLE IF EXISTS tasks CASCADE`,
+		`DROP TABLE IF EXISTS entities CASCADE`,
+		`DROP TABLE IF EXISTS objects CASCADE`,
+		`DROP TABLE IF EXISTS deletions CASCADE`,
+		`DROP SEQUENCE IF EXISTS atlas_change_version_seq CASCADE`,
 	}
 }
 
@@ -354,18 +375,9 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Drop order: tasks (depends on entities) first, then everything else.
-	// CASCADE is a safety net — it severs any FK the explicit order misses
+	// CASCADE is a safety net — it severs any FK the explicit drop list misses
 	// (e.g., a future table referencing tasks or entities).
-	dropDDL := []string{
-		`DROP TABLE IF EXISTS storage_deletion_outbox CASCADE`,
-		`DROP TABLE IF EXISTS tasks CASCADE`,
-		`DROP TABLE IF EXISTS entities CASCADE`,
-		`DROP TABLE IF EXISTS objects CASCADE`,
-		`DROP TABLE IF EXISTS deletions CASCADE`,
-		`DROP SEQUENCE IF EXISTS atlas_change_version_seq CASCADE`,
-	}
-	for _, stmt := range dropDDL {
+	for _, stmt := range coreSchemaDropDDL() {
 		if _, err = tx.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("failed to drop tables: %w", err)
 		}

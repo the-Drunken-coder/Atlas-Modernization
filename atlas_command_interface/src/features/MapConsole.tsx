@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
-import { CommandSubmitError } from "../atlas/data-source.js";
 import { entityGeometry, entityKind, type EntityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
-import { useCommandCredential } from "../state/command-credential.js";
 import { initialSidebarState, listForKind, sidebarReducer, type ListKind, type SidebarState } from "../state/selection.js";
 import { useAtlas } from "../state/atlas-context.js";
 import { AppShell } from "../ui/layout/AppShell.js";
@@ -39,7 +37,6 @@ export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
-  const { credential, setCredential } = useCommandCredential();
 
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
@@ -100,23 +97,23 @@ export function MapConsole() {
       setSubmitting(true);
       setSubmitError(undefined);
       try {
-        await atlas.submitCommand({ entityId: selectedEntity.entity_id, commandId: availability.command.id, parameters }, credential);
+        await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
         setCommandForm(null);
       } catch (cause) {
-        const message = cause instanceof CommandSubmitError ? `${cause.errorCode}: ${cause.message}` : cause instanceof Error ? cause.message : String(cause);
+        const message = cause instanceof Error ? cause.message : String(cause);
         setSubmitError(message);
         setCommandForm((current) => current ?? errorFormState ?? null);
       } finally {
         setSubmitting(false);
       }
     },
-    [atlas, credential, selectedEntity]
+    [atlas, selectedEntity]
   );
 
   const pickSidebarCommand = useCallback(
     (availability: CommandAvailability) => {
       if (submitting || availability.disabled) return;
-      if (availability.requiresForm || !credential.trim()) {
+      if (availability.requiresForm) {
         setSubmitError(undefined);
         setCommandForm({ availability });
         return;
@@ -125,13 +122,13 @@ export function MapConsole() {
       setCommandForm(formState);
       void submit(availability, {}, formState);
     },
-    [credential, submit, submitting]
+    [submit, submitting]
   );
 
   const pickMapCommand = useCallback(
     (availability: CommandAvailability, point: { lat: number; lng: number }) => {
       if (submitting || availability.disabled) return;
-      if (availability.requiresForm || !credential.trim()) {
+      if (availability.requiresForm) {
         setSubmitError(undefined);
         setCommandForm({ availability, mapPoint: point });
         return;
@@ -140,7 +137,7 @@ export function MapConsole() {
       setCommandForm(formState);
       void submit(availability, { latitude: point.lat, longitude: point.lng }, formState);
     },
-    [credential, submit, submitting]
+    [submit, submitting]
   );
 
   const onMapContextMenu = useCallback(
@@ -288,8 +285,6 @@ export function MapConsole() {
           targeting={commandForm.availability.targeting}
           formParameters={commandForm.availability.formParameters}
           mapPoint={commandForm.mapPoint}
-          credential={credential}
-          onCredentialChange={setCredential}
           submitting={submitting}
           error={submitError}
           onCancel={() => setCommandForm(null)}

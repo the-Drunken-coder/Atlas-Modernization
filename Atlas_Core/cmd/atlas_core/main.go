@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/handlers"
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
@@ -30,7 +31,7 @@ func atlasCORSOptions(allowedOrigins []string) cors.Options {
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "X-API-Key", "X-Request-ID"},
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
-		AllowCredentials: false,
+		AllowCredentials: true,
 		MaxAge:           300,
 	}
 }
@@ -104,6 +105,16 @@ func main() {
 	if err := db.EnsureTables(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
+	adminAuth := admin.NewService(db.Pool, cfg)
+	if admin.UsesDefaultDevelopmentPassword() {
+		if cfg.EnableAPIAuth {
+			logger.Fatal().Msg("API auth is enabled but development admin seed would use admin/password — set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE")
+		}
+		logger.Warn().Msg("Development admin seed is using the default admin/password credential; set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE before exposing Core")
+	}
+	if err := adminAuth.SeedDevelopmentAdmin(ensureCtx); err != nil {
+		logger.Fatal().Err(err).Msg("Failed to seed development admin account")
+	}
 
 	versionCtx, versionCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	currentVersion, err := actions.CurrentChangeVersion(versionCtx, db.Pool)
@@ -153,7 +164,7 @@ func main() {
 	}
 
 	// Create handler
-	handler := handlers.NewHandlerWithFeed(db, storageClient, logger, cfg, feedHub)
+	handler := handlers.NewHandlerWithFeed(db, storageClient, logger, cfg, feedHub, adminAuth)
 
 	// Create router
 	r := chi.NewRouter()
@@ -168,13 +179,13 @@ func main() {
 	// Add CORS
 	r.Use(cors.Handler(atlasCORSOptions(cfg.CORSOrigins)))
 
-	// API key middleware must be registered before route handlers (chi requirement); health/readiness skip auth.
+	// Auth middleware must be registered before route handlers (chi requirement); public endpoints skip auth.
 	if cfg.EnableAPIAuth {
 		logger.Info().Msg("API key authentication enabled")
-		r.Use(custommiddleware.APIKeyAuth(apiKey))
 	} else {
 		logger.Info().Msg("API key authentication disabled (set ENABLE_API_AUTH=true or enable_api_auth=true in atlas_core.settings.json)")
 	}
+	r.Use(custommiddleware.CombinedAuth(apiKey, cfg.EnableAPIAuth, adminAuth, cfg.CORSOrigins))
 
 	// Public health endpoints (no API key — middleware skips these paths)
 	r.Get("/health", handler.LivenessCheck)
@@ -184,6 +195,9 @@ func main() {
 	r.Get("/", handler.Root)
 	r.Get("/protocol/revision", handler.ProtocolRevision)
 	r.Get("/feed", handler.Feed)
+	r.Post("/admin/auth/login", handler.AdminLogin)
+	r.Post("/admin/auth/logout", handler.AdminLogout)
+	r.Get("/admin/auth/me", handler.AdminMe)
 
 	// Entity routes
 	r.Get("/entities", handler.ListEntities)

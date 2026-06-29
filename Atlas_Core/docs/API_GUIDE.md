@@ -16,14 +16,14 @@ Atlas Core treats PostgreSQL and the configured MinIO bucket as disposable runti
 
 ### Authentication
 
-Local development usually runs with API auth disabled. When `ENABLE_API_AUTH=true`, every Core route except `GET /health`, `GET /readiness`, and the websocket upgrade path `GET /feed` requires one of:
+Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session; machine clients should set `ENABLE_API_AUTH=true` and send one of:
 
 ```text
 X-API-Key: <API_AUTH_KEY>
 Authorization: Bearer <API_AUTH_KEY>
 ```
 
-The `/feed` websocket authenticates with a first JSON message instead of HTTP headers when Core auth is enabled:
+The `/feed` websocket accepts the browser session cookie during upgrade. Machine clients authenticate with a first JSON message when API-key auth is enabled:
 
 ```json
 { "action": "auth", "api_key": "example-api-key" }
@@ -44,14 +44,14 @@ Most non-streaming endpoints return JSON. Handler-generated errors use this shap
 }
 ```
 
-API-key middleware errors are smaller and only include `success`, `message`, and `error_code`.
+Auth middleware errors are smaller and only include `success`, `message`, and `error_code`.
 
 Common statuses:
 
 | Status | Meaning |
 | --- | --- |
 | `400` | Invalid JSON, invalid query parameter, or validation failure. |
-| `401` | API key is missing or wrong. |
+| `401` | API key is missing/wrong, or the browser session is missing/invalid. |
 | `404` | Entity, alias, task, object, bucket, or route was not found. |
 | `409` | Duplicate resource or unique constraint conflict. |
 | `412` | `If-Match` expected an older resource version than the server has. |
@@ -166,8 +166,8 @@ Object detail responses:
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/` | `200` | Returns service metadata and top-level endpoint links. |
-| `GET` | `/health` | `200` | Liveness only. Skips API-key auth. |
-| `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips API-key auth. |
+| `GET` | `/health` | `200` | Liveness only. Skips auth. |
+| `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
@@ -326,13 +326,13 @@ Create body:
   "status": "pending",
   "entity_id": "asset-1",
   "components": {
-    "command": {
-      "type": "move_to_location"
-    },
-    "parameters": {
+    "target": {
       "latitude": 38.8977,
       "longitude": -77.0365,
       "altitude_m": 120.5
+    },
+    "custom_note": {
+      "text": "inspect target area"
     }
   },
   "extra": {
@@ -528,51 +528,92 @@ Response includes changed resources, tombstones, per-stream `has_more_*` boolean
 }
 ```
 
-## Atlas Command Interface Worker
+## Browser Admin Auth And Command Interface
 
-The `atlas_command_interface/` Worker is a small same-origin layer in front of Core. It has its own endpoints:
+Atlas Core owns browser authentication. Admin routes live under `/admin/*` and are separate from the Atlas resource plane (`entities`, `tasks`, `objects`, `queries`, sync, and feed). Admin records are stored in `admin_records`; they are not returned by full dataset or changed-since queries and do not produce resource feed events.
+
+Core seeds a development admin account on startup:
+
+- username: `admin`
+- password: `password`
+- role: `admin`
+
+This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/config` | `200` | Returns browser-safe config: `atlasBaseUrl` and `protocolRevision`. |
-| `POST` | `/api/commands` | `201` | Validates a command request and creates a Core task. |
-| any | `/atlas` or `/atlas/*` | upstream status | Proxies HTTP requests to Atlas Core after removing the `/atlas` prefix. |
-| websocket | `/atlas/feed` | `101` | Bridges browser websocket traffic to Core `/feed`. |
+| `POST` | `/admin/auth/login` | `200` | Creates a Core-owned browser session from an admin username/password. |
+| `POST` | `/admin/auth/logout` | `204` | Deletes the current browser session and clears the session cookie. |
+| `GET` | `/admin/auth/me` | `200` | Reports the current browser session user. |
 
-`POST /api/commands` requires `ATLAS_COMMAND_API_KEY`, supplied as `Authorization: Bearer <ATLAS_COMMAND_API_KEY>`. Body:
+The session token is random and stored only as `session:<sha256(token)>` in Core. The browser receives it in the `atlas_session` cookie with `HttpOnly; Secure`. Cross-site UI/Core deployments use the default `SameSite=None`; same-site deployments can set `ATLAS_ADMIN_COOKIE_SAMESITE=lax`.
+
+The command interface Worker is intentionally thin. It hosts static assets and `GET /api/config`, which returns only browser-safe configuration:
+
+```json
+{
+  "atlasBaseUrl": "https://core.example",
+  "protocolRevision": "sha256:...",
+  "mapStyleUrl": "https://maps.example/style.json"
+}
+```
+
+The Worker does not own `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, Core API-key injection, or command validation. The browser Atlas SDK calls Core directly with `credentials: "include"`.
+
+Command task validation happens in Core `POST /tasks`. Command submissions omit `task_id`; Core generates `command-<uuid>`, loads the command catalog, loads the target entity, checks `components.task_catalog.supported_tasks`, and validates/coerces command parameters. Non-command task creation keeps the existing client-supplied `task_id` contract.
 
 ```json
 {
   "entity_id": "asset-1",
-  "command_id": "move_to_location",
-  "parameters": {
-    "latitude": 38.8977,
-    "longitude": -77.0365,
-    "altitude_m": 120.5
+  "components": {
+    "command": {
+      "type": "move_to_location",
+      "id": "move_to_location"
+    },
+    "parameters": {
+      "latitude": 38.8977,
+      "longitude": -77.0365,
+      "altitude_m": 120.5
+    }
   }
 }
 ```
 
-The Worker reads the `command_catalog` object from Core, checks that the target is an asset whose `components.task_catalog.supported_tasks` explicitly lists the command, coerces parameters against the catalog schema, and creates a pending task in Core.
+Smoke browser auth and command task creation against Core:
+
+```bash
+CORE_URL=http://localhost:8000
+COOKIE_JAR=/tmp/atlas-core-admin.cookies
+
+curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
+  -H 'Origin: http://localhost:5173' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"password"}'
+
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
+  -H 'Origin: http://localhost:5173' \
+  -H 'Content-Type: application/json' \
+  -d '{"entity_id":"asset-1","components":{"command":{"type":"move_to_location","id":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
+```
 
 Response:
 
 ```json
 {
-  "task": {
-    "task_id": "command-...",
-    "status": "pending",
-    "entity_id": "asset-1",
-    "components": {
-      "command": {
-        "type": "move_to_location",
-        "id": "move_to_location"
-      },
-      "parameters": {
-        "latitude": 38.8977,
-        "longitude": -77.0365,
-        "altitude_m": 120.5
-      }
+  "task_id": "command-...",
+  "status": "pending",
+  "entity_id": "asset-1",
+  "components": {
+    "command": {
+      "type": "move_to_location",
+      "id": "move_to_location"
+    },
+    "parameters": {
+      "latitude": 38.8977,
+      "longitude": -77.0365,
+      "altitude_m": 120.5
     }
   }
 }
@@ -583,7 +624,17 @@ Response:
 Create an entity:
 
 ```bash
-curl -sS -X POST http://localhost:8000/entities \
+CORE_URL=http://localhost:8000
+COOKIE_JAR=/tmp/atlas-core-admin.cookies
+UI_ORIGIN=http://localhost:5173
+
+curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
+  -H "Origin: $UI_ORIGIN" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"password"}'
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"entity_id":"asset-1","entity_type":"asset","subtype":"drone","alias":"alpha","components":{}}'
 ```
@@ -591,15 +642,17 @@ curl -sS -X POST http://localhost:8000/entities \
 Create a task:
 
 ```bash
-curl -sS -X POST http://localhost:8000/tasks \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"command":{"type":"move_to_location"},"parameters":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
+  -d '{"task_id":"task-1","entity_id":"asset-1","components":{"target":{"latitude":38.8977,"longitude":-77.0365,"altitude_m":120.5}}}'
 ```
 
 Check in and fetch pending work:
 
 ```bash
-curl -sS -X POST 'http://localhost:8000/entities/asset-1/checkin?fields=minimal' \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/checkin?fields=minimal" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"status":"online","latitude":38.8977,"longitude":-77.0365}'
 ```
@@ -607,7 +660,8 @@ curl -sS -X POST 'http://localhost:8000/entities/asset-1/checkin?fields=minimal'
 Complete the task:
 
 ```bash
-curl -sS -X POST http://localhost:8000/tasks/task-1/complete \
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks/task-1/complete" \
+  -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
   -d '{"result":{"summary":"done"}}'
 ```
@@ -615,5 +669,5 @@ curl -sS -X POST http://localhost:8000/tasks/task-1/complete \
 Poll changes since version zero:
 
 ```bash
-curl -sS 'http://localhost:8000/queries/changed-since?since_version=0'
+curl -sS -b "$COOKIE_JAR" "$CORE_URL/queries/changed-since?since_version=0"
 ```

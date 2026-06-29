@@ -10,8 +10,6 @@ export type CommandFormProps = {
   targeting: CommandTargeting;
   formParameters: Array<[string, CommandParameterSchema]>;
   mapPoint?: { lat: number; lng: number };
-  credential: string;
-  onCredentialChange: (value: string) => void;
   submitting: boolean;
   error?: string;
   onCancel: () => void;
@@ -19,7 +17,7 @@ export type CommandFormProps = {
 };
 
 export function CommandForm(props: CommandFormProps) {
-  const { command, targeting, formParameters, mapPoint, credential, onCredentialChange, submitting, error, onCancel, onSubmit } = props;
+  const { command, targeting, formParameters, mapPoint, submitting, error, onCancel, onSubmit } = props;
   const [values, setValues] = useState<Record<string, string>>({});
 
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
@@ -27,7 +25,7 @@ export function CommandForm(props: CommandFormProps) {
   const hasValidMapPoint = targeting !== "map_point" || isFiniteMapPoint(mapPoint);
   const missingRequired = formParameters.some(([name, schema]) => schema.required && schema.type !== "boolean" && !(values[name]?.trim()));
   const invalidParameter = formParameters.some(([name, schema]) => parameterError(schema, values[name]) !== undefined);
-  const canSubmit = !submitting && credential.trim().length > 0 && hasValidMapPoint && !missingRequired && !invalidParameter;
+  const canSubmit = !submitting && hasValidMapPoint && !missingRequired && !invalidParameter;
 
   const submit = () => {
     const parameters: Record<string, JSONValue> = {};
@@ -71,18 +69,6 @@ export function CommandForm(props: CommandFormProps) {
             const value = values[name] ?? "";
             return <ParameterField key={name} name={name} schema={schema} value={value} error={parameterError(schema, value)} onChange={(next) => setValue(name, next)} />;
           })}
-
-          <label className="field">
-            <span className="field__label">Command API key {credential.trim() ? "" : "(required)"}</span>
-            <input
-              className="input input--mono"
-              type="password"
-              autoComplete="off"
-              value={credential}
-              placeholder="ATLAS_COMMAND_API_KEY"
-              onChange={(event) => onCredentialChange(event.target.value)}
-            />
-          </label>
 
           {error ? <div className="banner banner--error">{error}</div> : null}
         </div>

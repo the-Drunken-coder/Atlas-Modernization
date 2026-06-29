@@ -3,6 +3,8 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,11 +20,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	atlasdb "github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+const feedIntegrationAPIKey = "feed-integration-key"
 
 func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	pool := openFeedIntegrationPool(t)
@@ -38,8 +43,9 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 		&atlasdb.DB{Pool: pool},
 		nil,
 		zerolog.Nop(),
-		&config.Config{},
+		&config.Config{EnableAPIAuth: true, APIAuthKey: feedIntegrationAPIKey},
 		hub,
+		nil,
 	)
 
 	router := chi.NewRouter()
@@ -87,6 +93,72 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 
 	secondEvent := readFeedEventIntegration(t, conn)
 	assertEntityCreateFeedEventIntegration(t, secondEvent, secondID, second)
+}
+
+func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
+	pool := openFeedIntegrationPool(t)
+	ctx := context.Background()
+	adminAuth := admin.NewService(pool, &config.Config{AdminCookieSameSite: "none"})
+	now := time.Now().UTC()
+	username := fmt.Sprintf("feed-auth-order-account-%d", now.UnixNano())
+	accountID := "account:" + username
+	token := fmt.Sprintf("feed-auth-order-session-%d", now.UnixNano())
+	sessionID := feedIntegrationSessionID(token)
+	account := admin.AccountRecord{
+		Username: username,
+		Role:     "admin",
+		Disabled: false,
+	}
+	session := admin.SessionRecord{
+		AccountID: accountID,
+		Username:  username,
+		Role:      "admin",
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := storeFeedIntegrationAdminRecord(ctx, pool, accountID, "account", account); err != nil {
+		t.Fatalf("store feed integration account: %v", err)
+	}
+	if err := storeFeedIntegrationAdminRecord(ctx, pool, sessionID, "session", session); err != nil {
+		t.Fatalf("store feed integration session: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM admin_records WHERE id = ANY($1)`, []string{accountID, sessionID}); err != nil {
+			t.Errorf("cleanup feed integration admin records: %v", err)
+		}
+	})
+
+	hub := feed.NewHub(0, feed.Options{})
+	defer hub.Close()
+	handler := NewHandlerWithFeed(
+		&atlasdb.DB{Pool: pool},
+		nil,
+		zerolog.Nop(),
+		&config.Config{
+			EnableAPIAuth: true,
+			APIAuthKey:    feedIntegrationAPIKey,
+			CORSOrigins:   []string{"https://trusted-ui.test"},
+		},
+		hub,
+		adminAuth,
+	)
+
+	router := chi.NewRouter()
+	router.Get("/feed", handler.Feed)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	conn := dialFeedIntegrationWithHeaders(t, server.URL, http.Header{
+		"Cookie":    []string{admin.CookieName + "=" + token},
+		"Origin":    []string{"https://evil-ui.test"},
+		"X-API-Key": []string{feedIntegrationAPIKey},
+	})
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+	readFeedHandshakeIntegration(t, conn)
 }
 
 func assertEntityCreateFeedEventIntegration(t *testing.T, event protocol.FeedEvent, wantID string, created feedIntegrationEntity) {
@@ -176,9 +248,28 @@ func feedIntegrationCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (
 					AND table_name = 'deletions'
 					AND column_name = 'context'
 			)
+			AND to_regclass('public.admin_records') IS NOT NULL
 			AND to_regclass('public.atlas_change_version_seq') IS NOT NULL
 	`).Scan(&ok)
 	return ok, err
+}
+
+func storeFeedIntegrationAdminRecord(ctx context.Context, pool *pgxpool.Pool, id, recordType string, value any) error {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO admin_records (id, type, json)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, updated_at = clock_timestamp()
+	`, id, recordType, payload)
+	return err
+}
+
+func feedIntegrationSessionID(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "session:" + hex.EncodeToString(sum[:])
 }
 
 type feedIntegrationEntity struct {
@@ -226,7 +317,12 @@ func postEntityIntegration(t *testing.T, serverURL, entityID string, wantStatus 
 
 func dialFeedIntegration(t *testing.T, serverURL string) *websocket.Conn {
 	t.Helper()
-	conn, response, err := websocket.Dial(context.Background(), "ws"+serverURL[len("http"):]+"/feed", nil)
+	return dialFeedIntegrationWithHeaders(t, serverURL, http.Header{"X-API-Key": []string{feedIntegrationAPIKey}})
+}
+
+func dialFeedIntegrationWithHeaders(t *testing.T, serverURL string, headers http.Header) *websocket.Conn {
+	t.Helper()
+	conn, response, err := websocket.Dial(context.Background(), "ws"+serverURL[len("http"):]+"/feed", &websocket.DialOptions{HTTPHeader: headers})
 	if response != nil && response.Body != nil {
 		defer func() {
 			_, _ = io.Copy(io.Discard, response.Body)

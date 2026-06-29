@@ -29,4 +29,12 @@ if [ "$api_auth_key" = "REPLACE_WITH_SECURE_KEY" ]; then
     exit 1
 fi
 
+admin_password="$(trim "${ATLAS_ADMIN_PASSWORD:-}")"
+admin_password_file="$(trim "${ATLAS_ADMIN_PASSWORD_FILE:-}")"
+
+if [ -z "$admin_password" ] && [ -z "$admin_password_file" ]; then
+    printf '%s\n' "Refusing to start production Atlas Core image: set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE to replace the development admin/password seed." >&2
+    exit 1
+fi
+
 exec "$@"

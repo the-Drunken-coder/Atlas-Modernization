@@ -7,16 +7,18 @@ import (
 	"crypto/subtle"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-var unauthorizedErrorBody = []byte(`{"success":false,"message":"Invalid or missing API key","error_code":"` + string(protocol.ErrorCodeUnauthorized) + `"}`)
+var unauthorizedErrorBody = []byte(`{"success":false,"message":"Unauthorized","error_code":"` + string(protocol.ErrorCodeUnauthorized) + `"}`)
 
-// IsPublicUnauthenticatedPath returns true for routes that skip request logging and API-key auth.
+// IsPublicUnauthenticatedPath returns true for routes that skip protected-route auth.
 func IsPublicUnauthenticatedPath(path string) bool {
 	normalized := strings.TrimRight(path, "/")
 	if normalized == "" {
@@ -24,31 +26,18 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 
 	switch normalized {
-	case "/health", "/readiness":
+	case "/health", "/readiness", "/admin/auth/login":
 		return true
 	default:
 		return false
 	}
 }
 
-// SkipsAPIKeyAuthPath returns true for routes that do not use HTTP-header API-key auth.
-func SkipsAPIKeyAuthPath(path string) bool {
-	normalized := strings.TrimRight(path, "/")
-	if normalized == "" {
-		normalized = "/"
-	}
-	if normalized == "/feed" {
-		return true
-	}
-	return IsPublicUnauthenticatedPath(path)
-}
-
 // RequestLogger returns middleware that logs each HTTP request.
 func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip logging for health endpoint
-			if IsPublicUnauthenticatedPath(r.URL.Path) {
+			if isUnloggedHealthPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -77,6 +66,16 @@ func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 				)
 		})
 	}
+}
+
+func isUnloggedHealthPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	return normalized == "/health" || normalized == "/readiness"
+}
+
+func isLogoutPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	return normalized == "/admin/auth/logout"
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
@@ -119,51 +118,112 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
 }
 
-// APIKeyAuth returns middleware that validates API key authentication.
-func APIKeyAuth(apiKey string) func(next http.Handler) http.Handler {
+func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, trustedOrigins []string) func(next http.Handler) http.Handler {
 	apiKey = strings.TrimSpace(apiKey)
+	trusted := trustedOriginSet(trustedOrigins)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth for endpoints that authenticate outside HTTP headers.
-			if SkipsAPIKeyAuthPath(r.URL.Path) {
+			if r.Method == http.MethodOptions || IsPublicUnauthenticatedPath(r.URL.Path) || r.URL.Path == "/feed" {
 				next.ServeHTTP(w, r)
 				return
 			}
-
-			// Empty configured key must never authenticate (SHA-256 of "" matches a missing key).
-			if apiKey == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
-				_, _ = w.Write(unauthorizedErrorBody)
+			if isLogoutPath(r.URL.Path) {
+				if unsafeMethod(r.Method) && !trustedOrigin(r.Header.Get("Origin"), trusted) {
+					writeUnauthorized(w)
+					return
+				}
+				next.ServeHTTP(w, r)
 				return
 			}
-
-			// Check X-API-Key header; Authorization: Bearer only when scheme matches case-insensitively.
-			providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-			if providedKey == "" {
-				authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-				if idx := strings.IndexByte(authHeader, ' '); idx > 0 {
-					scheme := authHeader[:idx]
-					token := strings.TrimSpace(authHeader[idx+1:])
-					if strings.EqualFold(scheme, "Bearer") && token != "" {
-						providedKey = token
+			if enableAPIKey && ValidAPIKey(r, apiKey) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if adminAuth != nil {
+				if _, err := adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
+					if unsafeMethod(r.Method) && !trustedOrigin(r.Header.Get("Origin"), trusted) {
+						writeUnauthorized(w)
+						return
 					}
+					next.ServeHTTP(w, r)
+					return
 				}
 			}
-
-			// Compare SHA-256 digests so length differences do not short-circuit (avoids leaking key length via timing).
-			pH := sha256.Sum256([]byte(providedKey))
-			eH := sha256.Sum256([]byte(apiKey))
-			if subtle.ConstantTimeCompare(pH[:], eH[:]) != 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
-				_, _ = w.Write(unauthorizedErrorBody)
-				return
-			}
-
-			next.ServeHTTP(w, r)
+			writeUnauthorized(w)
 		})
 	}
+}
+
+func ValidAPIKey(r *http.Request, apiKey string) bool {
+	if apiKey == "" {
+		return false
+	}
+	providedKey := requestAPIKey(r)
+	pH := sha256.Sum256([]byte(providedKey))
+	eH := sha256.Sum256([]byte(apiKey))
+	return subtle.ConstantTimeCompare(pH[:], eH[:]) == 1
+}
+
+func requestAPIKey(r *http.Request) string {
+	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if providedKey != "" {
+		return providedKey
+	}
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if idx := strings.IndexByte(authHeader, ' '); idx > 0 {
+		scheme := authHeader[:idx]
+		token := strings.TrimSpace(authHeader[idx+1:])
+		if strings.EqualFold(scheme, "Bearer") && token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- static JSON error body
+	_, _ = w.Write(unauthorizedErrorBody)
+}
+
+func unsafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}
+
+func trustedOriginSet(origins []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" {
+			out[origin] = struct{}{}
+		}
+	}
+	return out
+}
+
+func TrustedOrigin(origin string, trustedOrigins []string) bool {
+	return trustedOrigin(origin, trustedOriginSet(trustedOrigins))
+}
+
+func trustedOrigin(origin string, trusted map[string]struct{}) bool {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return false
+	}
+	if _, ok := trusted[origin]; ok {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	normalized := parsed.Scheme + "://" + parsed.Host
+	_, ok := trusted[normalized]
+	return ok
 }

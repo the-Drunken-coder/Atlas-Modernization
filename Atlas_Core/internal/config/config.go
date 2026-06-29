@@ -46,6 +46,9 @@ type Config struct {
 	EnableAPIAuth bool
 	APIAuthKey    string
 
+	// Browser admin sessions
+	AdminCookieSameSite string
+
 	// Upload limits
 	MaxUploadSizeMB int64 // Maximum file upload size in megabytes
 	MaxViewSizeMB   int64 // Maximum file size for inline viewing in megabytes
@@ -54,13 +57,14 @@ type Config struct {
 
 // SettingsFile represents the atlas_core.settings.json file structure.
 type SettingsFile struct {
-	Debug           bool     `json:"debug"`
-	LogLevel        string   `json:"log_level"`
-	CORSOrigins     []string `json:"cors_origins"`
-	EnableAPIAuth   bool     `json:"enable_api_auth"`
-	APIAuthKey      string   `json:"api_auth_key"`
-	MaxUploadSizeMB int64    `json:"max_upload_size_mb"`
-	MaxViewSizeMB   int64    `json:"max_view_size_mb"`
+	Debug               bool     `json:"debug"`
+	LogLevel            string   `json:"log_level"`
+	CORSOrigins         []string `json:"cors_origins"`
+	EnableAPIAuth       bool     `json:"enable_api_auth"`
+	APIAuthKey          string   `json:"api_auth_key"`
+	AdminCookieSameSite string   `json:"admin_cookie_samesite"`
+	MaxUploadSizeMB     int64    `json:"max_upload_size_mb"`
+	MaxViewSizeMB       int64    `json:"max_view_size_mb"`
 }
 
 // DefaultCORSOrigins are the default allowed origins for CORS.
@@ -183,8 +187,9 @@ func Load() (*Config, error) {
 
 		CORSOrigins: append([]string(nil), DefaultCORSOrigins...),
 
-		EnableAPIAuth: enableAPIAuth,
-		APIAuthKey:    getEnv("API_AUTH_KEY", ""),
+		EnableAPIAuth:       enableAPIAuth,
+		APIAuthKey:          getEnv("API_AUTH_KEY", ""),
+		AdminCookieSameSite: getEnv("ATLAS_ADMIN_COOKIE_SAMESITE", "none"),
 
 		MaxUploadSizeMB: maxUploadMB,
 		MaxViewSizeMB:   maxViewMB,
@@ -208,6 +213,15 @@ func Load() (*Config, error) {
 
 	if err := validateCORSOrigins(cfg.CORSOrigins); err != nil {
 		return nil, err
+	}
+	cfg.AdminCookieSameSite = strings.ToLower(strings.TrimSpace(cfg.AdminCookieSameSite))
+	if cfg.AdminCookieSameSite == "" {
+		cfg.AdminCookieSameSite = "none"
+	}
+	switch cfg.AdminCookieSameSite {
+	case "lax", "none", "strict":
+	default:
+		return nil, fmt.Errorf("ATLAS_ADMIN_COOKIE_SAMESITE must be lax, none, or strict")
 	}
 
 	cfg.APIAuthKey = strings.TrimSpace(cfg.APIAuthKey)
@@ -390,7 +404,9 @@ func (c *Config) loadSettingsFile() error {
 	if _, ok := os.LookupEnv("API_AUTH_KEY"); !ok {
 		c.APIAuthKey = settings.APIAuthKey
 	}
-
+	if _, ok := os.LookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && settings.AdminCookieSameSite != "" {
+		c.AdminCookieSameSite = settings.AdminCookieSameSite
+	}
 	// Load upload limits from settings (env vars take precedence)
 	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && settings.MaxUploadSizeMB > 0 {
 		c.MaxUploadSizeMB = settings.MaxUploadSizeMB

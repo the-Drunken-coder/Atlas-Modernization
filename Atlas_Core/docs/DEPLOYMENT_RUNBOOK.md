@@ -36,6 +36,7 @@ export POSTGRES_PASSWORD='replace-with-strong-password'
 export MINIO_ROOT_USER='atlas'
 export MINIO_ROOT_PASSWORD='replace-with-strong-password'
 export API_AUTH_KEY='replace-with-secure-api-key'
+export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 ```
 
 `atlas.py` loads `Atlas_Core/docker/.env` automatically during managed starts.
@@ -66,6 +67,7 @@ tunnel values:
 export CLOUDFLARE_TUNNEL_TOKEN='replace-with-cloudflare-token'
 export ATLAS_TUNNEL_HOSTNAME='atlascommandapi.org'
 export API_AUTH_KEY='replace-with-secure-api-key'
+export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 python3 Atlas_Core/scripts/atlas.py --production --tunnel
 ```
 

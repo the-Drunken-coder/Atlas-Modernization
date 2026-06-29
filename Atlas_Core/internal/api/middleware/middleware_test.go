@@ -28,14 +28,19 @@ func decodeJSONBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]int
 
 func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 	tests := map[string]bool{
-		"/health":      true,
-		"/health/":     true,
-		"/health///":   true,
-		"/readiness":   true,
-		"/readiness/":  true,
-		"/":            false,
-		"/entities/":   false,
-		"/health/live": false,
+		"/health":                    true,
+		"/health/":                   true,
+		"/health///":                 true,
+		"/readiness":                 true,
+		"/readiness/":                true,
+		"/":                          false,
+		"/entities/":                 false,
+		"/health/live":               false,
+		"/admin/auth/login":          true,
+		"/admin/auth/login/":         true,
+		"/admin/auth/me":             false,
+		"/admin/auth/logout":         false,
+		"/admin/auth/reset-password": false,
 	}
 
 	for path, want := range tests {
@@ -98,6 +103,26 @@ func TestRequestLoggerLogsRootPath(t *testing.T) {
 	}
 }
 
+func TestRequestLoggerLogsAdminLogin(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+
+	handler := middleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/login", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if !strings.Contains(logBuf.String(), `"path":"/admin/auth/login"`) {
+		t.Fatalf("expected login request to be logged, got %q", logBuf.String())
+	}
+}
+
 func TestRequestLoggerLogsMethodPathStatusAndResponseSize(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := zerolog.New(&logBuf)
@@ -123,9 +148,9 @@ func TestRequestLoggerLogsMethodPathStatusAndResponseSize(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthValidKeyCallsNextHandler(t *testing.T) {
+func TestCombinedAuthValidKeyCallsNextHandler(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -143,9 +168,9 @@ func TestAPIKeyAuthValidKeyCallsNextHandler(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthRejectsInvalidKeyAndDoesNotCallNext(t *testing.T) {
+func TestCombinedAuthRejectsInvalidKeyAndDoesNotCallNext(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -174,9 +199,9 @@ func TestAPIKeyAuthRejectsInvalidKeyAndDoesNotCallNext(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthAcceptsBearerToken(t *testing.T) {
+func TestCombinedAuthAcceptsBearerToken(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -194,9 +219,9 @@ func TestAPIKeyAuthAcceptsBearerToken(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
+func TestCombinedAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("secret", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -214,13 +239,13 @@ func TestAPIKeyAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthSkipsHealthAndReadiness(t *testing.T) {
+func TestCombinedAuthSkipsHealthAndReadiness(t *testing.T) {
 	tests := []string{"/health", "/health/", "/readiness", "/readiness/"}
 
 	for _, path := range tests {
 		t.Run(path, func(t *testing.T) {
 			called := false
-			handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -239,9 +264,9 @@ func TestAPIKeyAuthSkipsHealthAndReadiness(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthProtectsRootPath(t *testing.T) {
+func TestCombinedAuthProtectsRootPath(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("test-secret-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -258,9 +283,9 @@ func TestAPIKeyAuthProtectsRootPath(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
+func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	called := false
-	handler := middleware.APIKeyAuth("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -277,11 +302,11 @@ func TestAPIKeyAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	}
 }
 
-func TestAPIKeyAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
+func TestCombinedAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
 	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/"} {
 		t.Run(path, func(t *testing.T) {
 			called := false
-			handler := middleware.APIKeyAuth("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := middleware.CombinedAuth("", true, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -297,6 +322,66 @@ func TestAPIKeyAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
 				t.Fatalf("expected 200, got %d", rec.Code)
 			}
 		})
+	}
+}
+
+func TestCombinedAuthAllowsLogoutFromTrustedOriginWithoutSession(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("", false, nil, []string{"https://ui.test"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/logout", nil)
+	req.Header.Set("Origin", "https://ui.test")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("expected trusted-origin logout to reach handler")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestCombinedAuthRejectsLogoutFromUntrustedOrigin(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("", false, nil, []string{"https://ui.test"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/logout", nil)
+	req.Header.Set("Origin", "https://evil.test")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("expected untrusted-origin logout to be blocked")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestTrustedOriginRequiresConfiguredOrigin(t *testing.T) {
+	origins := []string{"http://localhost:5173", "https://atlas.example:8443"}
+
+	if !middleware.TrustedOrigin("https://atlas.example:8443", origins) {
+		t.Fatal("expected configured origin to be allowed")
+	}
+	if middleware.TrustedOrigin("http://atlas.example:8443", origins) {
+		t.Fatal("expected origin with the wrong scheme to be rejected")
+	}
+	if middleware.TrustedOrigin("https://evil.example", origins) {
+		t.Fatal("expected unconfigured origin to be rejected")
+	}
+	if middleware.TrustedOrigin("", origins) {
+		t.Fatal("expected missing origin to be rejected")
+	}
+	if middleware.TrustedOrigin("https://atlas.example:8443", nil) {
+		t.Fatal("expected empty origin list to reject session-cookie auth")
 	}
 }
 

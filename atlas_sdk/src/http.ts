@@ -4,6 +4,7 @@ import type { FetchLike } from "./types.js";
 export type HttpTransportOptions = {
   baseUrl: string;
   apiKey?: string;
+  credentials?: RequestCredentials;
   fetchImpl: FetchLike;
   requestTimeoutMs: number;
 };
@@ -32,12 +33,14 @@ export class ConflictError extends AtlasAPIError {
 export class HttpTransport {
   readonly baseUrl: string;
   private readonly apiKey?: string;
+  private readonly credentials?: RequestCredentials;
   private readonly fetchImpl: FetchLike;
   private readonly requestTimeoutMs: number;
 
   constructor(options: HttpTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.apiKey = options.apiKey;
+    this.credentials = options.credentials;
     this.fetchImpl = options.fetchImpl;
     if (!Number.isFinite(options.requestTimeoutMs) || options.requestTimeoutMs <= 0) {
       throw new Error("Atlas request timeout must be a positive finite number of milliseconds");
@@ -62,6 +65,7 @@ export class HttpTransport {
     const response = await this.fetchWithTimeout(this.baseUrl + path, {
       method,
       headers,
+      credentials: this.credentials,
       body: body === undefined ? undefined : JSON.stringify(body)
     });
     if (!response.ok) {

@@ -1,5 +1,7 @@
 # Atlas Map Console UI Plan
 
+> Historical note: browser auth and Core access have moved since this plan was written. The Worker now hosts static assets and `GET /api/config` only; browser auth is owned by Atlas Core under `/admin/auth/*`; the browser SDK calls Core directly with `credentials: "include"`; command validation belongs to Core `POST /tasks`, not the Worker or UI.
+
 ## Purpose
 
 Build the first Atlas web interface as an operator-facing map console. The first real user is the project owner, but the product role is a hybrid operator and commander overview user. For this system, those jobs are close enough that the UI should serve both without splitting into separate modes.
@@ -22,7 +24,7 @@ This should feel like a dark tactical map console: closer to Anduril Lattice / A
 
 ## Package Placement
 
-The UI work belongs to this interface package. The current package already owns the Worker command interface, proxy routes, and command model helpers, so the web app should grow from here unless a later split becomes clearly necessary.
+The UI work belongs to this interface package. The current package already owns the thin Worker/static host and command model helpers, so the web app should grow from here unless a later split becomes clearly necessary.
 
 Recommended structure:
 
@@ -52,7 +54,7 @@ atlas_command_interface/
 
 The exact file names can shift during implementation, but keep these boundaries:
 
-- `worker/` remains the Cloudflare Worker/API gateway.
+- `worker/` remains the Cloudflare Worker/static host and browser config endpoint.
 - `src/atlas/` owns reusable Atlas command/catalog/data helpers.
 - `src/ui/` owns the local design system and shared UI primitives.
 - `src/features/` owns feature-specific screens and panels.
@@ -68,15 +70,13 @@ Use:
 - MapLibre GL JS for map rendering, with basemap tiles supplied only by a
   configured `MAP_STYLE_URL`.
 - The existing Atlas SDK for Atlas Core data access.
-- Existing Worker routes for same-origin access:
+- Core direct browser access through the Atlas SDK with `credentials: "include"`.
+- Worker route:
   - `/api/config`
-  - `/api/commands`
-  - `/atlas/*`
-  - `/atlas/feed`
 
-The Worker should remain the gateway between the browser and Atlas Core. The browser app should not learn private Core deployment details directly when the Worker can provide same-origin proxy/config behavior.
+The Worker should not proxy Atlas Core or own browser authentication. It only serves the app and non-secret browser config.
 
-Initial data load should come from Atlas Core query/list endpoints through the SDK or `/atlas/*` proxy. Live updates should use `/atlas/feed` where practical, with refresh/recovery through normal Core queries.
+Initial data load should come from Atlas Core query/list endpoints through the SDK. Live updates should use the Core feed through the SDK where practical, with refresh/recovery through normal Core queries.
 
 ## Layout
 
@@ -263,7 +263,7 @@ Behavior:
 
 ### Command Submission
 
-Command submission goes through `/api/commands`.
+Command submission creates a task directly through Core `POST /tasks`.
 
 The UI should not invent local success state. Once a command is submitted, Atlas Core creates a task. The UI should read task status from Atlas Core and display that status.
 
@@ -417,7 +417,7 @@ Command flow tests:
 - Map context menu shows position commands.
 - Disabled commands are greyed out and not selectable.
 - Disabled command hover explains why.
-- Submitting a command posts to `/api/commands`.
+- Submitting a command posts to Core `POST /tasks`.
 - Created task appears as `pending` from Core response/task fetch.
 
 Geofeature editing tests:

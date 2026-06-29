@@ -94,7 +94,7 @@ const circleArea: EntityResource = {
 
 function makeFakeDataSource(geofeature: EntityResource = area) {
   let emit: ((event: AtlasWatchEvent) => void) | undefined;
-  const submissions: Array<{ submission: CommandSubmission; credential: string }> = [];
+  const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
     async loadSnapshot() {
@@ -113,13 +113,13 @@ function makeFakeDataSource(geofeature: EntityResource = area) {
     health() {
       return { running: true, healthy: true, degraded: false };
     },
-    async submitCommand(submission, credential) {
-      submissions.push({ submission, credential });
+    async submitCommand(submission) {
+      submissions.push(submission);
       const task = {
         task_id: "task-1",
         status: "pending",
         entity_id: submission.entityId,
-        components: { command: { type: submission.commandId, id: submission.commandId }, parameters: submission.parameters ?? {} },
+        components: { command: { type: submission.command.id, id: submission.command.id }, parameters: submission.parameters ?? {} },
         metadata: { ...metadata, version: 2 }
       };
       emit?.({ event: "create", resource_type: "task", id: task.task_id, version: 2, resource: task });
@@ -158,14 +158,8 @@ describe("MapConsole command flow", () => {
     expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute("title", "This asset does not support this command");
 
     await user.click(hold);
-    const send = await screen.findByRole("button", { name: "Send command" });
-    expect(send).toBeDisabled();
-    await user.type(screen.getByPlaceholderText("ATLAS_COMMAND_API_KEY"), "test-key");
-    expect(send).toBeEnabled();
-    await user.click(send);
-
     await waitFor(() => expect(submissions).toHaveLength(1));
-    expect(submissions[0]).toMatchObject({ submission: { entityId: "asset-1", commandId: "hold_position" }, credential: "test-key" });
+    expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "hold_position" } });
 
     // The created task arrives over the feed and shows as pending in history.
     expect(await screen.findByText("Pending")).toBeInTheDocument();
@@ -218,14 +212,9 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByText("Rover"));
     fireEvent.contextMenu(screen.getByTestId("map"));
     await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
-    await user.type(screen.getByPlaceholderText("ATLAS_COMMAND_API_KEY"), "test-key");
-    await user.click(screen.getByRole("button", { name: "Send command" }));
 
     await waitFor(() => expect(submissions).toHaveLength(1));
-    expect(submissions[0]).toMatchObject({
-      submission: { entityId: "asset-1", commandId: "goto", parameters: { latitude: 47.61, longitude: -122.33 } },
-      credential: "test-key"
-    });
+    expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
   });
 
   it("clears the selected entity when the map background is clicked", async () => {

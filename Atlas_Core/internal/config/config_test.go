@@ -18,7 +18,7 @@ var loadTestEnvKeys = []string{
 	"ENABLE_API_AUTH", "MAX_UPLOAD_SIZE_MB", "MAX_VIEW_SIZE_MB",
 	"SERVER_PORT", "LOG_LEVEL", "DATABASE_URL",
 	"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_BUCKET", "MINIO_REGION",
-	"API_AUTH_KEY", "CORS_ORIGINS",
+	"API_AUTH_KEY", "CORS_ORIGINS", "ATLAS_ADMIN_COOKIE_SAMESITE",
 }
 
 func isolateLoadEnv(t *testing.T) {
@@ -213,6 +213,9 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.MaxViewSizeMB != 10 {
 		t.Errorf("Expected default MaxViewSizeMB 10, got %d", cfg.MaxViewSizeMB)
 	}
+	if cfg.AdminCookieSameSite != "none" {
+		t.Errorf("Expected default AdminCookieSameSite none, got %s", cfg.AdminCookieSameSite)
+	}
 }
 
 func TestLoadCopiesDefaultCORSOrigins(t *testing.T) {
@@ -232,6 +235,36 @@ func TestLoadCopiesDefaultCORSOrigins(t *testing.T) {
 
 	if config.DefaultCORSOrigins[0] != originalDefault {
 		t.Fatalf("mutating loaded config changed DefaultCORSOrigins: got %q", config.DefaultCORSOrigins[0])
+	}
+}
+
+func TestLoadAdminCookieSameSiteFromSettingsWithEnvPrecedence(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{AdminCookieSameSite: "lax"}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.AdminCookieSameSite != "lax" {
+		t.Fatalf("AdminCookieSameSite = %q, want lax", cfg.AdminCookieSameSite)
+	}
+
+	t.Setenv("ATLAS_ADMIN_COOKIE_SAMESITE", "strict")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.AdminCookieSameSite != "strict" {
+		t.Fatalf("AdminCookieSameSite with env = %q, want strict", cfg.AdminCookieSameSite)
 	}
 }
 

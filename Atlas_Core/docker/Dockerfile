@@ -22,6 +22,7 @@ RUN go mod download
 # Copy source code
 COPY atlas_protocol/ /atlas_protocol/
 COPY Atlas_Core/cmd/ ./cmd/
+COPY Atlas_Core/command_catalog/ ./command_catalog/
 COPY Atlas_Core/internal/ ./internal/
 
 # Build the binary
@@ -49,6 +50,7 @@ RUN go mod download
 # Copy source code (for hot reload in development)
 COPY atlas_protocol/ /atlas_protocol/
 COPY Atlas_Core/cmd/ ./cmd/
+COPY Atlas_Core/command_catalog/ ./command_catalog/
 COPY Atlas_Core/internal/ ./internal/
 # Use the committed example settings only in development containers; local
 # overrides should be mounted at runtime (e.g., via docker compose override /

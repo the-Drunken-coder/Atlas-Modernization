@@ -69,6 +69,7 @@ export { ProtocolMismatchError } from "./feed-connection.js";
 export type AtlasClientOptions = {
   baseUrl: string;
   apiKey?: string;
+  credentials?: RequestCredentials;
   fetch?: FetchLike;
   WebSocket?: WebSocketCtor;
   sync?: false | "all" | "selective";
@@ -157,6 +158,7 @@ export class AtlasClient {
     this.transport = new HttpTransport({
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
+      credentials: options.credentials,
       fetchImpl,
       requestTimeoutMs: options.requestTimeoutMs ?? 30_000
     });
