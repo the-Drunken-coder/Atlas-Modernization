@@ -57,6 +57,32 @@ describe("thin Worker", () => {
       log.mockRestore();
     }
   });
+
+  it("does not expose unexpected exception messages in 500 responses", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await handleCommandRequest(
+        new Request("https://command.test/static"),
+        env({
+          ASSETS: {
+            fetch: async () => {
+              throw new Error("internal secret detail");
+            }
+          }
+        })
+      );
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        error_code: "INTERNAL_ERROR",
+        message: "Unexpected Worker error"
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 function env(overrides: Partial<Env> = {}): Env {

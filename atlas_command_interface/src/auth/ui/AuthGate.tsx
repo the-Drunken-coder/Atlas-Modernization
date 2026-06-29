@@ -5,7 +5,8 @@ import { Button } from "../../ui/primitives/controls.js";
 type AuthState =
   | { status: "loading" }
   | { status: "authenticated"; username: string }
-  | { status: "unauthenticated"; error?: string };
+  | { status: "unauthenticated"; error?: string }
+  | { status: "error"; error: string };
 
 export function AuthGate({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
@@ -20,7 +21,11 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         setState({ status: "authenticated", username: data.user.username });
       } catch (error) {
         if (!cancelled) {
-          setState({ status: "unauthenticated", error: sessionCheckErrorMessage(error) });
+          if (isUnauthorizedError(error)) {
+            setState({ status: "unauthenticated" });
+          } else {
+            setState({ status: "error", error: errorMessage(error) });
+          }
         }
       }
     };
@@ -46,13 +51,28 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
     return <>{children}</>;
   }
 
+  if (state.status === "error") {
+    return (
+      <main className="login-shell">
+        <div className="login-panel" role="alert">
+          <div className="login-panel__header">
+            <span className="login-panel__eyebrow">Atlas</span>
+            <h1>Core unavailable</h1>
+          </div>
+          <div className="banner banner--error">{state.error}</div>
+        </div>
+      </main>
+    );
+  }
+
   return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
 }
 
-function sessionCheckErrorMessage(error: unknown): string | undefined {
-  if (typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401) {
-    return undefined;
-  }
+function isUnauthorizedError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401;
+}
+
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 

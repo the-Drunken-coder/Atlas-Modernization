@@ -22,7 +22,7 @@ describe("AuthGate", () => {
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 
-  it("shows session check failures on the login panel", async () => {
+  it("shows session check failures without presenting the login form", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -37,7 +37,7 @@ describe("AuthGate", () => {
     );
 
     expect(await screen.findByText("Core is unavailable")).toBeInTheDocument();
-    expect(screen.getByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 

@@ -53,7 +53,7 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
     ) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "Route is owned by Atlas Core or has been removed", { path: url.pathname });
     }
-    return env.ASSETS.fetch(request);
+    return await env.ASSETS.fetch(request);
   } catch (error) {
     return errorResponse(error, request);
   }
@@ -99,7 +99,7 @@ function errorResponse(error: unknown, request: Request): Response {
     {
       success: false,
       error_code: "INTERNAL_ERROR",
-      message: error instanceof Error ? error.message : "Unexpected Worker error"
+      message: "Unexpected Worker error"
     } satisfies APIErrorResponse,
     { status: 500 }
   );

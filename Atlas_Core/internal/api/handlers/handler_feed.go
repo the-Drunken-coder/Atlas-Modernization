@@ -25,7 +25,12 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	}
 	serverConfig := feedServerConfig(h.config)
 	authenticated := false
-	if h.adminAuth != nil {
+	if serverConfig.EnableAPIAuth && custommiddleware.ValidAPIKey(r, serverConfig.APIKey) {
+		authenticated = true
+		serverConfig.EnableAPIAuth = false
+		serverConfig.APIKey = ""
+	}
+	if !authenticated && h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
 			if !custommiddleware.TrustedOrigin(r.Header.Get("Origin"), h.config.CORSOrigins) {
 				h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
@@ -35,11 +40,6 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 			serverConfig.EnableAPIAuth = false
 			serverConfig.APIKey = ""
 		}
-	}
-	if serverConfig.EnableAPIAuth && custommiddleware.ValidAPIKey(r, serverConfig.APIKey) {
-		authenticated = true
-		serverConfig.EnableAPIAuth = false
-		serverConfig.APIKey = ""
 	}
 	if serverConfig.EnableAPIAuth && serverConfig.APIKey == "" {
 		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler has auth enabled without an API key")
