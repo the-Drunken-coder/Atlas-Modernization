@@ -69,6 +69,21 @@ describe("AuthGate", () => {
     expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
+
+  it("shows expiration reason when auth expires while login is already visible", async () => {
+    stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    fireEvent(window, new Event("atlas-auth-expired"));
+
+    await waitFor(() => expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument());
+  });
 });
 
 function stubFetch(responses: Array<{ status: number; body: unknown }>): { calls: Array<[RequestInfo | URL, RequestInit | undefined]> } {

@@ -55,6 +55,10 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>(initialError);
 
+  useEffect(() => {
+    setError(initialError);
+  }, [initialError]);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
