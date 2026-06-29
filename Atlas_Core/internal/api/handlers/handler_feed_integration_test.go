@@ -3,6 +3,8 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -94,19 +96,39 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 }
 
 func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
-	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
-	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
 	pool := openFeedIntegrationPool(t)
 	ctx := context.Background()
 	adminAuth := admin.NewService(pool, &config.Config{AdminCookieSameSite: "none"})
-	cleanupFeedIntegrationAdminRows(ctx, t, pool)
-	if err := adminAuth.SeedDevelopmentAdmin(ctx); err != nil {
-		t.Fatalf("seed development admin: %v", err)
+	now := time.Now().UTC()
+	username := fmt.Sprintf("feed-auth-order-account-%d", now.UnixNano())
+	accountID := "account:" + username
+	token := fmt.Sprintf("feed-auth-order-session-%d", now.UnixNano())
+	sessionID := feedIntegrationSessionID(token)
+	account := admin.AccountRecord{
+		Username: username,
+		Role:     "admin",
+		Disabled: false,
 	}
-	token, _, err := adminAuth.Login(ctx, "admin", "password", "127.0.0.1", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("login development admin: %v", err)
+	session := admin.SessionRecord{
+		AccountID: accountID,
+		Username:  username,
+		Role:      "admin",
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
 	}
+	if err := storeFeedIntegrationAdminRecord(ctx, pool, accountID, "account", account); err != nil {
+		t.Fatalf("store feed integration account: %v", err)
+	}
+	if err := storeFeedIntegrationAdminRecord(ctx, pool, sessionID, "session", session); err != nil {
+		t.Fatalf("store feed integration session: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM admin_records WHERE id = ANY($1)`, []string{accountID, sessionID}); err != nil {
+			t.Errorf("cleanup feed integration admin records: %v", err)
+		}
+	})
 
 	hub := feed.NewHub(0, feed.Options{})
 	defer hub.Close()
@@ -226,16 +248,28 @@ func feedIntegrationCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (
 					AND table_name = 'deletions'
 					AND column_name = 'context'
 			)
+			AND to_regclass('public.admin_records') IS NOT NULL
 			AND to_regclass('public.atlas_change_version_seq') IS NOT NULL
 	`).Scan(&ok)
 	return ok, err
 }
 
-func cleanupFeedIntegrationAdminRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, `DELETE FROM admin_records`); err != nil {
-		t.Fatalf("cleanup admin rows: %v", err)
+func storeFeedIntegrationAdminRecord(ctx context.Context, pool *pgxpool.Pool, id, recordType string, value any) error {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
 	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO admin_records (id, type, json)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, updated_at = clock_timestamp()
+	`, id, recordType, payload)
+	return err
+}
+
+func feedIntegrationSessionID(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "session:" + hex.EncodeToString(sum[:])
 }
 
 type feedIntegrationEntity struct {

@@ -116,7 +116,7 @@ func SkipIfSystemNotAvailable(t *testing.T) {
 	if err == nil && resp != nil {
 		defer drainClose(resp)
 		if resp.StatusCode == http.StatusUnauthorized && client.APIKey == "" {
-			t.Skip("Skipping integration test: Atlas Core requires API auth; set ATLAS_CORE_API_KEY or API_AUTH_KEY")
+			t.Skip("Skipping integration test: Atlas Core requires API auth; set ATLAS_API_AUTH_KEY or API_AUTH_KEY")
 		}
 	}
 }
@@ -133,7 +133,7 @@ func NewAPIClient() *APIClient {
 	return &APIClient{
 		BaseURL: GetAPIURL(),
 		Client:  &http.Client{Timeout: 30 * time.Second},
-		APIKey:  strings.TrimSpace(firstEnv("ATLAS_CORE_API_KEY", "API_AUTH_KEY")),
+		APIKey:  strings.TrimSpace(firstEnv("ATLAS_API_AUTH_KEY", "API_AUTH_KEY")),
 	}
 }
 

@@ -25,6 +25,7 @@ type ServerConfig struct {
 	EnableAPIAuth     bool
 	APIKey            string
 	OriginPatterns    []string
+	SkipOriginCheck   bool
 	AuthTimeout       time.Duration
 	WriteTimeout      time.Duration
 	KeepaliveInterval time.Duration
@@ -47,7 +48,8 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: s.Config.OriginPatterns,
+		OriginPatterns:     s.Config.OriginPatterns,
+		InsecureSkipVerify: s.Config.SkipOriginCheck,
 	})
 	if err != nil {
 		return

@@ -29,6 +29,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		authenticated = true
 		serverConfig.EnableAPIAuth = false
 		serverConfig.APIKey = ""
+		serverConfig.SkipOriginCheck = true
 	}
 	if !authenticated && h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
