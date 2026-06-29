@@ -20,7 +20,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         setState({ status: "authenticated", username: data.user.username });
       } catch (error) {
         if (!cancelled) {
-          setState({ status: "unauthenticated" });
+          setState({ status: "unauthenticated", error: sessionCheckErrorMessage(error) });
         }
       }
     };
@@ -47,6 +47,13 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   }
 
   return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
+}
+
+function sessionCheckErrorMessage(error: unknown): string | undefined {
+  if (typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401) {
+    return undefined;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: string; initialError?: string; onAuthenticated: (username: string) => void }) {

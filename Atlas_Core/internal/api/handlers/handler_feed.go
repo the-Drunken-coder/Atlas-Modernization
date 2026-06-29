@@ -26,7 +26,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	serverConfig := feedServerConfig(h.config)
 	if h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
-			if !websocketSessionOriginAllowed(r.Header.Get("Origin"), h.config.CORSOrigins) {
+			if !custommiddleware.TrustedOrigin(r.Header.Get("Origin"), h.config.CORSOrigins) {
 				h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
 				return
 			}
@@ -73,22 +73,4 @@ func websocketOriginPatterns(origins []string) []string {
 		patterns = append(patterns, origin)
 	}
 	return patterns
-}
-
-func websocketSessionOriginAllowed(origin string, trustedOrigins []string) bool {
-	origin = strings.TrimSpace(origin)
-	if origin == "" {
-		return false
-	}
-	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return false
-	}
-	normalized := parsed.Scheme + "://" + parsed.Host
-	for _, trusted := range trustedOrigins {
-		if normalized == strings.TrimRight(strings.TrimSpace(trusted), "/") {
-			return true
-		}
-	}
-	return false
 }

@@ -22,6 +22,25 @@ describe("AuthGate", () => {
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 
+  it("shows session check failures on the login panel", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("Core is unavailable");
+      })
+    );
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByText("Core is unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("Username")).toBeInTheDocument();
+    expect(screen.queryByText("map console")).not.toBeInTheDocument();
+  });
+
   it("renders children after successful login", async () => {
     const user = userEvent.setup();
     const fetchStub = stubFetch([

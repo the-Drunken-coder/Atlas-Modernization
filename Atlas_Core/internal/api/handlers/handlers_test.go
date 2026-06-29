@@ -317,26 +317,6 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 	}
 }
 
-func TestWebsocketSessionOriginAllowedRequiresConfiguredOrigin(t *testing.T) {
-	origins := []string{"http://localhost:5173", "https://atlas.example:8443"}
-
-	if !websocketSessionOriginAllowed("https://atlas.example:8443", origins) {
-		t.Fatal("expected configured websocket origin to be allowed")
-	}
-	if websocketSessionOriginAllowed("http://atlas.example:8443", origins) {
-		t.Fatal("expected websocket origin with the wrong scheme to be rejected")
-	}
-	if websocketSessionOriginAllowed("https://evil.example", origins) {
-		t.Fatal("expected unconfigured websocket origin to be rejected")
-	}
-	if websocketSessionOriginAllowed("", origins) {
-		t.Fatal("expected missing websocket origin to be rejected")
-	}
-	if websocketSessionOriginAllowed("https://atlas.example:8443", nil) {
-		t.Fatal("expected empty origin patterns to reject session-cookie websocket auth")
-	}
-}
-
 func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

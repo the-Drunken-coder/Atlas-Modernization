@@ -365,6 +365,26 @@ func TestCombinedAuthRejectsLogoutFromUntrustedOrigin(t *testing.T) {
 	}
 }
 
+func TestTrustedOriginRequiresConfiguredOrigin(t *testing.T) {
+	origins := []string{"http://localhost:5173", "https://atlas.example:8443"}
+
+	if !middleware.TrustedOrigin("https://atlas.example:8443", origins) {
+		t.Fatal("expected configured origin to be allowed")
+	}
+	if middleware.TrustedOrigin("http://atlas.example:8443", origins) {
+		t.Fatal("expected origin with the wrong scheme to be rejected")
+	}
+	if middleware.TrustedOrigin("https://evil.example", origins) {
+		t.Fatal("expected unconfigured origin to be rejected")
+	}
+	if middleware.TrustedOrigin("", origins) {
+		t.Fatal("expected missing origin to be rejected")
+	}
+	if middleware.TrustedOrigin("https://atlas.example:8443", nil) {
+		t.Fatal("expected empty origin list to reject session-cookie auth")
+	}
+}
+
 // TestChiCompressMatchesMainRouter asserts the same Chi Compress middleware and level as main.go:
 //
 //	r.Use(middleware.Compress(5))
