@@ -28,18 +28,18 @@ func decodeJSONBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]int
 
 func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 	tests := map[string]bool{
-		"/health":      true,
-		"/health/":     true,
-		"/health///":   true,
-		"/readiness":   true,
-		"/readiness/":  true,
-		"/":            false,
-		"/entities/":   false,
-		"/health/live": false,
+		"/health":                    true,
+		"/health/":                   true,
+		"/health///":                 true,
+		"/readiness":                 true,
+		"/readiness/":                true,
+		"/":                          false,
+		"/entities/":                 false,
+		"/health/live":               false,
 		"/admin/auth/login":          true,
 		"/admin/auth/login/":         true,
 		"/admin/auth/me":             false,
-		"/admin/auth/logout":         false,
+		"/admin/auth/logout":         true,
 		"/admin/auth/reset-password": false,
 	}
 
@@ -100,6 +100,26 @@ func TestRequestLoggerLogsRootPath(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), `"path":"/"`) {
 		t.Fatalf("expected root request to be logged, got %q", logBuf.String())
+	}
+}
+
+func TestRequestLoggerLogsAdminLogin(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+
+	handler := middleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/auth/login", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if !strings.Contains(logBuf.String(), `"path":"/admin/auth/login"`) {
+		t.Fatalf("expected login request to be logged, got %q", logBuf.String())
 	}
 }
 

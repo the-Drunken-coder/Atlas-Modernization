@@ -18,7 +18,7 @@ import (
 
 var unauthorizedErrorBody = []byte(`{"success":false,"message":"Unauthorized","error_code":"` + string(protocol.ErrorCodeUnauthorized) + `"}`)
 
-// IsPublicUnauthenticatedPath returns true for routes that skip request logging and protected-route auth.
+// IsPublicUnauthenticatedPath returns true for routes that skip protected-route auth.
 func IsPublicUnauthenticatedPath(path string) bool {
 	normalized := strings.TrimRight(path, "/")
 	if normalized == "" {
@@ -26,7 +26,7 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 
 	switch normalized {
-	case "/health", "/readiness", "/admin/auth/login":
+	case "/health", "/readiness", "/admin/auth/login", "/admin/auth/logout":
 		return true
 	default:
 		return false
@@ -37,8 +37,7 @@ func IsPublicUnauthenticatedPath(path string) bool {
 func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip logging for health endpoint
-			if IsPublicUnauthenticatedPath(r.URL.Path) {
+			if isUnloggedHealthPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -67,6 +66,11 @@ func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 				)
 		})
 	}
+}
+
+func isUnloggedHealthPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	return normalized == "/health" || normalized == "/readiness"
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.

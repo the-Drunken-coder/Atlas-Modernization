@@ -36,8 +36,12 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	token, session, err := h.adminAuth.Login(r.Context(), req.Username, req.Password, admin.ClientIP(r), time.Now().UTC())
 	if err != nil {
-		if errors.Is(err, admin.ErrInvalidCredentials) || errors.Is(err, admin.ErrTooManyAttempts) {
+		if errors.Is(err, admin.ErrInvalidCredentials) {
 			h.writeError(w, r, http.StatusUnauthorized, "invalid username or password", protocol.ErrorCodeUnauthorized)
+			return
+		}
+		if errors.Is(err, admin.ErrTooManyAttempts) {
+			h.writeError(w, r, http.StatusTooManyRequests, "too many login attempts, try again later", protocol.ErrorCodeUnauthorized)
 			return
 		}
 		h.logger.Error().Err(err).Msg("admin login failed")
