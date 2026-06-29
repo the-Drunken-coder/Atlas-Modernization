@@ -18,7 +18,7 @@ var loadTestEnvKeys = []string{
 	"ENABLE_API_AUTH", "MAX_UPLOAD_SIZE_MB", "MAX_VIEW_SIZE_MB",
 	"SERVER_PORT", "LOG_LEVEL", "DATABASE_URL",
 	"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_BUCKET", "MINIO_REGION",
-	"API_AUTH_KEY", "CORS_ORIGINS",
+	"API_AUTH_KEY", "CORS_ORIGINS", "ATLAS_ADMIN_COOKIE_SAMESITE",
 }
 
 func isolateLoadEnv(t *testing.T) {
@@ -212,6 +212,9 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.MaxViewSizeMB != 10 {
 		t.Errorf("Expected default MaxViewSizeMB 10, got %d", cfg.MaxViewSizeMB)
+	}
+	if cfg.AdminCookieSameSite != "none" {
+		t.Errorf("Expected default AdminCookieSameSite none, got %s", cfg.AdminCookieSameSite)
 	}
 }
 

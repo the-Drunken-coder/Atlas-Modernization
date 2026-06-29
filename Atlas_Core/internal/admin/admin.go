@@ -411,7 +411,7 @@ func sessionID(token string) string {
 
 func sameSiteMode(cfg *config.Config) http.SameSite {
 	if cfg == nil {
-		return http.SameSiteLaxMode
+		return http.SameSiteNoneMode
 	}
 	switch strings.ToLower(strings.TrimSpace(cfg.AdminCookieSameSite)) {
 	case "none":

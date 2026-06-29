@@ -51,7 +51,7 @@ Atlas Core supports two protected-route auth modes:
 - Machine clients can use API-key auth.
 - Browser clients can use Core-owned admin sessions.
 
-Browser sessions use an `atlas_session` cookie with `HttpOnly; Secure`. The default SameSite mode is `Lax`; set `ATLAS_ADMIN_COOKIE_SAMESITE=none` only for cross-site UI/Core deployments, and only with HTTPS.
+Browser sessions use an `atlas_session` cookie with `HttpOnly; Secure`. The default SameSite mode is `None` so the Cloudflare-hosted UI can call a separately hosted Core with `credentials: "include"`. Set `ATLAS_ADMIN_COOKIE_SAMESITE=lax` only when the UI and Core are same-site.
 
 The development startup path seeds a disposable admin account:
 
@@ -94,5 +94,5 @@ The process refuses to start when:
 - [ ] Set explicit `CORS_ORIGINS` for production.
 - [ ] Set `ENABLE_API_AUTH=true` and a real `API_AUTH_KEY` for production.
 - [ ] Override the development `admin` / `password` seed with `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE`.
-- [ ] Use `ATLAS_ADMIN_COOKIE_SAMESITE=none` only when the UI and Core are intentionally cross-site.
+- [ ] Keep `ATLAS_ADMIN_COOKIE_SAMESITE=none` for cross-site UI/Core deployments, or set `lax` only for same-site deployments.
 - [ ] Audit environment variables and settings file before release.

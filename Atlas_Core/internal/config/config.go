@@ -188,7 +188,7 @@ func Load() (*Config, error) {
 
 		EnableAPIAuth:       enableAPIAuth,
 		APIAuthKey:          getEnv("API_AUTH_KEY", ""),
-		AdminCookieSameSite: getEnv("ATLAS_ADMIN_COOKIE_SAMESITE", "lax"),
+		AdminCookieSameSite: getEnv("ATLAS_ADMIN_COOKIE_SAMESITE", "none"),
 
 		MaxUploadSizeMB: maxUploadMB,
 		MaxViewSizeMB:   maxViewMB,
@@ -215,7 +215,7 @@ func Load() (*Config, error) {
 	}
 	cfg.AdminCookieSameSite = strings.ToLower(strings.TrimSpace(cfg.AdminCookieSameSite))
 	if cfg.AdminCookieSameSite == "" {
-		cfg.AdminCookieSameSite = "lax"
+		cfg.AdminCookieSameSite = "none"
 	}
 	switch cfg.AdminCookieSameSite {
 	case "lax", "none", "strict":

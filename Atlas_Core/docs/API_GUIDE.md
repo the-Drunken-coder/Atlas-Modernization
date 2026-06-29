@@ -546,7 +546,7 @@ This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or
 | `POST` | `/admin/auth/logout` | `204` | Deletes the current browser session and clears the session cookie. |
 | `GET` | `/admin/auth/me` | `200` | Reports the current browser session user. |
 
-The session token is random and stored only as `session:<sha256(token)>` in Core. The browser receives it in the `atlas_session` cookie with `HttpOnly; Secure`. Same-site deployments use the default `SameSite=Lax`; cross-site UI/Core deployments must use `ATLAS_ADMIN_COOKIE_SAMESITE=none` and HTTPS.
+The session token is random and stored only as `session:<sha256(token)>` in Core. The browser receives it in the `atlas_session` cookie with `HttpOnly; Secure`. Cross-site UI/Core deployments use the default `SameSite=None`; same-site deployments can set `ATLAS_ADMIN_COOKIE_SAMESITE=lax`.
 
 The command interface Worker is intentionally thin. It hosts static assets and `GET /api/config`, which returns only browser-safe configuration:
 
