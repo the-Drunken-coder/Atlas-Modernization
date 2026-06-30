@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, isEntityCreateRequest, isTaskCreateRequest } from "../src";
 import { AtlasAdminClient } from "../src/admin.js";
 import { entity, FakeCore, object, task } from "./support/fake-core.js";
+
+afterEach(() => vi.unstubAllGlobals());
 
 async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
   if (typeof document !== "undefined" && document.body) {
@@ -25,6 +27,26 @@ async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
 }
 
 describe("AtlasClient HTTP", () => {
+  it("binds the default global fetch for browser callers", async () => {
+    const receivers: unknown[] = [];
+    const fetchImpl: typeof fetch = async function (this: unknown, url) {
+      receivers.push(this);
+      const body = String(url).includes("/admin/")
+        ? { user: { username: "admin", role: "admin" } }
+        : { entities: [], tasks: [], objects: [] };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    } as typeof fetch;
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const client = new AtlasClient({ baseUrl: "http://atlas.test" });
+    const admin = new AtlasAdminClient({ baseUrl: "http://atlas.test" });
+
+    await client.queries.full();
+    await admin.auth.me();
+
+    expect(receivers).toEqual([globalThis, globalThis]);
+  });
+
   it("fails loudly on protocol revision mismatch", async () => {
     const core = new FakeCore();
     core.revision = "sha256:mismatch";
