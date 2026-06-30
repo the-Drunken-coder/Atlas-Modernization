@@ -22,6 +22,7 @@ services:
       MINIO_SECURE: "false"
       SERVER_PORT: "8000"
       ENABLE_API_AUTH: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://atlasinterface.com}
       # atlas.py enforces API_AUTH_KEY before managed API production starts.
       # Keep this optional for Compose parsing; DB/MinIO secrets remain required below.
       API_AUTH_KEY: ${API_AUTH_KEY:-}
