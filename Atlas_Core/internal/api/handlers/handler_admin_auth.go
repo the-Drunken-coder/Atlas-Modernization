@@ -93,7 +93,11 @@ func (h *Handler) AdminMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) requireTrustedAdminOrigin(w http.ResponseWriter, r *http.Request) bool {
-	if custommiddleware.TrustedOrigin(r.Header.Get("Origin"), h.config.CORSOrigins) {
+	if h.config == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "admin config is not configured", protocol.ErrorCodeInternalServerError)
+		return false
+	}
+	if custommiddleware.TrustedOriginWithPatterns(r.Header.Get("Origin"), h.config.CORSOrigins, h.config.CORSOriginPatterns) {
 		return true
 	}
 	h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)

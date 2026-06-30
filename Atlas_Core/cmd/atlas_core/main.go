@@ -25,14 +25,16 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
-func atlasCORSOptions(allowedOrigins []string) cors.Options {
+func atlasCORSOptions(allowedOrigins []string, allowedOriginPatterns []string) cors.Options {
 	return cors.Options{
-		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "X-API-Key", "X-Request-ID"},
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
 		AllowCredentials: true,
-		MaxAge:           300,
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			return custommiddleware.TrustedOriginWithPatterns(origin, allowedOrigins, allowedOriginPatterns)
+		},
+		MaxAge: 300,
 	}
 }
 
@@ -177,7 +179,7 @@ func main() {
 	r.Use(middleware.Compress(5))
 
 	// Add CORS
-	r.Use(cors.Handler(atlasCORSOptions(cfg.CORSOrigins)))
+	r.Use(cors.Handler(atlasCORSOptions(cfg.CORSOrigins, cfg.CORSOriginPatterns)))
 
 	// Auth middleware must be registered before route handlers (chi requirement); public endpoints skip auth.
 	if cfg.EnableAPIAuth {
@@ -185,7 +187,7 @@ func main() {
 	} else {
 		logger.Info().Msg("API key authentication disabled (set ENABLE_API_AUTH=true or enable_api_auth=true in atlas_core.settings.json)")
 	}
-	r.Use(custommiddleware.CombinedAuth(apiKey, cfg.EnableAPIAuth, adminAuth, cfg.CORSOrigins))
+	r.Use(custommiddleware.CombinedAuth(apiKey, cfg.EnableAPIAuth, adminAuth, cfg.CORSOrigins, cfg.CORSOriginPatterns))
 
 	// Public health endpoints (no API key — middleware skips these paths)
 	r.Get("/health", handler.LivenessCheck)

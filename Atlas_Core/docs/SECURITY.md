@@ -31,9 +31,19 @@ Production origins are not compiled into defaults. Configure each hosted origin 
 You can override origins with:
 
 - `CORS_ORIGINS` (JSON array string or comma-separated string)
+- `CORS_ORIGIN_PATTERNS` (JSON array string or comma-separated string)
 - `cors_origins` in `atlas_core.settings.json` (applies when env vars are not set)
+- `cors_origin_patterns` in `atlas_core.settings.json` (applies when env vars are not set)
 
-When `CORS_ORIGINS` is **explicitly set to empty**, no origins are allowed (deny-all). This differs from omitting the variable, which uses the built-in default list above.
+When `CORS_ORIGINS` is **explicitly set to empty** and `CORS_ORIGIN_PATTERNS` is unset or empty, no origins are allowed (deny-all). This differs from omitting both variables, which uses the built-in default exact-origin list above.
+
+`CORS_ORIGINS` and `CORS_ORIGIN_PATTERNS` form one combined allowlist. If either environment variable is set, environment configuration owns the whole allowlist and an omitted counterpart is treated as empty. The settings-file keys behave the same way when no CORS environment variables are set.
+
+`CORS_ORIGIN_PATTERNS` is for hosted preview environments such as Cloudflare branch/PR deployments. Patterns must be full `http` or `https` origins with exactly one wildcard constrained inside the leftmost hostname label, for example:
+
+- `https://*-atlas-command-interface.preview.example.com`
+
+Broad credentialed-CORS wildcards such as `*`, `https://*`, and `https://*.workers.dev` are rejected.
 
 ### Current Middleware Behavior
 
@@ -42,7 +52,7 @@ When `CORS_ORIGINS` is **explicitly set to empty**, no origins are allowed (deny
 - Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID`
 - Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
-Operators must choose exact trusted origins and use explicit hosts over wildcards. Unsafe cookie-authenticated browser methods are rejected unless the `Origin` header exactly matches configured CORS origins.
+Operators should prefer exact trusted origins. Use constrained origin patterns only for deployment systems that generate per-branch hostnames. Unsafe cookie-authenticated browser methods are rejected unless the `Origin` header matches configured CORS origins or constrained origin patterns.
 
 ## Authentication
 
@@ -92,7 +102,7 @@ The process refuses to start when:
 
 - [ ] Rotate database and MinIO credentials per environment, even though Atlas Core treats that storage as disposable runtime state.
 - [ ] Restrict network ingress to trusted operators.
-- [ ] Set explicit `CORS_ORIGINS` for production.
+- [ ] Set explicit `CORS_ORIGINS` for production and constrained `CORS_ORIGIN_PATTERNS` only for trusted preview deployment hostnames.
 - [ ] Set `ENABLE_API_AUTH=true` and a real `API_AUTH_KEY` for production.
 - [ ] Override the development `admin` / `password` seed with `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE`.
 - [ ] Keep `ATLAS_ADMIN_COOKIE_SAMESITE=none` for cross-site UI/Core deployments, or set `lax` only for same-site deployments.

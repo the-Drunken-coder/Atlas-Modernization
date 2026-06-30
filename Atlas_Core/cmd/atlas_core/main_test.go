@@ -1,20 +1,33 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
+
+	"github.com/go-chi/cors"
+	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 )
 
 func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) {
 	origins := []string{"http://localhost:3000"}
 
-	opts := atlasCORSOptions(origins)
+	opts := atlasCORSOptions(origins, nil)
 
 	if !opts.AllowCredentials {
 		t.Fatal("expected CORS AllowCredentials to be true")
 	}
-	if len(opts.AllowedOrigins) != 1 || opts.AllowedOrigins[0] != origins[0] {
-		t.Fatalf("expected allowed origins to be preserved, got %#v", opts.AllowedOrigins)
+	if opts.AllowOriginFunc == nil {
+		t.Fatal("expected CORS AllowOriginFunc to be configured")
+	}
+	if !opts.AllowOriginFunc(nil, origins[0]) {
+		t.Fatalf("expected exact origin %q to be allowed", origins[0])
+	}
+	emptyOpts := atlasCORSOptions(nil, nil)
+	if emptyOpts.AllowOriginFunc(nil, "https://atlasinterface.com") {
+		t.Fatal("expected empty CORS config to reject normal origins")
 	}
 	for _, header := range []string{"Accept", "Authorization", "Content-Type", "If-Match", "X-API-Key", "X-Request-ID"} {
 		if !slices.Contains(opts.AllowedHeaders, header) {
@@ -30,5 +43,98 @@ func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) 
 		if slices.Contains(opts.ExposedHeaders, removed) {
 			t.Fatalf("did not expect old pagination header %s in %#v", removed, opts.ExposedHeaders)
 		}
+	}
+}
+
+func TestAtlasCORSOptionsAllowsConstrainedOriginPatterns(t *testing.T) {
+	opts := atlasCORSOptions(
+		[]string{"https://atlasinterface.com"},
+		[]string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+	)
+
+	if !opts.AllowOriginFunc(nil, "https://feature-123-atlas-command-interface.laraujo123546.workers.dev") {
+		t.Fatal("expected Cloudflare preview origin to be allowed")
+	}
+	if opts.AllowOriginFunc(nil, "https://feature-123-atlas-command-interface.laraujo123546.workers.dev.evil.test") {
+		t.Fatal("expected suffix lookalike origin to be rejected")
+	}
+	if opts.AllowOriginFunc(nil, "https://atlas-command-interface.laraujo123546.workers.dev") {
+		t.Fatal("expected empty wildcard value to be rejected")
+	}
+}
+
+func TestAtlasCORSPreflightEchoesAllowedPreviewOrigin(t *testing.T) {
+	origin := "https://feature-123-atlas-command-interface.laraujo123546.workers.dev"
+	handler := cors.Handler(atlasCORSOptions(
+		[]string{"https://atlasinterface.com"},
+		[]string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+	))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodOptions, "/admin/auth/me", nil)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected preflight 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want true", got)
+	}
+}
+
+func TestAtlasCORSAndAuthAgreeOnPreviewOriginPatterns(t *testing.T) {
+	cfg := &config.Config{
+		CORSOrigins:        []string{"https://atlasinterface.com"},
+		CORSOriginPatterns: []string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+	}
+	handler := cors.Handler(atlasCORSOptions(cfg.CORSOrigins, cfg.CORSOriginPatterns))(
+		custommiddleware.CombinedAuth("", false, nil, cfg.CORSOrigins, cfg.CORSOriginPatterns)(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}),
+		),
+	)
+
+	for _, tt := range []struct {
+		name       string
+		origin     string
+		wantStatus int
+		wantACAO   string
+	}{
+		{
+			name:       "matching preview origin",
+			origin:     "https://feature-123-atlas-command-interface.laraujo123546.workers.dev",
+			wantStatus: http.StatusNoContent,
+			wantACAO:   "https://feature-123-atlas-command-interface.laraujo123546.workers.dev",
+		},
+		{
+			name:       "suffix lookalike origin",
+			origin:     "https://feature-123-atlas-command-interface.laraujo123546.workers.dev.evil.test",
+			wantStatus: http.StatusUnauthorized,
+			wantACAO:   "",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/admin/auth/logout", nil)
+			req.Header.Set("Origin", tt.origin)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tt.wantACAO {
+				t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, tt.wantACAO)
+			}
+		})
 	}
 }

@@ -132,6 +132,7 @@ Key environment variables:
 - `MINIO_HTTP_POOL_SIZE` (default `10`)
 - `MINIO_HTTP_POOL_TIMEOUT` (default `30`)
 - `CORS_ORIGINS` (empty string denies all origins)
+- `CORS_ORIGIN_PATTERNS` (constrained preview origins such as Cloudflare branch/PR deployments)
 - `ENABLE_API_AUTH` (default `false` for local/dev runs; required as `true` in the production Docker image)
 - `API_AUTH_KEY` (required when auth enabled; required and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/publicsuffix"
+
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -118,9 +120,9 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
 }
 
-func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, trustedOrigins []string) func(next http.Handler) http.Handler {
+func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, trustedOrigins []string, trustedOriginPatterns []string) func(next http.Handler) http.Handler {
 	apiKey = strings.TrimSpace(apiKey)
-	trusted := trustedOriginSet(trustedOrigins)
+	trusted := newTrustedOriginMatcher(trustedOrigins, trustedOriginPatterns)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodOptions || IsPublicUnauthenticatedPath(r.URL.Path) || r.URL.Path == "/feed" {
@@ -128,7 +130,7 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 				return
 			}
 			if isLogoutPath(r.URL.Path) {
-				if unsafeMethod(r.Method) && !trustedOrigin(r.Header.Get("Origin"), trusted) {
+				if unsafeMethod(r.Method) && !trusted.Match(r.Header.Get("Origin")) {
 					writeUnauthorized(w)
 					return
 				}
@@ -141,7 +143,7 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 			}
 			if adminAuth != nil {
 				if _, err := adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
-					if unsafeMethod(r.Method) && !trustedOrigin(r.Header.Get("Origin"), trusted) {
+					if unsafeMethod(r.Method) && !trusted.Match(r.Header.Get("Origin")) {
 						writeUnauthorized(w)
 						return
 					}
@@ -199,7 +201,7 @@ func unsafeMethod(method string) bool {
 func trustedOriginSet(origins []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(origins))
 	for _, origin := range origins {
-		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		origin = normalizeTrustedOrigin(origin)
 		if origin != "" {
 			out[origin] = struct{}{}
 		}
@@ -208,22 +210,93 @@ func trustedOriginSet(origins []string) map[string]struct{} {
 }
 
 func TrustedOrigin(origin string, trustedOrigins []string) bool {
-	return trustedOrigin(origin, trustedOriginSet(trustedOrigins))
+	return TrustedOriginWithPatterns(origin, trustedOrigins, nil)
 }
 
-func trustedOrigin(origin string, trusted map[string]struct{}) bool {
-	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+func TrustedOriginWithPatterns(origin string, trustedOrigins []string, trustedPatterns []string) bool {
+	return newTrustedOriginMatcher(trustedOrigins, trustedPatterns).Match(origin)
+}
+
+type trustedOriginMatcher struct {
+	exact    map[string]struct{}
+	patterns []string
+}
+
+func newTrustedOriginMatcher(origins []string, patterns []string) trustedOriginMatcher {
+	matcher := trustedOriginMatcher{
+		exact:    trustedOriginSet(origins),
+		patterns: make([]string, 0, len(patterns)),
+	}
+	for _, pattern := range patterns {
+		if normalized := normalizeTrustedOrigin(pattern); normalized != "" {
+			matcher.patterns = append(matcher.patterns, normalized)
+		}
+	}
+	return matcher
+}
+
+func (m trustedOriginMatcher) Match(origin string) bool {
+	origin = normalizeTrustedOrigin(origin)
 	if origin == "" {
 		return false
 	}
-	if _, ok := trusted[origin]; ok {
+	if _, ok := m.exact[origin]; ok {
 		return true
+	}
+	for _, pattern := range m.patterns {
+		if originMatchesPattern(origin, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func originMatchesPattern(origin string, pattern string) bool {
+	if strings.Count(pattern, "*") != 1 {
+		return false
+	}
+	if !isConstrainedOriginPattern(pattern) {
+		return false
+	}
+	prefix, suffix, _ := strings.Cut(pattern, "*")
+	if len(origin) <= len(prefix)+len(suffix) {
+		return false
+	}
+	if !strings.HasPrefix(origin, prefix) || !strings.HasSuffix(origin, suffix) {
+		return false
+	}
+	wildcardValue := strings.TrimSuffix(strings.TrimPrefix(origin, prefix), suffix)
+	return !strings.Contains(wildcardValue, ".")
+}
+
+func isConstrainedOriginPattern(pattern string) bool {
+	parsed, err := url.Parse(pattern)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.Count(host, "*") != 1 || strings.Contains(parsed.Port(), "*") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 3 || !strings.Contains(labels[0], "*") || labels[0] == "*" {
+		return false
+	}
+	_, err = publicsuffix.EffectiveTLDPlusOne(strings.Join(labels[1:], "."))
+	return err == nil
+}
+
+func normalizeTrustedOrigin(origin string) string {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return ""
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return false
+		return ""
 	}
-	normalized := parsed.Scheme + "://" + parsed.Host
-	_, ok := trusted[normalized]
-	return ok
+	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
 }
