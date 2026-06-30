@@ -151,7 +151,7 @@ export class AtlasClient {
   private readonly engine: SyncEngine;
 
   constructor(options: AtlasClientOptions) {
-    const fetchImpl = options.fetch ?? globalThis.fetch;
+    const fetchImpl = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (!fetchImpl) {
       throw new Error("AtlasClient requires a fetch implementation");
     }

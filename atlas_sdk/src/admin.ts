@@ -33,7 +33,7 @@ export class AtlasAdminClient {
   private readonly transport: HttpTransport;
 
   constructor(options: AtlasAdminClientOptions) {
-    const fetchImpl = options.fetch ?? globalThis.fetch;
+    const fetchImpl = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (!fetchImpl) {
       throw new Error("AtlasAdminClient requires a fetch implementation");
     }
