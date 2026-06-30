@@ -34,7 +34,7 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 1. Start Atlas Core from this checkout. Startup seeds the development admin account `admin` / `password`.
 2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
-3. Configure the Worker with `ATLAS_CORE_BASE_URL` and optional `MAP_STYLE_URL`.
+3. Configure the Worker with `ATLAS_CORE_BASE_URL`; optional `MAP_STYLE_URL` overrides the default OpenStreetMap basemap.
 4. Run the Worker and Vite dev server:
 
    ```bash

@@ -13,6 +13,8 @@ git worktree list
 git diff --check
 ```
 
+The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
+
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.
 
 Codex-created worktrees may not be checked out on the PR branch even when they are inside this repository. If the local tree looks unexpectedly small or detached, run `git worktree list` and inspect the branch checkout before deciding the PR contents are missing.
@@ -55,3 +57,5 @@ When working on Atlas Core, Atlas Protocol, the SDK, or the command interface, d
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
 Atlas Core's PostgreSQL database and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around.
+
+The Cloudflare-hosted Atlas command interface uses Worker code plus a static asset binding from `atlas_command_interface/dist/client`. Cloudflare's Git integration is configured with `main` as the production branch; PR/non-production branch builds use the Version command and do not update `https://atlasinterface.com`. Expect the public custom domain to stay on the last production deployment until the branch is merged to `main` or an explicit production deploy is run. Keep `atlas_command_interface/wrangler.jsonc`'s `build.command` generating the Vite client before upload so the static asset manifest is fresh when a production deploy happens.
