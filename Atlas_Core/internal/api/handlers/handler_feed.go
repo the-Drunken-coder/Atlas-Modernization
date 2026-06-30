@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
@@ -33,7 +32,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	}
 	if !authenticated && h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
-			if !custommiddleware.TrustedOrigin(r.Header.Get("Origin"), h.config.CORSOrigins) {
+			if !custommiddleware.TrustedOriginWithPatterns(r.Header.Get("Origin"), h.config.CORSOrigins, h.config.CORSOriginPatterns) {
 				h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
 				return
 			}
@@ -60,25 +59,10 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 
 func feedServerConfig(cfg *config.Config) feed.ServerConfig {
 	return feed.ServerConfig{
-		EnableAPIAuth:  cfg.EnableAPIAuth,
-		APIKey:         strings.TrimSpace(cfg.APIAuthKey),
-		OriginPatterns: websocketOriginPatterns(cfg.CORSOrigins),
+		EnableAPIAuth: cfg.EnableAPIAuth,
+		APIKey:        strings.TrimSpace(cfg.APIAuthKey),
+		AllowedOrigin: func(origin string) bool {
+			return custommiddleware.TrustedOriginWithPatterns(origin, cfg.CORSOrigins, cfg.CORSOriginPatterns)
+		},
 	}
-}
-
-func websocketOriginPatterns(origins []string) []string {
-	patterns := make([]string, 0, len(origins))
-	for _, origin := range origins {
-		origin = strings.TrimSpace(origin)
-		if origin == "" {
-			continue
-		}
-		parsed, err := url.Parse(origin)
-		if err == nil && parsed.Host != "" {
-			patterns = append(patterns, parsed.Host)
-			continue
-		}
-		patterns = append(patterns, origin)
-	}
-	return patterns
 }

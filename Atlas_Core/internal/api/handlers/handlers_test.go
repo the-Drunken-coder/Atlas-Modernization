@@ -8,8 +8,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -326,6 +324,9 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 			"devbox.local:3000",
 			" ",
 		},
+		CORSOriginPatterns: []string{
+			"https://*-atlas-command-interface.laraujo123546.workers.dev",
+		},
 	}
 
 	got := feedServerConfig(cfg)
@@ -333,13 +334,17 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 	if got.APIKey != "secret-key" {
 		t.Fatalf("APIKey = %q, want trimmed key", got.APIKey)
 	}
-	wantOrigins := []string{"localhost:5173", "atlas.example:8443", "devbox.local:3000"}
-	gotPatterns := append([]string(nil), got.OriginPatterns...)
-	wantPatterns := append([]string(nil), wantOrigins...)
-	sort.Strings(gotPatterns)
-	sort.Strings(wantPatterns)
-	if !reflect.DeepEqual(gotPatterns, wantPatterns) {
-		t.Fatalf("OriginPatterns = %#v, want %#v", gotPatterns, wantPatterns)
+	if got.AllowedOrigin == nil {
+		t.Fatal("AllowedOrigin must be configured")
+	}
+	if !got.AllowedOrigin("https://atlas.example:8443") {
+		t.Fatal("expected exact origin to be allowed")
+	}
+	if !got.AllowedOrigin("https://pr-123-atlas-command-interface.laraujo123546.workers.dev") {
+		t.Fatal("expected constrained preview origin to be allowed")
+	}
+	if got.AllowedOrigin("https://extra.pr-123-atlas-command-interface.laraujo123546.workers.dev") {
+		t.Fatal("expected extra subdomain label in wildcard slot to be rejected")
 	}
 }
 

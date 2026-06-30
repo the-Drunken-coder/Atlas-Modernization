@@ -3,6 +3,7 @@ package config_test
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ var loadTestEnvKeys = []string{
 	"ENABLE_API_AUTH", "MAX_UPLOAD_SIZE_MB", "MAX_VIEW_SIZE_MB",
 	"SERVER_PORT", "LOG_LEVEL", "DATABASE_URL",
 	"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_BUCKET", "MINIO_REGION",
-	"API_AUTH_KEY", "CORS_ORIGINS", "ATLAS_ADMIN_COOKIE_SAMESITE",
+	"API_AUTH_KEY", "CORS_ORIGINS", "CORS_ORIGIN_PATTERNS", "ATLAS_ADMIN_COOKIE_SAMESITE",
 }
 
 func isolateLoadEnv(t *testing.T) {
@@ -160,6 +161,210 @@ func TestCORSOriginsRejectsWildcard(t *testing.T) {
 	}
 }
 
+func TestCORSOriginsRejectNonOriginValues(t *testing.T) {
+	for _, value := range []string{
+		"https://atlas.example/path",
+		"https://atlas.example?debug=true",
+		"https://user@atlas.example",
+		"ftp://atlas.example",
+		"atlas.example",
+	} {
+		t.Run(value, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
+			t.Setenv("SERVER_PORT", "")
+			t.Setenv("MINIO_BUCKET", "")
+			t.Setenv("CORS_ORIGINS", value)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected Load to reject CORS_ORIGINS=%q", value)
+			}
+			if !strings.Contains(err.Error(), "CORS origins") {
+				t.Fatalf("expected CORS origins error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestParseCORSOriginPatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		envValue string
+		expected []string
+	}{
+		{
+			name:     "JSON array",
+			envValue: `["https://*-atlas-command-interface.laraujo123546.workers.dev"]`,
+			expected: []string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+		},
+		{
+			name:     "Comma separated",
+			envValue: "https://*-atlas-command-interface.laraujo123546.workers.dev, https://*-atlas-preview.example.com",
+			expected: []string{
+				"https://*-atlas-command-interface.laraujo123546.workers.dev",
+				"https://*-atlas-preview.example.com",
+			},
+		},
+		{
+			name:     "Explicit empty CORS_ORIGIN_PATTERNS means no patterns",
+			envValue: "",
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("CORS_ORIGIN_PATTERNS", tt.envValue)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Failed to load config: %v", err)
+			}
+
+			if !reflect.DeepEqual(cfg.CORSOriginPatterns, tt.expected) {
+				t.Errorf("CORSOriginPatterns = %#v, want %#v", cfg.CORSOriginPatterns, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCORSOriginPatternsRejectUnsafeWildcards(t *testing.T) {
+	for _, value := range []string{
+		"*",
+		"https://*",
+		"https://*.workers.dev",
+		"https://*.project.pages.dev",
+		"https://app-*.co.uk",
+		"https://pr-*.github.io",
+		"https://atlas.example/*",
+		"https://*-atlas.example.com/path",
+	} {
+		t.Run(value, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("CORS_ORIGIN_PATTERNS", value)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected Load to reject CORS_ORIGIN_PATTERNS=%q", value)
+			}
+			if !strings.Contains(err.Error(), "CORS origin patterns") {
+				t.Fatalf("expected CORS origin patterns error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestCORSOriginPatternsRejectUnsafeSettingsValues(t *testing.T) {
+	for _, value := range []string{"https://*.workers.dev", " "} {
+		t.Run(value, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			settings := config.SettingsFile{
+				CORSOriginPatterns: []string{value},
+			}
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatalf("marshal settings: %v", err)
+			}
+			if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+				t.Fatalf("write settings: %v", err)
+			}
+
+			_, err = config.Load()
+			if err == nil {
+				t.Fatalf("expected Load to reject settings CORS origin pattern %q", value)
+			}
+			if !strings.Contains(err.Error(), "CORS origin patterns") {
+				t.Fatalf("expected CORS origin patterns error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadCORSOriginPatternsFromSettingsWithEnvPrecedence(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		CORSOrigins:        []string{"https://from-settings.example.com"},
+		CORSOriginPatterns: []string{"https://*-from-settings.example.com"},
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got, want := strings.Join(cfg.CORSOriginPatterns, ","), "https://*-from-settings.example.com"; got != want {
+		t.Fatalf("settings CORSOriginPatterns = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(cfg.CORSOrigins, ","), "https://from-settings.example.com"; got != want {
+		t.Fatalf("settings CORSOrigins = %q, want %q", got, want)
+	}
+
+	t.Setenv("CORS_ORIGIN_PATTERNS", "https://*-from-env.example.com")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if got, want := strings.Join(cfg.CORSOriginPatterns, ","), "https://*-from-env.example.com"; got != want {
+		t.Fatalf("env CORSOriginPatterns = %q, want %q", got, want)
+	}
+	if len(cfg.CORSOrigins) != 0 {
+		t.Fatalf("origin-pattern env should clear exact origins, got %#v", cfg.CORSOrigins)
+	}
+
+	t.Setenv("CORS_ORIGIN_PATTERNS", "")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("reload config with explicit empty env: %v", err)
+	}
+	if len(cfg.CORSOriginPatterns) != 0 {
+		t.Fatalf("explicit empty env should clear settings patterns, got %#v", cfg.CORSOriginPatterns)
+	}
+	if len(cfg.CORSOrigins) != 0 {
+		t.Fatalf("explicit empty env should keep exact origins clear, got %#v", cfg.CORSOrigins)
+	}
+}
+
+func TestLoadCORSOriginsEnvClearsSettingsPatterns(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		CORSOrigins:        []string{"https://from-settings.example.com"},
+		CORSOriginPatterns: []string{"https://*-from-settings.example.com"},
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	t.Setenv("CORS_ORIGINS", "https://from-env.example.com")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got, want := strings.Join(cfg.CORSOrigins, ","), "https://from-env.example.com"; got != want {
+		t.Fatalf("env CORSOrigins = %q, want %q", got, want)
+	}
+	if len(cfg.CORSOriginPatterns) != 0 {
+		t.Fatalf("origin env should clear settings patterns, got %#v", cfg.CORSOriginPatterns)
+	}
+}
+
 func TestDefaultCORSOriginsAreLocalOnly(t *testing.T) {
 	for _, origin := range config.DefaultCORSOrigins {
 		if !strings.HasPrefix(origin, "http://localhost:") && !strings.HasPrefix(origin, "http://127.0.0.1:") {
@@ -206,6 +411,9 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if len(cfg.CORSOrigins) != len(config.DefaultCORSOrigins) {
 		t.Errorf("Expected default CORS list length %d, got %d", len(config.DefaultCORSOrigins), len(cfg.CORSOrigins))
+	}
+	if len(cfg.CORSOriginPatterns) != 0 {
+		t.Errorf("Expected no default CORS origin patterns, got %d", len(cfg.CORSOriginPatterns))
 	}
 	if cfg.MaxUploadSizeMB != 100 {
 		t.Errorf("Expected default MaxUploadSizeMB 100, got %d", cfg.MaxUploadSizeMB)

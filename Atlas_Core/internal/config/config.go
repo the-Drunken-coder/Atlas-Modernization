@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // Config holds all application configuration.
@@ -40,7 +43,8 @@ type Config struct {
 	MinIOHTTPPoolTimeout int
 
 	// CORS settings
-	CORSOrigins []string
+	CORSOrigins        []string
+	CORSOriginPatterns []string
 
 	// API authentication
 	EnableAPIAuth bool
@@ -60,6 +64,7 @@ type SettingsFile struct {
 	Debug               bool     `json:"debug"`
 	LogLevel            string   `json:"log_level"`
 	CORSOrigins         []string `json:"cors_origins"`
+	CORSOriginPatterns  []string `json:"cors_origin_patterns"`
 	EnableAPIAuth       bool     `json:"enable_api_auth"`
 	APIAuthKey          string   `json:"api_auth_key"`
 	AdminCookieSameSite string   `json:"admin_cookie_samesite"`
@@ -202,16 +207,33 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Override CORS origins from environment when explicitly set (including empty = deny all).
-	if _, ok := os.LookupEnv("CORS_ORIGINS"); ok {
+	// CORS origins and origin patterns form one allowlist. If either env var is
+	// present, the environment owns the whole allowlist and omitted halves are empty.
+	_, corsOriginsEnvSet := os.LookupEnv("CORS_ORIGINS")
+	_, corsOriginPatternsEnvSet := os.LookupEnv("CORS_ORIGIN_PATTERNS")
+	if corsOriginsEnvSet || corsOriginPatternsEnvSet {
+		cfg.CORSOrigins = nil
+		cfg.CORSOriginPatterns = nil
+	}
+	if corsOriginsEnvSet {
 		origins, err := parseCORSOriginsValue(os.Getenv("CORS_ORIGINS"))
 		if err != nil {
 			return nil, err
 		}
 		cfg.CORSOrigins = origins
 	}
+	if corsOriginPatternsEnvSet {
+		patterns, err := parseCORSOriginPatternsValue(os.Getenv("CORS_ORIGIN_PATTERNS"))
+		if err != nil {
+			return nil, err
+		}
+		cfg.CORSOriginPatterns = patterns
+	}
 
 	if err := validateCORSOrigins(cfg.CORSOrigins); err != nil {
+		return nil, err
+	}
+	if err := validateCORSOriginPatterns(cfg.CORSOriginPatterns); err != nil {
 		return nil, err
 	}
 	cfg.AdminCookieSameSite = strings.ToLower(strings.TrimSpace(cfg.AdminCookieSameSite))
@@ -393,9 +415,17 @@ func (c *Config) loadSettingsFile() error {
 	if _, ok := os.LookupEnv("DEBUG"); !ok {
 		c.Debug = settings.Debug
 	}
-	if settings.CORSOrigins != nil {
-		if _, ok := os.LookupEnv("CORS_ORIGINS"); !ok {
+	settingsHasCORSAllowlist := settings.CORSOrigins != nil || settings.CORSOriginPatterns != nil
+	_, corsOriginsEnvSet := os.LookupEnv("CORS_ORIGINS")
+	_, corsOriginPatternsEnvSet := os.LookupEnv("CORS_ORIGIN_PATTERNS")
+	if settingsHasCORSAllowlist && !corsOriginsEnvSet && !corsOriginPatternsEnvSet {
+		c.CORSOrigins = nil
+		c.CORSOriginPatterns = nil
+		if settings.CORSOrigins != nil {
 			c.CORSOrigins = settings.CORSOrigins
+		}
+		if settings.CORSOriginPatterns != nil {
+			c.CORSOriginPatterns = settings.CORSOriginPatterns
 		}
 	}
 	if _, ok := os.LookupEnv("ENABLE_API_AUTH"); !ok {
@@ -504,6 +534,14 @@ func loadMinIOSecretKey() (string, error) {
 // Empty or whitespace-only means no allowed origins (not the compile-time defaults).
 // Values that look like JSON arrays must parse as JSON; invalid JSON is rejected (no CSV fallback).
 func parseCORSOriginsValue(raw string) ([]string, error) {
+	return parseCORSListValue(raw, "CORS origins", validateCORSOrigins)
+}
+
+func parseCORSOriginPatternsValue(raw string) ([]string, error) {
+	return parseCORSListValue(raw, "CORS origin patterns", validateCORSOriginPatterns)
+}
+
+func parseCORSListValue(raw string, label string, validate func([]string) error) ([]string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return []string{}, nil
@@ -512,7 +550,7 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 	if strings.HasPrefix(raw, "[") {
 		var origins []string
 		if err := json.Unmarshal([]byte(raw), &origins); err != nil {
-			return nil, fmt.Errorf("CORS origins: invalid JSON array: %w", err)
+			return nil, fmt.Errorf("%s: invalid JSON array: %w", label, err)
 		}
 		result := make([]string, 0, len(origins))
 		for _, o := range origins {
@@ -520,7 +558,7 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 				result = append(result, trimmed)
 			}
 		}
-		return result, validateCORSOrigins(result)
+		return result, validate(result)
 	}
 
 	parts := strings.Split(raw, ",")
@@ -530,7 +568,7 @@ func parseCORSOriginsValue(raw string) ([]string, error) {
 			result = append(result, trimmed)
 		}
 	}
-	return result, validateCORSOrigins(result)
+	return result, validate(result)
 }
 
 // validateCORSOrigins rejects wildcard origins so production origins must be explicit.
@@ -539,6 +577,68 @@ func validateCORSOrigins(origins []string) error {
 		if strings.Contains(o, "*") {
 			return fmt.Errorf("CORS origins: wildcard origin %q is not allowed; configure explicit origins", o)
 		}
+		if err := validateCORSOrigin(o); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCORSOrigin(origin string) error {
+	normalized := strings.TrimRight(strings.TrimSpace(origin), "/")
+	if normalized == "" {
+		return fmt.Errorf("CORS origins: empty origin is not allowed")
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("CORS origins: %q must be a full http(s) origin", origin)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("CORS origins: %q must use http or https", origin)
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+		return fmt.Errorf("CORS origins: %q must not include user info, path, query, or fragment", origin)
+	}
+	return nil
+}
+
+func validateCORSOriginPatterns(patterns []string) error {
+	for _, pattern := range patterns {
+		if err := validateCORSOriginPattern(pattern); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCORSOriginPattern(pattern string) error {
+	normalized := strings.TrimRight(strings.TrimSpace(pattern), "/")
+	if normalized == "" {
+		return fmt.Errorf("CORS origin patterns: empty pattern is not allowed")
+	}
+	if strings.Count(normalized, "*") != 1 {
+		return fmt.Errorf("CORS origin patterns: %q must contain exactly one wildcard", pattern)
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("CORS origin patterns: %q must be a full http(s) origin", pattern)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("CORS origin patterns: %q must use http or https", pattern)
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+		return fmt.Errorf("CORS origin patterns: %q must not include user info, path, query, or fragment", pattern)
+	}
+	host := parsed.Hostname()
+	if strings.Count(host, "*") != 1 || strings.Contains(parsed.Port(), "*") {
+		return fmt.Errorf("CORS origin patterns: wildcard in %q must be in the hostname", pattern)
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 3 || !strings.Contains(labels[0], "*") || labels[0] == "*" {
+		return fmt.Errorf("CORS origin patterns: wildcard in %q must be constrained in the leftmost hostname label", pattern)
+	}
+	if _, err := publicsuffix.EffectiveTLDPlusOne(strings.Join(labels[1:], ".")); err != nil {
+		return fmt.Errorf("CORS origin patterns: wildcard in %q must not sit directly on a public suffix", pattern)
 	}
 	return nil
 }

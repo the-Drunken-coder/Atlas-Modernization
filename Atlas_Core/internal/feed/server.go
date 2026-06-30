@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,8 +25,8 @@ const (
 type ServerConfig struct {
 	EnableAPIAuth     bool
 	APIKey            string
-	OriginPatterns    []string
 	SkipOriginCheck   bool
+	AllowedOrigin     func(origin string) bool
 	AuthTimeout       time.Duration
 	WriteTimeout      time.Duration
 	KeepaliveInterval time.Duration
@@ -46,10 +47,13 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProtocolError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
+	if !s.Config.SkipOriginCheck && !s.originAllowed(r) {
+		writeProtocolError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
+		return
+	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns:     s.Config.OriginPatterns,
-		InsecureSkipVerify: s.Config.SkipOriginCheck,
+		InsecureSkipVerify: true,
 	})
 	if err != nil {
 		return
@@ -124,6 +128,21 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (s Server) originAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	if strings.EqualFold(r.Host, parsed.Host) {
+		return true
+	}
+	return s.Config.AllowedOrigin != nil && s.Config.AllowedOrigin(origin)
 }
 
 func writeProtocolError(w http.ResponseWriter, r *http.Request, status int, message string, code protocol.ErrorCode) {

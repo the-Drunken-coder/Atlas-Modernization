@@ -170,6 +170,40 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		Config: ServerConfig{
+			AllowedOrigin: func(origin string) bool {
+				return false
+			},
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn, response, err := websocket.Dial(context.Background(), websocketURL(server.URL), &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Origin": []string{"https://extra.pr-123-atlas-command-interface.laraujo123546.workers.dev"},
+		},
+	})
+	if conn != nil {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}
+	if response != nil && response.Body != nil {
+		defer func() {
+			_ = response.Body.Close()
+		}()
+	}
+	if err == nil {
+		t.Fatal("expected cross-origin feed dial to be rejected")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("response status = %v, want %d", responseStatus(response), http.StatusUnauthorized)
+	}
+}
+
 func TestWebsocketFeedRejectsAuthEnabledWithoutAPIKey(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()
@@ -471,6 +505,13 @@ func expectFeedClosedWithStatus(t *testing.T, conn *websocket.Conn, expected web
 	if closeErr.Code != expected {
 		t.Fatalf("expected feed websocket close status %v, got %v", expected, closeErr.Code)
 	}
+}
+
+func responseStatus(response *http.Response) int {
+	if response == nil {
+		return 0
+	}
+	return response.StatusCode
 }
 
 func assertFeedProtocolError(t *testing.T, rec *httptest.ResponseRecorder, status int, code protocol.ErrorCode, message string) {
