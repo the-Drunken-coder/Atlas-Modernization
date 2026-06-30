@@ -29,6 +29,6 @@
     }
   },
   "vars": {
-    "ATLAS_CORE_BASE_URL": "http://localhost:8000"
+    "ATLAS_CORE_BASE_URL": "https://atlascommandapi.org"
   }
 }
