@@ -98,15 +98,17 @@ const observationsObjects: Scenario = {
     }
 
     const verifier = ctx.newClient({ sync: false });
-    const readDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
+    const observerReadDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
     const observerResults = await Promise.allSettled(
-      assetIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `observer ${id}`))
+      assetIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), observerReadDeadline, `observer ${id}`))
     );
+    const trackReadDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
     const trackResults = await Promise.allSettled(
-      trackIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `track ${id}`))
+      trackIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), trackReadDeadline, `track ${id}`))
     );
+    const objectReadDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
     const objectResults = await Promise.allSettled(
-      objectIds.map((id) => requireBeforeDeadline(() => verifier.objects.get(id), readDeadline, `object ${id}`))
+      objectIds.map((id) => requireBeforeDeadline(() => verifier.objects.get(id), objectReadDeadline, `object ${id}`))
     );
     const persistedObservers = fulfilledValues(observerResults);
     const persistedTracks = fulfilledValues(trackResults);

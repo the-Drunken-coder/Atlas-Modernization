@@ -190,7 +190,15 @@ async function handleRunRoute(
       sendJSON(response, 404, { message: "Run not found" });
       return;
     }
-    sendJSON(response, 200, { run: await store.cleanup(runId) });
+    try {
+      sendJSON(response, 200, { run: await store.cleanup(runId) });
+    } catch (error) {
+      if (isCleanupConflict(error)) {
+        sendJSON(response, 409, { message: error.message });
+        return;
+      }
+      throw error;
+    }
     return;
   }
   sendJSON(response, 404, { message: "Not found" });
@@ -466,6 +474,10 @@ function contentType(file: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isCleanupConflict(error: unknown): error is Error {
+  return error instanceof Error && error.message === "Wait for the run to finish before cleanup";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

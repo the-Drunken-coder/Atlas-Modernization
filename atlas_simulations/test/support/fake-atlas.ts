@@ -1,11 +1,14 @@
 import {
   AtlasAPIError,
+  type AtlasSubscription,
+  type AtlasWatchEvent,
   type EntityCheckInMinimalTask,
   type EntityCreateRequest,
   type EntityResource,
   type EntityUpdateRequest,
   type ObjectCreateRequest,
   type ObjectResource,
+  type ResourceType,
   type TaskCreateRequest,
   type TaskResource
 } from "../../../atlas_sdk/src/index.js";
@@ -27,11 +30,17 @@ type FakeCoreState = {
 
 type VersionedResource = { metadata: { version: number } };
 type ResourceHistory<T extends VersionedResource> = Map<string, T[]>;
+type WatchableResource = EntityResource | TaskResource | ObjectResource;
+type Watcher = {
+  filter: AtlasSubscription;
+  callback: (value: WatchableResource | undefined, event: AtlasWatchEvent) => void;
+};
 
 type FakeClientState = {
   sync: ClientMode;
   running: boolean;
   visibleVersion: number;
+  watchers: Watcher[];
 };
 
 export function createFakeAtlasCore() {
@@ -49,7 +58,7 @@ export function createFakeAtlasCore() {
 }
 
 function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
-  const clientState: FakeClientState = { sync, running: false, visibleVersion: 0 };
+  const clientState: FakeClientState = { sync, running: false, visibleVersion: 0, watchers: [] };
   state.clients.push(clientState);
   return {
     entities: {
@@ -91,7 +100,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         const entity = saveValue(state.entities, id, updated);
         const taskLimit = options?.limit ?? 10;
         const statusFilter = new Set<string>(options?.statusFilter ?? ["pending"]);
-        const matchingTasks = visibleValues(state, { sync: false, running: false, visibleVersion: state.version }, state.tasks, "task").filter(
+        const matchingTasks = visibleValues(state, { sync: false, running: false, visibleVersion: state.version, watchers: [] }, state.tasks, "task").filter(
           (task) => task.entity_id === id && statusFilter.has(task.status)
         );
         const tasks = matchingTasks.slice(0, taskLimit);
@@ -146,7 +155,11 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         clientState.running = false;
       },
       status: () => {
-        if (clientState.running) clientState.visibleVersion = state.version;
+        if (clientState.running) {
+          const previousVersion = clientState.visibleVersion;
+          clientState.visibleVersion = state.version;
+          emitVisibleChanges(state, clientState, previousVersion, clientState.visibleVersion);
+        }
         return {
           running: clientState.running,
           healthy: clientState.running,
@@ -156,7 +169,14 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         };
       }
     },
-    watch: () => () => undefined,
+    watch: (filter, callback) => {
+      const watcher: Watcher = { filter, callback: callback as Watcher["callback"] };
+      clientState.watchers.push(watcher);
+      return () => {
+        const index = clientState.watchers.indexOf(watcher);
+        if (index !== -1) clientState.watchers.splice(index, 1);
+      };
+    },
     handshake: async () => undefined
   };
 }
@@ -273,6 +293,52 @@ function visibleVersion(state: FakeCoreState, clientState: FakeClientState): num
   return clientState.sync ? clientState.visibleVersion : state.version;
 }
 
+function emitVisibleChanges(state: FakeCoreState, clientState: FakeClientState, fromVersion: number, toVersion: number): void {
+  if (toVersion <= fromVersion || clientState.watchers.length === 0) return;
+  emitResourceChanges(state, clientState, "entity", state.entities, fromVersion, toVersion);
+  emitResourceChanges(state, clientState, "task", state.tasks, fromVersion, toVersion);
+  emitResourceChanges(state, clientState, "object", state.objects, fromVersion, toVersion);
+}
+
+function emitResourceChanges<T extends WatchableResource>(
+  state: FakeCoreState,
+  clientState: FakeClientState,
+  type: ResourceType,
+  values: ResourceHistory<T>,
+  fromVersion: number,
+  toVersion: number
+): void {
+  for (const history of values.values()) {
+    for (const value of history) {
+      if (value.metadata.version <= fromVersion || value.metadata.version > toVersion) continue;
+      const id = resourceId(value, type);
+      if (isDeletedAt(state, type, id, toVersion, value.metadata.version)) continue;
+      const resource = cloneValue(value);
+      const event = {
+        event: "recovered",
+        resource_type: type,
+        id,
+        version: value.metadata.version,
+        resource
+      } as AtlasWatchEvent;
+      emitWatchEvent(clientState, resource, event);
+    }
+  }
+}
+
+function emitWatchEvent(clientState: FakeClientState, resource: WatchableResource, event: AtlasWatchEvent): void {
+  for (const watcher of [...clientState.watchers]) {
+    if (matchesSubscription(watcher.filter, event, resource)) watcher.callback(cloneValue(resource), cloneValue(event));
+  }
+}
+
+function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, resource: WatchableResource): boolean {
+  if (filter.filter === "all") return true;
+  if (filter.filter === "id") return event.resource_type === filter.resource_type && event.id === filter.id;
+  if (filter.filter === "type") return event.resource_type === filter.resource_type;
+  return event.resource_type === "task" && (resource as TaskResource).entity_id === filter.entity_id;
+}
+
 function deleteValue<T extends VersionedResource>(state: FakeCoreState, clientState: FakeClientState, values: ResourceHistory<T>, id: string, type: string): void {
   const value = requireValue(values, id, type);
   if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
@@ -317,7 +383,7 @@ function resourceKey(type: string, id: string): string {
   return `${type}:${id}`;
 }
 
-function resourceId(value: { entity_id?: string; task_id?: string; object_id?: string }, type: string): string {
+function resourceId(value: { entity_id?: string | null; task_id?: string | null; object_id?: string | null }, type: string): string {
   if (type === "entity") return value.entity_id ?? "";
   if (type === "task") return value.task_id ?? "";
   if (type === "object") return value.object_id ?? "";

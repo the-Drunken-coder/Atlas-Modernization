@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RunEvent } from "../../src/shared/types.js";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
+import type { Scenario } from "../../src/server/scenario.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 let server: SimulationServer | undefined;
@@ -116,9 +117,42 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders()
     });
 
-    expect(stopped.run).toMatchObject({ id: started.run.id, status: "running" });
+    expect(stopped.run).toMatchObject({ id: started.run.id, status: "cancelled" });
     await waitFor(async () => {
       const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
+      expect(current.run.status).toBe("cancelled");
+    });
+  });
+
+  it("returns conflict when cleanup is requested before a stopped run unwinds", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    let release!: () => void;
+    const scenario: Scenario = {
+      id: "blocked-cleanup",
+      name: "Blocked cleanup",
+      summary: "Stays unsettled after stop",
+      acceptsJson: false,
+      inputFields: [],
+      async run() {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+    };
+    const started = store.start(scenario, { fields: {} });
+    await waitFor(async () => expect(release).toBeTypeOf("function"));
+    store.stop(started.id);
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      store
+    });
+    const baseUrl = await server.listen();
+
+    await expectStatus(`${baseUrl}/api/runs/${started.id}/cleanup`, 409, { method: "POST", headers: mutationHeaders() });
+    release();
+    await waitFor(async () => {
+      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.id}`);
       expect(current.run.status).toBe("cancelled");
     });
   });

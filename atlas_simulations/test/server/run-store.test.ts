@@ -79,7 +79,7 @@ describe("RunStore", () => {
     const started = store.start(scenario, { fields: {} });
     const stopped = store.stop(started.id);
 
-    expect(stopped.status).toBe("running");
+    expect(stopped.status).toBe("cancelled");
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("cancelled"));
     expect(store.get(started.id)?.finishedAt).toBeDefined();
   });
@@ -235,8 +235,9 @@ describe("RunStore", () => {
 
     await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the run to finish before cleanup");
     release();
-    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("cancelled"));
-    await expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true });
+    await vi.waitFor(async () => {
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true });
+    });
   });
 
   it("retries when a generated run ID collides with an existing run", () => {

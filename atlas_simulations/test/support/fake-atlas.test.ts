@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createFakeAtlasCore } from "./fake-atlas.js";
 
 describe("fake Atlas core", () => {
@@ -21,6 +21,8 @@ describe("fake Atlas core", () => {
     const core = createFakeAtlasCore();
     const writer = core.factory();
     const reader = core.factory({ sync: "all" });
+    const watch = vi.fn();
+    reader.watch({ filter: "type", resource_type: "entity" }, watch);
     await reader.sync.start();
 
     await writer.entities.create({ entity_id: "asset-1", entity_type: "asset" });
@@ -29,6 +31,7 @@ describe("fake Atlas core", () => {
     await reader.sync.status();
     await expect(reader.entities.get("asset-1")).resolves.toMatchObject({ entity_id: "asset-1" });
     await expect(reader.queries.full()).resolves.toMatchObject({ entities: [expect.objectContaining({ entity_id: "asset-1" })] });
+    expect(watch).toHaveBeenCalledWith(expect.objectContaining({ entity_id: "asset-1" }), expect.objectContaining({ event: "recovered", id: "asset-1" }));
   });
 
   it("enforces conflicts, tombstone reads, deletion logging, and re-create", async () => {

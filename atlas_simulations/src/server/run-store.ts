@@ -108,6 +108,7 @@ export class RunStore {
     if (run.status === "running" && !run.controller.signal.aborted) {
       run.controller.abort();
       this.emit(run, { type: "log", level: "warn", message: "Stop requested" });
+      this.finish(run, "cancelled", "Stop requested");
     }
     return toSummary(run);
   }
