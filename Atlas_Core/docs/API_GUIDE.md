@@ -165,7 +165,7 @@ Object detail responses:
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/` | `200` | Returns service metadata and top-level endpoint links. |
+| `GET` | `/` | `200` | Returns service metadata and top-level endpoints. |
 | `GET` | `/health` | `200` | Liveness only. Skips auth. |
 | `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
