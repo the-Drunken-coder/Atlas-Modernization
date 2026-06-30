@@ -271,7 +271,7 @@ function streamRunEvents(response: ServerResponse, store: RunStore, runId: strin
         closeAfterCurrentReplay();
         return;
       }
-      if (isTerminalRunEvent(event)) closeAfterCurrentReplay();
+      if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterCurrentReplay();
     });
     replaying = false;
     if (closeAfterReplay) scheduleClose();
@@ -329,6 +329,12 @@ function readRequestBody(bodyText: string): StartRunRequest {
 
 function isTerminalRunEvent(event: RunEvent): boolean {
   return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
+}
+
+function shouldCloseRunEventStream(event: RunEvent, run: { cleaned: boolean } | undefined, replaying: boolean): boolean {
+  if (!isTerminalRunEvent(event)) return false;
+  if (!replaying) return true;
+  return event.type === "cleanup" || run?.cleaned === true;
 }
 
 function sendJSON(response: ServerResponse, status: number, body: unknown): void {
@@ -477,7 +483,7 @@ function errorMessage(error: unknown): string {
 }
 
 function isCleanupConflict(error: unknown): error is Error {
-  return error instanceof Error && error.message === "Wait for the run to finish before cleanup";
+  return error instanceof Error && error.message.startsWith("Wait for ") && error.message.endsWith("before cleanup");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

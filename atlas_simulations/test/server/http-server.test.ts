@@ -79,9 +79,7 @@ describe("simulation HTTP server", () => {
 
     const stream = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/events`);
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
-    const replayEvents = await readRunStream(stream);
-    const completedEvent = replayEvents.find((event) => event.type === "status" && event.status === "completed");
-    expect(completedEvent).toMatchObject({ type: "status", status: "completed" });
+    const replayAndCleanupEvents = readRunStream(stream);
 
     const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
       `${baseUrl}/api/runs/${started.run.id}/cleanup`,
@@ -89,6 +87,11 @@ describe("simulation HTTP server", () => {
     );
     expect(cleaned.run).toMatchObject({ status: "completed", cleaned: true });
     expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
+    const streamedEvents = await replayAndCleanupEvents;
+    const completedEvent = streamedEvents.find((event) => event.type === "status" && event.status === "completed");
+    expect(completedEvent).toMatchObject({ type: "status", status: "completed" });
+    const streamedCleanupEvent = streamedEvents.find((event) => event.type === "cleanup" && !event.resource);
+    expect(streamedCleanupEvent).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
 
     const cleanupReplay = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/events`);
     const cleanupReplayEvents = await readRunStream(cleanupReplay);
@@ -149,7 +152,9 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    await expectStatus(`${baseUrl}/api/runs/${started.id}/cleanup`, 409, { method: "POST", headers: mutationHeaders() });
+    const conflict = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    expect(conflict.status).toBe(409);
+    await expect(responseJSON<{ message: string }>(conflict)).resolves.toMatchObject({ message: "Wait for the cancelled run to finish unwinding before cleanup" });
     release();
     await waitFor(async () => {
       const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.id}`);

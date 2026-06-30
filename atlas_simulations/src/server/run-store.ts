@@ -116,9 +116,10 @@ export class RunStore {
   async cleanup(id: string): Promise<RunSummary> {
     const run = this.requireRun(id);
     if (run.cleaned) return toSummary(run);
-    if (run.status === "running" || !run.settled) {
+    if (run.status === "running") {
       throw new Error("Wait for the run to finish before cleanup");
     }
+    if (!run.settled) throw new Error("Wait for the cancelled run to finish unwinding before cleanup");
     if (run.cleanupPromise) return run.cleanupPromise;
     run.cleanupPromise = this.performCleanup(run);
     try {

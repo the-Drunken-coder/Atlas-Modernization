@@ -233,7 +233,7 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     store.stop(started.id);
 
-    await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the run to finish before cleanup");
+    await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the cancelled run to finish unwinding before cleanup");
     release();
     await vi.waitFor(async () => {
       await expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true });
