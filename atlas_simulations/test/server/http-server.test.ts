@@ -127,7 +127,7 @@ describe("simulation HTTP server", () => {
     });
   });
 
-  it("returns conflict when cleanup is requested before a stopped run unwinds", async () => {
+  it("waits for a stopped run to unwind before cleanup", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
     let release!: () => void;
@@ -152,14 +152,9 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    const conflict = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
-    expect(conflict.status).toBe(409);
-    await expect(responseJSON<{ message: string }>(conflict)).resolves.toMatchObject({ message: "Wait for the cancelled run to finish unwinding before cleanup" });
+    const cleanup = fetchJSON<{ run: { status: string; cleaned: boolean } }>(`${baseUrl}/api/runs/${started.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
     release();
-    await waitFor(async () => {
-      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.id}`);
-      expect(current.run.status).toBe("cancelled");
-    });
+    await expect(cleanup).resolves.toMatchObject({ run: { status: "cancelled", cleaned: true } });
   });
 
   it("returns client errors for bad request bodies and missing runs", async () => {

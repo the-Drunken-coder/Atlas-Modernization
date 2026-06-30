@@ -41,6 +41,7 @@ type RunRecord = {
   cleanupStarted: boolean;
   cleaned: boolean;
   cleanupPromise?: Promise<RunSummary>;
+  execution?: Promise<void>;
   sequence: number;
   lastError?: string;
   trackingError?: string;
@@ -99,7 +100,7 @@ export class RunStore {
     };
     this.runs.set(id, run);
     this.emit(run, { type: "status", status: "running", message: `${scenario.name} started` });
-    void this.execute(run, runInput);
+    run.execution = this.execute(run, runInput);
     return toSummary(run);
   }
 
@@ -119,7 +120,8 @@ export class RunStore {
     if (run.status === "running") {
       throw new Error("Wait for the run to finish before cleanup");
     }
-    if (!run.settled) throw new Error("Wait for the cancelled run to finish unwinding before cleanup");
+    if (!run.settled) await run.execution;
+    if (!run.settled) throw new Error("Wait for the run to finish before cleanup");
     if (run.cleanupPromise) return run.cleanupPromise;
     run.cleanupPromise = this.performCleanup(run);
     try {

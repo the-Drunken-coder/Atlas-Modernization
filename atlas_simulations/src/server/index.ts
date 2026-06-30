@@ -483,7 +483,7 @@ function errorMessage(error: unknown): string {
 }
 
 function isCleanupConflict(error: unknown): error is Error {
-  return error instanceof Error && error.message.startsWith("Wait for ") && error.message.endsWith("before cleanup");
+  return error instanceof Error && error.message === "Wait for the run to finish before cleanup";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

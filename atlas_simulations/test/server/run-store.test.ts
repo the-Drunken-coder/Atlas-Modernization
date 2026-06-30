@@ -233,11 +233,9 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     store.stop(started.id);
 
-    await expect(store.cleanup(started.id)).rejects.toThrow("Wait for the cancelled run to finish unwinding before cleanup");
+    const cleanup = store.cleanup(started.id);
     release();
-    await vi.waitFor(async () => {
-      await expect(store.cleanup(started.id)).resolves.toMatchObject({ status: "cancelled", cleaned: true });
-    });
+    await expect(cleanup).resolves.toMatchObject({ status: "cancelled", cleaned: true });
   });
 
   it("retries when a generated run ID collides with an existing run", () => {
