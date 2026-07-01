@@ -339,8 +339,7 @@ export function MapView({
 
     const key = mapReticleTargetKey(focusTarget);
     if (focusedTargetKeyRef.current !== key) {
-      focusMapTarget(map, sources, focusTarget);
-      focusedTargetKeyRef.current = key;
+      if (focusMapTarget(map, sources, focusTarget)) focusedTargetKeyRef.current = key;
     }
 
     const syncFocusReticle = () => {
@@ -483,10 +482,12 @@ export function MapView({
     if (zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const activeReticle = activeReticleRef.current ?? reticleRef.current;
+    const hoverReticle = reticleRef.current;
+    const activeReticle = hoverReticle ?? activeReticleRef.current;
     if (activeReticle) {
-      reticleRef.current = activeReticle;
-      setReticle(activeReticle);
+      const lockedReticle = hoverReticle ?? { ...activeReticle, targetEntityId: undefined };
+      reticleRef.current = lockedReticle;
+      setReticle(lockedReticle);
     }
     const visualPoint = activeReticle ? { x: activeReticle.x, y: activeReticle.y } : pointFromClient(event, rect);
     cursorHandoffRef.current = { nativePoint: pointFromClient(event, rect), visualPoint };
@@ -740,19 +741,21 @@ function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null 
   });
 }
 
-function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget): void {
+function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget): boolean {
   const geometry = geometryForFocusTarget(sources, target);
-  if (!geometry) return;
+  if (!geometry) return false;
   if (geometry.type === "Point") {
     map.easeTo({
       center: [geometry.coordinates[0], geometry.coordinates[1]],
       duration: FOCUS_DURATION_MS,
       zoom: Math.max(map.getZoom(), FOCUS_MIN_POINT_ZOOM)
     });
-    return;
+    return true;
   }
   const bounds = boundsForGeometry(geometry);
-  if (bounds) map.fitBounds(bounds, { duration: FOCUS_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
+  if (!bounds) return false;
+  map.fitBounds(bounds, { duration: FOCUS_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
+  return true;
 }
 
 function geometryForFocusTarget(sources: MapSources, target: MapReticleTarget): UiRawGeometry | undefined {

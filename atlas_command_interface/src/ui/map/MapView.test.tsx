@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
 import { MapView, buildMapSources, type MapReticleTarget } from "./MapView.js";
 import type { MapSources } from "./map-sources.js";
 
@@ -356,6 +357,25 @@ describe("MapView external reticle targets", () => {
     await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith({ center: [90, 110], duration: 450, zoom: 6 }));
   });
 
+  it("retries entity focus when a selected entity becomes locatable", async () => {
+    const focusTarget = { type: "entity", id: "asset-1" } as const;
+    const { map, rerenderMap } = renderMapView({
+      focusTarget,
+      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
+    });
+    map.easeTo.mockClear();
+
+    rerenderMap({
+      focusTarget,
+      sources: buildMapSources(
+        [entity({ entity_id: "asset-1", components: { telemetry: { latitude: 40, longitude: -74 } } })],
+        undefined
+      )
+    });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [-74, 40], duration: 450, zoom: 6 }));
+  });
+
   it("focuses selected geometry targets with fitBounds", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
@@ -414,6 +434,25 @@ describe("MapView external reticle targets", () => {
       expect(settledOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
     });
   });
+
+  it("does not convert focused external reticles into clickable hover targets during scroll", async () => {
+    const { canvas, onBackgroundClick, onSelectEntity, rerenderMap } = renderMapView();
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+      act(() => vi.advanceTimersByTime(180));
+    } finally {
+      vi.useRealTimers();
+    }
+    fireEvent.click(canvas);
+
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    expect(onBackgroundClick).toHaveBeenCalledTimes(1);
+  });
 });
 
 type RenderMapViewProps = {
@@ -470,6 +509,12 @@ function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMR
   }
   container.appendChild(marker);
   return marker;
+}
+
+const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
+
+function entity(overrides: Partial<EntityResource>): EntityResource {
+  return { entity_id: "entity", entity_type: "asset", subtype: null, alias: null, components: {}, metadata, ...overrides };
 }
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
