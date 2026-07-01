@@ -67,6 +67,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
+  const [scrollLocked, setScrollLocked] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
 
   // Create the map once.
@@ -184,7 +185,6 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     if (!map || !mapReady || !entityId) return;
 
     const syncTargetBox = () => {
-      if (scrollLockedRef.current) return;
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
       const box = boxForEntityId(mapCanvas, entityId);
@@ -193,10 +193,12 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     };
 
     map.on("move", syncTargetBox);
+    map.on("render", syncTargetBox);
     map.on("zoom", syncTargetBox);
     map.on("moveend", syncTargetBox);
     return () => {
       map.off("move", syncTargetBox);
+      map.off("render", syncTargetBox);
       map.off("zoom", syncTargetBox);
       map.off("moveend", syncTargetBox);
     };
@@ -307,6 +309,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    if (!scrollLockedRef.current) setScrollLocked(true);
     scrollLockedRef.current = true;
     if (scrollLockTimeoutRef.current !== undefined) {
       window.clearTimeout(scrollLockTimeoutRef.current);
@@ -314,6 +317,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     scrollLockTimeoutRef.current = window.setTimeout(() => {
       scrollLockTimeoutRef.current = undefined;
       scrollLockedRef.current = false;
+      setScrollLocked(false);
       syncCurrentTargetBox();
     }, SCROLL_LOCK_SETTLE_MS);
   };
@@ -337,7 +341,13 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         "--map-target-y": `${crosshair.target.y}px`
       } as CSSProperties)
     : undefined;
-  const crosshairClassName = `map-crosshair${crosshair?.targetEntityId ? " map-crosshair--targeted" : ""}`;
+  const crosshairClassName = [
+    "map-crosshair",
+    scrollLocked ? "map-crosshair--scrolling" : "",
+    crosshair?.targetEntityId ? "map-crosshair--targeted" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div

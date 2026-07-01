@@ -174,7 +174,7 @@ describe("MapView hover target box", () => {
     });
   });
 
-  it("locks a hovered marker box during wheel scroll and resyncs after scrolling settles", async () => {
+  it("keeps a hovered marker box attached to its marker during wheel scroll", async () => {
     const { canvas, map } = renderMapView();
     let markerRect = rect(70, 90, 28, 40);
     const marker = appendMarker(canvas, "asset-1", () => markerRect);
@@ -188,15 +188,25 @@ describe("MapView hover target box", () => {
       markerRect = rect(120, 60, 28, 40);
       act(() => map.fire("zoom"));
 
+      const scrollingOverlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(scrollingOverlay).toHaveClass("map-crosshair--targeted");
+      expect(scrollingOverlay).toHaveClass("map-crosshair--scrolling");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+
+      fireEvent.pointerMove(canvas, { clientX: 30, clientY: 40 });
+
       const lockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(lockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("53px");
-      expect(lockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("63px");
-      expect(lockedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("74px");
-      expect(lockedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("90px");
+      expect(lockedOverlay).toHaveClass("map-crosshair--targeted");
+      expect(lockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
+      expect(lockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
 
       act(() => vi.advanceTimersByTime(180));
 
       const unlockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(unlockedOverlay).not.toHaveClass("map-crosshair--scrolling");
       expect(unlockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
       expect(unlockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
       expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
