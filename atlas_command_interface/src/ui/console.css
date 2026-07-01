@@ -802,6 +802,14 @@
   box-shadow: var(--map-crosshair-line-shadow);
 }
 
+.map-crosshair--targeted .map-crosshair__line {
+  transition:
+    top 90ms ease-out,
+    left 90ms ease-out,
+    width 90ms ease-out,
+    height 90ms ease-out;
+}
+
 .map-crosshair__line--left,
 .map-crosshair__line--right {
   top: var(--map-crosshair-y);
@@ -848,6 +856,14 @@
   background: transparent;
   box-shadow: var(--map-crosshair-line-shadow);
   transition: none;
+}
+
+.map-crosshair--targeted .map-crosshair__target {
+  transition:
+    left 90ms ease-out,
+    top 90ms ease-out,
+    width 90ms ease-out,
+    height 90ms ease-out;
 }
 
 .map-unavailable {

@@ -280,6 +280,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         "--map-target-y": `${crosshair.target.y}px`
       } as CSSProperties)
     : undefined;
+  const crosshairClassName = `map-crosshair${crosshair?.targetEntityId ? " map-crosshair--targeted" : ""}`;
 
   return (
     <div
@@ -295,7 +296,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     >
       <div className="maplibre-host" ref={containerRef} />
       {crosshair ? (
-        <div className="map-crosshair" style={crosshairStyle} aria-hidden="true">
+        <div className={crosshairClassName} style={crosshairStyle} aria-hidden="true">
           <div className="map-crosshair__line map-crosshair__line--left" />
           <div className="map-crosshair__line map-crosshair__line--right" />
           <div className="map-crosshair__line map-crosshair__line--top" />
