@@ -1,6 +1,6 @@
 import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
 import {
   addVertexAfter,
   displayGeometry,
@@ -28,6 +28,7 @@ const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
 ];
 const CROSSHAIR_TARGET_SIZE = 22;
 const HOVER_TARGET_PADDING = 7;
+const SCROLL_LOCK_SETTLE_MS = 180;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 
@@ -61,6 +62,8 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const editMarkersRef = useRef<Marker[]>([]);
   const symbolMarkersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
+  const scrollLockedRef = useRef(false);
+  const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
@@ -135,6 +138,10 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       clearMarkers(symbolMarkersRef.current);
       editMarkersRef.current = [];
       symbolMarkersRef.current = [];
+      scrollLockedRef.current = false;
+      if (scrollLockTimeoutRef.current !== undefined) {
+        window.clearTimeout(scrollLockTimeoutRef.current);
+      }
       map.remove();
       mapRef.current = undefined;
     };
@@ -154,6 +161,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     if (!crosshair) return;
 
     const clearWhenOutsideMap = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+      if (scrollLockedRef.current) return;
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
       const rect = mapCanvas.getBoundingClientRect();
@@ -176,6 +184,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     if (!map || !mapReady || !entityId) return;
 
     const syncTargetBox = () => {
+      if (scrollLockedRef.current) return;
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
       const box = boxForEntityId(mapCanvas, entityId);
@@ -274,6 +283,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const updateCrosshair = (
     event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement }
   ) => {
+    if (scrollLockedRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
       setCrosshair(null);
       return;
@@ -282,6 +292,30 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const target = hoverSelectionTarget(event, rect, point, mapRef.current);
     setCrosshair(target ? crosshairForTarget(target) : { ...point, target: squareAround(point, CROSSHAIR_TARGET_SIZE) });
+  };
+
+  const syncCurrentTargetBox = () => {
+    const mapCanvas = mapCanvasRef.current;
+    if (!mapCanvas) return;
+    setCrosshair((current) => {
+      const entityId = current?.targetEntityId;
+      if (!entityId) return current;
+      const box = boxForEntityId(mapCanvas, entityId);
+      return box ? crosshairForTarget({ entityId, box }) : current;
+    });
+  };
+
+  const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    scrollLockedRef.current = true;
+    if (scrollLockTimeoutRef.current !== undefined) {
+      window.clearTimeout(scrollLockTimeoutRef.current);
+    }
+    scrollLockTimeoutRef.current = window.setTimeout(() => {
+      scrollLockTimeoutRef.current = undefined;
+      scrollLockedRef.current = false;
+      syncCurrentTargetBox();
+    }, SCROLL_LOCK_SETTLE_MS);
   };
 
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -312,9 +346,14 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       style={{ position: "absolute", inset: 0 }}
       data-testid="map-canvas"
       onMouseMove={updateCrosshair}
-      onMouseLeave={() => setCrosshair(null)}
+      onMouseLeave={() => {
+        if (!scrollLockedRef.current) setCrosshair(null);
+      }}
       onPointerMove={updateCrosshair}
-      onPointerLeave={() => setCrosshair(null)}
+      onPointerLeave={() => {
+        if (!scrollLockedRef.current) setCrosshair(null);
+      }}
+      onWheelCapture={onMapWheel}
       onClick={onMapClick}
     >
       <div className="maplibre-host" ref={containerRef} />
