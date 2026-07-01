@@ -297,6 +297,20 @@ describe("MapView zoom overlay", () => {
     expect(onSelectEntity).not.toHaveBeenCalled();
     expect(onBackgroundClick).not.toHaveBeenCalled();
   });
+
+  it("does not select or clear entities when a Shift-drag cancel produces a click", async () => {
+    const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    fireEvent.mouseDown(marker, { button: 0, shiftKey: true, clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
+    fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.click(marker);
+
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
 });
 
 describe("MapView external reticle targets", () => {

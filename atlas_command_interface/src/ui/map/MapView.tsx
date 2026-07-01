@@ -242,7 +242,10 @@ export function MapView({
     };
 
     const cancelZoomDrag = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setZoomOverlayState(null);
+      if (event.key === "Escape") {
+        suppressNextClick();
+        setZoomOverlayState(null);
+      }
     };
 
     window.addEventListener("mousemove", updateZoomDrag);
