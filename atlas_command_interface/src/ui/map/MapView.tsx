@@ -1,6 +1,6 @@
-import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
+import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import {
   addVertexAfter,
   displayGeometry,
@@ -9,7 +9,6 @@ import {
   removeVertex,
   type Position,
   type UiGeometry,
-  type UiRawGeometry,
   type VertexRef
 } from "../../atlas/geometry.js";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
@@ -23,6 +22,12 @@ const COLORS = {
 };
 
 const INTERACTIVE_LAYERS = ["geofeatures-point", "geofeatures-line", "geofeatures-fill"];
+const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
+  [-180, -80],
+  [180, 85.051129]
+];
+const CROSSHAIR_TARGET_SIZE = 22;
+const HOVER_TARGET_PADDING = 7;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 
@@ -42,17 +47,23 @@ type MapViewProps = {
   onBackgroundClick?: () => void;
 };
 
+type ScreenPoint = { x: number; y: number };
+type TargetBox = { x: number; y: number; width: number; height: number };
+type HoverTarget = { entityId: string; box: TargetBox };
+type CrosshairState = ScreenPoint & { target: TargetBox; targetEntityId?: string };
+
 export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
+  const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
   const readyRef = useRef(false);
-  const fitOnceRef = useRef(false);
-  const shouldAutoFitRef = useRef(initialCenter === undefined);
+  const fitWorldOnceRef = useRef(initialCenter !== undefined);
   const editMarkersRef = useRef<Marker[]>([]);
   const symbolMarkersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
+  const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
 
   // Create the map once.
@@ -69,9 +80,12 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       map = new maplibregl.Map({
         container: containerRef.current,
         style: styleUrl ?? defaultMapStyle(),
-        center: initialCenter ?? [0, 20],
-        zoom: initialCenter ? 11 : 1.6,
-        attributionControl: { compact: true }
+        center: initialCenter ?? [0, 0],
+        zoom: initialCenter ? 11 : 0,
+        renderWorldCopies: false,
+        dragRotate: false,
+        pitchWithRotate: false,
+        attributionControl: false
       });
     } catch (error) {
       setMapError(error instanceof Error ? error.message : "MapLibre failed to initialize");
@@ -79,7 +93,8 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     }
 
     mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
     const resizeObserver = new ResizeObserver(() => map.resize());
     resizeObserver.observe(containerRef.current);
@@ -91,27 +106,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       readyRef.current = true;
       setMapReady(true);
       pushSources(map, sources);
-      if (shouldAutoFitRef.current) fitToSourcesOnce(map, sources, fitOnceRef);
-
-      for (const layer of INTERACTIVE_LAYERS) {
-        map.on("click", layer, (event) => {
-          event.preventDefault();
-          const id = event.features?.[0]?.properties?.entityId;
-          if (typeof id === "string") handlersRef.current.onSelectEntity(id);
-        });
-        map.on("mouseenter", layer, () => {
-          map.getCanvas().style.cursor = "pointer";
-        });
-        map.on("mouseleave", layer, () => {
-          map.getCanvas().style.cursor = "";
-        });
-      }
-
-      map.on("click", (event: MapMouseEvent) => {
-        if (event.defaultPrevented) return;
-        const hits = map.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYERS });
-        if (hits.length === 0) handlersRef.current.onBackgroundClick?.();
-      });
+      fitWorldOnce(map, fitWorldOnceRef);
 
       map.on("contextmenu", (event: MapMouseEvent) => {
         event.preventDefault();
@@ -152,9 +147,28 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     const map = mapRef.current;
     if (map && readyRef.current) {
       pushSources(map, sources);
-      if (shouldAutoFitRef.current) fitToSourcesOnce(map, sources, fitOnceRef);
     }
   }, [sources]);
+
+  useEffect(() => {
+    if (!crosshair) return;
+
+    const clearWhenOutsideMap = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+      const mapCanvas = mapCanvasRef.current;
+      if (!mapCanvas) return;
+      const rect = mapCanvas.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+        setCrosshair(null);
+      }
+    };
+
+    window.addEventListener("pointermove", clearWhenOutsideMap);
+    window.addEventListener("mousemove", clearWhenOutsideMap);
+    return () => {
+      window.removeEventListener("pointermove", clearWhenOutsideMap);
+      window.removeEventListener("mousemove", clearWhenOutsideMap);
+    };
+  }, [crosshair]);
 
   // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
   useEffect(() => {
@@ -166,10 +180,6 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
     for (const feature of symbolMarkerFeatures(sources)) {
       const element = createSymbolMarkerElement(feature);
-      element.addEventListener("click", (event) => {
-        event.stopPropagation();
-        handlersRef.current.onSelectEntity(feature.properties.entityId);
-      });
       element.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -238,8 +248,61 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     }
   }, [editing, mapReady]);
 
+  const updateCrosshair = (
+    event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement }
+  ) => {
+    if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
+      setCrosshair(null);
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const target = hoverSelectionTarget(event, rect, point, mapRef.current);
+    setCrosshair({ ...point, target: targetSquare(point, target?.box ?? null), ...(target ? { targetEntityId: target.entityId } : {}) });
+  };
+
+  const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    if (crosshair?.targetEntityId) {
+      handlersRef.current.onSelectEntity(crosshair.targetEntityId);
+      return;
+    }
+    handlersRef.current.onBackgroundClick?.();
+  };
+
+  const crosshairStyle = crosshair
+    ? ({
+        "--map-crosshair-x": `${crosshair.x}px`,
+        "--map-crosshair-y": `${crosshair.y}px`,
+        "--map-target-height": `${crosshair.target.height}px`,
+        "--map-target-width": `${crosshair.target.width}px`,
+        "--map-target-x": `${crosshair.target.x}px`,
+        "--map-target-y": `${crosshair.target.y}px`
+      } as CSSProperties)
+    : undefined;
+
   return (
-    <div className="map-canvas" ref={containerRef} style={{ position: "absolute", inset: 0 }} data-testid="map-canvas">
+    <div
+      className="map-canvas"
+      ref={mapCanvasRef}
+      style={{ position: "absolute", inset: 0 }}
+      data-testid="map-canvas"
+      onMouseMove={updateCrosshair}
+      onMouseLeave={() => setCrosshair(null)}
+      onPointerMove={updateCrosshair}
+      onPointerLeave={() => setCrosshair(null)}
+      onClick={onMapClick}
+    >
+      <div className="maplibre-host" ref={containerRef} />
+      {crosshair ? (
+        <div className="map-crosshair" style={crosshairStyle} aria-hidden="true">
+          <div className="map-crosshair__line map-crosshair__line--left" />
+          <div className="map-crosshair__line map-crosshair__line--right" />
+          <div className="map-crosshair__line map-crosshair__line--top" />
+          <div className="map-crosshair__line map-crosshair__line--bottom" />
+          <div className="map-crosshair__target" />
+        </div>
+      ) : null}
       {mapError ? (
         <div className="map-unavailable" role="status" aria-live="polite">
           <span>Map unavailable</span>
@@ -286,6 +349,95 @@ function openRing(ring: Position[]): Position[] {
 function positionsEqual(a: Position | undefined, b: Position | undefined): boolean {
   if (!a || !b) return false;
   return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+}
+
+function hoverSelectionTarget(
+  event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement },
+  mapRect: DOMRect,
+  point: ScreenPoint,
+  map: MlMap | undefined
+): HoverTarget | null {
+  if (event.target instanceof Element) {
+    const element = event.target.closest<HTMLElement>(".map-symbol-marker");
+    const entityId = element?.dataset.entityId;
+    if (element && entityId && event.currentTarget.contains(element)) {
+      return { entityId, box: boxFromElement(element, mapRect) };
+    }
+  }
+
+  if (!map) return null;
+  try {
+    const features = map.queryRenderedFeatures([point.x, point.y], { layers: INTERACTIVE_LAYERS });
+    for (const feature of features) {
+      const box = boxFromFeature(map, feature);
+      const entityId = feature.properties?.entityId;
+      if (box && typeof entityId === "string") return { entityId, box };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function squareAround(point: ScreenPoint, size: number): TargetBox {
+  return { x: point.x - size / 2, y: point.y - size / 2, width: size, height: size };
+}
+
+function targetSquare(point: ScreenPoint, target: TargetBox | null): TargetBox {
+  if (!target) return squareAround(point, CROSSHAIR_TARGET_SIZE);
+  const side =
+    Math.max(
+      CROSSHAIR_TARGET_SIZE,
+      Math.abs(point.x - target.x) * 2 + HOVER_TARGET_PADDING * 2,
+      Math.abs(point.x - (target.x + target.width)) * 2 + HOVER_TARGET_PADDING * 2,
+      Math.abs(point.y - target.y) * 2 + HOVER_TARGET_PADDING * 2,
+      Math.abs(point.y - (target.y + target.height)) * 2 + HOVER_TARGET_PADDING * 2
+    );
+  return squareAround(point, side);
+}
+
+function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.left - mapRect.left,
+    y: rect.top - mapRect.top,
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | null {
+  const points = collectLngLatPositions(feature.geometry.coordinates).map((position) => {
+    const projected = map.project([position[0], position[1]]);
+    return { x: projected.x, y: projected.y };
+  });
+  if (points.length === 0) return null;
+
+  const xValues = points.map((position) => position.x);
+  const yValues = points.map((position) => position.y);
+  return {
+    x: Math.min(...xValues),
+    y: Math.min(...yValues),
+    width: Math.max(...xValues) - Math.min(...xValues),
+    height: Math.max(...yValues) - Math.min(...yValues)
+  };
+}
+
+function collectLngLatPositions(value: unknown): Position[] {
+  if (isLngLatPosition(value)) return [value];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(collectLngLatPositions);
+}
+
+function isLngLatPosition(value: unknown): value is Position {
+  return (
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    typeof value[0] === "number" &&
+    Number.isFinite(value[0]) &&
+    typeof value[1] === "number" &&
+    Number.isFinite(value[1])
+  );
 }
 
 function pushSources(map: MlMap, sources: MapSources): void {
@@ -415,45 +567,10 @@ function webglAvailable(): boolean {
   }
 }
 
-function fitToSourcesOnce(map: MlMap, sources: MapSources, fitOnceRef: { current: boolean }): void {
-  if (fitOnceRef.current) return;
-  const bounds = sourceBounds(sources);
-  if (!bounds) return;
-  fitOnceRef.current = true;
-  map.fitBounds(bounds, { padding: 84, maxZoom: 5, duration: 0 });
-}
-
-function sourceBounds(sources: MapSources): maplibregl.LngLatBounds | undefined {
-  let bounds: maplibregl.LngLatBounds | undefined;
-  for (const feature of allFeatures(sources)) {
-    forEachPosition(feature.geometry, (position) => {
-      const lngLat = toLngLat(position);
-      bounds = bounds ? bounds.extend(lngLat) : new maplibregl.LngLatBounds(lngLat, lngLat);
-    });
-  }
-  return bounds;
-}
-
-function allFeatures(sources: MapSources): MapFeature[] {
-  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features];
-}
-
-function forEachPosition(geometry: UiRawGeometry, visitor: (position: Position) => void): void {
-  if (geometry.type === "Point") {
-    visitor(geometry.coordinates);
-    return;
-  }
-  if (geometry.type === "LineString") {
-    for (const position of geometry.coordinates) visitor(position);
-    return;
-  }
-  for (const ring of geometry.coordinates) {
-    for (const position of ring) visitor(position);
-  }
-}
-
-function toLngLat(position: Position): [number, number] {
-  return [position[0], position[1]];
+function fitWorldOnce(map: MlMap, fitWorldOnceRef: { current: boolean }): void {
+  if (fitWorldOnceRef.current) return;
+  fitWorldOnceRef.current = true;
+  map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 });
 }
 
 export { buildMapSources };

@@ -251,19 +251,22 @@ export function MapConsole() {
         }
         map={
           <>
-            <MapView
-              sources={sources}
-              styleUrl={atlas.config?.mapStyleUrl}
-              selectedId={selectedId}
-              editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
-              onSelectEntity={selectEntityById}
-              onMapContextMenu={onMapContextMenu}
-              onBackgroundClick={() => {
-                setMapMenu(null);
-                dispatch({ type: "clearSelection" });
-              }}
-            />
-            <ConnectionBadge running={atlas.health.running} healthy={atlas.health.healthy} degraded={atlas.health.degraded} />
+            <div className="map-world-frame">
+              <div className="map-stage">
+                <MapView
+                  sources={sources}
+                  styleUrl={atlas.config?.mapStyleUrl}
+                  selectedId={selectedId}
+                  editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
+                  onSelectEntity={selectEntityById}
+                  onMapContextMenu={onMapContextMenu}
+                  onBackgroundClick={() => {
+                    setMapMenu(null);
+                    dispatch({ type: "clearSelection" });
+                  }}
+                />
+              </div>
+            </div>
           </>
         }
       />
@@ -371,20 +374,6 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
       onSelect={onSelectEntity}
     />
-  );
-}
-
-function ConnectionBadge({ running, healthy, degraded }: { running: boolean; healthy: boolean; degraded: boolean }) {
-  const { color, label } = degraded
-    ? { color: "var(--warning)", label: "Reconnecting" }
-    : running && healthy
-      ? { color: "var(--success)", label: "Live" }
-      : { color: "var(--text-3)", label: "Connecting" };
-  return (
-    <div className="map-overlay-tl">
-      <span className="conn-dot" style={{ background: color }} />
-      <span>{label}</span>
-    </div>
   );
 }
 
