@@ -6,7 +6,7 @@ export const HOVER_TARGET_PADDING = 7;
 export type ScreenPoint = { x: number; y: number };
 export type TargetBox = { x: number; y: number; width: number; height: number };
 export type ReticleTarget = { box: TargetBox; entityId?: string; id?: string };
-export type ReticleState = ScreenPoint & { target: TargetBox; targetEntityId?: string; targetId?: string };
+export type ReticleState = ScreenPoint & { target: TargetBox; targetEntityId?: string; targeted?: boolean };
 export type ZoomOverlayState = { start: ScreenPoint; current: ScreenPoint };
 
 export function pointFromClient(event: { clientX: number; clientY: number }, rect: DOMRect, clampToRect = false): ScreenPoint {
@@ -43,7 +43,7 @@ export function reticleForTarget(target: ReticleTarget): ReticleState {
     y: box.y + box.height / 2,
     target: box,
     targetEntityId: target.entityId,
-    targetId: target.id ?? target.entityId
+    targeted: true
   };
 }
 

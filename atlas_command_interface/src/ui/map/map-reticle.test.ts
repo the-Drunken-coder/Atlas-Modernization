@@ -18,7 +18,7 @@ describe("map reticle helpers", () => {
       y: 24,
       target: { x: 1, y: 13, width: 22, height: 22 },
       targetEntityId: "asset-1",
-      targetId: "asset-1"
+      targeted: true
     });
   });
 

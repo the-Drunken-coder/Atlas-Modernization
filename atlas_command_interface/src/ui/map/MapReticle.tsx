@@ -20,7 +20,7 @@ export function MapReticle({ reticle, scrolling = false, zooming = false }: MapR
     "map-reticle",
     scrolling ? "map-reticle--scrolling" : "",
     zooming ? "map-reticle--zoom" : "",
-    !zooming && reticle.targetId ? "map-reticle--targeted" : ""
+    !zooming && reticle.targeted ? "map-reticle--targeted" : ""
   ]
     .filter(Boolean)
     .join(" ");

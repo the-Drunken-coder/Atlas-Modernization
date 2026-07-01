@@ -537,9 +537,7 @@ export function MapView({
       ? reticle
       : (previewReticle ?? reticle ?? focusReticle);
 
-  useEffect(() => {
-    activeReticleRef.current = visibleReticle;
-  }, [visibleReticle]);
+  activeReticleRef.current = visibleReticle;
 
   function setZoomOverlayState(next: ZoomOverlayState | null): void {
     zoomOverlayRef.current = next;

@@ -37,9 +37,6 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
               onSelect(entity);
             }}
             onFocus={() => onPreview?.(entity)}
-            onMouseEnter={() => onPreview?.(entity)}
-            onMouseLeave={() => onPreview?.(null)}
-            onMouseMove={() => onPreview?.(entity)}
             onPointerEnter={() => onPreview?.(entity)}
             onPointerLeave={() => onPreview?.(null)}
             onPointerMove={() => onPreview?.(entity)}
