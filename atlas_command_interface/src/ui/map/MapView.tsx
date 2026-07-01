@@ -532,7 +532,7 @@ export function MapView({
     ? reticleFromTargetBox(boxFromDrag(zoomOverlay))
     : scrollLocked
       ? reticle
-      : (previewReticle ?? reticle ?? focusReticle);
+      : (reticle?.targetEntityId ? reticle : (previewReticle ?? reticle ?? focusReticle));
 
   activeReticleRef.current = visibleReticle;
 

@@ -414,6 +414,24 @@ describe("MapView external reticle targets", () => {
     });
   });
 
+  it("shows live map hover reticles ahead of external previews", async () => {
+    const { canvas, onSelectEntity, rerenderMap } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(170, 120, 20, 20));
+    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    fireEvent.pointerMove(marker, { clientX: 180, clientY: 130 });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");
+    });
+    fireEvent.click(canvas);
+    expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
+  });
+
   it("keeps scroll-locked reticle state ahead of external previews", async () => {
     const { canvas, rerenderMap } = renderMapView();
     rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
