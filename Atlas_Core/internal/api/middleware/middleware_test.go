@@ -33,6 +33,8 @@ func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 		"/health///":                 true,
 		"/readiness":                 true,
 		"/readiness/":                true,
+		"/resources":                 true,
+		"/resources/":                true,
 		"/":                          false,
 		"/entities/":                 false,
 		"/health/live":               false,
@@ -322,8 +324,8 @@ func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	}
 }
 
-func TestCombinedAuthEmptyConfiguredKeyStillAllowsHealth(t *testing.T) {
-	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/"} {
+func TestCombinedAuthEmptyConfiguredKeyStillAllowsPublicPaths(t *testing.T) {
+	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/", "/resources", "/resources/"} {
 		t.Run(path, func(t *testing.T) {
 			called := false
 			handler := middleware.CombinedAuth("", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

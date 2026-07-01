@@ -146,6 +146,7 @@ Key environment variables:
 - `GET /`
 - `GET /health`
 - `GET /readiness`
+- `GET /resources`
 
 ### Entities
 

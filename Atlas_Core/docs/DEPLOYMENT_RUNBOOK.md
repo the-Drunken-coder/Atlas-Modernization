@@ -56,8 +56,8 @@ This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings
 files, binds the API to `127.0.0.1:8000`, and requires API-key auth for API
 routes. `API_AUTH_KEY` is the required bootstrap machine key; browser admins can
-create additional managed machine keys after sign-in. Health and readiness
-endpoints remain unauthenticated.
+create additional managed machine keys after sign-in. Health, readiness, and
+resource usage endpoints remain unauthenticated.
 
 ## Production Tunnel
 

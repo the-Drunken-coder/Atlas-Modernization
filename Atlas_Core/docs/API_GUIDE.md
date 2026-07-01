@@ -168,8 +168,11 @@ Object detail responses:
 | `GET` | `/` | `200` | Returns service metadata and top-level endpoints. |
 | `GET` | `/health` | `200` | Liveness only. Skips auth. |
 | `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
+| `GET` | `/resources` | `200` | Returns CPU, memory, disk, and Go process usage. Skips protected-route auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
+
+`GET /resources` reports host-level metrics, not cgroup-aware container limits. Disk `used_percent` is based on space unavailable to the service, so it may differ from `df`-style `Use%`.
 
 Feed behavior:
 
