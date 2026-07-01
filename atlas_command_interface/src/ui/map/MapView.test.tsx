@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MapView, buildMapSources } from "./MapView.js";
+import { MapView, buildMapSources, type MapReticleTarget } from "./MapView.js";
+import type { MapSources } from "./map-sources.js";
 
 type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
@@ -12,6 +13,7 @@ const maplibreMock = vi.hoisted(() => {
 
     readonly options: Record<string, unknown>;
     readonly listeners = new Map<string, Listener[]>();
+    readonly easeTo = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly resize = vi.fn();
@@ -21,6 +23,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly addLayer = vi.fn();
     readonly queryRenderedFeatures = vi.fn(() => []);
     readonly getBearing = vi.fn(() => 0);
+    readonly getZoom = vi.fn(() => 4);
     readonly getSource = vi.fn(() => ({ setData: vi.fn() }));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
 
@@ -295,14 +298,122 @@ describe("MapView zoom overlay", () => {
   });
 });
 
-function renderMapView() {
+describe("MapView external reticle targets", () => {
+  it("previews visible entity targets without moving the camera", async () => {
+    const { canvas, map, rerenderMap } = renderMapView();
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    map.easeTo.mockClear();
+    map.fitBounds.mockClear();
+
+    rerenderMap({ previewTarget: { type: "entity", id: "asset-1" } });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+    });
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it("ignores offscreen preview targets", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.easeTo.mockClear();
+    map.fitBounds.mockClear();
+
+    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [500, 500] } });
+
+    await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+  });
+
+  it("focuses selected point targets with easeTo and keeps a fallback reticle", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.easeTo.mockClear();
+    map.fitBounds.mockClear();
+
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 6 }));
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    const overlay = document.querySelector<HTMLElement>(".map-reticle");
+    expect(overlay).toHaveClass("map-reticle--targeted");
+    expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+    expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+  });
+
+  it("focuses selected geometry targets with fitBounds", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.easeTo.mockClear();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      focusTarget: {
+        type: "geometry",
+        id: "area-1",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [-75, 40],
+            [-73, 42]
+          ]
+        }
+      }
+    });
+
+    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 450, maxZoom: 10, padding: 48 }));
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("previews generic point targets for future search results", async () => {
+    const { rerenderMap } = renderMapView();
+
+    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80], label: "Dunkin" } });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("22px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("22px");
+    });
+  });
+
+  it("keeps scroll-locked reticle state ahead of external previews", async () => {
+    const { canvas, rerenderMap } = renderMapView();
+    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+    rerenderMap({ previewTarget: { type: "point", id: "search-2", coordinates: [160, 100] } });
+
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--scrolling"));
+    const overlay = document.querySelector<HTMLElement>(".map-reticle");
+    expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+    expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+  });
+});
+
+type RenderMapViewProps = {
+  focusTarget?: MapReticleTarget | null;
+  previewTarget?: MapReticleTarget | null;
+  sources?: MapSources;
+};
+
+function renderMapView(props: RenderMapViewProps = {}) {
   const onBackgroundClick = vi.fn();
   const onMapContextMenu = vi.fn();
   const onSelectEntity = vi.fn();
-  render(
+  const renderProps = { sources: buildMapSources([], undefined), ...props };
+  const result = render(
     <MapView
-      sources={buildMapSources([], undefined)}
+      sources={renderProps.sources}
       styleUrl="test-style"
+      focusTarget={renderProps.focusTarget}
+      previewTarget={renderProps.previewTarget}
       onBackgroundClick={onBackgroundClick}
       onMapContextMenu={onMapContextMenu}
       onSelectEntity={onSelectEntity}
@@ -311,7 +422,21 @@ function renderMapView() {
 
   const canvas = screen.getByTestId("map-canvas");
   vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
-  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity };
+  const rerenderMap = (nextProps: RenderMapViewProps) => {
+    Object.assign(renderProps, nextProps);
+    result.rerender(
+      <MapView
+        sources={renderProps.sources}
+        styleUrl="test-style"
+        focusTarget={renderProps.focusTarget}
+        previewTarget={renderProps.previewTarget}
+        onBackgroundClick={onBackgroundClick}
+        onMapContextMenu={onMapContextMenu}
+        onSelectEntity={onSelectEntity}
+      />
+    );
+  };
+  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap };
 }
 
 function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect | (() => DOMRect)): HTMLButtonElement {

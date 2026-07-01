@@ -8,6 +8,7 @@ import {
   moveVertex,
   removeVertex,
   type Position,
+  type UiRawGeometry,
   type UiGeometry,
   type VertexRef
 } from "../../atlas/geometry.js";
@@ -19,6 +20,7 @@ import {
   RETICLE_TARGET_SIZE,
   boxFromDrag,
   boxFromProjectedPositions,
+  boxIntersectsViewport,
   pointFromClient,
   reticleForTarget,
   reticleFromTargetBox,
@@ -42,8 +44,16 @@ const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
   [180, 85.051129]
 ];
 const SCROLL_LOCK_SETTLE_MS = 180;
+const FOCUS_DURATION_MS = 450;
+const FOCUS_BOUNDS_PADDING = 48;
+const FOCUS_MAX_ZOOM = 10;
+const FOCUS_MIN_POINT_ZOOM = 6;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
+export type MapReticleTarget =
+  | { type: "entity"; id: string }
+  | { type: "point"; id: string; coordinates: [number, number]; label?: string }
+  | { type: "geometry"; id: string; geometry: UiRawGeometry; label?: string };
 
 export type MapEditing = {
   geometry: UiGeometry;
@@ -56,6 +66,8 @@ type MapViewProps = {
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
+  previewTarget?: MapReticleTarget | null;
+  focusTarget?: MapReticleTarget | null;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
@@ -64,7 +76,17 @@ type MapViewProps = {
 type HoverTarget = ReticleTarget & { entityId: string };
 type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
 
-export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
+export function MapView({
+  sources,
+  styleUrl,
+  editing,
+  initialCenter,
+  previewTarget,
+  focusTarget,
+  onSelectEntity,
+  onMapContextMenu,
+  onBackgroundClick
+}: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
@@ -76,13 +98,17 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const scrollLockedRef = useRef(false);
   const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
   const reticleRef = useRef<ReticleState | null>(null);
+  const activeReticleRef = useRef<ReticleState | null>(null);
   const cursorHandoffRef = useRef<CursorHandoffState | null>(null);
   const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
+  const focusedTargetKeyRef = useRef<string | null>(null);
   const suppressNextClickRef = useRef(false);
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   const [reticle, setReticle] = useState<ReticleState | null>(null);
+  const [previewReticle, setPreviewReticle] = useState<ReticleState | null>(null);
+  const [focusReticle, setFocusReticle] = useState<ReticleState | null>(null);
   const [scrollLocked, setScrollLocked] = useState(false);
   const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
@@ -259,7 +285,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     const syncTargetBox = () => {
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
-      const box = boxForEntityId(mapCanvas, entityId);
+      const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
       if (!box) return;
       setReticle((current) => {
         if (current?.targetEntityId !== entityId) return current;
@@ -280,7 +306,62 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       map.off("zoom", syncTargetBox);
       map.off("moveend", syncTargetBox);
     };
-  }, [reticle?.targetEntityId, mapReady]);
+  }, [reticle?.targetEntityId, mapReady, sources]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !previewTarget) {
+      setPreviewReticle(null);
+      return;
+    }
+
+    const syncPreviewReticle = () => {
+      if (scrollLockedRef.current || zoomOverlayRef.current) return;
+      setPreviewReticle(reticleForVisibleTarget(mapCanvasRef.current, map, sources, previewTarget));
+    };
+
+    syncPreviewReticle();
+    map.on("move", syncPreviewReticle);
+    map.on("render", syncPreviewReticle);
+    map.on("zoom", syncPreviewReticle);
+    return () => {
+      map.off("move", syncPreviewReticle);
+      map.off("render", syncPreviewReticle);
+      map.off("zoom", syncPreviewReticle);
+    };
+  }, [mapReady, previewTarget, sources]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !focusTarget) {
+      focusedTargetKeyRef.current = null;
+      setFocusReticle(null);
+      return;
+    }
+
+    const key = mapReticleTargetKey(focusTarget);
+    if (focusedTargetKeyRef.current !== key) {
+      focusMapTarget(map, sources, focusTarget);
+      focusedTargetKeyRef.current = key;
+    }
+
+    const syncFocusReticle = () => {
+      if (scrollLockedRef.current || zoomOverlayRef.current) return;
+      setFocusReticle(reticleForVisibleTarget(mapCanvasRef.current, map, sources, focusTarget));
+    };
+
+    syncFocusReticle();
+    map.on("move", syncFocusReticle);
+    map.on("render", syncFocusReticle);
+    map.on("zoom", syncFocusReticle);
+    map.on("moveend", syncFocusReticle);
+    return () => {
+      map.off("move", syncFocusReticle);
+      map.off("render", syncFocusReticle);
+      map.off("zoom", syncFocusReticle);
+      map.off("moveend", syncFocusReticle);
+    };
+  }, [focusTarget, mapReady, sources]);
 
   // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
   useEffect(() => {
@@ -391,7 +472,9 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     setReticle((current) => {
       const entityId = current?.targetEntityId;
       if (!entityId) return current;
-      const box = boxForEntityId(mapCanvas, entityId);
+      const map = mapRef.current;
+      if (!map) return current;
+      const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
       if (!box) return current;
       const next = reticleForTarget({ entityId, box });
       reticleRef.current = next;
@@ -404,7 +487,12 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     if (zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const visualPoint = reticleRef.current ? { x: reticleRef.current.x, y: reticleRef.current.y } : pointFromClient(event, rect);
+    const activeReticle = activeReticleRef.current ?? reticleRef.current;
+    if (activeReticle) {
+      reticleRef.current = activeReticle;
+      setReticle(activeReticle);
+    }
+    const visualPoint = activeReticle ? { x: activeReticle.x, y: activeReticle.y } : pointFromClient(event, rect);
     cursorHandoffRef.current = { nativePoint: pointFromClient(event, rect), visualPoint };
     event.currentTarget.classList.add("map-canvas--scrolling");
     if (!scrollLockedRef.current) setScrollLocked(true);
@@ -443,7 +531,15 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     handlersRef.current.onBackgroundClick?.();
   };
 
-  const visibleReticle = zoomOverlay ? reticleFromTargetBox(boxFromDrag(zoomOverlay)) : reticle;
+  const visibleReticle = zoomOverlay
+    ? reticleFromTargetBox(boxFromDrag(zoomOverlay))
+    : scrollLocked
+      ? reticle
+      : (previewReticle ?? reticle ?? focusReticle);
+
+  useEffect(() => {
+    activeReticleRef.current = visibleReticle;
+  }, [visibleReticle]);
 
   function setZoomOverlayState(next: ZoomOverlayState | null): void {
     zoomOverlayRef.current = next;
@@ -588,12 +684,38 @@ function markerTargetAtPoint(mapCanvas: HTMLElement, mapRect: DOMRect, point: Sc
   return null;
 }
 
-function boxForEntityId(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
+function reticleForVisibleTarget(mapCanvas: HTMLElement | null, map: MlMap, sources: MapSources, target: MapReticleTarget): ReticleState | null {
+  if (!mapCanvas) return null;
+  const box = boxForMapReticleTarget(mapCanvas, map, sources, target);
+  if (!box) return null;
+  const viewport = mapCanvas.getBoundingClientRect();
+  if (!boxIntersectsViewport(box, { width: viewport.width, height: viewport.height })) return null;
+  return reticleForTarget({ id: target.id, entityId: target.type === "entity" ? target.id : undefined, box });
+}
+
+function boxForMapReticleTarget(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, target: MapReticleTarget): TargetBox | null {
+  if (target.type === "entity") return targetBoxForEntityId(mapCanvas, map, sources, target.id);
+  if (target.type === "point") {
+    const point = map.project(target.coordinates);
+    return squareAround({ x: point.x, y: point.y }, 1);
+  }
+  return boxFromGeometry(map, target.geometry);
+}
+
+function targetBoxForEntityId(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, entityId: string): TargetBox | null {
+  return boxForEntityMarker(mapCanvas, entityId) ?? boxForFeature(map, featureForEntityId(sources, entityId));
+}
+
+function boxForEntityMarker(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
   const mapRect = mapCanvas.getBoundingClientRect();
   for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
     if (element.dataset.entityId === entityId) return boxFromElement(element, mapRect);
   }
   return null;
+}
+
+function featureForEntityId(sources: MapSources, entityId: string): MapFeature | undefined {
+  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].find((feature) => feature.properties.entityId === entityId);
 }
 
 function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
@@ -611,6 +733,53 @@ function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | nul
     const projected = map.project([position[0], position[1]]);
     return { x: projected.x, y: projected.y };
   });
+}
+
+function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox | null {
+  return feature ? boxFromGeometry(map, feature.geometry) : null;
+}
+
+function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null {
+  return boxFromProjectedPositions(collectLngLatPositions(geometry.coordinates), (position) => {
+    const projected = map.project([position[0], position[1]]);
+    return { x: projected.x, y: projected.y };
+  });
+}
+
+function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget): void {
+  const geometry = geometryForFocusTarget(sources, target);
+  if (!geometry) return;
+  if (geometry.type === "Point") {
+    map.easeTo({
+      center: [geometry.coordinates[0], geometry.coordinates[1]],
+      duration: FOCUS_DURATION_MS,
+      zoom: Math.max(map.getZoom(), FOCUS_MIN_POINT_ZOOM)
+    });
+    return;
+  }
+  const bounds = boundsForGeometry(geometry);
+  if (bounds) map.fitBounds(bounds, { duration: FOCUS_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
+}
+
+function geometryForFocusTarget(sources: MapSources, target: MapReticleTarget): UiRawGeometry | undefined {
+  if (target.type === "point") return { type: "Point", coordinates: target.coordinates };
+  if (target.type === "geometry") return target.geometry;
+  return featureForEntityId(sources, target.id)?.geometry;
+}
+
+function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number, number]] | null {
+  const positions = collectLngLatPositions(geometry.coordinates);
+  if (positions.length === 0) return null;
+  const lngValues = positions.map((position) => position[0]);
+  const latValues = positions.map((position) => position[1]);
+  return [
+    [Math.min(...lngValues), Math.min(...latValues)],
+    [Math.max(...lngValues), Math.max(...latValues)]
+  ];
+}
+
+function mapReticleTargetKey(target: MapReticleTarget): string {
+  return `${target.type}:${target.id}`;
 }
 
 function collectLngLatPositions(value: unknown): Position[] {
