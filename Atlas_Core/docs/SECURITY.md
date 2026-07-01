@@ -76,7 +76,7 @@ Optional API key auth is controlled by:
 - `ENABLE_API_AUTH` and `API_AUTH_KEY` environment variables (take precedence)
 - `enable_api_auth` and `api_auth_key` in `atlas_core.settings.json`
 
-If enabled, middleware accepts the bootstrap API key or an active managed API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes. Managed API keys are full-access machine credentials in v1; Core stores only `sha256(secret)` plus metadata and returns the full key only from the create response.
+If enabled, middleware accepts the bootstrap API key or an active managed API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes. Managed API keys are full-access machine credentials in v1; Core stores only `sha256(secret)` plus metadata and returns the full key only from the create response. Managed keys are inactive while API-key auth is disabled, and Core rejects new managed-key creation until `ENABLE_API_AUTH=true`.
 
 Managed API key administration is browser-session-only:
 

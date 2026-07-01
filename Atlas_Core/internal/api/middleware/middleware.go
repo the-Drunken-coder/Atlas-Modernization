@@ -142,9 +142,15 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 				next.ServeHTTP(w, r)
 				return
 			}
-			if !isAPIKeyAdminPath(r.URL.Path) && enableAPIKey && ValidAPIKeyOrManaged(r, apiKey, adminAuth) {
-				next.ServeHTTP(w, r)
-				return
+			if !isAPIKeyAdminPath(r.URL.Path) && enableAPIKey {
+				valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
+				if err != nil {
+					zerolog.Ctx(r.Context()).Warn().Err(err).Msg("managed API key authentication failed")
+				}
+				if valid {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 			if adminAuth != nil {
 				if _, err := adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
@@ -166,14 +172,19 @@ func ValidAPIKey(r *http.Request, apiKey string) bool {
 }
 
 func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth *admin.Service) bool {
+	valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
+	return err == nil && valid
+}
+
+func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth *admin.Service) (bool, error) {
 	providedKey := requestAPIKey(r)
 	if validAPIKeyValue(providedKey, apiKey) {
-		return true
+		return true, nil
 	}
 	if strings.TrimSpace(providedKey) == "" || adminAuth == nil {
-		return false
+		return false, nil
 	}
-	return adminAuth.AuthenticateAPIKey(r.Context(), providedKey)
+	return adminAuth.AuthenticateAPIKeyResult(r.Context(), providedKey)
 }
 
 func validAPIKeyValue(providedKey string, apiKey string) bool {

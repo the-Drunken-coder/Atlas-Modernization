@@ -171,16 +171,27 @@ func (s *Service) RevokeAPIKey(ctx context.Context, keyID string, now time.Time)
 }
 
 func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) bool {
+	ok, err := s.AuthenticateAPIKeyResult(ctx, apiKey)
+	return err == nil && ok
+}
+
+func (s *Service) AuthenticateAPIKeyResult(ctx context.Context, apiKey string) (bool, error) {
 	keyID, secret, ok := parseManagedAPIKey(apiKey)
 	if !ok {
-		return false
+		return false, nil
 	}
 	record, err := s.getAPIKeyRecord(ctx, keyID)
-	if err != nil || record.RevokedAt != nil {
-		return false
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if record.RevokedAt != nil {
+		return false, nil
 	}
 	actual := hashAPIKeySecret(secret)
-	return subtle.ConstantTimeCompare([]byte(actual), []byte(record.SecretHash)) == 1
+	return subtle.ConstantTimeCompare([]byte(actual), []byte(record.SecretHash)) == 1, nil
 }
 
 func (s *Service) getAPIKeyRecord(ctx context.Context, keyID string) (APIKeyRecord, error) {

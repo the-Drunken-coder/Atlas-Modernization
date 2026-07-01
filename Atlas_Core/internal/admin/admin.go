@@ -158,6 +158,9 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	if username == "" || password == "" {
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}
+	if err := s.CleanupExpiredAuthRecords(ctx, now); err != nil {
+		return "", SessionRecord{}, err
+	}
 	if throttled, err := s.loginThrottled(ctx, username, ip, now); err != nil {
 		return "", SessionRecord{}, err
 	} else if throttled {
@@ -272,6 +275,15 @@ func (s *Service) Logout(ctx context.Context, r *http.Request) error {
 func requestSessionCookie(r *http.Request) (*http.Cookie, bool) {
 	cookie, err := r.Cookie(CookieName)
 	return cookie, err == nil
+}
+
+func (s *Service) CleanupExpiredAuthRecords(ctx context.Context, now time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM admin_records
+		WHERE (type = 'session' AND COALESCE((json->>'expires_at')::timestamptz, '-infinity'::timestamptz) <= $1::timestamptz)
+		   OR (type = 'login_fail' AND COALESCE((json->>'reset_at')::timestamptz, '-infinity'::timestamptz) <= $1::timestamptz)
+	`, now.UTC())
+	return err
 }
 
 func (s *Service) storeSession(ctx context.Context, token string, session SessionRecord) error {

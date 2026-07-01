@@ -546,12 +546,12 @@ This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or
 | `POST` | `/admin/auth/logout` | `204` | Deletes the current browser session and clears the session cookie. |
 | `GET` | `/admin/auth/me` | `200` | Reports the current browser session user. |
 | `GET` | `/admin/api-keys` | `200` | Lists active managed API key metadata. |
-| `POST` | `/admin/api-keys` | `201` | Creates a named managed API key and returns the full key once. |
+| `POST` | `/admin/api-keys` | `201` | Creates a named managed API key and returns the full key once. Requires API-key auth to be enabled. |
 | `DELETE` | `/admin/api-keys/{key_id}` | `204` | Revokes a managed API key. |
 
 The session token is random and stored only as `session:<sha256(token)>` in Core. The browser receives it in the `atlas_session` cookie with `HttpOnly; Secure`. Cross-site UI/Core deployments use the default `SameSite=None`; same-site deployments can set `ATLAS_ADMIN_COOKIE_SAMESITE=lax`.
 
-Managed API keys are full-access machine credentials for the current auth model. Core stores only `sha256(secret)` plus key metadata in `admin_records`, and list responses never include the full secret. API-key-authenticated requests cannot create, list, or revoke API keys; key management requires a browser admin session.
+Managed API keys are full-access machine credentials for the current auth model. Core stores only `sha256(secret)` plus key metadata in `admin_records`, and list responses never include the full secret. API-key-authenticated requests cannot create, list, or revoke API keys; key management requires a browser admin session. Creating managed keys requires `ENABLE_API_AUTH=true`; existing keys remain visible/revocable but inactive while API-key auth is disabled.
 
 The command interface Worker is intentionally thin. It hosts static assets and `GET /api/config`, which returns only browser-safe configuration:
 

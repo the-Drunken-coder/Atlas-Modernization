@@ -52,6 +52,10 @@ func (h *Handler) AdminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !h.requireTrustedAdminOrigin(w, r) {
 		return
 	}
+	if !h.config.EnableAPIAuth {
+		h.writeError(w, r, http.StatusConflict, "API key auth is disabled; set ENABLE_API_AUTH=true before creating managed API keys", protocol.ErrorCodeValidationError)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req adminCreateAPIKeyRequest
 	if !h.decodeJSONRequestBody(w, r, &req, false) {

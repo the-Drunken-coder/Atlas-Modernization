@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -157,6 +158,70 @@ func TestLoginThrottleBoundary(t *testing.T) {
 	}
 }
 
+func TestCleanupExpiredAuthRecordsRemovesOnlyTransientExpiredRows(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+	activeUntil := now.Add(time.Minute)
+	revokedAt := expiredAt
+	insertAdminRecord(ctx, t, pool, "session:expired-cleanup", "session", SessionRecord{ExpiresAt: expiredAt})
+	insertAdminRecord(ctx, t, pool, "session:active-cleanup", "session", SessionRecord{ExpiresAt: activeUntil})
+	insertAdminRecord(ctx, t, pool, "login_fail:user:expired-cleanup", "login_fail", LoginFailureRecord{Count: 1, ResetAt: expiredAt})
+	insertAdminRecord(ctx, t, pool, "login_fail:user:active-cleanup", "login_fail", LoginFailureRecord{Count: 1, ResetAt: activeUntil})
+	insertAdminRecord(ctx, t, pool, "account:cleanup", "account", AccountRecord{Username: "cleanup", Role: "admin"})
+	insertAdminRecord(ctx, t, pool, "api_key:atlas_ak_cleanup", "api_key", APIKeyRecord{
+		ID:         "atlas_ak_cleanup",
+		Name:       "cleanup",
+		KeyPrefix:  "atlas_ak_cleanup",
+		SecretHash: "hash",
+		CreatedAt:  expiredAt,
+		CreatedBy:  "admin",
+		RevokedAt:  &revokedAt,
+	})
+
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	if err := service.CleanupExpiredAuthRecords(ctx, now); err != nil {
+		t.Fatalf("cleanup expired auth records: %v", err)
+	}
+
+	assertAdminRecordAbsent(ctx, t, pool, "session:expired-cleanup")
+	assertAdminRecordPresent(ctx, t, pool, "session:active-cleanup")
+	assertAdminRecordAbsent(ctx, t, pool, "login_fail:user:expired-cleanup")
+	assertAdminRecordPresent(ctx, t, pool, "login_fail:user:active-cleanup")
+	assertAdminRecordPresent(ctx, t, pool, "account:cleanup")
+	assertAdminRecordPresent(ctx, t, pool, "api_key:atlas_ak_cleanup")
+}
+
+func TestLoginCleansExpiredAuthRecordsOpportunistically(t *testing.T) {
+	t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+	t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	if err := service.SeedDevelopmentAdmin(ctx); err != nil {
+		t.Fatalf("seed dev admin: %v", err)
+	}
+	insertAdminRecord(ctx, t, pool, "session:stale-before-login", "session", SessionRecord{ExpiresAt: now.Add(-time.Minute)})
+	insertAdminRecord(ctx, t, pool, "session:active-before-login", "session", SessionRecord{ExpiresAt: now.Add(time.Minute)})
+	insertAdminRecord(ctx, t, pool, "login_fail:user:stale-before-login", "login_fail", LoginFailureRecord{Count: 1, ResetAt: now.Add(-time.Minute)})
+	insertAdminRecord(ctx, t, pool, "login_fail:user:active-before-login", "login_fail", LoginFailureRecord{Count: 1, ResetAt: now.Add(time.Minute)})
+
+	if _, _, err := service.Login(ctx, "admin", "password", "127.0.0.1", now); err != nil {
+		t.Fatalf("login seeded admin: %v", err)
+	}
+
+	assertAdminRecordAbsent(ctx, t, pool, "session:stale-before-login")
+	assertAdminRecordPresent(ctx, t, pool, "session:active-before-login")
+	assertAdminRecordAbsent(ctx, t, pool, "login_fail:user:stale-before-login")
+	assertAdminRecordPresent(ctx, t, pool, "login_fail:user:active-before-login")
+}
+
 func TestAPIKeyCreateAuthenticateListAndRevoke(t *testing.T) {
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
@@ -196,6 +261,12 @@ func TestAPIKeyCreateAuthenticateListAndRevoke(t *testing.T) {
 	if service.AuthenticateAPIKey(ctx, "malformed") {
 		t.Fatal("expected malformed key to fail")
 	}
+	if ok, err := service.AuthenticateAPIKeyResult(ctx, created.ID+".wrong"); err != nil || ok {
+		t.Fatalf("wrong secret result = (%v, %v), want (false, nil)", ok, err)
+	}
+	if ok, err := service.AuthenticateAPIKeyResult(ctx, "malformed"); err != nil || ok {
+		t.Fatalf("malformed key result = (%v, %v), want (false, nil)", ok, err)
+	}
 
 	keys, err := service.ListAPIKeys(ctx)
 	if err != nil {
@@ -220,6 +291,19 @@ func TestAPIKeyCreateAuthenticateListAndRevoke(t *testing.T) {
 	}
 	if !errors.Is(service.RevokeAPIKey(ctx, created.ID, time.Now().UTC()), ErrAPIKeyNotFound) {
 		t.Fatal("expected second revoke to return ErrAPIKeyNotFound")
+	}
+	if ok, err := service.AuthenticateAPIKeyResult(ctx, created.APIKey); err != nil || ok {
+		t.Fatalf("revoked key result = (%v, %v), want (false, nil)", ok, err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO admin_records (id, type, json)
+		VALUES ($1, 'api_key', $2::jsonb)
+	`, "api_key:atlas_ak_badjson", `"not an api key record"`); err != nil {
+		t.Fatalf("insert malformed api key record: %v", err)
+	}
+	if ok, err := service.AuthenticateAPIKeyResult(ctx, "atlas_ak_badjson.secret"); err == nil || ok {
+		t.Fatalf("malformed record result = (%v, %v), want (false, error)", ok, err)
 	}
 }
 
@@ -335,6 +419,43 @@ func cleanupAdminRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	if _, err := pool.Exec(ctx, `DELETE FROM admin_records`); err != nil {
 		t.Fatalf("cleanup admin records: %v", err)
 	}
+}
+
+func insertAdminRecord(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id, recordType string, record any) {
+	t.Helper()
+	payload, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("marshal admin record %s: %v", id, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO admin_records (id, type, json)
+		VALUES ($1, $2, $3)
+	`, id, recordType, payload); err != nil {
+		t.Fatalf("insert admin record %s: %v", id, err)
+	}
+}
+
+func assertAdminRecordPresent(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	if !adminRecordExists(ctx, t, pool, id) {
+		t.Fatalf("expected admin record %q to be present", id)
+	}
+}
+
+func assertAdminRecordAbsent(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	if adminRecordExists(ctx, t, pool, id) {
+		t.Fatalf("expected admin record %q to be absent", id)
+	}
+}
+
+func adminRecordExists(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id string) bool {
+	t.Helper()
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM admin_records WHERE id = $1)`, id).Scan(&exists); err != nil {
+		t.Fatalf("check admin record %s: %v", id, err)
+	}
+	return exists
 }
 
 func adminTestDatabaseURL() (string, bool) {

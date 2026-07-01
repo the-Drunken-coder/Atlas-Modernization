@@ -114,6 +114,9 @@ func main() {
 		}
 		logger.Warn().Msg("Development admin seed is using the default admin/password credential; set ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE before exposing Core")
 	}
+	if err := adminAuth.CleanupExpiredAuthRecords(ensureCtx, time.Now().UTC()); err != nil {
+		logger.Fatal().Err(err).Msg("Failed to clean expired admin auth records")
+	}
 	if err := adminAuth.SeedDevelopmentAdmin(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to seed development admin account")
 	}

@@ -25,7 +25,7 @@ const (
 type ServerConfig struct {
 	EnableAPIAuth     bool
 	APIKey            string
-	APIKeyValidator   func(context.Context, string) bool
+	APIKeyValidator   func(context.Context, string) (bool, error)
 	SkipOriginCheck   bool
 	AllowedOrigin     func(origin string) bool
 	AuthTimeout       time.Duration
@@ -242,7 +242,11 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 	if err := json.Unmarshal(result.data, &message); err != nil {
 		return fmt.Errorf("feed auth frame is invalid JSON")
 	}
-	if !s.validAPIKey(ctx, message.APIKey) {
+	valid, err := s.validAPIKey(ctx, message.APIKey)
+	if err != nil {
+		return fmt.Errorf("feed API key validation failed: %w", err)
+	}
+	if !valid {
 		return fmt.Errorf("feed API key rejected")
 	}
 	return nil
@@ -345,11 +349,14 @@ func (s Server) writeTimeout() time.Duration {
 	return defaultWriteTimeout
 }
 
-func (s Server) validAPIKey(ctx context.Context, provided string) bool {
+func (s Server) validAPIKey(ctx context.Context, provided string) (bool, error) {
 	if constantTimeEqual(provided, s.Config.APIKey) {
-		return true
+		return true, nil
 	}
-	return s.Config.APIKeyValidator != nil && s.Config.APIKeyValidator(ctx, provided)
+	if s.Config.APIKeyValidator == nil {
+		return false, nil
+	}
+	return s.Config.APIKeyValidator(ctx, provided)
 }
 
 func constantTimeEqual(provided, expected string) bool {

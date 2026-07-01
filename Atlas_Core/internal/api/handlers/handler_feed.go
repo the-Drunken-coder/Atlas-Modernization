@@ -24,14 +24,20 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	}
 	serverConfig := feedServerConfig(h.config)
 	if h.adminAuth != nil {
-		serverConfig.APIKeyValidator = h.adminAuth.AuthenticateAPIKey
+		serverConfig.APIKeyValidator = h.adminAuth.AuthenticateAPIKeyResult
 	}
 	authenticated := false
-	if serverConfig.EnableAPIAuth && custommiddleware.ValidAPIKeyOrManaged(r, serverConfig.APIKey, h.adminAuth) {
-		authenticated = true
-		serverConfig.EnableAPIAuth = false
-		serverConfig.APIKey = ""
-		serverConfig.SkipOriginCheck = true
+	if serverConfig.EnableAPIAuth {
+		valid, err := custommiddleware.ValidAPIKeyOrManagedResult(r, serverConfig.APIKey, h.adminAuth)
+		if err != nil {
+			h.logger.Warn().Err(err).Msg("managed feed API key authentication failed")
+		}
+		if valid {
+			authenticated = true
+			serverConfig.EnableAPIAuth = false
+			serverConfig.APIKey = ""
+			serverConfig.SkipOriginCheck = true
+		}
 	}
 	if !authenticated && h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {

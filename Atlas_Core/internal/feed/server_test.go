@@ -177,8 +177,8 @@ func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
 		Hub: hub,
 		Config: ServerConfig{
 			EnableAPIAuth: true,
-			APIKeyValidator: func(_ context.Context, apiKey string) bool {
-				return apiKey == "managed-secret"
+			APIKeyValidator: func(_ context.Context, apiKey string) (bool, error) {
+				return apiKey == "managed-secret", nil
 			},
 		},
 	}.ServeHTTP))
@@ -207,6 +207,32 @@ func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
 	if event.Version != 1 || event.ResourceType != protocol.ResourceTypeTask {
 		t.Fatalf("unexpected managed-key feed event: %+v", event)
 	}
+}
+
+func TestWebsocketFeedFirstMessageAuthClosesWhenAPIKeyValidatorErrors(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		Config: ServerConfig{
+			EnableAPIAuth: true,
+			APIKeyValidator: func(context.Context, string) (bool, error) {
+				return false, errors.New("validator unavailable")
+			},
+			AuthTimeout: 2 * time.Second,
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"managed-secret"}`)); err != nil {
+		t.Fatalf("auth feed with managed key: %v", err)
+	}
+	expectFeedClosedWithStatus(t, conn, websocket.StatusPolicyViolation)
 }
 
 func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {

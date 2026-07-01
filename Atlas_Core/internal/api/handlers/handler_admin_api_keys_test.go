@@ -25,7 +25,7 @@ func TestAdminAPIKeyHandlersCreateListAndRevoke(t *testing.T) {
 	ctx := context.Background()
 	cleanupHandlerAdminRows(ctx, t, pool)
 
-	cfg := &config.Config{AdminCookieSameSite: "lax", CORSOrigins: []string{"https://ui.test"}}
+	cfg := &config.Config{AdminCookieSameSite: "lax", CORSOrigins: []string{"https://ui.test"}, EnableAPIAuth: true}
 	adminAuth := admin.NewService(pool, cfg)
 	if err := adminAuth.SeedDevelopmentAdmin(ctx); err != nil {
 		t.Fatalf("seed admin: %v", err)
@@ -93,7 +93,7 @@ func TestAdminCreateAPIKeyValidatesName(t *testing.T) {
 	ctx := context.Background()
 	cleanupHandlerAdminRows(ctx, t, pool)
 
-	cfg := &config.Config{AdminCookieSameSite: "lax", CORSOrigins: []string{"https://ui.test"}}
+	cfg := &config.Config{AdminCookieSameSite: "lax", CORSOrigins: []string{"https://ui.test"}, EnableAPIAuth: true}
 	adminAuth := admin.NewService(pool, cfg)
 	if err := adminAuth.SeedDevelopmentAdmin(ctx); err != nil {
 		t.Fatalf("seed admin: %v", err)
@@ -106,6 +106,41 @@ func TestAdminCreateAPIKeyValidatesName(t *testing.T) {
 	handler.AdminCreateAPIKey(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminCreateAPIKeyRejectsDisabledAPIAuth(t *testing.T) {
+	pool := openHandlerAdminTestPool(t)
+	ctx := context.Background()
+	cleanupHandlerAdminRows(ctx, t, pool)
+
+	cfg := &config.Config{AdminCookieSameSite: "lax", CORSOrigins: []string{"https://ui.test"}}
+	adminAuth := admin.NewService(pool, cfg)
+	if err := adminAuth.SeedDevelopmentAdmin(ctx); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	handler := &Handler{logger: zerolog.Nop(), config: cfg, adminAuth: adminAuth}
+	req := routeRequest(http.MethodPost, "/admin/api-keys", `{"name":"sim runner"}`)
+	req.Header.Set("Origin", "https://ui.test")
+	req.AddCookie(loginAdminCookie(t, adminAuth))
+	rec := httptest.NewRecorder()
+	handler.AdminCreateAPIKey(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if body["message"] != "API key auth is disabled; set ENABLE_API_AUTH=true before creating managed API keys" {
+		t.Fatalf("unexpected message: %v", body["message"])
+	}
+	keys, err := adminAuth.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("list api keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected no created keys, got %#v", keys)
 	}
 }
 
