@@ -3,7 +3,7 @@
   "name": "atlas-command-interface",
   "main": "worker/index.ts",
   "compatibility_date": "2026-06-20",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "build": {
     "command": "npm run build:web"
   },
