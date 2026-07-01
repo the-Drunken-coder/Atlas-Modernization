@@ -284,6 +284,16 @@ describe("MapView zoom overlay", () => {
     expect(onBackgroundClick).not.toHaveBeenCalled();
   });
 
+  it("selects map markers from direct click activation without a hover reticle", () => {
+    const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    fireEvent.click(marker);
+
+    expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
   it("does not select or clear entities when a Shift-drag release produces a click", async () => {
     const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));

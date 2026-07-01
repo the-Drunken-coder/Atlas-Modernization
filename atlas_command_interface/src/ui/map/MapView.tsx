@@ -525,6 +525,14 @@ export function MapView({
       event.stopPropagation();
       return;
     }
+    if (event.target instanceof Element) {
+      const marker = event.target.closest<HTMLElement>(".map-symbol-marker");
+      const entityId = marker?.dataset.entityId;
+      if (marker && entityId && event.currentTarget.contains(marker)) {
+        handlersRef.current.onSelectEntity(entityId);
+        return;
+      }
+    }
     if (reticle?.targetEntityId) {
       handlersRef.current.onSelectEntity(reticle.targetEntityId);
       return;
