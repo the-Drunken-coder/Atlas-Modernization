@@ -676,6 +676,10 @@
   cursor: pointer;
 }
 
+.map-canvas .maplibregl-boxzoom {
+  visibility: hidden;
+}
+
 .map-crosshair {
   position: absolute;
   inset: 0;

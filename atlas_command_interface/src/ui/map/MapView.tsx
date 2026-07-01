@@ -53,6 +53,7 @@ type TargetBox = { x: number; y: number; width: number; height: number };
 type HoverTarget = { entityId: string; box: TargetBox };
 type CrosshairState = ScreenPoint & { target: TargetBox; targetEntityId?: string };
 type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
+type ZoomOverlayState = { start: ScreenPoint; current: ScreenPoint };
 
 export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
@@ -67,11 +68,16 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
   const crosshairRef = useRef<CrosshairState | null>(null);
   const cursorHandoffRef = useRef<CursorHandoffState | null>(null);
+  const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
+  const suppressNextClickRef = useRef(false);
+  const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
   const [scrollLocked, setScrollLocked] = useState(false);
+  const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
+  const zoomDragging = zoomOverlay !== null;
 
   useEffect(() => {
     crosshairRef.current = crosshair;
@@ -96,7 +102,14 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         renderWorldCopies: false,
         dragRotate: false,
         pitchWithRotate: false,
-        attributionControl: false
+        attributionControl: false,
+        boxZoom: {
+          boxZoomEnd: (zoomMap, start, end) => {
+            suppressNextClick();
+            setZoomOverlayState(null);
+            zoomMap.fitScreenCoordinates(start, end, zoomMap.getBearing(), { linear: true });
+          }
+        }
       });
     } catch (error) {
       setMapError(error instanceof Error ? error.message : "MapLibre failed to initialize");
@@ -132,6 +145,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
     map.on("style.load", initializeLayers);
     if (map.isStyleLoaded()) initializeLayers();
+    map.on("boxzoomcancel", () => setZoomOverlayState(null));
     map.on("error", (event) => {
       // Tile/style errors should not blank the operator picture. Keep overlays
       // alive and surface the details in devtools.
@@ -151,6 +165,9 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       if (scrollLockTimeoutRef.current !== undefined) {
         window.clearTimeout(scrollLockTimeoutRef.current);
       }
+      if (suppressClickTimeoutRef.current !== undefined) {
+        window.clearTimeout(suppressClickTimeoutRef.current);
+      }
       map.remove();
       mapRef.current = undefined;
     };
@@ -167,14 +184,52 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   }, [sources]);
 
   useEffect(() => {
+    if (!zoomDragging) return;
+
+    const updateZoomDrag = (event: globalThis.MouseEvent) => {
+      const mapCanvas = mapCanvasRef.current;
+      if (!mapCanvas) return;
+      const rect = mapCanvas.getBoundingClientRect();
+      setZoomOverlay((current) => {
+        if (!current) {
+          zoomOverlayRef.current = null;
+          return null;
+        }
+        const next = { ...current, current: pointFromClient(event, rect, true) };
+        zoomOverlayRef.current = next;
+        return next;
+      });
+    };
+
+    const finishZoomDrag = () => {
+      suppressNextClick();
+      setZoomOverlayState(null);
+    };
+
+    const cancelZoomDrag = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setZoomOverlayState(null);
+    };
+
+    window.addEventListener("mousemove", updateZoomDrag);
+    window.addEventListener("mouseup", finishZoomDrag);
+    window.addEventListener("keydown", cancelZoomDrag);
+    return () => {
+      window.removeEventListener("mousemove", updateZoomDrag);
+      window.removeEventListener("mouseup", finishZoomDrag);
+      window.removeEventListener("keydown", cancelZoomDrag);
+    };
+  }, [zoomDragging]);
+
+  useEffect(() => {
     if (!crosshair) return;
 
     const clearWhenOutsideMap = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
-      if (scrollLockedRef.current) return;
+      if (scrollLockedRef.current || zoomOverlayRef.current) return;
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
       const rect = mapCanvas.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+        cursorHandoffRef.current = null;
         setCrosshair(null);
       }
     };
@@ -299,7 +354,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const updateCrosshair = (
     event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement }
   ) => {
-    if (scrollLockedRef.current) return;
+    if (scrollLockedRef.current || zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
       cursorHandoffRef.current = null;
       setCrosshair(null);
@@ -337,6 +392,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   };
 
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const visualPoint = crosshairRef.current ? { x: crosshairRef.current.x, y: crosshairRef.current.y } : pointFromClient(event, rect);
@@ -356,8 +412,21 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     }, SCROLL_LOCK_SETTLE_MS);
   };
 
+  const onMapMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (!event.shiftKey || event.button !== 0) return;
+    if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
+    setZoomOverlayState({ start: point, current: point });
+    setCrosshair(null);
+  };
+
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    if (consumeSuppressedClick() || zoomOverlayRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (crosshair?.targetEntityId) {
       handlersRef.current.onSelectEntity(crosshair.targetEntityId);
       return;
@@ -365,23 +434,51 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     handlersRef.current.onBackgroundClick?.();
   };
 
-  const crosshairStyle = crosshair
+  const visibleCrosshair = zoomOverlay ? crosshairFromTargetBox(boxFromDrag(zoomOverlay)) : crosshair;
+  const crosshairStyle = visibleCrosshair
     ? ({
-        "--map-crosshair-x": `${crosshair.x}px`,
-        "--map-crosshair-y": `${crosshair.y}px`,
-        "--map-target-height": `${crosshair.target.height}px`,
-        "--map-target-width": `${crosshair.target.width}px`,
-        "--map-target-x": `${crosshair.target.x}px`,
-        "--map-target-y": `${crosshair.target.y}px`
+        "--map-crosshair-x": `${visibleCrosshair.x}px`,
+        "--map-crosshair-y": `${visibleCrosshair.y}px`,
+        "--map-target-height": `${visibleCrosshair.target.height}px`,
+        "--map-target-width": `${visibleCrosshair.target.width}px`,
+        "--map-target-x": `${visibleCrosshair.target.x}px`,
+        "--map-target-y": `${visibleCrosshair.target.y}px`
       } as CSSProperties)
     : undefined;
   const crosshairClassName = [
     "map-crosshair",
     scrollLocked ? "map-crosshair--scrolling" : "",
-    crosshair?.targetEntityId ? "map-crosshair--targeted" : ""
+    zoomOverlay ? "map-crosshair--zoom" : "",
+    !zoomOverlay && visibleCrosshair?.targetEntityId ? "map-crosshair--targeted" : ""
   ]
     .filter(Boolean)
     .join(" ");
+
+  function setZoomOverlayState(next: ZoomOverlayState | null): void {
+    zoomOverlayRef.current = next;
+    setZoomOverlay(next);
+  }
+
+  function suppressNextClick(): void {
+    suppressNextClickRef.current = true;
+    if (suppressClickTimeoutRef.current !== undefined) {
+      window.clearTimeout(suppressClickTimeoutRef.current);
+    }
+    suppressClickTimeoutRef.current = window.setTimeout(() => {
+      suppressNextClickRef.current = false;
+      suppressClickTimeoutRef.current = undefined;
+    }, 0);
+  }
+
+  function consumeSuppressedClick(): boolean {
+    if (!suppressNextClickRef.current) return false;
+    suppressNextClickRef.current = false;
+    if (suppressClickTimeoutRef.current !== undefined) {
+      window.clearTimeout(suppressClickTimeoutRef.current);
+      suppressClickTimeoutRef.current = undefined;
+    }
+    return true;
+  }
 
   return (
     <div
@@ -390,15 +487,16 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       style={{ position: "absolute", inset: 0 }}
       data-testid="map-canvas"
       onMouseMove={updateCrosshair}
+      onMouseDown={onMapMouseDown}
       onMouseLeave={() => {
-        if (!scrollLockedRef.current) {
+        if (!scrollLockedRef.current && !zoomOverlayRef.current) {
           cursorHandoffRef.current = null;
           setCrosshair(null);
         }
       }}
       onPointerMove={updateCrosshair}
       onPointerLeave={() => {
-        if (!scrollLockedRef.current) {
+        if (!scrollLockedRef.current && !zoomOverlayRef.current) {
           cursorHandoffRef.current = null;
           setCrosshair(null);
         }
@@ -407,7 +505,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       onClick={onMapClick}
     >
       <div className="maplibre-host" ref={containerRef} />
-      {crosshair ? (
+      {visibleCrosshair ? (
         <div className={crosshairClassName} style={crosshairStyle} aria-hidden="true">
           <div className="map-crosshair__line map-crosshair__line--left" />
           <div className="map-crosshair__line map-crosshair__line--right" />
@@ -464,6 +562,29 @@ function positionsEqual(a: Position | undefined, b: Position | undefined): boole
   return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
 
+function pointFromClient(event: { clientX: number; clientY: number }, rect: DOMRect, clampToRect = false): ScreenPoint {
+  const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  if (!clampToRect) return point;
+  return { x: clamp(point.x, 0, rect.width), y: clamp(point.y, 0, rect.height) };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+function boxFromDrag({ start, current }: ZoomOverlayState): TargetBox {
+  return {
+    x: Math.min(start.x, current.x),
+    y: Math.min(start.y, current.y),
+    width: Math.max(1, Math.abs(start.x - current.x)),
+    height: Math.max(1, Math.abs(start.y - current.y))
+  };
+}
+
+function crosshairFromTargetBox(target: TargetBox): CrosshairState {
+  return { x: target.x + target.width / 2, y: target.y + target.height / 2, target };
+}
+
 function hoverSelectionTarget(
   event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement },
   mapRect: DOMRect,
@@ -513,10 +634,6 @@ function boxForEntityId(mapCanvas: HTMLElement, entityId: string): TargetBox | n
     if (element.dataset.entityId === entityId) return boxFromElement(element, mapRect);
   }
   return null;
-}
-
-function pointFromClient(event: { clientX: number; clientY: number }, rect: DOMRect): ScreenPoint {
-  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
 function squareAround(point: ScreenPoint, size: number): TargetBox {

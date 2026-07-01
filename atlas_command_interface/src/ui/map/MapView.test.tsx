@@ -3,6 +3,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MapView, buildMapSources } from "./MapView.js";
 
+type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
 
 const maplibreMock = vi.hoisted(() => {
@@ -11,6 +12,7 @@ const maplibreMock = vi.hoisted(() => {
 
     readonly options: Record<string, unknown>;
     readonly listeners = new Map<string, Listener[]>();
+    readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly resize = vi.fn();
     readonly remove = vi.fn();
@@ -18,6 +20,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly addSource = vi.fn();
     readonly addLayer = vi.fn();
     readonly queryRenderedFeatures = vi.fn(() => []);
+    readonly getBearing = vi.fn(() => 0);
     readonly getSource = vi.fn(() => ({ setData: vi.fn() }));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
 
@@ -235,20 +238,80 @@ describe("MapView hover target box", () => {
   });
 });
 
+describe("MapView zoom overlay", () => {
+  it("delegates completed MapLibre box zooms to fitScreenCoordinates", () => {
+    const { map } = renderMapView();
+    const boxZoom = map.options.boxZoom as { boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void };
+    const start = { x: 12, y: 18 };
+    const end = { x: 220, y: 140 };
+
+    boxZoom.boxZoomEnd(map, start, end, new MouseEvent("mouseup"));
+
+    expect(map.fitScreenCoordinates).toHaveBeenCalledWith(start, end, 0, { linear: true });
+  });
+
+  it("renders Shift-drag as the Atlas crosshair target box", async () => {
+    const { canvas } = renderMapView();
+
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+    await waitFor(() => expect(document.querySelector(".map-crosshair--zoom")).toBeInTheDocument());
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 180 });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-crosshair--zoom");
+      expect(overlay?.style.getPropertyValue("--map-target-x")).toBe("40px");
+      expect(overlay?.style.getPropertyValue("--map-target-y")).toBe("60px");
+      expect(overlay?.style.getPropertyValue("--map-target-width")).toBe("100px");
+      expect(overlay?.style.getPropertyValue("--map-target-height")).toBe("100px");
+      expect(overlay?.style.getPropertyValue("--map-crosshair-x")).toBe("90px");
+      expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("110px");
+    });
+  });
+
+  it("keeps normal boxed entity click selection outside zoom drag", async () => {
+    const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-crosshair")).toBeInTheDocument());
+    fireEvent.click(marker);
+
+    expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
+  it("does not select or clear entities when a Shift-drag release produces a click", async () => {
+    const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    fireEvent.mouseDown(marker, { button: 0, shiftKey: true, clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-crosshair--zoom")).toBeInTheDocument());
+    fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
+    fireEvent.mouseUp(window, { button: 0, clientX: 180, clientY: 150 });
+    fireEvent.click(marker);
+
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+});
+
 function renderMapView() {
+  const onBackgroundClick = vi.fn();
+  const onMapContextMenu = vi.fn();
+  const onSelectEntity = vi.fn();
   render(
     <MapView
       sources={buildMapSources([], undefined)}
       styleUrl="test-style"
-      onBackgroundClick={vi.fn()}
-      onMapContextMenu={vi.fn()}
-      onSelectEntity={vi.fn()}
+      onBackgroundClick={onBackgroundClick}
+      onMapContextMenu={onMapContextMenu}
+      onSelectEntity={onSelectEntity}
     />
   );
 
   const canvas = screen.getByTestId("map-canvas");
   vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
-  return { canvas, map: maplibreMock.FakeMap.instances[0] };
+  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity };
 }
 
 function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect | (() => DOMRect)): HTMLButtonElement {
