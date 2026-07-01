@@ -6,6 +6,7 @@ Simple script to start Docker containers for the ATLAS Core System.
 
 Usage:
     python atlas.py              # Interactive menu to choose startup options
+    python atlas.py --dev         # Start local dev containers (non-interactive)
     python atlas.py --tunnel     # Start all containers with Cloudflare tunnel (non-interactive)
     python atlas.py --production # Start production-image containers (non-interactive)
     python atlas.py --db-only    # Start only PostgreSQL container (non-interactive)
@@ -674,11 +675,18 @@ def main():
         epilog="""
 Examples:
   python atlas.py              # Interactive menu to choose startup options
+  python atlas.py --dev         # Start local dev containers without prompting
   python atlas.py --tunnel     # Start all containers with Cloudflare tunnel (non-interactive)
   python atlas.py --production # Start production-image containers (non-interactive)
   python atlas.py --production --tunnel
   python atlas.py --db-only    # Start only PostgreSQL container (non-interactive)
         """,
+    )
+
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Start all development containers without prompting",
     )
 
     parser.add_argument(
@@ -705,12 +713,16 @@ Examples:
 
     args = parser.parse_args()
 
+    if args.dev and (args.db_only or args.tunnel or args.production):
+        print("[ERROR] --dev cannot be combined with --db-only, --tunnel, or --production")
+        sys.exit(1)
+
     if args.db_only and args.tunnel:
         print("[ERROR] Cannot use --db-only and --tunnel together")
         sys.exit(1)
 
     # Interactive menu only when invoked with no flags (any flag => non-interactive).
-    if not (args.db_only or args.tunnel or args.production or args.reset_volumes):
+    if not (args.dev or args.db_only or args.tunnel or args.production or args.reset_volumes):
         db_only, tunnel = show_interactive_menu()
     else:
         db_only = args.db_only

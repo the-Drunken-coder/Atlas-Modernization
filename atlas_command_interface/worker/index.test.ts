@@ -7,7 +7,7 @@ describe("thin Worker", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      atlasBaseUrl: "https://core.test",
+      atlasBaseUrl: "/atlas",
       protocolRevision: expect.any(String)
     });
   });
@@ -19,8 +19,57 @@ describe("thin Worker", () => {
     expect(config).not.toHaveProperty("mapStyleUrl");
   });
 
-	  it("does not own auth, api key, settings, or Atlas proxy routes", async () => {
-	    for (const path of ["/auth/login", "/admin/auth/login", "/admin/api-keys", "/me/settings", "/atlas/entities"]) {
+  it("proxies Atlas routes to configured Core", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("proxied", { status: 202 }));
+
+    try {
+      const response = await handleCommandRequest(
+        new Request("https://command.test/atlas/entities?limit=1", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: "https://command.test" },
+          body: JSON.stringify({ entity_id: "asset-1" })
+        }),
+        env()
+      );
+
+      expect(response.status).toBe(202);
+      expect(await response.text()).toBe("proxied");
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const proxied = fetchSpy.mock.calls[0]?.[0] as Request;
+      expect(proxied.url).toBe("https://core.test/entities?limit=1");
+      expect(proxied.method).toBe("POST");
+      expect(proxied.headers.get("Content-Type")).toBe("application/json");
+      expect(proxied.headers.get("Origin")).toBe("https://command.test");
+      await expect(proxied.text()).resolves.toBe(JSON.stringify({ entity_id: "asset-1" }));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("maps missing Core session to a clean signed-out response", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    try {
+      const response = await handleCommandRequest(new Request("https://command.test/api/auth/me", { headers: { Cookie: "atlas_session=old" } }), env());
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ authenticated: false });
+      const proxied = fetchSpy.mock.calls[0]?.[0] as Request;
+      expect(proxied.url).toBe("https://core.test/admin/auth/me");
+      expect(proxied.headers.get("Cookie")).toBe("atlas_session=old");
+      expect(proxied.headers.get("Origin")).toBe("https://command.test");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not own legacy direct auth, API key, or settings routes", async () => {
+    for (const path of ["/auth/login", "/admin/auth/login", "/admin/api-keys", "/me/settings"]) {
       const response = await handleCommandRequest(new Request(`https://command.test${path}`), env());
       expect(response.status).toBe(404);
     }

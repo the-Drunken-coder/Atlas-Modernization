@@ -6,21 +6,22 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 
 ## What Lives Here
 
-- `worker/` - static asset hosting plus `GET /api/config`.
+- `worker/` - static asset hosting, `GET /api/config`, `GET /api/auth/me`, and the same-origin `/atlas/*` Core proxy.
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
 - `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, command catalog parsing, and command targeting.
 - `src/ui/` - the local design system.
 - `src/features/` - feature screens and panels.
 - `src/app/` - config loading, providers, routing, and the Vite entry point.
 
-The browser calls Atlas Core directly. It does not receive a durable Core API key. Login state is a Core-owned `atlas_session` cookie with `HttpOnly; Secure`; Core requests use `credentials: "include"`.
+The browser calls the command-interface Worker on the same origin. The Worker proxies `/atlas/*` to Atlas Core using `ATLAS_CORE_BASE_URL`, so local and deployed browser traffic use the same URL shape. The browser does not receive a durable Core API key. Login state is a Core-owned `atlas_session` cookie with `HttpOnly; Secure`; Core requests use `credentials: "include"`.
 
 ## Boundary
 
 - `AtlasClient` is resource-only: entities, tasks, objects, queries, sync, and feed.
 - `AtlasAdminClient` is admin-only: `auth.login`, `auth.logout`, `auth.me`, and managed API key administration.
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
-- The Worker does not own `/auth/*`, `/admin/api-keys/*`, `/me/settings`, `/atlas/*`, feed bridging, API-key injection, or command validation.
+- The Worker owns `/api/config`, `/api/auth/me`, and the `/atlas/*` same-origin Core proxy.
+- The Worker does not own `/auth/*`, `/admin/api-keys/*`, `/me/settings`, feed bridging, API-key injection, or command validation.
 
 `/api/config` returns only non-secret browser config: Core base URL, protocol revision, and optional MapLibre style URL.
 
@@ -32,17 +33,30 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 ## Local Development
 
-1. Start Atlas Core from this checkout. Startup seeds the development admin account `admin` / `password`.
-2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
-3. Configure the Worker with `ATLAS_CORE_BASE_URL`; optional `MAP_STYLE_URL` overrides the default OpenStreetMap basemap. For local `wrangler dev`, put `ATLAS_CORE_BASE_URL=http://localhost:8000` in ignored `.dev.vars`.
-4. Run the Worker and Vite dev server:
+1. Start local Atlas Core from this checkout:
 
    ```bash
-   npm --prefix atlas_command_interface run dev:worker
-   npm --prefix atlas_command_interface run dev
+   python3 Atlas_Core/scripts/atlas.py --dev
    ```
 
-Open http://localhost:5173/map and sign in with `admin` / `password`.
+   `atlas.py` starts Docker Compose, waits for PostgreSQL, MinIO, and the API, then seeds the command catalog. Startup seeds the development admin account `admin` / `password`.
+   If an old local Postgres volume has stale credentials, run `python3 Atlas_Core/scripts/atlas.py --dev --reset-volumes`.
+
+2. Configure local Worker variables:
+
+   ```bash
+   cp atlas_command_interface/.dev.vars.example atlas_command_interface/.dev.vars
+   ```
+
+   The local default points the Worker at `http://127.0.0.1:8000`. Optional `MAP_STYLE_URL` overrides the default OpenStreetMap basemap.
+
+3. Run the Worker-hosted web app:
+
+   ```bash
+   npm --prefix atlas_command_interface run dev:local
+   ```
+
+Open http://127.0.0.1:8787/map and sign in with `admin` / `password`.
 
 The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
 
