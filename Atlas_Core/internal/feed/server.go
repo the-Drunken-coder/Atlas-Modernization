@@ -25,6 +25,7 @@ const (
 type ServerConfig struct {
 	EnableAPIAuth     bool
 	APIKey            string
+	APIKeyValidator   func(context.Context, string) bool
 	SkipOriginCheck   bool
 	AllowedOrigin     func(origin string) bool
 	AuthTimeout       time.Duration
@@ -42,7 +43,7 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProtocolError(w, r, http.StatusServiceUnavailable, "feed hub is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
-	if s.Config.EnableAPIAuth && strings.TrimSpace(s.Config.APIKey) == "" {
+	if s.Config.EnableAPIAuth && strings.TrimSpace(s.Config.APIKey) == "" && s.Config.APIKeyValidator == nil {
 		zerolog.Ctx(r.Context()).Error().Msg("Atlas feed server has auth enabled without an API key")
 		writeProtocolError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
@@ -241,7 +242,7 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 	if err := json.Unmarshal(result.data, &message); err != nil {
 		return fmt.Errorf("feed auth frame is invalid JSON")
 	}
-	if !constantTimeEqual(message.APIKey, s.Config.APIKey) {
+	if !s.validAPIKey(ctx, message.APIKey) {
 		return fmt.Errorf("feed API key rejected")
 	}
 	return nil
@@ -342,6 +343,13 @@ func (s Server) writeTimeout() time.Duration {
 		return s.Config.WriteTimeout
 	}
 	return defaultWriteTimeout
+}
+
+func (s Server) validAPIKey(ctx context.Context, provided string) bool {
+	if constantTimeEqual(provided, s.Config.APIKey) {
+		return true
+	}
+	return s.Config.APIKeyValidator != nil && s.Config.APIKeyValidator(ctx, provided)
 }
 
 func constantTimeEqual(provided, expected string) bool {

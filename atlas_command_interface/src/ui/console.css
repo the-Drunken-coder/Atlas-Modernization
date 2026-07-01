@@ -242,6 +242,114 @@
   text-overflow: ellipsis;
 }
 
+/* ---------- API keys ---------- */
+.api-keys-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.api-key-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: end;
+}
+
+.api-key-create .field {
+  margin-bottom: 0;
+}
+
+.generated-key {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.generated-key__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.generated-key__meta strong {
+  min-width: 0;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generated-key code {
+  display: block;
+  max-width: 100%;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.api-key-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.api-key-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.api-key-row:last-child {
+  border-bottom: none;
+}
+
+.api-key-row__main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.api-key-row__main strong,
+.api-key-row__main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-key-row__main strong {
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.api-key-row__main span {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 /* ---------- Inspector ---------- */
 .inspector {
   display: flex;

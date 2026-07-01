@@ -47,17 +47,26 @@ export function GeofeaturesIcon(props: IconProps) {
 }
 
 export function CommandsIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M5 7l4 4-4 4" />
-      <path d="M12 16h7" />
+	return (
+		<Svg {...props}>
+			<path d="M5 7l4 4-4 4" />
+			<path d="M12 16h7" />
     </Svg>
-  );
+	);
+}
+
+export function KeyIcon(props: IconProps) {
+	return (
+		<Svg {...props}>
+			<circle cx="7.5" cy="12" r="3.5" />
+			<path d="M11 12h9M16 12v3M19 12v-3" />
+		</Svg>
+	);
 }
 
 export function BrandIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
+	return (
+		<Svg {...props}>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 3.5v17M3.5 12h17" />
       <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />

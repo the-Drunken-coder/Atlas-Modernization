@@ -10,17 +10,17 @@ http://localhost:8000
 
 The canonical resource and wire schemas are generated from Atlas Protocol. Use this guide for route behavior, then use `../../atlas_protocol/examples/` and `../../atlas_protocol/generated/jsonschema/` for exact payload examples and schema details.
 
-Atlas Core treats PostgreSQL and the configured MinIO bucket as disposable runtime scratch storage. With the default startup path, the service drops and recreates database tables and clears the configured bucket, so operators should not treat rows or blobs as durable systems of record.
+Atlas Core treats resource tables and the configured MinIO bucket as disposable runtime scratch storage. With the default startup path, the service drops and recreates resource tables and clears the configured bucket, so operators should not treat resource rows or blobs as durable systems of record. `admin_records` is preserved for operator credentials and managed API key metadata.
 
 ## Common Rules
 
 ### Authentication
 
-Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session; machine clients should set `ENABLE_API_AUTH=true` and send one of:
+Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session; machine clients should set `ENABLE_API_AUTH=true` and send either the required bootstrap `API_AUTH_KEY` or an active managed API key with one of:
 
 ```text
-X-API-Key: <API_AUTH_KEY>
-Authorization: Bearer <API_AUTH_KEY>
+X-API-Key: <api-key>
+Authorization: Bearer <api-key>
 ```
 
 The `/feed` websocket accepts the browser session cookie during upgrade. Machine clients authenticate with a first JSON message when API-key auth is enabled:
@@ -545,8 +545,13 @@ This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or
 | `POST` | `/admin/auth/login` | `200` | Creates a Core-owned browser session from an admin username/password. |
 | `POST` | `/admin/auth/logout` | `204` | Deletes the current browser session and clears the session cookie. |
 | `GET` | `/admin/auth/me` | `200` | Reports the current browser session user. |
+| `GET` | `/admin/api-keys` | `200` | Lists active managed API key metadata. |
+| `POST` | `/admin/api-keys` | `201` | Creates a named managed API key and returns the full key once. |
+| `DELETE` | `/admin/api-keys/{key_id}` | `204` | Revokes a managed API key. |
 
 The session token is random and stored only as `session:<sha256(token)>` in Core. The browser receives it in the `atlas_session` cookie with `HttpOnly; Secure`. Cross-site UI/Core deployments use the default `SameSite=None`; same-site deployments can set `ATLAS_ADMIN_COOKIE_SAMESITE=lax`.
+
+Managed API keys are full-access machine credentials for the current auth model. Core stores only `sha256(secret)` plus key metadata in `admin_records`, and list responses never include the full secret. API-key-authenticated requests cannot create, list, or revoke API keys; key management requires a browser admin session.
 
 The command interface Worker is intentionally thin. It hosts static assets and `GET /api/config`, which returns only browser-safe configuration:
 

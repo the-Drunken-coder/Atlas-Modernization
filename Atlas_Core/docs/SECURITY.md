@@ -76,15 +76,24 @@ Optional API key auth is controlled by:
 - `ENABLE_API_AUTH` and `API_AUTH_KEY` environment variables (take precedence)
 - `enable_api_auth` and `api_auth_key` in `atlas_core.settings.json`
 
-If enabled, middleware accepts a valid API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes.
+If enabled, middleware accepts the bootstrap API key or an active managed API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes. Managed API keys are full-access machine credentials in v1; Core stores only `sha256(secret)` plus metadata and returns the full key only from the create response.
+
+Managed API key administration is browser-session-only:
+
+- `GET /admin/api-keys`
+- `POST /admin/api-keys`
+- `DELETE /admin/api-keys/{key_id}`
+
+API-key-authenticated requests cannot manage API keys. `admin_records` stores admin accounts, sessions, login throttles, and managed API key metadata; it is preserved across recreate-mode resource table refreshes.
 
 ### Production Docker image
 
 The production Docker target does not copy `atlas_core.settings.json.example`
 into the image. Its entrypoint refuses to start unless `ENABLE_API_AUTH=true`
 and `API_AUTH_KEY` is set to a non-empty value other than
-`REPLACE_WITH_SECURE_KEY`. The auth-disabled example settings file is kept only
-for the development image / loopback-only Compose workflow.
+`REPLACE_WITH_SECURE_KEY`. This bootstrap key remains required even when managed
+API keys exist. The auth-disabled example settings file is kept only for the
+development image / loopback-only Compose workflow.
 
 ### Startup fail-fast
 

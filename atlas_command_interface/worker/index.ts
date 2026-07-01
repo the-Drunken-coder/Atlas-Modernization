@@ -47,6 +47,8 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
       url.pathname.startsWith("/auth/") ||
       url.pathname === "/admin/auth" ||
       url.pathname.startsWith("/admin/auth/") ||
+      url.pathname === "/admin/api-keys" ||
+      url.pathname.startsWith("/admin/api-keys/") ||
       url.pathname === "/me/settings" ||
       url.pathname === "/atlas" ||
       url.pathname.startsWith("/atlas/")

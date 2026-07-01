@@ -200,6 +200,9 @@ func main() {
 	r.Post("/admin/auth/login", handler.AdminLogin)
 	r.Post("/admin/auth/logout", handler.AdminLogout)
 	r.Get("/admin/auth/me", handler.AdminMe)
+	r.Get("/admin/api-keys", handler.AdminListAPIKeys)
+	r.Post("/admin/api-keys", handler.AdminCreateAPIKey)
+	r.Delete("/admin/api-keys/{key_id}", handler.AdminRevokeAPIKey)
 
 	// Entity routes
 	r.Get("/entities", handler.ListEntities)

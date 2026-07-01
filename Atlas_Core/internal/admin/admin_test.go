@@ -154,6 +154,87 @@ func TestLoginThrottleBoundary(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateAuthenticateListAndRevoke(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	created, err := service.CreateAPIKey(ctx, "sim runner", "admin", time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+	if !strings.HasPrefix(created.ID, apiKeyIDPrefix) {
+		t.Fatalf("created key id = %q, want %s prefix", created.ID, apiKeyIDPrefix)
+	}
+	if !strings.HasPrefix(created.APIKey, created.ID+".") {
+		t.Fatalf("created full key %q does not include id prefix %q", created.APIKey, created.ID)
+	}
+	if created.KeyPrefix != created.ID {
+		t.Fatalf("key prefix = %q, want %q", created.KeyPrefix, created.ID)
+	}
+
+	record, err := service.getAPIKeyRecord(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get raw api key record: %v", err)
+	}
+	if strings.Contains(record.SecretHash, created.APIKey) {
+		t.Fatal("stored hash should not contain the full api key")
+	}
+	if record.SecretHash == "" {
+		t.Fatal("expected stored secret hash")
+	}
+	if !service.AuthenticateAPIKey(ctx, created.APIKey) {
+		t.Fatal("expected created api key to authenticate")
+	}
+	if service.AuthenticateAPIKey(ctx, created.ID+".wrong") {
+		t.Fatal("expected wrong secret to fail")
+	}
+	if service.AuthenticateAPIKey(ctx, "malformed") {
+		t.Fatal("expected malformed key to fail")
+	}
+
+	keys, err := service.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("list api keys: %v", err)
+	}
+	if len(keys) != 1 || keys[0].ID != created.ID || keys[0].Name != "sim runner" {
+		t.Fatalf("unexpected listed keys: %#v", keys)
+	}
+
+	if err := service.RevokeAPIKey(ctx, created.ID, time.Now().UTC()); err != nil {
+		t.Fatalf("revoke api key: %v", err)
+	}
+	if service.AuthenticateAPIKey(ctx, created.APIKey) {
+		t.Fatal("expected revoked api key to fail")
+	}
+	keys, err = service.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("list after revoke: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected revoked key to be omitted, got %#v", keys)
+	}
+	if !errors.Is(service.RevokeAPIKey(ctx, created.ID, time.Now().UTC()), ErrAPIKeyNotFound) {
+		t.Fatal("expected second revoke to return ErrAPIKeyNotFound")
+	}
+}
+
+func TestAPIKeyCreateValidatesName(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	if _, err := service.CreateAPIKey(ctx, "   ", "admin", time.Now().UTC()); !errors.Is(err, ErrAPIKeyNameRequired) {
+		t.Fatalf("blank name error = %v, want ErrAPIKeyNameRequired", err)
+	}
+	longName := strings.Repeat("a", apiKeyNameMaxRunes+1)
+	if _, err := service.CreateAPIKey(ctx, longName, "admin", time.Now().UTC()); !errors.Is(err, ErrAPIKeyNameTooLong) {
+		t.Fatalf("long name error = %v, want ErrAPIKeyNameTooLong", err)
+	}
+}
+
 func TestClientIPIgnoresSpoofableForwardedHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/auth/login", nil)
 	req.RemoteAddr = "203.0.113.10:4242"

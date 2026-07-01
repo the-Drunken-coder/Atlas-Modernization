@@ -19,8 +19,8 @@ describe("thin Worker", () => {
     expect(config).not.toHaveProperty("mapStyleUrl");
   });
 
-  it("does not own auth, settings, or Atlas proxy routes", async () => {
-    for (const path of ["/auth/login", "/admin/auth/login", "/me/settings", "/atlas/entities"]) {
+	  it("does not own auth, api key, settings, or Atlas proxy routes", async () => {
+	    for (const path of ["/auth/login", "/admin/auth/login", "/admin/api-keys", "/me/settings", "/atlas/entities"]) {
       const response = await handleCommandRequest(new Request(`https://command.test${path}`), env());
       expect(response.status).toBe(404);
     }

@@ -124,24 +124,25 @@ func coreSchemaCreateDDL() []string {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 			UNIQUE (bucket, path)
-		)`,
+			)`,
 		`CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)`,
 
-		`CREATE TABLE admin_records (
-			id TEXT PRIMARY KEY,
-			type TEXT NOT NULL,
-			json JSONB NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-		)`,
-		`CREATE INDEX idx_admin_records_type ON admin_records(type)`,
+		// admin_records stores operator credentials and sessions, so it is the
+		// narrow durable exception to the scratch resource schema.
+		`CREATE TABLE IF NOT EXISTS admin_records (
+				id TEXT PRIMARY KEY,
+				type TEXT NOT NULL,
+				json JSONB NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_records_type ON admin_records(type)`,
 	}
 }
 
 func coreSchemaDropDDL() []string {
 	return []string{
 		`DROP TABLE IF EXISTS storage_deletion_outbox CASCADE`,
-		`DROP TABLE IF EXISTS admin_records CASCADE`,
 		`DROP TABLE IF EXISTS tasks CASCADE`,
 		`DROP TABLE IF EXISTS entities CASCADE`,
 		`DROP TABLE IF EXISTS objects CASCADE`,
