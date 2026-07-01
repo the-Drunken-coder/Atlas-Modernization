@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -203,6 +204,87 @@ func TestReadinessCheckWithoutDBReturnsUnhealthy(t *testing.T) {
 	}
 }
 
+func TestResourcesReturnsUsageSnapshot(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+
+	handler.Resources(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["service"] != "atlas-core" {
+		t.Fatalf("expected atlas-core service, got %v", body["service"])
+	}
+	if body["timestamp"] == "" {
+		t.Fatal("expected timestamp")
+	}
+
+	cpu, ok := body["cpu"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected cpu object, got %T", body["cpu"])
+	}
+	cores, ok := cpu["cores"].(float64)
+	if !ok || cores < 1 {
+		t.Fatalf("expected at least one CPU core, got %v", cpu["cores"])
+	}
+
+	disk, ok := body["disk"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected disk object, got %T", body["disk"])
+	}
+	if disk["path"] != "/" {
+		t.Fatalf("expected root disk path, got %v", disk["path"])
+	}
+
+	process, ok := body["process"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected process object, got %T", body["process"])
+	}
+	goroutines, ok := process["goroutines"].(float64)
+	if !ok || goroutines < 1 {
+		t.Fatalf("expected goroutine count, got %v", process["goroutines"])
+	}
+}
+
+func TestParseCPUSnapshotAndUsage(t *testing.T) {
+	first, err := parseCPUSnapshot("cpu  100 0 50 850 0 0 0 0 30 5")
+	if err != nil {
+		t.Fatalf("parse first snapshot: %v", err)
+	}
+	second, err := parseCPUSnapshot("cpu  120 0 70 900 0 0 0 0 50 10")
+	if err != nil {
+		t.Fatalf("parse second snapshot: %v", err)
+	}
+
+	if first.total != 1000 {
+		t.Fatalf("first total = %d, want 1000", first.total)
+	}
+	if second.total != 1090 {
+		t.Fatalf("second total = %d, want 1090", second.total)
+	}
+	const wantUsage = 44.44
+	if got := cpuUsagePercent(first, second); math.Abs(got-wantUsage) > 0.001 {
+		t.Fatalf("usage percent = %v, want %v", got, wantUsage)
+	}
+}
+
+func TestParseMeminfoBytes(t *testing.T) {
+	total, available, err := parseMeminfoBytes("MemTotal: 1000 kB\nHugePages_Total: 1\nMemAvailable: 250 kB\n")
+	if err != nil {
+		t.Fatalf("parse meminfo: %v", err)
+	}
+	if total != 1024000 {
+		t.Fatalf("total = %d, want 1024000", total)
+	}
+	if available != 256000 {
+		t.Fatalf("available = %d, want 256000", available)
+	}
+}
+
 func TestFeedWithoutHubReturnsServiceUnavailable(t *testing.T) {
 	handler := &Handler{}
 	rec := httptest.NewRecorder()
@@ -373,6 +455,9 @@ func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	}
 	if endpoints["readiness"] != "/readiness" {
 		t.Fatalf("expected readiness endpoint to be exposed, got %v", endpoints["readiness"])
+	}
+	if endpoints["resources"] != "/resources" {
+		t.Fatalf("expected resources endpoint, got %v", endpoints["resources"])
 	}
 	if endpoints["changed_since"] != "/queries/changed-since" {
 		t.Fatalf("expected changed_since endpoint, got %v", endpoints["changed_since"])

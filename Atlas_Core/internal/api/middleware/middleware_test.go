@@ -33,6 +33,7 @@ func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 		"/health///":                 true,
 		"/readiness":                 true,
 		"/readiness/":                true,
+		"/resources":                 false,
 		"/":                          false,
 		"/entities/":                 false,
 		"/health/live":               false,

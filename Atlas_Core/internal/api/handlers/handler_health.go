@@ -91,6 +91,7 @@ func (h *Handler) Root(w http.ResponseWriter, r *http.Request) {
 		"endpoints": map[string]string{
 			"health":        "/health",
 			"readiness":     "/readiness",
+			"resources":     "/resources",
 			"entities":      "/entities",
 			"tasks":         "/tasks",
 			"objects":       "/objects",

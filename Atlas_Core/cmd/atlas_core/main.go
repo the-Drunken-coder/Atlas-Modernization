@@ -195,6 +195,7 @@ func main() {
 
 	// Register routes
 	r.Get("/", handler.Root)
+	r.Get("/resources", handler.Resources)
 	r.Get("/protocol/revision", handler.ProtocolRevision)
 	r.Get("/feed", handler.Feed)
 	r.Post("/admin/auth/login", handler.AdminLogin)
