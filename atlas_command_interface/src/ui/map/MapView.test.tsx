@@ -173,6 +173,38 @@ describe("MapView hover target box", () => {
       expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
     });
   });
+
+  it("locks a hovered marker box during wheel scroll and resyncs after scrolling settles", async () => {
+    const { canvas, map } = renderMapView();
+    let markerRect = rect(70, 90, 28, 40);
+    const marker = appendMarker(canvas, "asset-1", () => markerRect);
+
+    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-crosshair")).toHaveClass("map-crosshair--targeted"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+      markerRect = rect(120, 60, 28, 40);
+      act(() => map.fire("zoom"));
+
+      const lockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(lockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("53px");
+      expect(lockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("63px");
+      expect(lockedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("74px");
+      expect(lockedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("90px");
+
+      act(() => vi.advanceTimersByTime(180));
+
+      const unlockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function renderMapView() {
