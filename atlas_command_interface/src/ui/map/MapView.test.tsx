@@ -213,6 +213,22 @@ describe("MapView hover target box", () => {
       expect(unlockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
       expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
       expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+
+      fireEvent.mouseMove(canvas, { clientX: 90, clientY: 110 });
+
+      const movedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(movedOverlay).toHaveClass("map-crosshair--targeted");
+      expect(movedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
+      expect(movedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
+
+      fireEvent.mouseMove(canvas, { clientX: 170, clientY: 150 });
+
+      const releasedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(releasedOverlay).not.toHaveClass("map-crosshair--targeted");
+      expect(releasedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("204px");
+      expect(releasedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("100px");
+      expect(releasedOverlay?.style.getPropertyValue("--map-target-x")).toBe("193px");
+      expect(releasedOverlay?.style.getPropertyValue("--map-target-y")).toBe("89px");
     } finally {
       vi.useRealTimers();
     }
