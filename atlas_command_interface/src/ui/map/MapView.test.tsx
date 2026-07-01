@@ -295,6 +295,16 @@ describe("MapView zoom overlay", () => {
     expect(onBackgroundClick).not.toHaveBeenCalled();
   });
 
+  it("selects the clicked marker when marker target boxes overlap", () => {
+    const { canvas, onSelectEntity } = renderMapView();
+    appendMarker(canvas, "asset-lower", rect(70, 90, 20, 20));
+    const topMarker = appendMarker(canvas, "asset-top", rect(70, 90, 20, 20));
+
+    fireEvent.click(topMarker, { clientX: 80, clientY: 100 });
+
+    expect(onSelectEntity).toHaveBeenCalledWith("asset-top");
+  });
+
   it("selects canvas features from direct clicks without a hover reticle", () => {
     const { canvas, map, onBackgroundClick, onSelectEntity } = renderMapView();
     map.queryRenderedFeatures.mockReturnValue([

@@ -652,9 +652,6 @@ function hoverSelectionTarget(
   point: ScreenPoint,
   map: MlMap | undefined
 ): HoverTarget | null {
-  const markerAtPoint = markerTargetAtPoint(event.currentTarget, mapRect, point);
-  if (markerAtPoint) return markerAtPoint;
-
   if (event.target instanceof Element) {
     const element = event.target.closest<HTMLElement>(".map-symbol-marker");
     const entityId = element?.dataset.entityId;
@@ -662,6 +659,9 @@ function hoverSelectionTarget(
       return { entityId, box: boxFromElement(element, mapRect) };
     }
   }
+
+  const markerAtPoint = markerTargetAtPoint(event.currentTarget, mapRect, point);
+  if (markerAtPoint) return markerAtPoint;
 
   if (!map) return null;
   try {
