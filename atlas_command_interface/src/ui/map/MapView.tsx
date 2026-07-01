@@ -44,6 +44,7 @@ const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
   [180, 85.051129]
 ];
 const SCROLL_LOCK_SETTLE_MS = 180;
+const SUPPRESSED_CLICK_FALLBACK_MS = 750;
 const FOCUS_DURATION_MS = 450;
 const FOCUS_BOUNDS_PADDING = 48;
 const FOCUS_MAX_ZOOM = 10;
@@ -552,7 +553,7 @@ export function MapView({
     suppressClickTimeoutRef.current = window.setTimeout(() => {
       suppressNextClickRef.current = false;
       suppressClickTimeoutRef.current = undefined;
-    }, 0);
+    }, SUPPRESSED_CLICK_FALLBACK_MS);
   }
 
   function consumeSuppressedClick(): boolean {

@@ -290,9 +290,15 @@ describe("MapView zoom overlay", () => {
 
     fireEvent.mouseDown(marker, { button: 0, shiftKey: true, clientX: 80, clientY: 100 });
     await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
-    fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
-    fireEvent.mouseUp(window, { button: 0, clientX: 180, clientY: 150 });
-    fireEvent.click(marker);
+    vi.useFakeTimers();
+    try {
+      fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
+      fireEvent.mouseUp(window, { button: 0, clientX: 180, clientY: 150 });
+      act(() => vi.advanceTimersByTime(0));
+      fireEvent.click(marker);
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(onSelectEntity).not.toHaveBeenCalled();
     expect(onBackgroundClick).not.toHaveBeenCalled();
@@ -304,9 +310,15 @@ describe("MapView zoom overlay", () => {
 
     fireEvent.mouseDown(marker, { button: 0, shiftKey: true, clientX: 80, clientY: 100 });
     await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
-    fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
-    fireEvent.keyDown(window, { key: "Escape" });
-    fireEvent.click(marker);
+    vi.useFakeTimers();
+    try {
+      fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
+      fireEvent.keyDown(window, { key: "Escape" });
+      act(() => vi.advanceTimersByTime(0));
+      fireEvent.click(marker);
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(onSelectEntity).not.toHaveBeenCalled();
     expect(onBackgroundClick).not.toHaveBeenCalled();
