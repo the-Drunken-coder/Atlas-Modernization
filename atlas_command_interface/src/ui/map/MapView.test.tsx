@@ -188,6 +188,7 @@ describe("MapView hover target box", () => {
       markerRect = rect(120, 60, 28, 40);
       act(() => map.fire("zoom"));
 
+      expect(canvas).toHaveClass("map-canvas--scrolling");
       const scrollingOverlay = document.querySelector<HTMLElement>(".map-crosshair");
       expect(scrollingOverlay).toHaveClass("map-crosshair--targeted");
       expect(scrollingOverlay).toHaveClass("map-crosshair--scrolling");
@@ -205,6 +206,7 @@ describe("MapView hover target box", () => {
 
       act(() => vi.advanceTimersByTime(180));
 
+      expect(canvas).not.toHaveClass("map-canvas--scrolling");
       const unlockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
       expect(unlockedOverlay).not.toHaveClass("map-crosshair--scrolling");
       expect(unlockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
