@@ -54,7 +54,7 @@ python3 Atlas_Core/scripts/atlas.py --production
 This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings
 files, binds the API to `127.0.0.1:8000`, and requires `X-API-Key` for API
-routes. Health and readiness endpoints remain unauthenticated.
+routes. Health, readiness, and resource usage endpoints remain unauthenticated.
 
 ## Production Tunnel
 
