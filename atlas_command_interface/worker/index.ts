@@ -7,6 +7,10 @@ type APIErrorResponse = {
   details?: Record<string, string | number | boolean | null>;
 };
 
+const TILEMUX_ORIGIN = "https://tilemux.laraujo123546.workers.dev";
+const TILEMUX_SOURCES = new Set(["maptiler-osm-dark", "esri-world-imagery", "usgs-topo"]);
+const MAP_TILE_PATH = /^\/map-tiles\/([a-z0-9-]+)\/(\d+)\/(\d+)\/(\d+)\.png$/;
+
 class WorkerHTTPError extends Error {
   readonly status: number;
   readonly code: string;
@@ -30,6 +34,9 @@ export default {
 export async function handleCommandRequest(request: Request, env: Env): Promise<Response> {
   try {
     const url = new URL(request.url);
+    if (url.pathname === "/map-tiles" || url.pathname.startsWith("/map-tiles/")) {
+      return proxyTileRequest(request, url);
+    }
     if (url.pathname === "/api/config" && request.method === "GET") {
       const atlasBaseUrl = requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL");
       const mapStyleUrl = optionalString(env.MAP_STYLE_URL);
@@ -57,6 +64,21 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
   } catch (error) {
     return errorResponse(error, request);
   }
+}
+
+function proxyTileRequest(request: Request, url: URL): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    throw new WorkerHTTPError(405, "METHOD_NOT_ALLOWED", "Map tiles only support GET and HEAD");
+  }
+  const match = url.pathname.match(MAP_TILE_PATH);
+  if (!match || !TILEMUX_SOURCES.has(match[1])) {
+    throw new WorkerHTTPError(404, "NOT_FOUND", "Map tile route not found", { path: url.pathname });
+  }
+  const [, source, z, x, y] = match;
+  return fetch(`${TILEMUX_ORIGIN}/tiles/${source}/${z}/${x}/${y}.png`, {
+    method: request.method,
+    headers: { Accept: request.headers.get("Accept") ?? "image/*,*/*;q=0.8" }
+  });
 }
 
 function requiredString(value: unknown, name: string): string {

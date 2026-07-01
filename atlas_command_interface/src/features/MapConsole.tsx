@@ -12,7 +12,9 @@ import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo } from "../ui/map/MapView.js";
+import { TILEMUX_MAP_STYLES } from "../ui/map/map-style.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
+import { SelectField } from "../ui/primitives/controls.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
 import { CommandList } from "./commands/CommandList.js";
@@ -45,11 +47,16 @@ export function MapConsole() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [selectedMapStyleId, setSelectedMapStyleId] = useState(() => initialMapStyleId(atlas.config?.mapStyleUrl));
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
   const selectedId = selection?.id;
   const selectedEntityId = selectedEntity?.entity_id;
+
+  useEffect(() => {
+    setSelectedMapStyleId(initialMapStyleId(atlas.config?.mapStyleUrl));
+  }, [atlas.config?.mapStyleUrl]);
 
   // Drop transient command UI when the selected entity changes.
   useEffect(() => {
@@ -79,6 +86,7 @@ export function MapConsole() {
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
+  const selectedMapStyle = TILEMUX_MAP_STYLES.find((style) => style.id === selectedMapStyleId) ?? TILEMUX_MAP_STYLES[0];
 
   const selectEntityById = useCallback(
     (id: string) => {
@@ -252,8 +260,9 @@ export function MapConsole() {
         map={
           <>
             <MapView
+              key={selectedMapStyle.id}
               sources={sources}
-              styleUrl={atlas.config?.mapStyleUrl}
+              style={selectedMapStyle.style}
               selectedId={selectedId}
               editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
               onSelectEntity={selectEntityById}
@@ -264,6 +273,7 @@ export function MapConsole() {
               }}
             />
             <ConnectionBadge running={atlas.health.running} healthy={atlas.health.healthy} degraded={atlas.health.degraded} />
+            <MapStylePicker value={selectedMapStyle.id} onChange={setSelectedMapStyleId} />
           </>
         }
       />
@@ -292,6 +302,24 @@ export function MapConsole() {
         />
       ) : null}
     </>
+  );
+}
+
+function initialMapStyleId(configuredUrl: string | undefined): string {
+  const configured = TILEMUX_MAP_STYLES.find((style) => configuredUrl === style.id || configuredUrl?.includes(`/styles/${style.id}.json`));
+  return configured?.id ?? TILEMUX_MAP_STYLES[0].id;
+}
+
+function MapStylePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="map-overlay-tr map-style-control">
+      <SelectField
+        label="Map"
+        value={value}
+        options={TILEMUX_MAP_STYLES.map((style) => ({ label: style.label, value: style.id }))}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    </div>
   );
 }
 

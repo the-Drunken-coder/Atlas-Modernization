@@ -1,4 +1,4 @@
-import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent } from "maplibre-gl";
+import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -33,7 +33,7 @@ export type MapEditing = {
 
 type MapViewProps = {
   sources: MapSources;
-  styleUrl?: string;
+  style?: StyleSpecification | string;
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -42,7 +42,7 @@ type MapViewProps = {
   onBackgroundClick?: () => void;
 };
 
-export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
+export function MapView({ sources, style, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
   const readyRef = useRef(false);
@@ -68,7 +68,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl ?? defaultMapStyle(),
+        style: style ?? defaultMapStyle(),
         center: initialCenter ?? [0, 20],
         zoom: initialCenter ? 11 : 1.6,
         attributionControl: { compact: true }

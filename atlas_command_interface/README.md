@@ -6,7 +6,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 
 ## What Lives Here
 
-- `worker/` - static asset hosting plus `GET /api/config`.
+- `worker/` - static asset hosting, `GET /api/config`, and the allowlisted TileMux tile proxy.
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
 - `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, command catalog parsing, and command targeting.
 - `src/ui/` - the local design system.
@@ -22,7 +22,8 @@ The browser calls Atlas Core directly. It does not receive a durable Core API ke
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
 - The Worker does not own `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, API-key injection, or command validation.
 
-`/api/config` returns only non-secret browser config: Core base URL, protocol revision, and optional MapLibre style URL.
+`/api/config` returns only non-secret browser config: Core base URL, protocol revision, and optional legacy MapLibre style URL.
+The map picker exposes three built-in TileMux basemaps and loads their raster tiles through same-origin `/map-tiles/*`.
 
 ## Commands
 
@@ -34,7 +35,7 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 1. Start Atlas Core from this checkout. Startup seeds the development admin account `admin` / `password`.
 2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
-3. Configure the Worker with `ATLAS_CORE_BASE_URL`; optional `MAP_STYLE_URL` overrides the default OpenStreetMap basemap. For local `wrangler dev`, put `ATLAS_CORE_BASE_URL=http://localhost:8000` in ignored `.dev.vars`.
+3. Configure the Worker with `ATLAS_CORE_BASE_URL`. For local `wrangler dev`, put `ATLAS_CORE_BASE_URL=http://localhost:8000` in ignored `.dev.vars`.
 4. Run the Worker and Vite dev server:
 
    ```bash

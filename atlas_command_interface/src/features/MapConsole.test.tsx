@@ -13,12 +13,14 @@ vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
   return {
     MapView: (props: {
+      style?: unknown;
       editing?: unknown;
       onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
       onBackgroundClick?: () => void;
     }) => (
       <div
         data-testid="map"
+        data-style-id={styleSourceId(props.style)}
         data-editing={props.editing ? "true" : "false"}
         onClick={() => props.onBackgroundClick?.()}
         onContextMenu={(event) => {
@@ -30,6 +32,13 @@ vi.mock("../ui/map/MapView.js", async () => {
     buildMapSources: sources.buildMapSources
   };
 });
+
+function styleSourceId(style: unknown): string | undefined {
+  if (typeof style === "string") return style;
+  if (!style || typeof style !== "object") return undefined;
+  const sources = (style as { sources?: Record<string, unknown> }).sources ?? {};
+  return Object.keys(sources)[0];
+}
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
@@ -215,6 +224,26 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
+  });
+
+  it("switches between TileMux map styles", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
+
+    const mapSelect = screen.getByLabelText("Map");
+    expect(Array.from(mapSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual([
+      "MapTiler OSM Dark",
+      "Esri World Imagery",
+      "USGS Topo"
+    ]);
+
+    await user.selectOptions(mapSelect, "esri-world-imagery");
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "esri-world-imagery");
   });
 
   it("clears the selected entity when the map background is clicked", async () => {

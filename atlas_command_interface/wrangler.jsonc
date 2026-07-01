@@ -18,6 +18,8 @@
       "/admin/auth",
       "/admin/auth/*",
       "/me/settings",
+      "/map-tiles",
+      "/map-tiles/*",
       "/atlas",
       "/atlas/*"
     ]

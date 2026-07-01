@@ -26,6 +26,33 @@ describe("thin Worker", () => {
     }
   });
 
+  it("proxies allowlisted TileMux map tiles", async () => {
+    const tileFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("tile", { headers: { "Content-Type": "image/png" } }));
+
+    try {
+      const response = await handleCommandRequest(
+        new Request("https://command.test/map-tiles/maptiler-osm-dark/6/19/24.png", { headers: { Accept: "image/png" } }),
+        env()
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("tile");
+      expect(tileFetch).toHaveBeenCalledWith("https://tilemux.laraujo123546.workers.dev/tiles/maptiler-osm-dark/6/19/24.png", {
+        method: "GET",
+        headers: { Accept: "image/png" }
+      });
+    } finally {
+      tileFetch.mockRestore();
+    }
+  });
+
+  it("rejects unknown map tile routes", async () => {
+    const response = await handleCommandRequest(new Request("https://command.test/map-tiles/other/6/19/24.png"), env());
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ success: false, error_code: "NOT_FOUND" });
+  });
+
   it("returns JSON 404 for unknown API routes", async () => {
     for (const path of ["/api", "/api/missing"]) {
       const response = await handleCommandRequest(new Request(`https://command.test${path}`), env());

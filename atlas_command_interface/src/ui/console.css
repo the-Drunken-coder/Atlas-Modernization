@@ -631,6 +631,28 @@
   backdrop-filter: blur(4px);
 }
 
+.map-overlay-tr {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 10;
+  max-width: calc(100% - var(--space-5));
+  padding: var(--space-2);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(4px);
+}
+
+.map-style-control .field {
+  width: min(224px, calc(100vw - var(--space-5)));
+  margin-bottom: 0;
+}
+
+.map-style-control .select {
+  background: color-mix(in srgb, var(--bg-base) 92%, transparent);
+}
+
 .map-hint {
   position: absolute;
   bottom: var(--space-3);
