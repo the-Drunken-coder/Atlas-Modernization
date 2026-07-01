@@ -432,6 +432,25 @@ describe("MapView external reticle targets", () => {
     expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
   });
 
+  it("shows refreshed focus reticles after scroll lock settles", async () => {
+    const { canvas, map, rerenderMap } = renderMapView();
+    let markerRect = rect(70, 90, 20, 20);
+    appendMarker(canvas, "asset-1", () => markerRect);
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+    markerRect = rect(170, 120, 20, 20);
+    act(() => map.fire("zoom"));
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).not.toHaveClass("map-reticle--scrolling");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");
+    });
+  });
+
   it("keeps scroll-locked reticle state ahead of external previews", async () => {
     const { canvas, rerenderMap } = renderMapView();
     rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
