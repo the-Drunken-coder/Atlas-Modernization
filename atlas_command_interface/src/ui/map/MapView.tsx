@@ -258,7 +258,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     const rect = event.currentTarget.getBoundingClientRect();
     const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const target = hoverSelectionTarget(event, rect, point, mapRef.current);
-    setCrosshair({ ...point, target: targetSquare(point, target?.box ?? null), ...(target ? { targetEntityId: target.entityId } : {}) });
+    setCrosshair(target ? crosshairForTarget(target) : { ...point, target: squareAround(point, CROSSHAIR_TARGET_SIZE) });
   };
 
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -383,17 +383,34 @@ function squareAround(point: ScreenPoint, size: number): TargetBox {
   return { x: point.x - size / 2, y: point.y - size / 2, width: size, height: size };
 }
 
-function targetSquare(point: ScreenPoint, target: TargetBox | null): TargetBox {
-  if (!target) return squareAround(point, CROSSHAIR_TARGET_SIZE);
-  const side =
-    Math.max(
-      CROSSHAIR_TARGET_SIZE,
-      Math.abs(point.x - target.x) * 2 + HOVER_TARGET_PADDING * 2,
-      Math.abs(point.x - (target.x + target.width)) * 2 + HOVER_TARGET_PADDING * 2,
-      Math.abs(point.y - target.y) * 2 + HOVER_TARGET_PADDING * 2,
-      Math.abs(point.y - (target.y + target.height)) * 2 + HOVER_TARGET_PADDING * 2
-    );
-  return squareAround(point, side);
+function crosshairForTarget(target: HoverTarget): CrosshairState {
+  const box = minimumBox(paddedBox(target.box, HOVER_TARGET_PADDING), CROSSHAIR_TARGET_SIZE);
+  return {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+    target: box,
+    targetEntityId: target.entityId
+  };
+}
+
+function paddedBox(box: TargetBox, padding: number): TargetBox {
+  return {
+    x: box.x - padding,
+    y: box.y - padding,
+    width: box.width + padding * 2,
+    height: box.height + padding * 2
+  };
+}
+
+function minimumBox(box: TargetBox, minSize: number): TargetBox {
+  const width = Math.max(box.width, minSize);
+  const height = Math.max(box.height, minSize);
+  return {
+    x: box.x + (box.width - width) / 2,
+    y: box.y + (box.height - height) / 2,
+    width,
+    height
+  };
 }
 
 function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
