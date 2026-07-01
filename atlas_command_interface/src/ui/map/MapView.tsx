@@ -52,6 +52,7 @@ type ScreenPoint = { x: number; y: number };
 type TargetBox = { x: number; y: number; width: number; height: number };
 type HoverTarget = { entityId: string; box: TargetBox };
 type CrosshairState = ScreenPoint & { target: TargetBox; targetEntityId?: string };
+type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
 
 export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
@@ -64,11 +65,17 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const scrollLockedRef = useRef(false);
   const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
+  const crosshairRef = useRef<CrosshairState | null>(null);
+  const cursorHandoffRef = useRef<CursorHandoffState | null>(null);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
   const [scrollLocked, setScrollLocked] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
+
+  useEffect(() => {
+    crosshairRef.current = crosshair;
+  }, [crosshair]);
 
   // Create the map once.
   useEffect(() => {
@@ -140,6 +147,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       editMarkersRef.current = [];
       symbolMarkersRef.current = [];
       scrollLockedRef.current = false;
+      cursorHandoffRef.current = null;
       if (scrollLockTimeoutRef.current !== undefined) {
         window.clearTimeout(scrollLockTimeoutRef.current);
       }
@@ -189,7 +197,13 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       if (!mapCanvas) return;
       const box = boxForEntityId(mapCanvas, entityId);
       if (!box) return;
-      setCrosshair((current) => (current?.targetEntityId === entityId ? crosshairForTarget({ entityId, box }) : current));
+      setCrosshair((current) => {
+        if (current?.targetEntityId !== entityId) return current;
+        const next = crosshairForTarget({ entityId, box });
+        crosshairRef.current = next;
+        if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
+        return next;
+      });
     };
 
     map.on("move", syncTargetBox);
@@ -287,13 +301,24 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   ) => {
     if (scrollLockedRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
+      cursorHandoffRef.current = null;
       setCrosshair(null);
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const rawPoint = pointFromClient(event, rect);
+    const handoff = cursorHandoffRef.current;
+    const point = handoff
+      ? {
+          x: handoff.visualPoint.x + rawPoint.x - handoff.nativePoint.x,
+          y: handoff.visualPoint.y + rawPoint.y - handoff.nativePoint.y
+        }
+      : rawPoint;
     const target = hoverSelectionTarget(event, rect, point, mapRef.current);
-    setCrosshair(target ? crosshairForTarget(target) : { ...point, target: squareAround(point, CROSSHAIR_TARGET_SIZE) });
+    const next = target ? crosshairForTarget(target) : { ...point, target: squareAround(point, CROSSHAIR_TARGET_SIZE) };
+    crosshairRef.current = next;
+    if (handoff) cursorHandoffRef.current = { nativePoint: rawPoint, visualPoint: { x: next.x, y: next.y } };
+    setCrosshair(next);
   };
 
   const syncCurrentTargetBox = () => {
@@ -303,12 +328,19 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       const entityId = current?.targetEntityId;
       if (!entityId) return current;
       const box = boxForEntityId(mapCanvas, entityId);
-      return box ? crosshairForTarget({ entityId, box }) : current;
+      if (!box) return current;
+      const next = crosshairForTarget({ entityId, box });
+      crosshairRef.current = next;
+      if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
+      return next;
     });
   };
 
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const visualPoint = crosshairRef.current ? { x: crosshairRef.current.x, y: crosshairRef.current.y } : pointFromClient(event, rect);
+    cursorHandoffRef.current = { nativePoint: pointFromClient(event, rect), visualPoint };
     event.currentTarget.classList.add("map-canvas--scrolling");
     if (!scrollLockedRef.current) setScrollLocked(true);
     scrollLockedRef.current = true;
@@ -359,11 +391,17 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       data-testid="map-canvas"
       onMouseMove={updateCrosshair}
       onMouseLeave={() => {
-        if (!scrollLockedRef.current) setCrosshair(null);
+        if (!scrollLockedRef.current) {
+          cursorHandoffRef.current = null;
+          setCrosshair(null);
+        }
       }}
       onPointerMove={updateCrosshair}
       onPointerLeave={() => {
-        if (!scrollLockedRef.current) setCrosshair(null);
+        if (!scrollLockedRef.current) {
+          cursorHandoffRef.current = null;
+          setCrosshair(null);
+        }
       }}
       onWheelCapture={onMapWheel}
       onClick={onMapClick}
@@ -432,6 +470,9 @@ function hoverSelectionTarget(
   point: ScreenPoint,
   map: MlMap | undefined
 ): HoverTarget | null {
+  const markerAtPoint = markerTargetAtPoint(event.currentTarget, mapRect, point);
+  if (markerAtPoint) return markerAtPoint;
+
   if (event.target instanceof Element) {
     const element = event.target.closest<HTMLElement>(".map-symbol-marker");
     const entityId = element?.dataset.entityId;
@@ -454,12 +495,28 @@ function hoverSelectionTarget(
   return null;
 }
 
+function markerTargetAtPoint(mapCanvas: HTMLElement, mapRect: DOMRect, point: ScreenPoint): HoverTarget | null {
+  for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
+    const entityId = element.dataset.entityId;
+    if (!entityId) continue;
+    const box = boxFromElement(element, mapRect);
+    if (point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height) {
+      return { entityId, box };
+    }
+  }
+  return null;
+}
+
 function boxForEntityId(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
   const mapRect = mapCanvas.getBoundingClientRect();
   for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
     if (element.dataset.entityId === entityId) return boxFromElement(element, mapRect);
   }
   return null;
+}
+
+function pointFromClient(event: { clientX: number; clientY: number }, rect: DOMRect): ScreenPoint {
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
 function squareAround(point: ScreenPoint, size: number): TargetBox {
