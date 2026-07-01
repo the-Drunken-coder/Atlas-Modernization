@@ -34,7 +34,7 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
       requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL");
       const mapStyleUrl = optionalString(env.MAP_STYLE_URL);
       return jsonResponse({
-        atlasBaseUrl: "/atlas",
+        atlasBaseUrl: new URL("/atlas", url.origin).toString(),
         protocolRevision: ATLAS_PROTOCOL_REVISION,
         ...(mapStyleUrl ? { mapStyleUrl } : {})
       });
