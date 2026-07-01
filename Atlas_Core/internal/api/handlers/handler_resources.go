@@ -249,26 +249,37 @@ func linuxMemoryBytes() (uint64, uint64, error) {
 }
 
 func parseMeminfoBytes(data string) (uint64, uint64, error) {
-	values := map[string]uint64{}
+	var total uint64
+	var hasTotal bool
+	var available uint64
+	var hasAvailable bool
+
 	for _, line := range strings.Split(data, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 3 {
 			continue
 		}
 		key := strings.TrimSuffix(fields[0], ":")
+		if key != "MemTotal" && key != "MemAvailable" {
+			continue
+		}
+		if fields[2] != "kB" {
+			return 0, 0, strconv.ErrSyntax
+		}
 		value, err := strconv.ParseUint(fields[1], 10, 64)
 		if err != nil {
 			return 0, 0, err
 		}
-		values[key] = value * 1024
+		if key == "MemTotal" {
+			total = value * 1024
+			hasTotal = true
+		} else {
+			available = value * 1024
+			hasAvailable = true
+		}
 	}
 
-	total, ok := values["MemTotal"]
-	if !ok {
-		return 0, 0, strconv.ErrSyntax
-	}
-	available, ok := values["MemAvailable"]
-	if !ok {
+	if !hasTotal || !hasAvailable {
 		return 0, 0, strconv.ErrSyntax
 	}
 	if available > total {

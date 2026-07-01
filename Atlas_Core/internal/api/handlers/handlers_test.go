@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -265,13 +266,14 @@ func TestParseCPUSnapshotAndUsage(t *testing.T) {
 	if second.total != 1090 {
 		t.Fatalf("second total = %d, want 1090", second.total)
 	}
-	if got := cpuUsagePercent(first, second); got != 44.44 {
-		t.Fatalf("usage percent = %v, want 44.44", got)
+	const wantUsage = 44.44
+	if got := cpuUsagePercent(first, second); math.Abs(got-wantUsage) > 0.001 {
+		t.Fatalf("usage percent = %v, want %v", got, wantUsage)
 	}
 }
 
 func TestParseMeminfoBytes(t *testing.T) {
-	total, available, err := parseMeminfoBytes("MemTotal: 1000 kB\nMemAvailable: 250 kB\n")
+	total, available, err := parseMeminfoBytes("MemTotal: 1000 kB\nHugePages_Total: 1\nMemAvailable: 250 kB\n")
 	if err != nil {
 		t.Fatalf("parse meminfo: %v", err)
 	}
