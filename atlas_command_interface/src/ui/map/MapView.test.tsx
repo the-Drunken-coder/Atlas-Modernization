@@ -7,6 +7,7 @@ import type { MapSources } from "./map-sources.js";
 
 type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
+type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
 
 const maplibreMock = vi.hoisted(() => {
   class FakeMap {
@@ -22,7 +23,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly addControl = vi.fn();
     readonly addSource = vi.fn();
     readonly addLayer = vi.fn();
-    readonly queryRenderedFeatures = vi.fn(() => []);
+    readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => 4);
     readonly getSource = vi.fn(() => ({ setData: vi.fn() }));
@@ -291,6 +292,21 @@ describe("MapView zoom overlay", () => {
     fireEvent.click(marker);
 
     expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
+  it("selects canvas features from direct clicks without a hover reticle", () => {
+    const { canvas, map, onBackgroundClick, onSelectEntity } = renderMapView();
+    map.queryRenderedFeatures.mockReturnValue([
+      { geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-1" } }
+    ]);
+
+    fireEvent.click(canvas, { clientX: 80, clientY: 100 });
+
+    expect(map.queryRenderedFeatures).toHaveBeenCalledWith([70, 80], {
+      layers: ["geofeatures-point", "geofeatures-line", "geofeatures-fill"]
+    });
+    expect(onSelectEntity).toHaveBeenCalledWith("geo-1");
     expect(onBackgroundClick).not.toHaveBeenCalled();
   });
 
