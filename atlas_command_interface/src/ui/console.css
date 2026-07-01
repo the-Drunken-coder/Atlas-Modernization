@@ -758,6 +758,8 @@
     height 90ms ease-out;
 }
 
+.map-canvas--scrolling .map-crosshair__line,
+.map-canvas--scrolling .map-crosshair__target,
 .map-crosshair--scrolling .map-crosshair__line,
 .map-crosshair--scrolling .map-crosshair__target {
   transition: none;

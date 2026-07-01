@@ -309,6 +309,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    event.currentTarget.classList.add("map-canvas--scrolling");
     if (!scrollLockedRef.current) setScrollLocked(true);
     scrollLockedRef.current = true;
     if (scrollLockTimeoutRef.current !== undefined) {
@@ -317,6 +318,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     scrollLockTimeoutRef.current = window.setTimeout(() => {
       scrollLockTimeoutRef.current = undefined;
       scrollLockedRef.current = false;
+      mapCanvasRef.current?.classList.remove("map-canvas--scrolling");
       setScrollLocked(false);
       syncCurrentTargetBox();
     }, SCROLL_LOCK_SETTLE_MS);
@@ -351,7 +353,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
   return (
     <div
-      className="map-canvas"
+      className={`map-canvas${scrollLocked ? " map-canvas--scrolling" : ""}`}
       ref={mapCanvasRef}
       style={{ position: "absolute", inset: 0 }}
       data-testid="map-canvas"
