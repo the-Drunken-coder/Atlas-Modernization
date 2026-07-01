@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MapView, buildMapSources } from "./MapView.js";
 
@@ -36,6 +37,18 @@ const maplibreMock = vi.hoisted(() => {
     on(type: string, listener: Listener): this {
       this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
       return this;
+    }
+
+    off(type: string, listener: Listener): this {
+      this.listeners.set(
+        type,
+        (this.listeners.get(type) ?? []).filter((current) => current !== listener)
+      );
+      return this;
+    }
+
+    fire(type: string, event?: unknown): void {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
     }
   }
 
@@ -140,6 +153,26 @@ describe("MapView hover target box", () => {
       expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("80px");
     });
   });
+
+  it("keeps a hovered marker box aligned while the map camera moves", async () => {
+    const { canvas, map } = renderMapView();
+    let markerRect = rect(70, 90, 28, 40);
+    const marker = appendMarker(canvas, "asset-1", () => markerRect);
+
+    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-crosshair")).toHaveClass("map-crosshair--targeted"));
+
+    markerRect = rect(120, 60, 28, 40);
+    act(() => map.fire("move"));
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(overlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
+      expect(overlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
+      expect(overlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
+      expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+    });
+  });
 });
 
 function renderMapView() {
@@ -155,14 +188,19 @@ function renderMapView() {
 
   const canvas = screen.getByTestId("map-canvas");
   vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(10, 20, 400, 200));
-  return { canvas };
+  return { canvas, map: maplibreMock.FakeMap.instances[0] };
 }
 
-function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect): HTMLButtonElement {
+function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect | (() => DOMRect)): HTMLButtonElement {
   const marker = document.createElement("button");
   marker.className = "map-symbol-marker";
   marker.dataset.entityId = entityId;
-  vi.spyOn(marker, "getBoundingClientRect").mockReturnValue(markerRect);
+  const rectMock = vi.spyOn(marker, "getBoundingClientRect");
+  if (typeof markerRect === "function") {
+    rectMock.mockImplementation(markerRect);
+  } else {
+    rectMock.mockReturnValue(markerRect);
+  }
   container.appendChild(marker);
   return marker;
 }

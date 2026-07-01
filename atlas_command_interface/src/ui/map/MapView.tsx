@@ -170,6 +170,29 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     };
   }, [crosshair]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    const entityId = crosshair?.targetEntityId;
+    if (!map || !mapReady || !entityId) return;
+
+    const syncTargetBox = () => {
+      const mapCanvas = mapCanvasRef.current;
+      if (!mapCanvas) return;
+      const box = boxForEntityId(mapCanvas, entityId);
+      if (!box) return;
+      setCrosshair((current) => (current?.targetEntityId === entityId ? crosshairForTarget({ entityId, box }) : current));
+    };
+
+    map.on("move", syncTargetBox);
+    map.on("zoom", syncTargetBox);
+    map.on("moveend", syncTargetBox);
+    return () => {
+      map.off("move", syncTargetBox);
+      map.off("zoom", syncTargetBox);
+      map.off("moveend", syncTargetBox);
+    };
+  }, [crosshair?.targetEntityId, mapReady]);
+
   // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
   useEffect(() => {
     const map = mapRef.current;
@@ -376,6 +399,14 @@ function hoverSelectionTarget(
     }
   } catch {
     return null;
+  }
+  return null;
+}
+
+function boxForEntityId(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
+  const mapRect = mapCanvas.getBoundingClientRect();
+  for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
+    if (element.dataset.entityId === entityId) return boxFromElement(element, mapRect);
   }
   return null;
 }
