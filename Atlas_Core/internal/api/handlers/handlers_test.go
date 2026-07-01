@@ -250,15 +250,21 @@ func TestResourcesReturnsUsageSnapshot(t *testing.T) {
 }
 
 func TestParseCPUSnapshotAndUsage(t *testing.T) {
-	first, err := parseCPUSnapshot("cpu  100 0 50 850 0 0 0 0 0 0")
+	first, err := parseCPUSnapshot("cpu  100 0 50 850 0 0 0 0 30 5")
 	if err != nil {
 		t.Fatalf("parse first snapshot: %v", err)
 	}
-	second, err := parseCPUSnapshot("cpu  120 0 70 900 0 0 0 0 0 0")
+	second, err := parseCPUSnapshot("cpu  120 0 70 900 0 0 0 0 50 10")
 	if err != nil {
 		t.Fatalf("parse second snapshot: %v", err)
 	}
 
+	if first.total != 1000 {
+		t.Fatalf("first total = %d, want 1000", first.total)
+	}
+	if second.total != 1090 {
+		t.Fatalf("second total = %d, want 1090", second.total)
+	}
 	if got := cpuUsagePercent(first, second); got != 44.44 {
 		t.Fatalf("usage percent = %v, want 44.44", got)
 	}

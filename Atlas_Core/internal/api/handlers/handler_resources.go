@@ -133,8 +133,11 @@ func collectDiskResources(path string) diskResources {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return diskResources{Path: path}
 	}
+	if stat.Bsize <= 0 {
+		return diskResources{Path: path}
+	}
 
-	blockSize := uint64(stat.Bsize)
+	blockSize := uint64(stat.Bsize) // #nosec G115 -- stat.Bsize is checked positive before conversion.
 	total := stat.Blocks * blockSize
 	free := stat.Bavail * blockSize
 	if free > total {
@@ -191,13 +194,16 @@ func parseCPUSnapshot(line string) (cpuSnapshot, error) {
 
 	var total uint64
 	values := make([]uint64, 0, len(fields)-1)
-	for _, field := range fields[1:] {
+	for index, field := range fields[1:] {
 		value, err := strconv.ParseUint(field, 10, 64)
 		if err != nil {
 			return cpuSnapshot{}, err
 		}
 		values = append(values, value)
-		total += value
+		// Linux guest and guest_nice are already included in user and nice.
+		if index < 8 {
+			total += value
+		}
 	}
 
 	idle := values[3]
