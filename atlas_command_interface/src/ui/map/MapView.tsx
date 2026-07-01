@@ -1,6 +1,6 @@
 import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
 import {
   addVertexAfter,
   displayGeometry,
@@ -8,12 +8,29 @@ import {
   moveVertex,
   removeVertex,
   type Position,
+  type UiRawGeometry,
   type UiGeometry,
   type VertexRef
 } from "../../atlas/geometry.js";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
+import { MapReticle } from "./MapReticle.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
 import { defaultMapStyle } from "./map-style.js";
+import {
+  RETICLE_TARGET_SIZE,
+  boxFromDrag,
+  boxFromProjectedPositions,
+  boxIntersectsViewport,
+  pointFromClient,
+  reticleForTarget,
+  reticleFromTargetBox,
+  squareAround,
+  type ReticleState,
+  type ReticleTarget,
+  type ScreenPoint,
+  type TargetBox,
+  type ZoomOverlayState
+} from "./map-reticle.js";
 
 const COLORS = {
   geofeature: "#3fd27a",
@@ -26,11 +43,17 @@ const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
   [-180, -80],
   [180, 85.051129]
 ];
-const CROSSHAIR_TARGET_SIZE = 22;
-const HOVER_TARGET_PADDING = 7;
 const SCROLL_LOCK_SETTLE_MS = 180;
+const FOCUS_DURATION_MS = 450;
+const FOCUS_BOUNDS_PADDING = 48;
+const FOCUS_MAX_ZOOM = 10;
+const FOCUS_MIN_POINT_ZOOM = 6;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
+export type MapReticleTarget =
+  | { type: "entity"; id: string }
+  | { type: "point"; id: string; coordinates: [number, number]; label?: string }
+  | { type: "geometry"; id: string; geometry: UiRawGeometry; label?: string };
 
 export type MapEditing = {
   geometry: UiGeometry;
@@ -43,19 +66,27 @@ type MapViewProps = {
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
+  previewTarget?: MapReticleTarget | null;
+  focusTarget?: MapReticleTarget | null;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
 };
 
-type ScreenPoint = { x: number; y: number };
-type TargetBox = { x: number; y: number; width: number; height: number };
-type HoverTarget = { entityId: string; box: TargetBox };
-type CrosshairState = ScreenPoint & { target: TargetBox; targetEntityId?: string };
+type HoverTarget = ReticleTarget & { entityId: string };
 type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
-type ZoomOverlayState = { start: ScreenPoint; current: ScreenPoint };
 
-export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
+export function MapView({
+  sources,
+  styleUrl,
+  editing,
+  initialCenter,
+  previewTarget,
+  focusTarget,
+  onSelectEntity,
+  onMapContextMenu,
+  onBackgroundClick
+}: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
@@ -66,22 +97,26 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const scrollLockedRef = useRef(false);
   const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
-  const crosshairRef = useRef<CrosshairState | null>(null);
+  const reticleRef = useRef<ReticleState | null>(null);
+  const activeReticleRef = useRef<ReticleState | null>(null);
   const cursorHandoffRef = useRef<CursorHandoffState | null>(null);
   const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
+  const focusedTargetKeyRef = useRef<string | null>(null);
   const suppressNextClickRef = useRef(false);
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
-  const [crosshair, setCrosshair] = useState<CrosshairState | null>(null);
+  const [reticle, setReticle] = useState<ReticleState | null>(null);
+  const [previewReticle, setPreviewReticle] = useState<ReticleState | null>(null);
+  const [focusReticle, setFocusReticle] = useState<ReticleState | null>(null);
   const [scrollLocked, setScrollLocked] = useState(false);
   const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
   const zoomDragging = zoomOverlay !== null;
 
   useEffect(() => {
-    crosshairRef.current = crosshair;
-  }, [crosshair]);
+    reticleRef.current = reticle;
+  }, [reticle]);
 
   // Create the map once.
   useEffect(() => {
@@ -221,7 +256,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   }, [zoomDragging]);
 
   useEffect(() => {
-    if (!crosshair) return;
+    if (!reticle) return;
 
     const clearWhenOutsideMap = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
       if (scrollLockedRef.current || zoomOverlayRef.current) return;
@@ -230,7 +265,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       const rect = mapCanvas.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
         cursorHandoffRef.current = null;
-        setCrosshair(null);
+        setReticle(null);
       }
     };
 
@@ -240,22 +275,22 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       window.removeEventListener("pointermove", clearWhenOutsideMap);
       window.removeEventListener("mousemove", clearWhenOutsideMap);
     };
-  }, [crosshair]);
+  }, [reticle]);
 
   useEffect(() => {
     const map = mapRef.current;
-    const entityId = crosshair?.targetEntityId;
+    const entityId = reticle?.targetEntityId;
     if (!map || !mapReady || !entityId) return;
 
     const syncTargetBox = () => {
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
-      const box = boxForEntityId(mapCanvas, entityId);
+      const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
       if (!box) return;
-      setCrosshair((current) => {
+      setReticle((current) => {
         if (current?.targetEntityId !== entityId) return current;
-        const next = crosshairForTarget({ entityId, box });
-        crosshairRef.current = next;
+        const next = reticleForTarget({ entityId, box });
+        reticleRef.current = next;
         if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
         return next;
       });
@@ -271,7 +306,57 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       map.off("zoom", syncTargetBox);
       map.off("moveend", syncTargetBox);
     };
-  }, [crosshair?.targetEntityId, mapReady]);
+  }, [reticle?.targetEntityId, mapReady, sources]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !previewTarget) {
+      setPreviewReticle(null);
+      return;
+    }
+
+    const syncPreviewReticle = () => {
+      if (scrollLockedRef.current || zoomOverlayRef.current) return;
+      setPreviewReticle(reticleForVisibleTarget(mapCanvasRef.current, map, sources, previewTarget));
+    };
+
+    syncPreviewReticle();
+    map.on("move", syncPreviewReticle);
+    map.on("zoom", syncPreviewReticle);
+    return () => {
+      map.off("move", syncPreviewReticle);
+      map.off("zoom", syncPreviewReticle);
+    };
+  }, [mapReady, previewTarget, scrollLocked, sources, zoomDragging]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !focusTarget) {
+      focusedTargetKeyRef.current = null;
+      setFocusReticle(null);
+      return;
+    }
+
+    const key = mapReticleTargetKey(focusTarget);
+    if (focusedTargetKeyRef.current !== key) {
+      if (focusMapTarget(map, sources, focusTarget)) focusedTargetKeyRef.current = key;
+    }
+
+    const syncFocusReticle = () => {
+      if (scrollLockedRef.current || zoomOverlayRef.current) return;
+      setFocusReticle(reticleForVisibleTarget(mapCanvasRef.current, map, sources, focusTarget));
+    };
+
+    syncFocusReticle();
+    map.on("move", syncFocusReticle);
+    map.on("zoom", syncFocusReticle);
+    map.on("moveend", syncFocusReticle);
+    return () => {
+      map.off("move", syncFocusReticle);
+      map.off("zoom", syncFocusReticle);
+      map.off("moveend", syncFocusReticle);
+    };
+  }, [focusTarget, mapReady, scrollLocked, sources, zoomDragging]);
 
   // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
   useEffect(() => {
@@ -351,13 +436,13 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     }
   }, [editing, mapReady]);
 
-  const updateCrosshair = (
+  const updateReticle = (
     event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement }
   ) => {
     if (scrollLockedRef.current || zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
       cursorHandoffRef.current = null;
-      setCrosshair(null);
+      setReticle(null);
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
@@ -370,22 +455,24 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
         }
       : rawPoint;
     const target = hoverSelectionTarget(event, rect, point, mapRef.current);
-    const next = target ? crosshairForTarget(target) : { ...point, target: squareAround(point, CROSSHAIR_TARGET_SIZE) };
-    crosshairRef.current = next;
+    const next = target ? reticleForTarget(target) : { ...point, target: squareAround(point, RETICLE_TARGET_SIZE) };
+    reticleRef.current = next;
     if (handoff) cursorHandoffRef.current = { nativePoint: rawPoint, visualPoint: { x: next.x, y: next.y } };
-    setCrosshair(next);
+    setReticle(next);
   };
 
   const syncCurrentTargetBox = () => {
     const mapCanvas = mapCanvasRef.current;
     if (!mapCanvas) return;
-    setCrosshair((current) => {
+    setReticle((current) => {
       const entityId = current?.targetEntityId;
       if (!entityId) return current;
-      const box = boxForEntityId(mapCanvas, entityId);
+      const map = mapRef.current;
+      if (!map) return current;
+      const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
       if (!box) return current;
-      const next = crosshairForTarget({ entityId, box });
-      crosshairRef.current = next;
+      const next = reticleForTarget({ entityId, box });
+      reticleRef.current = next;
       if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
       return next;
     });
@@ -395,7 +482,14 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     if (zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const visualPoint = crosshairRef.current ? { x: crosshairRef.current.x, y: crosshairRef.current.y } : pointFromClient(event, rect);
+    const hoverReticle = reticleRef.current;
+    const activeReticle = hoverReticle ?? activeReticleRef.current;
+    if (activeReticle) {
+      const lockedReticle = hoverReticle ?? { ...activeReticle, targetEntityId: undefined };
+      reticleRef.current = lockedReticle;
+      setReticle(lockedReticle);
+    }
+    const visualPoint = activeReticle ? { x: activeReticle.x, y: activeReticle.y } : pointFromClient(event, rect);
     cursorHandoffRef.current = { nativePoint: pointFromClient(event, rect), visualPoint };
     event.currentTarget.classList.add("map-canvas--scrolling");
     if (!scrollLockedRef.current) setScrollLocked(true);
@@ -417,7 +511,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
     setZoomOverlayState({ start: point, current: point });
-    setCrosshair(null);
+    setReticle(null);
   };
 
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -427,32 +521,20 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       event.stopPropagation();
       return;
     }
-    if (crosshair?.targetEntityId) {
-      handlersRef.current.onSelectEntity(crosshair.targetEntityId);
+    if (reticle?.targetEntityId) {
+      handlersRef.current.onSelectEntity(reticle.targetEntityId);
       return;
     }
     handlersRef.current.onBackgroundClick?.();
   };
 
-  const visibleCrosshair = zoomOverlay ? crosshairFromTargetBox(boxFromDrag(zoomOverlay)) : crosshair;
-  const crosshairStyle = visibleCrosshair
-    ? ({
-        "--map-crosshair-x": `${visibleCrosshair.x}px`,
-        "--map-crosshair-y": `${visibleCrosshair.y}px`,
-        "--map-target-height": `${visibleCrosshair.target.height}px`,
-        "--map-target-width": `${visibleCrosshair.target.width}px`,
-        "--map-target-x": `${visibleCrosshair.target.x}px`,
-        "--map-target-y": `${visibleCrosshair.target.y}px`
-      } as CSSProperties)
-    : undefined;
-  const crosshairClassName = [
-    "map-crosshair",
-    scrollLocked ? "map-crosshair--scrolling" : "",
-    zoomOverlay ? "map-crosshair--zoom" : "",
-    !zoomOverlay && visibleCrosshair?.targetEntityId ? "map-crosshair--targeted" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const visibleReticle = zoomOverlay
+    ? reticleFromTargetBox(boxFromDrag(zoomOverlay))
+    : scrollLocked
+      ? reticle
+      : (reticle?.targetEntityId ? reticle : (previewReticle ?? focusReticle ?? reticle));
+
+  activeReticleRef.current = visibleReticle;
 
   function setZoomOverlayState(next: ZoomOverlayState | null): void {
     zoomOverlayRef.current = next;
@@ -486,34 +568,26 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       ref={mapCanvasRef}
       style={{ position: "absolute", inset: 0 }}
       data-testid="map-canvas"
-      onMouseMove={updateCrosshair}
+      onMouseMove={updateReticle}
       onMouseDown={onMapMouseDown}
       onMouseLeave={() => {
         if (!scrollLockedRef.current && !zoomOverlayRef.current) {
           cursorHandoffRef.current = null;
-          setCrosshair(null);
+          setReticle(null);
         }
       }}
-      onPointerMove={updateCrosshair}
+      onPointerMove={updateReticle}
       onPointerLeave={() => {
         if (!scrollLockedRef.current && !zoomOverlayRef.current) {
           cursorHandoffRef.current = null;
-          setCrosshair(null);
+          setReticle(null);
         }
       }}
       onWheelCapture={onMapWheel}
       onClick={onMapClick}
     >
       <div className="maplibre-host" ref={containerRef} />
-      {visibleCrosshair ? (
-        <div className={crosshairClassName} style={crosshairStyle} aria-hidden="true">
-          <div className="map-crosshair__line map-crosshair__line--left" />
-          <div className="map-crosshair__line map-crosshair__line--right" />
-          <div className="map-crosshair__line map-crosshair__line--top" />
-          <div className="map-crosshair__line map-crosshair__line--bottom" />
-          <div className="map-crosshair__target" />
-        </div>
-      ) : null}
+      {visibleReticle ? <MapReticle reticle={visibleReticle} scrolling={scrollLocked} zooming={zoomOverlay !== null} /> : null}
       {mapError ? (
         <div className="map-unavailable" role="status" aria-live="polite">
           <span>Map unavailable</span>
@@ -562,29 +636,6 @@ function positionsEqual(a: Position | undefined, b: Position | undefined): boole
   return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
 }
 
-function pointFromClient(event: { clientX: number; clientY: number }, rect: DOMRect, clampToRect = false): ScreenPoint {
-  const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  if (!clampToRect) return point;
-  return { x: clamp(point.x, 0, rect.width), y: clamp(point.y, 0, rect.height) };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), Math.max(min, max));
-}
-
-function boxFromDrag({ start, current }: ZoomOverlayState): TargetBox {
-  return {
-    x: Math.min(start.x, current.x),
-    y: Math.min(start.y, current.y),
-    width: Math.max(1, Math.abs(start.x - current.x)),
-    height: Math.max(1, Math.abs(start.y - current.y))
-  };
-}
-
-function crosshairFromTargetBox(target: TargetBox): CrosshairState {
-  return { x: target.x + target.width / 2, y: target.y + target.height / 2, target };
-}
-
 function hoverSelectionTarget(
   event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement },
   mapRect: DOMRect,
@@ -628,7 +679,29 @@ function markerTargetAtPoint(mapCanvas: HTMLElement, mapRect: DOMRect, point: Sc
   return null;
 }
 
-function boxForEntityId(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
+function reticleForVisibleTarget(mapCanvas: HTMLElement | null, map: MlMap, sources: MapSources, target: MapReticleTarget): ReticleState | null {
+  if (!mapCanvas) return null;
+  const box = boxForMapReticleTarget(mapCanvas, map, sources, target);
+  if (!box) return null;
+  const viewport = mapCanvas.getBoundingClientRect();
+  if (!boxIntersectsViewport(box, { width: viewport.width, height: viewport.height })) return null;
+  return reticleForTarget({ id: target.id, entityId: target.type === "entity" ? target.id : undefined, box });
+}
+
+function boxForMapReticleTarget(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, target: MapReticleTarget): TargetBox | null {
+  if (target.type === "entity") return targetBoxForEntityId(mapCanvas, map, sources, target.id);
+  if (target.type === "point") {
+    const point = map.project(target.coordinates);
+    return squareAround({ x: point.x, y: point.y }, 1);
+  }
+  return boxFromGeometry(map, target.geometry);
+}
+
+function targetBoxForEntityId(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, entityId: string): TargetBox | null {
+  return boxForEntityMarker(mapCanvas, entityId) ?? boxForFeature(map, featureForEntityId(sources, entityId));
+}
+
+function boxForEntityMarker(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
   const mapRect = mapCanvas.getBoundingClientRect();
   for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
     if (element.dataset.entityId === entityId) return boxFromElement(element, mapRect);
@@ -636,38 +709,8 @@ function boxForEntityId(mapCanvas: HTMLElement, entityId: string): TargetBox | n
   return null;
 }
 
-function squareAround(point: ScreenPoint, size: number): TargetBox {
-  return { x: point.x - size / 2, y: point.y - size / 2, width: size, height: size };
-}
-
-function crosshairForTarget(target: HoverTarget): CrosshairState {
-  const box = minimumBox(paddedBox(target.box, HOVER_TARGET_PADDING), CROSSHAIR_TARGET_SIZE);
-  return {
-    x: box.x + box.width / 2,
-    y: box.y + box.height / 2,
-    target: box,
-    targetEntityId: target.entityId
-  };
-}
-
-function paddedBox(box: TargetBox, padding: number): TargetBox {
-  return {
-    x: box.x - padding,
-    y: box.y - padding,
-    width: box.width + padding * 2,
-    height: box.height + padding * 2
-  };
-}
-
-function minimumBox(box: TargetBox, minSize: number): TargetBox {
-  const width = Math.max(box.width, minSize);
-  const height = Math.max(box.height, minSize);
-  return {
-    x: box.x + (box.width - width) / 2,
-    y: box.y + (box.height - height) / 2,
-    width,
-    height
-  };
+function featureForEntityId(sources: MapSources, entityId: string): MapFeature | undefined {
+  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].find((feature) => feature.properties.entityId === entityId);
 }
 
 function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
@@ -681,20 +724,61 @@ function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
 }
 
 function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | null {
-  const points = collectLngLatPositions(feature.geometry.coordinates).map((position) => {
+  return boxFromProjectedPositions(collectLngLatPositions(feature.geometry.coordinates), (position) => {
     const projected = map.project([position[0], position[1]]);
     return { x: projected.x, y: projected.y };
   });
-  if (points.length === 0) return null;
+}
 
-  const xValues = points.map((position) => position.x);
-  const yValues = points.map((position) => position.y);
-  return {
-    x: Math.min(...xValues),
-    y: Math.min(...yValues),
-    width: Math.max(...xValues) - Math.min(...xValues),
-    height: Math.max(...yValues) - Math.min(...yValues)
-  };
+function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox | null {
+  return feature ? boxFromGeometry(map, feature.geometry) : null;
+}
+
+function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null {
+  return boxFromProjectedPositions(collectLngLatPositions(geometry.coordinates), (position) => {
+    const projected = map.project([position[0], position[1]]);
+    return { x: projected.x, y: projected.y };
+  });
+}
+
+function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget): boolean {
+  const geometry = geometryForFocusTarget(sources, target);
+  if (!geometry) return false;
+  if (geometry.type === "Point") {
+    map.easeTo({
+      center: [geometry.coordinates[0], geometry.coordinates[1]],
+      duration: FOCUS_DURATION_MS,
+      zoom: Math.max(map.getZoom(), FOCUS_MIN_POINT_ZOOM)
+    });
+    return true;
+  }
+  const bounds = boundsForGeometry(geometry);
+  if (!bounds) return false;
+  map.fitBounds(bounds, { duration: FOCUS_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
+  return true;
+}
+
+function geometryForFocusTarget(sources: MapSources, target: MapReticleTarget): UiRawGeometry | undefined {
+  if (target.type === "point") return { type: "Point", coordinates: target.coordinates };
+  if (target.type === "geometry") return target.geometry;
+  return featureForEntityId(sources, target.id)?.geometry;
+}
+
+function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number, number]] | null {
+  const positions = collectLngLatPositions(geometry.coordinates);
+  if (positions.length === 0) return null;
+  const lngValues = positions.map((position) => position[0]);
+  const latValues = positions.map((position) => position[1]);
+  return [
+    [Math.min(...lngValues), Math.min(...latValues)],
+    [Math.max(...lngValues), Math.max(...latValues)]
+  ];
+}
+
+function mapReticleTargetKey(target: MapReticleTarget): string {
+  if (target.type === "point") return `point:${target.id}:${target.coordinates[0]},${target.coordinates[1]}`;
+  if (target.type === "geometry") return `geometry:${target.id}:${JSON.stringify(target.geometry)}`;
+  return `entity:${target.id}`;
 }
 
 function collectLngLatPositions(value: unknown): Position[] {

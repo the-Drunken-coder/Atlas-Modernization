@@ -14,12 +14,16 @@ vi.mock("../ui/map/MapView.js", async () => {
   return {
     MapView: (props: {
       editing?: unknown;
+      focusTarget?: { id: string } | null;
       onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
       onBackgroundClick?: () => void;
+      previewTarget?: { id: string } | null;
     }) => (
       <div
         data-testid="map"
         data-editing={props.editing ? "true" : "false"}
+        data-focus-target={props.focusTarget?.id ?? ""}
+        data-preview-target={props.previewTarget?.id ?? ""}
         onClick={() => props.onBackgroundClick?.()}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -163,6 +167,31 @@ describe("MapConsole command flow", () => {
 
     // The created task arrives over the feed and shows as pending in history.
     expect(await screen.findByText("Pending")).toBeInTheDocument();
+  });
+
+  it("passes hovered sidebar entities to the map as preview targets", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    const rover = await screen.findByRole("button", { name: /Rover/ });
+    await user.hover(rover);
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-preview-target", "asset-1");
+
+    await user.unhover(rover);
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-preview-target", "");
+  });
+
+  it("passes selected sidebar entities to the map as focus targets", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByRole("button", { name: /Rover/ }));
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {
