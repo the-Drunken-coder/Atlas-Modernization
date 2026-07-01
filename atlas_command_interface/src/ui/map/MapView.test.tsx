@@ -117,6 +117,7 @@ describe("MapView hover target box", () => {
 
     await waitFor(() => {
       const overlay = document.querySelector<HTMLElement>(".map-crosshair");
+      expect(overlay).toHaveClass("map-crosshair--targeted");
       expect(overlay?.style.getPropertyValue("--map-target-x")).toBe("53px");
       expect(overlay?.style.getPropertyValue("--map-target-y")).toBe("63px");
       expect(overlay?.style.getPropertyValue("--map-target-width")).toBe("42px");
