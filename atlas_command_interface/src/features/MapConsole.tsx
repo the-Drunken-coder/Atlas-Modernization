@@ -11,7 +11,7 @@ import { useAtlas } from "../state/atlas-context.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
-import { MapView, buildMapSources, type MapContextMenuInfo } from "../ui/map/MapView.js";
+import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
@@ -47,6 +47,7 @@ export function MapConsole() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [previewEntityId, setPreviewEntityId] = useState<string>();
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
@@ -81,6 +82,12 @@ export function MapConsole() {
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
+  const previewTarget = useMemo(() => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined), [previewEntityId, snapshot.entities]);
+  const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
+
+  useEffect(() => {
+    if (previewEntityId && !snapshot.entities[previewEntityId]) setPreviewEntityId(undefined);
+  }, [previewEntityId, snapshot.entities]);
 
   const selectEntityById = useCallback(
     (id: string) => {
@@ -88,6 +95,7 @@ export function MapConsole() {
       if (!entity) return;
       const kind = entityKind(entity);
       if (kind === "other") return;
+      setPreviewEntityId(undefined);
       dispatch({ type: "selectEntity", kind, id });
     },
     [snapshot.entities]
@@ -238,7 +246,15 @@ export function MapConsole() {
               onSelectEntity={(entity) => {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
+                setPreviewEntityId(undefined);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id });
+              }}
+              onPreviewEntity={(entity) => {
+                if (!entity || entityKind(entity) === "other") {
+                  setPreviewEntityId(undefined);
+                  return;
+                }
+                setPreviewEntityId(entity.entity_id);
               }}
               onPickCommand={pickSidebarCommand}
               onStartEdit={startEdit}
@@ -260,10 +276,13 @@ export function MapConsole() {
                   styleUrl={atlas.config?.mapStyleUrl}
                   selectedId={selectedId}
                   editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
+                  focusTarget={focusTarget}
+                  previewTarget={previewTarget}
                   onSelectEntity={selectEntityById}
                   onMapContextMenu={onMapContextMenu}
                   onBackgroundClick={() => {
                     setMapMenu(null);
+                    setPreviewEntityId(undefined);
                     dispatch({ type: "clearSelection" });
                   }}
                 />
@@ -309,6 +328,7 @@ type PanelBodyProps = {
   saving: boolean;
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
+  onPreviewEntity: (entity: EntityResource | null) => void;
   onPickCommand: (availability: CommandAvailability) => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
@@ -352,10 +372,10 @@ function PanelBody(props: PanelBodyProps) {
   return <div className="panel__empty">Unsupported entity type.</div>;
 }
 
-function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
-	if (list === "commands") {
-		if (selectedEntity && entityKind(selectedEntity) === "asset") {
-			return (
+function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPreviewEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
+  if (list === "commands") {
+    if (selectedEntity && entityKind(selectedEntity) === "asset") {
+      return (
         <div style={{ padding: 12 }}>
           <CommandList
             availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
@@ -364,22 +384,27 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
           />
         </div>
       );
-		}
-		return <div className="panel__empty">Select an asset to issue commands.</div>;
-	}
-	if (list === "apiKeys") {
-		return <APIKeysPanel />;
-	}
+    }
+    return <div className="panel__empty">Select an asset to issue commands.</div>;
+  }
+  if (list === "apiKeys") {
+    return <APIKeysPanel />;
+  }
 
-	const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
+  const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
   return (
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
+      onPreview={onPreviewEntity}
       onSelect={onSelectEntity}
     />
   );
+}
+
+function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
+  return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
 }
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {
