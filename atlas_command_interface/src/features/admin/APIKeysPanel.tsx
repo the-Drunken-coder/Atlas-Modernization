@@ -67,8 +67,15 @@ export function APIKeysPanel() {
 
 	const copyGenerated = async () => {
 		if (!generated) return;
-		await navigator.clipboard?.writeText(generated.api_key);
-		setCopied(true);
+		setError(undefined);
+		try {
+			if (!navigator.clipboard) throw new Error("clipboard unavailable");
+			await navigator.clipboard.writeText(generated.api_key);
+			setCopied(true);
+		} catch {
+			setCopied(false);
+			setError("Failed to copy key to clipboard.");
+		}
 	};
 
 	const revokeKey = async (key: AdminAPIKey) => {

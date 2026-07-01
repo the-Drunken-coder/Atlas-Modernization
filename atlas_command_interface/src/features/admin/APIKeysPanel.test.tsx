@@ -79,6 +79,37 @@ describe("APIKeysPanel", () => {
 			window.removeEventListener("atlas-auth-expired", expired);
 		}
 	});
+
+	it("shows an error when copying the generated key fails", async () => {
+		const user = userEvent.setup();
+		Object.defineProperty(navigator, "clipboard", {
+			value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+			configurable: true
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi
+				.fn()
+				.mockResolvedValueOnce(jsonResponse([]))
+				.mockResolvedValueOnce(
+					jsonResponse({
+						id: "atlas_ak_created",
+						name: "sim runner",
+						key_prefix: "atlas_ak_created",
+						created_at: "2026-07-01T12:01:00Z",
+						created_by: "admin",
+						api_key: "atlas_ak_created.secret"
+					})
+				)
+		);
+
+		renderPanel();
+
+		await user.type(await screen.findByLabelText("Name"), "sim runner");
+		await user.click(screen.getByRole("button", { name: /Create/ }));
+		await user.click(await screen.findByRole("button", { name: "Copy" }));
+		expect(await screen.findByText("Failed to copy key to clipboard.")).toBeInTheDocument();
+	});
 });
 
 function renderPanel() {
