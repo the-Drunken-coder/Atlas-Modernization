@@ -68,6 +68,8 @@ func (h *Handler) Resources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, collectResources(r.Context(), time.Now().UTC(), "/"))
 }
 
+// collectResources assembles a host and process usage snapshot. runtime.ReadMemStats
+// briefly pauses other goroutines, so callers should avoid high-frequency polling.
 func collectResources(ctx context.Context, now time.Time, diskPath string) resourcesResponse {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -218,9 +220,6 @@ func cpuUsagePercent(first, second cpuSnapshot) float64 {
 		return 0
 	}
 	totalDelta := second.total - first.total
-	if totalDelta == 0 {
-		return 0
-	}
 	idleDelta := second.idle - first.idle
 	if idleDelta > totalDelta {
 		return 0
