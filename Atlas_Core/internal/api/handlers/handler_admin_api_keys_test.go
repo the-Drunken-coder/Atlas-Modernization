@@ -17,6 +17,9 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 )
 
+// Serializes DB-backed admin tests that share admin_records across Go packages.
+const handlerAdminRecordsTestLockKey int64 = 780078001
+
 func TestAdminAPIKeyHandlersCreateListAndRevoke(t *testing.T) {
 	pool := openHandlerAdminTestPool(t)
 	ctx := context.Background()
@@ -146,7 +149,28 @@ func openHandlerAdminTestPool(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, `SELECT 1 FROM admin_records LIMIT 1`); err != nil {
 		t.Skipf("admin_records table is not present: %v", err)
 	}
+	lockHandlerAdminRecords(ctx, t, pool)
 	return pool
+}
+
+func lockHandlerAdminRecords(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire admin_records test lock connection: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, handlerAdminRecordsTestLockKey); err != nil {
+		conn.Release()
+		t.Fatalf("lock admin_records tests: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(cleanupCtx, `SELECT pg_advisory_unlock($1)`, handlerAdminRecordsTestLockKey); err != nil {
+			t.Errorf("unlock admin_records tests: %v", err)
+		}
+		conn.Release()
+	})
 }
 
 func cleanupHandlerAdminRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
