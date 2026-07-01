@@ -132,14 +132,14 @@ describe("MapView hover target box", () => {
     fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(overlay).toHaveClass("map-crosshair--targeted");
-      expect(overlay?.style.getPropertyValue("--map-target-x")).toBe("53px");
-      expect(overlay?.style.getPropertyValue("--map-target-y")).toBe("63px");
-      expect(overlay?.style.getPropertyValue("--map-target-width")).toBe("42px");
-      expect(overlay?.style.getPropertyValue("--map-target-height")).toBe("54px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-x")).toBe("74px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("90px");
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("53px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("63px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("42px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("54px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("74px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("90px");
     });
   });
 
@@ -149,11 +149,11 @@ describe("MapView hover target box", () => {
     fireEvent.mouseMove(canvas, { clientX: 80, clientY: 100 });
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(overlay?.style.getPropertyValue("--map-target-width")).toBe("22px");
-      expect(overlay?.style.getPropertyValue("--map-target-height")).toBe("22px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-x")).toBe("70px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("80px");
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("22px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("22px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
   });
 
@@ -163,17 +163,17 @@ describe("MapView hover target box", () => {
     const marker = appendMarker(canvas, "asset-1", () => markerRect);
 
     fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
-    await waitFor(() => expect(document.querySelector(".map-crosshair")).toHaveClass("map-crosshair--targeted"));
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
 
     markerRect = rect(120, 60, 28, 40);
     act(() => map.fire("move"));
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(overlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
-      expect(overlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("124px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
     });
   });
 
@@ -183,7 +183,7 @@ describe("MapView hover target box", () => {
     const marker = appendMarker(canvas, "asset-1", () => markerRect);
 
     fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
-    await waitFor(() => expect(document.querySelector(".map-crosshair")).toHaveClass("map-crosshair--targeted"));
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
 
     vi.useFakeTimers();
     try {
@@ -192,46 +192,46 @@ describe("MapView hover target box", () => {
       act(() => map.fire("zoom"));
 
       expect(canvas).toHaveClass("map-canvas--scrolling");
-      const scrollingOverlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(scrollingOverlay).toHaveClass("map-crosshair--targeted");
-      expect(scrollingOverlay).toHaveClass("map-crosshair--scrolling");
-      expect(scrollingOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
-      expect(scrollingOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
-      expect(scrollingOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
-      expect(scrollingOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+      const scrollingOverlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(scrollingOverlay).toHaveClass("map-reticle--targeted");
+      expect(scrollingOverlay).toHaveClass("map-reticle--scrolling");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("124px");
+      expect(scrollingOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
 
       fireEvent.pointerMove(canvas, { clientX: 30, clientY: 40 });
 
-      const lockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(lockedOverlay).toHaveClass("map-crosshair--targeted");
-      expect(lockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
-      expect(lockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
+      const lockedOverlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(lockedOverlay).toHaveClass("map-reticle--targeted");
+      expect(lockedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
+      expect(lockedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
 
       act(() => vi.advanceTimersByTime(180));
 
       expect(canvas).not.toHaveClass("map-canvas--scrolling");
-      const unlockedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(unlockedOverlay).not.toHaveClass("map-crosshair--scrolling");
-      expect(unlockedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
-      expect(unlockedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
-      expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("124px");
-      expect(unlockedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("60px");
+      const unlockedOverlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(unlockedOverlay).not.toHaveClass("map-reticle--scrolling");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("124px");
+      expect(unlockedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
 
       fireEvent.mouseMove(canvas, { clientX: 90, clientY: 110 });
 
-      const movedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(movedOverlay).toHaveClass("map-crosshair--targeted");
-      expect(movedOverlay?.style.getPropertyValue("--map-target-x")).toBe("103px");
-      expect(movedOverlay?.style.getPropertyValue("--map-target-y")).toBe("33px");
+      const movedOverlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(movedOverlay).toHaveClass("map-reticle--targeted");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
 
       fireEvent.mouseMove(canvas, { clientX: 170, clientY: 150 });
 
-      const releasedOverlay = document.querySelector<HTMLElement>(".map-crosshair");
-      expect(releasedOverlay).not.toHaveClass("map-crosshair--targeted");
-      expect(releasedOverlay?.style.getPropertyValue("--map-crosshair-x")).toBe("204px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-crosshair-y")).toBe("100px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-target-x")).toBe("193px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-target-y")).toBe("89px");
+      const releasedOverlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(releasedOverlay).not.toHaveClass("map-reticle--targeted");
+      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("204px");
+      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
+      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("193px");
+      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("89px");
     } finally {
       vi.useRealTimers();
     }
@@ -250,21 +250,21 @@ describe("MapView zoom overlay", () => {
     expect(map.fitScreenCoordinates).toHaveBeenCalledWith(start, end, 0, { linear: true });
   });
 
-  it("renders Shift-drag as the Atlas crosshair target box", async () => {
+  it("renders Shift-drag as the Atlas reticle target box", async () => {
     const { canvas } = renderMapView();
 
     fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
-    await waitFor(() => expect(document.querySelector(".map-crosshair--zoom")).toBeInTheDocument());
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
     fireEvent.mouseMove(window, { clientX: 150, clientY: 180 });
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-crosshair--zoom");
-      expect(overlay?.style.getPropertyValue("--map-target-x")).toBe("40px");
-      expect(overlay?.style.getPropertyValue("--map-target-y")).toBe("60px");
-      expect(overlay?.style.getPropertyValue("--map-target-width")).toBe("100px");
-      expect(overlay?.style.getPropertyValue("--map-target-height")).toBe("100px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-x")).toBe("90px");
-      expect(overlay?.style.getPropertyValue("--map-crosshair-y")).toBe("110px");
+      const overlay = document.querySelector<HTMLElement>(".map-reticle--zoom");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("40px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("60px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("100px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("100px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("90px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");
     });
   });
 
@@ -273,7 +273,7 @@ describe("MapView zoom overlay", () => {
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
 
     fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
-    await waitFor(() => expect(document.querySelector(".map-crosshair")).toBeInTheDocument());
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
     fireEvent.click(marker);
 
     expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
@@ -285,7 +285,7 @@ describe("MapView zoom overlay", () => {
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
 
     fireEvent.mouseDown(marker, { button: 0, shiftKey: true, clientX: 80, clientY: 100 });
-    await waitFor(() => expect(document.querySelector(".map-crosshair--zoom")).toBeInTheDocument());
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
     fireEvent.mouseMove(window, { clientX: 180, clientY: 150 });
     fireEvent.mouseUp(window, { button: 0, clientX: 180, clientY: 150 });
     fireEvent.click(marker);
