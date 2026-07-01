@@ -170,6 +170,45 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		Config: ServerConfig{
+			EnableAPIAuth: true,
+			APIKeyValidator: func(_ context.Context, apiKey string) bool {
+				return apiKey == "managed-secret"
+			},
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"auth","api_key":"managed-secret"}`)); err != nil {
+		t.Fatalf("auth feed with managed key: %v", err)
+	}
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"type","resource_type":"task"}`)); err != nil {
+		t.Fatalf("subscribe task type: %v", err)
+	}
+	waitForSubscription(t, hub, Subscription{
+		Filter:       FilterType,
+		ResourceType: protocol.ResourceTypeTask,
+	})
+	hub.Publish(taskEvent("create", "task-managed-auth", 1, "", "asset-1", "pending"))
+
+	var event protocol.FeedEvent
+	readFeedEvent(t, conn, &event)
+	if event.Version != 1 || event.ResourceType != protocol.ResourceTypeTask {
+		t.Fatalf("unexpected managed-key feed event: %+v", event)
+	}
+}
+
 func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()
