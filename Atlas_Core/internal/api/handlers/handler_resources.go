@@ -68,8 +68,9 @@ func (h *Handler) Resources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, collectResources(r.Context(), time.Now().UTC(), "/"))
 }
 
-// collectResources assembles a host and process usage snapshot. runtime.ReadMemStats
-// briefly pauses other goroutines, so callers should avoid high-frequency polling.
+// collectResources assembles a host-level process and machine usage snapshot.
+// The /proc values are not cgroup-aware. runtime.ReadMemStats briefly pauses
+// other goroutines, so callers should avoid high-frequency polling.
 func collectResources(ctx context.Context, now time.Time, diskPath string) resourcesResponse {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -141,6 +142,8 @@ func collectDiskResources(path string) diskResources {
 
 	blockSize := uint64(stat.Bsize) // #nosec G115 -- stat.Bsize is checked positive before conversion.
 	total := stat.Blocks * blockSize
+	// Bavail reflects blocks available to this service, so reserved or
+	// quota-withheld space counts as unavailable and may differ from df Use%.
 	free := stat.Bavail * blockSize
 	if free > total {
 		free = total

@@ -172,6 +172,8 @@ Object detail responses:
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
+`GET /resources` reports host-level metrics, not cgroup-aware container limits. Disk `used_percent` is based on space unavailable to the service, so it may differ from `df`-style `Use%`.
+
 Feed behavior:
 
 - Server sends a `hello` frame with `protocol_revision` after authentication.
