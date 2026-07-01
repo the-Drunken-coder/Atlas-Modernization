@@ -322,14 +322,12 @@ export function MapView({
 
     syncPreviewReticle();
     map.on("move", syncPreviewReticle);
-    map.on("render", syncPreviewReticle);
     map.on("zoom", syncPreviewReticle);
     return () => {
       map.off("move", syncPreviewReticle);
-      map.off("render", syncPreviewReticle);
       map.off("zoom", syncPreviewReticle);
     };
-  }, [mapReady, previewTarget, sources]);
+  }, [mapReady, previewTarget, scrollLocked, sources, zoomDragging]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -352,16 +350,14 @@ export function MapView({
 
     syncFocusReticle();
     map.on("move", syncFocusReticle);
-    map.on("render", syncFocusReticle);
     map.on("zoom", syncFocusReticle);
     map.on("moveend", syncFocusReticle);
     return () => {
       map.off("move", syncFocusReticle);
-      map.off("render", syncFocusReticle);
       map.off("zoom", syncFocusReticle);
       map.off("moveend", syncFocusReticle);
     };
-  }, [focusTarget, mapReady, sources]);
+  }, [focusTarget, mapReady, scrollLocked, sources, zoomDragging]);
 
   // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
   useEffect(() => {
@@ -777,7 +773,9 @@ function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number,
 }
 
 function mapReticleTargetKey(target: MapReticleTarget): string {
-  return `${target.type}:${target.id}`;
+  if (target.type === "point") return `point:${target.id}:${target.coordinates[0]},${target.coordinates[1]}`;
+  if (target.type === "geometry") return `geometry:${target.id}:${JSON.stringify(target.geometry)}`;
+  return `entity:${target.id}`;
 }
 
 function collectLngLatPositions(value: unknown): Position[] {

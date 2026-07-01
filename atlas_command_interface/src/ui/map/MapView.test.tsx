@@ -344,6 +344,18 @@ describe("MapView external reticle targets", () => {
     expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
   });
 
+  it("refocuses point targets when coordinates change under the same id", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.easeTo.mockClear();
+
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 6 }));
+
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [90, 110] } });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith({ center: [90, 110], duration: 450, zoom: 6 }));
+  });
+
   it("focuses selected geometry targets with fitBounds", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
@@ -394,6 +406,13 @@ describe("MapView external reticle targets", () => {
     const overlay = document.querySelector<HTMLElement>(".map-reticle");
     expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
     expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+
+    await waitFor(() => {
+      const settledOverlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(settledOverlay).not.toHaveClass("map-reticle--scrolling");
+      expect(settledOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("160px");
+      expect(settledOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
+    });
   });
 });
 
