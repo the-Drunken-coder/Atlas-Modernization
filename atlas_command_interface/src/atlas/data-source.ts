@@ -45,7 +45,6 @@ export interface AtlasDataSource {
 
 /** The real data source: an Atlas SDK client pointed directly at Atlas Core. */
 export function createSdkDataSource(config: AppConfig): AtlasDataSource {
-  let running = false;
   const client = new AtlasClient({
     baseUrl: config.atlasBaseUrl,
     credentials: "include",
@@ -84,12 +83,12 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async start() {
-      await client.handshake();
-      running = true;
+      await client.sync.start();
     },
 
     health() {
-      return { running, healthy: running, degraded: false };
+      const status = client.sync.status();
+      return { running: status.running, healthy: status.healthy, degraded: status.degraded };
     },
 
     async submitCommand(submission) {
@@ -106,7 +105,6 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     dispose() {
-      running = false;
       client.sync.stop();
     }
   };
