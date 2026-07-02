@@ -5,6 +5,7 @@ import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/ind
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CommandSubmission } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
+import type { AppConfig } from "../app/config.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
@@ -13,12 +14,14 @@ vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
   return {
     MapView: (props: {
+      styleUrl: string;
       editing?: unknown;
       onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
       onBackgroundClick?: () => void;
     }) => (
       <div
         data-testid="map"
+        data-style-url={props.styleUrl}
         data-editing={props.editing ? "true" : "false"}
         onClick={() => props.onBackgroundClick?.()}
         onContextMenu={(event) => {
@@ -134,9 +137,22 @@ function makeFakeDataSource(geofeature: EntityResource = area) {
   return { fake, submissions, geometryUpdates, emit: (event: AtlasWatchEvent) => emit?.(event) };
 }
 
-function renderConsole(fake: AtlasDataSource) {
+function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
+  return {
+    atlasBaseUrl: "/atlas",
+    protocolRevision: "rev",
+    defaultMapSourceId: "maptiler-osm-dark",
+    mapSources: [
+      { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", styleUrl: "/maps/styles/maptiler-osm-dark.json" },
+      { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }
+    ],
+    ...overrides
+  };
+}
+
+function renderConsole(fake: AtlasDataSource, config: AppConfig = appConfig()) {
   return render(
-    <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+    <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
       <MapConsole />
     </AtlasProvider>
   );
@@ -215,6 +231,37 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
+  });
+
+  it("switches between configured map sources", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/maptiler-osm-dark.json");
+
+    const mapSelect = screen.getByLabelText("Map");
+    expect(Array.from(mapSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["MapTiler OSM Dark", "Esri World Imagery"]);
+
+    await user.selectOptions(mapSelect, "esri-world-imagery");
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+  });
+
+  it("falls back when the configured default is the only available map source", async () => {
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "usgs-topo",
+        mapSources: [{ id: "usgs-topo", label: "USGS Topo", styleUrl: "/maps/styles/usgs-topo.json" }]
+      })
+    );
+
+    await screen.findByText("Rover");
+    expect(screen.getByLabelText("Map")).toHaveValue("usgs-topo");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
   });
 
   it("clears the selected entity when the map background is clicked", async () => {

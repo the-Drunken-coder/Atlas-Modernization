@@ -54,7 +54,7 @@ node_modules/
 /atlas_command_interface/dist/
 /atlas_command_interface/storybook-static/
 /atlas_command_interface/.wrangler/
-/atlas_command_interface/.dev.vars
+/atlas_command_interface/.dev.vars*
 /atlas_command_interface/worker-configuration.d.ts
 /atlas_simulations/dist/
 

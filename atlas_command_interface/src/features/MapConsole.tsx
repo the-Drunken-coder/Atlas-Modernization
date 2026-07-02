@@ -8,11 +8,13 @@ import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { initialSidebarState, listForKind, sidebarReducer, type ListKind, type SidebarState } from "../state/selection.js";
 import { useAtlas } from "../state/atlas-context.js";
+import type { MapSourceConfig } from "../app/config.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo } from "../ui/map/MapView.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
+import { SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
@@ -47,6 +49,7 @@ export function MapConsole() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
@@ -78,6 +81,12 @@ export function MapConsole() {
     setEdit(null);
     setSaveError(undefined);
   }, [selectedId, selectedEntityId]);
+
+  useEffect(() => {
+    const config = atlas.config;
+    if (!config) return;
+    setSelectedMapSourceId((current) => (current && config.mapSources.some((source) => source.id === current) ? current : config.defaultMapSourceId));
+  }, [atlas.config]);
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
@@ -192,9 +201,27 @@ export function MapConsole() {
       </div>
     );
   }
+  if (!atlas.config) {
+    return (
+      <div className="app-error">
+        <span>Command interface configuration is unavailable.</span>
+      </div>
+    );
+  }
+  if (atlas.config.mapSources.length === 0) {
+    return (
+      <div className="app-error">
+        <span>No map sources are configured.</span>
+      </div>
+    );
+  }
 
   const activeList: ListKind | null =
     sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
+  const selectedMapSource =
+    atlas.config.mapSources.find((source) => source.id === selectedMapSourceId) ??
+    atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId) ??
+    atlas.config.mapSources[0];
 
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
@@ -255,7 +282,7 @@ export function MapConsole() {
           <>
             <MapView
               sources={sources}
-              styleUrl={atlas.config?.mapStyleUrl}
+              styleUrl={selectedMapSource.styleUrl}
               selectedId={selectedId}
               editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
               onSelectEntity={selectEntityById}
@@ -266,6 +293,7 @@ export function MapConsole() {
               }}
             />
             <ConnectionBadge running={atlas.health.running} healthy={atlas.health.healthy} degraded={atlas.health.degraded} />
+            <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
           </>
         }
       />
@@ -294,6 +322,19 @@ export function MapConsole() {
         />
       ) : null}
     </>
+  );
+}
+
+function MapSourcePicker({ sources, value, onChange }: { sources: MapSourceConfig[]; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="map-overlay-tr map-source-control">
+      <SelectField
+        label="Map"
+        value={value}
+        options={sources.map((source) => ({ label: source.label, value: source.id }))}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    </div>
   );
 }
 

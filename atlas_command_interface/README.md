@@ -6,7 +6,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 
 ## What Lives Here
 
-- `worker/` - static asset hosting plus `GET /api/config`.
+- `worker/` - static asset hosting plus `GET /api/config` and the same-origin map style/tile gateway.
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
 - `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, command catalog parsing, and command targeting.
 - `src/ui/` - the local design system.
@@ -22,7 +22,7 @@ The browser calls Atlas Core directly. It does not receive a durable Core API ke
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
 - The Worker does not own `/auth/*`, `/admin/api-keys/*`, `/me/settings`, `/atlas/*`, feed bridging, API-key injection, or command validation.
 
-`/api/config` returns only non-secret browser config: Core base URL, protocol revision, and optional MapLibre style URL.
+`/api/config` returns only non-secret browser config: Core base URL, protocol revision, the default map source ID, and available same-origin MapLibre style URLs. Provider API keys stay in Worker secrets and are only injected into upstream tile requests by the Worker.
 
 ## Commands
 
@@ -34,7 +34,14 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 1. Start Atlas Core from this checkout. Startup seeds the development admin account `admin` / `password`.
 2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
-3. Configure the Worker with `ATLAS_CORE_BASE_URL`; optional `MAP_STYLE_URL` overrides the default OpenStreetMap basemap. For local `wrangler dev`, put `ATLAS_CORE_BASE_URL=http://localhost:8000` in ignored `.dev.vars`.
+3. Configure the Worker with `ATLAS_CORE_BASE_URL`. Optional provider secrets enable additional map sources:
+
+   ```sh
+   npx wrangler secret put MAPTILER_API_KEY
+   npx wrangler secret put MAPBOX_ACCESS_TOKEN
+   ```
+
+   For local `wrangler dev`, put `ATLAS_CORE_BASE_URL=http://localhost:8000` and any local provider keys in ignored `.dev.vars`. Do not commit `.dev.vars*` files.
 4. Run the Worker and Vite dev server:
 
    ```bash
@@ -45,6 +52,18 @@ Command submission posts a task directly to Core without a client-supplied `task
 Open http://localhost:5173/map and sign in with `admin` / `password`.
 
 The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
+
+## Map Sources
+
+The browser receives same-origin style URLs such as `/maps/styles/esri-world-imagery.json`. MapLibre then requests same-origin tiles through `/maps/tiles/{source}/{z}/{x}/{y}.{ext}`. Public sources are available by default; provider-backed sources are hidden until their Worker secrets are configured.
+
+Curated sources:
+
+- `maptiler-osm-dark` - requires `MAPTILER_API_KEY`.
+- `maptiler-satellite` - requires `MAPTILER_API_KEY`.
+- `mapbox-satellite` - requires `MAPBOX_ACCESS_TOKEN`.
+- `esri-world-imagery` - public ArcGIS World Imagery.
+- `usgs-topo` - public USGS Topo.
 
 ## Checks
 

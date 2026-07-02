@@ -14,7 +14,6 @@ import {
 } from "../../atlas/geometry.js";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
-import { defaultMapStyle } from "./map-style.js";
 
 const COLORS = {
   geofeature: "#3fd27a",
@@ -33,7 +32,7 @@ export type MapEditing = {
 
 type MapViewProps = {
   sources: MapSources;
-  styleUrl?: string;
+  styleUrl: string;
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -45,7 +44,10 @@ type MapViewProps = {
 export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
+  const sourcesRef = useRef(sources);
+  const currentStyleUrlRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
+  const eventsRegisteredRef = useRef(false);
   const fitOnceRef = useRef(false);
   const shouldAutoFitRef = useRef(initialCenter === undefined);
   const editMarkersRef = useRef<Marker[]>([]);
@@ -54,6 +56,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
+  sourcesRef.current = sources;
 
   // Create the map once.
   useEffect(() => {
@@ -68,7 +71,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl ?? defaultMapStyle(),
+        style: styleUrl,
         center: initialCenter ?? [0, 20],
         zoom: initialCenter ? 11 : 1.6,
         attributionControl: { compact: true }
@@ -79,6 +82,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     }
 
     mapRef.current = map;
+    currentStyleUrlRef.current = styleUrl;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 
     const resizeObserver = new ResizeObserver(() => map.resize());
@@ -86,42 +90,44 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     requestAnimationFrame(() => map.resize());
 
     const initializeLayers = () => {
-      if (readyRef.current) return;
       registerSourcesAndLayers(map);
       readyRef.current = true;
       setMapReady(true);
-      pushSources(map, sources);
-      if (shouldAutoFitRef.current) fitToSourcesOnce(map, sources, fitOnceRef);
+      pushSources(map, sourcesRef.current);
+      if (shouldAutoFitRef.current) fitToSourcesOnce(map, sourcesRef.current, fitOnceRef);
 
-      for (const layer of INTERACTIVE_LAYERS) {
-        map.on("click", layer, (event) => {
+      if (!eventsRegisteredRef.current) {
+        eventsRegisteredRef.current = true;
+        for (const layer of INTERACTIVE_LAYERS) {
+          map.on("click", layer, (event) => {
+            event.preventDefault();
+            const id = event.features?.[0]?.properties?.entityId;
+            if (typeof id === "string") handlersRef.current.onSelectEntity(id);
+          });
+          map.on("mouseenter", layer, () => {
+            map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", layer, () => {
+            map.getCanvas().style.cursor = "";
+          });
+        }
+
+        map.on("click", (event: MapMouseEvent) => {
+          if (event.defaultPrevented) return;
+          const hits = map.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYERS });
+          if (hits.length === 0) handlersRef.current.onBackgroundClick?.();
+        });
+
+        map.on("contextmenu", (event: MapMouseEvent) => {
           event.preventDefault();
-          const id = event.features?.[0]?.properties?.entityId;
-          if (typeof id === "string") handlersRef.current.onSelectEntity(id);
-        });
-        map.on("mouseenter", layer, () => {
-          map.getCanvas().style.cursor = "pointer";
-        });
-        map.on("mouseleave", layer, () => {
-          map.getCanvas().style.cursor = "";
+          handlersRef.current.onMapContextMenu({
+            lng: event.lngLat.lng,
+            lat: event.lngLat.lat,
+            x: event.originalEvent.clientX,
+            y: event.originalEvent.clientY
+          });
         });
       }
-
-      map.on("click", (event: MapMouseEvent) => {
-        if (event.defaultPrevented) return;
-        const hits = map.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYERS });
-        if (hits.length === 0) handlersRef.current.onBackgroundClick?.();
-      });
-
-      map.on("contextmenu", (event: MapMouseEvent) => {
-        event.preventDefault();
-        handlersRef.current.onMapContextMenu({
-          lng: event.lngLat.lng,
-          lat: event.lngLat.lat,
-          x: event.originalEvent.clientX,
-          y: event.originalEvent.clientY
-        });
-      });
     };
 
     map.on("style.load", initializeLayers);
@@ -134,6 +140,7 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
 
     return () => {
       readyRef.current = false;
+      eventsRegisteredRef.current = false;
       setMapReady(false);
       resizeObserver.disconnect();
       clearMarkers(editMarkersRef.current);
@@ -146,6 +153,16 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
     // The map is created once; props are synced via the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapError]);
+
+  // Sync basemap style while keeping the map camera and re-adding Atlas overlays.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || currentStyleUrlRef.current === styleUrl) return;
+    currentStyleUrlRef.current = styleUrl;
+    readyRef.current = false;
+    setMapReady(false);
+    map.setStyle(styleUrl);
+  }, [styleUrl]);
 
   // Sync entity sources.
   useEffect(() => {
@@ -294,49 +311,61 @@ function pushSources(map: MlMap, sources: MapSources): void {
 
 function registerSourcesAndLayers(map: MlMap): void {
   for (const id of ["geofeatures", "editing"]) {
-    map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
+    if (!map.getSource(id)) {
+      map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
+    }
   }
 
-  map.addLayer({
-    id: "geofeatures-fill",
-    type: "fill",
-    source: "geofeatures",
-    filter: ["==", ["geometry-type"], "Polygon"],
-    paint: { "fill-color": COLORS.geofeatureFill, "fill-outline-color": COLORS.geofeature }
-  });
-  map.addLayer({
-    id: "geofeatures-line",
-    type: "line",
-    source: "geofeatures",
-    filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
-    paint: {
-      "line-color": COLORS.geofeature,
-      "line-width": ["case", ["boolean", ["get", "selected"], false], 3.5, 2]
-    }
-  });
-  map.addLayer({
-    id: "geofeatures-point",
-    type: "circle",
-    source: "geofeatures",
-    filter: ["==", ["geometry-type"], "Point"],
-    paint: circlePaint(COLORS.geofeature)
-  });
+  if (!map.getLayer("geofeatures-fill")) {
+    map.addLayer({
+      id: "geofeatures-fill",
+      type: "fill",
+      source: "geofeatures",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": COLORS.geofeatureFill, "fill-outline-color": COLORS.geofeature }
+    });
+  }
+  if (!map.getLayer("geofeatures-line")) {
+    map.addLayer({
+      id: "geofeatures-line",
+      type: "line",
+      source: "geofeatures",
+      filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
+      paint: {
+        "line-color": COLORS.geofeature,
+        "line-width": ["case", ["boolean", ["get", "selected"], false], 3.5, 2]
+      }
+    });
+  }
+  if (!map.getLayer("geofeatures-point")) {
+    map.addLayer({
+      id: "geofeatures-point",
+      type: "circle",
+      source: "geofeatures",
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: circlePaint(COLORS.geofeature)
+    });
+  }
 
   // Editing overlay drawn above everything.
-  map.addLayer({
-    id: "editing-fill",
-    type: "fill",
-    source: "editing",
-    filter: ["==", ["geometry-type"], "Polygon"],
-    paint: { "fill-color": "rgba(63,182,255,0.18)" }
-  });
-  map.addLayer({
-    id: "editing-line",
-    type: "line",
-    source: "editing",
-    filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
-    paint: { "line-color": COLORS.selected, "line-width": 2, "line-dasharray": [2, 1.5] }
-  });
+  if (!map.getLayer("editing-fill")) {
+    map.addLayer({
+      id: "editing-fill",
+      type: "fill",
+      source: "editing",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": "rgba(63,182,255,0.18)" }
+    });
+  }
+  if (!map.getLayer("editing-line")) {
+    map.addLayer({
+      id: "editing-line",
+      type: "line",
+      source: "editing",
+      filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
+      paint: { "line-color": COLORS.selected, "line-width": 2, "line-dasharray": [2, 1.5] }
+    });
+  }
 }
 
 function circlePaint(color: string): maplibregl.CircleLayerSpecification["paint"] {
