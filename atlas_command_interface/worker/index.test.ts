@@ -20,7 +20,7 @@ describe("thin Worker", () => {
     expect(JSON.stringify(config)).not.toContain("MAPBOX_ACCESS_TOKEN");
   });
 
-  it("includes configured provider-backed map sources without exposing secret values", async () => {
+  it("does not expose secret-backed map sources even when provider secrets are configured", async () => {
     const response = await handleCommandRequest(
       new Request("https://command.test/api/config"),
       env({ MAPTILER_API_KEY: "test-maptiler-key", MAPBOX_ACCESS_TOKEN: "test-mapbox-token" })
@@ -28,11 +28,8 @@ describe("thin Worker", () => {
 
     expect(response.status).toBe(200);
     const config = await json(response);
-    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+    expect(config.defaultMapSourceId).toBe("esri-world-imagery");
     expect((config.mapSources as Array<{ id: string }>).map((source) => source.id)).toEqual([
-      "maptiler-osm-dark",
-      "maptiler-satellite",
-      "mapbox-satellite",
       "esri-world-imagery",
       "usgs-topo"
     ]);
@@ -66,13 +63,26 @@ describe("thin Worker", () => {
   });
 
   it("proxies public ArcGIS map tiles using z/y/x upstream ordering", async () => {
-    const tileFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("tile", { headers: { "Content-Type": "image/png" } }));
+    const tileFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("tile", {
+        headers: {
+          "Cache-Control": "public, max-age=3600",
+          "Content-Type": "image/png",
+          ETag: '"tile-etag"',
+          "Set-Cookie": "provider_session=abc"
+        }
+      })
+    );
 
     try {
       const response = await handleCommandRequest(new Request("https://command.test/maps/tiles/usgs-topo/6/19/24.png", { headers: { Accept: "image/png" } }), env());
 
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("tile");
+      expect(response.headers.get("Content-Type")).toBe("image/png");
+      expect(response.headers.get("Cache-Control")).toBe("public, max-age=3600");
+      expect(response.headers.get("ETag")).toBe('"tile-etag"');
+      expect(response.headers.get("Set-Cookie")).toBeNull();
       expect(tileFetch).toHaveBeenCalledWith("https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/6/24/19", {
         method: "GET",
         headers: { Accept: "image/png" }
@@ -82,29 +92,22 @@ describe("thin Worker", () => {
     }
   });
 
-  it("injects MapTiler and Mapbox provider secrets only in upstream tile requests", async () => {
+  it("does not proxy secret-backed provider tiles without an Atlas-owned auth gate", async () => {
     const tileFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("tile"));
 
     try {
-      await handleCommandRequest(
+      const maptilerResponse = await handleCommandRequest(
         new Request("https://command.test/maps/tiles/maptiler-osm-dark/6/19/24.png"),
         env({ MAPTILER_API_KEY: "test maptiler key", MAPBOX_ACCESS_TOKEN: "test mapbox token" })
       );
-      await handleCommandRequest(
+      const mapboxResponse = await handleCommandRequest(
         new Request("https://command.test/maps/tiles/mapbox-satellite/6/19/24.jpg"),
         env({ MAPTILER_API_KEY: "test maptiler key", MAPBOX_ACCESS_TOKEN: "test mapbox token" })
       );
 
-      expect(tileFetch).toHaveBeenNthCalledWith(
-        1,
-        "https://api.maptiler.com/maps/dataviz-v4-dark/256/6/19/24.png?key=test%20maptiler%20key",
-        expect.objectContaining({ method: "GET" })
-      );
-      expect(tileFetch).toHaveBeenNthCalledWith(
-        2,
-        "https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/256/6/19/24?access_token=test%20mapbox%20token",
-        expect.objectContaining({ method: "GET" })
-      );
+      expect(maptilerResponse.status).toBe(404);
+      expect(mapboxResponse.status).toBe(404);
+      expect(tileFetch).not.toHaveBeenCalled();
     } finally {
       tileFetch.mockRestore();
     }

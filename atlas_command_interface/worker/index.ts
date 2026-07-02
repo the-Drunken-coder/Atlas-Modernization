@@ -86,6 +86,16 @@ const MAP_SOURCES: MapSource[] = [
 
 const STYLE_PATH = /^\/maps\/styles\/([a-z0-9-]+)\.json$/;
 const TILE_PATH = /^\/maps\/tiles\/([a-z0-9-]+)\/(\d+)\/(\d+)\/(\d+)\.(png|jpg|webp)$/;
+const SAFE_TILE_RESPONSE_HEADERS = [
+  "Accept-Ranges",
+  "Cache-Control",
+  "Content-Encoding",
+  "Content-Type",
+  "ETag",
+  "Expires",
+  "Last-Modified",
+  "Vary"
+];
 
 class WorkerHTTPError extends Error {
   readonly status: number;
@@ -115,7 +125,7 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
     }
     if (url.pathname === "/api/config" && request.method === "GET") {
       const atlasBaseUrl = requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL");
-      const mapSources = availableMapSources(env).map(mapSourceConfig);
+      const mapSources = browserMapSources().map(mapSourceConfig);
       if (mapSources.length === 0) {
         throw new WorkerHTTPError(500, "CONFIGURATION_ERROR", "No map sources are configured");
       }
@@ -154,7 +164,7 @@ async function handleMapRequest(request: Request, env: Env, url: URL): Promise<R
   }
   const styleMatch = url.pathname.match(STYLE_PATH);
   if (styleMatch) {
-    const source = availableMapSource(env, styleMatch[1]);
+    const source = browserMapSource(styleMatch[1]);
     if (!source) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "Map style route not found", { path: url.pathname });
     }
@@ -163,7 +173,7 @@ async function handleMapRequest(request: Request, env: Env, url: URL): Promise<R
   const tileMatch = url.pathname.match(TILE_PATH);
   if (tileMatch) {
     const [, sourceId, zText, xText, yText, ext] = tileMatch;
-    const source = availableMapSource(env, sourceId);
+    const source = browserMapSource(sourceId);
     if (!source) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "Map tile route not found", { path: url.pathname });
     }
@@ -177,12 +187,13 @@ async function handleMapRequest(request: Request, env: Env, url: URL): Promise<R
   throw new WorkerHTTPError(404, "NOT_FOUND", "Map route not found", { path: url.pathname });
 }
 
-function availableMapSources(env: Env): MapSource[] {
-  return MAP_SOURCES.filter((source) => !source.secretName || optionalString(env[source.secretName]));
+function browserMapSources(): MapSource[] {
+  // Secret-backed providers need an Atlas-owned auth boundary before they can be safely exposed as same-origin tile routes.
+  return MAP_SOURCES.filter((source) => !source.secretName);
 }
 
-function availableMapSource(env: Env, sourceId: string): MapSource | undefined {
-  return availableMapSources(env).find((source) => source.id === sourceId);
+function browserMapSource(sourceId: string): MapSource | undefined {
+  return browserMapSources().find((source) => source.id === sourceId);
 }
 
 function mapSourceConfig(source: MapSource): MapSourceConfig {
@@ -194,7 +205,7 @@ function mapSourceConfig(source: MapSource): MapSourceConfig {
 }
 
 function defaultMapSourceId(mapSources: MapSourceConfig[]): string {
-  return mapSources.find((source) => source.id === "maptiler-osm-dark")?.id ?? mapSources[0].id;
+  return mapSources.find((source) => source.id === "esri-world-imagery")?.id ?? mapSources[0].id;
 }
 
 function rasterStyle(source: MapSource): StyleSpecification {
@@ -232,9 +243,24 @@ async function proxyTileRequest(
   tile: { z: number; x: number; y: number; ext: TileExtension }
 ): Promise<Response> {
   validateTile(source, tile);
-  return await fetch(upstreamTileUrl(env, source, tile), {
+  const upstream = await fetch(upstreamTileUrl(env, source, tile), {
     method: request.method,
     headers: { Accept: request.headers.get("Accept") ?? "image/*,*/*;q=0.8" }
+  });
+  return tileResponse(upstream);
+}
+
+function tileResponse(upstream: Response): Response {
+  const headers = new Headers();
+  for (const name of SAFE_TILE_RESPONSE_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers
   });
 }
 

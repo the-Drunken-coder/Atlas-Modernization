@@ -22,7 +22,7 @@ The browser calls Atlas Core directly. It does not receive a durable Core API ke
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
 - The Worker does not own `/auth/*`, `/admin/api-keys/*`, `/me/settings`, `/atlas/*`, feed bridging, API-key injection, or command validation.
 
-`/api/config` returns only non-secret browser config: Core base URL, protocol revision, the default map source ID, and available same-origin MapLibre style URLs. Provider API keys stay in Worker secrets and are only injected into upstream tile requests by the Worker.
+`/api/config` returns only non-secret browser config: Core base URL, protocol revision, the default map source ID, and available same-origin MapLibre style URLs. Public map sources are exposed through the Worker. Secret-backed providers stay staged in the source registry until the command interface has an Atlas-owned auth boundary for map routes.
 
 ## Commands
 
@@ -34,14 +34,13 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 1. Start Atlas Core from this checkout. Startup seeds the development admin account `admin` / `password`.
 2. Seed the command catalog with `python3 Atlas_Core/scripts/seed_command_catalog.py --api-url http://localhost:8000`.
-3. Configure the Worker with `ATLAS_CORE_BASE_URL`. Optional provider secrets enable additional map sources:
+3. Configure the Worker with `ATLAS_CORE_BASE_URL`. Production uses the plain Worker var in `wrangler.jsonc`; local development can override it in `.dev.vars`.
 
    ```sh
-   npx wrangler secret put MAPTILER_API_KEY
-   npx wrangler secret put MAPBOX_ACCESS_TOKEN
+   ATLAS_CORE_BASE_URL=http://localhost:8000
    ```
 
-   For local `wrangler dev`, put `ATLAS_CORE_BASE_URL=http://localhost:8000` and any local provider keys in ignored `.dev.vars`. Do not commit `.dev.vars*` files.
+   Do not commit `.dev.vars*` files.
 4. Run the Worker and Vite dev server:
 
    ```bash
@@ -55,15 +54,18 @@ The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `A
 
 ## Map Sources
 
-The browser receives same-origin style URLs such as `/maps/styles/esri-world-imagery.json`. MapLibre then requests same-origin tiles through `/maps/tiles/{source}/{z}/{x}/{y}.{ext}`. Public sources are available by default; provider-backed sources are hidden until their Worker secrets are configured.
+The browser receives same-origin style URLs such as `/maps/styles/esri-world-imagery.json`. MapLibre then requests same-origin tiles through `/maps/tiles/{source}/{z}/{x}/{y}.{ext}`. Public sources are available by default. Secret-backed providers are intentionally not exposed by browser routes yet, even when Cloudflare secrets exist, because the Worker does not own the Core login session.
 
 Curated sources:
 
-- `maptiler-osm-dark` - requires `MAPTILER_API_KEY`.
-- `maptiler-satellite` - requires `MAPTILER_API_KEY`.
-- `mapbox-satellite` - requires `MAPBOX_ACCESS_TOKEN`.
 - `esri-world-imagery` - public ArcGIS World Imagery.
 - `usgs-topo` - public USGS Topo.
+
+Staged provider sources:
+
+- `maptiler-osm-dark` - requires a future authenticated map route before use.
+- `maptiler-satellite` - requires a future authenticated map route before use.
+- `mapbox-satellite` - requires a future authenticated map route before use.
 
 ## Checks
 
