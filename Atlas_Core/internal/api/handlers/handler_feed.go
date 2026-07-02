@@ -23,12 +23,21 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serverConfig := feedServerConfig(h.config)
+	if h.adminAuth != nil {
+		serverConfig.APIKeyValidator = h.adminAuth.AuthenticateAPIKeyResult
+	}
 	authenticated := false
-	if serverConfig.EnableAPIAuth && custommiddleware.ValidAPIKey(r, serverConfig.APIKey) {
-		authenticated = true
-		serverConfig.EnableAPIAuth = false
-		serverConfig.APIKey = ""
-		serverConfig.SkipOriginCheck = true
+	if serverConfig.EnableAPIAuth {
+		valid, err := custommiddleware.ValidAPIKeyOrManagedResult(r, serverConfig.APIKey, h.adminAuth)
+		if err != nil {
+			h.logger.Warn().Err(err).Msg("managed feed API key authentication failed")
+		}
+		if valid {
+			authenticated = true
+			serverConfig.EnableAPIAuth = false
+			serverConfig.APIKey = ""
+			serverConfig.SkipOriginCheck = true
+		}
 	}
 	if !authenticated && h.adminAuth != nil {
 		if _, err := h.adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
@@ -41,7 +50,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 			serverConfig.APIKey = ""
 		}
 	}
-	if serverConfig.EnableAPIAuth && serverConfig.APIKey == "" {
+	if serverConfig.EnableAPIAuth && serverConfig.APIKey == "" && serverConfig.APIKeyValidator == nil {
 		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler has auth enabled without an API key")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return

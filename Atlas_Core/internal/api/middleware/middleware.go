@@ -80,6 +80,11 @@ func isLogoutPath(path string) bool {
 	return normalized == "/admin/auth/logout"
 }
 
+func isAPIKeyAdminPath(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	return normalized == "/admin/api-keys" || strings.HasPrefix(normalized, "/admin/api-keys/")
+}
+
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
 type responseWriter struct {
 	http.ResponseWriter
@@ -137,9 +142,15 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 				next.ServeHTTP(w, r)
 				return
 			}
-			if enableAPIKey && ValidAPIKey(r, apiKey) {
-				next.ServeHTTP(w, r)
-				return
+			if !isAPIKeyAdminPath(r.URL.Path) && enableAPIKey {
+				valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
+				if err != nil {
+					zerolog.Ctx(r.Context()).Warn().Err(err).Msg("managed API key authentication failed")
+				}
+				if valid {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 			if adminAuth != nil {
 				if _, err := adminAuth.AuthenticateRequest(r.Context(), r); err == nil {
@@ -157,10 +168,29 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 }
 
 func ValidAPIKey(r *http.Request, apiKey string) bool {
+	return validAPIKeyValue(requestAPIKey(r), apiKey)
+}
+
+func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth *admin.Service) bool {
+	valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
+	return err == nil && valid
+}
+
+func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth *admin.Service) (bool, error) {
+	providedKey := requestAPIKey(r)
+	if validAPIKeyValue(providedKey, apiKey) {
+		return true, nil
+	}
+	if strings.TrimSpace(providedKey) == "" || adminAuth == nil {
+		return false, nil
+	}
+	return adminAuth.AuthenticateAPIKeyResult(r.Context(), providedKey)
+}
+
+func validAPIKeyValue(providedKey string, apiKey string) bool {
 	if apiKey == "" {
 		return false
 	}
-	providedKey := requestAPIKey(r)
 	pH := sha256.Sum256([]byte(providedKey))
 	eH := sha256.Sum256([]byte(apiKey))
 	return subtle.ConstantTimeCompare(pH[:], eH[:]) == 1

@@ -157,6 +157,8 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 		"CREATE TABLE storage_deletion_outbox",
 		"UNIQUE (bucket, path)",
 		"CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)",
+		"CREATE TABLE IF NOT EXISTS admin_records",
+		"CREATE INDEX IF NOT EXISTS idx_admin_records_type ON admin_records(type)",
 	}
 
 	for _, stmt := range want {
@@ -169,6 +171,12 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 func TestCoreSchemaDropDDLIncludesAllCoreTables(t *testing.T) {
 	ddl := strings.Join(coreSchemaDropDDL(), "\n")
 	for _, table := range coreSchemaTables {
+		if table == "admin_records" {
+			if strings.Contains(ddl, "DROP TABLE IF EXISTS admin_records CASCADE") {
+				t.Fatalf("admin_records should survive recreate-mode drops, got:\n%s", ddl)
+			}
+			continue
+		}
 		if !strings.Contains(ddl, "DROP TABLE IF EXISTS "+table+" CASCADE") {
 			t.Fatalf("expected drop DDL to include %q, got:\n%s", table, ddl)
 		}

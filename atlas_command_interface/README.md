@@ -18,9 +18,9 @@ The browser calls Atlas Core directly. It does not receive a durable Core API ke
 ## Boundary
 
 - `AtlasClient` is resource-only: entities, tasks, objects, queries, sync, and feed.
-- `AtlasAdminClient` is admin-only: `auth.login`, `auth.logout`, and `auth.me`.
+- `AtlasAdminClient` is admin-only: `auth.login`, `auth.logout`, `auth.me`, and managed API key administration.
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
-- The Worker does not own `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, API-key injection, or command validation.
+- The Worker does not own `/auth/*`, `/admin/api-keys/*`, `/me/settings`, `/atlas/*`, feed bridging, API-key injection, or command validation.
 
 `/api/config` returns only non-secret browser config: Core base URL, protocol revision, and optional MapLibre style URL.
 

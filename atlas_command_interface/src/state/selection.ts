@@ -1,6 +1,6 @@
 import type { EntityKind } from "../atlas/entities.js";
 
-export type ListKind = "assets" | "tracks" | "geofeatures" | "commands";
+export type ListKind = "assets" | "tracks" | "geofeatures" | "commands" | "apiKeys";
 
 export type SidebarView = { mode: "list"; list: ListKind } | { mode: "inspector"; previousList: ListKind };
 
@@ -20,7 +20,7 @@ export type SidebarAction =
   | { type: "clearSelection" }
   | { type: "back" };
 
-export const LIST_KINDS: ListKind[] = ["assets", "tracks", "geofeatures", "commands"];
+export const LIST_KINDS: ListKind[] = ["assets", "tracks", "geofeatures", "commands", "apiKeys"];
 
 export const initialSidebarState: SidebarState = {
   collapsed: false,

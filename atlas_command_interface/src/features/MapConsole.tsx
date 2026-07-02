@@ -13,6 +13,7 @@ import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo } from "../ui/map/MapView.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
+import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
 import { CommandList } from "./commands/CommandList.js";
@@ -22,9 +23,10 @@ import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES: Record<ListKind, string> = {
   assets: "Assets",
-  tracks: "Tracks",
-  geofeatures: "Geo Features",
-  commands: "Commands"
+	tracks: "Tracks",
+	geofeatures: "Geo Features",
+	commands: "Commands",
+	apiKeys: "API Keys"
 };
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
@@ -348,9 +350,9 @@ function PanelBody(props: PanelBodyProps) {
 }
 
 function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
-  if (list === "commands") {
-    if (selectedEntity && entityKind(selectedEntity) === "asset") {
-      return (
+	if (list === "commands") {
+		if (selectedEntity && entityKind(selectedEntity) === "asset") {
+			return (
         <div style={{ padding: 12 }}>
           <CommandList
             availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
@@ -359,11 +361,14 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
           />
         </div>
       );
-    }
-    return <div className="panel__empty">Select an asset to issue commands.</div>;
-  }
+		}
+		return <div className="panel__empty">Select an asset to issue commands.</div>;
+	}
+	if (list === "apiKeys") {
+		return <APIKeysPanel />;
+	}
 
-  const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
+	const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
   return (
     <EntityList
       entities={entitiesByKind(snapshot, kind)}

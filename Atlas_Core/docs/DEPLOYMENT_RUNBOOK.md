@@ -4,9 +4,10 @@ Atlas Core uses the original Atlas single-host deployment posture: Docker
 Compose runs the Core API, PostgreSQL, and MinIO on one machine, and an optional
 Cloudflare Tunnel container provides the public HTTPS edge.
 
-PostgreSQL and the configured MinIO bucket are disposable runtime scratch
-storage. The default startup path drops/recreates database tables and clears the
-bucket. Do not treat either service as a durable system of record.
+Atlas Core resource tables and the configured MinIO bucket are disposable
+runtime scratch storage. The default startup path drops/recreates resource
+tables and clears the bucket. `admin_records` is preserved for operator
+credentials and managed API key metadata.
 
 ## Local Development
 
@@ -53,8 +54,10 @@ python3 Atlas_Core/scripts/atlas.py --production
 
 This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings
-files, binds the API to `127.0.0.1:8000`, and requires `X-API-Key` for API
-routes. Health, readiness, and resource usage endpoints remain unauthenticated.
+files, binds the API to `127.0.0.1:8000`, and requires API-key auth for API
+routes. `API_AUTH_KEY` is the required bootstrap machine key; browser admins can
+create additional managed machine keys after sign-in. Health, readiness, and
+resource usage endpoints remain unauthenticated.
 
 ## Production Tunnel
 
@@ -136,5 +139,5 @@ docker compose -f docker-compose.production.yml down -v --remove-orphans
 ```
 
 The reset command removes Docker volumes, but ordinary Atlas Core startup also
-recreates database tables and clears the configured MinIO bucket in recreate
-mode.
+recreates resource tables and clears the configured MinIO bucket in recreate
+mode while preserving `admin_records`.

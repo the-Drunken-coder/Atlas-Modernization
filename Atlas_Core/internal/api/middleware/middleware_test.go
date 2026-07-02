@@ -241,6 +241,26 @@ func TestCombinedAuthAcceptsBearerTokenCaseInsensitiveScheme(t *testing.T) {
 	}
 }
 
+func TestCombinedAuthRejectsAPIKeyForAdminAPIKeyRoutes(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api-keys", nil)
+	req.Header.Set("X-API-Key", "test-secret-key")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("expected API key to be blocked from key-management routes")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
 func TestCombinedAuthSkipsHealthAndReadiness(t *testing.T) {
 	tests := []string{"/health", "/health/", "/readiness", "/readiness/"}
 

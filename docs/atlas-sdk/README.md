@@ -102,7 +102,7 @@ The language-neutral contract remains Atlas Protocol plus the change-feed consum
 
 ## Auth
 
-Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), currently disabled for the local deployment. The SDK accepts `apiKey`, attaches it to HTTP requests and the websocket handshake, and never embeds keys in package output. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
+Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), currently disabled for the local deployment. The SDK accepts `apiKey`, attaches it to HTTP requests and the websocket handshake, and never embeds keys in package output. Keys can be the production bootstrap key or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
 
 ## Composite functions
 
@@ -124,6 +124,6 @@ Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simula
 
 - **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `completeTask()` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
 - **Object upload.** Upload remains a direct Core API call for now; the SDK already has the transport and cache conventions it should follow when this is added.
-- **Auth hardening.** Single shared API key with full write access, stored in app-managed client-side state for the web UI, is acceptable only for the current single-user local deployment. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything is internet-facing.
+- **Auth hardening.** Bootstrap and managed API keys are still full-access machine credentials. Browser UI auth is Core-owned session-cookie auth, not durable client-side API-key state. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything broader than the current operator deployment.
 
 Feed-side decisions — endpoint shape, wire formats, slow-consumer policy, keepalive, missing-version skips, and harness placement — are recorded in the [change feed doc](../atlas-change-feed/README.md).

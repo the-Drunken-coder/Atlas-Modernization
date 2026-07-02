@@ -2,16 +2,17 @@
 
 ## Overview
 
-The ATLAS Core System treats PostgreSQL and its configured MinIO bucket as
-**disposable runtime storage**. They are scratch state for the running service,
-not systems of record, and they are not meant to be preserved between restarts
-or deployments.
+The ATLAS Core System treats resource PostgreSQL tables and its configured MinIO
+bucket as **disposable runtime storage**. They are scratch state for the running
+service, not systems of record, and they are not meant to be preserved between
+restarts or deployments. `admin_records` is the narrow durable exception for
+operator credentials, sessions, login throttles, and managed API key metadata.
 
 Atlas Core uses a **destroy-and-recreate workflow** by default. On startup, when
-`DATABASE_RECREATE_ON_STARTUP=true` (the default), `EnsureTables()` drops all
-tables and recreates them from the DDL defined in `internal/database/db.go`;
-after storage initialization, Atlas Core also empties the configured MinIO
-bucket. The system **never uses migration tools like Alembic or
+`DATABASE_RECREATE_ON_STARTUP=true` (the default), `EnsureTables()` drops
+resource tables and recreates them from the DDL defined in
+`internal/database/db.go`; after storage initialization, Atlas Core also empties
+the configured MinIO bucket. The system **never uses migration tools like Alembic or
 golang-migrate**.
 
 **Why destroy-and-recreate instead of `CREATE TABLE IF NOT EXISTS`?** The old `IF NOT EXISTS` approach created missing tables but silently skipped existing ones. If you added a column to the Go model and DDL, restarted against an existing DB, the column simply never appeared — no error, no warning, just a runtime query failure later. Destroy-and-recreate makes that class of bug impossible. The Go models and DDL are the single source of truth; the database is always an exact reflection of them.
@@ -29,7 +30,7 @@ is not a production configuration.
 - **Extensions**: `docker/postgres/init.sql` enables only basic PostgreSQL extensions used for local development bootstrap. Go `EnsureTables()` owns application tables and indexes.
 - **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
 - **Models**: Located in `internal/models/models.go`
-- **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops all tables then recreates them; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
+- **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops resource tables then recreates them while preserving `admin_records`; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
 - **Object Storage Lifecycle**: `storage.Client.EmptyBucket()` in `internal/storage/storage.go` — by default clears the configured MinIO bucket after the bucket is ensured; per-object delete retries are queued in `storage_deletion_outbox`
 
 ## Database Schema
@@ -108,20 +109,20 @@ docker compose -f docker/docker-compose.yml down
 # 2. Edit the DDL in internal/database/db.go (EnsureTables function)
 #    and update Go structs in internal/models/models.go as needed
 
-# 3. Rebuild and restart — all tables are dropped and recreated on startup
+# 3. Rebuild and restart — resource tables are dropped and recreated on startup
 go build -o atlas_core ./cmd/atlas_core
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-**Note**: `EnsureTables()` drops all tables with `DROP TABLE IF EXISTS ... CASCADE` then recreates them with fresh `CREATE TABLE` statements. All existing rows and configured-bucket objects are discarded on every recreate-mode restart. This is intentional — add any seed data you need to `docker/postgres/init.sql` or another bootstrap path.
+**Note**: `EnsureTables()` drops resource tables with `DROP TABLE IF EXISTS ... CASCADE` then recreates them with fresh `CREATE TABLE` statements. Existing resource rows and configured-bucket objects are discarded on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. This is intentional — add any resource seed data you need to `docker/postgres/init.sql` or another bootstrap path.
 
 ### 2. What Happens on Startup
 
 When the application starts (via `go run ./cmd/atlas_core` or as a Docker container):
 
 1. **Database Connection**: pgx pool connects to PostgreSQL
-2. **Table Drop**: `EnsureTables()` drops all existing tables with `DROP TABLE IF EXISTS ... CASCADE`
-3. **Table Creation**: `EnsureTables()` recreates all tables and indexes from the DDL in `db.go`
+2. **Table Drop**: `EnsureTables()` drops existing resource tables with `DROP TABLE IF EXISTS ... CASCADE`
+3. **Table Creation**: `EnsureTables()` recreates resource tables and indexes from the DDL in `db.go` and ensures `admin_records` exists
 4. **Storage Initialization**: Atlas Core initializes MinIO, ensures the configured bucket exists, then clears every object in that bucket when recreate mode is enabled
 5. **Service Ready**: Application begins serving traffic
 
@@ -139,8 +140,8 @@ The `internal/database/db.go` file contains `EnsureTables()` which:
 This means:
 
 - **No migration files needed** — DDL in `db.go` is the single source of truth
-- **Every startup gets a clean database and bucket** — no schema/blob drift possible under recreate mode
-- **All runtime data is disposable** — add seed data to `docker/postgres/init.sql` if needed, and keep durable history outside Atlas Core
+- **Every startup gets clean resource tables and bucket** — no schema/blob drift possible under recreate mode
+- **Runtime resource data is disposable** — add seed data to `docker/postgres/init.sql` if needed, and keep durable history outside Atlas Core
 
 ### 3. Example: Adding a New Column
 
@@ -203,7 +204,7 @@ Then add the corresponding Go struct in `internal/models/models.go` and rebuild.
 
 ### Important Notes
 
-- **Data is disposable**: PostgreSQL rows and MinIO blobs are lost on every recreate-mode restart. Seed data goes in `docker/postgres/init.sql`; durable history belongs outside Atlas Core.
+- **Resource data is disposable**: Resource rows and MinIO blobs are lost on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. Seed data goes in `docker/postgres/init.sql`; durable history belongs outside Atlas Core.
 - **Schema changes on restart**: Changes to DDL require an application restart to take effect
 - **Scratch-store workflow**: Not suitable for shared databases or environments where data persistence matters
 
@@ -228,13 +229,13 @@ docker compose -f docker/docker-compose.yml down
 
 ### What the Auto-Creation Handles
 
-- Creating all tables and indexes fresh on every recreate-mode startup
+- Creating resource tables and indexes fresh on every recreate-mode startup
 - Schema is always an exact match for the current DDL
 - All operations run in a single transaction
 
 ### What It Doesn't Handle
 
-- Data persistence — all rows are lost on every recreate-mode restart, by design
+- Resource data persistence — resource rows are lost on every recreate-mode restart, by design
 - Selective schema changes — the entire schema is replaced, not evolved
 
 ## Troubleshooting
@@ -312,4 +313,4 @@ docker compose -f docker/docker-compose.yml up -d
 
 ---
 
-**Remember**: the Atlas Core database and configured bucket are disposable. With recreate mode enabled (default), `EnsureTables()` drops and recreates everything on startup; set `DATABASE_RECREATE_ON_STARTUP=false` only when you intentionally want to keep the current scratch store. Edit `db.go` and the Go models, rebuild, restart — the runtime store will match. No migrations, no drift, no stale columns, and no expectation that old rows survive.
+**Remember**: Atlas Core resource tables and the configured bucket are disposable. With recreate mode enabled (default), `EnsureTables()` drops and recreates resource tables on startup while preserving `admin_records`; set `DATABASE_RECREATE_ON_STARTUP=false` only when you intentionally want to keep the current scratch store. Edit `db.go` and the Go models, rebuild, restart — the runtime store will match. No migrations, no drift, no stale resource columns, and no expectation that resource rows survive.

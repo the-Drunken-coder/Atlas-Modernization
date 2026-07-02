@@ -7,5 +7,6 @@ Atlas Core owns authentication, sessions, throttling, and admin storage under `/
 - `POST /admin/auth/login`
 - `POST /admin/auth/logout`
 - `GET /admin/auth/me`
+- `/admin/api-keys` key-management routes
 
-Do not add Worker KV sessions, `/auth/*`, `/me/settings`, or `/atlas/*` proxy behavior here. Admin APIs are intentionally separate from the Atlas resource SDK surface so entities, objects, tasks, queries, sync, and feed stay operational-resource-only.
+Do not add Worker KV sessions, `/auth/*`, `/admin/api-keys/*`, `/me/settings`, or `/atlas/*` proxy behavior here. Admin APIs are intentionally separate from the Atlas resource SDK surface so entities, objects, tasks, queries, sync, and feed stay operational-resource-only.

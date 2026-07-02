@@ -23,11 +23,33 @@ export type AdminLoginRequest = {
   password: string;
 };
 
+export type AdminAPIKey = {
+  id: string;
+  name: string;
+  key_prefix: string;
+  created_at: string;
+  created_by: string;
+};
+
+export type AdminCreateAPIKeyRequest = {
+  name: string;
+};
+
+export type AdminCreatedAPIKey = AdminAPIKey & {
+  api_key: string;
+};
+
 export class AtlasAdminClient {
   readonly auth = {
     login: (request: AdminLoginRequest) => this.transport.json<AdminMeResponse>("POST", "/admin/auth/login", request),
     logout: () => this.transport.json<void>("POST", "/admin/auth/logout"),
     me: () => this.transport.json<AdminMeResponse>("GET", "/admin/auth/me")
+  };
+
+  readonly apiKeys = {
+    list: () => this.transport.json<AdminAPIKey[]>("GET", "/admin/api-keys"),
+    create: (request: AdminCreateAPIKeyRequest) => this.transport.json<AdminCreatedAPIKey>("POST", "/admin/api-keys", request),
+    revoke: (id: string) => this.transport.json<void>("DELETE", `/admin/api-keys/${encodeURIComponent(id)}`)
   };
 
   private readonly transport: HttpTransport;
