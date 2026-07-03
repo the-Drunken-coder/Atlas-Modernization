@@ -19,11 +19,11 @@ describe("appConfigFromEnv", () => {
     });
   });
 
-  it("uses the live production Core URL outside development", () => {
+  it("uses the same-site production Core alias outside development", () => {
     vi.stubGlobal("location", { origin: "https://atlasinterface.com" });
 
     expect(appConfigFromEnv({ DEV: false, MODE: "production" })).toMatchObject({
-      atlasBaseUrl: "https://atlascommandapi.org",
+      atlasBaseUrl: "https://api.atlasinterface.com",
       protocolRevision: ATLAS_PROTOCOL_REVISION,
       defaultMapSourceId: "esri-world-imagery",
       mapSources: [

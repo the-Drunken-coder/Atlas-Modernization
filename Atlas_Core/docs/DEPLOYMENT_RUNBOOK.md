@@ -76,11 +76,8 @@ python3 Atlas_Core/scripts/atlas.py --production --tunnel
 
 `ATLAS_TUNNEL_HOSTNAME` defaults to `atlascommandapi.org`. The tunnel container
 joins the Compose network and forwards traffic to `http://api:8000`.
-For the browser interface, `atlascommandapi.org` remains the live production Core
-hostname. You can add `api.atlasinterface.com` as a second Cloudflare Tunnel
-public hostname pointing at that same service, then set the Pages build variable
-`VITE_ATLAS_CORE_BASE_URL=https://api.atlasinterface.com` to switch the UI to
-the same-site alias.
+For the browser interface, `api.atlasinterface.com` is the default Core URL and
+points at the same tunnel service as `atlascommandapi.org`.
 
 The production Core environment should allow the Pages origins that can call
 cookie-authenticated admin/resource routes:

@@ -13,7 +13,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 - `src/app/` - config loading, providers, routing, and the Vite entry point.
 - `public/maps/styles/` - static MapLibre styles for public basemap sources.
 
-The browser calls Atlas Core directly through the SDK with `credentials: "include"`. Local Vite dev defaults to `http://127.0.0.1:8000`; production and preview builds default to the live tunnel hostname `https://atlascommandapi.org`. Set `VITE_ATLAS_CORE_BASE_URL` when a build needs a different Core URL. Login state is a Core-owned `atlas_session` cookie with `HttpOnly; Secure`.
+The browser calls Atlas Core directly through the SDK with `credentials: "include"`. Local Vite dev defaults to `http://127.0.0.1:8000`; production and preview builds default to the same-site tunnel alias `https://api.atlasinterface.com`. Set `VITE_ATLAS_CORE_BASE_URL` when a build needs a different Core URL. Login state is a Core-owned `atlas_session` cookie with `HttpOnly; Secure`.
 
 ## Boundary
 
@@ -79,7 +79,7 @@ Use these settings for the Pages project:
 - Build command: `npm run build`
 - Build output directory: `dist/client`
 
-The Core API is exposed through Cloudflare Tunnel at `https://atlascommandapi.org`. A same-site browser alias, `https://api.atlasinterface.com`, can point to the same tunnel service once its Cloudflare DNS record exists; use `VITE_ATLAS_CORE_BASE_URL=https://api.atlasinterface.com` to switch Pages builds to that alias. Core must allow `https://atlasinterface.com` plus the trusted Pages preview pattern in `CORS_ORIGIN_PATTERNS`.
+The Core API is exposed through Cloudflare Tunnel at `https://atlascommandapi.org`, with `https://api.atlasinterface.com` as the browser-facing alias for the same tunnel service. Core must allow `https://atlasinterface.com` plus the trusted Pages preview pattern in `CORS_ORIGIN_PATTERNS`.
 
 ## Checks
 

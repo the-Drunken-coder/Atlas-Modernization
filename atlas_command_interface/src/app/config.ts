@@ -16,7 +16,7 @@ export type AppConfig = {
 const CONFIG_URL_BASE = "http://localhost";
 const URL_SCHEME = /^[a-z][a-z\d+\-.]*:/i;
 const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
-const REMOTE_CORE_BASE_URL = "https://atlascommandapi.org";
+const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
 
 const MAP_SOURCES: MapSourceConfig[] = [
   { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" },
