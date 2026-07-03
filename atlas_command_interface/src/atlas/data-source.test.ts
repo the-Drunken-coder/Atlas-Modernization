@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSdkDataSource } from "./data-source.js";
 import type { CommandDefinition } from "./command-model.js";
+import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
 
 const config = {
   atlasBaseUrl: "https://core.test",
@@ -21,6 +22,43 @@ afterEach(() => {
 });
 
 describe("sdk data source", () => {
+  it("starts live SDK sync and reports sync health", async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("WebSocket", undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url === "https://core.test/protocol/revision") {
+          return new Response(JSON.stringify({ protocol_revision: ATLAS_PROTOCOL_REVISION }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        if (url === "https://core.test/queries/full") {
+          return new Response(JSON.stringify({ entities: [], tasks: [], objects: [], has_more_entities: false, has_more_tasks: false, has_more_objects: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+
+    const dataSource = createSdkDataSource(config);
+    expect(dataSource.health?.()).toEqual({ running: false, healthy: false, degraded: false });
+
+    await dataSource.start();
+
+    expect(requestedUrls).toEqual(["https://core.test/protocol/revision", "https://core.test/queries/full"]);
+    expect(dataSource.health?.()).toEqual({ running: true, healthy: true, degraded: false });
+
+    dataSource.dispose();
+
+    expect(dataSource.health?.()).toEqual({ running: false, healthy: false, degraded: false });
+  });
+
   it("paginates entity and task snapshots without paginating objects", async () => {
     const requestedUrls: string[] = [];
     vi.stubGlobal(

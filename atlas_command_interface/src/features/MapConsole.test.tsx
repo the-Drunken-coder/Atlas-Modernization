@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
-import type { AtlasDataSource, CommandSubmission } from "../atlas/data-source.js";
+import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AppConfig } from "../app/config.js";
 import { AtlasProvider } from "../state/atlas-context.js";
@@ -12,9 +12,11 @@ import { MapConsole } from "./MapConsole.js";
 type MockMapViewProps = {
   styleUrl: string;
   editing?: unknown;
+  focusTarget?: { id: string } | null;
   onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
   onBackgroundClick?: () => void;
   onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  previewTarget?: { id: string } | null;
 };
 
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
@@ -30,6 +32,8 @@ vi.mock("../ui/map/MapView.js", async () => {
           data-testid="map"
           data-style-url={props.styleUrl}
           data-editing={props.editing ? "true" : "false"}
+          data-focus-target={props.focusTarget?.id ?? ""}
+          data-preview-target={props.previewTarget?.id ?? ""}
           onClick={() => props.onBackgroundClick?.()}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -103,7 +107,9 @@ const circleArea: EntityResource = {
   }
 };
 
-function makeFakeDataSource(geofeature: EntityResource = area) {
+const healthyConnection: ConnectionHealth = { running: true, healthy: true, degraded: false };
+
+function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
   let emit: ((event: AtlasWatchEvent) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
@@ -122,7 +128,7 @@ function makeFakeDataSource(geofeature: EntityResource = area) {
     },
     async start() {},
     health() {
-      return { running: true, healthy: true, degraded: false };
+      return health;
     },
     async submitCommand(submission) {
       submissions.push(submission);
@@ -187,6 +193,38 @@ describe("MapConsole command flow", () => {
 
     // The created task arrives over the feed and shows as pending in history.
     expect(await screen.findByText("Pending")).toBeInTheDocument();
+  });
+
+  it("passes hovered sidebar entities to the map as preview targets", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    const rover = await screen.findByRole("button", { name: /Rover/ });
+    await user.hover(rover);
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-preview-target", "asset-1");
+
+    await user.unhover(rover);
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-preview-target", "");
+  });
+
+  it("passes selected sidebar entities to the map as focus targets", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByRole("button", { name: /Rover/ }));
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+  });
+
+  it("surfaces degraded live-sync health on the map", async () => {
+    const { fake } = makeFakeDataSource(area, { running: true, healthy: false, degraded: true });
+    renderConsole(fake);
+
+    expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {

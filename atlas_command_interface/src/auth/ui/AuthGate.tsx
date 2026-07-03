@@ -8,24 +8,25 @@ type AuthState =
   | { status: "unauthenticated"; error?: string }
   | { status: "error"; error: string };
 
+type SessionResponse = { authenticated: false } | { authenticated: true; user: { username: string } };
+
 export function AuthGate({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
-    const admin = new AtlasAdminClient({ baseUrl, credentials: "include" });
     const checkSession = async () => {
       try {
-        const data = await admin.auth.me();
+        const data = await loadSession();
         if (cancelled) return;
-        setState({ status: "authenticated", username: data.user.username });
+        if (data.authenticated) {
+          setState({ status: "authenticated", username: data.user.username });
+        } else {
+          setState({ status: "unauthenticated" });
+        }
       } catch (error) {
         if (!cancelled) {
-          if (isUnauthorizedError(error)) {
-            setState({ status: "unauthenticated" });
-          } else {
-            setState({ status: "error", error: errorMessage(error) });
-          }
+          setState({ status: "error", error: errorMessage(error) });
         }
       }
     };
@@ -68,12 +69,19 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
 }
 
-function isUnauthorizedError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401;
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function loadSession(): Promise<SessionResponse> {
+  const response = await fetch("/api/auth/me", { credentials: "include", headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`Session check failed (${response.status})`);
+  const data = (await response.json()) as Partial<SessionResponse>;
+  if (data.authenticated === false) return { authenticated: false };
+  if (data.authenticated === true && data.user && typeof data.user.username === "string") {
+    return { authenticated: true, user: { username: data.user.username } };
+  }
+  throw new Error("Session check returned an unexpected shape");
 }
 
 function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: string; initialError?: string; onAuthenticated: (username: string) => void }) {
