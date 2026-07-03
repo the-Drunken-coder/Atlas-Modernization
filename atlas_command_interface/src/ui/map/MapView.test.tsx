@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { StyleSpecification } from "maplibre-gl";
 import { MapView, buildMapSources, type MapReticleTarget } from "./MapView.js";
 import type { MapSources } from "./map-sources.js";
 
@@ -37,6 +38,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
     readonly setStyle = vi.fn((style: unknown) => {
+      if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle) throw new Error("bad style");
       this.style = style;
       this.loaded = false;
       this.sources.clear();
@@ -166,38 +168,34 @@ describe("MapView style switching", () => {
     expect(map.sources.has("geofeatures")).toBe(true);
   });
 
-  it("keeps existing symbol markers when a style prefetch fails", async () => {
+  it("keeps existing symbol markers when a style switch fails", async () => {
     const onStyleSwitchError = vi.fn();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 503 })));
     const { canvas, map, rerenderMap } = renderMapView({
       sources: markerSources(),
-      styleUrl: "/maps/styles/a.json",
+      styleId: "a",
+      style: style("a"),
       onStyleSwitchError
     });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
 
-    rerenderMap({ styleUrl: "/maps/styles/b.json" });
+    rerenderMap({ styleId: "b", style: style("b", { throwOnSetStyle: true }) });
 
     await waitFor(() =>
       expect(onStyleSwitchError).toHaveBeenCalledWith({
-        failedStyleUrl: "/maps/styles/b.json",
-        activeStyleUrl: "/maps/styles/a.json"
+        failedStyleId: "b",
+        activeStyleId: "a"
       })
     );
     expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1);
-    expect(map.setStyle).not.toHaveBeenCalled();
+    expect(map.setStyle).toHaveBeenCalledTimes(1);
   });
 
   it("sets a prefetched style and re-registers overlays after style load", async () => {
-    const nextStyle = { version: 8, sources: {}, layers: [] };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify(nextStyle), { status: 200, headers: { "Content-Type": "application/json" } }))
-    );
-    const { canvas, map, rerenderMap } = renderMapView({ sources: markerSources(), styleUrl: "/maps/styles/a.json" });
+    const nextStyle = style("b");
+    const { canvas, map, rerenderMap } = renderMapView({ sources: markerSources(), styleId: "a", style: style("a") });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
 
-    rerenderMap({ styleUrl: "/maps/styles/b.json" });
+    rerenderMap({ styleId: "b", style: nextStyle });
 
     await waitFor(() => expect(map.setStyle).toHaveBeenCalledWith(nextStyle));
     expect(map.sources.has("geofeatures")).toBe(false);
@@ -745,21 +743,23 @@ describe("MapView external reticle targets", () => {
 
 type RenderMapViewProps = {
   focusTarget?: MapReticleTarget | null;
-  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   previewTarget?: MapReticleTarget | null;
   sources?: MapSources;
-  styleUrl?: string;
+  styleId?: string;
+  style?: StyleSpecification;
 };
 
 function renderMapView(props: RenderMapViewProps = {}) {
   const onBackgroundClick = vi.fn();
   const onMapContextMenu = vi.fn();
   const onSelectEntity = vi.fn();
-  const renderProps = { sources: buildMapSources([], undefined), styleUrl: "test-style", ...props };
+  const renderProps = { sources: buildMapSources([], undefined), styleId: "test-style", style: style("test-style"), ...props };
   const result = render(
     <MapView
       sources={renderProps.sources}
-      styleUrl={renderProps.styleUrl}
+      styleId={renderProps.styleId}
+      style={renderProps.style}
       focusTarget={renderProps.focusTarget}
       previewTarget={renderProps.previewTarget}
       onBackgroundClick={onBackgroundClick}
@@ -776,7 +776,8 @@ function renderMapView(props: RenderMapViewProps = {}) {
     result.rerender(
       <MapView
         sources={renderProps.sources}
-        styleUrl={renderProps.styleUrl}
+        styleId={renderProps.styleId}
+        style={renderProps.style}
         focusTarget={renderProps.focusTarget}
         previewTarget={renderProps.previewTarget}
         onBackgroundClick={onBackgroundClick}
@@ -787,6 +788,10 @@ function renderMapView(props: RenderMapViewProps = {}) {
     );
   };
   return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap };
+}
+
+function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {
+  return { version: 8, sources: {}, layers: [], metadata: { id, ...metadata } };
 }
 
 function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect | (() => DOMRect)): HTMLButtonElement {

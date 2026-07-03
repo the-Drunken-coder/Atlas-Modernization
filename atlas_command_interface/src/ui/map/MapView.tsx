@@ -1,4 +1,4 @@
-import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
+import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
 import {
@@ -62,7 +62,8 @@ export type MapEditing = {
 
 type MapViewProps = {
   sources: MapSources;
-  styleUrl: string;
+  styleId: string;
+  style: StyleSpecification;
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -71,7 +72,7 @@ type MapViewProps = {
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
-  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
 };
 
 type HoverTarget = ReticleTarget & { entityId: string };
@@ -79,7 +80,8 @@ type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint }
 
 export function MapView({
   sources,
-  styleUrl,
+  styleId,
+  style,
   editing,
   initialCenter,
   previewTarget,
@@ -94,8 +96,8 @@ export function MapView({
   const mapRef = useRef<MlMap | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
-  const currentStyleUrlRef = useRef<string | undefined>(undefined);
-  const pendingStyleUrlRef = useRef<string | undefined>(undefined);
+  const currentStyleIdRef = useRef<string | undefined>(undefined);
+  const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
   const fitWorldOnceRef = useRef(initialCenter !== undefined);
@@ -144,7 +146,7 @@ export function MapView({
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl,
+        style: cloneStyle(style),
         center: initialCenter ?? [0, 0],
         zoom: initialCenter ? 11 : 0,
         renderWorldCopies: false,
@@ -166,7 +168,7 @@ export function MapView({
     }
 
     mapRef.current = map;
-    currentStyleUrlRef.current = styleUrl;
+    currentStyleIdRef.current = styleId;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -206,15 +208,15 @@ export function MapView({
       // Tile/style errors should not blank the operator picture. Keep overlays
       // alive and surface the details in devtools.
       console.warn("Map render warning", event.error);
-      const failedStyleUrl = pendingStyleUrlRef.current;
-      if (failedStyleUrl) {
-        pendingStyleUrlRef.current = undefined;
+      const failedStyleId = pendingStyleIdRef.current;
+      if (failedStyleId) {
+        pendingStyleIdRef.current = undefined;
         if (readyRef.current && map.isStyleLoaded()) {
           registerSourcesAndLayers(map);
           pushSources(map, sourcesRef.current);
           pushEditingOverlay(map, editingRef.current);
         }
-        styleSwitchErrorRef.current?.({ failedStyleUrl, activeStyleUrl: currentStyleUrlRef.current ?? failedStyleUrl });
+        styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
       }
     });
 
@@ -246,44 +248,38 @@ export function MapView({
   // Sync basemap style while keeping the map camera and re-adding Atlas overlays.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || currentStyleUrlRef.current === styleUrl) return;
+    if (!map || currentStyleIdRef.current === styleId) return;
 
-    const controller = new AbortController();
     let cancelled = false;
-    pendingStyleUrlRef.current = styleUrl;
+    pendingStyleIdRef.current = styleId;
 
     const handleFailure = (error: unknown) => {
-      if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
-      pendingStyleUrlRef.current = undefined;
+      if (cancelled || pendingStyleIdRef.current !== styleId) return;
+      pendingStyleIdRef.current = undefined;
       console.warn("Map style switch failed", error);
       if (readyRef.current && map.isStyleLoaded()) {
         registerSourcesAndLayers(map);
         pushSources(map, sourcesRef.current);
         pushEditingOverlay(map, editingRef.current);
       }
-      styleSwitchErrorRef.current?.({ failedStyleUrl: styleUrl, activeStyleUrl: currentStyleUrlRef.current ?? styleUrl });
+      styleSwitchErrorRef.current?.({ failedStyleId: styleId, activeStyleId: currentStyleIdRef.current ?? styleId });
     };
 
-    void loadStyle(styleUrl, controller.signal)
-      .then((style) => {
-        if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
-        map.once("style.load", () => {
-          if (pendingStyleUrlRef.current !== styleUrl) return;
-          currentStyleUrlRef.current = styleUrl;
-          pendingStyleUrlRef.current = undefined;
-        });
-        map.setStyle(style);
-      })
-      .catch((error: unknown) => {
-        if (isAbortError(error)) return;
-        handleFailure(error);
+    try {
+      map.once("style.load", () => {
+        if (pendingStyleIdRef.current !== styleId) return;
+        currentStyleIdRef.current = styleId;
+        pendingStyleIdRef.current = undefined;
       });
+      map.setStyle(cloneStyle(style));
+    } catch (error) {
+      handleFailure(error);
+    }
 
     return () => {
       cancelled = true;
-      controller.abort();
     };
-  }, [styleUrl]);
+  }, [styleId, style]);
 
   // Sync entity sources.
   useEffect(() => {
@@ -1069,16 +1065,8 @@ function clearMarkers(markers: Marker[]): void {
   for (const marker of markers) marker.remove();
 }
 
-async function loadStyle(styleUrl: string, signal: AbortSignal): Promise<maplibregl.StyleSpecification> {
-  const response = await fetch(styleUrl, { headers: { Accept: "application/json" }, signal });
-  if (!response.ok) {
-    throw new Error(`Map style request failed (${response.status})`);
-  }
-  return (await response.json()) as maplibregl.StyleSpecification;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+function cloneStyle(style: StyleSpecification): StyleSpecification {
+  return JSON.parse(JSON.stringify(style)) as StyleSpecification;
 }
 
 function webglAvailable(): boolean {

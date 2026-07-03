@@ -11,7 +11,6 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 - `src/ui/` - the local design system.
 - `src/features/` - feature screens and panels.
 - `src/app/` - config loading, providers, routing, and the Vite entry point.
-- `public/maps/styles/` - static MapLibre styles for public basemap sources.
 
 The browser calls Atlas Core directly through the SDK with `credentials: "include"`. Local Vite dev defaults to `http://127.0.0.1:8000`; production and preview builds default to the same-site tunnel alias `https://api.atlasinterface.com`. Set `VITE_ATLAS_CORE_BASE_URL` when a build needs a different Core URL. Login state is a Core-owned `atlas_session` cookie with `HttpOnly; Secure`.
 
@@ -23,7 +22,7 @@ The browser calls Atlas Core directly through the SDK with `credentials: "includ
 - The command interface does not own Core auth/session routes, `/atlas/*` proxy routes, feed bridging, API-key injection, or command validation.
 - Browser config is build/dev-time Vite config, not a runtime Worker route.
 
-The committed browser config contains only non-secret values: Core base URL defaults, protocol revision, the default map source ID, and public MapLibre style URLs.
+The committed browser config contains only non-secret values: Core base URL defaults, protocol revision, map source IDs, labels, and provider URL templates. Any `VITE_*` provider keys are browser-visible and must be restricted in the provider dashboards.
 
 ## Commands
 
@@ -56,18 +55,27 @@ If you need a different Core URL:
 VITE_ATLAS_CORE_BASE_URL=https://api.example.test npm --prefix atlas_command_interface run dev
 ```
 
+For local map-provider testing, copy `atlas_command_interface/.env.example` to `atlas_command_interface/.env.local` and fill only the provider keys you want to enable. `.env.local` is ignored by git.
+
 The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
 
 ## Map Sources
 
-The browser receives static style URLs such as `/maps/styles/esri-world-imagery.json`. Vite and Cloudflare Pages serve those files from `public/maps/styles/`, and MapLibre requests public provider tiles directly from the style definitions.
+The browser builds MapLibre raster styles from provider tile URL templates. Public sources are selectable by default; credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time.
 
-Curated sources:
+Always available:
 
-- `esri-world-imagery` - public ArcGIS World Imagery.
+- `openstreetmap-default` - OpenStreetMap Standard raster tiles.
 - `usgs-topo` - public USGS Topo.
+- `openmaptiles-dark-matter` - CARTO-hosted Dark Matter raster tiles based on OpenStreetMap/OpenMapTiles styling.
 
-Secret-backed providers such as MapTiler or Mapbox are intentionally out of scope for the static Pages app until there is a real requirement for an authenticated tile service.
+Credentialed sources:
+
+- `google-satellite` - set `VITE_GOOGLE_MAPS_API_KEY`. The app creates the required Google Maps Tile API satellite session at startup. `VITE_GOOGLE_MAPS_TILE_SESSION` can be supplied to reuse a pre-created session.
+- `microsoft-imagery` - set `VITE_BING_MAPS_KEY` or `VITE_MICROSOFT_MAPS_KEY` for Bing imagery, or `VITE_AZURE_MAPS_SUBSCRIPTION_KEY` for Azure Maps imagery.
+- `mapbox-satellite`, `mapbox-outdoors`, `mapbox-dark` - set `VITE_MAPBOX_ACCESS_TOKEN`.
+- `thunderforest-outdoors` - set `VITE_THUNDERFOREST_API_KEY`.
+- `maptiler-satellite`, `maptiler-osm-dark` - set `VITE_MAPTILER_API_KEY`.
 
 ## Cloudflare Pages
 

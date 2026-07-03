@@ -87,14 +87,14 @@ export function MapConsole() {
   useEffect(() => {
     const config = atlas.config;
     if (!config) return;
-    setSelectedMapSourceId((current) => (current && config.mapSources.some((source) => source.id === current) ? current : config.defaultMapSourceId));
+    setSelectedMapSourceId((current) => (current && config.mapSources.some((source) => source.id === current && source.style) ? current : config.defaultMapSourceId));
   }, [atlas.config]);
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
   const handleMapStyleSwitchError = useCallback(
-    ({ activeStyleUrl }: { failedStyleUrl: string; activeStyleUrl: string }) => {
-      const activeSource = atlas.config?.mapSources.find((source) => source.styleUrl === activeStyleUrl);
+    ({ activeStyleId }: { failedStyleId: string; activeStyleId: string }) => {
+      const activeSource = atlas.config?.mapSources.find((source) => source.id === activeStyleId);
       if (activeSource) setSelectedMapSourceId(activeSource.id);
     },
     [atlas.config]
@@ -235,9 +235,16 @@ export function MapConsole() {
   const activeList: ListKind | null =
     sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
   const selectedMapSource =
-    atlas.config.mapSources.find((source) => source.id === selectedMapSourceId) ??
-    atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId) ??
-    atlas.config.mapSources[0];
+    availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
+    availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId)) ??
+    atlas.config.mapSources.find((source): source is AvailableMapSourceConfig => Boolean(source.style));
+  if (!selectedMapSource) {
+    return (
+      <div className="app-error">
+        <span>No usable map sources are configured.</span>
+      </div>
+    );
+  }
 
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
@@ -308,7 +315,8 @@ export function MapConsole() {
               <div className="map-stage">
                 <MapView
                   sources={sources}
-                  styleUrl={selectedMapSource.styleUrl}
+                  styleId={selectedMapSource.id}
+                  style={selectedMapSource.style}
                   selectedId={selectedId}
                   editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
                   focusTarget={focusTarget}
@@ -363,11 +371,24 @@ function MapSourcePicker({ sources, value, onChange }: { sources: MapSourceConfi
       <SelectField
         label="Map"
         value={value}
-        options={sources.map((source) => ({ label: source.label, value: source.id }))}
-        onChange={(event) => onChange(event.currentTarget.value)}
+        options={sources.map((source) => ({
+          label: source.unavailableReason ? `${source.label} (${source.unavailableReason})` : source.label,
+          value: source.id,
+          disabled: !source.style
+        }))}
+        onChange={(event) => {
+          const source = sources.find((entry) => entry.id === event.currentTarget.value);
+          if (source?.style) onChange(source.id);
+        }}
       />
     </div>
   );
+}
+
+type AvailableMapSourceConfig = MapSourceConfig & { style: NonNullable<MapSourceConfig["style"]> };
+
+function availableMapSource(source: MapSourceConfig | undefined): AvailableMapSourceConfig | undefined {
+  return source?.style ? (source as AvailableMapSourceConfig) : undefined;
 }
 
 type PanelBodyProps = {
