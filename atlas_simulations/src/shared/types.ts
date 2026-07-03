@@ -89,6 +89,7 @@ export type RunSummary = {
   id: string;
   scenarioId: string;
   scenarioName: string;
+  target?: AtlasTargetSummary;
   status: RunStatus;
   startedAt: string;
   finishedAt?: string;
@@ -103,6 +104,7 @@ export type RunSummary = {
 
 export type StartRunRequest = {
   scenarioId: string;
+  targetId?: string;
   inputs?: Record<string, string | JSONNumber | boolean>;
   jsonInput?: string;
 };
@@ -119,6 +121,19 @@ export type HealthResponse = {
   ok: boolean;
   status?: JSONNumber;
   message?: string;
+  target?: AtlasTargetSummary;
+};
+
+export type AtlasTargetSummary = {
+  id: string;
+  label: string;
+  baseUrl: string;
+  apiKeyConfigured: boolean;
+};
+
+export type TargetListResponse = {
+  targets: AtlasTargetSummary[];
+  defaultTargetId: string;
 };
 
 export type ScenarioListResponse = {

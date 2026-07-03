@@ -3,10 +3,20 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { jsonNumber, type HealthResponse, type RunEvent, type RunListResponse, type ScenarioListResponse, type StartRunRequest, type StartRunResponse } from "../shared/types.js";
+import {
+  jsonNumber,
+  type AtlasTargetSummary,
+  type HealthResponse,
+  type RunEvent,
+  type RunListResponse,
+  type ScenarioListResponse,
+  type StartRunRequest,
+  type StartRunResponse,
+  type TargetListResponse
+} from "../shared/types.js";
 import { createAtlasClientFactory } from "./atlas.js";
-import { loadConfig, type SimulationConfig } from "./config.js";
-import { RunStore } from "./run-store.js";
+import { loadConfig, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
+import { RunStore, type RunTarget } from "./run-store.js";
 import { descriptorForScenario, parseStartRequest, type ParsedStart } from "./scenario.js";
 import { findScenario, scenarios } from "./scenario-registry.js";
 
@@ -21,7 +31,16 @@ type EventStream = {
   close(): void;
 };
 
+type TargetRegistry = {
+  targets: Map<string, AtlasTargetConfig>;
+  summaries: AtlasTargetSummary[];
+  defaultTarget: AtlasTargetConfig;
+  defaultTargetId: string;
+};
+
 const MUTATION_HEADER = "x-atlas-simulations-request";
+const TARGET_API_KEY_HEADER = "x-atlas-target-api-key";
+const MAX_REQUEST_API_KEY_BYTES = 16_384;
 const UI_SECURITY_HEADERS = {
   "Content-Security-Policy": [
     "default-src 'self'",
@@ -39,10 +58,12 @@ const UI_SECURITY_HEADERS = {
 
 export function createSimulationServer(options: { config?: SimulationConfig; store?: RunStore } = {}): SimulationServer {
   const config = options.config ?? loadConfig();
-  const store = options.store ?? new RunStore(createAtlasClientFactory(config));
+  const targetRegistry = createTargetRegistry(config);
+  const ownsStore = options.store === undefined;
+  const store = options.store ?? new RunStore(createAtlasClientFactory(targetRegistry.defaultTarget));
   const eventStreams = new Set<EventStream>();
   const server = createServer((request, response) => {
-    void handleRequest(request, response, config, store, eventStreams).catch((error) => {
+    void handleRequest(request, response, config, targetRegistry, store, ownsStore, eventStreams).catch((error) => {
       if (response.headersSent || response.writableEnded) {
         response.destroy(error instanceof Error ? error : undefined);
         return;
@@ -80,7 +101,9 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   config: SimulationConfig,
+  targetRegistry: TargetRegistry,
   store: RunStore,
+  ownsStore: boolean,
   eventStreams: Set<EventStream>
 ): Promise<void> {
   if (!hasLoopbackHost(request.headers.host)) {
@@ -94,8 +117,17 @@ async function handleRequest(
     sendJSON(response, 400, { message: "Request target must be a valid URL" });
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/targets") {
+    sendJSON(response, 200, { targets: targetRegistry.summaries, defaultTargetId: targetRegistry.defaultTargetId } satisfies TargetListResponse);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/api/health") {
-    const health = await atlasHealth(config);
+    const target = targetForRequest(url, targetRegistry, apiKeyForRequest(request));
+    if (!target) {
+      sendJSON(response, 404, { message: "Atlas target not found" });
+      return;
+    }
+    const health = await atlasHealth(target);
     sendJSON(response, health.ok ? 200 : health.status ?? 503, health satisfies HealthResponse);
     return;
   }
@@ -116,6 +148,11 @@ async function handleRequest(
       sendJSON(response, 404, { message: "Scenario not found" });
       return;
     }
+    const target = targetForId(body.targetId, targetRegistry, apiKeyForRequest(request));
+    if (!target) {
+      sendJSON(response, 404, { message: "Atlas target not found" });
+      return;
+    }
     let parsed: ParsedStart;
     try {
       parsed = parseStartRequest(scenario, body);
@@ -123,7 +160,7 @@ async function handleRequest(
       sendJSON(response, 400, { message: errorMessage(error) });
       return;
     }
-    sendJSON(response, 201, { run: store.start(scenario, parsed.input) } satisfies StartRunResponse);
+    sendJSON(response, 201, { run: store.start(scenario, parsed.input, runTarget(target, ownsStore)) } satisfies StartRunResponse);
     return;
   }
   const runMatch = /^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname);
@@ -204,28 +241,86 @@ async function handleRunRoute(
   sendJSON(response, 404, { message: "Not found" });
 }
 
-async function atlasHealth(config: SimulationConfig): Promise<HealthResponse> {
+async function atlasHealth(target: AtlasTargetConfig): Promise<HealthResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3_000);
   let response: Response | undefined;
   try {
     const headers = new Headers();
-    if (config.atlasApiKey) headers.set("X-API-Key", config.atlasApiKey);
-    response = await fetch(`${config.atlasBaseUrl}/health`, { headers, signal: controller.signal });
+    if (target.apiKey) headers.set("X-API-Key", target.apiKey);
+    response = await fetch(`${target.baseUrl}/health`, { headers, signal: controller.signal });
     return {
       ok: response.ok,
       status: jsonNumber(response.status),
-      message: response.ok ? "Atlas Core reachable" : `Atlas Core returned ${response.status}`
+      message: response.ok ? "Atlas Core reachable" : `Atlas Core returned ${response.status}`,
+      target: targetSummary(target)
     };
   } catch (error) {
     return {
       ok: false,
-      message: errorMessage(error)
+      message: errorMessage(error),
+      target: targetSummary(target)
     };
   } finally {
     await response?.body?.cancel().catch(() => undefined);
     clearTimeout(timeout);
   }
+}
+
+function createTargetRegistry(config: SimulationConfig): TargetRegistry {
+  const configuredTargets = config.atlasTargets ?? [
+    {
+      id: "configured",
+      label: "Atlas Core",
+      baseUrl: config.atlasBaseUrl,
+      ...(config.atlasApiKey ? { apiKey: config.atlasApiKey } : {})
+    }
+  ];
+  const targets = new Map(configuredTargets.map((target) => [target.id, target]));
+  const defaultTarget = (config.defaultAtlasTargetId ? targets.get(config.defaultAtlasTargetId) : undefined) ?? configuredTargets[0];
+  if (!defaultTarget) throw new Error("At least one Atlas target is required");
+  return {
+    targets,
+    summaries: configuredTargets.map(targetSummary),
+    defaultTarget,
+    defaultTargetId: defaultTarget.id
+  };
+}
+
+function targetForRequest(url: URL, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig | undefined {
+  return targetForId(url.searchParams.get("target") ?? undefined, registry, apiKey);
+}
+
+function targetForId(id: string | undefined, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig | undefined {
+  const target = id ? registry.targets.get(id) : registry.defaultTarget;
+  return target && apiKey ? { ...target, apiKey } : target;
+}
+
+function runTarget(target: AtlasTargetConfig, includeClientFactory: boolean): RunTarget {
+  return {
+    ...targetSummary(target),
+    ...(includeClientFactory ? { clientFactory: createAtlasClientFactory(target) } : {})
+  };
+}
+
+function targetSummary(target: AtlasTargetConfig): AtlasTargetSummary {
+  return {
+    id: target.id,
+    label: target.label,
+    baseUrl: target.baseUrl,
+    apiKeyConfigured: !!target.apiKey
+  };
+}
+
+function apiKeyForRequest(request: IncomingMessage): string | undefined {
+  const header = request.headers[TARGET_API_KEY_HEADER];
+  const value = Array.isArray(header) ? header.at(-1) : header;
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (Buffer.byteLength(trimmed, "utf8") > MAX_REQUEST_API_KEY_BYTES) {
+    throw new RequestBodyError(400, "Atlas API key is too large");
+  }
+  return trimmed;
 }
 
 function streamRunEvents(response: ServerResponse, store: RunStore, runId: string, eventStreams: Set<EventStream>): void {

@@ -3,7 +3,7 @@ import {
   AtlasClient,
   type AtlasClientOptions
 } from "../../../atlas_sdk/src/index.js";
-import type { SimulationConfig } from "./config.js";
+import type { AtlasTargetConfig, SimulationConfig } from "./config.js";
 
 export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
   entities: Pick<AtlasClient["entities"], "get" | "create" | "update" | "delete" | "checkIn">;
@@ -19,11 +19,15 @@ export type AtlasClientFactory = (options?: { sync?: ClientMode; pollIntervalMs?
 
 const ATLAS_REQUEST_TIMEOUT_MS = 10_000;
 
-export function createAtlasClientFactory(config: SimulationConfig): AtlasClientFactory {
+type AtlasClientConfig = SimulationConfig | AtlasTargetConfig;
+
+export function createAtlasClientFactory(config: AtlasClientConfig): AtlasClientFactory {
+  const baseUrl = "baseUrl" in config ? config.baseUrl : config.atlasBaseUrl;
+  const apiKey = "baseUrl" in config ? config.apiKey : config.atlasApiKey;
   return (options = {}) =>
     new AtlasClient({
-      baseUrl: config.atlasBaseUrl,
-      apiKey: config.atlasApiKey,
+      baseUrl,
+      apiKey,
       fetch: abortableFetch(options.signal),
       sync: options.sync ?? false,
       pollIntervalMs: options.pollIntervalMs ?? 2_000

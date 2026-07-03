@@ -13,6 +13,7 @@ import { createFakeAtlasCore } from "../support/fake-atlas.js";
 let server: SimulationServer | undefined;
 let coreServer: HttpServer | undefined;
 let coreHealthRequests: string[] = [];
+let coreHealthApiKeys: Array<string | undefined> = [];
 
 const INTEGRATION_TIMEOUT_MS = 5_000;
 
@@ -21,6 +22,7 @@ afterEach(async () => {
   await closeCoreServer();
   server = undefined;
   coreHealthRequests = [];
+  coreHealthApiKeys = [];
 });
 
 describe("simulation HTTP server", () => {
@@ -51,6 +53,42 @@ describe("simulation HTTP server", () => {
     const unhealthy = await responseJSON<{ ok: boolean; status: number }>(unhealthyResponse);
     expect(unhealthy).toMatchObject({ ok: false, status: 503 });
     expect(coreHealthRequests).toEqual(["/api/health"]);
+  });
+
+  it("lists API targets and health-checks the selected target", async () => {
+    const coreUrl = await startCoreHealthServer(200, "/deployed");
+    server = createSimulationServer({
+      config: {
+        atlasBaseUrl: "http://127.0.0.1:8000",
+        atlasTargets: [
+          { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000" },
+          { id: "deployed", label: "Atlas Command API", baseUrl: coreUrl, apiKey: "remote-key" }
+        ],
+        defaultAtlasTargetId: "local",
+        port: 0,
+        packageRoot: process.cwd()
+      },
+      store: new RunStore(createFakeAtlasCore().factory)
+    });
+    const baseUrl = await server.listen();
+
+    const targets = await fetchJSON<{ targets: Array<{ id: string; label: string; baseUrl: string; apiKeyConfigured: boolean }>; defaultTargetId: string }>(`${baseUrl}/api/targets`);
+    expect(targets).toMatchObject({
+      defaultTargetId: "local",
+      targets: [
+        { id: "local", label: "Local Core", apiKeyConfigured: false },
+        { id: "deployed", label: "Atlas Command API", baseUrl: coreUrl, apiKeyConfigured: true }
+      ]
+    });
+
+    const health = await fetchJSON<{ ok: boolean; status: number; target: { id: string; apiKeyConfigured: boolean } }>(`${baseUrl}/api/health?target=deployed`, {
+      headers: { "X-Atlas-Target-Api-Key": "pasted-key" }
+    });
+    expect(health).toMatchObject({ ok: true, status: 200, target: { id: "deployed" } });
+    expect(coreHealthRequests).toEqual(["/deployed/health"]);
+    expect(coreHealthApiKeys).toEqual(["pasted-key"]);
+    expect(health.target.apiKeyConfigured).toBe(true);
+    await expectStatus(`${baseUrl}/api/health?target=missing`, 404);
   });
 
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
@@ -270,6 +308,8 @@ async function startCoreHealthServer(status: number, basePath = ""): Promise<str
   const expectedPath = `${basePath}/health`;
   coreServer = createServer((request, response) => {
     coreHealthRequests.push(request.url ?? "");
+    const apiKey = request.headers["x-api-key"];
+    coreHealthApiKeys.push(Array.isArray(apiKey) ? apiKey.at(-1) : apiKey);
     if (request.url !== expectedPath) {
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ ok: false }));

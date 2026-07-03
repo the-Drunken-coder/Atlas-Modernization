@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
-import { jsonNumber, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
+import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
+import { jsonNumber, type AtlasTargetSummary, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -20,6 +20,13 @@ const run: RunSummary = {
   createdResources: [],
   assertions: [],
   cleaned: false
+};
+
+const target: AtlasTargetSummary = {
+  id: "deployed",
+  label: "Atlas Command API",
+  baseUrl: "https://atlascommandapi.org",
+  apiKeyConfigured: true
 };
 
 describe("client API", () => {
@@ -58,6 +65,18 @@ describe("client API", () => {
     await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(200), message: "Unexpected health response (200)" });
   });
 
+  it("loads API targets and checks health for a selected target", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ targets: [target], defaultTargetId: target.id }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, status: 200, target }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadTargets()).resolves.toEqual({ targets: [target], defaultTargetId: target.id });
+    await expect(loadHealth(target.id, " pasted-key ")).resolves.toMatchObject({ ok: true, status: jsonNumber(200), target });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/health?target=${encodeURIComponent(target.id)}`);
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("X-Atlas-Target-Api-Key")).toBe("pasted-key");
+  });
+
   it("normalizes transport failures for JSON APIs", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("server offline");
@@ -76,7 +95,7 @@ describe("client API", () => {
     const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(startRun({ scenarioId: scenario.id, inputs: { assetCount: jsonNumber(1) } })).resolves.toEqual(run);
+    await expect(startRun({ scenarioId: scenario.id, inputs: { assetCount: jsonNumber(1) } }, "pasted-key")).resolves.toEqual(run);
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("/api/runs");
@@ -85,6 +104,7 @@ describe("client API", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(headers.get("X-Atlas-Simulations-Request")).toBe("1");
+    expect(headers.get("X-Atlas-Target-Api-Key")).toBe("pasted-key");
   });
 
   it("sends trusted mutation headers when stopping runs", async () => {
