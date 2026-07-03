@@ -14,6 +14,7 @@ import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
+import type { MapCameraCommand } from "../ui/map/map-camera.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
@@ -101,6 +102,12 @@ export function MapConsole() {
   );
   const previewTarget = useMemo(() => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined), [previewEntityId, snapshot.entities]);
   const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
+  // Camera intent is derived from the sidebar's claim, not the snapshot, so
+  // its identity only changes when the user asks to go somewhere.
+  const cameraCommand = useMemo<MapCameraCommand | null>(
+    () => (sidebar.focusRequest ? { seq: sidebar.focusRequest.seq, target: { type: "entity", id: sidebar.focusRequest.id } } : null),
+    [sidebar.focusRequest]
+  );
 
   useEffect(() => {
     if (previewEntityId && !snapshot.entities[previewEntityId]) setPreviewEntityId(undefined);
@@ -113,7 +120,7 @@ export function MapConsole() {
       const kind = entityKind(entity);
       if (kind === "other") return;
       setPreviewEntityId(undefined);
-      dispatch({ type: "selectEntity", kind, id });
+      dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
     [snapshot.entities]
   );
@@ -282,7 +289,7 @@ export function MapConsole() {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
                 setPreviewEntityId(undefined);
-                dispatch({ type: "selectEntity", kind, id: entity.entity_id });
+                dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onPreviewEntity={(entity) => {
                 if (!entity || entityKind(entity) === "other") {
@@ -313,6 +320,7 @@ export function MapConsole() {
                   editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
                   focusTarget={focusTarget}
                   previewTarget={previewTarget}
+                  cameraCommand={cameraCommand}
                   onSelectEntity={selectEntityById}
                   onMapContextMenu={onMapContextMenu}
                   onBackgroundClick={() => {

@@ -38,7 +38,7 @@ function Harness() {
             entities={ASSETS}
             selectedId={state.selection?.id}
             emptyLabel="none"
-            onSelect={(entity) => dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id })}
+            onSelect={(entity) => dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })}
           />
         ) : (
           <div>{state.view.mode === "inspector" ? `inspector ${state.selection?.id}` : `list ${state.view.list}`}</div>

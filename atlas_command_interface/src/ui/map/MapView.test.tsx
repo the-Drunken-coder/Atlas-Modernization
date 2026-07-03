@@ -3,6 +3,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
 import { MapView, buildMapSources, type MapReticleTarget } from "./MapView.js";
+import { ASSET_VIEW_ZOOM, FOLLOW_EASE_MS, INITIAL_WORLD_BOUNDS, flyDurationMs, type MapCameraCommand } from "./map-camera.js";
 import type { MapSources } from "./map-sources.js";
 
 type PointLike = { x: number; y: number };
@@ -19,8 +20,11 @@ const maplibreMock = vi.hoisted(() => {
     readonly sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
     readonly layers = new Map<string, unknown>();
     readonly easeTo = vi.fn();
+    readonly flyTo = vi.fn();
+    readonly stop = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
+    readonly getCenter = vi.fn(() => ({ lng: 0, lat: 0 }));
     readonly resize = vi.fn();
     readonly remove = vi.fn();
     readonly addControl = vi.fn();
@@ -566,6 +570,7 @@ describe("MapView external reticle targets", () => {
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
     expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
@@ -578,76 +583,26 @@ describe("MapView external reticle targets", () => {
 
     await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
     expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
-  it("focuses selected point targets with easeTo and keeps a fallback reticle", async () => {
+  it("shows the focus reticle without moving the camera", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
     map.fitBounds.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 6 }));
-    expect(map.fitBounds).not.toHaveBeenCalled();
-    const overlay = document.querySelector<HTMLElement>(".map-reticle");
-    expect(overlay).toHaveClass("map-reticle--targeted");
-    expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
-    expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
-  });
-
-  it("refocuses point targets when coordinates change under the same id", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.easeTo.mockClear();
-
-    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 6 }));
-
-    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [90, 110] } });
-
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith({ center: [90, 110], duration: 450, zoom: 6 }));
-  });
-
-  it("retries entity focus when a selected entity becomes locatable", async () => {
-    const focusTarget = { type: "entity", id: "asset-1" } as const;
-    const { map, rerenderMap } = renderMapView({
-      focusTarget,
-      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
-    map.easeTo.mockClear();
-
-    rerenderMap({
-      focusTarget,
-      sources: buildMapSources(
-        [entity({ entity_id: "asset-1", components: { telemetry: { latitude: 40, longitude: -74 } } })],
-        undefined
-      )
-    });
-
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [-74, 40], duration: 450, zoom: 6 }));
-  });
-
-  it("focuses selected geometry targets with fitBounds", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.easeTo.mockClear();
-    map.fitBounds.mockClear();
-
-    rerenderMap({
-      focusTarget: {
-        type: "geometry",
-        id: "area-1",
-        geometry: {
-          type: "LineString",
-          coordinates: [
-            [-75, 40],
-            [-73, 42]
-          ]
-        }
-      }
-    });
-
-    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 450, maxZoom: 10, padding: 48 }));
     expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
   it("previews generic point targets for future search results", async () => {
@@ -743,7 +698,201 @@ describe("MapView external reticle targets", () => {
   });
 });
 
+describe("MapView camera commands", () => {
+  const homeView = { center: [0, 0] as [number, number], zoom: 4 };
+  const movedSources = () =>
+    buildMapSources([entity({ entity_id: "asset-1", components: { telemetry: { latitude: 41, longitude: -73 } } })], undefined);
+
+  const startFollowing = async () => {
+    const rendered = renderMapView({ sources: markerSources() });
+    rendered.rerenderMap({ cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(rendered.map.flyTo).toHaveBeenCalledTimes(1));
+    act(() => rendered.map.fire("moveend", { atlasCamera: true, atlasFlySeq: 1 }));
+    rendered.map.easeTo.mockClear();
+    return rendered;
+  };
+
+  it("fits the world once on load with a tagged instant move", async () => {
+    const { map } = renderMapView();
+
+    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { atlasCamera: true }));
+  });
+
+  it("flies point commands to the standard asset view with a tagged arc flight", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      cameraCommand: { seq: 1, target: { type: "point", id: "search-1", coordinates: [70, 80] } },
+      focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] }
+    });
+
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(
+        {
+          center: [70, 80],
+          zoom: ASSET_VIEW_ZOOM,
+          duration: flyDurationMs(homeView, { center: [70, 80], zoom: ASSET_VIEW_ZOOM })
+        },
+        { atlasCamera: true, atlasFlySeq: 1 }
+      )
+    );
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    const overlay = document.querySelector<HTMLElement>(".map-reticle");
+    expect(overlay).toHaveClass("map-reticle--targeted");
+  });
+
+  it("does not re-fly for the same command but re-flies when the sequence bumps", async () => {
+    const { map, rerenderMap } = renderMapView({ sources: markerSources() });
+
+    rerenderMap({ cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+
+    rerenderMap({ sources: movedSources() });
+    expect(map.flyTo).toHaveBeenCalledTimes(1);
+
+    rerenderMap({ cameraCommand: { seq: 2, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(2));
+    expect(map.flyTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true, atlasFlySeq: 2 });
+  });
+
+  it("waits for an unlocatable entity and flies once it becomes locatable", async () => {
+    const command: MapCameraCommand = { seq: 1, target: { type: "entity", id: "asset-1" } };
+    const { map, rerenderMap } = renderMapView({
+      cameraCommand: command,
+      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
+    });
+    expect(map.flyTo).not.toHaveBeenCalled();
+
+    rerenderMap({ sources: markerSources() });
+
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({ center: [-74, 40], zoom: ASSET_VIEW_ZOOM }),
+        { atlasCamera: true, atlasFlySeq: 1 }
+      )
+    );
+  });
+
+  it("fits geometry commands with a tagged bounded ease and never follows them", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        target: {
+          type: "geometry",
+          id: "area-1",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [-75, 40],
+              [-73, 42]
+            ]
+          }
+        }
+      }
+    });
+
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenCalledWith(
+        [
+          [-75, 40],
+          [-73, 42]
+        ],
+        { duration: 450, maxZoom: 10, padding: 48 },
+        { atlasCamera: true }
+      )
+    );
+    expect(map.flyTo).not.toHaveBeenCalled();
+
+    act(() => map.fire("moveend", { atlasCamera: true }));
+    rerenderMap({ sources: movedSources() });
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("follows the selected entity with short tagged eases as telemetry moves it", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    rerenderMap({ sources: movedSources() });
+
+    await waitFor(() =>
+      expect(map.easeTo).toHaveBeenCalledWith(
+        { center: [-73, 41], duration: FOLLOW_EASE_MS, easing: expect.any(Function) },
+        { atlasCamera: true }
+      )
+    );
+  });
+
+  it("stops following when the user moves the map", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    act(() => map.fire("movestart", {}));
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps following through its own tagged camera moves", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    act(() => map.fire("movestart", { atlasCamera: true }));
+    rerenderMap({ sources: movedSources() });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledTimes(1));
+  });
+
+  it("re-engages follow when the command sequence bumps after a user gesture", async () => {
+    const { map, rerenderMap } = await startFollowing();
+    act(() => map.fire("movestart", {}));
+
+    rerenderMap({ cameraCommand: { seq: 2, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(2));
+    act(() => map.fire("moveend", { atlasCamera: true, atlasFlySeq: 2 }));
+    rerenderMap({ sources: movedSources() });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true }));
+  });
+
+  it("does not chase mid-flight and catches up once the flight lands", async () => {
+    const { map, rerenderMap } = renderMapView({ sources: markerSources() });
+    rerenderMap({ cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+    map.easeTo.mockClear();
+
+    rerenderMap({ sources: movedSources() });
+    expect(map.easeTo).not.toHaveBeenCalled();
+
+    act(() => map.fire("moveend", { atlasCamera: true, atlasFlySeq: 1 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledTimes(1));
+    expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true });
+  });
+
+  it("stops following when a box zoom completes", async () => {
+    const { map, rerenderMap } = await startFollowing();
+    const boxZoom = map.options.boxZoom as { boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void };
+
+    boxZoom.boxZoomEnd(map, { x: 12, y: 18 }, { x: 220, y: 140 }, new MouseEvent("mouseup"));
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.fitScreenCoordinates).toHaveBeenCalledWith({ x: 12, y: 18 }, { x: 220, y: 140 }, 0, { linear: true });
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("releases follow when the command clears", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    rerenderMap({ cameraCommand: null });
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+});
+
 type RenderMapViewProps = {
+  cameraCommand?: MapCameraCommand | null;
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
   previewTarget?: MapReticleTarget | null;
@@ -762,6 +911,7 @@ function renderMapView(props: RenderMapViewProps = {}) {
       styleUrl={renderProps.styleUrl}
       focusTarget={renderProps.focusTarget}
       previewTarget={renderProps.previewTarget}
+      cameraCommand={renderProps.cameraCommand}
       onBackgroundClick={onBackgroundClick}
       onMapContextMenu={onMapContextMenu}
       onSelectEntity={onSelectEntity}
@@ -779,6 +929,7 @@ function renderMapView(props: RenderMapViewProps = {}) {
         styleUrl={renderProps.styleUrl}
         focusTarget={renderProps.focusTarget}
         previewTarget={renderProps.previewTarget}
+        cameraCommand={renderProps.cameraCommand}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}

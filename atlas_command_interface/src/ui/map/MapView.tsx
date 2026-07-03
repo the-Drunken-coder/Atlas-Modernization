@@ -14,7 +14,16 @@ import {
 } from "../../atlas/geometry.js";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { MapReticle } from "./MapReticle.js";
+import {
+  CAMERA_EVENT_TAG,
+  INITIAL_WORLD_BOUNDS,
+  collectLngLatPositions,
+  featureForEntityId,
+  type MapCameraCommand,
+  type MapTarget
+} from "./map-camera.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
+import { useMapCamera } from "./use-map-camera.js";
 import {
   RETICLE_TARGET_SIZE,
   boxFromDrag,
@@ -38,22 +47,11 @@ const COLORS = {
 };
 
 const INTERACTIVE_LAYERS = ["geofeatures-point", "geofeatures-line", "geofeatures-fill"];
-const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
-  [-180, -80],
-  [180, 85.051129]
-];
 const SCROLL_LOCK_SETTLE_MS = 180;
 const SUPPRESSED_CLICK_FALLBACK_MS = 750;
-const FOCUS_DURATION_MS = 450;
-const FOCUS_BOUNDS_PADDING = 48;
-const FOCUS_MAX_ZOOM = 10;
-const FOCUS_MIN_POINT_ZOOM = 6;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
-export type MapReticleTarget =
-  | { type: "entity"; id: string }
-  | { type: "point"; id: string; coordinates: [number, number]; label?: string }
-  | { type: "geometry"; id: string; geometry: UiRawGeometry; label?: string };
+export type MapReticleTarget = MapTarget;
 
 export type MapEditing = {
   geometry: UiGeometry;
@@ -68,6 +66,7 @@ type MapViewProps = {
   initialCenter?: [number, number];
   previewTarget?: MapReticleTarget | null;
   focusTarget?: MapReticleTarget | null;
+  cameraCommand?: MapCameraCommand | null;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
@@ -84,6 +83,7 @@ export function MapView({
   initialCenter,
   previewTarget,
   focusTarget,
+  cameraCommand,
   onSelectEntity,
   onMapContextMenu,
   onBackgroundClick,
@@ -111,7 +111,6 @@ export function MapView({
   const scrollLockedExternalReticleRef = useRef(false);
   const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
   const zoomPointerInsideMapRef = useRef(true);
-  const focusedTargetKeyRef = useRef<string | null>(null);
   const suppressNextClickRef = useRef(false);
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const [mapError, setMapError] = useState<string>();
@@ -126,6 +125,7 @@ export function MapView({
   sourcesRef.current = sources;
   editingRef.current = editing;
   const zoomDragging = zoomOverlay !== null;
+  const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
 
   useEffect(() => {
     reticleRef.current = reticle;
@@ -156,6 +156,7 @@ export function MapView({
             suppressNextClick();
             restoreReticleAtScreenPoint(end);
             setZoomOverlayState(null);
+            notifyUserGesture();
             zoomMap.fitScreenCoordinates(start, end, zoomMap.getBearing(), { linear: true });
           }
         }
@@ -393,17 +394,12 @@ export function MapView({
     };
   }, [mapReady, previewTarget, scrollLocked, sources, zoomDragging]);
 
+  // Focus reticle sync only — camera movement is owned by useMapCamera.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !focusTarget) {
-      focusedTargetKeyRef.current = null;
       setFocusReticle(null);
       return;
-    }
-
-    const key = mapReticleTargetKey(focusTarget);
-    if (focusedTargetKeyRef.current !== key) {
-      if (focusMapTarget(map, sources, focusTarget)) focusedTargetKeyRef.current = key;
     }
 
     const syncFocusReticle = () => {
@@ -563,6 +559,7 @@ export function MapView({
     zoomPointerInsideMapRef.current = true;
     cursorHandoffRef.current = null;
     setReticleState(null);
+    notifyUserGesture();
   };
 
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -841,10 +838,6 @@ function boxForEntityMarker(mapCanvas: HTMLElement, entityId: string): TargetBox
   return null;
 }
 
-function featureForEntityId(sources: MapSources, entityId: string): MapFeature | undefined {
-  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].find((feature) => feature.properties.entityId === entityId);
-}
-
 function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
   const rect = element.getBoundingClientRect();
   return {
@@ -871,63 +864,6 @@ function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null 
     const projected = map.project([position[0], position[1]]);
     return { x: projected.x, y: projected.y };
   });
-}
-
-function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget): boolean {
-  const geometry = geometryForFocusTarget(sources, target);
-  if (!geometry) return false;
-  if (geometry.type === "Point") {
-    map.easeTo({
-      center: [geometry.coordinates[0], geometry.coordinates[1]],
-      duration: FOCUS_DURATION_MS,
-      zoom: Math.max(map.getZoom(), FOCUS_MIN_POINT_ZOOM)
-    });
-    return true;
-  }
-  const bounds = boundsForGeometry(geometry);
-  if (!bounds) return false;
-  map.fitBounds(bounds, { duration: FOCUS_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
-  return true;
-}
-
-function geometryForFocusTarget(sources: MapSources, target: MapReticleTarget): UiRawGeometry | undefined {
-  if (target.type === "point") return { type: "Point", coordinates: target.coordinates };
-  if (target.type === "geometry") return target.geometry;
-  return featureForEntityId(sources, target.id)?.geometry;
-}
-
-function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number, number]] | null {
-  const positions = collectLngLatPositions(geometry.coordinates);
-  if (positions.length === 0) return null;
-  const lngValues = positions.map((position) => position[0]);
-  const latValues = positions.map((position) => position[1]);
-  return [
-    [Math.min(...lngValues), Math.min(...latValues)],
-    [Math.max(...lngValues), Math.max(...latValues)]
-  ];
-}
-
-function mapReticleTargetKey(target: MapReticleTarget): string {
-  if (target.type === "point") return `point:${target.id}:${target.coordinates[0]},${target.coordinates[1]}`;
-  if (target.type === "geometry") return `geometry:${target.id}:${JSON.stringify(target.geometry)}`;
-  return `entity:${target.id}`;
-}
-
-function collectLngLatPositions(value: unknown): Position[] {
-  if (isLngLatPosition(value)) return [value];
-  if (!Array.isArray(value)) return [];
-  return value.flatMap(collectLngLatPositions);
-}
-
-function isLngLatPosition(value: unknown): value is Position {
-  return (
-    Array.isArray(value) &&
-    value.length >= 2 &&
-    typeof value[0] === "number" &&
-    Number.isFinite(value[0]) &&
-    typeof value[1] === "number" &&
-    Number.isFinite(value[1])
-  );
 }
 
 function pushSources(map: MlMap, sources: MapSources): void {
@@ -1093,7 +1029,7 @@ function webglAvailable(): boolean {
 function fitWorldOnce(map: MlMap, fitWorldOnceRef: { current: boolean }): void {
   if (fitWorldOnceRef.current) return;
   fitWorldOnceRef.current = true;
-  map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 });
+  map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { [CAMERA_EVENT_TAG]: true });
 }
 
 export { buildMapSources };
