@@ -62,6 +62,46 @@ describe("RunStore", () => {
     expect(core.state.deleted).toEqual([]);
   });
 
+  it("cleans up hidden create candidates after response failure", async () => {
+    const core = createFakeAtlasCore();
+    let firstClient = true;
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      if (!firstClient) return client;
+      firstClient = false;
+      return {
+        ...client,
+        entities: {
+          ...client.entities,
+          create: async (entity) => {
+            await client.entities.create(entity);
+            throw new Error("response failed");
+          }
+        }
+      };
+    });
+    let entityId = "";
+    const scenario: Scenario = {
+      id: "response-failure-cleanup",
+      name: "Response failure cleanup",
+      summary: "Cleans up a create whose response failed after persistence",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        entityId = ctx.id("asset");
+        await ctx.createEntity({ entity_id: entityId, entity_type: "asset" });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.createdResources).toEqual([]);
+    await expect(core.factory().entities.get(entityId)).resolves.toMatchObject({ entity_id: entityId });
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(core.state.deleted).toEqual([`entity:${entityId}`]);
+  });
+
   it("reports cancelled status after a stopped run unwinds", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);

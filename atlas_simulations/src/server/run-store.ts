@@ -231,6 +231,9 @@ export class RunStore {
         assert: (name, passed, message) => (run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message)),
         track: (resource) => {
           if (!run.settled && !run.cleanupStarted && !run.cleaned) this.track(run, resource);
+        },
+        trackCleanupCandidate: (resource) => {
+          if (!run.settled && !run.cleanupStarted && !run.cleaned) this.trackCleanupCandidate(run, resource);
         }
       });
       await run.scenario.run(context, input);
@@ -295,6 +298,17 @@ export class RunStore {
 
   private track(run: RunRecord, resource: CreatedResource): void {
     if (run.cleanupStarted || run.cleaned) return;
+    this.trackCleanupCandidate(run, resource);
+    const tracked = cloneValue(resource);
+    if (!hasResource(run.createdResources, tracked)) {
+      if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
+      run.createdResources.push(cloneValue(tracked));
+      this.emit(run, { type: "resource", resource: tracked, message: `Created ${tracked.type} ${tracked.id}` });
+    }
+  }
+
+  private trackCleanupCandidate(run: RunRecord, resource: CreatedResource): void {
+    if (run.cleanupStarted || run.cleaned) return;
     const tracked = cloneValue(resource);
     if (!hasResource(run.cleanupResources, tracked) && !sameResource(run.overflowCleanupResource, tracked)) {
       if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
@@ -305,11 +319,6 @@ export class RunStore {
         throw new Error(message);
       }
       run.cleanupResources.push(cloneValue(tracked));
-    }
-    if (!hasResource(run.createdResources, tracked)) {
-      if (run.createdResources.length >= MAX_CREATED_RESOURCES_PER_RUN) return;
-      run.createdResources.push(cloneValue(tracked));
-      this.emit(run, { type: "resource", resource: tracked, message: `Created ${tracked.type} ${tracked.id}` });
     }
   }
 
