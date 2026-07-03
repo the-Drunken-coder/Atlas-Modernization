@@ -39,7 +39,6 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
             onFocus={() => onPreview?.(entity)}
             onPointerEnter={() => onPreview?.(entity)}
             onPointerLeave={() => onPreview?.(null)}
-            onPointerMove={() => onPreview?.(entity)}
           >
             <span className="entity-row__dot" style={{ background: entityDotColor(entity) }} />
             <span className="entity-row__main">

@@ -750,6 +750,47 @@
   background: #05070a;
 }
 
+.connection-badge {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--connection-color) 58%, var(--border-strong));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.connection-badge[data-state="live"] {
+  --connection-color: var(--success);
+}
+
+.connection-badge[data-state="reconnecting"] {
+  --connection-color: var(--warning);
+}
+
+.connection-badge[data-state="connecting"] {
+  --connection-color: var(--text-3);
+}
+
+.connection-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--connection-color);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--connection-color) 72%, transparent);
+}
+
 @supports not (width: 1cqw) {
   .map-stage {
     width: 100%;

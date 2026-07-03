@@ -134,7 +134,7 @@ describe("MapView hover target box", () => {
     const { canvas } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 28, 40));
 
-    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
 
     await waitFor(() => {
       const overlay = document.querySelector<HTMLElement>(".map-reticle");
@@ -151,7 +151,7 @@ describe("MapView hover target box", () => {
   it("keeps the default cursor target square when no marker is hovered", async () => {
     const { canvas } = renderMapView();
 
-    fireEvent.mouseMove(canvas, { clientX: 80, clientY: 100 });
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
 
     await waitFor(() => {
       const overlay = document.querySelector<HTMLElement>(".map-reticle");
@@ -167,7 +167,7 @@ describe("MapView hover target box", () => {
     let markerRect = rect(70, 90, 28, 40);
     const marker = appendMarker(canvas, "asset-1", () => markerRect);
 
-    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
 
     markerRect = rect(120, 60, 28, 40);
@@ -187,7 +187,7 @@ describe("MapView hover target box", () => {
     let markerRect = rect(70, 90, 28, 40);
     const marker = appendMarker(canvas, "asset-1", () => markerRect);
 
-    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
 
     vi.useFakeTimers();
@@ -205,7 +205,7 @@ describe("MapView hover target box", () => {
       expect(scrollingOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("124px");
       expect(scrollingOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
 
-      fireEvent.pointerMove(canvas, { clientX: 30, clientY: 40 });
+      firePointerMove(canvas, { clientX: 30, clientY: 40 });
 
       const lockedOverlay = document.querySelector<HTMLElement>(".map-reticle");
       expect(lockedOverlay).toHaveClass("map-reticle--targeted");
@@ -222,14 +222,14 @@ describe("MapView hover target box", () => {
       expect(unlockedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("124px");
       expect(unlockedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
 
-      fireEvent.mouseMove(canvas, { clientX: 90, clientY: 110 });
+      firePointerMove(canvas, { clientX: 90, clientY: 110 });
 
       const movedOverlay = document.querySelector<HTMLElement>(".map-reticle");
       expect(movedOverlay).toHaveClass("map-reticle--targeted");
       expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
       expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
 
-      fireEvent.mouseMove(canvas, { clientX: 170, clientY: 150 });
+      firePointerMove(canvas, { clientX: 170, clientY: 150 });
 
       const releasedOverlay = document.querySelector<HTMLElement>(".map-reticle");
       expect(releasedOverlay).not.toHaveClass("map-reticle--targeted");
@@ -240,6 +240,86 @@ describe("MapView hover target box", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("selects the handoff-adjusted visual target after wheel zoom", async () => {
+    const { canvas, map, onSelectEntity } = renderMapView({
+      sources: buildMapSources(
+        [
+          entity({
+            entity_id: "geo-visual",
+            entity_type: "geofeature",
+            components: { geometry: { type: "Point", coordinates: [120, 60] } }
+          })
+        ],
+        undefined
+      )
+    });
+    map.queryRenderedFeatures.mockImplementation((point: unknown) => {
+      const [x, y] = point as [number, number];
+      if (x === 70 && y === 80) return [{ geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-visual" } }];
+      if (x === 20 && y === 100) return [{ geometry: { type: "Point", coordinates: [20, 100] }, properties: { entityId: "geo-raw" } }];
+      return [];
+    });
+
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+      act(() => map.fire("zoom"));
+      act(() => vi.advanceTimersByTime(180));
+      fireEvent.click(canvas, { clientX: 30, clientY: 120 });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(map.queryRenderedFeatures).toHaveBeenLastCalledWith([70, 80], {
+      layers: ["geofeatures-point", "geofeatures-line", "geofeatures-fill"]
+    });
+    expect(onSelectEntity).toHaveBeenCalledWith("geo-visual");
+    expect(onSelectEntity).not.toHaveBeenCalledWith("geo-raw");
+  });
+
+  it("keeps focused entity reticles behind live map background movement", async () => {
+    const { canvas, rerenderMap } = renderMapView();
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    firePointerMove(canvas, { clientX: 220, clientY: 120 });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).not.toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("210px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
+    });
+  });
+
+  it("keeps outside-map pointer listeners stable while the reticle moves", async () => {
+    const addListener = vi.spyOn(window, "addEventListener");
+    const { canvas } = renderMapView();
+    const pointerMoveRegistrations = () => addListener.mock.calls.filter(([type]) => String(type) === "pointermove").length;
+    const initialRegistrations = pointerMoveRegistrations();
+
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+    firePointerMove(canvas, { clientX: 90, clientY: 110 });
+
+    expect(pointerMoveRegistrations()).toBe(initialRegistrations);
+  });
+
+  it("does not subscribe targeted reticles to render frames", async () => {
+    const { canvas, map } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 28, 40));
+
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+
+    await waitFor(() => expect(map.listeners.get("move") ?? []).toHaveLength(1));
+    expect(map.listeners.get("render") ?? []).toHaveLength(0);
   });
 });
 
@@ -277,7 +357,7 @@ describe("MapView zoom overlay", () => {
     const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
 
-    fireEvent.pointerMove(marker, { clientX: 80, clientY: 100 });
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
     fireEvent.click(marker);
 
@@ -482,7 +562,7 @@ describe("MapView external reticle targets", () => {
     rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
     await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
 
-    fireEvent.pointerMove(marker, { clientX: 180, clientY: 130 });
+    firePointerMove(marker, { clientX: 180, clientY: 130 });
 
     await waitFor(() => {
       const overlay = document.querySelector<HTMLElement>(".map-reticle");
@@ -608,6 +688,10 @@ function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMR
   }
   container.appendChild(marker);
   return marker;
+}
+
+function firePointerMove(target: Element, init: MouseEventInit): void {
+  fireEvent(target, new MouseEvent("pointermove", { bubbles: true, cancelable: true, ...init }));
 }
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };

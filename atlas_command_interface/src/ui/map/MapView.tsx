@@ -101,6 +101,7 @@ export function MapView({
   const reticleRef = useRef<ReticleState | null>(null);
   const activeReticleRef = useRef<ReticleState | null>(null);
   const cursorHandoffRef = useRef<CursorHandoffState | null>(null);
+  const scrollLockedExternalReticleRef = useRef(false);
   const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
   const focusedTargetKeyRef = useRef<string | null>(null);
   const suppressNextClickRef = useRef(false);
@@ -197,6 +198,7 @@ export function MapView({
       editMarkersRef.current = [];
       symbolMarkersRef.current = [];
       scrollLockedRef.current = false;
+      scrollLockedExternalReticleRef.current = false;
       cursorHandoffRef.current = null;
       if (scrollLockTimeoutRef.current !== undefined) {
         window.clearTimeout(scrollLockTimeoutRef.current);
@@ -260,53 +262,36 @@ export function MapView({
   }, [zoomDragging]);
 
   useEffect(() => {
-    if (!reticle) return;
-
-    const clearWhenOutsideMap = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+    const clearWhenOutsideMap = (event: globalThis.PointerEvent) => {
+      if (!reticleRef.current) return;
       if (scrollLockedRef.current || zoomOverlayRef.current) return;
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
       const rect = mapCanvas.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
         cursorHandoffRef.current = null;
-        setReticle(null);
+        setReticleState(null);
       }
     };
 
     window.addEventListener("pointermove", clearWhenOutsideMap);
-    window.addEventListener("mousemove", clearWhenOutsideMap);
     return () => {
       window.removeEventListener("pointermove", clearWhenOutsideMap);
-      window.removeEventListener("mousemove", clearWhenOutsideMap);
     };
-  }, [reticle]);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
     const entityId = reticle?.targetEntityId;
     if (!map || !mapReady || !entityId) return;
 
-    const syncTargetBox = () => {
-      const mapCanvas = mapCanvasRef.current;
-      if (!mapCanvas) return;
-      const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
-      if (!box) return;
-      setReticle((current) => {
-        if (current?.targetEntityId !== entityId) return current;
-        const next = reticleForTarget({ entityId, box });
-        reticleRef.current = next;
-        if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
-        return next;
-      });
-    };
+    const syncTargetBox = () => syncTargetReticle(entityId);
 
     map.on("move", syncTargetBox);
-    map.on("render", syncTargetBox);
     map.on("zoom", syncTargetBox);
     map.on("moveend", syncTargetBox);
     return () => {
       map.off("move", syncTargetBox);
-      map.off("render", syncTargetBox);
       map.off("zoom", syncTargetBox);
       map.off("moveend", syncTargetBox);
     };
@@ -440,46 +425,25 @@ export function MapView({
     }
   }, [editing, mapReady]);
 
-  const updateReticle = (
-    event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement }
-  ) => {
+  const updateReticle = (event: PointerEvent<HTMLDivElement> & { currentTarget: HTMLDivElement }) => {
     if (scrollLockedRef.current || zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
       cursorHandoffRef.current = null;
-      setReticle(null);
+      setReticleState(null);
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const rawPoint = pointFromClient(event, rect);
     const handoff = cursorHandoffRef.current;
-    const point = handoff
-      ? {
-          x: handoff.visualPoint.x + rawPoint.x - handoff.nativePoint.x,
-          y: handoff.visualPoint.y + rawPoint.y - handoff.nativePoint.y
-        }
-      : rawPoint;
-    const target = hoverSelectionTarget(event, rect, point, mapRef.current);
-    const next = target ? reticleForTarget(target) : { ...point, target: squareAround(point, RETICLE_TARGET_SIZE) };
-    reticleRef.current = next;
+    const { rawPoint, visualPoint } = cursorPointsFromEvent(event, rect, handoff);
+    const target = hoverSelectionTarget(event, rect, visualPoint, mapRef.current);
+    const next = target ? reticleForTarget(target) : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
     if (handoff) cursorHandoffRef.current = { nativePoint: rawPoint, visualPoint: { x: next.x, y: next.y } };
-    setReticle(next);
+    setReticleState(next);
   };
 
   const syncCurrentTargetBox = () => {
-    const mapCanvas = mapCanvasRef.current;
-    if (!mapCanvas) return;
-    setReticle((current) => {
-      const entityId = current?.targetEntityId;
-      if (!entityId) return current;
-      const map = mapRef.current;
-      if (!map) return current;
-      const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
-      if (!box) return current;
-      const next = reticleForTarget({ entityId, box });
-      reticleRef.current = next;
-      if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
-      return next;
-    });
+    const entityId = reticleRef.current?.targetEntityId;
+    if (entityId) syncTargetReticle(entityId);
   };
 
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -488,6 +452,7 @@ export function MapView({
     const rect = event.currentTarget.getBoundingClientRect();
     const hoverReticle = reticleRef.current;
     const activeReticle = hoverReticle ?? activeReticleRef.current;
+    scrollLockedExternalReticleRef.current = Boolean(activeReticle && !hoverReticle);
     if (activeReticle) {
       const lockedReticle = hoverReticle ?? { ...activeReticle, targetEntityId: undefined };
       reticleRef.current = lockedReticle;
@@ -506,7 +471,12 @@ export function MapView({
       scrollLockedRef.current = false;
       mapCanvasRef.current?.classList.remove("map-canvas--scrolling");
       setScrollLocked(false);
-      syncCurrentTargetBox();
+      if (scrollLockedExternalReticleRef.current) {
+        scrollLockedExternalReticleRef.current = false;
+        setReticleState(null);
+      } else {
+        syncCurrentTargetBox();
+      }
     }, SCROLL_LOCK_SETTLE_MS);
   };
 
@@ -526,7 +496,7 @@ export function MapView({
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const clickTarget = hoverSelectionTarget(event, rect, pointFromClient(event, rect), mapRef.current);
+    const clickTarget = hoverSelectionTarget(event, rect, cursorPointsFromEvent(event, rect, cursorHandoffRef.current).visualPoint, mapRef.current);
     if (clickTarget) {
       handlersRef.current.onSelectEntity(clickTarget.entityId);
       return;
@@ -542,13 +512,34 @@ export function MapView({
     ? reticleFromTargetBox(boxFromDrag(zoomOverlay))
     : scrollLocked
       ? reticle
-      : (reticle?.targetEntityId ? reticle : (previewReticle ?? focusReticle ?? reticle));
+      : (reticle ?? previewReticle ?? focusReticle);
 
   activeReticleRef.current = visibleReticle;
 
   function setZoomOverlayState(next: ZoomOverlayState | null): void {
     zoomOverlayRef.current = next;
     setZoomOverlay(next);
+  }
+
+  function setReticleState(next: ReticleState | null): void {
+    reticleRef.current = next;
+    setReticle((current) => (reticlesEqual(current, next) ? current : next));
+  }
+
+  function syncTargetReticle(entityId: string): void {
+    const mapCanvas = mapCanvasRef.current;
+    const map = mapRef.current;
+    if (!mapCanvas || !map) return;
+    const box = targetBoxForEntityId(mapCanvas, map, sources, entityId);
+    if (!box) return;
+    const next = reticleForTarget({ entityId, box });
+    setReticle((current) => {
+      if (!current || current.targetEntityId !== entityId) return current;
+      const value = reticlesEqual(current, next) ? current : next;
+      reticleRef.current = value;
+      if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: value.x, y: value.y };
+      return value;
+    });
   }
 
   function suppressNextClick(): void {
@@ -578,19 +569,12 @@ export function MapView({
       ref={mapCanvasRef}
       style={{ position: "absolute", inset: 0 }}
       data-testid="map-canvas"
-      onMouseMove={updateReticle}
       onMouseDown={onMapMouseDown}
-      onMouseLeave={() => {
-        if (!scrollLockedRef.current && !zoomOverlayRef.current) {
-          cursorHandoffRef.current = null;
-          setReticle(null);
-        }
-      }}
       onPointerMove={updateReticle}
       onPointerLeave={() => {
         if (!scrollLockedRef.current && !zoomOverlayRef.current) {
           cursorHandoffRef.current = null;
-          setReticle(null);
+          setReticleState(null);
         }
       }}
       onWheelCapture={onMapWheel}
@@ -644,6 +628,38 @@ function openRing(ring: Position[]): Position[] {
 function positionsEqual(a: Position | undefined, b: Position | undefined): boolean {
   if (!a || !b) return false;
   return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+}
+
+function cursorPointsFromEvent(
+  event: { clientX: number; clientY: number },
+  rect: DOMRect,
+  handoff: CursorHandoffState | null
+): { rawPoint: ScreenPoint; visualPoint: ScreenPoint } {
+  const rawPoint = pointFromClient(event, rect);
+  if (!handoff) return { rawPoint, visualPoint: rawPoint };
+  return {
+    rawPoint,
+    visualPoint: {
+      x: handoff.visualPoint.x + rawPoint.x - handoff.nativePoint.x,
+      y: handoff.visualPoint.y + rawPoint.y - handoff.nativePoint.y
+    }
+  };
+}
+
+function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.x === b.x &&
+    a.y === b.y &&
+    a.targetEntityId === b.targetEntityId &&
+    a.targeted === b.targeted &&
+    boxesEqual(a.target, b.target)
+  );
+}
+
+function boxesEqual(a: TargetBox, b: TargetBox): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
 function hoverSelectionTarget(

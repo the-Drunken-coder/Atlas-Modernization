@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
+import type { ConnectionHealth } from "../atlas/data-source.js";
 import { entityGeometry, entityKind, type EntityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
@@ -286,6 +287,7 @@ export function MapConsole() {
                     dispatch({ type: "clearSelection" });
                   }}
                 />
+                <ConnectionBadge health={atlas.health} />
               </div>
             </div>
           </>
@@ -405,6 +407,22 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
 
 function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
   return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
+}
+
+function ConnectionBadge({ health }: { health: ConnectionHealth }) {
+  const state = connectionBadgeState(health);
+  return (
+    <div className="connection-badge" data-state={state.state} role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
+      <span className="connection-badge__dot" aria-hidden="true" />
+      <span>{state.label}</span>
+    </div>
+  );
+}
+
+function connectionBadgeState(health: ConnectionHealth): { label: string; state: "live" | "reconnecting" | "connecting" } {
+  if (health.running && health.healthy && !health.degraded) return { label: "Live", state: "live" };
+  if (health.running) return { label: "Reconnecting", state: "reconnecting" };
+  return { label: "Connecting", state: "connecting" };
 }
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {

@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useReducer } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
 import { EntityList } from "../../features/EntityList.js";
 import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
@@ -91,5 +91,18 @@ describe("sidebar rail + panel", () => {
     // Back returns to the previous list.
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByText("Rover One")).toBeInTheDocument();
+  });
+
+  it("does not repeat preview callbacks on row pointer movement", () => {
+    const onPreview = vi.fn();
+    render(<EntityList entities={ASSETS} selectedId={undefined} emptyLabel="none" onSelect={() => {}} onPreview={onPreview} />);
+
+    const row = screen.getByRole("button", { name: /Rover One/ });
+    fireEvent.pointerEnter(row);
+    fireEvent.pointerMove(row);
+    fireEvent.pointerMove(row);
+
+    expect(onPreview).toHaveBeenCalledTimes(1);
+    expect(onPreview).toHaveBeenCalledWith(ASSETS[0]);
   });
 });
