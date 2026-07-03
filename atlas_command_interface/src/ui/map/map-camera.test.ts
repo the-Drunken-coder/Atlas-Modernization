@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ASSET_VIEW_ZOOM,
   FIT_BOUNDS_PADDING,
   FIT_DURATION_MS,
   FIT_MAX_ZOOM,
@@ -20,12 +19,12 @@ const view = (center: [number, number], zoom: number): CameraView => ({ center, 
 describe("planFocusMove", () => {
   it("flies points to the standard asset view zoom when zoomed out", () => {
     const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([0, 0], 4));
-    expect(move).toMatchObject({ kind: "fly-to", center: [70, 80], zoom: ASSET_VIEW_ZOOM });
+    expect(move).toMatchObject({ kind: "fly-to", center: [70, 80], zoom: 13 });
   });
 
   it("flies points down to the asset view zoom when zoomed in past it", () => {
     const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([70, 80], 15));
-    expect(move).toMatchObject({ kind: "fly-to", zoom: ASSET_VIEW_ZOOM });
+    expect(move).toMatchObject({ kind: "fly-to", zoom: 13 });
   });
 
   it("fits line geometry bounds with the standard padding and cap", () => {
