@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
+import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
 import { AtlasProvider, useAtlas } from "./atlas-context.js";
 
@@ -35,6 +36,12 @@ function GeometryActionProbe() {
 }
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
+const config: AppConfig = {
+  atlasBaseUrl: "/atlas",
+  protocolRevision: "rev",
+  defaultMapSourceId: "esri-world-imagery",
+  mapSources: [{ id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }]
+};
 
 function entity(alias: string, version: number): EntityResource {
   return {
@@ -80,7 +87,7 @@ describe("AtlasProvider", () => {
     };
 
     render(
-      <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
         <StatusProbe />
       </AtlasProvider>
     );
@@ -116,7 +123,7 @@ describe("AtlasProvider", () => {
     };
 
     render(
-      <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
         <StatusProbe />
       </AtlasProvider>
     );
@@ -154,7 +161,7 @@ describe("AtlasProvider", () => {
     };
 
     render(
-      <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
         <GeometryActionProbe />
       </AtlasProvider>
     );

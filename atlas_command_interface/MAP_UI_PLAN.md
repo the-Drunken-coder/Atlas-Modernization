@@ -67,14 +67,16 @@ Use:
 
 - React + TypeScript.
 - Vite for the browser app.
-- MapLibre GL JS for map rendering, with a default OpenStreetMap raster basemap
-  and optional `MAP_STYLE_URL` override.
+- MapLibre GL JS for map rendering, with same-origin map styles and tiles served
+  by the command-interface Worker.
 - The existing Atlas SDK for Atlas Core data access.
 - Core direct browser access through the Atlas SDK with `credentials: "include"`.
 - Worker route:
   - `/api/config`
+  - `/maps/styles/:sourceId.json`
+  - `/maps/tiles/:sourceId/:z/:x/:y.:ext`
 
-The Worker should not proxy Atlas Core or own browser authentication. It only serves the app and non-secret browser config.
+The Worker should not proxy Atlas Core or own browser authentication. It serves the app, non-secret browser config, and map provider requests that need server-side secret injection.
 
 Initial data load should come from Atlas Core query/list endpoints through the SDK. Live updates should use the Core feed through the SDK where practical, with refresh/recovery through normal Core queries.
 

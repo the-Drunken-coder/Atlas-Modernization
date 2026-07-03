@@ -1,36 +1,47 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
+import type { AppConfig } from "../app/config.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
+
+type MockMapViewProps = {
+  styleUrl: string;
+  editing?: unknown;
+  focusTarget?: { id: string } | null;
+  onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+  onBackgroundClick?: () => void;
+  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  previewTarget?: { id: string } | null;
+};
+
+const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
 
 // MapLibre never runs in jsdom; stub the map but keep the real source builder.
 vi.mock("../ui/map/MapView.js", async () => {
   const sources = await import("../ui/map/map-sources.js");
   return {
-    MapView: (props: {
-      editing?: unknown;
-      focusTarget?: { id: string } | null;
-      onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
-      onBackgroundClick?: () => void;
-      previewTarget?: { id: string } | null;
-    }) => (
-      <div
-        data-testid="map"
-        data-editing={props.editing ? "true" : "false"}
-        data-focus-target={props.focusTarget?.id ?? ""}
-        data-preview-target={props.previewTarget?.id ?? ""}
-        onClick={() => props.onBackgroundClick?.()}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
-        }}
-      />
-    ),
+    MapView: (props: MockMapViewProps) => {
+      mapViewMock.lastProps = props;
+      return (
+        <div
+          data-testid="map"
+          data-style-url={props.styleUrl}
+          data-editing={props.editing ? "true" : "false"}
+          data-focus-target={props.focusTarget?.id ?? ""}
+          data-preview-target={props.previewTarget?.id ?? ""}
+          onClick={() => props.onBackgroundClick?.()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
+          }}
+        />
+      );
+    },
     buildMapSources: sources.buildMapSources
   };
 });
@@ -140,9 +151,22 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
   return { fake, submissions, geometryUpdates, emit: (event: AtlasWatchEvent) => emit?.(event) };
 }
 
-function renderConsole(fake: AtlasDataSource) {
+function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
+  return {
+    atlasBaseUrl: "/atlas",
+    protocolRevision: "rev",
+    defaultMapSourceId: "maptiler-osm-dark",
+    mapSources: [
+      { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", styleUrl: "/maps/styles/maptiler-osm-dark.json" },
+      { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }
+    ],
+    ...overrides
+  };
+}
+
+function renderConsole(fake: AtlasDataSource, config: AppConfig = appConfig()) {
   return render(
-    <AtlasProvider loadConfig={async () => ({ atlasBaseUrl: "/atlas", protocolRevision: "rev" })} createDataSource={() => fake}>
+    <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
       <MapConsole />
     </AtlasProvider>
   );
@@ -253,6 +277,59 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
+  });
+
+  it("switches between configured map sources", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/maptiler-osm-dark.json");
+
+    const mapSelect = screen.getByLabelText("Map");
+    expect(Array.from(mapSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["MapTiler OSM Dark", "Esri World Imagery"]);
+
+    await user.selectOptions(mapSelect, "esri-world-imagery");
+
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+  });
+
+  it("reverts the map selector when a style switch fails", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    const mapSelect = screen.getByLabelText("Map");
+
+    await user.selectOptions(mapSelect, "esri-world-imagery");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+
+    act(() => {
+      mapViewMock.lastProps?.onStyleSwitchError?.({
+        failedStyleUrl: "/maps/styles/esri-world-imagery.json",
+        activeStyleUrl: "/maps/styles/maptiler-osm-dark.json"
+      });
+    });
+
+    await waitFor(() => expect(mapSelect).toHaveValue("maptiler-osm-dark"));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/maptiler-osm-dark.json");
+  });
+
+  it("falls back when the configured default is the only available map source", async () => {
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "usgs-topo",
+        mapSources: [{ id: "usgs-topo", label: "USGS Topo", styleUrl: "/maps/styles/usgs-topo.json" }]
+      })
+    );
+
+    await screen.findByText("Rover");
+    expect(screen.getByLabelText("Map")).toHaveValue("usgs-topo");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
   });
 
   it("clears the selected entity when the map background is clicked", async () => {

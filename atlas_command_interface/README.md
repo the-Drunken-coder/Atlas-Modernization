@@ -6,7 +6,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 
 ## What Lives Here
 
-- `worker/` - static asset hosting, `GET /api/config`, `GET /api/auth/me`, and the same-origin `/atlas/*` Core proxy.
+- `worker/` - static asset hosting, `GET /api/config`, `GET /api/auth/me`, the same-origin `/atlas/*` Core proxy, and the same-origin map style/tile gateway.
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
 - `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, command catalog parsing, and command targeting.
 - `src/ui/` - the local design system.
@@ -20,10 +20,10 @@ The browser calls the command-interface Worker on the same origin. The Worker pr
 - `AtlasClient` is resource-only: entities, tasks, objects, queries, sync, and feed.
 - `AtlasAdminClient` is admin-only: `auth.login`, `auth.logout`, `auth.me`, and managed API key administration.
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
-- The Worker owns `/api/config`, `/api/auth/me`, and the `/atlas/*` same-origin Core proxy.
+- The Worker owns `/api/config`, `/api/auth/me`, the `/atlas/*` same-origin Core proxy, and public `/maps/*` map gateway routes.
 - The Worker does not own `/auth/*`, `/admin/api-keys/*`, `/me/settings`, feed bridging, API-key injection, or command validation.
 
-`/api/config` returns only non-secret browser config: Core base URL, protocol revision, and optional MapLibre style URL.
+`/api/config` returns only non-secret browser config: Core base URL, protocol revision, the default map source ID, and available same-origin MapLibre style URLs. Public map sources are exposed through the Worker. Secret-backed providers stay staged in the source registry until the command interface has an Atlas-owned auth boundary for map routes.
 
 ## Commands
 
@@ -48,7 +48,8 @@ Command submission posts a task directly to Core without a client-supplied `task
    cp atlas_command_interface/.dev.vars.example atlas_command_interface/.dev.vars
    ```
 
-   The local default points the Worker at `http://127.0.0.1:8000`. Optional `MAP_STYLE_URL` overrides the default OpenStreetMap basemap.
+   The local default points the Worker at `http://127.0.0.1:8000`. Public map sources work without provider secrets.
+   Do not commit `.dev.vars*` files.
 
 3. Run the Worker-hosted web app:
 
@@ -59,6 +60,21 @@ Command submission posts a task directly to Core without a client-supplied `task
 Open http://127.0.0.1:8787/map and sign in with `admin` / `password`.
 
 The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
+
+## Map Sources
+
+The browser receives same-origin style URLs such as `/maps/styles/esri-world-imagery.json`. MapLibre then requests same-origin tiles through `/maps/tiles/{source}/{z}/{x}/{y}.{ext}`. Public sources are available by default. Secret-backed providers are intentionally not exposed by browser routes yet, even when Cloudflare secrets exist, because the Worker does not own the Core login session.
+
+Curated sources:
+
+- `esri-world-imagery` - public ArcGIS World Imagery.
+- `usgs-topo` - public USGS Topo.
+
+Staged provider sources:
+
+- `maptiler-osm-dark` - requires a future authenticated map route before use.
+- `maptiler-satellite` - requires a future authenticated map route before use.
+- `mapbox-satellite` - requires a future authenticated map route before use.
 
 ## Checks
 

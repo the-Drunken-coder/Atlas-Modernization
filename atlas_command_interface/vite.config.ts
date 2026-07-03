@@ -12,7 +12,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: "http://localhost:8787" }
+      "/api": { target: "http://localhost:8787" },
+      "/maps": { target: "http://localhost:8787" }
     }
   }
 });

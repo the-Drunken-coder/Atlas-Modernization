@@ -7,7 +7,12 @@ import { APIKeysPanel } from "./APIKeysPanel.js";
 
 const atlasValue: AtlasContextValue = {
 	status: "ready",
-	config: { atlasBaseUrl: "https://core.test", protocolRevision: "rev" },
+	config: {
+		atlasBaseUrl: "https://core.test",
+		protocolRevision: "rev",
+		defaultMapSourceId: "esri-world-imagery",
+		mapSources: [{ id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }]
+	},
 	snapshot: emptySnapshot(),
 	health: { running: true, healthy: true, degraded: false },
 	submitCommand: async () => {

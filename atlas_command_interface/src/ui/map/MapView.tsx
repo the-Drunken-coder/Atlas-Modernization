@@ -15,7 +15,6 @@ import {
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { MapReticle } from "./MapReticle.js";
 import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
-import { defaultMapStyle } from "./map-style.js";
 import {
   RETICLE_TARGET_SIZE,
   boxFromDrag,
@@ -63,7 +62,7 @@ export type MapEditing = {
 
 type MapViewProps = {
   sources: MapSources;
-  styleUrl?: string;
+  styleUrl: string;
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -72,6 +71,7 @@ type MapViewProps = {
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
+  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
 };
 
 type HoverTarget = ReticleTarget & { entityId: string };
@@ -86,16 +86,23 @@ export function MapView({
   focusTarget,
   onSelectEntity,
   onMapContextMenu,
-  onBackgroundClick
+  onBackgroundClick,
+  onStyleSwitchError
 }: MapViewProps) {
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
+  const sourcesRef = useRef(sources);
+  const editingRef = useRef(editing);
+  const currentStyleUrlRef = useRef<string | undefined>(undefined);
+  const pendingStyleUrlRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
+  const eventsRegisteredRef = useRef(false);
   const fitWorldOnceRef = useRef(initialCenter !== undefined);
   const editMarkersRef = useRef<Marker[]>([]);
   const symbolMarkersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
+  const styleSwitchErrorRef = useRef(onStyleSwitchError);
   const scrollLockedRef = useRef(false);
   const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
   const reticleRef = useRef<ReticleState | null>(null);
@@ -114,6 +121,9 @@ export function MapView({
   const [scrollLocked, setScrollLocked] = useState(false);
   const [zoomOverlay, setZoomOverlay] = useState<ZoomOverlayState | null>(null);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
+  styleSwitchErrorRef.current = onStyleSwitchError;
+  sourcesRef.current = sources;
+  editingRef.current = editing;
   const zoomDragging = zoomOverlay !== null;
 
   useEffect(() => {
@@ -133,7 +143,7 @@ export function MapView({
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl ?? defaultMapStyle(),
+        style: styleUrl,
         center: initialCenter ?? [0, 0],
         zoom: initialCenter ? 11 : 0,
         renderWorldCopies: false,
@@ -154,6 +164,7 @@ export function MapView({
     }
 
     mapRef.current = map;
+    currentStyleUrlRef.current = styleUrl;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -162,22 +173,25 @@ export function MapView({
     requestAnimationFrame(() => map.resize());
 
     const initializeLayers = () => {
-      if (readyRef.current) return;
       registerSourcesAndLayers(map);
       readyRef.current = true;
       setMapReady(true);
-      pushSources(map, sources);
+      pushSources(map, sourcesRef.current);
+      pushEditingOverlay(map, editingRef.current);
       fitWorldOnce(map, fitWorldOnceRef);
 
-      map.on("contextmenu", (event: MapMouseEvent) => {
-        event.preventDefault();
-        handlersRef.current.onMapContextMenu({
-          lng: event.lngLat.lng,
-          lat: event.lngLat.lat,
-          x: event.originalEvent.clientX,
-          y: event.originalEvent.clientY
+      if (!eventsRegisteredRef.current) {
+        eventsRegisteredRef.current = true;
+        map.on("contextmenu", (event: MapMouseEvent) => {
+          event.preventDefault();
+          handlersRef.current.onMapContextMenu({
+            lng: event.lngLat.lng,
+            lat: event.lngLat.lat,
+            x: event.originalEvent.clientX,
+            y: event.originalEvent.clientY
+          });
         });
-      });
+      }
     };
 
     map.on("style.load", initializeLayers);
@@ -187,10 +201,21 @@ export function MapView({
       // Tile/style errors should not blank the operator picture. Keep overlays
       // alive and surface the details in devtools.
       console.warn("Map render warning", event.error);
+      const failedStyleUrl = pendingStyleUrlRef.current;
+      if (failedStyleUrl) {
+        pendingStyleUrlRef.current = undefined;
+        if (readyRef.current && map.isStyleLoaded()) {
+          registerSourcesAndLayers(map);
+          pushSources(map, sourcesRef.current);
+          pushEditingOverlay(map, editingRef.current);
+        }
+        styleSwitchErrorRef.current?.({ failedStyleUrl, activeStyleUrl: currentStyleUrlRef.current ?? failedStyleUrl });
+      }
     });
 
     return () => {
       readyRef.current = false;
+      eventsRegisteredRef.current = false;
       setMapReady(false);
       resizeObserver.disconnect();
       clearMarkers(editMarkersRef.current);
@@ -212,6 +237,48 @@ export function MapView({
     // The map is created once; props are synced via the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapError]);
+
+  // Sync basemap style while keeping the map camera and re-adding Atlas overlays.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || currentStyleUrlRef.current === styleUrl) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    pendingStyleUrlRef.current = styleUrl;
+
+    const handleFailure = (error: unknown) => {
+      if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
+      pendingStyleUrlRef.current = undefined;
+      console.warn("Map style switch failed", error);
+      if (readyRef.current && map.isStyleLoaded()) {
+        registerSourcesAndLayers(map);
+        pushSources(map, sourcesRef.current);
+        pushEditingOverlay(map, editingRef.current);
+      }
+      styleSwitchErrorRef.current?.({ failedStyleUrl: styleUrl, activeStyleUrl: currentStyleUrlRef.current ?? styleUrl });
+    };
+
+    void loadStyle(styleUrl, controller.signal)
+      .then((style) => {
+        if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
+        map.once("style.load", () => {
+          if (pendingStyleUrlRef.current !== styleUrl) return;
+          currentStyleUrlRef.current = styleUrl;
+          pendingStyleUrlRef.current = undefined;
+        });
+        map.setStyle(style);
+      })
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        handleFailure(error);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [styleUrl]);
 
   // Sync entity sources.
   useEffect(() => {
@@ -828,51 +895,72 @@ function pushSources(map: MlMap, sources: MapSources): void {
   (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures as never);
 }
 
+function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined): void {
+  const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
+  overlay?.setData(
+    editing
+      ? ({ type: "FeatureCollection", features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }] } as never)
+      : (emptyFeatureCollection() as never)
+  );
+}
+
 function registerSourcesAndLayers(map: MlMap): void {
   for (const id of ["geofeatures", "editing"]) {
-    map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
+    if (!map.getSource(id)) {
+      map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
+    }
   }
 
-  map.addLayer({
-    id: "geofeatures-fill",
-    type: "fill",
-    source: "geofeatures",
-    filter: ["==", ["geometry-type"], "Polygon"],
-    paint: { "fill-color": COLORS.geofeatureFill, "fill-outline-color": COLORS.geofeature }
-  });
-  map.addLayer({
-    id: "geofeatures-line",
-    type: "line",
-    source: "geofeatures",
-    filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
-    paint: {
-      "line-color": COLORS.geofeature,
-      "line-width": ["case", ["boolean", ["get", "selected"], false], 3.5, 2]
-    }
-  });
-  map.addLayer({
-    id: "geofeatures-point",
-    type: "circle",
-    source: "geofeatures",
-    filter: ["==", ["geometry-type"], "Point"],
-    paint: circlePaint(COLORS.geofeature)
-  });
+  if (!map.getLayer("geofeatures-fill")) {
+    map.addLayer({
+      id: "geofeatures-fill",
+      type: "fill",
+      source: "geofeatures",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": COLORS.geofeatureFill, "fill-outline-color": COLORS.geofeature }
+    });
+  }
+  if (!map.getLayer("geofeatures-line")) {
+    map.addLayer({
+      id: "geofeatures-line",
+      type: "line",
+      source: "geofeatures",
+      filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
+      paint: {
+        "line-color": COLORS.geofeature,
+        "line-width": ["case", ["boolean", ["get", "selected"], false], 3.5, 2]
+      }
+    });
+  }
+  if (!map.getLayer("geofeatures-point")) {
+    map.addLayer({
+      id: "geofeatures-point",
+      type: "circle",
+      source: "geofeatures",
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: circlePaint(COLORS.geofeature)
+    });
+  }
 
   // Editing overlay drawn above everything.
-  map.addLayer({
-    id: "editing-fill",
-    type: "fill",
-    source: "editing",
-    filter: ["==", ["geometry-type"], "Polygon"],
-    paint: { "fill-color": "rgba(63,182,255,0.18)" }
-  });
-  map.addLayer({
-    id: "editing-line",
-    type: "line",
-    source: "editing",
-    filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
-    paint: { "line-color": COLORS.selected, "line-width": 2, "line-dasharray": [2, 1.5] }
-  });
+  if (!map.getLayer("editing-fill")) {
+    map.addLayer({
+      id: "editing-fill",
+      type: "fill",
+      source: "editing",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": "rgba(63,182,255,0.18)" }
+    });
+  }
+  if (!map.getLayer("editing-line")) {
+    map.addLayer({
+      id: "editing-line",
+      type: "line",
+      source: "editing",
+      filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
+      paint: { "line-color": COLORS.selected, "line-width": 2, "line-dasharray": [2, 1.5] }
+    });
+  }
 }
 
 function circlePaint(color: string): maplibregl.CircleLayerSpecification["paint"] {
@@ -940,6 +1028,18 @@ function createSymbolMarkerElement(feature: MapFeature & { geometry: { type: "Po
 
 function clearMarkers(markers: Marker[]): void {
   for (const marker of markers) marker.remove();
+}
+
+async function loadStyle(styleUrl: string, signal: AbortSignal): Promise<maplibregl.StyleSpecification> {
+  const response = await fetch(styleUrl, { headers: { Accept: "application/json" }, signal });
+  if (!response.ok) {
+    throw new Error(`Map style request failed (${response.status})`);
+  }
+  return (await response.json()) as maplibregl.StyleSpecification;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function webglAvailable(): boolean {

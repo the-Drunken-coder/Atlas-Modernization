@@ -7,6 +7,7 @@ import type { MapSources } from "./map-sources.js";
 
 type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
+type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
 
 const maplibreMock = vi.hoisted(() => {
@@ -14,23 +15,40 @@ const maplibreMock = vi.hoisted(() => {
     static instances: FakeMap[] = [];
 
     readonly options: Record<string, unknown>;
-    readonly listeners = new Map<string, Listener[]>();
+    readonly listeners = new Map<string, ListenerEntry[]>();
+    readonly sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
+    readonly layers = new Map<string, unknown>();
     readonly easeTo = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly resize = vi.fn();
     readonly remove = vi.fn();
     readonly addControl = vi.fn();
-    readonly addSource = vi.fn();
-    readonly addLayer = vi.fn();
+    readonly addSource = vi.fn((id: string) => {
+      this.sources.set(id, { setData: vi.fn() });
+    });
+    readonly addLayer = vi.fn((layer: { id: string }) => {
+      this.layers.set(layer.id, layer);
+    });
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => 4);
-    readonly getSource = vi.fn(() => ({ setData: vi.fn() }));
+    readonly getLayer = vi.fn((id: string) => this.layers.get(id));
+    readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
+    readonly setStyle = vi.fn((style: unknown) => {
+      this.style = style;
+      this.loaded = false;
+      this.sources.clear();
+      this.layers.clear();
+      return this;
+    });
+    loaded = true;
+    style: unknown;
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
+      this.style = options.style;
       FakeMap.instances.push(this);
     }
 
@@ -39,24 +57,35 @@ const maplibreMock = vi.hoisted(() => {
     }
 
     isStyleLoaded(): boolean {
-      return true;
+      return this.loaded;
     }
 
     on(type: string, listener: Listener): this {
-      this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      this.listeners.set(type, [...(this.listeners.get(type) ?? []), { listener, once: false }]);
+      return this;
+    }
+
+    once(type: string, listener: Listener): this {
+      this.listeners.set(type, [...(this.listeners.get(type) ?? []), { listener, once: true }]);
       return this;
     }
 
     off(type: string, listener: Listener): this {
       this.listeners.set(
         type,
-        (this.listeners.get(type) ?? []).filter((current) => current !== listener)
+        (this.listeners.get(type) ?? []).filter((entry) => entry.listener !== listener)
       );
       return this;
     }
 
     fire(type: string, event?: unknown): void {
-      for (const listener of this.listeners.get(type) ?? []) listener(event);
+      if (type === "style.load") this.loaded = true;
+      const entries = [...(this.listeners.get(type) ?? [])];
+      this.listeners.set(
+        type,
+        (this.listeners.get(type) ?? []).filter((entry) => !entry.once)
+      );
+      for (const entry of entries) entry.listener(event);
     }
   }
 
@@ -127,6 +156,57 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("MapView style switching", () => {
+  it("creates symbol markers after the initial style load", async () => {
+    const { canvas, map } = renderMapView({ sources: markerSources() });
+
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    expect(map.sources.has("geofeatures")).toBe(true);
+  });
+
+  it("keeps existing symbol markers when a style prefetch fails", async () => {
+    const onStyleSwitchError = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 503 })));
+    const { canvas, map, rerenderMap } = renderMapView({
+      sources: markerSources(),
+      styleUrl: "/maps/styles/a.json",
+      onStyleSwitchError
+    });
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+
+    rerenderMap({ styleUrl: "/maps/styles/b.json" });
+
+    await waitFor(() =>
+      expect(onStyleSwitchError).toHaveBeenCalledWith({
+        failedStyleUrl: "/maps/styles/b.json",
+        activeStyleUrl: "/maps/styles/a.json"
+      })
+    );
+    expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1);
+    expect(map.setStyle).not.toHaveBeenCalled();
+  });
+
+  it("sets a prefetched style and re-registers overlays after style load", async () => {
+    const nextStyle = { version: 8, sources: {}, layers: [] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(nextStyle), { status: 200, headers: { "Content-Type": "application/json" } }))
+    );
+    const { canvas, map, rerenderMap } = renderMapView({ sources: markerSources(), styleUrl: "/maps/styles/a.json" });
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+
+    rerenderMap({ styleUrl: "/maps/styles/b.json" });
+
+    await waitFor(() => expect(map.setStyle).toHaveBeenCalledWith(nextStyle));
+    expect(map.sources.has("geofeatures")).toBe(false);
+
+    act(() => map.fire("style.load"));
+
+    await waitFor(() => expect(map.sources.has("geofeatures")).toBe(true));
+    expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1);
+  });
 });
 
 describe("MapView hover target box", () => {
@@ -636,24 +716,27 @@ describe("MapView external reticle targets", () => {
 
 type RenderMapViewProps = {
   focusTarget?: MapReticleTarget | null;
+  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
   previewTarget?: MapReticleTarget | null;
   sources?: MapSources;
+  styleUrl?: string;
 };
 
 function renderMapView(props: RenderMapViewProps = {}) {
   const onBackgroundClick = vi.fn();
   const onMapContextMenu = vi.fn();
   const onSelectEntity = vi.fn();
-  const renderProps = { sources: buildMapSources([], undefined), ...props };
+  const renderProps = { sources: buildMapSources([], undefined), styleUrl: "test-style", ...props };
   const result = render(
     <MapView
       sources={renderProps.sources}
-      styleUrl="test-style"
+      styleUrl={renderProps.styleUrl}
       focusTarget={renderProps.focusTarget}
       previewTarget={renderProps.previewTarget}
       onBackgroundClick={onBackgroundClick}
       onMapContextMenu={onMapContextMenu}
       onSelectEntity={onSelectEntity}
+      onStyleSwitchError={renderProps.onStyleSwitchError}
     />
   );
 
@@ -664,12 +747,13 @@ function renderMapView(props: RenderMapViewProps = {}) {
     result.rerender(
       <MapView
         sources={renderProps.sources}
-        styleUrl="test-style"
+        styleUrl={renderProps.styleUrl}
         focusTarget={renderProps.focusTarget}
         previewTarget={renderProps.previewTarget}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}
+        onStyleSwitchError={renderProps.onStyleSwitchError}
       />
     );
   };
@@ -692,6 +776,19 @@ function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMR
 
 function firePointerMove(target: Element, init: MouseEventInit): void {
   fireEvent(target, new MouseEvent("pointermove", { bubbles: true, cancelable: true, ...init }));
+}
+
+function markerSources(): MapSources {
+  return buildMapSources(
+    [
+      entity({
+        entity_id: "asset-1",
+        alias: "Rover",
+        components: { telemetry: { latitude: 40, longitude: -74 } }
+      })
+    ],
+    undefined
+  );
 }
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };

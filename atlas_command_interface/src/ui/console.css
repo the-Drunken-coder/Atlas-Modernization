@@ -791,6 +791,23 @@
   box-shadow: 0 0 8px color-mix(in srgb, var(--connection-color) 72%, transparent);
 }
 
+.map-overlay-tr {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 30;
+  min-width: 190px;
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(4px);
+}
+
+.map-source-control .field {
+  margin-bottom: 0;
+}
+
 @supports not (width: 1cqw) {
   .map-stage {
     width: 100%;

@@ -3,7 +3,12 @@ import { createSdkDataSource } from "./data-source.js";
 import type { CommandDefinition } from "./command-model.js";
 import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
 
-const config = { atlasBaseUrl: "https://core.test", protocolRevision: "rev" };
+const config = {
+  atlasBaseUrl: "https://core.test",
+  protocolRevision: "rev",
+  defaultMapSourceId: "esri-world-imagery",
+  mapSources: [{ id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }]
+};
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 const holdPositionCommand: CommandDefinition = {
   id: "hold_position",
