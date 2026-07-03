@@ -22,6 +22,12 @@ const maplibreMock = vi.hoisted(() => {
     readonly easeTo = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
+    readonly jumpTo = vi.fn((options: { center?: [number, number] | { lng: number; lat: number }; zoom?: number }) => {
+      if (options.center) this.center = Array.isArray(options.center) ? { lng: options.center[0], lat: options.center[1] } : options.center;
+      if (options.zoom !== undefined) this.zoom = options.zoom;
+      return this;
+    });
+    readonly stop = vi.fn();
     readonly zoomTo = vi.fn();
     readonly resize = vi.fn();
     readonly remove = vi.fn();
@@ -34,10 +40,15 @@ const maplibreMock = vi.hoisted(() => {
     });
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
-    readonly getZoom = vi.fn(() => 4);
-    readonly getCenter = vi.fn(() => ({ lng: 0, lat: 0 }));
+    readonly getZoom = vi.fn(() => this.zoom);
+    readonly getCenter = vi.fn(() => this.center);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
+    readonly cameraForBounds = vi.fn((bounds: [[number, number], [number, number]], options?: { maxZoom?: number }) => ({
+      center: { lng: (bounds[0][0] + bounds[1][0]) / 2, lat: (bounds[0][1] + bounds[1][1]) / 2 },
+      zoom: options?.maxZoom ?? 16,
+      bearing: 0
+    }));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
     readonly unproject = vi.fn((point: [number, number] | { x: number; y: number }) =>
       Array.isArray(point) ? { lng: point[0], lat: point[1] } : { lng: point.x, lat: point.y }
@@ -57,6 +68,8 @@ const maplibreMock = vi.hoisted(() => {
     });
     loaded = true;
     style: unknown;
+    center = { lng: 0, lat: 0 };
+    zoom = 4;
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -150,6 +163,7 @@ vi.mock("maplibre-gl", () => ({
 
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
+  let animationTime = 0;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
     "ResizeObserver",
@@ -160,8 +174,9 @@ beforeEach(() => {
     }
   );
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    callback(0);
-    return 1;
+    animationTime += 100;
+    callback(animationTime);
+    return animationTime;
   });
 });
 
@@ -169,6 +184,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+function lastJumpTo(map: (typeof maplibreMock.FakeMap)["instances"][number]): { center?: unknown; zoom?: number } | undefined {
+  return map.jumpTo.mock.calls[map.jumpTo.mock.calls.length - 1]?.[0];
+}
+
+function cameraCallMatches(options: { center?: unknown; zoom?: number }, expectedCenter: [number, number], expectedZoom: number): boolean {
+  const center = centerFromCameraCall(options.center);
+  return Boolean(center && Math.abs(center[0] - expectedCenter[0]) < 0.001 && Math.abs(center[1] - expectedCenter[1]) < 0.001 && Math.abs((options.zoom ?? Number.NaN) - expectedZoom) < 0.001);
+}
+
+function centerFromCameraCall(center: unknown): [number, number] | null {
+  if (Array.isArray(center) && typeof center[0] === "number" && typeof center[1] === "number") return [center[0], center[1]];
+  if (center && typeof center === "object" && "lng" in center && "lat" in center) {
+    const { lng, lat } = center as { lng: unknown; lat: unknown };
+    if (typeof lng === "number" && typeof lat === "number") return [lng, lat];
+  }
+  return null;
+}
 
 describe("MapView style switching", () => {
   it("creates symbol markers after the initial style load", async () => {
@@ -613,17 +646,19 @@ describe("MapView external reticle targets", () => {
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
-  it("focuses selected point targets with easeTo and keeps a fallback reticle", async () => {
+  it("focuses selected point targets with explicit camera frames and keeps a fallback reticle", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
     map.fitBounds.mockClear();
+    map.jumpTo.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], duration: 1400 })));
+    await waitFor(() => expect(map.jumpTo).toHaveBeenCalled());
+    expect(map.easeTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
-    act(() => map.fire("moveend"));
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [70, 80], duration: 2200, zoom: 16 })));
+    expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [70, 80], 4))).toBe(true);
+    expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [70, 80], zoom: 16 }));
     const overlay = document.querySelector<HTMLElement>(".map-reticle");
     expect(overlay).toHaveClass("map-reticle--targeted");
     expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
@@ -632,31 +667,32 @@ describe("MapView external reticle targets", () => {
 
   it("refocuses point targets when coordinates change under the same id", async () => {
     const { map, rerenderMap } = renderMapView();
-    map.easeTo.mockClear();
+    map.jumpTo.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], duration: 1400 })));
+    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [70, 80], zoom: 16 })));
 
+    map.jumpTo.mockClear();
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [90, 110] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [90, 110], duration: 1400 })));
-    act(() => map.fire("moveend"));
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [90, 110], duration: 2200, zoom: 16 })));
+    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [90, 110], zoom: 16 })));
   });
 
   it("zooms out before moving to a selected target from a tight view elsewhere", async () => {
     const { map, rerenderMap } = renderMapView();
-    map.getZoom.mockReturnValue(16);
-    map.getCenter.mockReturnValue({ lng: -120, lat: 35 });
-    map.easeTo.mockClear();
+    map.zoom = 16;
+    map.center = { lng: -120, lat: 35 };
+    map.jumpTo.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [-74, 40] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenNthCalledWith(1, expect.objectContaining({ duration: 700, zoom: 7 })));
-    act(() => map.fire("moveend"));
-    await waitFor(() => expect(map.easeTo).toHaveBeenNthCalledWith(2, expect.objectContaining({ center: [-74, 40], duration: 1400 })));
-    act(() => map.fire("moveend"));
-    await waitFor(() => expect(map.easeTo).toHaveBeenNthCalledWith(3, expect.objectContaining({ center: [-74, 40], duration: 2200, zoom: 16 })));
+    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [-74, 40], zoom: 16 })));
+    expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [-120, 35], 7))).toBe(true);
+    expect(map.jumpTo.mock.calls.some(([options]) => {
+      const center = (options as { center?: [number, number] }).center;
+      return Array.isArray(center) && center[0] > -120 && center[0] < -74 && center[1] > 35 && center[1] < 40;
+    })).toBe(true);
+    expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [-74, 40], 7))).toBe(true);
   });
 
   it("retries entity focus when a selected entity becomes locatable", async () => {
@@ -665,7 +701,7 @@ describe("MapView external reticle targets", () => {
       focusTarget,
       sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
     });
-    map.easeTo.mockClear();
+    map.jumpTo.mockClear();
 
     rerenderMap({
       focusTarget,
@@ -675,15 +711,14 @@ describe("MapView external reticle targets", () => {
       )
     });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 40], duration: 1400 })));
-    act(() => map.fire("moveend"));
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-74, 40], duration: 2200, zoom: 16 })));
+    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [-74, 40], zoom: 16 })));
   });
 
   it("focuses selected geometry targets with fitBounds", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
     map.fitBounds.mockClear();
+    map.jumpTo.mockClear();
 
     rerenderMap({
       focusTarget: {
@@ -699,10 +734,10 @@ describe("MapView external reticle targets", () => {
       }
     });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 41], duration: 1400 })));
+    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [-74, 41], zoom: 16 })));
+    expect(map.cameraForBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { maxZoom: 16, padding: 48 });
+    expect(map.easeTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
-    act(() => map.fire("moveend"));
-    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 2200, maxZoom: 16, padding: 48 }));
   });
 
   it("previews generic point targets for future search results", async () => {

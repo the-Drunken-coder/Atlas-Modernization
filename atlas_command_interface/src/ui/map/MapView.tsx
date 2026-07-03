@@ -50,7 +50,6 @@ const FOCUS_ZOOM_IN_DURATION_MS = 2200;
 const FOCUS_BOUNDS_PADDING = 48;
 const FOCUS_OVERVIEW_ZOOM = 7;
 const FOCUS_MAX_ZOOM = 16;
-const FOCUS_MIN_POINT_ZOOM = 16;
 const FOCUS_OVERVIEW_THRESHOLD_ZOOM = 8;
 const FOCUS_CENTER_AWAY_DEGREES = 0.01;
 const WHEEL_ZOOM_RATE = 1 / 450;
@@ -84,13 +83,8 @@ type MapViewProps = {
 
 type HoverTarget = ReticleTarget & { entityId: string };
 type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
-type FocusEaseStep = { type: "ease"; options: NonNullable<Parameters<MlMap["easeTo"]>[0]> };
-type FocusFitBoundsStep = {
-  type: "fitBounds";
-  bounds: [[number, number], [number, number]];
-  options: NonNullable<Parameters<MlMap["fitBounds"]>[1]>;
-};
-type FocusCameraStep = FocusEaseStep | FocusFitBoundsStep;
+type FocusCamera = { center: [number, number]; zoom: number };
+type FocusCameraSegment = { from: FocusCamera; to: FocusCamera; duration: number };
 
 export function MapView({
   sources,
@@ -147,6 +141,10 @@ export function MapView({
   useEffect(() => {
     reticleRef.current = reticle;
   }, [reticle]);
+
+  useEffect(() => () => {
+    focusAnimationIdRef.current += 1;
+  }, []);
 
   useEffect(() => {
     const mapCanvas = mapCanvasRef.current;
@@ -921,72 +919,111 @@ function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null 
 function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget, isCurrent: () => boolean): boolean {
   const geometry = geometryForFocusTarget(sources, target);
   if (!geometry) return false;
-  if (geometry.type === "Point") {
-    focusPointGeometry(map, [geometry.coordinates[0], geometry.coordinates[1]], isCurrent);
-    return true;
-  }
-  const bounds = boundsForGeometry(geometry);
-  if (!bounds) return false;
-  focusBoundedGeometry(map, bounds, isCurrent);
+  const targetCamera = focusCameraForGeometry(map, geometry);
+  if (!targetCamera) return false;
+  animateFocusCamera(map, targetCamera, isCurrent);
   return true;
 }
 
-function focusPointGeometry(map: MlMap, center: [number, number], isCurrent: () => boolean): void {
-  const currentZoom = map.getZoom();
-  runFocusCameraSteps(
-    map,
-    [
-      ...overviewStepsIfNeeded(map, center, currentZoom),
-      { type: "ease", options: { center, duration: FOCUS_PAN_DURATION_MS, easing: linearFocusEasing } },
-      {
-        type: "ease",
-        options: { center, duration: FOCUS_ZOOM_IN_DURATION_MS, easing: linearFocusEasing, zoom: Math.max(currentZoom, FOCUS_MIN_POINT_ZOOM) }
-      }
-    ],
-    isCurrent
-  );
+function focusCameraForGeometry(map: MlMap, geometry: UiRawGeometry): FocusCamera | null {
+  if (geometry.type === "Point") return { center: [geometry.coordinates[0], geometry.coordinates[1]], zoom: FOCUS_MAX_ZOOM };
+
+  const bounds = boundsForGeometry(geometry);
+  if (!bounds) return null;
+  const camera = map.cameraForBounds(bounds, { maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
+  return {
+    center: lngLatLikeToCenter(camera?.center) ?? centerForBounds(bounds),
+    zoom: camera?.zoom ?? FOCUS_MAX_ZOOM
+  };
 }
 
-function focusBoundedGeometry(map: MlMap, bounds: [[number, number], [number, number]], isCurrent: () => boolean): void {
-  const center = centerForBounds(bounds);
-  runFocusCameraSteps(
-    map,
-    [
-      ...overviewStepsIfNeeded(map, center, map.getZoom()),
-      { type: "ease", options: { center, duration: FOCUS_PAN_DURATION_MS, easing: linearFocusEasing } },
-      { type: "fitBounds", bounds, options: { duration: FOCUS_ZOOM_IN_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING } }
-    ],
-    isCurrent
-  );
+function animateFocusCamera(map: MlMap, target: FocusCamera, isCurrent: () => boolean): void {
+  map.stop();
+  runFocusCameraSegments(map, focusCameraSegments(currentFocusCamera(map), target), isCurrent);
 }
 
-function overviewStepsIfNeeded(map: MlMap, center: [number, number], currentZoom: number): FocusCameraStep[] {
-  if (currentZoom < FOCUS_OVERVIEW_THRESHOLD_ZOOM || !targetIsAwayFromCenter(map, center)) return [];
-  return [{ type: "ease", options: { duration: FOCUS_ZOOM_OUT_DURATION_MS, easing: linearFocusEasing, zoom: FOCUS_OVERVIEW_ZOOM } }];
-}
+function focusCameraSegments(current: FocusCamera, target: FocusCamera): FocusCameraSegment[] {
+  const segments: FocusCameraSegment[] = [];
+  let from = current;
 
-function runFocusCameraSteps(map: MlMap, steps: FocusCameraStep[], isCurrent: () => boolean): void {
-  const [step, ...nextSteps] = steps;
-  if (!step || !isCurrent()) return;
-  if (step.type === "ease") {
-    map.easeTo(step.options);
-  } else {
-    map.fitBounds(step.bounds, step.options);
+  if (from.zoom > FOCUS_OVERVIEW_THRESHOLD_ZOOM && targetIsAwayFromCamera(from, target.center)) {
+    const overview = { ...from, zoom: FOCUS_OVERVIEW_ZOOM };
+    pushFocusSegment(segments, from, overview, FOCUS_ZOOM_OUT_DURATION_MS);
+    from = overview;
   }
-  if (nextSteps.length > 0) {
-    map.once("moveend", () => runFocusCameraSteps(map, nextSteps, isCurrent));
-  }
+
+  const panned = { ...from, center: target.center };
+  pushFocusSegment(segments, from, panned, FOCUS_PAN_DURATION_MS);
+  pushFocusSegment(segments, panned, target, FOCUS_ZOOM_IN_DURATION_MS);
+  return segments;
 }
 
-function linearFocusEasing(t: number): number {
-  return t;
+function pushFocusSegment(segments: FocusCameraSegment[], from: FocusCamera, to: FocusCamera, duration: number): void {
+  if (focusCamerasMatch(from, to)) return;
+  segments.push({ from, to, duration });
 }
 
-function targetIsAwayFromCenter(map: MlMap, target: [number, number]): boolean {
+function runFocusCameraSegments(map: MlMap, segments: FocusCameraSegment[], isCurrent: () => boolean, index = 0): void {
+  const segment = segments[index];
+  if (!segment || !isCurrent()) return;
+
+  let startedAt: number | undefined;
+  const step = (timestamp: number) => {
+    if (!isCurrent()) return;
+    startedAt ??= timestamp;
+    const progress = clamp01((timestamp - startedAt) / segment.duration);
+    map.jumpTo(interpolatedFocusCamera(segment, progress));
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    } else {
+      runFocusCameraSegments(map, segments, isCurrent, index + 1);
+    }
+  };
+  requestAnimationFrame(step);
+}
+
+function interpolatedFocusCamera(segment: FocusCameraSegment, progress: number): FocusCamera {
+  const lngDelta = shortestLngDelta(segment.from.center[0], segment.to.center[0]);
+  return {
+    center: [segment.from.center[0] + lngDelta * progress, lerp(segment.from.center[1], segment.to.center[1], progress)],
+    zoom: lerp(segment.from.zoom, segment.to.zoom, progress)
+  };
+}
+
+function currentFocusCamera(map: MlMap): FocusCamera {
   const center = map.getCenter();
-  const lngDelta = Math.abs((((center.lng - target[0]) % 360) + 540) % 360 - 180);
-  const latDelta = Math.abs(center.lat - target[1]);
+  return { center: [center.lng, center.lat], zoom: map.getZoom() };
+}
+
+function targetIsAwayFromCamera(camera: FocusCamera, target: [number, number]): boolean {
+  const lngDelta = Math.abs(shortestLngDelta(camera.center[0], target[0]));
+  const latDelta = Math.abs(camera.center[1] - target[1]);
   return lngDelta > FOCUS_CENTER_AWAY_DEGREES || latDelta > FOCUS_CENTER_AWAY_DEGREES;
+}
+
+function focusCamerasMatch(a: FocusCamera, b: FocusCamera): boolean {
+  return !targetIsAwayFromCamera(a, b.center) && Math.abs(a.zoom - b.zoom) < 0.001;
+}
+
+function lngLatLikeToCenter(center: unknown): [number, number] | null {
+  if (Array.isArray(center) && typeof center[0] === "number" && typeof center[1] === "number") return [center[0], center[1]];
+  if (center && typeof center === "object" && "lng" in center && "lat" in center) {
+    const { lng, lat } = center as { lng: unknown; lat: unknown };
+    if (typeof lng === "number" && typeof lat === "number") return [lng, lat];
+  }
+  return null;
+}
+
+function shortestLngDelta(from: number, to: number): number {
+  return (((to - from) % 360) + 540) % 360 - 180;
+}
+
+function lerp(from: number, to: number, progress: number): number {
+  return from + (to - from) * progress;
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 function centerForBounds(bounds: [[number, number], [number, number]]): [number, number] {
