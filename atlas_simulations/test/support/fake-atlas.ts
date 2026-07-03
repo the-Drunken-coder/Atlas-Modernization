@@ -75,7 +75,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
           ...current,
           ...("entity_type" in patch && patch.entity_type !== undefined ? { entity_type: patch.entity_type } : {}),
           ...("subtype" in patch ? { subtype: patch.subtype ?? null } : {}),
-          ...("alias" in patch ? { alias: patch.alias ?? null } : {}),
+          ...("alias" in patch ? { alias: normalizeAlias(patch.alias) } : {}),
           ...(patch.components ? { components: { ...current.components, ...patch.components } } : {}),
           ...("extra" in patch ? { extra: patch.extra } : {}),
           metadata: metadata(commitVersion(state, clientState), current.metadata.created_at)
@@ -186,7 +186,7 @@ function entityFromCreate(request: EntityCreateRequest, version: number): Entity
   return {
     entity_id: request.entity_id,
     entity_type: request.entity_type,
-    alias: request.alias ?? null,
+    alias: normalizeAlias(request.alias),
     subtype: request.subtype ?? null,
     components: request.components ?? {},
     ...("extra" in request ? { extra: request.extra } : {}),
@@ -265,15 +265,21 @@ function assertCanCreateEntity(state: FakeCoreState, id: string, alias: string |
 }
 
 function assertCanUseEntityAlias(state: FakeCoreState, alias: string | null, ownerId: string): void {
-  const normalized = alias?.trim();
+  const normalized = normalizeAlias(alias);
   if (!normalized) return;
   for (const [id, history] of state.entities) {
     if (id === ownerId) continue;
     const current = history.at(-1);
-    if (current?.alias === normalized && !isDeletedAt(state, "entity", id, state.version, current.metadata.version)) {
+    if (!current || isDeletedAt(state, "entity", id, state.version, current.metadata.version)) continue;
+    if (normalizeAlias(current.alias) === normalized) {
       throw conflict("entity alias", normalized);
     }
   }
+}
+
+function normalizeAlias(alias: string | null | undefined): string | null {
+  const normalized = alias?.trim();
+  return normalized ? normalized : null;
 }
 
 function visibleValue<T extends { metadata: { version: number } }>(

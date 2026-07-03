@@ -572,10 +572,14 @@ describe("RunStore", () => {
     const core = createFakeAtlasCore();
     const client = core.factory();
 
-    await client.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: "Shared alias" });
+    await client.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: " Shared alias " });
+    expect((await client.entities.get("asset-1")).alias).toBe("Shared alias");
     await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })).rejects.toMatchObject({ status: 409 });
+    await client.entities.update("asset-1", { alias: " Updated alias " });
+    expect((await client.entities.get("asset-1")).alias).toBe("Updated alias");
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).rejects.toMatchObject({ status: 409 });
     await client.entities.delete("asset-1");
-    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })).resolves.toMatchObject({ entity_id: "asset-2" });
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).resolves.toMatchObject({ entity_id: "asset-2" });
   });
 
   it("evicts cleaned runs before refusing new runs at capacity", async () => {

@@ -195,6 +195,40 @@ describe("scenario input parsing", () => {
     expect(tracked).toEqual([]);
   });
 
+  it("tracks resources when create is aborted after Core accepts it", async () => {
+    const tracked: Array<{ type: string; id: string }> = [];
+    const core = createFakeAtlasCore();
+    const controller = new AbortController();
+    const ctx = createScenarioContext({
+      runId: "sim-aborted-create",
+      signal: controller.signal,
+      clientFactory: () => {
+        const client = core.factory();
+        return {
+          ...client,
+          entities: {
+            ...client.entities,
+            create: async (entity) => {
+              await client.entities.create(entity);
+              controller.abort();
+              throw new Error("request aborted");
+            }
+          }
+        };
+      },
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      registerClient: () => undefined
+    });
+
+    const entityId = ctx.id("asset");
+
+    await expect(ctx.client.entities.create({ entity_id: entityId, entity_type: "asset" })).rejects.toThrow("request aborted");
+    await expect(core.factory().entities.get(entityId)).resolves.toMatchObject({ entity_id: entityId });
+    expect(tracked).toEqual([{ type: "entity", id: entityId }]);
+  });
+
   it("rejects created and tracked resources outside the run ID prefix", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const ctx = createScenarioContext({

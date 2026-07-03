@@ -161,6 +161,19 @@ function trackClientCreates(
     throwIfCancelled();
     return result;
   };
+  const createTracked = async <T>(resource: CreatedResource, operation: () => Promise<T>): Promise<T> => {
+    throwIfCancelled();
+    assertRunOwned(resource);
+    try {
+      const created = await operation();
+      track(resource);
+      throwIfCancelled();
+      return created;
+    } catch (error) {
+      if (signal.aborted) track(resource);
+      throw error;
+    }
+  };
   const guardedWatch: AtlasClientLike["watch"] = (filter, callback) => {
     throwIfCancelled();
     let active = true;
@@ -194,13 +207,8 @@ function trackClientCreates(
     entities: {
       get: (id) => guarded(() => client.entities.get(id)),
       create: async (entity) => {
-        throwIfCancelled();
         const resource = { type: "entity", id: entity.entity_id } satisfies CreatedResource;
-        assertRunOwned(resource);
-        const created = await client.entities.create(entity);
-        track(resource);
-        throwIfCancelled();
-        return created;
+        return createTracked(resource, () => client.entities.create(entity));
       },
       update: (id, patch) => guarded(() => client.entities.update(id, patch)),
       delete: (id) => guarded(() => client.entities.delete(id)),
@@ -209,13 +217,8 @@ function trackClientCreates(
     tasks: {
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
-        throwIfCancelled();
         const resource = { type: "task", id: task.task_id } satisfies CreatedResource;
-        assertRunOwned(resource);
-        const created = await client.tasks.create(task);
-        track(resource);
-        throwIfCancelled();
-        return created;
+        return createTracked(resource, () => client.tasks.create(task));
       },
       delete: (id) => guarded(() => client.tasks.delete(id)),
       acknowledge: (id, options) => guarded(() => client.tasks.acknowledge(id, options)),
@@ -226,13 +229,8 @@ function trackClientCreates(
     objects: {
       get: (id) => guarded(() => client.objects.get(id)),
       create: async (object) => {
-        throwIfCancelled();
         const resource = { type: "object", id: object.object_id } satisfies CreatedResource;
-        assertRunOwned(resource);
-        const created = await client.objects.create(object);
-        track(resource);
-        throwIfCancelled();
-        return created;
+        return createTracked(resource, () => client.objects.create(object));
       },
       delete: (id) => guarded(() => client.objects.delete(id))
     },
