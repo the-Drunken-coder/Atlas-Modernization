@@ -31,16 +31,22 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
   try {
     const url = new URL(request.url);
     if (url.pathname === "/api/config" && request.method === "GET") {
-      const atlasBaseUrl = requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL");
+      requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL");
       const mapStyleUrl = optionalString(env.MAP_STYLE_URL);
       return jsonResponse({
-        atlasBaseUrl: atlasBaseUrl.replace(/\/+$/, ""),
+        atlasBaseUrl: new URL("/atlas", url.origin).toString(),
         protocolRevision: ATLAS_PROTOCOL_REVISION,
         ...(mapStyleUrl ? { mapStyleUrl } : {})
       });
     }
+    if (url.pathname === "/api/auth/me" && request.method === "GET") {
+      return authSessionResponse(request, requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL"));
+    }
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "API route not found", { path: url.pathname });
+    }
+    if (url.pathname === "/atlas" || url.pathname.startsWith("/atlas/")) {
+      return proxyAtlasCore(request, url, requiredString(env.ATLAS_CORE_BASE_URL, "ATLAS_CORE_BASE_URL"));
     }
     if (
       url.pathname === "/auth" ||
@@ -49,9 +55,7 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
       url.pathname.startsWith("/admin/auth/") ||
       url.pathname === "/admin/api-keys" ||
       url.pathname.startsWith("/admin/api-keys/") ||
-      url.pathname === "/me/settings" ||
-      url.pathname === "/atlas" ||
-      url.pathname.startsWith("/atlas/")
+      url.pathname === "/me/settings"
     ) {
       throw new WorkerHTTPError(404, "NOT_FOUND", "Route is owned by Atlas Core or has been removed", { path: url.pathname });
     }
@@ -59,6 +63,50 @@ export async function handleCommandRequest(request: Request, env: Env): Promise<
   } catch (error) {
     return errorResponse(error, request);
   }
+}
+
+async function authSessionResponse(request: Request, atlasBaseUrl: string): Promise<Response> {
+  const response = await fetchAtlasCore(request, atlasBaseUrl, "/admin/auth/me", "");
+  if (response.status === 401) {
+    return jsonResponse({ authenticated: false });
+  }
+  if (!response.ok) {
+    return response;
+  }
+  const body = (await response.json()) as { user?: unknown };
+  return jsonResponse({ authenticated: true, user: body.user });
+}
+
+async function proxyAtlasCore(request: Request, url: URL, atlasBaseUrl: string): Promise<Response> {
+  return fetchAtlasCore(request, atlasBaseUrl, url.pathname.slice("/atlas".length) || "/", url.search);
+}
+
+async function fetchAtlasCore(request: Request, atlasBaseUrl: string, path: string, search: string): Promise<Response> {
+  const target = new URL(atlasBaseUrl.replace(/\/+$/, ""));
+  target.pathname = proxyPath(target.pathname, path);
+  target.search = search;
+  return fetch(await coreRequest(request, target));
+}
+
+async function coreRequest(request: Request, target: URL): Promise<Request> {
+  const headers = new Headers(request.headers);
+  const browserOrigin = headers.get("Origin")?.trim() || new URL(request.url).origin;
+  headers.set("Origin", browserOrigin);
+  if (!headers.has("Referer")) headers.set("Referer", `${browserOrigin}/`);
+  const init: RequestInit = {
+    headers,
+    method: request.method,
+    redirect: "manual"
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = await request.arrayBuffer();
+  }
+  return new Request(target, init);
+}
+
+function proxyPath(basePath: string, suffix: string): string {
+  const normalizedBase = basePath.replace(/\/+$/, "");
+  return `${normalizedBase}${suffix}` || "/";
 }
 
 function requiredString(value: unknown, name: string): string {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
+import type { ConnectionHealth } from "../atlas/data-source.js";
 import { entityGeometry, entityKind, type EntityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
@@ -11,7 +12,7 @@ import { useAtlas } from "../state/atlas-context.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
-import { MapView, buildMapSources, type MapContextMenuInfo } from "../ui/map/MapView.js";
+import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
@@ -47,6 +48,7 @@ export function MapConsole() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [previewEntityId, setPreviewEntityId] = useState<string>();
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
@@ -81,6 +83,12 @@ export function MapConsole() {
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
+  const previewTarget = useMemo(() => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined), [previewEntityId, snapshot.entities]);
+  const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
+
+  useEffect(() => {
+    if (previewEntityId && !snapshot.entities[previewEntityId]) setPreviewEntityId(undefined);
+  }, [previewEntityId, snapshot.entities]);
 
   const selectEntityById = useCallback(
     (id: string) => {
@@ -88,6 +96,7 @@ export function MapConsole() {
       if (!entity) return;
       const kind = entityKind(entity);
       if (kind === "other") return;
+      setPreviewEntityId(undefined);
       dispatch({ type: "selectEntity", kind, id });
     },
     [snapshot.entities]
@@ -238,7 +247,15 @@ export function MapConsole() {
               onSelectEntity={(entity) => {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
+                setPreviewEntityId(undefined);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id });
+              }}
+              onPreviewEntity={(entity) => {
+                if (!entity || entityKind(entity) === "other") {
+                  setPreviewEntityId(undefined);
+                  return;
+                }
+                setPreviewEntityId(entity.entity_id);
               }}
               onPickCommand={pickSidebarCommand}
               onStartEdit={startEdit}
@@ -253,19 +270,26 @@ export function MapConsole() {
         }
         map={
           <>
-            <MapView
-              sources={sources}
-              styleUrl={atlas.config?.mapStyleUrl}
-              selectedId={selectedId}
-              editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
-              onSelectEntity={selectEntityById}
-              onMapContextMenu={onMapContextMenu}
-              onBackgroundClick={() => {
-                setMapMenu(null);
-                dispatch({ type: "clearSelection" });
-              }}
-            />
-            <ConnectionBadge running={atlas.health.running} healthy={atlas.health.healthy} degraded={atlas.health.degraded} />
+            <div className="map-world-frame">
+              <div className="map-stage">
+                <MapView
+                  sources={sources}
+                  styleUrl={atlas.config?.mapStyleUrl}
+                  selectedId={selectedId}
+                  editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
+                  focusTarget={focusTarget}
+                  previewTarget={previewTarget}
+                  onSelectEntity={selectEntityById}
+                  onMapContextMenu={onMapContextMenu}
+                  onBackgroundClick={() => {
+                    setMapMenu(null);
+                    setPreviewEntityId(undefined);
+                    dispatch({ type: "clearSelection" });
+                  }}
+                />
+                <ConnectionBadge health={atlas.health} />
+              </div>
+            </div>
           </>
         }
       />
@@ -306,6 +330,7 @@ type PanelBodyProps = {
   saving: boolean;
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
+  onPreviewEntity: (entity: EntityResource | null) => void;
   onPickCommand: (availability: CommandAvailability) => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
@@ -349,10 +374,10 @@ function PanelBody(props: PanelBodyProps) {
   return <div className="panel__empty">Unsupported entity type.</div>;
 }
 
-function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
-	if (list === "commands") {
-		if (selectedEntity && entityKind(selectedEntity) === "asset") {
-			return (
+function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPreviewEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
+  if (list === "commands") {
+    if (selectedEntity && entityKind(selectedEntity) === "asset") {
+      return (
         <div style={{ padding: 12 }}>
           <CommandList
             availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
@@ -361,36 +386,43 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
           />
         </div>
       );
-		}
-		return <div className="panel__empty">Select an asset to issue commands.</div>;
-	}
-	if (list === "apiKeys") {
-		return <APIKeysPanel />;
-	}
+    }
+    return <div className="panel__empty">Select an asset to issue commands.</div>;
+  }
+  if (list === "apiKeys") {
+    return <APIKeysPanel />;
+  }
 
-	const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
+  const kind: EntityKind = list === "assets" ? "asset" : list === "tracks" ? "track" : "geofeature";
   return (
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
+      onPreview={onPreviewEntity}
       onSelect={onSelectEntity}
     />
   );
 }
 
-function ConnectionBadge({ running, healthy, degraded }: { running: boolean; healthy: boolean; degraded: boolean }) {
-  const { color, label } = degraded
-    ? { color: "var(--warning)", label: "Reconnecting" }
-    : running && healthy
-      ? { color: "var(--success)", label: "Live" }
-      : { color: "var(--text-3)", label: "Connecting" };
+function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
+  return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
+}
+
+function ConnectionBadge({ health }: { health: ConnectionHealth }) {
+  const state = connectionBadgeState(health);
   return (
-    <div className="map-overlay-tl">
-      <span className="conn-dot" style={{ background: color }} />
-      <span>{label}</span>
+    <div className="connection-badge" data-state={state.state} role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
+      <span className="connection-badge__dot" aria-hidden="true" />
+      <span>{state.label}</span>
     </div>
   );
+}
+
+function connectionBadgeState(health: ConnectionHealth): { label: string; state: "live" | "reconnecting" | "connecting" } {
+  if (health.running && health.healthy && !health.degraded) return { label: "Live", state: "live" };
+  if (health.running) return { label: "Reconnecting", state: "reconnecting" };
+  return { label: "Connecting", state: "connecting" };
 }
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {

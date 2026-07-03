@@ -49,6 +49,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     baseUrl: config.atlasBaseUrl,
     credentials: "include",
     sync: "all",
+    pollIntervalMs: 0,
     fetch: atlasFetch,
     WebSocket: globalThis.WebSocket
   });

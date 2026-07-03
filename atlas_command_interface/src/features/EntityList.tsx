@@ -16,9 +16,10 @@ type EntityListProps = {
   selectedId?: string;
   emptyLabel: string;
   onSelect: (entity: EntityResource) => void;
+  onPreview?: (entity: EntityResource | null) => void;
 };
 
-export function EntityList({ entities, selectedId, emptyLabel, onSelect }: EntityListProps) {
+export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPreview }: EntityListProps) {
   if (entities.length === 0) {
     return <div className="panel__empty">{emptyLabel}</div>;
   }
@@ -30,7 +31,14 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect }: Entit
             type="button"
             className="entity-row"
             data-selected={entity.entity_id === selectedId}
-            onClick={() => onSelect(entity)}
+            onBlur={() => onPreview?.(null)}
+            onClick={() => {
+              onPreview?.(null);
+              onSelect(entity);
+            }}
+            onFocus={() => onPreview?.(entity)}
+            onPointerEnter={() => onPreview?.(entity)}
+            onPointerLeave={() => onPreview?.(null)}
           >
             <span className="entity-row__dot" style={{ background: entityDotColor(entity) }} />
             <span className="entity-row__main">
