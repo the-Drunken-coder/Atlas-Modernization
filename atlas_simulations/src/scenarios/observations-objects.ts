@@ -34,7 +34,7 @@ const observationsObjects: Scenario = {
       await ctx.createEntity({
         entity_id: id,
         entity_type: "asset",
-        alias: `Observer ${index + 1}`,
+        alias: `Observer ${ctx.runId} ${index + 1}`,
         subtype: "simulated-observer",
         components: {
           telemetry: {
@@ -67,7 +67,7 @@ const observationsObjects: Scenario = {
       await ctx.createEntity({
         entity_id: trackId,
         entity_type: "track",
-        alias: `Observed track ${index + 1}`,
+        alias: `Observed ${ctx.runId} track ${index + 1}`,
         subtype: "simulated-observation",
         components: {
           telemetry: { latitude, longitude, last_update: isoNow() },

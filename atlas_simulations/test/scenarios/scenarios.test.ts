@@ -40,6 +40,27 @@ describe("v1 scenarios", () => {
     }
   });
 
+  it.each(scenarios.map((scenario) => [scenario.id, scenario]))("%s can run twice before cleanup", async (_id, scenario) => {
+    vi.useFakeTimers();
+    try {
+      const core = createFakeAtlasCore();
+      const store = new RunStore(core.factory);
+      const start = () => store.start(scenario, parseStartRequest(scenario, defaultStartRequest(scenario)).input);
+      const first = start();
+      await vi.waitFor(() => expect(store.get(first.id)?.status).toBe("completed"), { timeout: 5000 });
+      const second = start();
+      await vi.waitFor(() => expect(store.get(second.id)?.status).toBe("completed"), { timeout: 5000 });
+
+      expect(store.get(first.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
+      expect(store.get(second.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
+      await expect(store.cleanup(first.id)).resolves.toMatchObject({ cleaned: true });
+      await expect(store.cleanup(second.id)).resolves.toMatchObject({ cleaned: true });
+      await expect(core.factory().queries.full()).resolves.toMatchObject({ entities: [], tasks: [], objects: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects invalid point coordinates", () => {
     expect(() => point(181, 0)).toThrow("longitude must be between -180 and 180");
     expect(() => point(0, -91)).toThrow("latitude must be between -90 and 90");
@@ -56,3 +77,11 @@ describe("v1 scenarios", () => {
     expect(() => boundedPositiveIntegerInput({ fields: { assetCount: 26 } }, "assetCount", 25)).toThrow("assetCount must be <= 25");
   });
 });
+
+function defaultStartRequest(scenario: (typeof scenarios)[number]) {
+  return {
+    scenarioId: scenario.id,
+    inputs: Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.defaultValue])),
+    jsonInput: scenario.acceptsJson ? '{"test":"yes"}' : undefined
+  };
+}

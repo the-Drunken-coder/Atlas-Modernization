@@ -166,6 +166,35 @@ describe("scenario input parsing", () => {
     ]);
   });
 
+  it("does not track resources when Core rejects the create", async () => {
+    const tracked: Array<{ type: string; id: string }> = [];
+    const core = createFakeAtlasCore();
+    const ctx = createScenarioContext({
+      runId: "sim-rejected-create",
+      signal: new AbortController().signal,
+      clientFactory: () => {
+        const client = core.factory();
+        return {
+          ...client,
+          entities: {
+            ...client.entities,
+            create: async () => {
+              throw new Error("create rejected");
+            }
+          }
+        };
+      },
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      registerClient: () => undefined
+    });
+
+    await expect(ctx.client.entities.create({ entity_id: ctx.id("asset"), entity_type: "asset" })).rejects.toThrow("create rejected");
+
+    expect(tracked).toEqual([]);
+  });
+
   it("rejects created and tracked resources outside the run ID prefix", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const ctx = createScenarioContext({

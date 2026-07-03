@@ -64,12 +64,13 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     entities: {
       get: async (id) => visibleValue(state, clientState, state.entities, id, "entity"),
       create: async (entity) => {
-        assertCanCreate(state, state.entities, entity.entity_id, "entity");
+        assertCanCreateEntity(state, entity.entity_id, entity.alias);
         const created = entityFromCreate(entity, commitVersion(state, clientState));
         return saveValue(state.entities, created.entity_id, created);
       },
       update: async (id, patch) => {
         const current = requireActiveValue(state, state.entities, id, "entity");
+        if ("alias" in patch) assertCanUseEntityAlias(state, patch.alias ?? null, id);
         const updated: EntityResource = {
           ...current,
           ...("entity_type" in patch && patch.entity_type !== undefined ? { entity_type: patch.entity_type } : {}),
@@ -256,6 +257,23 @@ function requireActiveValue<T extends VersionedResource>(state: FakeCoreState, v
 function assertCanCreate<T extends VersionedResource>(state: FakeCoreState, values: ResourceHistory<T>, id: string, type: string): void {
   const current = values.get(id)?.at(-1);
   if (current && !isDeletedAt(state, type, id, state.version, current.metadata.version)) throw conflict(type, id);
+}
+
+function assertCanCreateEntity(state: FakeCoreState, id: string, alias: string | null | undefined): void {
+  assertCanCreate(state, state.entities, id, "entity");
+  assertCanUseEntityAlias(state, alias ?? null, id);
+}
+
+function assertCanUseEntityAlias(state: FakeCoreState, alias: string | null, ownerId: string): void {
+  const normalized = alias?.trim();
+  if (!normalized) return;
+  for (const [id, history] of state.entities) {
+    if (id === ownerId) continue;
+    const current = history.at(-1);
+    if (current?.alias === normalized && !isDeletedAt(state, "entity", id, state.version, current.metadata.version)) {
+      throw conflict("entity alias", normalized);
+    }
+  }
 }
 
 function visibleValue<T extends { metadata: { version: number } }>(

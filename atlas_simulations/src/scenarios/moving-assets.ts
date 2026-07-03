@@ -32,7 +32,7 @@ const movingAssets: Scenario = {
       await ctx.createEntity({
         entity_id: id,
         entity_type: "asset",
-        alias: `Sim asset ${index + 1}`,
+        alias: `Sim ${ctx.runId} asset ${index + 1}`,
         subtype: "simulated",
         components: {
           geometry: point(startLongitude + index * 0.002, startLatitude + index * 0.001),

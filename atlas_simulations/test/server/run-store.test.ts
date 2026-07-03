@@ -568,6 +568,16 @@ describe("RunStore", () => {
     await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-1" });
   });
 
+  it("fake core rejects duplicate active entity aliases", async () => {
+    const core = createFakeAtlasCore();
+    const client = core.factory();
+
+    await client.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: "Shared alias" });
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })).rejects.toMatchObject({ status: 409 });
+    await client.entities.delete("asset-1");
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })).resolves.toMatchObject({ entity_id: "asset-2" });
+  });
+
   it("evicts cleaned runs before refusing new runs at capacity", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
