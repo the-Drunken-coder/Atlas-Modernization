@@ -97,6 +97,7 @@ export function createScenarioContext(args: {
   log(message: string, data?: JSONValue): void;
   assert(name: string, passed: boolean, message?: string): AssertionResult;
   track(resource: CreatedResource): void;
+  trackCleanupCandidate?(resource: CreatedResource): void;
   registerClient(client: AtlasClientLike): void;
 }): ScenarioContext {
   const throwIfCancelled = () => {
@@ -108,11 +109,18 @@ export function createScenarioContext(args: {
     assertRunOwnedResourceId(args.runId, resource);
     args.track(resource);
   };
+  const trackCleanupCandidate = (resource: CreatedResource) => {
+    assertRunOwnedResourceId(args.runId, resource);
+    args.trackCleanupCandidate?.(resource);
+  };
+  const assertRunOwned = (resource: CreatedResource) => {
+    assertRunOwnedResourceId(args.runId, resource);
+  };
   const newClient = (options?: { sync?: ClientMode; pollIntervalMs?: number }) => {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(rawClient, track, throwIfCancelled, args.signal);
+    return trackClientCreates(rawClient, track, trackCleanupCandidate, assertRunOwned, throwIfCancelled, args.signal);
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -139,7 +147,14 @@ function assertRunOwnedResourceId(runId: string, resource: CreatedResource): voi
   }
 }
 
-function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedResource) => void, throwIfCancelled: () => void, signal: AbortSignal): AtlasClientLike {
+function trackClientCreates(
+  client: AtlasClientLike,
+  track: (resource: CreatedResource) => void,
+  trackCleanupCandidate: (resource: CreatedResource) => void,
+  assertRunOwned: (resource: CreatedResource) => void,
+  throwIfCancelled: () => void,
+  signal: AbortSignal
+): AtlasClientLike {
   const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
     throwIfCancelled();
     const result = await operation();
@@ -151,6 +166,15 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     const result = operation();
     throwIfCancelled();
     return result;
+  };
+  const createTracked = async <T>(resource: CreatedResource, operation: () => Promise<T>): Promise<T> => {
+    throwIfCancelled();
+    assertRunOwned(resource);
+    trackCleanupCandidate(resource);
+    const created = await operation();
+    track(resource);
+    throwIfCancelled();
+    return created;
   };
   const guardedWatch: AtlasClientLike["watch"] = (filter, callback) => {
     throwIfCancelled();
@@ -185,11 +209,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     entities: {
       get: (id) => guarded(() => client.entities.get(id)),
       create: async (entity) => {
-        throwIfCancelled();
-        track({ type: "entity", id: entity.entity_id });
-        const created = await client.entities.create(entity);
-        throwIfCancelled();
-        return created;
+        const resource = { type: "entity", id: entity.entity_id } satisfies CreatedResource;
+        return createTracked(resource, () => client.entities.create(entity));
       },
       update: (id, patch) => guarded(() => client.entities.update(id, patch)),
       delete: (id) => guarded(() => client.entities.delete(id)),
@@ -198,11 +219,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     tasks: {
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
-        throwIfCancelled();
-        track({ type: "task", id: task.task_id });
-        const created = await client.tasks.create(task);
-        throwIfCancelled();
-        return created;
+        const resource = { type: "task", id: task.task_id } satisfies CreatedResource;
+        return createTracked(resource, () => client.tasks.create(task));
       },
       delete: (id) => guarded(() => client.tasks.delete(id)),
       acknowledge: (id, options) => guarded(() => client.tasks.acknowledge(id, options)),
@@ -213,11 +231,8 @@ function trackClientCreates(client: AtlasClientLike, track: (resource: CreatedRe
     objects: {
       get: (id) => guarded(() => client.objects.get(id)),
       create: async (object) => {
-        throwIfCancelled();
-        track({ type: "object", id: object.object_id });
-        const created = await client.objects.create(object);
-        throwIfCancelled();
-        return created;
+        const resource = { type: "object", id: object.object_id } satisfies CreatedResource;
+        return createTracked(resource, () => client.objects.create(object));
       },
       delete: (id) => guarded(() => client.objects.delete(id))
     },

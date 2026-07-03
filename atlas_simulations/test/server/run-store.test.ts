@@ -62,6 +62,46 @@ describe("RunStore", () => {
     expect(core.state.deleted).toEqual([]);
   });
 
+  it("cleans up hidden create candidates after response failure", async () => {
+    const core = createFakeAtlasCore();
+    let firstClient = true;
+    const store = new RunStore((options) => {
+      const client = core.factory(options);
+      if (!firstClient) return client;
+      firstClient = false;
+      return {
+        ...client,
+        entities: {
+          ...client.entities,
+          create: async (entity) => {
+            await client.entities.create(entity);
+            throw new Error("response failed");
+          }
+        }
+      };
+    });
+    let entityId = "";
+    const scenario: Scenario = {
+      id: "response-failure-cleanup",
+      name: "Response failure cleanup",
+      summary: "Cleans up a create whose response failed after persistence",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        entityId = ctx.id("asset");
+        await ctx.createEntity({ entity_id: entityId, entity_type: "asset" });
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+    expect(store.get(started.id)?.createdResources).toEqual([]);
+    await expect(core.factory().entities.get(entityId)).resolves.toMatchObject({ entity_id: entityId });
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(core.state.deleted).toEqual([`entity:${entityId}`]);
+  });
+
   it("reports cancelled status after a stopped run unwinds", async () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
@@ -566,6 +606,20 @@ describe("RunStore", () => {
     await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({ status: 409 });
     await client.entities.delete("asset-1");
     await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-1" });
+  });
+
+  it("fake core rejects duplicate active entity aliases", async () => {
+    const core = createFakeAtlasCore();
+    const client = core.factory();
+
+    await client.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: " Shared alias " });
+    expect((await client.entities.get("asset-1")).alias).toBe("Shared alias");
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })).rejects.toMatchObject({ status: 409 });
+    await client.entities.update("asset-1", { alias: " Updated alias " });
+    expect((await client.entities.get("asset-1")).alias).toBe("Updated alias");
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).rejects.toMatchObject({ status: 409 });
+    await client.entities.delete("asset-1");
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).resolves.toMatchObject({ entity_id: "asset-2" });
   });
 
   it("evicts cleaned runs before refusing new runs at capacity", async () => {

@@ -53,7 +53,7 @@ const multiClientSync: Scenario = {
         await ctx.createEntity({
           entity_id: id,
           entity_type: "asset",
-          alias: `Sync asset ${index + 1}`,
+          alias: `Sync ${ctx.runId} asset ${index + 1}`,
           subtype: "sync-probe",
           components: {
             telemetry: {
