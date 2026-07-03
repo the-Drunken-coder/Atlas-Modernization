@@ -619,7 +619,7 @@ describe("MapView external reticle targets", () => {
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 6 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 16 }));
     expect(map.fitBounds).not.toHaveBeenCalled();
     const overlay = document.querySelector<HTMLElement>(".map-reticle");
     expect(overlay).toHaveClass("map-reticle--targeted");
@@ -632,11 +632,11 @@ describe("MapView external reticle targets", () => {
     map.easeTo.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 6 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 16 }));
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [90, 110] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith({ center: [90, 110], duration: 450, zoom: 6 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith({ center: [90, 110], duration: 450, zoom: 16 }));
   });
 
   it("retries entity focus when a selected entity becomes locatable", async () => {
@@ -655,7 +655,7 @@ describe("MapView external reticle targets", () => {
       )
     });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [-74, 40], duration: 450, zoom: 6 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [-74, 40], duration: 450, zoom: 16 }));
   });
 
   it("focuses selected geometry targets with fitBounds", async () => {
@@ -677,7 +677,7 @@ describe("MapView external reticle targets", () => {
       }
     });
 
-    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 450, maxZoom: 10, padding: 48 }));
+    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 450, maxZoom: 16, padding: 48 }));
     expect(map.easeTo).not.toHaveBeenCalled();
   });
 
