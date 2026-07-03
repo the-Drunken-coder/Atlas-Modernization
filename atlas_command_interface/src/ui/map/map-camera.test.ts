@@ -19,12 +19,12 @@ const view = (center: [number, number], zoom: number): CameraView => ({ center, 
 describe("planFocusMove", () => {
   it("flies points to the standard asset view zoom when zoomed out", () => {
     const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([0, 0], 4));
-    expect(move).toMatchObject({ kind: "fly-to", center: [70, 80], zoom: 13 });
+    expect(move).toMatchObject({ kind: "fly-to", center: [70, 80], zoom: 15 });
   });
 
   it("flies points down to the asset view zoom when zoomed in past it", () => {
     const move = planFocusMove({ type: "Point", coordinates: [70, 80] }, view([70, 80], 15));
-    expect(move).toMatchObject({ kind: "fly-to", zoom: 13 });
+    expect(move).toMatchObject({ kind: "fly-to", zoom: 15 });
   });
 
   it("fits line geometry bounds with the standard padding and cap", () => {

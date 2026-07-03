@@ -16,7 +16,7 @@ export type MapTarget =
  */
 export type MapCameraCommand = { seq: number; target: MapTarget };
 
-export const ASSET_VIEW_ZOOM = 13;
+export const ASSET_VIEW_ZOOM = 15;
 export const FIT_MAX_ZOOM = 10;
 export const FIT_BOUNDS_PADDING = 48;
 export const FIT_DURATION_MS = 450;
