@@ -819,6 +819,8 @@
   position: absolute;
   inset: 0;
   cursor: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .map-canvas > .maplibre-host,
