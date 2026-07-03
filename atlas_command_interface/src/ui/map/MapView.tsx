@@ -153,6 +153,7 @@ export function MapView({
         boxZoom: {
           boxZoomEnd: (zoomMap, start, end) => {
             suppressNextClick();
+            restoreReticleAtScreenPoint(end);
             setZoomOverlayState(null);
             zoomMap.fitScreenCoordinates(start, end, zoomMap.getBearing(), { linear: true });
           }
@@ -196,7 +197,10 @@ export function MapView({
 
     map.on("style.load", initializeLayers);
     if (map.isStyleLoaded()) initializeLayers();
-    map.on("boxzoomcancel", () => setZoomOverlayState(null));
+    map.on("boxzoomcancel", () => {
+      restoreReticleAtCurrentZoomPoint();
+      setZoomOverlayState(null);
+    });
     map.on("error", (event) => {
       // Tile/style errors should not blank the operator picture. Keep overlays
       // alive and surface the details in devtools.
@@ -306,14 +310,16 @@ export function MapView({
       });
     };
 
-    const finishZoomDrag = () => {
+    const finishZoomDrag = (event: globalThis.MouseEvent) => {
       suppressNextClick();
+      restoreReticleFromClientPoint(event);
       setZoomOverlayState(null);
     };
 
     const cancelZoomDrag = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
         suppressNextClick();
+        restoreReticleAtCurrentZoomPoint();
         setZoomOverlayState(null);
       }
     };
@@ -552,7 +558,8 @@ export function MapView({
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
     setZoomOverlayState({ start: point, current: point });
-    setReticle(null);
+    cursorHandoffRef.current = null;
+    setReticleState(null);
   };
 
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -591,6 +598,27 @@ export function MapView({
   function setReticleState(next: ReticleState | null): void {
     reticleRef.current = next;
     setReticle((current) => (reticlesEqual(current, next) ? current : next));
+  }
+
+  function restoreReticleFromClientPoint(event: Pick<globalThis.MouseEvent, "clientX" | "clientY">): void {
+    const mapCanvas = mapCanvasRef.current;
+    if (!mapCanvas) return;
+    const rect = mapCanvas.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+      setReticleState(null);
+      return;
+    }
+    restoreReticleAtScreenPoint(pointFromClient(event, rect));
+  }
+
+  function restoreReticleAtCurrentZoomPoint(): void {
+    const point = zoomOverlayRef.current?.current;
+    if (point) restoreReticleAtScreenPoint(point);
+  }
+
+  function restoreReticleAtScreenPoint(point: ScreenPoint): void {
+    cursorHandoffRef.current = null;
+    setReticleState({ x: point.x, y: point.y, target: squareAround(point, RETICLE_TARGET_SIZE) });
   }
 
   function syncTargetReticle(entityId: string): void {
