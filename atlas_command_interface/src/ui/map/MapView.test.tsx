@@ -35,6 +35,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => 4);
+    readonly getCenter = vi.fn(() => ({ lng: 0, lat: 0 }));
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
@@ -619,8 +620,10 @@ describe("MapView external reticle targets", () => {
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 16 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], duration: 650 })));
     expect(map.fitBounds).not.toHaveBeenCalled();
+    act(() => map.fire("moveend"));
+    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [70, 80], duration: 1600, zoom: 16 })));
     const overlay = document.querySelector<HTMLElement>(".map-reticle");
     expect(overlay).toHaveClass("map-reticle--targeted");
     expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
@@ -632,11 +635,28 @@ describe("MapView external reticle targets", () => {
     map.easeTo.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [70, 80], duration: 450, zoom: 16 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], duration: 650 })));
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [90, 110] } });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith({ center: [90, 110], duration: 450, zoom: 16 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [90, 110], duration: 650 })));
+    act(() => map.fire("moveend"));
+    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [90, 110], duration: 1600, zoom: 16 })));
+  });
+
+  it("zooms out before moving to a selected target from a tight view elsewhere", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.getZoom.mockReturnValue(16);
+    map.getCenter.mockReturnValue({ lng: -120, lat: 35 });
+    map.easeTo.mockClear();
+
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [-74, 40] } });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenNthCalledWith(1, expect.objectContaining({ duration: 550, zoom: 10 })));
+    act(() => map.fire("moveend"));
+    await waitFor(() => expect(map.easeTo).toHaveBeenNthCalledWith(2, expect.objectContaining({ center: [-74, 40], duration: 650 })));
+    act(() => map.fire("moveend"));
+    await waitFor(() => expect(map.easeTo).toHaveBeenNthCalledWith(3, expect.objectContaining({ center: [-74, 40], duration: 1600, zoom: 16 })));
   });
 
   it("retries entity focus when a selected entity becomes locatable", async () => {
@@ -655,7 +675,9 @@ describe("MapView external reticle targets", () => {
       )
     });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith({ center: [-74, 40], duration: 450, zoom: 16 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 40], duration: 650 })));
+    act(() => map.fire("moveend"));
+    await waitFor(() => expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-74, 40], duration: 1600, zoom: 16 })));
   });
 
   it("focuses selected geometry targets with fitBounds", async () => {
@@ -677,8 +699,10 @@ describe("MapView external reticle targets", () => {
       }
     });
 
-    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 450, maxZoom: 16, padding: 48 }));
-    expect(map.easeTo).not.toHaveBeenCalled();
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 41], duration: 650 })));
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    act(() => map.fire("moveend"));
+    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { duration: 1600, maxZoom: 16, padding: 48 }));
   });
 
   it("previews generic point targets for future search results", async () => {

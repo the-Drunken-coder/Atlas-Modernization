@@ -44,10 +44,15 @@ const INITIAL_WORLD_BOUNDS: [[number, number], [number, number]] = [
 ];
 const SCROLL_LOCK_SETTLE_MS = 180;
 const SUPPRESSED_CLICK_FALLBACK_MS = 750;
-const FOCUS_DURATION_MS = 450;
+const FOCUS_ZOOM_OUT_DURATION_MS = 550;
+const FOCUS_PAN_DURATION_MS = 650;
+const FOCUS_ZOOM_IN_DURATION_MS = 1600;
 const FOCUS_BOUNDS_PADDING = 48;
+const FOCUS_OVERVIEW_ZOOM = 10;
 const FOCUS_MAX_ZOOM = 16;
 const FOCUS_MIN_POINT_ZOOM = 16;
+const FOCUS_OVERVIEW_THRESHOLD_ZOOM = 12;
+const FOCUS_CENTER_AWAY_DEGREES = 0.01;
 const WHEEL_ZOOM_RATE = 1 / 450;
 const DOM_DELTA_LINE = 1;
 
@@ -79,6 +84,13 @@ type MapViewProps = {
 
 type HoverTarget = ReticleTarget & { entityId: string };
 type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
+type FocusEaseStep = { type: "ease"; options: NonNullable<Parameters<MlMap["easeTo"]>[0]> };
+type FocusFitBoundsStep = {
+  type: "fitBounds";
+  bounds: [[number, number], [number, number]];
+  options: NonNullable<Parameters<MlMap["fitBounds"]>[1]>;
+};
+type FocusCameraStep = FocusEaseStep | FocusFitBoundsStep;
 
 export function MapView({
   sources,
@@ -116,6 +128,7 @@ export function MapView({
   const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
   const zoomPointerInsideMapRef = useRef(true);
   const focusedTargetKeyRef = useRef<string | null>(null);
+  const focusAnimationIdRef = useRef(0);
   const suppressNextClickRef = useRef(false);
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const [mapError, setMapError] = useState<string>();
@@ -404,6 +417,7 @@ export function MapView({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !focusTarget) {
+      focusAnimationIdRef.current += 1;
       focusedTargetKeyRef.current = null;
       setFocusReticle(null);
       return;
@@ -411,7 +425,9 @@ export function MapView({
 
     const key = mapReticleTargetKey(focusTarget);
     if (focusedTargetKeyRef.current !== key) {
-      if (focusMapTarget(map, sources, focusTarget)) focusedTargetKeyRef.current = key;
+      const animationId = focusAnimationIdRef.current + 1;
+      focusAnimationIdRef.current = animationId;
+      if (focusMapTarget(map, sources, focusTarget, () => focusAnimationIdRef.current === animationId)) focusedTargetKeyRef.current = key;
     }
 
     const syncFocusReticle = () => {
@@ -902,21 +918,79 @@ function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null 
   });
 }
 
-function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget): boolean {
+function focusMapTarget(map: MlMap, sources: MapSources, target: MapReticleTarget, isCurrent: () => boolean): boolean {
   const geometry = geometryForFocusTarget(sources, target);
   if (!geometry) return false;
   if (geometry.type === "Point") {
-    map.easeTo({
-      center: [geometry.coordinates[0], geometry.coordinates[1]],
-      duration: FOCUS_DURATION_MS,
-      zoom: Math.max(map.getZoom(), FOCUS_MIN_POINT_ZOOM)
-    });
+    focusPointGeometry(map, [geometry.coordinates[0], geometry.coordinates[1]], isCurrent);
     return true;
   }
   const bounds = boundsForGeometry(geometry);
   if (!bounds) return false;
-  map.fitBounds(bounds, { duration: FOCUS_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING });
+  focusBoundedGeometry(map, bounds, isCurrent);
   return true;
+}
+
+function focusPointGeometry(map: MlMap, center: [number, number], isCurrent: () => boolean): void {
+  const currentZoom = map.getZoom();
+  runFocusCameraSteps(
+    map,
+    [
+      ...overviewStepsIfNeeded(map, center, currentZoom),
+      { type: "ease", options: { center, duration: FOCUS_PAN_DURATION_MS, easing: linearFocusEasing } },
+      {
+        type: "ease",
+        options: { center, duration: FOCUS_ZOOM_IN_DURATION_MS, easing: linearFocusEasing, zoom: Math.max(currentZoom, FOCUS_MIN_POINT_ZOOM) }
+      }
+    ],
+    isCurrent
+  );
+}
+
+function focusBoundedGeometry(map: MlMap, bounds: [[number, number], [number, number]], isCurrent: () => boolean): void {
+  const center = centerForBounds(bounds);
+  runFocusCameraSteps(
+    map,
+    [
+      ...overviewStepsIfNeeded(map, center, map.getZoom()),
+      { type: "ease", options: { center, duration: FOCUS_PAN_DURATION_MS, easing: linearFocusEasing } },
+      { type: "fitBounds", bounds, options: { duration: FOCUS_ZOOM_IN_DURATION_MS, maxZoom: FOCUS_MAX_ZOOM, padding: FOCUS_BOUNDS_PADDING } }
+    ],
+    isCurrent
+  );
+}
+
+function overviewStepsIfNeeded(map: MlMap, center: [number, number], currentZoom: number): FocusCameraStep[] {
+  if (currentZoom < FOCUS_OVERVIEW_THRESHOLD_ZOOM || !targetIsAwayFromCenter(map, center)) return [];
+  return [{ type: "ease", options: { duration: FOCUS_ZOOM_OUT_DURATION_MS, easing: linearFocusEasing, zoom: FOCUS_OVERVIEW_ZOOM } }];
+}
+
+function runFocusCameraSteps(map: MlMap, steps: FocusCameraStep[], isCurrent: () => boolean): void {
+  const [step, ...nextSteps] = steps;
+  if (!step || !isCurrent()) return;
+  if (step.type === "ease") {
+    map.easeTo(step.options);
+  } else {
+    map.fitBounds(step.bounds, step.options);
+  }
+  if (nextSteps.length > 0) {
+    map.once("moveend", () => runFocusCameraSteps(map, nextSteps, isCurrent));
+  }
+}
+
+function linearFocusEasing(t: number): number {
+  return t;
+}
+
+function targetIsAwayFromCenter(map: MlMap, target: [number, number]): boolean {
+  const center = map.getCenter();
+  const lngDelta = Math.abs((((center.lng - target[0]) % 360) + 540) % 360 - 180);
+  const latDelta = Math.abs(center.lat - target[1]);
+  return lngDelta > FOCUS_CENTER_AWAY_DEGREES || latDelta > FOCUS_CENTER_AWAY_DEGREES;
+}
+
+function centerForBounds(bounds: [[number, number], [number, number]]): [number, number] {
+  return [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2];
 }
 
 function geometryForFocusTarget(sources: MapSources, target: MapReticleTarget): UiRawGeometry | undefined {
