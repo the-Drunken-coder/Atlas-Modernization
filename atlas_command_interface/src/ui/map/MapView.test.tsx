@@ -249,6 +249,15 @@ describe("MapView hover target box", () => {
     });
   });
 
+  it("prevents page scrolling during map wheel zoom", () => {
+    const { canvas } = renderMapView();
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 80, clientY: 100, deltaY: -120 });
+
+    fireEvent(canvas, wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
+  });
+
   it("keeps a hovered marker box aligned while the map camera moves", async () => {
     const { canvas, map } = renderMapView();
     let markerRect = rect(70, 90, 28, 40);

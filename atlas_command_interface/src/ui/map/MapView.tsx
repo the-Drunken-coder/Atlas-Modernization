@@ -135,6 +135,16 @@ export function MapView({
     reticleRef.current = reticle;
   }, [reticle]);
 
+  useEffect(() => {
+    const mapCanvas = mapCanvasRef.current;
+    if (!mapCanvas) return;
+    const preventPageScroll = (event: globalThis.WheelEvent) => event.preventDefault();
+    mapCanvas.addEventListener("wheel", preventPageScroll, { capture: true, passive: false });
+    return () => {
+      mapCanvas.removeEventListener("wheel", preventPageScroll, { capture: true });
+    };
+  }, []);
+
   // Create the map once.
   useEffect(() => {
     if (mapError) return;
