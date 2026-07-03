@@ -556,17 +556,7 @@ The session token is random and stored only as `session:<sha256(token)>` in Core
 
 Managed API keys are full-access machine credentials for the current auth model. Core stores only `sha256(secret)` plus key metadata in `admin_records`, and list responses never include the full secret. API-key-authenticated requests cannot create, list, or revoke API keys; key management requires a browser admin session. Creating managed keys requires `ENABLE_API_AUTH=true`; existing keys remain visible/revocable but inactive while API-key auth is disabled.
 
-The command interface Worker is intentionally thin. It hosts static assets and `GET /api/config`, which returns only browser-safe configuration:
-
-```json
-{
-  "atlasBaseUrl": "https://core.example",
-  "protocolRevision": "sha256:...",
-  "mapStyleUrl": "https://maps.example/style.json"
-}
-```
-
-The Worker does not own `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, Core API-key injection, or command validation. The browser Atlas SDK calls Core directly with `credentials: "include"`.
+The Cloudflare Pages command interface is a static Vite app. It does not own `/api/config`, `/auth/*`, `/me/settings`, `/atlas/*`, feed bridging, Core API-key injection, or command validation. The browser Atlas SDK calls Core directly with `credentials: "include"` and receives only non-secret build-time browser config from Vite/public assets.
 
 Command task validation happens in Core `POST /tasks`. Command submissions omit `task_id`; Core generates `command-<uuid>`, loads the command catalog, loads the target entity, checks `components.task_catalog.supported_tasks`, and validates/coerces command parameters. Non-command task creation keeps the existing client-supplied `task_id` contract.
 

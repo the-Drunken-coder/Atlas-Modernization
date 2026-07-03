@@ -10,7 +10,7 @@ This directory contains operational docs for the Go-based Atlas Core service.
 
 | Topic | File | Description |
 | --- | --- | --- |
-| API Guide | `API_GUIDE.md` | Basic route-by-route guide for Core endpoints and the command Worker API surface. |
+| API Guide | `API_GUIDE.md` | Basic route-by-route guide for Core endpoints and the command interface browser API surface. |
 | Entity Status | `ASSET_STATUS_SYSTEM.md` | Entity types, status tracking, and telemetry updates. |
 | Pagination | `PAGINATION.md` | `limit`/`cursor` behavior and pagination headers. |
 | Database Workflow | `DATABASE_WORKFLOW.md` | Disposable runtime-store model, schema bootstrap, and developer workflow. |

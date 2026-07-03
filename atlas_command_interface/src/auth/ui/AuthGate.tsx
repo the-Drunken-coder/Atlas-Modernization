@@ -17,7 +17,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
     let cancelled = false;
     const checkSession = async () => {
       try {
-        const data = await loadSession();
+        const data = await loadSession(baseUrl);
         if (cancelled) return;
         if (data.authenticated) {
           setState({ status: "authenticated", username: data.user.username });
@@ -73,12 +73,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function loadSession(): Promise<SessionResponse> {
-  const response = await fetch("/api/auth/me", { credentials: "include", headers: { Accept: "application/json" } });
+async function loadSession(baseUrl: string): Promise<SessionResponse> {
+  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/admin/auth/me`, { credentials: "include", headers: { Accept: "application/json" } });
+  if (response.status === 401) return { authenticated: false };
   if (!response.ok) throw new Error(`Session check failed (${response.status})`);
-  const data = (await response.json()) as Partial<SessionResponse>;
-  if (data.authenticated === false) return { authenticated: false };
-  if (data.authenticated === true && data.user && typeof data.user.username === "string") {
+  const data = (await response.json()) as { user?: { username?: unknown } };
+  if (data.user && typeof data.user.username === "string") {
     return { authenticated: true, user: { username: data.user.username } };
   }
   throw new Error("Session check returned an unexpected shape");

@@ -407,7 +407,7 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 			" ",
 		},
 		CORSOriginPatterns: []string{
-			"https://*-atlas-command-interface.laraujo123546.workers.dev",
+			"https://*.atlas-je0.pages.dev",
 		},
 	}
 
@@ -422,10 +422,10 @@ func TestFeedServerConfigNormalizesAuthAndOrigins(t *testing.T) {
 	if !got.AllowedOrigin("https://atlas.example:8443") {
 		t.Fatal("expected exact origin to be allowed")
 	}
-	if !got.AllowedOrigin("https://pr-123-atlas-command-interface.laraujo123546.workers.dev") {
+	if !got.AllowedOrigin("https://pr-123.atlas-je0.pages.dev") {
 		t.Fatal("expected constrained preview origin to be allowed")
 	}
-	if got.AllowedOrigin("https://extra.pr-123-atlas-command-interface.laraujo123546.workers.dev") {
+	if got.AllowedOrigin("https://extra.pr-123.atlas-je0.pages.dev") {
 		t.Fatal("expected extra subdomain label in wildcard slot to be rejected")
 	}
 }

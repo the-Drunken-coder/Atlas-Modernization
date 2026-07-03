@@ -155,10 +155,10 @@ function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     atlasBaseUrl: "/atlas",
     protocolRevision: "rev",
-    defaultMapSourceId: "maptiler-osm-dark",
+    defaultMapSourceId: "esri-world-imagery",
     mapSources: [
-      { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", styleUrl: "/maps/styles/maptiler-osm-dark.json" },
-      { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }
+      { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" },
+      { id: "usgs-topo", label: "USGS Topo", styleUrl: "/maps/styles/usgs-topo.json" }
     ],
     ...overrides
   };
@@ -285,14 +285,14 @@ describe("MapConsole command flow", () => {
     renderConsole(fake);
 
     await screen.findByText("Rover");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/maptiler-osm-dark.json");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
 
     const mapSelect = screen.getByLabelText("Map");
-    expect(Array.from(mapSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["MapTiler OSM Dark", "Esri World Imagery"]);
+    expect(Array.from(mapSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["Esri World Imagery", "USGS Topo"]);
 
-    await user.selectOptions(mapSelect, "esri-world-imagery");
+    await user.selectOptions(mapSelect, "usgs-topo");
 
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
   });
 
   it("reverts the map selector when a style switch fails", async () => {
@@ -303,18 +303,18 @@ describe("MapConsole command flow", () => {
     await screen.findByText("Rover");
     const mapSelect = screen.getByLabelText("Map");
 
-    await user.selectOptions(mapSelect, "esri-world-imagery");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+    await user.selectOptions(mapSelect, "usgs-topo");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
 
     act(() => {
       mapViewMock.lastProps?.onStyleSwitchError?.({
-        failedStyleUrl: "/maps/styles/esri-world-imagery.json",
-        activeStyleUrl: "/maps/styles/maptiler-osm-dark.json"
+        failedStyleUrl: "/maps/styles/usgs-topo.json",
+        activeStyleUrl: "/maps/styles/esri-world-imagery.json"
       });
     });
 
-    await waitFor(() => expect(mapSelect).toHaveValue("maptiler-osm-dark"));
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/maptiler-osm-dark.json");
+    await waitFor(() => expect(mapSelect).toHaveValue("esri-world-imagery"));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
   });
 
   it("falls back when the configured default is the only available map source", async () => {

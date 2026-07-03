@@ -415,24 +415,24 @@ func TestTrustedOriginRequiresConfiguredOrigin(t *testing.T) {
 
 func TestTrustedOriginWithPatternsAllowsConstrainedPreviewOrigin(t *testing.T) {
 	origins := []string{"https://atlasinterface.com"}
-	patterns := []string{"https://*-atlas-command-interface.laraujo123546.workers.dev"}
+	patterns := []string{"https://*.atlas-je0.pages.dev"}
 
 	if !middleware.TrustedOriginWithPatterns("https://atlasinterface.com", origins, patterns) {
 		t.Fatal("expected exact production origin to be allowed")
 	}
-	if !middleware.TrustedOriginWithPatterns("https://pr-123-atlas-command-interface.laraujo123546.workers.dev", origins, patterns) {
+	if !middleware.TrustedOriginWithPatterns("https://pr-123.atlas-je0.pages.dev", origins, patterns) {
 		t.Fatal("expected matching Cloudflare preview origin to be allowed")
 	}
-	if middleware.TrustedOriginWithPatterns("https://atlas-command-interface.laraujo123546.workers.dev", origins, patterns) {
+	if middleware.TrustedOriginWithPatterns("https://atlas-je0.pages.dev", origins, patterns) {
 		t.Fatal("expected empty wildcard match to be rejected")
 	}
-	if middleware.TrustedOriginWithPatterns("https://pr-123-atlas-command-interface.laraujo123546.workers.dev.evil.test", origins, patterns) {
+	if middleware.TrustedOriginWithPatterns("https://pr-123.atlas-je0.pages.dev.evil.test", origins, patterns) {
 		t.Fatal("expected suffix lookalike origin to be rejected")
 	}
 	if middleware.TrustedOriginWithPatterns("https://evil.test", origins, patterns) {
 		t.Fatal("expected unrelated origin to be rejected")
 	}
-	if middleware.TrustedOriginWithPatterns("https://extra.pr-123-atlas-command-interface.laraujo123546.workers.dev", origins, patterns) {
+	if middleware.TrustedOriginWithPatterns("https://extra.pr-123.atlas-je0.pages.dev", origins, patterns) {
 		t.Fatal("expected extra subdomain label in wildcard slot to be rejected")
 	}
 }
@@ -446,11 +446,11 @@ func TestTrustedOriginWithPatternsRejectsBroadWildcardPattern(t *testing.T) {
 		t.Fatal("expected broad wildcard pattern to be rejected")
 	}
 	if middleware.TrustedOriginWithPatterns(
-		"https://feature.project.pages.dev",
+		"https://feature.pages.dev",
 		nil,
-		[]string{"https://*.project.pages.dev"},
+		[]string{"https://*.pages.dev"},
 	) {
-		t.Fatal("expected whole-label wildcard pattern to be rejected")
+		t.Fatal("expected public-suffix Pages wildcard pattern to be rejected")
 	}
 	if middleware.TrustedOriginWithPatterns(
 		"https://pr-demo.github.io",

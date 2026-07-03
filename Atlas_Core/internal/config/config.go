@@ -636,8 +636,8 @@ func validateCORSOriginPattern(pattern string) error {
 		return fmt.Errorf("CORS origin patterns: wildcard in %q must be in the hostname", pattern)
 	}
 	labels := strings.Split(host, ".")
-	if len(labels) < 3 || !strings.Contains(labels[0], "*") || labels[0] == "*" {
-		return fmt.Errorf("CORS origin patterns: wildcard in %q must be constrained in the leftmost hostname label", pattern)
+	if len(labels) < 3 || !strings.Contains(labels[0], "*") {
+		return fmt.Errorf("CORS origin patterns: wildcard in %q must be constrained to the leftmost hostname label", pattern)
 	}
 	if _, err := publicsuffix.EffectiveTLDPlusOne(strings.Join(labels[1:], ".")); err != nil {
 		return fmt.Errorf("CORS origin patterns: wildcard in %q must not sit directly on a public suffix", pattern)

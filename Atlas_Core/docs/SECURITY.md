@@ -41,9 +41,10 @@ When `CORS_ORIGINS` is **explicitly set to empty** and `CORS_ORIGIN_PATTERNS` is
 
 `CORS_ORIGIN_PATTERNS` is for hosted preview environments such as Cloudflare branch/PR deployments. Patterns must be full `http` or `https` origins with exactly one wildcard constrained inside the leftmost hostname label, for example:
 
+- `https://*.atlas-je0.pages.dev`
 - `https://*-atlas-command-interface.preview.example.com`
 
-Broad credentialed-CORS wildcards such as `*`, `https://*`, and `https://*.workers.dev` are rejected.
+Broad credentialed-CORS wildcards such as `*`, `https://*`, `https://*.pages.dev`, and `https://*.workers.dev` are rejected.
 
 ### Current Middleware Behavior
 

@@ -49,25 +49,25 @@ func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) 
 func TestAtlasCORSOptionsAllowsConstrainedOriginPatterns(t *testing.T) {
 	opts := atlasCORSOptions(
 		[]string{"https://atlasinterface.com"},
-		[]string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+		[]string{"https://*.atlas-je0.pages.dev"},
 	)
 
-	if !opts.AllowOriginFunc(nil, "https://feature-123-atlas-command-interface.laraujo123546.workers.dev") {
+	if !opts.AllowOriginFunc(nil, "https://feature-123.atlas-je0.pages.dev") {
 		t.Fatal("expected Cloudflare preview origin to be allowed")
 	}
-	if opts.AllowOriginFunc(nil, "https://feature-123-atlas-command-interface.laraujo123546.workers.dev.evil.test") {
+	if opts.AllowOriginFunc(nil, "https://feature-123.atlas-je0.pages.dev.evil.test") {
 		t.Fatal("expected suffix lookalike origin to be rejected")
 	}
-	if opts.AllowOriginFunc(nil, "https://atlas-command-interface.laraujo123546.workers.dev") {
+	if opts.AllowOriginFunc(nil, "https://atlas-je0.pages.dev") {
 		t.Fatal("expected empty wildcard value to be rejected")
 	}
 }
 
 func TestAtlasCORSPreflightEchoesAllowedPreviewOrigin(t *testing.T) {
-	origin := "https://feature-123-atlas-command-interface.laraujo123546.workers.dev"
+	origin := "https://feature-123.atlas-je0.pages.dev"
 	handler := cors.Handler(atlasCORSOptions(
 		[]string{"https://atlasinterface.com"},
-		[]string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+		[]string{"https://*.atlas-je0.pages.dev"},
 	))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -93,7 +93,7 @@ func TestAtlasCORSPreflightEchoesAllowedPreviewOrigin(t *testing.T) {
 func TestAtlasCORSAndAuthAgreeOnPreviewOriginPatterns(t *testing.T) {
 	cfg := &config.Config{
 		CORSOrigins:        []string{"https://atlasinterface.com"},
-		CORSOriginPatterns: []string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+		CORSOriginPatterns: []string{"https://*.atlas-je0.pages.dev"},
 	}
 	handler := cors.Handler(atlasCORSOptions(cfg.CORSOrigins, cfg.CORSOriginPatterns))(
 		custommiddleware.CombinedAuth("", false, nil, cfg.CORSOrigins, cfg.CORSOriginPatterns)(
@@ -111,13 +111,13 @@ func TestAtlasCORSAndAuthAgreeOnPreviewOriginPatterns(t *testing.T) {
 	}{
 		{
 			name:       "matching preview origin",
-			origin:     "https://feature-123-atlas-command-interface.laraujo123546.workers.dev",
+			origin:     "https://feature-123.atlas-je0.pages.dev",
 			wantStatus: http.StatusNoContent,
-			wantACAO:   "https://feature-123-atlas-command-interface.laraujo123546.workers.dev",
+			wantACAO:   "https://feature-123.atlas-je0.pages.dev",
 		},
 		{
 			name:       "suffix lookalike origin",
-			origin:     "https://feature-123-atlas-command-interface.laraujo123546.workers.dev.evil.test",
+			origin:     "https://feature-123.atlas-je0.pages.dev.evil.test",
 			wantStatus: http.StatusUnauthorized,
 			wantACAO:   "",
 		},

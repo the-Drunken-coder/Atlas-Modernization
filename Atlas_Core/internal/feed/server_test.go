@@ -250,7 +250,7 @@ func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {
 
 	conn, response, err := websocket.Dial(context.Background(), websocketURL(server.URL), &websocket.DialOptions{
 		HTTPHeader: http.Header{
-			"Origin": []string{"https://extra.pr-123-atlas-command-interface.laraujo123546.workers.dev"},
+			"Origin": []string{"https://extra.pr-123.atlas-je0.pages.dev"},
 		},
 	})
 	if conn != nil {

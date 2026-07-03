@@ -309,7 +309,7 @@ func isConstrainedOriginPattern(pattern string) bool {
 		return false
 	}
 	labels := strings.Split(host, ".")
-	if len(labels) < 3 || !strings.Contains(labels[0], "*") || labels[0] == "*" {
+	if len(labels) < 3 || !strings.Contains(labels[0], "*") {
 		return false
 	}
 	_, err = publicsuffix.EffectiveTLDPlusOne(strings.Join(labels[1:], "."))

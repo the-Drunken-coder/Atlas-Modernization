@@ -10,7 +10,7 @@ afterEach(() => {
 
 describe("AuthGate", () => {
   it("shows login instead of the console when the session is missing", async () => {
-    stubFetch([{ status: 200, body: { authenticated: false } }]);
+    const fetchStub = stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -20,6 +20,7 @@ describe("AuthGate", () => {
 
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
+    expect(fetchStub.calls[0]?.[0]).toBe("https://core.test/admin/auth/me");
   });
 
   it("shows session check failures without presenting the login form", async () => {
@@ -44,7 +45,7 @@ describe("AuthGate", () => {
   it("renders children after successful login", async () => {
     const user = userEvent.setup();
     const fetchStub = stubFetch([
-      { status: 200, body: { authenticated: false } },
+      { status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } },
       { status: 200, body: { user: { username: "operator", role: "admin" } } }
     ]);
 
@@ -73,7 +74,7 @@ describe("AuthGate", () => {
   });
 
   it("returns to logged-out state when Atlas auth expires", async () => {
-    stubFetch([{ status: 200, body: { authenticated: true, user: { username: "operator", role: "admin" } } }]);
+    stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -90,7 +91,7 @@ describe("AuthGate", () => {
   });
 
   it("shows expiration reason when auth expires while login is already visible", async () => {
-    stubFetch([{ status: 200, body: { authenticated: false } }]);
+    stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">

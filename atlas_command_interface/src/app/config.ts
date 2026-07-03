@@ -1,3 +1,5 @@
+import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
+
 export type MapSourceConfig = {
   id: string;
   label: string;
@@ -13,52 +15,45 @@ export type AppConfig = {
 
 const CONFIG_URL_BASE = "http://localhost";
 const URL_SCHEME = /^[a-z][a-z\d+\-.]*:/i;
+const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
+const REMOTE_CORE_BASE_URL = "https://atlascommandapi.org";
 
-/** Load non-secret runtime config from the same-origin Worker. */
-export async function fetchAppConfig(signal?: AbortSignal): Promise<AppConfig> {
-  const response = await fetch("/api/config", { headers: { Accept: "application/json" }, signal });
-  if (!response.ok) {
-    throw new Error(`Failed to load /api/config (${response.status})`);
-  }
-  const data = await response.json();
-  if (!isConfigPayload(data)) {
-    throw new Error("/api/config returned an unexpected shape");
-  }
-  const protocolRevision = data.protocolRevision.trim();
-  if (!protocolRevision) {
-    throw new Error("/api/config returned empty protocolRevision");
-  }
-  const atlasBaseUrl = parseConfigUrl(data.atlasBaseUrl, "atlasBaseUrl").replace(/\/$/, "");
-  const mapSources = data.mapSources.map(parseMapSource);
+const MAP_SOURCES: MapSourceConfig[] = [
+  { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" },
+  { id: "usgs-topo", label: "USGS Topo", styleUrl: "/maps/styles/usgs-topo.json" }
+];
+
+type RuntimeEnv = {
+  DEV?: boolean;
+  MODE?: string;
+  VITE_ATLAS_CORE_BASE_URL?: string;
+};
+
+/** Build the non-secret browser config from Vite env plus static public assets. */
+export async function fetchAppConfig(): Promise<AppConfig> {
+  return appConfigFromEnv(import.meta.env);
+}
+
+export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
+  const atlasBaseUrl = parseConfigUrl(env.VITE_ATLAS_CORE_BASE_URL ?? defaultCoreBaseUrl(env), "atlasBaseUrl").replace(/\/$/, "");
+  const mapSources = MAP_SOURCES.map(parseMapSource);
   if (mapSources.length === 0) {
-    throw new Error("/api/config returned no mapSources");
+    throw new Error("Atlas interface config has no mapSources");
   }
-  const defaultMapSourceId = data.defaultMapSourceId.trim();
+  const defaultMapSourceId = "esri-world-imagery";
   if (!defaultMapSourceId || !mapSources.some((source) => source.id === defaultMapSourceId)) {
-    throw new Error("/api/config returned invalid defaultMapSourceId");
+    throw new Error("Atlas interface config has an invalid defaultMapSourceId");
   }
   return {
     atlasBaseUrl,
-    protocolRevision,
+    protocolRevision: ATLAS_PROTOCOL_REVISION,
     defaultMapSourceId,
     mapSources
   };
 }
 
-function isConfigPayload(value: unknown): value is {
-  atlasBaseUrl: string;
-  protocolRevision: string;
-  defaultMapSourceId: string;
-  mapSources: unknown[];
-} {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { atlasBaseUrl?: unknown }).atlasBaseUrl === "string" &&
-    typeof (value as { protocolRevision?: unknown }).protocolRevision === "string" &&
-    typeof (value as { defaultMapSourceId?: unknown }).defaultMapSourceId === "string" &&
-    Array.isArray((value as { mapSources?: unknown }).mapSources)
-  );
+function defaultCoreBaseUrl(env: RuntimeEnv): string {
+  return env.DEV || env.MODE === "development" ? LOCAL_CORE_BASE_URL : REMOTE_CORE_BASE_URL;
 }
 
 function parseMapSource(value: unknown): MapSourceConfig {
@@ -69,12 +64,12 @@ function parseMapSource(value: unknown): MapSourceConfig {
     typeof (value as { label?: unknown }).label !== "string" ||
     typeof (value as { styleUrl?: unknown }).styleUrl !== "string"
   ) {
-    throw new Error("/api/config returned invalid mapSources");
+    throw new Error("Atlas interface config has invalid mapSources");
   }
   const id = (value as { id: string }).id.trim();
   const label = (value as { label: string }).label.trim();
   if (!id || !label) {
-    throw new Error("/api/config returned invalid mapSources");
+    throw new Error("Atlas interface config has invalid mapSources");
   }
   return {
     id,
@@ -85,14 +80,14 @@ function parseMapSource(value: unknown): MapSourceConfig {
 
 function parseConfigUrl(value: string, field: "atlasBaseUrl" | "styleUrl"): string {
   const trimmed = value.trim();
-  if (!trimmed) throw new Error(`/api/config returned empty ${field}`);
+  if (!trimmed) throw new Error(`Atlas interface config has empty ${field}`);
   if (!URL_SCHEME.test(trimmed) && !trimmed.startsWith("/")) {
-    throw new Error(`/api/config returned invalid ${field}`);
+    throw new Error(`Atlas interface config has invalid ${field}`);
   }
   try {
     return new URL(trimmed, configUrlBase()).toString();
   } catch {
-    throw new Error(`/api/config returned invalid ${field}`);
+    throw new Error(`Atlas interface config has invalid ${field}`);
   }
 }
 

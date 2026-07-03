@@ -196,14 +196,14 @@ func TestParseCORSOriginPatterns(t *testing.T) {
 	}{
 		{
 			name:     "JSON array",
-			envValue: `["https://*-atlas-command-interface.laraujo123546.workers.dev"]`,
-			expected: []string{"https://*-atlas-command-interface.laraujo123546.workers.dev"},
+			envValue: `["https://*.atlas-je0.pages.dev"]`,
+			expected: []string{"https://*.atlas-je0.pages.dev"},
 		},
 		{
 			name:     "Comma separated",
-			envValue: "https://*-atlas-command-interface.laraujo123546.workers.dev, https://*-atlas-preview.example.com",
+			envValue: "https://*.atlas-je0.pages.dev, https://*-atlas-preview.example.com",
 			expected: []string{
-				"https://*-atlas-command-interface.laraujo123546.workers.dev",
+				"https://*.atlas-je0.pages.dev",
 				"https://*-atlas-preview.example.com",
 			},
 		},
@@ -237,7 +237,7 @@ func TestCORSOriginPatternsRejectUnsafeWildcards(t *testing.T) {
 		"*",
 		"https://*",
 		"https://*.workers.dev",
-		"https://*.project.pages.dev",
+		"https://*.pages.dev",
 		"https://app-*.co.uk",
 		"https://pr-*.github.io",
 		"https://atlas.example/*",

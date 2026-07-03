@@ -3,24 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cloudflare Worker-hosted Atlas Command map console.",
+  "description": "Cloudflare Pages-hosted Atlas Command map console.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "dev": "vite",
-    "dev:worker": "wrangler dev",
-    "dev:local": "wrangler dev --port 8787 --ip 127.0.0.1",
-    "prebuild": "wrangler types",
-    "build": "vite build && wrangler deploy --dry-run --outdir dist/worker",
+    "dev:local": "vite --host 127.0.0.1",
+    "build": "vite build",
     "build:web": "vite build",
     "preview": "vite preview",
-    "pretest": "wrangler types",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pretypecheck": "wrangler types",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "cf:types": "wrangler types"
+    "deploy:pages": "npm run build && wrangler pages deploy dist/client --project-name atlas"
   },
   "dependencies": {
     "maplibre-gl": "^5.6.0",

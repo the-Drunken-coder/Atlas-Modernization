@@ -1,6 +1,6 @@
 # Atlas Map Console UI Plan
 
-> Historical note: browser auth and Core access have moved since this plan was written. The Worker now hosts static assets and `GET /api/config` only; browser auth is owned by Atlas Core under `/admin/auth/*`; the browser SDK calls Core directly with `credentials: "include"`; command validation belongs to Core `POST /tasks`, not the Worker or UI.
+> Historical note: hosting moved after this plan was written. The command interface is now a static Cloudflare Pages/Vite app. Browser auth is owned by Atlas Core under `/admin/auth/*`; the browser SDK calls Core directly with `credentials: "include"`; command validation belongs to Core `POST /tasks`, not the UI.
 
 ## Purpose
 
@@ -24,7 +24,7 @@ This should feel like a dark tactical map console: closer to Anduril Lattice / A
 
 ## Package Placement
 
-The UI work belongs to this interface package. The current package already owns the thin Worker/static host and command model helpers, so the web app should grow from here unless a later split becomes clearly necessary.
+The UI work belongs to this interface package. The current package owns the Vite app and command model helpers, so the web app should grow from here unless a later split becomes clearly necessary.
 
 Recommended structure:
 
@@ -48,13 +48,14 @@ atlas_command_interface/
       geofeatures/
       commands/
       debug/
-  worker/
-    index.ts
+  public/
+    maps/
+      styles/
 ```
 
 The exact file names can shift during implementation, but keep these boundaries:
 
-- `worker/` remains the Cloudflare Worker/static host and browser config endpoint.
+- `public/maps/styles/` owns static MapLibre style files for public basemaps.
 - `src/atlas/` owns reusable Atlas command/catalog/data helpers.
 - `src/ui/` owns the local design system and shared UI primitives.
 - `src/features/` owns feature-specific screens and panels.
@@ -67,16 +68,13 @@ Use:
 
 - React + TypeScript.
 - Vite for the browser app.
-- MapLibre GL JS for map rendering, with same-origin map styles and tiles served
-  by the command-interface Worker.
+- MapLibre GL JS for map rendering, with static same-origin style JSON files
+  and public provider tile URLs.
 - The existing Atlas SDK for Atlas Core data access.
 - Core direct browser access through the Atlas SDK with `credentials: "include"`.
-- Worker route:
-  - `/api/config`
-  - `/maps/styles/:sourceId.json`
-  - `/maps/tiles/:sourceId/:z/:x/:y.:ext`
+- Build/dev-time Vite config for the Core base URL.
 
-The Worker should not proxy Atlas Core or own browser authentication. It serves the app, non-secret browser config, and map provider requests that need server-side secret injection.
+Do not add a Worker proxy for Atlas Core or browser authentication. If a future map provider requires secrets, add a real authenticated tile service only when that requirement exists.
 
 Initial data load should come from Atlas Core query/list endpoints through the SDK. Live updates should use the Core feed through the SDK where practical, with refresh/recovery through normal Core queries.
 
@@ -372,7 +370,7 @@ Do not make raw JSON the main content unless the selected item has no better str
 1. Add Vite/React app scaffolding inside `atlas_command_interface`.
 2. Add `/home` redirect and `/map` route.
 3. Add design tokens and base layout: icon rail, collapsible sidebar, map region.
-4. Add `/api/config` app config consumption.
+4. Add Vite-based app config consumption.
 5. Load initial entities and render assets, tracks, and geofeatures on MapLibre.
 6. Implement single-selection state across map and sidebar.
 7. Implement list mode and inspector mode.

@@ -1,36 +1,5 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "atlas-command-interface",
-  "main": "worker/index.ts",
-  "compatibility_date": "2026-06-20",
-  "compatibility_flags": ["nodejs_compat"],
-  "build": {
-    "command": "npm run build:web"
-  },
-  "assets": {
-    "directory": "./dist/client",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": [
-      "/api",
-      "/api/*",
-      "/auth",
-      "/auth/*",
-      "/admin/auth",
-      "/admin/auth/*",
-      "/me/settings",
-      "/maps",
-      "/maps/*",
-      "/atlas",
-      "/atlas/*"
-    ]
-  },
-  "observability": {
-    "enabled": true,
-    "logs": {
-      "head_sampling_rate": 1
-    }
-  },
-  "vars": {
-    "ATLAS_CORE_BASE_URL": "https://atlascommandapi.org"
-  }
+  "name": "atlas",
+  "pages_build_output_dir": "./dist/client"
 }

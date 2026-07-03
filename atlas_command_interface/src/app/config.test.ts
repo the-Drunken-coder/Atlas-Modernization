@@ -1,110 +1,56 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchAppConfig } from "./config.js";
+import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
+import { appConfigFromEnv, fetchAppConfig } from "./config.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("fetchAppConfig", () => {
-  it("normalises configured URLs and map source style URLs", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        configResponse({
-          atlasBaseUrl: "https://core.test/",
-          protocolRevision: "rev",
-          defaultMapSourceId: "maptiler-osm-dark",
-          mapSources: [{ id: "maptiler-osm-dark", label: " MapTiler OSM Dark ", styleUrl: " /maps/styles/maptiler-osm-dark.json " }]
-        })
-      )
-    );
-    vi.stubGlobal("location", { origin: "https://command.test" });
+describe("appConfigFromEnv", () => {
+  it("uses the local Core URL during Vite development", () => {
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
 
-    await expect(fetchAppConfig()).resolves.toEqual({
-      atlasBaseUrl: "https://core.test",
-      protocolRevision: "rev",
-      defaultMapSourceId: "maptiler-osm-dark",
-      mapSources: [{ id: "maptiler-osm-dark", label: "MapTiler OSM Dark", styleUrl: "https://command.test/maps/styles/maptiler-osm-dark.json" }]
+    expect(appConfigFromEnv({ DEV: true, MODE: "development" })).toEqual({
+      atlasBaseUrl: "http://127.0.0.1:8000",
+      protocolRevision: ATLAS_PROTOCOL_REVISION,
+      defaultMapSourceId: "esri-world-imagery",
+      mapSources: [
+        { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "http://127.0.0.1:5173/maps/styles/esri-world-imagery.json" },
+        { id: "usgs-topo", label: "USGS Topo", styleUrl: "http://127.0.0.1:5173/maps/styles/usgs-topo.json" }
+      ]
     });
   });
 
-  it("rejects invalid URL fields", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        configResponse({
-          atlasBaseUrl: "atlas",
-          protocolRevision: "rev",
-          defaultMapSourceId: "esri-world-imagery",
-          mapSources: [{ id: "esri-world-imagery", label: "Esri", styleUrl: "/maps/styles/esri-world-imagery.json" }]
-        })
-      )
-    );
+  it("uses the live production Core URL outside development", () => {
+    vi.stubGlobal("location", { origin: "https://atlasinterface.com" });
 
-    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned invalid atlasBaseUrl");
+    expect(appConfigFromEnv({ DEV: false, MODE: "production" })).toMatchObject({
+      atlasBaseUrl: "https://atlascommandapi.org",
+      protocolRevision: ATLAS_PROTOCOL_REVISION,
+      defaultMapSourceId: "esri-world-imagery",
+      mapSources: [
+        { id: "esri-world-imagery", styleUrl: "https://atlasinterface.com/maps/styles/esri-world-imagery.json" },
+        { id: "usgs-topo", styleUrl: "https://atlasinterface.com/maps/styles/usgs-topo.json" }
+      ]
+    });
   });
 
-  it("rejects invalid map source style URLs", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        configResponse({
-          atlasBaseUrl: "https://core.test",
-          protocolRevision: "rev",
-          defaultMapSourceId: "esri-world-imagery",
-          mapSources: [{ id: "esri-world-imagery", label: "Esri", styleUrl: "http://[bad" }]
-        })
-      )
-    );
+  it("allows an explicit Core URL override", () => {
+    vi.stubGlobal("location", { origin: "https://preview.example" });
 
-    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned invalid styleUrl");
+    expect(appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: " https://core.test/ " }).atlasBaseUrl).toBe("https://core.test");
   });
 
-  it("rejects empty protocol revisions", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        configResponse({
-          atlasBaseUrl: "https://core.test",
-          protocolRevision: "   ",
-          defaultMapSourceId: "esri-world-imagery",
-          mapSources: [{ id: "esri-world-imagery", label: "Esri", styleUrl: "/maps/styles/esri-world-imagery.json" }]
-        })
-      )
-    );
-
-    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned empty protocolRevision");
-  });
-
-  it("rejects missing or empty map sources", async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(configResponse({ atlasBaseUrl: "https://core.test", protocolRevision: "rev", defaultMapSourceId: "missing" }))
-      .mockResolvedValueOnce(configResponse({ atlasBaseUrl: "https://core.test", protocolRevision: "rev", defaultMapSourceId: "missing", mapSources: [] }));
-    vi.stubGlobal("fetch", fetch);
-
-    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned an unexpected shape");
-    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned no mapSources");
-  });
-
-  it("rejects a default map source that is not in the available list", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        configResponse({
-          atlasBaseUrl: "https://core.test",
-          protocolRevision: "rev",
-          defaultMapSourceId: "maptiler-osm-dark",
-          mapSources: [{ id: "esri-world-imagery", label: "Esri", styleUrl: "/maps/styles/esri-world-imagery.json" }]
-        })
-      )
-    );
-
-    await expect(fetchAppConfig()).rejects.toThrow("/api/config returned invalid defaultMapSourceId");
+  it("rejects invalid explicit Core URLs", () => {
+    expect(() => appConfigFromEnv({ DEV: false, VITE_ATLAS_CORE_BASE_URL: "atlas" })).toThrow("Atlas interface config has invalid atlasBaseUrl");
   });
 });
 
-function configResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
+describe("fetchAppConfig", () => {
+  it("does not fetch a runtime config route", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+
+    await expect(fetchAppConfig()).resolves.toMatchObject({ atlasBaseUrl: "http://127.0.0.1:8000" });
+    expect(fetch).not.toHaveBeenCalled();
   });
-}
+});
