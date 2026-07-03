@@ -48,6 +48,8 @@ const FOCUS_DURATION_MS = 450;
 const FOCUS_BOUNDS_PADDING = 48;
 const FOCUS_MAX_ZOOM = 10;
 const FOCUS_MIN_POINT_ZOOM = 6;
+const WHEEL_ZOOM_RATE = 1 / 450;
+const DOM_DELTA_LINE = 1;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 export type MapReticleTarget =
@@ -520,17 +522,19 @@ export function MapView({
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    const map = mapRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
     const hoverReticle = reticleRef.current;
     const activeReticle = hoverReticle ?? activeReticleRef.current;
     scrollLockedExternalReticleRef.current = Boolean(activeReticle && !hoverReticle);
+    if (map && activeReticle?.targetEntityId) zoomAroundReticleTarget(map, activeReticle, event);
     if (activeReticle) {
       const lockedReticle = hoverReticle ?? { ...activeReticle, targetEntityId: undefined };
       reticleRef.current = lockedReticle;
       setReticle(lockedReticle);
     }
     const visualPoint = activeReticle ? { x: activeReticle.x, y: activeReticle.y } : pointFromClient(event, rect);
-    cursorHandoffRef.current = { nativePoint: pointFromClient(event, rect), visualPoint };
+    cursorHandoffRef.current = activeReticle?.targetEntityId ? null : { nativePoint: pointFromClient(event, rect), visualPoint };
     event.currentTarget.classList.add("map-canvas--scrolling");
     if (!scrollLockedRef.current) setScrollLocked(true);
     scrollLockedRef.current = true;
@@ -622,6 +626,19 @@ export function MapView({
   function restoreReticleAtScreenPoint(point: ScreenPoint): void {
     cursorHandoffRef.current = null;
     setReticleState({ x: point.x, y: point.y, target: squareAround(point, RETICLE_TARGET_SIZE) });
+  }
+
+  function zoomAroundReticleTarget(map: MlMap, target: ReticleState, event: WheelEvent<HTMLDivElement>): void {
+    const delta = zoomDeltaFromWheel(event);
+    if (delta === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const scrollZoomWasEnabled = map.scrollZoom.isEnabled();
+    if (scrollZoomWasEnabled) {
+      map.scrollZoom.disable();
+      window.setTimeout(() => map.scrollZoom.enable(), 0);
+    }
+    map.zoomTo(map.getZoom() + delta, { around: map.unproject([target.x, target.y]), duration: 0 });
   }
 
   function syncTargetReticle(entityId: string): void {
@@ -746,6 +763,12 @@ function cursorPointsFromEvent(
 
 function clientPointInsideRect(event: { clientX: number; clientY: number }, rect: DOMRect): boolean {
   return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+}
+
+function zoomDeltaFromWheel(event: Pick<WheelEvent<HTMLDivElement>, "deltaMode" | "deltaY" | "shiftKey">): number {
+  let value = event.deltaMode === DOM_DELTA_LINE ? event.deltaY * 40 : event.deltaY;
+  if (event.shiftKey && value) value /= 4;
+  return -value * WHEEL_ZOOM_RATE;
 }
 
 function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {

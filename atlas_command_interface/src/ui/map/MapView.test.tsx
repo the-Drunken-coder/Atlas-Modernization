@@ -22,6 +22,7 @@ const maplibreMock = vi.hoisted(() => {
     readonly easeTo = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
+    readonly zoomTo = vi.fn();
     readonly resize = vi.fn();
     readonly remove = vi.fn();
     readonly addControl = vi.fn();
@@ -37,6 +38,14 @@ const maplibreMock = vi.hoisted(() => {
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
+    readonly unproject = vi.fn((point: [number, number] | { x: number; y: number }) =>
+      Array.isArray(point) ? { lng: point[0], lat: point[1] } : { lng: point.x, lat: point.y }
+    );
+    readonly scrollZoom = {
+      disable: vi.fn(),
+      enable: vi.fn(),
+      isEnabled: vi.fn(() => true)
+    };
     readonly setStyle = vi.fn((style: unknown) => {
       if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle) throw new Error("bad style");
       this.style = style;
@@ -303,24 +312,39 @@ describe("MapView hover target box", () => {
       firePointerMove(canvas, { clientX: 90, clientY: 110 });
 
       const movedOverlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(movedOverlay).toHaveClass("map-reticle--targeted");
-      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
-      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
-
-      firePointerMove(canvas, { clientX: 170, clientY: 150 });
-
-      const releasedOverlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(releasedOverlay).not.toHaveClass("map-reticle--targeted");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("204px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("193px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("89px");
+      expect(movedOverlay).not.toHaveClass("map-reticle--targeted");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("80px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("90px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("69px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("79px");
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("selects the handoff-adjusted visual target after wheel zoom", async () => {
+  it("zooms around the snapped target instead of the physical wheel point", async () => {
+    const { canvas, map } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 28, 40));
+
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.wheel(canvas, { clientX: 180, clientY: 150, deltaY: -120 });
+
+      expect(map.scrollZoom.disable).toHaveBeenCalledTimes(1);
+      expect(map.unproject).toHaveBeenCalledWith([74, 90]);
+      expect(map.zoomTo).toHaveBeenCalledWith(4 + 120 / 450, { around: { lng: 74, lat: 90 }, duration: 0 });
+
+      act(() => vi.advanceTimersByTime(0));
+      expect(map.scrollZoom.enable).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("selects the raw pointer target after targeted wheel zoom settles", async () => {
     const { canvas, map, onSelectEntity } = renderMapView({
       sources: buildMapSources(
         [
@@ -353,11 +377,11 @@ describe("MapView hover target box", () => {
       vi.useRealTimers();
     }
 
-    expect(map.queryRenderedFeatures).toHaveBeenLastCalledWith([70, 80], {
+    expect(map.queryRenderedFeatures).toHaveBeenLastCalledWith([20, 100], {
       layers: ["geofeatures-point", "geofeatures-line", "geofeatures-fill"]
     });
-    expect(onSelectEntity).toHaveBeenCalledWith("geo-visual");
-    expect(onSelectEntity).not.toHaveBeenCalledWith("geo-raw");
+    expect(onSelectEntity).toHaveBeenCalledWith("geo-raw");
+    expect(onSelectEntity).not.toHaveBeenCalledWith("geo-visual");
   });
 
   it("keeps focused entity reticles behind live map background movement", async () => {
