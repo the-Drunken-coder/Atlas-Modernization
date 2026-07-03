@@ -451,6 +451,17 @@ describe("MapView zoom overlay", () => {
     });
   });
 
+  it("clears the reticle when Shift-drag is canceled outside the map", async () => {
+    const { canvas } = renderMapView();
+
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
+    fireEvent.mouseMove(window, { clientX: 500, clientY: 250 });
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
+  });
+
   it("keeps normal boxed entity click selection outside zoom drag", async () => {
     const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));

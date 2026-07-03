@@ -110,6 +110,7 @@ export function MapView({
   const cursorHandoffRef = useRef<CursorHandoffState | null>(null);
   const scrollLockedExternalReticleRef = useRef(false);
   const zoomOverlayRef = useRef<ZoomOverlayState | null>(null);
+  const zoomPointerInsideMapRef = useRef(true);
   const focusedTargetKeyRef = useRef<string | null>(null);
   const suppressNextClickRef = useRef(false);
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
@@ -299,6 +300,7 @@ export function MapView({
       const mapCanvas = mapCanvasRef.current;
       if (!mapCanvas) return;
       const rect = mapCanvas.getBoundingClientRect();
+      zoomPointerInsideMapRef.current = clientPointInsideRect(event, rect);
       setZoomOverlay((current) => {
         if (!current) {
           zoomOverlayRef.current = null;
@@ -558,6 +560,7 @@ export function MapView({
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
     const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
     setZoomOverlayState({ start: point, current: point });
+    zoomPointerInsideMapRef.current = true;
     cursorHandoffRef.current = null;
     setReticleState(null);
   };
@@ -613,7 +616,11 @@ export function MapView({
 
   function restoreReticleAtCurrentZoomPoint(): void {
     const point = zoomOverlayRef.current?.current;
-    if (point) restoreReticleAtScreenPoint(point);
+    if (point && zoomPointerInsideMapRef.current) {
+      restoreReticleAtScreenPoint(point);
+      return;
+    }
+    setReticleState(null);
   }
 
   function restoreReticleAtScreenPoint(point: ScreenPoint): void {
@@ -739,6 +746,10 @@ function cursorPointsFromEvent(
       y: handoff.visualPoint.y + rawPoint.y - handoff.nativePoint.y
     }
   };
+}
+
+function clientPointInsideRect(event: { clientX: number; clientY: number }, rect: DOMRect): boolean {
+  return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
 }
 
 function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {
