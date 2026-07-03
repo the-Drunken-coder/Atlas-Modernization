@@ -24,9 +24,6 @@ export async function fetchAppConfig(signal?: AbortSignal): Promise<AppConfig> {
   if (!isConfigPayload(data)) {
     throw new Error("/api/config returned an unexpected shape");
   }
-  if (typeof data.atlasBaseUrl !== "string" || typeof data.protocolRevision !== "string") {
-    throw new Error("/api/config returned an unexpected shape");
-  }
   const protocolRevision = data.protocolRevision.trim();
   if (!protocolRevision) {
     throw new Error("/api/config returned empty protocolRevision");

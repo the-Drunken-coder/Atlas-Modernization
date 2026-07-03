@@ -39,13 +39,24 @@ type MapViewProps = {
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
+  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
 };
 
-export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEntity, onMapContextMenu, onBackgroundClick }: MapViewProps) {
+export function MapView({
+  sources,
+  styleUrl,
+  editing,
+  initialCenter,
+  onSelectEntity,
+  onMapContextMenu,
+  onBackgroundClick,
+  onStyleSwitchError
+}: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const currentStyleUrlRef = useRef<string | undefined>(undefined);
+  const pendingStyleUrlRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
   const fitOnceRef = useRef(false);
@@ -53,9 +64,11 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   const editMarkersRef = useRef<Marker[]>([]);
   const symbolMarkersRef = useRef<Marker[]>([]);
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
+  const styleSwitchErrorRef = useRef(onStyleSwitchError);
   const [mapError, setMapError] = useState<string>();
   const [mapReady, setMapReady] = useState(false);
   handlersRef.current = { onSelectEntity, onMapContextMenu, onBackgroundClick };
+  styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
 
   // Create the map once.
@@ -136,6 +149,15 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
       // Tile/style errors should not blank the operator picture. Keep overlays
       // alive and surface the details in devtools.
       console.warn("Map render warning", event.error);
+      const failedStyleUrl = pendingStyleUrlRef.current;
+      if (failedStyleUrl) {
+        pendingStyleUrlRef.current = undefined;
+        if (readyRef.current && map.isStyleLoaded()) {
+          registerSourcesAndLayers(map);
+          pushSources(map, sourcesRef.current);
+        }
+        styleSwitchErrorRef.current?.({ failedStyleUrl, activeStyleUrl: currentStyleUrlRef.current ?? failedStyleUrl });
+      }
     });
 
     return () => {
@@ -158,10 +180,41 @@ export function MapView({ sources, styleUrl, editing, initialCenter, onSelectEnt
   useEffect(() => {
     const map = mapRef.current;
     if (!map || currentStyleUrlRef.current === styleUrl) return;
-    currentStyleUrlRef.current = styleUrl;
-    readyRef.current = false;
-    setMapReady(false);
-    map.setStyle(styleUrl);
+
+    const controller = new AbortController();
+    let cancelled = false;
+    pendingStyleUrlRef.current = styleUrl;
+
+    const handleFailure = (error: unknown) => {
+      if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
+      pendingStyleUrlRef.current = undefined;
+      console.warn("Map style switch failed", error);
+      if (readyRef.current && map.isStyleLoaded()) {
+        registerSourcesAndLayers(map);
+        pushSources(map, sourcesRef.current);
+      }
+      styleSwitchErrorRef.current?.({ failedStyleUrl: styleUrl, activeStyleUrl: currentStyleUrlRef.current ?? styleUrl });
+    };
+
+    void loadStyle(styleUrl, controller.signal)
+      .then((style) => {
+        if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
+        map.once("style.load", () => {
+          if (pendingStyleUrlRef.current !== styleUrl) return;
+          currentStyleUrlRef.current = styleUrl;
+          pendingStyleUrlRef.current = undefined;
+        });
+        map.setStyle(style);
+      })
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        handleFailure(error);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [styleUrl]);
 
   // Sync entity sources.
@@ -433,6 +486,18 @@ function createSymbolMarkerElement(feature: MapFeature & { geometry: { type: "Po
 
 function clearMarkers(markers: Marker[]): void {
   for (const marker of markers) marker.remove();
+}
+
+async function loadStyle(styleUrl: string, signal: AbortSignal): Promise<maplibregl.StyleSpecification> {
+  const response = await fetch(styleUrl, { headers: { Accept: "application/json" }, signal });
+  if (!response.ok) {
+    throw new Error(`Map style request failed (${response.status})`);
+  }
+  return (await response.json()) as maplibregl.StyleSpecification;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function webglAvailable(): boolean {

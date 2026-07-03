@@ -51,7 +51,32 @@ describe("thin Worker", () => {
           maxzoom: 19
         }
       },
-      layers: [{ id: "background" }, { id: "esri-world-imagery-raster", type: "raster", source: "esri-world-imagery" }]
+      layers: [
+        { id: "background" },
+        {
+          id: "esri-world-imagery-raster",
+          type: "raster",
+          source: "esri-world-imagery",
+          paint: { "raster-opacity": 0.84, "raster-saturation": -0.14, "raster-contrast": 0 }
+        }
+      ]
+    });
+  });
+
+  it("uses source registry raster paint values in generated styles", async () => {
+    const response = await handleCommandRequest(new Request("https://command.test/maps/styles/usgs-topo.json"), env());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      layers: [
+        { id: "background" },
+        {
+          id: "usgs-topo-raster",
+          type: "raster",
+          source: "usgs-topo",
+          paint: { "raster-opacity": 0.84, "raster-saturation": 0, "raster-contrast": 0.08 }
+        }
+      ]
     });
   });
 

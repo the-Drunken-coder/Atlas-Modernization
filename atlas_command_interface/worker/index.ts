@@ -11,6 +11,11 @@ type APIErrorResponse = {
 type ProviderSecretName = "MAPTILER_API_KEY" | "MAPBOX_ACCESS_TOKEN";
 type ProviderKind = "maptiler" | "mapbox" | "arcgis";
 type TileExtension = "png" | "jpg" | "webp";
+type RasterPaint = {
+  "raster-opacity"?: number;
+  "raster-saturation"?: number;
+  "raster-contrast"?: number;
+};
 
 type MapSource = {
   id: string;
@@ -24,6 +29,7 @@ type MapSource = {
   providerStyleOwner?: string;
   providerStyleId?: string;
   upstreamBaseUrl?: string;
+  paint?: RasterPaint;
 };
 
 type MapSourceConfig = {
@@ -41,6 +47,7 @@ const MAP_SOURCES: MapSource[] = [
     maxzoom: 22,
     ext: "png",
     secretName: "MAPTILER_API_KEY",
+    paint: { "raster-opacity": 0.92 },
     attribution: '&copy; <a href="https://www.maptiler.com/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
   },
   {
@@ -51,6 +58,7 @@ const MAP_SOURCES: MapSource[] = [
     maxzoom: 22,
     ext: "jpg",
     secretName: "MAPTILER_API_KEY",
+    paint: { "raster-saturation": -0.14 },
     attribution: '&copy; <a href="https://www.maptiler.com/">MapTiler</a>'
   },
   {
@@ -62,6 +70,7 @@ const MAP_SOURCES: MapSource[] = [
     maxzoom: 22,
     ext: "jpg",
     secretName: "MAPBOX_ACCESS_TOKEN",
+    paint: { "raster-saturation": -0.14 },
     attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
   },
   {
@@ -71,6 +80,7 @@ const MAP_SOURCES: MapSource[] = [
     upstreamBaseUrl: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile",
     maxzoom: 19,
     ext: "jpg",
+    paint: { "raster-saturation": -0.14 },
     attribution: '&copy; <a href="https://www.esri.com/">Esri</a>'
   },
   {
@@ -80,9 +90,16 @@ const MAP_SOURCES: MapSource[] = [
     upstreamBaseUrl: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile",
     maxzoom: 23,
     ext: "png",
+    paint: { "raster-contrast": 0.08 },
     attribution: "USGS The National Map"
   }
 ];
+
+const DEFAULT_RASTER_PAINT: Required<RasterPaint> = {
+  "raster-opacity": 0.84,
+  "raster-saturation": 0,
+  "raster-contrast": 0
+};
 
 const STYLE_PATH = /^\/maps\/styles\/([a-z0-9-]+)\.json$/;
 const TILE_PATH = /^\/maps\/tiles\/([a-z0-9-]+)\/(\d+)\/(\d+)\/(\d+)\.(png|jpg|webp)$/;
@@ -226,11 +243,7 @@ function rasterStyle(source: MapSource): StyleSpecification {
         id: `${source.id}-raster`,
         type: "raster",
         source: source.id,
-        paint: {
-          "raster-opacity": source.id === "maptiler-osm-dark" ? 0.92 : 0.84,
-          "raster-saturation": source.id.includes("satellite") || source.id.includes("imagery") ? -0.14 : 0,
-          "raster-contrast": source.id === "usgs-topo" ? 0.08 : 0
-        }
+        paint: { ...DEFAULT_RASTER_PAINT, ...source.paint }
       }
     ]
   };

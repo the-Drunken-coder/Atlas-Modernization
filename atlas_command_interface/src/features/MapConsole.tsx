@@ -90,6 +90,13 @@ export function MapConsole() {
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
+  const handleMapStyleSwitchError = useCallback(
+    ({ activeStyleUrl }: { failedStyleUrl: string; activeStyleUrl: string }) => {
+      const activeSource = atlas.config?.mapSources.find((source) => source.styleUrl === activeStyleUrl);
+      if (activeSource) setSelectedMapSourceId(activeSource.id);
+    },
+    [atlas.config]
+  );
 
   const selectEntityById = useCallback(
     (id: string) => {
@@ -291,6 +298,7 @@ export function MapConsole() {
                 setMapMenu(null);
                 dispatch({ type: "clearSelection" });
               }}
+              onStyleSwitchError={handleMapStyleSwitchError}
             />
             <ConnectionBadge running={atlas.health.running} healthy={atlas.health.healthy} degraded={atlas.health.degraded} />
             <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
