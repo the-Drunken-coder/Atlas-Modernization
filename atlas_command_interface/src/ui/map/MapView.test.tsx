@@ -194,6 +194,10 @@ function cameraCallMatches(options: { center?: unknown; zoom?: number }, expecte
   return Boolean(center && Math.abs(center[0] - expectedCenter[0]) < 0.001 && Math.abs(center[1] - expectedCenter[1]) < 0.001 && Math.abs((options.zoom ?? Number.NaN) - expectedZoom) < 0.001);
 }
 
+function firstCameraCallIndex(map: (typeof maplibreMock.FakeMap)["instances"][number], expectedCenter: [number, number], expectedZoom: number): number {
+  return map.jumpTo.mock.calls.findIndex(([options]) => cameraCallMatches(options, expectedCenter, expectedZoom));
+}
+
 function centerFromCameraCall(center: unknown): [number, number] | null {
   if (Array.isArray(center) && typeof center[0] === "number" && typeof center[1] === "number") return [center[0], center[1]];
   if (center && typeof center === "object" && "lng" in center && "lat" in center) {
@@ -658,6 +662,7 @@ describe("MapView external reticle targets", () => {
     expect(map.easeTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
     expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [70, 80], 4))).toBe(true);
+    expect(firstCameraCallIndex(map, [70, 80], 4)).toBeLessThanOrEqual(6);
     expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [70, 80], zoom: 16 }));
     const overlay = document.querySelector<HTMLElement>(".map-reticle");
     expect(overlay).toHaveClass("map-reticle--targeted");
