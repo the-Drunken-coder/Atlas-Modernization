@@ -433,6 +433,35 @@ describe("MapView zoom overlay", () => {
     });
   });
 
+  it("restores the normal reticle when Shift-drag ends without another pointer move", async () => {
+    const { canvas } = renderMapView();
+
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 180 });
+    fireEvent.mouseUp(window, { button: 0, clientX: 150, clientY: 180 });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).not.toHaveClass("map-reticle--zoom");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("129px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("149px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("140px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("160px");
+    });
+  });
+
+  it("clears the reticle when Shift-drag is canceled outside the map", async () => {
+    const { canvas } = renderMapView();
+
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
+    fireEvent.mouseMove(window, { clientX: 500, clientY: 250 });
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
+  });
+
   it("keeps normal boxed entity click selection outside zoom drag", async () => {
     const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
