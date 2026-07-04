@@ -4,12 +4,15 @@ import type { WebSocketEvent, WebSocketEventType, WebSocketListener } from "../.
 export type FakeWebSocketOwner = {
   revision: string;
   rejectFeedAuth: boolean;
+  expectedFeedApiKey?: string;
+  feedAuthFrames: Array<{ apiKey?: string }>;
   feedConnections: number;
   sockets: Set<FakeWebSocket>;
 };
 
 export class FakeWebSocket {
   readyState = 0;
+  sentMessages: unknown[] = [];
   private listeners = new Map<WebSocketEventType, Set<WebSocketListener>>();
   private subscriptions: AtlasSubscription[] = [];
 
@@ -29,7 +32,11 @@ export class FakeWebSocket {
 
   send(data: string): void {
     const parsed = JSON.parse(data);
-    if (parsed.action === "auth" && this.core.rejectFeedAuth) {
+    this.sentMessages.push(parsed);
+    if (parsed.action === "auth") {
+      this.core.feedAuthFrames.push({ apiKey: parsed.api_key });
+    }
+    if (parsed.action === "auth" && (this.core.rejectFeedAuth || (this.core.expectedFeedApiKey !== undefined && parsed.api_key !== this.core.expectedFeedApiKey))) {
       this.close();
       return;
     }

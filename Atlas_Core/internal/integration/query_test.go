@@ -737,7 +737,7 @@ func TestComplexScenario(t *testing.T) {
 			"entity_id": entityID,
 			"status":    "pending",
 			"components": map[string]interface{}{
-				"command": map[string]interface{}{
+				"custom_mission": map[string]interface{}{
 					"type": "move_to",
 					"target": map[string]interface{}{
 						"latitude":  40.7128 + float64(i)*0.001,

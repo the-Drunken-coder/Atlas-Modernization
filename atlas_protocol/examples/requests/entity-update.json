@@ -1,0 +1,12 @@
+{
+  "alias": "North Patrol",
+  "components": {
+    "status": {
+      "value": "moving",
+      "last_update": "2026-06-20T00:05:00Z"
+    }
+  },
+  "extra": {
+    "operator_note": "moving to checkpoint"
+  }
+}

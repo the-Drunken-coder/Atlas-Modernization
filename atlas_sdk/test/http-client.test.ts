@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AtlasAPIError, AtlasClient, ConflictError, ProtocolMismatchError, isEntityCreateRequest, isTaskCreateRequest } from "../src";
+import {
+  AtlasAPIError,
+  AtlasClient,
+  ConflictError,
+  ProtocolMismatchError,
+  isEntityCreateRequest,
+  isEntityUpdateRequest,
+  isObjectCreateRequest,
+  isObjectUpdateRequest,
+  isTaskCreateRequest,
+  isTaskUpdateRequest
+} from "../src";
 import { AtlasAdminClient } from "../src/admin.js";
 import { entity, FakeCore, object, task } from "./support/fake-core.js";
 
@@ -94,6 +105,17 @@ describe("AtlasClient HTTP", () => {
     expect("auth" in client).toBe(false);
   });
 
+  it("sends configured API keys on resource HTTP requests", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", apiKey: "resource-key", fetch: core.fetch });
+
+    await client.queries.full();
+    await client.entities.create({ entity_id: "asset-api-key", entity_type: "asset" });
+
+    expect(core.requestHeaders.find((request) => request.path === "/queries/full")?.apiKey).toBe("resource-key");
+    expect(core.requestHeaders.find((request) => request.path === "/entities")?.apiKey).toBe("resource-key");
+  });
+
   it("keeps admin auth on AtlasAdminClient", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -183,6 +205,23 @@ describe("AtlasClient HTTP", () => {
         }
       })
     ).toBe(false);
+  });
+
+  it("validates every generated request validator at runtime", () => {
+    expect(isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", alias: null })).toBe(true);
+    expect(isEntityCreateRequest({ entity_id: "", entity_type: "asset" })).toBe(false);
+    expect(isEntityUpdateRequest({ alias: null })).toBe(true);
+    expect(isEntityUpdateRequest({})).toBe(false);
+
+    expect(isTaskCreateRequest({ task_id: "task-valid", entity_id: null, components: { parameters: { latitude: 38, longitude: -77 } } })).toBe(true);
+    expect(isTaskCreateRequest({ task_id: "task-invalid", components: { parameters: { latitude: 91 } } })).toBe(false);
+    expect(isTaskUpdateRequest({ remove_extra_keys: ["priority"] })).toBe(true);
+    expect(isTaskUpdateRequest({})).toBe(false);
+
+    expect(isObjectCreateRequest({ object_id: "object-valid", referenced_by: [{ entity_id: "asset-valid" }] })).toBe(true);
+    expect(isObjectCreateRequest({ object_id: "object-invalid", referenced_by: [{}] })).toBe(false);
+    expect(isObjectUpdateRequest({ usage_hints: ["thumbnail"] })).toBe(true);
+    expect(isObjectUpdateRequest({})).toBe(false);
   });
 
   it("enforces fake Core route verbs while preserving default GET semantics", async () => {
@@ -549,5 +588,38 @@ describe("AtlasClient HTTP", () => {
       response: expect.objectContaining({ success: false, error_code: "ENTITY_NOT_FOUND" })
     });
     await expect(client.entities.get("missing-entity")).rejects.toBeInstanceOf(AtlasAPIError);
+  });
+
+  it("surfaces successful invalid JSON responses as JSON parse failures", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => new Response("{", { status: 200, headers: { "Content-Type": "application/json" } })
+    });
+
+    await expect(client.queries.full()).rejects.toThrow(SyntaxError);
+  });
+
+  it("surfaces empty successful JSON responses as JSON parse failures", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => new Response("", { status: 200, headers: { "Content-Type": "application/json" } })
+    });
+
+    await expect(client.queries.full()).rejects.toThrow(SyntaxError);
+  });
+
+  it("collapses non-JSON error responses into unstructured AtlasAPIError", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => new Response("server exploded", { status: 500, headers: { "Content-Type": "text/plain" } })
+    });
+
+    await expect(client.queries.full()).rejects.toMatchObject({
+      name: "AtlasAPIError",
+      status: 500,
+      response: undefined,
+      errorCode: undefined,
+      message: "Atlas request failed: 500"
+    });
   });
 });

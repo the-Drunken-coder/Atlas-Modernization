@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 )
 
 // Serializes DB-backed admin tests that share admin_records across Go packages.
@@ -369,7 +370,7 @@ func openAdminTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicit := adminTestDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed admin tests")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed admin tests")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -378,17 +379,17 @@ func openAdminTestPool(t *testing.T) *pgxpool.Pool {
 		if explicit {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	if err := pool.Ping(ctx); err != nil {
 		if explicit {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `SELECT 1 FROM admin_records LIMIT 1`); err != nil {
-		t.Skipf("admin_records table is not present: %v", err)
+		testenv.SkipOrFatal(t, "admin_records table is not present: %v", err)
 	}
 	lockAdminRecords(ctx, t, pool)
 	return pool

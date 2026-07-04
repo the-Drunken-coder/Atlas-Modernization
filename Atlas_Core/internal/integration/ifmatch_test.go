@@ -354,6 +354,9 @@ func requestJSONWithHeaders(ctx context.Context, client *APIClient, method, path
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	if client.APIKey != "" {
+		req.Header.Set("X-API-Key", client.APIKey)
+	}
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}

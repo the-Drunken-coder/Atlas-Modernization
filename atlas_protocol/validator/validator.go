@@ -70,6 +70,30 @@ func ValidateErrorResponse(value any) []string {
 	return validate("#ErrorResponse", value)
 }
 
+func ValidateEntityCreateRequest(value any) []string {
+	return validate("#EntityCreateRequest", value)
+}
+
+func ValidateEntityUpdateRequest(value any) []string {
+	return validate("#EntityUpdateRequest", value)
+}
+
+func ValidateTaskCreateRequest(value any) []string {
+	return validate("#TaskCreateRequest", value)
+}
+
+func ValidateTaskUpdateRequest(value any) []string {
+	return validate("#TaskUpdateRequest", value)
+}
+
+func ValidateObjectCreateRequest(value any) []string {
+	return validate("#ObjectCreateRequest", value)
+}
+
+func ValidateObjectUpdateRequest(value any) []string {
+	return validate("#ObjectUpdateRequest", value)
+}
+
 func ValidateFeedEvent(value any) []string {
 	errors := validate("#FeedEvent", value)
 	return appendFeedEventContextErrors(errors, value)
@@ -240,9 +264,6 @@ func validate(definition string, value any) []string {
 	evalMu.Lock()
 	defer evalMu.Unlock()
 	def := schema.root.LookupPath(path)
-	if err := def.Err(); err != nil {
-		return []string{fmt.Sprintf("protocol schema definition %s not found: %v", definition, err)}
-	}
 
 	input := schema.ctx.Encode(normalized)
 	if err := input.Err(); err != nil {

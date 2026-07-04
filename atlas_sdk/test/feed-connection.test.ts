@@ -133,6 +133,43 @@ describe("AtlasClient feed connection", () => {
     });
   });
 
+  it("sends API key auth frames before accepting feed events", async () => {
+    const core = new FakeCore();
+    core.expectedFeedApiKey = "feed-key";
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      apiKey: "feed-key",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.connectFeed();
+
+    expect(core.feedAuthFrames).toEqual([{ apiKey: "feed-key" }]);
+    const socket = Array.from(core.sockets)[0];
+    expect(socket.sentMessages).toContainEqual({ action: "auth", api_key: "feed-key" });
+  });
+
+  it("rejects feed connections when the auth frame has the wrong API key", async () => {
+    const core = new FakeCore();
+    core.expectedFeedApiKey = "right-key";
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      apiKey: "wrong-key",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0,
+      feedHandshakeTimeoutMs: 50
+    });
+
+    await expect(client.connectFeed()).rejects.toThrow("before protocol hello");
+    expect(core.feedAuthFrames).toEqual([{ apiKey: "wrong-key" }]);
+    expect(core.sockets.size).toBe(0);
+  });
+
   it("rejects feed connections that close before the protocol hello", async () => {
     const core = new FakeCore();
     core.rejectFeedAuth = true;

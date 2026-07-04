@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -266,6 +267,49 @@ func TestRawJSONRejectsTrailingValues(t *testing.T) {
 	}
 }
 
+func TestRequestExamplesValidate(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		validate func(any) []string
+	}{
+		{"entity_create", "../examples/requests/entity-create.json", ValidateEntityCreateRequest},
+		{"entity_update", "../examples/requests/entity-update.json", ValidateEntityUpdateRequest},
+		{"task_create", "../examples/requests/task-create.json", ValidateTaskCreateRequest},
+		{"task_update", "../examples/requests/task-update.json", ValidateTaskUpdateRequest},
+		{"object_create", "../examples/requests/object-create.json", ValidateObjectCreateRequest},
+		{"object_update", "../examples/requests/object-update.json", ValidateObjectUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if errors := tt.validate(readJSONExample(t, tt.path)); len(errors) > 0 {
+				t.Fatalf("%s validation errors = %v", tt.path, errors)
+			}
+		})
+	}
+}
+
+func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		validate func(any) []string
+	}{
+		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", ValidateEntityUpdateRequest},
+		{"task_update_empty", "../examples/requests/invalid-task-update-empty.json", ValidateTaskUpdateRequest},
+		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", ValidateObjectUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.validate(readJSONExample(t, tt.path))
+			assertAnyContains(t, errors, "MinFields")
+		})
+	}
+
+	errors := ValidateTaskCreateRequest(json.RawMessage(`{"task_id":"task-unknown","unknown":true}`))
+	assertAnyContains(t, errors, "unknown")
+}
+
 func TestUnencodableInputReturnsError(t *testing.T) {
 	values := []any{
 		map[string]any{"latitude": make(chan int)},
@@ -282,6 +326,19 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func readJSONExample(t *testing.T, path string) json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return json.RawMessage(data)
 }
 
 func assertAnyContains(t *testing.T, errors []string, want string) {

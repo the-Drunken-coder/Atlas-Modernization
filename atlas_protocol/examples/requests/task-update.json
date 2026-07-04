@@ -1,0 +1,12 @@
+{
+  "status": "acknowledged",
+  "entity_id": null,
+  "components": {
+    "progress": {
+      "percent": 25,
+      "updated_at": "2026-06-20T00:10:00Z"
+    },
+    "status_message": "en route"
+  },
+  "remove_extra_keys": ["priority"]
+}

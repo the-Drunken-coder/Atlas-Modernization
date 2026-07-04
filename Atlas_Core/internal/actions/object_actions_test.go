@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 )
 
 func TestNormalizeOptionalObjectString(t *testing.T) {
@@ -105,7 +106,7 @@ func TestCleanupUploadedPathAfterFailureReportsDeleteFailure(t *testing.T) {
 func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -116,19 +117,19 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
+		testenv.SkipOrFatal(t, "core schema with storage deletion outbox is not present in test database")
 	}
 
 	objectID := fmt.Sprintf("cleanup-retry-%d", time.Now().UTC().UnixNano())
@@ -171,7 +172,7 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object delete ordering test")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object delete ordering test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -182,19 +183,19 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
+		testenv.SkipOrFatal(t, "core schema with storage deletion outbox is not present in test database")
 	}
 
 	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
@@ -406,7 +407,7 @@ func TestStorageDeletionRetryDelay(t *testing.T) {
 func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -417,19 +418,19 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
-		t.Skip("core schema with storage deletion outbox is not present in test database")
+		testenv.SkipOrFatal(t, "core schema with storage deletion outbox is not present in test database")
 	}
 
 	objectID := fmt.Sprintf("outbox-%d", time.Now().UTC().UnixNano())
@@ -473,7 +474,7 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object upload race test")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object upload race test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -484,19 +485,19 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
-		t.Skip("core schema is not present in test database")
+		testenv.SkipOrFatal(t, "core schema is not present in test database")
 	}
 
 	storageClient := newBlockingObjectStorage()
