@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { StyleSpecification } from "maplibre-gl";
 import { createSdkDataSource } from "./data-source.js";
 import type { CommandDefinition } from "./command-model.js";
 import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
@@ -6,8 +7,8 @@ import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
 const config = {
   atlasBaseUrl: "https://core.test",
   protocolRevision: "rev",
-  defaultMapSourceId: "esri-world-imagery",
-  mapSources: [{ id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }]
+  defaultMapSourceId: "openstreetmap-default",
+  mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
 };
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 const holdPositionCommand: CommandDefinition = {
@@ -20,6 +21,10 @@ const holdPositionCommand: CommandDefinition = {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+function style(id: string): StyleSpecification {
+  return { version: 8, sources: {}, layers: [], metadata: { id } };
+}
 
 describe("sdk data source", () => {
   it("starts live SDK sync and reports sync health", async () => {

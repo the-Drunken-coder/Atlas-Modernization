@@ -42,7 +42,7 @@ export function TextField({ label, hint, mono, id: providedId, className, ...pro
 
 type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & {
   label?: string;
-  options: Array<{ value: string; label: string }>;
+  options: Array<{ value: string; label: string; disabled?: boolean }>;
 };
 
 export function SelectField({ label, options, id: providedId, className, ...props }: SelectFieldProps) {
@@ -53,7 +53,7 @@ export function SelectField({ label, options, id: providedId, className, ...prop
       {label ? <span className="field__label">{label}</span> : null}
       <select id={id} className={`select${className ? ` ${className}` : ""}`} {...props}>
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option key={option.value} value={option.value} disabled={option.disabled}>
             {option.label}
           </option>
         ))}

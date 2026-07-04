@@ -2,21 +2,33 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
 import { appConfigFromEnv, fetchAppConfig } from "./config.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 describe("appConfigFromEnv", () => {
   it("uses the local Core URL during Vite development", () => {
     vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
 
-    expect(appConfigFromEnv({ DEV: true, MODE: "development" })).toEqual({
+    const config = appConfigFromEnv({ DEV: true, MODE: "development" });
+    expect(config).toMatchObject({
       atlasBaseUrl: "http://127.0.0.1:8000",
       protocolRevision: ATLAS_PROTOCOL_REVISION,
-      defaultMapSourceId: "esri-world-imagery",
-      mapSources: [
-        { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "http://127.0.0.1:5173/maps/styles/esri-world-imagery.json" },
-        { id: "usgs-topo", label: "USGS Topo", styleUrl: "http://127.0.0.1:5173/maps/styles/usgs-topo.json" }
-      ]
+      defaultMapSourceId: "openstreetmap-default"
     });
+    expect(config.mapSources.map(({ id, style, unavailableReason }) => ({ id, available: Boolean(style), unavailableReason }))).toEqual([
+      { id: "google-satellite", available: false, unavailableReason: "missing key" },
+      { id: "openstreetmap-default", available: true, unavailableReason: undefined },
+      { id: "usgs-topo", available: true, unavailableReason: undefined },
+      { id: "mapbox-satellite", available: false, unavailableReason: "missing key" },
+      { id: "mapbox-outdoors", available: false, unavailableReason: "missing key" },
+      { id: "mapbox-dark", available: false, unavailableReason: "missing key" },
+      { id: "thunderforest-outdoors", available: false, unavailableReason: "missing key" },
+      { id: "maptiler-satellite", available: false, unavailableReason: "missing key" },
+      { id: "maptiler-osm-dark", available: false, unavailableReason: "missing key" },
+      { id: "openmaptiles-dark-matter", available: true, unavailableReason: undefined }
+    ]);
   });
 
   it("uses the same-site production Core alias outside development", () => {
@@ -25,18 +37,45 @@ describe("appConfigFromEnv", () => {
     expect(appConfigFromEnv({ DEV: false, MODE: "production" })).toMatchObject({
       atlasBaseUrl: "https://api.atlasinterface.com",
       protocolRevision: ATLAS_PROTOCOL_REVISION,
-      defaultMapSourceId: "esri-world-imagery",
-      mapSources: [
-        { id: "esri-world-imagery", styleUrl: "https://atlasinterface.com/maps/styles/esri-world-imagery.json" },
-        { id: "usgs-topo", styleUrl: "https://atlasinterface.com/maps/styles/usgs-topo.json" }
-      ]
+      defaultMapSourceId: "openstreetmap-default"
     });
+  });
+
+  it("adds credentialed map sources when their provider env vars are present", () => {
+    const config = appConfigFromEnv({
+      DEV: true,
+      VITE_GOOGLE_MAPS_API_KEY: " google-key ",
+      googleMapsTileSession: " google-session ",
+      VITE_MAPBOX_ACCESS_TOKEN: " mapbox-token ",
+      VITE_MAPTILER_API_KEY: " maptiler-key ",
+      VITE_THUNDERFOREST_API_KEY: " thunderforest-key "
+    });
+
+    expect(config.defaultMapSourceId).toBe("google-satellite");
+    expect(config.mapSources.map((source) => source.id)).toEqual([
+      "google-satellite",
+      "openstreetmap-default",
+      "usgs-topo",
+      "mapbox-satellite",
+      "mapbox-outdoors",
+      "mapbox-dark",
+      "thunderforest-outdoors",
+      "maptiler-satellite",
+      "maptiler-osm-dark",
+      "openmaptiles-dark-matter"
+    ]);
+    expect(config.mapSources.every((source) => source.style)).toBe(true);
+    expect(JSON.stringify(config.mapSources.find((source) => source.id === "google-satellite")?.style)).toContain("session=google-session&key=google-key");
   });
 
   it("allows an explicit Core URL override", () => {
     vi.stubGlobal("location", { origin: "https://preview.example" });
 
     expect(appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: " https://core.test/ " }).atlasBaseUrl).toBe("https://core.test");
+  });
+
+  it("falls back to the default Core URL when the explicit env value is blank", () => {
+    expect(appConfigFromEnv({ DEV: true, MODE: "development", VITE_ATLAS_CORE_BASE_URL: " " }).atlasBaseUrl).toBe("http://127.0.0.1:8000");
   });
 
   it("rejects invalid explicit Core URLs", () => {
@@ -52,5 +91,21 @@ describe("fetchAppConfig", () => {
 
     await expect(fetchAppConfig()).resolves.toMatchObject({ atlasBaseUrl: "http://127.0.0.1:8000" });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("creates a Google Maps tile session when only the API key is configured", async () => {
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ session: "session-1" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+
+    const config = await fetchAppConfig();
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://tile.googleapis.com/v1/createSession?key=google-key",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ mapType: "satellite", language: "en-US", region: "US" }) })
+    );
+    expect(config.mapSources[0].id).toBe("google-satellite");
+    expect(JSON.stringify(config.mapSources[0].style)).toContain("session=session-1&key=google-key");
   });
 });

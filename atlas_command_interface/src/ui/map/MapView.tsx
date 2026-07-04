@@ -1,4 +1,4 @@
-import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent } from "maplibre-gl";
+import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
 import {
@@ -49,6 +49,8 @@ const COLORS = {
 const INTERACTIVE_LAYERS = ["geofeatures-point", "geofeatures-line", "geofeatures-fill"];
 const SCROLL_LOCK_SETTLE_MS = 180;
 const SUPPRESSED_CLICK_FALLBACK_MS = 750;
+const WHEEL_ZOOM_RATE = 1 / 450;
+const DOM_DELTA_LINE = 1;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 export type MapReticleTarget = MapTarget;
@@ -60,7 +62,8 @@ export type MapEditing = {
 
 type MapViewProps = {
   sources: MapSources;
-  styleUrl: string;
+  styleId: string;
+  style: StyleSpecification;
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
@@ -70,7 +73,7 @@ type MapViewProps = {
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
   onBackgroundClick?: () => void;
-  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
 };
 
 type HoverTarget = ReticleTarget & { entityId: string };
@@ -78,7 +81,8 @@ type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint }
 
 export function MapView({
   sources,
-  styleUrl,
+  styleId,
+  style,
   editing,
   initialCenter,
   previewTarget,
@@ -94,8 +98,8 @@ export function MapView({
   const mapRef = useRef<MlMap | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
-  const currentStyleUrlRef = useRef<string | undefined>(undefined);
-  const pendingStyleUrlRef = useRef<string | undefined>(undefined);
+  const currentStyleIdRef = useRef<string | undefined>(undefined);
+  const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
   const fitWorldOnceRef = useRef(initialCenter !== undefined);
@@ -131,6 +135,16 @@ export function MapView({
     reticleRef.current = reticle;
   }, [reticle]);
 
+  useEffect(() => {
+    const mapCanvas = mapCanvasRef.current;
+    if (!mapCanvas) return;
+    const preventPageScroll = (event: globalThis.WheelEvent) => event.preventDefault();
+    mapCanvas.addEventListener("wheel", preventPageScroll, { capture: true, passive: false });
+    return () => {
+      mapCanvas.removeEventListener("wheel", preventPageScroll, { capture: true });
+    };
+  }, []);
+
   // Create the map once.
   useEffect(() => {
     if (mapError) return;
@@ -144,7 +158,7 @@ export function MapView({
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: styleUrl,
+        style: cloneStyle(style),
         center: initialCenter ?? [0, 0],
         zoom: initialCenter ? 11 : 0,
         renderWorldCopies: false,
@@ -167,7 +181,7 @@ export function MapView({
     }
 
     mapRef.current = map;
-    currentStyleUrlRef.current = styleUrl;
+    currentStyleIdRef.current = styleId;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -207,15 +221,15 @@ export function MapView({
       // Tile/style errors should not blank the operator picture. Keep overlays
       // alive and surface the details in devtools.
       console.warn("Map render warning", event.error);
-      const failedStyleUrl = pendingStyleUrlRef.current;
-      if (failedStyleUrl) {
-        pendingStyleUrlRef.current = undefined;
+      const failedStyleId = pendingStyleIdRef.current;
+      if (failedStyleId) {
+        pendingStyleIdRef.current = undefined;
         if (readyRef.current && map.isStyleLoaded()) {
           registerSourcesAndLayers(map);
           pushSources(map, sourcesRef.current);
           pushEditingOverlay(map, editingRef.current);
         }
-        styleSwitchErrorRef.current?.({ failedStyleUrl, activeStyleUrl: currentStyleUrlRef.current ?? failedStyleUrl });
+        styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
       }
     });
 
@@ -247,44 +261,38 @@ export function MapView({
   // Sync basemap style while keeping the map camera and re-adding Atlas overlays.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || currentStyleUrlRef.current === styleUrl) return;
+    if (!map || currentStyleIdRef.current === styleId) return;
 
-    const controller = new AbortController();
     let cancelled = false;
-    pendingStyleUrlRef.current = styleUrl;
+    pendingStyleIdRef.current = styleId;
 
     const handleFailure = (error: unknown) => {
-      if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
-      pendingStyleUrlRef.current = undefined;
+      if (cancelled || pendingStyleIdRef.current !== styleId) return;
+      pendingStyleIdRef.current = undefined;
       console.warn("Map style switch failed", error);
       if (readyRef.current && map.isStyleLoaded()) {
         registerSourcesAndLayers(map);
         pushSources(map, sourcesRef.current);
         pushEditingOverlay(map, editingRef.current);
       }
-      styleSwitchErrorRef.current?.({ failedStyleUrl: styleUrl, activeStyleUrl: currentStyleUrlRef.current ?? styleUrl });
+      styleSwitchErrorRef.current?.({ failedStyleId: styleId, activeStyleId: currentStyleIdRef.current ?? styleId });
     };
 
-    void loadStyle(styleUrl, controller.signal)
-      .then((style) => {
-        if (cancelled || pendingStyleUrlRef.current !== styleUrl) return;
-        map.once("style.load", () => {
-          if (pendingStyleUrlRef.current !== styleUrl) return;
-          currentStyleUrlRef.current = styleUrl;
-          pendingStyleUrlRef.current = undefined;
-        });
-        map.setStyle(style);
-      })
-      .catch((error: unknown) => {
-        if (isAbortError(error)) return;
-        handleFailure(error);
+    try {
+      map.once("style.load", () => {
+        if (pendingStyleIdRef.current !== styleId) return;
+        currentStyleIdRef.current = styleId;
+        pendingStyleIdRef.current = undefined;
       });
+      map.setStyle(cloneStyle(style));
+    } catch (error) {
+      handleFailure(error);
+    }
 
     return () => {
       cancelled = true;
-      controller.abort();
     };
-  }, [styleUrl]);
+  }, [styleId, style]);
 
   // Sync entity sources.
   useEffect(() => {
@@ -520,17 +528,19 @@ export function MapView({
   const onMapWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (zoomOverlayRef.current) return;
     if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
+    const map = mapRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
     const hoverReticle = reticleRef.current;
     const activeReticle = hoverReticle ?? activeReticleRef.current;
     scrollLockedExternalReticleRef.current = Boolean(activeReticle && !hoverReticle);
+    if (map && activeReticle?.targetEntityId) zoomAroundReticleTarget(map, activeReticle, event);
     if (activeReticle) {
       const lockedReticle = hoverReticle ?? { ...activeReticle, targetEntityId: undefined };
       reticleRef.current = lockedReticle;
       setReticle(lockedReticle);
     }
     const visualPoint = activeReticle ? { x: activeReticle.x, y: activeReticle.y } : pointFromClient(event, rect);
-    cursorHandoffRef.current = { nativePoint: pointFromClient(event, rect), visualPoint };
+    cursorHandoffRef.current = activeReticle?.targetEntityId ? null : { nativePoint: pointFromClient(event, rect), visualPoint };
     event.currentTarget.classList.add("map-canvas--scrolling");
     if (!scrollLockedRef.current) setScrollLocked(true);
     scrollLockedRef.current = true;
@@ -623,6 +633,19 @@ export function MapView({
   function restoreReticleAtScreenPoint(point: ScreenPoint): void {
     cursorHandoffRef.current = null;
     setReticleState({ x: point.x, y: point.y, target: squareAround(point, RETICLE_TARGET_SIZE) });
+  }
+
+  function zoomAroundReticleTarget(map: MlMap, target: ReticleState, event: WheelEvent<HTMLDivElement>): void {
+    const delta = zoomDeltaFromWheel(event);
+    if (delta === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const scrollZoomWasEnabled = map.scrollZoom.isEnabled();
+    if (scrollZoomWasEnabled) {
+      map.scrollZoom.disable();
+      window.setTimeout(() => map.scrollZoom.enable(), 0);
+    }
+    map.zoomTo(map.getZoom() + delta, { around: map.unproject([target.x, target.y]), duration: 0 });
   }
 
   function syncTargetReticle(entityId: string): void {
@@ -747,6 +770,12 @@ function cursorPointsFromEvent(
 
 function clientPointInsideRect(event: { clientX: number; clientY: number }, rect: DOMRect): boolean {
   return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+}
+
+function zoomDeltaFromWheel(event: Pick<WheelEvent<HTMLDivElement>, "deltaMode" | "deltaY" | "shiftKey">): number {
+  let value = event.deltaMode === DOM_DELTA_LINE ? event.deltaY * 40 : event.deltaY;
+  if (event.shiftKey && value) value /= 4;
+  return -value * WHEEL_ZOOM_RATE;
 }
 
 function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {
@@ -1005,16 +1034,8 @@ function clearMarkers(markers: Marker[]): void {
   for (const marker of markers) marker.remove();
 }
 
-async function loadStyle(styleUrl: string, signal: AbortSignal): Promise<maplibregl.StyleSpecification> {
-  const response = await fetch(styleUrl, { headers: { Accept: "application/json" }, signal });
-  if (!response.ok) {
-    throw new Error(`Map style request failed (${response.status})`);
-  }
-  return (await response.json()) as maplibregl.StyleSpecification;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+function cloneStyle(style: StyleSpecification): StyleSpecification {
+  return JSON.parse(JSON.stringify(style)) as StyleSpecification;
 }
 
 function webglAvailable(): boolean {

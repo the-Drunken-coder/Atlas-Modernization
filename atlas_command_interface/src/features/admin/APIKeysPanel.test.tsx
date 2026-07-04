@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emptySnapshot } from "../../atlas/store.js";
 import { AtlasStaticProvider, type AtlasContextValue } from "../../state/atlas-context.js";
@@ -8,11 +9,11 @@ import { APIKeysPanel } from "./APIKeysPanel.js";
 const atlasValue: AtlasContextValue = {
 	status: "ready",
 	config: {
-		atlasBaseUrl: "https://core.test",
-		protocolRevision: "rev",
-		defaultMapSourceId: "esri-world-imagery",
-		mapSources: [{ id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }]
-	},
+			atlasBaseUrl: "https://core.test",
+			protocolRevision: "rev",
+			defaultMapSourceId: "openstreetmap-default",
+			mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
+		},
 	snapshot: emptySnapshot(),
 	health: { running: true, healthy: true, degraded: false },
 	submitCommand: async () => {
@@ -21,7 +22,11 @@ const atlasValue: AtlasContextValue = {
 	updateGeometry: async () => {
 		throw new Error("not used");
 	}
-};
+	};
+
+function style(id: string): StyleSpecification {
+	return { version: 8, sources: {}, layers: [], metadata: { id } };
+}
 
 afterEach(() => {
 	vi.unstubAllGlobals();

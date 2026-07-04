@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { StyleSpecification } from "maplibre-gl";
 import { MapView, buildMapSources, type MapReticleTarget } from "./MapView.js";
 import { ASSET_VIEW_ZOOM, FOLLOW_EASE_MS, INITIAL_WORLD_BOUNDS, flyDurationMs, type MapCameraCommand } from "./map-camera.js";
 import type { MapSources } from "./map-sources.js";
@@ -25,7 +26,8 @@ const maplibreMock = vi.hoisted(() => {
     readonly stop = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
-    readonly getCenter = vi.fn(() => ({ lng: 0, lat: 0 }));
+    readonly zoomTo = vi.fn();
+    readonly getCenter = vi.fn(() => this.center);
     readonly resize = vi.fn((eventData?: unknown) => {
       this.fire("movestart", eventData);
       this.fire("moveend", eventData);
@@ -41,11 +43,25 @@ const maplibreMock = vi.hoisted(() => {
     });
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
-    readonly getZoom = vi.fn(() => 4);
+    readonly getZoom = vi.fn(() => this.zoom);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
+    readonly cameraForBounds = vi.fn((bounds: [[number, number], [number, number]], options?: { maxZoom?: number }) => ({
+      center: { lng: (bounds[0][0] + bounds[1][0]) / 2, lat: (bounds[0][1] + bounds[1][1]) / 2 },
+      zoom: options?.maxZoom ?? 16,
+      bearing: 0
+    }));
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
+    readonly unproject = vi.fn((point: [number, number] | { x: number; y: number }) =>
+      Array.isArray(point) ? { lng: point[0], lat: point[1] } : { lng: point.x, lat: point.y }
+    );
+    readonly scrollZoom = {
+      disable: vi.fn(),
+      enable: vi.fn(),
+      isEnabled: vi.fn(() => true)
+    };
     readonly setStyle = vi.fn((style: unknown) => {
+      if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle) throw new Error("bad style");
       this.style = style;
       this.loaded = false;
       this.sources.clear();
@@ -54,6 +70,8 @@ const maplibreMock = vi.hoisted(() => {
     });
     loaded = true;
     style: unknown;
+    center = { lng: 0, lat: 0 };
+    zoom = 4;
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -180,38 +198,34 @@ describe("MapView style switching", () => {
     expect(map.sources.has("geofeatures")).toBe(true);
   });
 
-  it("keeps existing symbol markers when a style prefetch fails", async () => {
+  it("keeps existing symbol markers when a style switch fails", async () => {
     const onStyleSwitchError = vi.fn();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 503 })));
     const { canvas, map, rerenderMap } = renderMapView({
       sources: markerSources(),
-      styleUrl: "/maps/styles/a.json",
+      styleId: "a",
+      style: style("a"),
       onStyleSwitchError
     });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
 
-    rerenderMap({ styleUrl: "/maps/styles/b.json" });
+    rerenderMap({ styleId: "b", style: style("b", { throwOnSetStyle: true }) });
 
     await waitFor(() =>
       expect(onStyleSwitchError).toHaveBeenCalledWith({
-        failedStyleUrl: "/maps/styles/b.json",
-        activeStyleUrl: "/maps/styles/a.json"
+        failedStyleId: "b",
+        activeStyleId: "a"
       })
     );
     expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1);
-    expect(map.setStyle).not.toHaveBeenCalled();
+    expect(map.setStyle).toHaveBeenCalledTimes(1);
   });
 
   it("sets a prefetched style and re-registers overlays after style load", async () => {
-    const nextStyle = { version: 8, sources: {}, layers: [] };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify(nextStyle), { status: 200, headers: { "Content-Type": "application/json" } }))
-    );
-    const { canvas, map, rerenderMap } = renderMapView({ sources: markerSources(), styleUrl: "/maps/styles/a.json" });
+    const nextStyle = style("b");
+    const { canvas, map, rerenderMap } = renderMapView({ sources: markerSources(), styleId: "a", style: style("a") });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
 
-    rerenderMap({ styleUrl: "/maps/styles/b.json" });
+    rerenderMap({ styleId: "b", style: nextStyle });
 
     await waitFor(() => expect(map.setStyle).toHaveBeenCalledWith(nextStyle));
     expect(map.sources.has("geofeatures")).toBe(false);
@@ -254,6 +268,15 @@ describe("MapView hover target box", () => {
       expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
+  });
+
+  it("prevents page scrolling during map wheel zoom", () => {
+    const { canvas } = renderMapView();
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 80, clientY: 100, deltaY: -120 });
+
+    fireEvent(canvas, wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
   });
 
   it("keeps a hovered marker box aligned while the map camera moves", async () => {
@@ -319,24 +342,39 @@ describe("MapView hover target box", () => {
       firePointerMove(canvas, { clientX: 90, clientY: 110 });
 
       const movedOverlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(movedOverlay).toHaveClass("map-reticle--targeted");
-      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
-      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
-
-      firePointerMove(canvas, { clientX: 170, clientY: 150 });
-
-      const releasedOverlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(releasedOverlay).not.toHaveClass("map-reticle--targeted");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("204px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("193px");
-      expect(releasedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("89px");
+      expect(movedOverlay).not.toHaveClass("map-reticle--targeted");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("80px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("90px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("69px");
+      expect(movedOverlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("79px");
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("selects the handoff-adjusted visual target after wheel zoom", async () => {
+  it("zooms around the snapped target instead of the physical wheel point", async () => {
+    const { canvas, map } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 28, 40));
+
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.wheel(canvas, { clientX: 180, clientY: 150, deltaY: -120 });
+
+      expect(map.scrollZoom.disable).toHaveBeenCalledTimes(1);
+      expect(map.unproject).toHaveBeenCalledWith([74, 90]);
+      expect(map.zoomTo).toHaveBeenCalledWith(4 + 120 / 450, { around: { lng: 74, lat: 90 }, duration: 0 });
+
+      act(() => vi.advanceTimersByTime(0));
+      expect(map.scrollZoom.enable).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("selects the raw pointer target after targeted wheel zoom settles", async () => {
     const { canvas, map, onSelectEntity } = renderMapView({
       sources: buildMapSources(
         [
@@ -369,11 +407,11 @@ describe("MapView hover target box", () => {
       vi.useRealTimers();
     }
 
-    expect(map.queryRenderedFeatures).toHaveBeenLastCalledWith([70, 80], {
+    expect(map.queryRenderedFeatures).toHaveBeenLastCalledWith([20, 100], {
       layers: ["geofeatures-point", "geofeatures-line", "geofeatures-fill"]
     });
-    expect(onSelectEntity).toHaveBeenCalledWith("geo-visual");
-    expect(onSelectEntity).not.toHaveBeenCalledWith("geo-raw");
+    expect(onSelectEntity).toHaveBeenCalledWith("geo-raw");
+    expect(onSelectEntity).not.toHaveBeenCalledWith("geo-visual");
   });
 
   it("keeps focused entity reticles behind live map background movement", async () => {
@@ -935,21 +973,23 @@ describe("MapView camera commands", () => {
 type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   focusTarget?: MapReticleTarget | null;
-  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   previewTarget?: MapReticleTarget | null;
   sources?: MapSources;
-  styleUrl?: string;
+  styleId?: string;
+  style?: StyleSpecification;
 };
 
 function renderMapView(props: RenderMapViewProps = {}) {
   const onBackgroundClick = vi.fn();
   const onMapContextMenu = vi.fn();
   const onSelectEntity = vi.fn();
-  const renderProps = { sources: buildMapSources([], undefined), styleUrl: "test-style", ...props };
+  const renderProps = { sources: buildMapSources([], undefined), styleId: "test-style", style: style("test-style"), ...props };
   const result = render(
     <MapView
       sources={renderProps.sources}
-      styleUrl={renderProps.styleUrl}
+      styleId={renderProps.styleId}
+      style={renderProps.style}
       focusTarget={renderProps.focusTarget}
       previewTarget={renderProps.previewTarget}
       cameraCommand={renderProps.cameraCommand}
@@ -967,7 +1007,8 @@ function renderMapView(props: RenderMapViewProps = {}) {
     result.rerender(
       <MapView
         sources={renderProps.sources}
-        styleUrl={renderProps.styleUrl}
+        styleId={renderProps.styleId}
+        style={renderProps.style}
         focusTarget={renderProps.focusTarget}
         previewTarget={renderProps.previewTarget}
         cameraCommand={renderProps.cameraCommand}
@@ -979,6 +1020,10 @@ function renderMapView(props: RenderMapViewProps = {}) {
     );
   };
   return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap };
+}
+
+function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {
+  return { version: 8, sources: {}, layers: [], metadata: { id, ...metadata } };
 }
 
 function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect | (() => DOMRect)): HTMLButtonElement {

@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import type { AppConfig } from "../app/config.js";
@@ -39,9 +40,13 @@ const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T0
 const config: AppConfig = {
   atlasBaseUrl: "/atlas",
   protocolRevision: "rev",
-  defaultMapSourceId: "esri-world-imagery",
-  mapSources: [{ id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" }]
+  defaultMapSourceId: "openstreetmap-default",
+  mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
 };
+
+function style(id: string): StyleSpecification {
+  return { version: 8, sources: {}, layers: [], metadata: { id } };
+}
 
 function entity(alias: string, version: number): EntityResource {
   return {

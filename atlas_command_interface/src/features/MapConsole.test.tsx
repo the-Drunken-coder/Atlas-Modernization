@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
@@ -10,14 +11,14 @@ import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {
-  styleUrl: string;
+  styleId: string;
   editing?: unknown;
   focusTarget?: { id: string } | null;
   cameraCommand?: { seq: number; target: { id: string } } | null;
   onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
-  onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
+  onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   previewTarget?: { id: string } | null;
 };
 
@@ -32,7 +33,7 @@ vi.mock("../ui/map/MapView.js", async () => {
       return (
         <div
           data-testid="map"
-          data-style-url={props.styleUrl}
+          data-style-id={props.styleId}
           data-editing={props.editing ? "true" : "false"}
           data-focus-target={props.focusTarget?.id ?? ""}
           data-preview-target={props.previewTarget?.id ?? ""}
@@ -168,13 +169,18 @@ function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     atlasBaseUrl: "/atlas",
     protocolRevision: "rev",
-    defaultMapSourceId: "esri-world-imagery",
+    defaultMapSourceId: "openstreetmap-default",
     mapSources: [
-      { id: "esri-world-imagery", label: "Esri World Imagery", styleUrl: "/maps/styles/esri-world-imagery.json" },
-      { id: "usgs-topo", label: "USGS Topo", styleUrl: "/maps/styles/usgs-topo.json" }
+      { id: "google-satellite", label: "Google Satellite", unavailableReason: "missing key" },
+      { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") },
+      { id: "usgs-topo", label: "USGS Topo", style: style("usgs-topo") }
     ],
     ...overrides
   };
+}
+
+function style(id: string): StyleSpecification {
+  return { version: 8, sources: {}, layers: [], metadata: { id } };
 }
 
 function renderConsole(fake: AtlasDataSource, config: AppConfig = appConfig()) {
@@ -344,14 +350,17 @@ describe("MapConsole command flow", () => {
     renderConsole(fake);
 
     await screen.findByText("Rover");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
 
     const mapSelect = screen.getByLabelText("Map");
-    expect(Array.from(mapSelect.querySelectorAll("option")).map((option) => option.textContent)).toEqual(["Esri World Imagery", "USGS Topo"]);
+    const options = Array.from(mapSelect.querySelectorAll("option"));
+    expect(options.map((option) => option.textContent)).toEqual(["Google Satellite (missing key)", "OpenStreetMap Default", "USGS Topo"]);
+    expect(options[0]).toBeDisabled();
+    expect(options[1]).not.toBeDisabled();
 
     await user.selectOptions(mapSelect, "usgs-topo");
 
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
   });
 
   it("reverts the map selector when a style switch fails", async () => {
@@ -363,17 +372,17 @@ describe("MapConsole command flow", () => {
     const mapSelect = screen.getByLabelText("Map");
 
     await user.selectOptions(mapSelect, "usgs-topo");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
 
     act(() => {
       mapViewMock.lastProps?.onStyleSwitchError?.({
-        failedStyleUrl: "/maps/styles/usgs-topo.json",
-        activeStyleUrl: "/maps/styles/esri-world-imagery.json"
+        failedStyleId: "usgs-topo",
+        activeStyleId: "openstreetmap-default"
       });
     });
 
-    await waitFor(() => expect(mapSelect).toHaveValue("esri-world-imagery"));
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/esri-world-imagery.json");
+    await waitFor(() => expect(mapSelect).toHaveValue("openstreetmap-default"));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "openstreetmap-default");
   });
 
   it("falls back when the configured default is the only available map source", async () => {
@@ -382,13 +391,13 @@ describe("MapConsole command flow", () => {
       fake,
       appConfig({
         defaultMapSourceId: "usgs-topo",
-        mapSources: [{ id: "usgs-topo", label: "USGS Topo", styleUrl: "/maps/styles/usgs-topo.json" }]
+        mapSources: [{ id: "usgs-topo", label: "USGS Topo", style: style("usgs-topo") }]
       })
     );
 
     await screen.findByText("Rover");
     expect(screen.getByLabelText("Map")).toHaveValue("usgs-topo");
-    expect(screen.getByTestId("map")).toHaveAttribute("data-style-url", "/maps/styles/usgs-topo.json");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
   });
 
   it("clears the selected entity when the map background is clicked", async () => {

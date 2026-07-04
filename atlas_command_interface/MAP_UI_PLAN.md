@@ -48,14 +48,11 @@ atlas_command_interface/
       geofeatures/
       commands/
       debug/
-  public/
-    maps/
-      styles/
 ```
 
 The exact file names can shift during implementation, but keep these boundaries:
 
-- `public/maps/styles/` owns static MapLibre style files for public basemaps.
+- `src/app/` owns generated MapLibre basemap source configuration from Vite env and public provider templates.
 - `src/atlas/` owns reusable Atlas command/catalog/data helpers.
 - `src/ui/` owns the local design system and shared UI primitives.
 - `src/features/` owns feature-specific screens and panels.
@@ -68,8 +65,7 @@ Use:
 
 - React + TypeScript.
 - Vite for the browser app.
-- MapLibre GL JS for map rendering, with static same-origin style JSON files
-  and public provider tile URLs.
+- MapLibre GL JS for map rendering, with generated raster style objects and public provider tile URLs.
 - The existing Atlas SDK for Atlas Core data access.
 - Core direct browser access through the Atlas SDK with `credentials: "include"`.
 - Build/dev-time Vite config for the Core base URL.
