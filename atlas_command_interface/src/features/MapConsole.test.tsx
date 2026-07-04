@@ -13,8 +13,10 @@ type MockMapViewProps = {
   styleUrl: string;
   editing?: unknown;
   focusTarget?: { id: string } | null;
+  cameraCommand?: { seq: number; target: { id: string } } | null;
   onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
   onBackgroundClick?: () => void;
+  onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleUrl: string; activeStyleUrl: string }) => void;
   previewTarget?: { id: string } | null;
 };
@@ -34,12 +36,23 @@ vi.mock("../ui/map/MapView.js", async () => {
           data-editing={props.editing ? "true" : "false"}
           data-focus-target={props.focusTarget?.id ?? ""}
           data-preview-target={props.previewTarget?.id ?? ""}
+          data-camera-seq={props.cameraCommand?.seq ?? ""}
+          data-camera-target={props.cameraCommand?.target.id ?? ""}
           onClick={() => props.onBackgroundClick?.()}
           onContextMenu={(event) => {
             event.preventDefault();
             props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
           }}
-        />
+        >
+          <button
+            type="button"
+            data-testid="map-marker-select"
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onSelectEntity?.("asset-1");
+            }}
+          />
+        </div>
       );
     },
     buildMapSources: sources.buildMapSources
@@ -218,6 +231,52 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByRole("button", { name: /Rover/ }));
 
     expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "asset-1");
+  });
+
+  it("issues a camera command for sidebar selections and bumps the sequence on re-select", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByRole("button", { name: /Rover/ }));
+    const map = screen.getByTestId("map");
+    expect(map).toHaveAttribute("data-camera-target", "asset-1");
+    expect(map).toHaveAttribute("data-camera-seq", "1");
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(await screen.findByRole("button", { name: /Rover/ }));
+
+    expect(map).toHaveAttribute("data-camera-target", "asset-1");
+    expect(map).toHaveAttribute("data-camera-seq", "2");
+  });
+
+  it("selects entities from map clicks without issuing a camera command", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+    await screen.findByRole("button", { name: /Rover/ });
+
+    await user.click(screen.getByTestId("map-marker-select"));
+
+    expect(await screen.findByRole("button", { name: /Hold Position/ })).toBeInTheDocument();
+    const map = screen.getByTestId("map");
+    expect(map).toHaveAttribute("data-focus-target", "asset-1");
+    expect(map).toHaveAttribute("data-camera-target", "");
+    expect(map).toHaveAttribute("data-camera-seq", "");
+  });
+
+  it("releases the camera command when the selection clears", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByRole("button", { name: /Rover/ }));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", "asset-1");
+
+    await user.click(screen.getByTestId("map"));
+
+    await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-camera-target", ""));
+    expect(screen.getByTestId("map")).toHaveAttribute("data-camera-seq", "");
   });
 
   it("surfaces degraded live-sync health on the map", async () => {
