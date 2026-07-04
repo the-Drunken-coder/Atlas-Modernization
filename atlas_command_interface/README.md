@@ -71,11 +71,12 @@ Always available:
 
 Credentialed sources:
 
-- `google-satellite` - set `VITE_GOOGLE_MAPS_API_KEY`. The app creates the required Google Maps Tile API satellite session at startup. `VITE_GOOGLE_MAPS_TILE_SESSION` can be supplied to reuse a pre-created session.
-- `microsoft-imagery` - set `VITE_BING_MAPS_KEY` or `VITE_MICROSOFT_MAPS_KEY` for Bing imagery, or `VITE_AZURE_MAPS_SUBSCRIPTION_KEY` for Azure Maps imagery.
+- `google-satellite` - set `VITE_GOOGLE_MAPS_API_KEY`. The app creates the required Google Maps Tile API satellite session at startup.
 - `mapbox-satellite`, `mapbox-outdoors`, `mapbox-dark` - set `VITE_MAPBOX_ACCESS_TOKEN`.
 - `thunderforest-outdoors` - set `VITE_THUNDERFOREST_API_KEY`.
 - `maptiler-satellite`, `maptiler-osm-dark` - set `VITE_MAPTILER_API_KEY`.
+
+Microsoft imagery via Bing or Azure Maps is intentionally deferred for the static app because it needs supported tile metadata, required attribution handling, and safer token/key handling.
 
 ## Cloudflare Pages
 

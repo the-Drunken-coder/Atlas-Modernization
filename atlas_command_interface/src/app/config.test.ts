@@ -19,7 +19,6 @@ describe("appConfigFromEnv", () => {
     });
     expect(config.mapSources.map(({ id, style, unavailableReason }) => ({ id, available: Boolean(style), unavailableReason }))).toEqual([
       { id: "google-satellite", available: false, unavailableReason: "missing key" },
-      { id: "microsoft-imagery", available: false, unavailableReason: "missing key" },
       { id: "openstreetmap-default", available: true, unavailableReason: undefined },
       { id: "usgs-topo", available: true, unavailableReason: undefined },
       { id: "mapbox-satellite", available: false, unavailableReason: "missing key" },
@@ -45,9 +44,8 @@ describe("appConfigFromEnv", () => {
   it("adds credentialed map sources when their provider env vars are present", () => {
     const config = appConfigFromEnv({
       DEV: true,
-      VITE_BING_MAPS_KEY: " bing-key ",
       VITE_GOOGLE_MAPS_API_KEY: " google-key ",
-      VITE_GOOGLE_MAPS_TILE_SESSION: " google-session ",
+      googleMapsTileSession: " google-session ",
       VITE_MAPBOX_ACCESS_TOKEN: " mapbox-token ",
       VITE_MAPTILER_API_KEY: " maptiler-key ",
       VITE_THUNDERFOREST_API_KEY: " thunderforest-key "
@@ -56,7 +54,6 @@ describe("appConfigFromEnv", () => {
     expect(config.defaultMapSourceId).toBe("google-satellite");
     expect(config.mapSources.map((source) => source.id)).toEqual([
       "google-satellite",
-      "microsoft-imagery",
       "openstreetmap-default",
       "usgs-topo",
       "mapbox-satellite",
@@ -69,19 +66,16 @@ describe("appConfigFromEnv", () => {
     ]);
     expect(config.mapSources.every((source) => source.style)).toBe(true);
     expect(JSON.stringify(config.mapSources.find((source) => source.id === "google-satellite")?.style)).toContain("session=google-session&key=google-key");
-    expect(JSON.stringify(config.mapSources.find((source) => source.id === "microsoft-imagery")?.style)).toContain("virtualearth.net/tiles/a{quadkey}.jpeg");
-  });
-
-  it("uses Azure Maps for Microsoft imagery when only an Azure key is configured", () => {
-    const config = appConfigFromEnv({ DEV: true, VITE_AZURE_MAPS_SUBSCRIPTION_KEY: " azure-key " });
-
-    expect(JSON.stringify(config.mapSources.find((source) => source.id === "microsoft-imagery")?.style)).toContain("atlas.microsoft.com/map/tile");
   });
 
   it("allows an explicit Core URL override", () => {
     vi.stubGlobal("location", { origin: "https://preview.example" });
 
     expect(appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: " https://core.test/ " }).atlasBaseUrl).toBe("https://core.test");
+  });
+
+  it("falls back to the default Core URL when the explicit env value is blank", () => {
+    expect(appConfigFromEnv({ DEV: true, MODE: "development", VITE_ATLAS_CORE_BASE_URL: " " }).atlasBaseUrl).toBe("http://127.0.0.1:8000");
   });
 
   it("rejects invalid explicit Core URLs", () => {

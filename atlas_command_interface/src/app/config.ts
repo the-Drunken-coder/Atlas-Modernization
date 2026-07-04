@@ -23,14 +23,11 @@ const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
 type RuntimeEnv = {
   DEV?: boolean;
   MODE?: string;
+  googleMapsTileSession?: string;
   VITE_ATLAS_CORE_BASE_URL?: string;
-  VITE_AZURE_MAPS_SUBSCRIPTION_KEY?: string;
-  VITE_BING_MAPS_KEY?: string;
   VITE_GOOGLE_MAPS_API_KEY?: string;
-  VITE_GOOGLE_MAPS_TILE_SESSION?: string;
   VITE_MAPBOX_ACCESS_TOKEN?: string;
   VITE_MAPTILER_API_KEY?: string;
-  VITE_MICROSOFT_MAPS_KEY?: string;
   VITE_THUNDERFOREST_API_KEY?: string;
 };
 
@@ -38,12 +35,12 @@ type RuntimeEnv = {
 export async function fetchAppConfig(): Promise<AppConfig> {
   const env = import.meta.env;
   const googleMapsApiKey = envValue(env.VITE_GOOGLE_MAPS_API_KEY);
-  const googleMapsTileSession = envValue(env.VITE_GOOGLE_MAPS_TILE_SESSION) ?? (googleMapsApiKey ? await fetchGoogleMapsTileSession(googleMapsApiKey) : undefined);
-  return appConfigFromEnv({ ...env, VITE_GOOGLE_MAPS_TILE_SESSION: googleMapsTileSession });
+  const googleMapsTileSession = googleMapsApiKey ? await fetchGoogleMapsTileSession(googleMapsApiKey) : undefined;
+  return appConfigFromEnv({ ...env, googleMapsTileSession });
 }
 
 export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
-  const atlasBaseUrl = parseConfigUrl(env.VITE_ATLAS_CORE_BASE_URL ?? defaultCoreBaseUrl(env), "atlasBaseUrl").replace(/\/$/, "");
+  const atlasBaseUrl = parseConfigUrl(envValue(env.VITE_ATLAS_CORE_BASE_URL) ?? defaultCoreBaseUrl(env), "atlasBaseUrl").replace(/\/$/, "");
   const mapSources = buildMapSourceConfig(env).map(parseMapSource);
   if (mapSources.length === 0) {
     throw new Error("Atlas interface config has no mapSources");
@@ -104,9 +101,7 @@ function configUrlBase(): string {
 
 function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
   const googleMapsApiKey = envValue(env.VITE_GOOGLE_MAPS_API_KEY);
-  const googleMapsTileSession = envValue(env.VITE_GOOGLE_MAPS_TILE_SESSION);
-  const bingMapsKey = envValue(env.VITE_BING_MAPS_KEY) ?? envValue(env.VITE_MICROSOFT_MAPS_KEY);
-  const azureMapsKey = envValue(env.VITE_AZURE_MAPS_SUBSCRIPTION_KEY);
+  const googleMapsTileSession = envValue(env.googleMapsTileSession);
   const mapboxAccessToken = envValue(env.VITE_MAPBOX_ACCESS_TOKEN);
   const thunderforestApiKey = envValue(env.VITE_THUNDERFOREST_API_KEY);
   const maptilerApiKey = envValue(env.VITE_MAPTILER_API_KEY);
@@ -125,9 +120,6 @@ function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
           label: "Google Satellite",
           unavailableReason: googleMapsApiKey ? "session unavailable" : "missing key"
         }),
-    bingMapsKey || azureMapsKey
-      ? microsoftImagerySource({ bingMapsKey, azureMapsKey })
-      : unavailableMapSource({ id: "microsoft-imagery", label: "Microsoft Imagery", unavailableReason: "missing key" }),
     rasterMapSource({
       id: "openstreetmap-default",
       label: "OpenStreetMap Default",
@@ -265,27 +257,6 @@ function rasterMapSource({
       ]
     }
   };
-}
-
-function microsoftImagerySource({ bingMapsKey, azureMapsKey }: { bingMapsKey?: string; azureMapsKey?: string }): MapSourceConfig {
-  if (bingMapsKey) {
-    return rasterMapSource({
-      id: "microsoft-imagery",
-      label: "Microsoft Imagery",
-      tiles: [`https://ecn.t0.tiles.virtualearth.net/tiles/a{quadkey}.jpeg?g=129&mkt=en-US&n=z&key=${urlParam(bingMapsKey)}`],
-      minzoom: 1,
-      maxzoom: 19,
-      attribution: "Microsoft Bing"
-    });
-  }
-  return rasterMapSource({
-    id: "microsoft-imagery",
-    label: "Microsoft Imagery",
-    tiles: [`https://atlas.microsoft.com/map/tile?api-version=2024-04-01&tilesetId=microsoft.imagery&zoom={z}&x={x}&y={y}&subscription-key=${urlParam(azureMapsKey ?? "")}`],
-    minzoom: 1,
-    maxzoom: 19,
-    attribution: "Microsoft"
-  });
 }
 
 function unavailableMapSource({ id, label, unavailableReason }: { id: string; label: string; unavailableReason: string }): MapSourceConfig {
