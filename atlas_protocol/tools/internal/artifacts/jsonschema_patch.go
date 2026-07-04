@@ -112,7 +112,58 @@ func patchGeneratedJSONSchema(root map[string]any) {
 	normalizeIntegerAllOf(root)
 	normalizeArrayLengthKeywords(root)
 	normalizeWildcardPatternProperties(root)
+	hydrateTaskCreateCommandComponents(root)
 	injectMinProperties(root)
+}
+
+func hydrateTaskCreateCommandComponents(root map[string]any) {
+	defs, ok := root["$defs"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := defs["TaskCreateCommandComponents"]; !ok {
+		return
+	}
+	nonCommand, ok := defs["TaskCreateNonCommandComponents"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := defs["CommandComponent"]; !ok {
+		return
+	}
+
+	commandComponents := cloneSchemaMap(nonCommand)
+	properties, _ := commandComponents["properties"].(map[string]any)
+	if properties == nil {
+		properties = map[string]any{}
+	}
+	properties["command"] = map[string]any{"$ref": "#/$defs/CommandComponent"}
+	commandComponents["properties"] = properties
+	commandComponents["required"] = []any{"command"}
+	defs["TaskCreateCommandComponents"] = commandComponents
+}
+
+func cloneSchemaMap(node map[string]any) map[string]any {
+	out := make(map[string]any, len(node))
+	for key, value := range node {
+		out[key] = cloneSchemaValue(value)
+	}
+	return out
+}
+
+func cloneSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchemaMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = cloneSchemaValue(item)
+		}
+		return out
+	default:
+		return typed
+	}
 }
 
 func normalizeIntegerAllOf(value any) {

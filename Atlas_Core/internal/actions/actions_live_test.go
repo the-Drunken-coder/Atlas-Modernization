@@ -275,6 +275,9 @@ func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Poo
 	t.Helper()
 	pattern := prefix + "%"
 	for _, taskID := range taskIDs {
+		if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = $1 AND resource_id = $2`, ChangeResourceTask, taskID); err != nil {
+			t.Fatalf("cleanup live action generated task tombstone %q: %v", taskID, err)
+		}
 		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
 			t.Fatalf("cleanup live action generated task %q: %v", taskID, err)
 		}

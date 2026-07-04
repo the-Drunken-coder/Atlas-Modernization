@@ -29,6 +29,23 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	[string]:    #JSONValue
 }
 
+#TaskCreateNonCommandComponents: {
+	parameters?:     #TaskParametersComponent
+	progress?:       #TaskProgressComponent
+	target?:         #TaskParametersComponent
+	status_message?: string
+	[=~"^custom_"]:  #JSONValue
+}
+
+#TaskCreateCommandComponents: close({
+	command:         #CommandComponent
+	parameters?:     #TaskParametersComponent
+	progress?:       #TaskProgressComponent
+	target?:         #TaskParametersComponent
+	status_message?: string
+	[=~"^custom_"]:  #JSONValue
+})
+
 #TaskComponents: {
 	command?:        #CommandComponent
 	parameters?:     #TaskParametersComponent

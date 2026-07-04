@@ -26,7 +26,12 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	task_id!:    shared.#NonEmptyString
 	status?:     shared.#NonEmptyString
 	entity_id?:  null | shared.#NonEmptyString
-	components?: #TaskComponents
+	components?: #TaskCreateNonCommandComponents
+	extra?: {[string]: #JSONValue}
+}) | close({
+	status?:     shared.#NonEmptyString
+	entity_id!:  shared.#NonEmptyString
+	components!: #TaskCreateCommandComponents
 	extra?: {[string]: #JSONValue}
 })
 

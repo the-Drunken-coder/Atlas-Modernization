@@ -329,6 +329,29 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 	}
 }
 
+func TestTaskCreateRequestCommandTaskIDRules(t *testing.T) {
+	validCommand := json.RawMessage(`{"entity_id":"asset-command","components":{"command":{"type":"goto"},"parameters":{"latitude":38,"longitude":-77}}}`)
+	if errors := ValidateTaskCreateRequest(validCommand); len(errors) > 0 {
+		t.Fatalf("ValidateTaskCreateRequest(command without task_id) errors = %v", errors)
+	}
+
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"normal_task_requires_task_id", `{"status":"pending"}`, "task_id"},
+		{"command_task_rejects_task_id", `{"task_id":"task-command","entity_id":"asset-command","components":{"command":{"type":"goto"}}}`, "task_id"},
+		{"command_task_requires_entity_id", `{"components":{"command":{"type":"goto"}}}`, "entity_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := ValidateTaskCreateRequest(json.RawMessage(tt.payload))
+			assertAnyContains(t, errors, tt.want)
+		})
+	}
+}
+
 func TestUnencodableInputReturnsError(t *testing.T) {
 	values := []any{
 		map[string]any{"latitude": make(chan int)},

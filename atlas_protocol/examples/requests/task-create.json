@@ -1,6 +1,5 @@
 {
-  "task_id": "task-001",
-  "entity_id": null,
+  "entity_id": "asset-001",
   "components": {
     "command": {
       "type": "goto",

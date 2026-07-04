@@ -214,7 +214,10 @@ describe("AtlasClient HTTP", () => {
     expect(isEntityUpdateRequest({})).toBe(false);
 
     expect(isTaskCreateRequest({ task_id: "task-valid", entity_id: null, components: { parameters: { latitude: 38, longitude: -77 } } })).toBe(true);
+    expect(isTaskCreateRequest({ entity_id: "asset-command", components: { command: { type: "goto" }, parameters: { latitude: 38, longitude: -77 } } })).toBe(true);
     expect(isTaskCreateRequest({ task_id: "task-invalid", components: { parameters: { latitude: 91 } } })).toBe(false);
+    expect(isTaskCreateRequest({ task_id: "task-command-invalid", entity_id: "asset-command", components: { command: { type: "goto" } } })).toBe(false);
+    expect(isTaskCreateRequest({ components: { command: { type: "goto" } } })).toBe(false);
     expect(isTaskUpdateRequest({ remove_extra_keys: ["priority"] })).toBe(true);
     expect(isTaskUpdateRequest({})).toBe(false);
 

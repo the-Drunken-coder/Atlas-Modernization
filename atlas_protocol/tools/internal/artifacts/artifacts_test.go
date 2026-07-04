@@ -50,6 +50,38 @@ func TestNormalizeWildcardPatternPropertiesPreservesSpecificPatterns(t *testing.
 	}
 }
 
+func TestHydrateTaskCreateCommandComponentsRequiresCommand(t *testing.T) {
+	nonCommandProperties := map[string]any{
+		"parameters": map[string]any{"$ref": "#/$defs/TaskParametersComponent"},
+	}
+	root := map[string]any{
+		"$defs": map[string]any{
+			"CommandComponent":            map[string]any{"type": "object"},
+			"TaskCreateCommandComponents": map[string]any{"type": "object"},
+			"TaskCreateNonCommandComponents": map[string]any{
+				"additionalProperties": false,
+				"properties":           nonCommandProperties,
+				"type":                 "object",
+			},
+		},
+	}
+
+	hydrateTaskCreateCommandComponents(root)
+
+	defs := root["$defs"].(map[string]any)
+	commandComponents := defs["TaskCreateCommandComponents"].(map[string]any)
+	properties := commandComponents["properties"].(map[string]any)
+	if got := properties["command"]; !reflect.DeepEqual(got, map[string]any{"$ref": "#/$defs/CommandComponent"}) {
+		t.Fatalf("command property = %#v, want CommandComponent ref", got)
+	}
+	if got := commandComponents["required"]; !reflect.DeepEqual(got, []any{"command"}) {
+		t.Fatalf("required = %#v, want command required", got)
+	}
+	if _, exists := nonCommandProperties["command"]; exists {
+		t.Fatal("hydrateTaskCreateCommandComponents mutated non-command component properties")
+	}
+}
+
 func TestNormalizeIntegerAllOf(t *testing.T) {
 	root := map[string]any{
 		"allOf": []any{
