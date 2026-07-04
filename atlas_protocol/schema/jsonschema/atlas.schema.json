@@ -1266,39 +1266,68 @@
       "type": "object"
     },
     "TaskCreateRequest": {
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "components": {
-          "$ref": "#/$defs/TaskComponents"
-        },
-        "entity_id": {
-          "anyOf": [
-            {
-              "type": "null"
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "components": {
+              "$ref": "#/$defs/TaskCreateNonCommandComponents"
             },
-            {
+            "entity_id": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/NonEmptyString"
+                }
+              ]
+            },
+            "extra": {
+              "additionalProperties": {
+                "$ref": "#/$defs/JSONValue"
+              },
+              "type": "object"
+            },
+            "status": {
+              "$ref": "#/$defs/NonEmptyString"
+            },
+            "task_id": {
               "$ref": "#/$defs/NonEmptyString"
             }
-          ]
-        },
-        "extra": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JSONValue"
           },
+          "required": [
+            "task_id"
+          ],
           "type": "object"
         },
-        "status": {
-          "$ref": "#/$defs/NonEmptyString"
-        },
-        "task_id": {
-          "$ref": "#/$defs/NonEmptyString"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "components": {
+              "$ref": "#/$defs/TaskCreateCommandComponents"
+            },
+            "entity_id": {
+              "$ref": "#/$defs/NonEmptyString"
+            },
+            "extra": {
+              "additionalProperties": {
+                "$ref": "#/$defs/JSONValue"
+              },
+              "type": "object"
+            },
+            "status": {
+              "$ref": "#/$defs/NonEmptyString"
+            }
+          },
+          "required": [
+            "components",
+            "entity_id"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "task_id"
-      ],
-      "type": "object"
+      ]
     },
     "TaskDeleteEvent": {
       "additionalProperties": false,
@@ -1601,6 +1630,58 @@
         "filter",
         "resource_type"
       ],
+      "type": "object"
+    },
+    "TaskCreateCommandComponents": {
+      "additionalProperties": false,
+      "patternProperties": {
+        "^custom_": {
+          "$ref": "#/$defs/JSONValue"
+        }
+      },
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/CommandComponent"
+        },
+        "parameters": {
+          "$ref": "#/$defs/TaskParametersComponent"
+        },
+        "progress": {
+          "$ref": "#/$defs/TaskProgressComponent"
+        },
+        "status_message": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TaskParametersComponent"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "TaskCreateNonCommandComponents": {
+      "additionalProperties": false,
+      "patternProperties": {
+        "^custom_": {
+          "$ref": "#/$defs/JSONValue"
+        }
+      },
+      "properties": {
+        "parameters": {
+          "$ref": "#/$defs/TaskParametersComponent"
+        },
+        "progress": {
+          "$ref": "#/$defs/TaskProgressComponent"
+        },
+        "status_message": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/TaskParametersComponent"
+        }
+      },
       "type": "object"
     }
   }

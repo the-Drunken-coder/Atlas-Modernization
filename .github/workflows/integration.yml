@@ -24,6 +24,11 @@ env:
   POSTGRES_PASSWORD: atlas
   MINIO_ROOT_USER: atlas
   CLOUDFLARE_TUNNEL_TOKEN: dummy
+  ATLAS_CORE_REQUIRE_LIVE_TESTS: "1"
+  ENABLE_API_AUTH: "true"
+  API_AUTH_KEY: atlas-ci-api-key
+  ATLAS_API_AUTH_KEY: atlas-ci-api-key
+  ATLAS_ADMIN_PASSWORD: atlas-ci-admin-password
 
 jobs:
   integration:

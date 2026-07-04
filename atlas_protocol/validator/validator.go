@@ -41,6 +41,12 @@ var schemaDefinitions = []string{
 	"TaskResource",
 	"ObjectResource",
 	"ErrorResponse",
+	"EntityCreateRequest",
+	"EntityUpdateRequest",
+	"TaskCreateRequest",
+	"TaskUpdateRequest",
+	"ObjectCreateRequest",
+	"ObjectUpdateRequest",
 	"FeedEvent",
 	"FeedAuthMessage",
 	"FeedSubscribeMessage",
@@ -91,6 +97,30 @@ func ValidateObjectResource(value any) []string {
 
 func ValidateErrorResponse(value any) []string {
 	return validate("ErrorResponse", value)
+}
+
+func ValidateEntityCreateRequest(value any) []string {
+	return validate("EntityCreateRequest", value)
+}
+
+func ValidateEntityUpdateRequest(value any) []string {
+	return validate("EntityUpdateRequest", value)
+}
+
+func ValidateTaskCreateRequest(value any) []string {
+	return validate("TaskCreateRequest", value)
+}
+
+func ValidateTaskUpdateRequest(value any) []string {
+	return validate("TaskUpdateRequest", value)
+}
+
+func ValidateObjectCreateRequest(value any) []string {
+	return validate("ObjectCreateRequest", value)
+}
+
+func ValidateObjectUpdateRequest(value any) []string {
+	return validate("ObjectUpdateRequest", value)
 }
 
 func ValidateFeedEvent(value any) []string {
@@ -277,12 +307,24 @@ func unknownComponentErrors(schema *compiledSchema, definition string, value any
 			return nil
 		}
 		return componentUnknowns(blob["components"], schema.componentFields["EntityComponents"])
+	case "EntityCreateRequest", "EntityUpdateRequest":
+		request, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		return componentUnknowns(request["components"], schema.componentFields["EntityComponents"])
 	case "TaskBlob":
 		blob, ok := value.(map[string]any)
 		if !ok {
 			return nil
 		}
 		return componentUnknowns(blob["components"], schema.componentFields["TaskComponents"])
+	case "TaskCreateRequest", "TaskUpdateRequest":
+		request, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		return componentUnknowns(request["components"], schema.componentFields["TaskComponents"])
 	case "EntityComponents":
 		return componentUnknowns(value, schema.componentFields["EntityComponents"])
 	case "TaskComponents":

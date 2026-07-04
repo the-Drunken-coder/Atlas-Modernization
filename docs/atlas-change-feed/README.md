@@ -4,6 +4,12 @@ The change feed is the push channel out of Atlas Core: a websocket endpoint (`/f
 
 This document is the behavioral contract. The durable rationale lives in the [design decision](../design-decisions/2026-06-12-change-feed-websocket-fat-events.md).
 
+## Why this exists
+
+The feed is a latency and traffic optimization over the same cursor contract that powers `changed-since`, not a second source of truth. Atlas keeps it because the operator UI needs a live view of asset, task, and object metadata changes while work is happening, and approximating that with few-second polling would create materially more API traffic as long-running UI and SDK clients are added.
+
+If those product requirements go away, a poll-only `changed-since` client is the simpler valid design. Until then, websocket push is the fast path and `changed-since` remains the recovery and fallback path.
+
 ## Transport and placement
 
 - Websocket endpoint: `/feed`.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -244,6 +245,91 @@ func TestRawJSONRejectsTrailingValues(t *testing.T) {
 	}
 }
 
+func TestRequestExamplesValidate(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		validate func(any) []string
+	}{
+		{"entity_create", "../examples/requests/entity-create.json", ValidateEntityCreateRequest},
+		{"entity_update", "../examples/requests/entity-update.json", ValidateEntityUpdateRequest},
+		{"task_create", "../examples/requests/task-create.json", ValidateTaskCreateRequest},
+		{"task_update", "../examples/requests/task-update.json", ValidateTaskUpdateRequest},
+		{"object_create", "../examples/requests/object-create.json", ValidateObjectCreateRequest},
+		{"object_update", "../examples/requests/object-update.json", ValidateObjectUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if errors := tt.validate(readJSONExample(t, tt.path)); len(errors) > 0 {
+				t.Fatalf("%s validation errors = %v", tt.path, errors)
+			}
+		})
+	}
+}
+
+func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		validate func(any) []string
+	}{
+		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", ValidateEntityUpdateRequest},
+		{"task_update_empty", "../examples/requests/invalid-task-update-empty.json", ValidateTaskUpdateRequest},
+		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", ValidateObjectUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.validate(readJSONExample(t, tt.path))
+			assertAnyContains(t, errors, "minProperties")
+		})
+	}
+
+	errors := ValidateTaskCreateRequest(json.RawMessage(`{"task_id":"task-unknown","unknown":true}`))
+	assertAnyContains(t, errors, "unknown")
+}
+
+func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		validate func(any) []string
+	}{
+		{"entity_create", `{"entity_id":"asset-unknown","entity_type":"asset","components":{"typo":true}}`, ValidateEntityCreateRequest},
+		{"entity_update", `{"components":{"typo":true}}`, ValidateEntityUpdateRequest},
+		{"task_create", `{"task_id":"task-unknown","components":{"typo":true}}`, ValidateTaskCreateRequest},
+		{"task_update", `{"components":{"typo":true}}`, ValidateTaskUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.validate(json.RawMessage(tt.payload))
+			assertAnyContains(t, errors, "Unknown component 'typo'")
+		})
+	}
+}
+
+func TestTaskCreateRequestCommandTaskIDRules(t *testing.T) {
+	validCommand := json.RawMessage(`{"entity_id":"asset-command","components":{"command":{"type":"goto"},"parameters":{"latitude":38,"longitude":-77}}}`)
+	if errors := ValidateTaskCreateRequest(validCommand); len(errors) > 0 {
+		t.Fatalf("ValidateTaskCreateRequest(command without task_id) errors = %v", errors)
+	}
+
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"normal_task_requires_task_id", `{"status":"pending"}`, "task_id"},
+		{"command_task_rejects_task_id", `{"task_id":"task-command","entity_id":"asset-command","components":{"command":{"type":"goto"}}}`, "task_id"},
+		{"command_task_requires_entity_id", `{"components":{"command":{"type":"goto"}}}`, "entity_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := ValidateTaskCreateRequest(json.RawMessage(tt.payload))
+			assertAnyContains(t, errors, tt.want)
+		})
+	}
+}
+
 func TestUnencodableInputReturnsError(t *testing.T) {
 	values := []any{
 		map[string]any{"latitude": make(chan int)},
@@ -260,6 +346,19 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func readJSONExample(t *testing.T, path string) json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return json.RawMessage(data)
 }
 
 func assertAnyContains(t *testing.T, errors []string, want string) {

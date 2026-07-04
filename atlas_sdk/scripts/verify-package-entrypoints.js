@@ -36,6 +36,8 @@ const expected = new Map([
   ["types", "./dist/atlas_sdk/src/index.d.ts"],
   ['exports["."].import', "./dist/atlas_sdk/src/index.js"],
   ['exports["."].types', "./dist/atlas_sdk/src/index.d.ts"],
+  ['exports["./admin"].import', "./dist/atlas_sdk/src/admin.js"],
+  ['exports["./admin"].types', "./dist/atlas_sdk/src/admin.d.ts"],
   ['bin["atlas"]', "./dist/atlas_sdk/src/cli.js"],
   ["cli PACKAGE_NAME", packageJSON.name],
   ["cli PACKAGE_BIN.atlas", packageJSON.bin?.atlas]
@@ -46,6 +48,8 @@ const actual = new Map([
   ["types", packageJSON.types],
   ['exports["."].import', packageJSON.exports?.["."]?.import],
   ['exports["."].types', packageJSON.exports?.["."]?.types],
+  ['exports["./admin"].import', packageJSON.exports?.["./admin"]?.import],
+  ['exports["./admin"].types', packageJSON.exports?.["./admin"]?.types],
   ['bin["atlas"]', packageJSON.bin?.atlas],
   ["cli PACKAGE_NAME", cliModule.PACKAGE_NAME],
   ["cli PACKAGE_BIN.atlas", cliModule.PACKAGE_BIN?.atlas]

@@ -21,16 +21,22 @@ const (
 type schemaBundle map[string]any
 
 var exampleSets = []struct {
-	dir        string
+	pattern    string
 	definition string
 }{
-	{dir: "entities", definition: "EntityBlob"},
-	{dir: "tasks", definition: "TaskBlob"},
-	{dir: "objects", definition: "ObjectBlob"},
-	{dir: "errors", definition: "ErrorResponse"},
-	{dir: "feed/events", definition: "FeedEvent"},
-	{dir: "feed/messages", definition: "FeedClientMessage"},
-	{dir: "feed/server", definition: "FeedHandshakeMessage"},
+	{pattern: "entities/*.json", definition: "EntityBlob"},
+	{pattern: "tasks/*.json", definition: "TaskBlob"},
+	{pattern: "objects/*.json", definition: "ObjectBlob"},
+	{pattern: "errors/*.json", definition: "ErrorResponse"},
+	{pattern: "feed/events/*.json", definition: "FeedEvent"},
+	{pattern: "feed/messages/*.json", definition: "FeedClientMessage"},
+	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage"},
+	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest"},
+	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest"},
+	{pattern: "requests/task-create.json", definition: "TaskCreateRequest"},
+	{pattern: "requests/task-update.json", definition: "TaskUpdateRequest"},
+	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest"},
+	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest"},
 }
 
 var exampleValidators = map[string]func(any) []string{
@@ -41,6 +47,12 @@ var exampleValidators = map[string]func(any) []string{
 	"FeedEvent":            protocolvalidator.ValidateFeedEvent,
 	"FeedClientMessage":    protocolvalidator.ValidateFeedClientMessage,
 	"FeedHandshakeMessage": protocolvalidator.ValidateFeedHandshakeMessage,
+	"EntityCreateRequest":  protocolvalidator.ValidateEntityCreateRequest,
+	"EntityUpdateRequest":  protocolvalidator.ValidateEntityUpdateRequest,
+	"TaskCreateRequest":    protocolvalidator.ValidateTaskCreateRequest,
+	"TaskUpdateRequest":    protocolvalidator.ValidateTaskUpdateRequest,
+	"ObjectCreateRequest":  protocolvalidator.ValidateObjectCreateRequest,
+	"ObjectUpdateRequest":  protocolvalidator.ValidateObjectUpdateRequest,
 }
 
 func ValidateExamples(root string) error {
@@ -54,24 +66,27 @@ func ValidateExamples(root string) error {
 	}
 
 	for _, set := range exampleSets {
-		if err := validateExampleSet(root, compiler, set.dir, set.definition); err != nil {
+		if err := validateExampleSet(root, compiler, set.pattern, set.definition); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateExampleSet(root string, compiler *jsonschema.Compiler, dir, definition string) error {
+func validateExampleSet(root string, compiler *jsonschema.Compiler, pattern, definition string) error {
 	schema, err := compiler.Compile(schemaDefinitionLocation(definition))
 	if err != nil {
 		return fmt.Errorf("compile %s: %w", definition, err)
 	}
-	examples, err := filepath.Glob(filepath.Join(root, "examples", dir, "*.json"))
+	if !strings.ContainsAny(pattern, "*?[") && filepath.Ext(pattern) == "" {
+		pattern = filepath.Join(pattern, "*.json")
+	}
+	examples, err := filepath.Glob(filepath.Join(root, "examples", pattern))
 	if err != nil {
 		return err
 	}
 	if len(examples) == 0 {
-		return fmt.Errorf("no %s examples found", dir)
+		return fmt.Errorf("no %s examples found", pattern)
 	}
 	sort.Strings(examples)
 

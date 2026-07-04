@@ -1,10 +1,11 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, request as httpRequest, type ClientRequest, type Server as HttpServer } from "node:http";
+import { createServer, request as httpRequest, type ClientRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RunEvent } from "../../src/shared/types.js";
+import type { AtlasClientFactory } from "../../src/server/atlas.js";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
 import type { Scenario } from "../../src/server/scenario.js";
@@ -14,6 +15,7 @@ let server: SimulationServer | undefined;
 let coreServer: HttpServer | undefined;
 let coreHealthRequests: string[] = [];
 let coreHealthApiKeys: Array<string | undefined> = [];
+let coreResourceRequests: Array<{ method: string; path: string; apiKey?: string }> = [];
 
 const INTEGRATION_TIMEOUT_MS = 5_000;
 
@@ -23,6 +25,7 @@ afterEach(async () => {
   server = undefined;
   coreHealthRequests = [];
   coreHealthApiKeys = [];
+  coreResourceRequests = [];
 });
 
 describe("simulation HTTP server", () => {
@@ -137,6 +140,46 @@ describe("simulation HTTP server", () => {
     expect(defaultCore.state.deleted).toEqual([]);
   });
 
+  it("forwards pasted target API keys to Core when starting and cleaning up protected runs", async () => {
+    const coreUrl = await startCoreResourceServer();
+    server = createSimulationServer({
+      config: {
+        atlasBaseUrl: coreUrl,
+        atlasTargets: [{ id: "deployed", label: "Atlas Command API", baseUrl: coreUrl }],
+        defaultAtlasTargetId: "deployed",
+        port: 0,
+        packageRoot: process.cwd()
+      }
+    });
+    const baseUrl = await server.listen();
+
+    const started = await fetchJSON<{ run: { id: string; status: string } }>(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json", "X-Atlas-Target-Api-Key": "pasted-key" }),
+      body: JSON.stringify({
+        scenarioId: "moving-assets",
+        targetId: "deployed",
+        inputs: { assetCount: 1, ticks: 1, tickMs: 0, startLatitude: 38, startLongitude: -77 }
+      })
+    });
+
+    await waitFor(async () => {
+      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
+      expect(current.run.status).toBe("completed");
+    });
+
+    await fetchJSON<{ run: { cleaned: boolean } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, {
+      method: "POST",
+      headers: mutationHeaders({ "X-Atlas-Target-Api-Key": "pasted-key" })
+    });
+
+    expect(coreResourceRequests.filter((request) => request.method === "POST" && request.path === "/entities").map((request) => request.apiKey)).toEqual(["pasted-key"]);
+    expect(coreResourceRequests.filter((request) => request.method === "DELETE" && request.path.startsWith("/entities/")).map((request) => request.apiKey)).toEqual([
+      "pasted-key"
+    ]);
+    expect(new Set(coreResourceRequests.map((request) => request.apiKey))).toEqual(new Set(["pasted-key"]));
+  });
+
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
@@ -209,6 +252,70 @@ describe("simulation HTTP server", () => {
       const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
       expect(current.run.status).toBe("cancelled");
     });
+  });
+
+  it("returns 409 when cleanup is requested while a run is still running", async () => {
+    const core = createFakeAtlasCore();
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      store: new RunStore(core.factory)
+    });
+    const baseUrl = await server.listen();
+    const started = await fetchJSON<{ run: { id: string; status: string } }>(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        scenarioId: "moving-assets",
+        inputs: { assetCount: 1, ticks: 2, tickMs: 1000, startLatitude: 38, startLongitude: -77 }
+      })
+    });
+
+    const cleanup = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/cleanup`, {
+      method: "POST",
+      headers: mutationHeaders()
+    });
+
+    expect(cleanup.status).toBe(409);
+    await expect(responseJSON<{ message: string }>(cleanup)).resolves.toMatchObject({ message: "Wait for the run to finish before cleanup" });
+  });
+
+  it("surfaces cleanup deletion failures as server errors", async () => {
+    const core = createFakeAtlasCore();
+    const failingFactory: AtlasClientFactory = (options) => {
+      const client = core.factory(options);
+      return {
+        ...client,
+        entities: {
+          ...client.entities,
+          delete: async (id) => {
+            throw new Error(`delete failed for ${id}`);
+          }
+        }
+      };
+    };
+    const store = new RunStore(failingFactory);
+    const scenario: Scenario = {
+      id: "cleanup-failure",
+      name: "Cleanup failure",
+      summary: "Creates one resource and then fails cleanup deletion",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset", components: {} });
+      }
+    };
+    const run = store.start(scenario, { fields: {} });
+    await waitFor(async () => expect(store.get(run.id)?.status).toBe("completed"));
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      store
+    });
+    const baseUrl = await server.listen();
+
+    const cleanup = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+
+    expect(cleanup.status).toBe(500);
+    await expect(responseJSON<{ message: string }>(cleanup)).resolves.toMatchObject({ message: expect.stringContaining("delete failed for") });
   });
 
   it("waits for a stopped run to unwind before cleanup", async () => {
@@ -367,6 +474,103 @@ async function startCoreHealthServer(status: number, basePath = ""): Promise<str
   await new Promise<void>((resolve) => coreServer!.listen(0, "127.0.0.1", resolve));
   const address = coreServer.address() as AddressInfo;
   return `http://127.0.0.1:${address.port}${basePath}`;
+}
+
+async function startCoreResourceServer(): Promise<string> {
+  const entities = new Map<string, Record<string, unknown>>();
+  let version = 0;
+  coreServer = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const apiKey = request.headers["x-api-key"];
+    coreResourceRequests.push({
+      method: request.method ?? "",
+      path: url.pathname,
+      apiKey: Array.isArray(apiKey) ? apiKey.at(-1) : apiKey
+    });
+    const entityMatch = /^\/entities\/([^/]+)$/.exec(url.pathname);
+    const checkInMatch = /^\/entities\/([^/]+)\/checkin$/.exec(url.pathname);
+    if (request.method === "POST" && url.pathname === "/entities") {
+      const body = await readIncomingJSON<Record<string, unknown>>(request);
+      const entity = {
+        ...body,
+        subtype: body.subtype ?? null,
+        alias: body.alias ?? null,
+        components: body.components ?? {},
+        metadata: metadata(++version)
+      };
+      entities.set(String(body.entity_id), entity);
+      sendCoreJSON(response, 200, entity);
+      return;
+    }
+    if (request.method === "POST" && checkInMatch) {
+      const id = decodeURIComponent(checkInMatch[1]!);
+      const current = entities.get(id);
+      if (!current) {
+        sendCoreJSON(response, 404, { message: "not found" });
+        return;
+      }
+      const body = await readIncomingJSON<Record<string, unknown>>(request);
+      const updated = {
+        ...current,
+        components: {
+          ...((current.components as Record<string, unknown> | undefined) ?? {}),
+          ...((body.components as Record<string, unknown> | undefined) ?? {}),
+          ...(body.status ? { status: { value: body.status, last_update: new Date().toISOString() } } : {}),
+          ...(body.latitude !== undefined || body.longitude !== undefined || body.speed_m_s !== undefined || body.heading_deg !== undefined
+            ? {
+                telemetry: {
+                  ...(((current.components as Record<string, unknown> | undefined)?.telemetry as Record<string, unknown> | undefined) ?? {}),
+                  ...(body.latitude === undefined ? {} : { latitude: body.latitude }),
+                  ...(body.longitude === undefined ? {} : { longitude: body.longitude }),
+                  ...(body.speed_m_s === undefined ? {} : { speed_m_s: body.speed_m_s }),
+                  ...(body.heading_deg === undefined ? {} : { heading_deg: body.heading_deg }),
+                  last_update: new Date().toISOString()
+                }
+              }
+            : {}),
+        },
+        metadata: metadata(++version, (current.metadata as { created_at?: string } | undefined)?.created_at)
+      };
+      entities.set(id, updated);
+      sendCoreJSON(response, 200, { entity: updated, tasks: [], task_count: 0, task_limit: 10, has_more_tasks: false });
+      return;
+    }
+    if (request.method === "GET" && entityMatch) {
+      const entity = entities.get(decodeURIComponent(entityMatch[1]!));
+      if (!entity) {
+        sendCoreJSON(response, 404, { message: "not found" });
+        return;
+      }
+      sendCoreJSON(response, 200, entity);
+      return;
+    }
+    if (request.method === "DELETE" && entityMatch) {
+      entities.delete(decodeURIComponent(entityMatch[1]!));
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    sendCoreJSON(response, 404, { message: "not found" });
+  });
+  await new Promise<void>((resolve) => coreServer!.listen(0, "127.0.0.1", resolve));
+  const address = coreServer.address() as AddressInfo;
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function readIncomingJSON<T>(request: IncomingMessage): Promise<T> {
+  let body = "";
+  for await (const chunk of request) body += chunk;
+  return JSON.parse(body || "{}") as T;
+}
+
+function metadata(version: number, createdAt = new Date().toISOString()) {
+  const now = new Date().toISOString();
+  return { created_at: createdAt, updated_at: now, version };
+}
+
+function sendCoreJSON(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(body));
 }
 
 async function closeCoreServer(): Promise<void> {

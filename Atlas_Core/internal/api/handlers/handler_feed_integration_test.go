@@ -24,6 +24,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	atlasdb "github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -186,7 +187,7 @@ func openFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicitDBURL := feedIntegrationDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -196,7 +197,7 @@ func openFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	t.Cleanup(pool.Close)
 
@@ -204,12 +205,12 @@ func openFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if ok, err := feedIntegrationCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
-		t.Skip("core schema is not present in test database")
+		testenv.SkipOrFatal(t, "core schema is not present in test database")
 	}
 	return pool
 }

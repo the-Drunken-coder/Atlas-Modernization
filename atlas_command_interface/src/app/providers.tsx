@@ -1,15 +1,22 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AuthGate } from "../auth/ui/AuthGate.js";
+import type { AtlasDataSource } from "../atlas/data-source.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { fetchAppConfig, type AppConfig } from "./config.js";
 
-export function Providers({ children }: { children: ReactNode }) {
+export type ProvidersProps = {
+  children: ReactNode;
+  loadConfig?: () => Promise<AppConfig>;
+  createDataSource?: (config: AppConfig) => AtlasDataSource;
+};
+
+export function Providers({ children, loadConfig = fetchAppConfig, createDataSource }: ProvidersProps) {
   const [config, setConfig] = useState<AppConfig>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void fetchAppConfig()
+    void loadConfig()
       .then((next) => {
         if (!cancelled) setConfig(next);
       })
@@ -19,7 +26,7 @@ export function Providers({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadConfig]);
 
   if (error) {
     return (
@@ -38,7 +45,9 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <AuthGate baseUrl={config.atlasBaseUrl}>
-      <AtlasProvider config={config}>{children}</AtlasProvider>
+      <AtlasProvider config={config} createDataSource={createDataSource}>
+        {children}
+      </AtlasProvider>
     </AuthGate>
   );
 }
