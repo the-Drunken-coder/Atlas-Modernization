@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import { jsonNumber } from "../../src/shared/types.js";
-import type { AtlasTargetSummary, RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
+import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -58,6 +58,16 @@ function cloneRun(overrides: Partial<RunSummary> = {}): RunSummary {
     assertions: [...run.assertions],
     ...overrides
   };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(reason?: unknown): void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 vi.mock("../../src/client/api.js", () => ({
@@ -203,6 +213,33 @@ describe("App", () => {
         inputs: { assetCount: 2 }
       })
     );
+  });
+
+  it("ignores stale health responses after target switches", async () => {
+    const user = userEvent.setup();
+    const localHealth = deferred<HealthResponse>();
+    const deployedHealth = deferred<HealthResponse>();
+    vi.mocked(loadHealth).mockImplementation((targetId) => (targetId === deployedTarget.id ? deployedHealth.promise : localHealth.promise));
+    render(<App />);
+
+    const apiSelect = await screen.findByLabelText("API");
+    await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(localTarget.id));
+    await user.selectOptions(apiSelect, deployedTarget.id);
+    await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(deployedTarget.id));
+
+    await act(async () => {
+      deployedHealth.resolve({ ok: true, status: jsonNumber(200), message: "deployed ok", target: deployedTarget });
+      await deployedHealth.promise;
+    });
+    expect(await screen.findByText("Core reachable")).toBeInTheDocument();
+
+    await act(async () => {
+      localHealth.resolve({ ok: false, status: jsonNumber(503), message: "local down", target: localTarget });
+      await localHealth.promise;
+    });
+
+    expect(screen.getByText("Core reachable")).toBeInTheDocument();
+    expect(screen.queryByText("Core offline")).not.toBeInTheDocument();
   });
 
   it("uses the pasted API key when refreshing health and starting a run", async () => {

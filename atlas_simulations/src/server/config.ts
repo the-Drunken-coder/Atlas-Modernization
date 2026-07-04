@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AtlasClientFactory } from "./atlas.js";
 
 export type SimulationConfig = {
   atlasBaseUrl: string;
@@ -16,6 +17,7 @@ export type AtlasTargetConfig = {
   label: string;
   baseUrl: string;
   apiKey?: string;
+  clientFactory?: AtlasClientFactory;
 };
 
 const LOCAL_TARGET_ID = "local";

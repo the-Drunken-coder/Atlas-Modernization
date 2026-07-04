@@ -27,6 +27,7 @@ export function App() {
   const activeRunIdRef = useRef<string | undefined>(undefined);
   const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
   const currentRunIdRef = useRef<string | undefined>(undefined);
+  const healthRequestRef = useRef(0);
   const refreshRunsRequestRef = useRef(0);
   const runsRef = useRef<RunSummary[]>([]);
   const eventsByRunIdRef = useRef<Map<string, RunEvent[]>>(new Map());
@@ -76,12 +77,15 @@ export function App() {
   }, [hasCleanupInFlight, hasRunningRuns]);
 
   async function refreshHealth(targetId = selectedTargetId) {
+    const requestId = ++healthRequestRef.current;
     try {
       const apiKey = apiKeyForTarget(targetId);
       const nextHealth = apiKey ? await loadHealth(targetId || undefined, apiKey) : await loadHealth(targetId || undefined);
+      if (requestId !== healthRequestRef.current) return;
       setHealth(nextHealth);
       setError(undefined);
     } catch (errorValue) {
+      if (requestId !== healthRequestRef.current) return;
       setHealth({ ok: false, message: errorMessage(errorValue) });
       throw errorValue;
     }

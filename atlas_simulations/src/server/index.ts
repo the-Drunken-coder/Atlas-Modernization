@@ -14,7 +14,7 @@ import {
   type StartRunResponse,
   type TargetListResponse
 } from "../shared/types.js";
-import { createAtlasClientFactory } from "./atlas.js";
+import { createAtlasClientFactory, type AtlasClientFactory } from "./atlas.js";
 import { loadConfig, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
 import { RunStore, type RunTarget } from "./run-store.js";
 import { descriptorForScenario, parseStartRequest, type ParsedStart } from "./scenario.js";
@@ -160,7 +160,7 @@ async function handleRequest(
       sendJSON(response, 400, { message: errorMessage(error) });
       return;
     }
-    sendJSON(response, 201, { run: store.start(scenario, parsed.input, runTarget(target, ownsStore)) } satisfies StartRunResponse);
+    sendJSON(response, 201, { run: store.start(scenario, parsed.input, runTarget(target, ownsStore || body.targetId !== undefined)) } satisfies StartRunResponse);
     return;
   }
   const runMatch = /^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname);
@@ -299,8 +299,12 @@ function targetForId(id: string | undefined, registry: TargetRegistry, apiKey: s
 function runTarget(target: AtlasTargetConfig, includeClientFactory: boolean): RunTarget {
   return {
     ...targetSummary(target),
-    ...(includeClientFactory ? { clientFactory: createAtlasClientFactory(target) } : {})
+    ...(includeClientFactory ? { clientFactory: clientFactoryForTarget(target) } : {})
   };
+}
+
+function clientFactoryForTarget(target: AtlasTargetConfig): AtlasClientFactory {
+  return target.clientFactory ?? createAtlasClientFactory(target);
 }
 
 function targetSummary(target: AtlasTargetConfig): AtlasTargetSummary {

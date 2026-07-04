@@ -91,6 +91,52 @@ describe("simulation HTTP server", () => {
     await expectStatus(`${baseUrl}/api/health?target=missing`, 404);
   });
 
+  it("uses the selected target factory when a store is injected", async () => {
+    const defaultCore = createFakeAtlasCore();
+    const selectedCore = createFakeAtlasCore();
+    server = createSimulationServer({
+      config: {
+        atlasBaseUrl: "http://127.0.0.1:8000",
+        atlasTargets: [
+          { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: defaultCore.factory },
+          { id: "deployed", label: "Atlas Command API", baseUrl: "https://atlascommandapi.org", clientFactory: selectedCore.factory }
+        ],
+        defaultAtlasTargetId: "local",
+        port: 0,
+        packageRoot: process.cwd()
+      },
+      store: new RunStore(defaultCore.factory)
+    });
+    const baseUrl = await server.listen();
+
+    const started = await fetchJSON<{ run: { id: string; target?: { id: string } } }>(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        scenarioId: "moving-assets",
+        targetId: "deployed",
+        inputs: { assetCount: 1, ticks: 1, tickMs: 0, startLatitude: 38, startLongitude: -77 }
+      })
+    });
+    expect(started.run.target).toMatchObject({ id: "deployed" });
+
+    await waitFor(async () => {
+      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
+      expect(current.run.status).toBe("completed");
+    });
+    const current = await fetchJSON<{ run: { cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(`${baseUrl}/api/runs/${started.run.id}`);
+    const created = current.run.createdResources[0];
+    expect(created).toMatchObject({ type: "entity" });
+
+    await fetchJSON<{ run: { cleaned: boolean } }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, {
+      method: "POST",
+      headers: mutationHeaders()
+    });
+
+    expect(selectedCore.state.deleted).toEqual([`entity:${created!.id}`]);
+    expect(defaultCore.state.deleted).toEqual([]);
+  });
+
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
