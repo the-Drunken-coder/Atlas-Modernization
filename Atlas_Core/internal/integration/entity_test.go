@@ -433,6 +433,11 @@ func TestEntityCheckin(t *testing.T) {
 		"entity_id":   entityID,
 		"entity_type": "asset",
 		"subtype":     "rover",
+		"components": map[string]interface{}{
+			"task_catalog": map[string]interface{}{
+				"supported_tasks": []interface{}{"move_to_location"},
+			},
+		},
 	}
 
 	resp, err := client.Post(ctx, "/entities", createPayload)
@@ -447,14 +452,12 @@ func TestEntityCheckin(t *testing.T) {
 	resp.Body.Close()
 
 	// Create tasks for the entity and another entity to validate checkin filtering.
-	pendingTaskID := fmt.Sprintf("%s-checkin-pending", prefix)
 	pendingTaskPayload := map[string]interface{}{
-		"task_id":   pendingTaskID,
 		"entity_id": entityID,
 		"status":    "pending",
 		"components": map[string]interface{}{
 			"command": map[string]interface{}{
-				"type": "move_to_location",
+				"id": "move_to_location",
 			},
 			"parameters": map[string]interface{}{
 				"latitude":   40.73061,
@@ -471,7 +474,14 @@ func TestEntityCheckin(t *testing.T) {
 		_ = resp.Body.Close()
 		t.Fatalf("Expected 201 creating pending task, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	var pendingTask map[string]interface{}
+	if err := ParseResponse(resp, &pendingTask); err != nil {
+		t.Fatalf("parse pending checkin task: %v", err)
+	}
+	pendingTaskID, ok := pendingTask["task_id"].(string)
+	if !ok || pendingTaskID == "" {
+		t.Fatalf("expected generated pending task_id, got %#v", pendingTask["task_id"])
+	}
 
 	completedTaskID := fmt.Sprintf("%s-checkin-completed", prefix)
 	completedTaskPayload := map[string]interface{}{

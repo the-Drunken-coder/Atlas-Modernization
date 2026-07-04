@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 )
 
 func TestBuildPoolConfigRejectsInvalidDatabaseURL(t *testing.T) {
@@ -262,7 +263,7 @@ func TestCoreSchemaCheckRejectsWrongObjectKinds(t *testing.T) {
 func TestCoreSchemaDeletionsContextQueryParses(t *testing.T) {
 	dbURL, explicitDBURL := databaseTestURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema parse tests")
+		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema parse tests")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -273,7 +274,7 @@ func TestCoreSchemaDeletionsContextQueryParses(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer func() {
 		if err := conn.Close(context.Background()); err != nil {
@@ -292,7 +293,7 @@ func TestCoreSchemaDeletionsContextQueryParses(t *testing.T) {
 func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 	dbURL, explicitDBURL := databaseTestURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema constraint tests")
+		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema constraint tests")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -303,7 +304,7 @@ func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer func() {
 		if err := conn.Close(context.Background()); err != nil {
@@ -317,7 +318,7 @@ func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 		if explicitDBURL {
 			t.Fatalf("create test schema: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)

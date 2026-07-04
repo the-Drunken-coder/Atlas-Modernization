@@ -23,6 +23,7 @@ env:
   PROTOCOL_WORKING_DIRECTORY: atlas_protocol
   SDK_WORKING_DIRECTORY: atlas_sdk
   COMMAND_INTERFACE_WORKING_DIRECTORY: atlas_command_interface
+  SIMULATIONS_WORKING_DIRECTORY: atlas_simulations
   WORKING_DIRECTORY: Atlas_Core
 
 jobs:
@@ -159,6 +160,8 @@ jobs:
           test -f dist/atlas_sdk/src/index.d.ts || { echo "::error::missing dist/atlas_sdk/src/index.d.ts"; missing=1; }
           test -f dist/atlas_sdk/src/cli.js || { echo "::error::missing dist/atlas_sdk/src/cli.js"; missing=1; }
           test -f dist/atlas_sdk/src/cli.d.ts || { echo "::error::missing dist/atlas_sdk/src/cli.d.ts"; missing=1; }
+          test -f dist/atlas_sdk/src/admin.js || { echo "::error::missing dist/atlas_sdk/src/admin.js"; missing=1; }
+          test -f dist/atlas_sdk/src/admin.d.ts || { echo "::error::missing dist/atlas_sdk/src/admin.d.ts"; missing=1; }
           test -d dist/atlas_protocol/generated/typescript || { echo "::error::missing dist/atlas_protocol/generated/typescript"; missing=1; }
           test -f dist/atlas_protocol/generated/typescript/index.js || { echo "::error::missing dist/atlas_protocol/generated/typescript/index.js"; missing=1; }
           test -f dist/atlas_protocol/generated/typescript/index.d.ts || { echo "::error::missing dist/atlas_protocol/generated/typescript/index.d.ts"; missing=1; }
@@ -205,6 +208,37 @@ jobs:
         run: npm test
 
       - name: Build command interface
+        run: npm run build
+
+  atlas-simulations:
+    name: atlas-simulations
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.SIMULATIONS_WORKING_DIRECTORY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: ${{ env.SIMULATIONS_WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Install simulations dependencies
+        run: npm ci
+
+      - name: Type-check simulations
+        run: npm run typecheck
+
+      - name: Test simulations
+        run: npm test
+
+      - name: Build simulations
         run: npm run build
 
   build:

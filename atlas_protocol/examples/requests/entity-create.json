@@ -1,0 +1,18 @@
+{
+  "entity_id": "asset-001",
+  "entity_type": "asset",
+  "subtype": "drone",
+  "alias": null,
+  "components": {
+    "task_catalog": {
+      "supported_tasks": ["goto", "hold_position"]
+    },
+    "status": {
+      "value": "ready",
+      "last_update": "2026-06-20T00:00:00Z"
+    }
+  },
+  "extra": {
+    "operator_note": "ready for dispatch"
+  }
+}

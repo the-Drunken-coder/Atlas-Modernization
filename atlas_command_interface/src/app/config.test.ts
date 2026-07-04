@@ -5,6 +5,7 @@ import { appConfigFromEnv, fetchAppConfig } from "./config.js";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("appConfigFromEnv", () => {
@@ -68,6 +69,42 @@ describe("appConfigFromEnv", () => {
     expect(JSON.stringify(config.mapSources.find((source) => source.id === "google-satellite")?.style)).toContain("session=google-session&key=google-key");
   });
 
+  it("generates valid MapLibre raster styles for every available map source", () => {
+    const config = appConfigFromEnv({
+      DEV: true,
+      VITE_GOOGLE_MAPS_API_KEY: "google-key",
+      googleMapsTileSession: "google-session",
+      VITE_MAPBOX_ACCESS_TOKEN: "mapbox-token",
+      VITE_MAPTILER_API_KEY: "maptiler-key",
+      VITE_THUNDERFOREST_API_KEY: "thunderforest-key"
+    });
+    const expectedUrlFragments: Record<string, string> = {
+      "google-satellite": "session=google-session&key=google-key",
+      "openstreetmap-default": "tile.openstreetmap.org",
+      "usgs-topo": "basemap.nationalmap.gov",
+      "mapbox-satellite": "access_token=mapbox-token",
+      "mapbox-outdoors": "access_token=mapbox-token",
+      "mapbox-dark": "access_token=mapbox-token",
+      "thunderforest-outdoors": "apikey=thunderforest-key",
+      "maptiler-satellite": "key=maptiler-key",
+      "maptiler-osm-dark": "key=maptiler-key",
+      "openmaptiles-dark-matter": "basemaps.cartocdn.com"
+    };
+
+    for (const source of config.mapSources) {
+      expect(source.style, source.id).toBeDefined();
+      const style = source.style!;
+      const rasterSource = style.sources[source.id] as { type?: string; tiles?: string[] } | undefined;
+      expect(style.version).toBe(8);
+      expect(Object.keys(style.sources).length).toBeGreaterThan(0);
+      expect(style.layers.length).toBeGreaterThan(0);
+      expect(rasterSource?.type).toBe("raster");
+      expect(rasterSource?.tiles?.length).toBeGreaterThan(0);
+      expect(style.layers).toEqual(expect.arrayContaining([expect.objectContaining({ type: "raster", source: source.id })]));
+      expect(JSON.stringify(rasterSource?.tiles)).toContain(expectedUrlFragments[source.id]);
+    }
+  });
+
   it("allows an explicit Core URL override", () => {
     vi.stubGlobal("location", { origin: "https://preview.example" });
 
@@ -107,5 +144,26 @@ describe("fetchAppConfig", () => {
     );
     expect(config.mapSources[0].id).toBe("google-satellite");
     expect(JSON.stringify(config.mapSources[0].style)).toContain("session=session-1&key=google-key");
+  });
+
+  it.each([
+    ["network failure", async () => Promise.reject(new Error("network down"))],
+    ["non-OK response", async () => new Response("unavailable", { status: 503 })],
+    ["invalid JSON", async () => new Response("not json", { status: 200, headers: { "Content-Type": "application/json" } })],
+    ["missing session token", async () => new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } })]
+  ])("keeps Google unavailable and the default map usable on tile-session %s", async (_name, fetchImpl) => {
+    vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetch = vi.fn(fetchImpl);
+    vi.stubGlobal("fetch", fetch);
+
+    const config = await fetchAppConfig();
+
+    expect(fetch).toHaveBeenCalledWith("https://tile.googleapis.com/v1/createSession?key=google-key", expect.objectContaining({ method: "POST" }));
+    expect(config.defaultMapSourceId).toBe("openstreetmap-default");
+    expect(config.mapSources[0]).toMatchObject({ id: "google-satellite", style: undefined, unavailableReason: "session unavailable" });
+    expect(config.mapSources.find((source) => source.id === "openstreetmap-default")?.style).toBeDefined();
+    expect(warn).toHaveBeenCalled();
   });
 });

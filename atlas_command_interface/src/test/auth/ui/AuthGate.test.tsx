@@ -21,6 +21,7 @@ describe("AuthGate", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
     expect(fetchStub.calls[0]?.[0]).toBe("https://core.test/admin/auth/me");
+    expect(fetchStub.calls[0]?.[1]).toMatchObject({ credentials: "include" });
   });
 
   it("shows session check failures without presenting the login form", async () => {

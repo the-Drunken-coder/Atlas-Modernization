@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 )
 
 func TestCreateEntityValidatesFinalBlobBeforeInsert(t *testing.T) {
@@ -114,7 +115,7 @@ func openActionsTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
-		t.Skip("set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -125,7 +126,7 @@ func openActionsTestPool(t *testing.T) *pgxpool.Pool {
 		if explicitDBURL {
 			t.Fatalf("connect test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	t.Cleanup(pool.Close)
 
@@ -133,12 +134,12 @@ func openActionsTestPool(t *testing.T) *pgxpool.Pool {
 		if explicitDBURL {
 			t.Fatalf("ping test database: %v", err)
 		}
-		t.Skipf("test database unavailable: %v", err)
+		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
-		t.Skip("core schema is not present in test database")
+		testenv.SkipOrFatal(t, "core schema is not present in test database")
 	}
 	return pool
 }

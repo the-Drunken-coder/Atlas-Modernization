@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   AtlasAPIError,
   type AtlasSubscription,
@@ -117,8 +118,9 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
     tasks: {
       get: async (id) => visibleValue(state, clientState, state.tasks, id, "task"),
       create: async (task) => {
-        assertCanCreate(state, state.tasks, task.task_id, "task");
-        const created = taskFromCreate(task, commitVersion(state, clientState));
+        const taskID = taskIDFromCreate(task);
+        assertCanCreate(state, state.tasks, taskID, "task");
+        const created = taskFromCreate(task, commitVersion(state, clientState), taskID);
         return saveValue(state.tasks, created.task_id, created);
       },
       delete: async (id) => {
@@ -194,15 +196,19 @@ function entityFromCreate(request: EntityCreateRequest, version: number): Entity
   };
 }
 
-function taskFromCreate(request: TaskCreateRequest, version: number): TaskResource {
+function taskFromCreate(request: TaskCreateRequest, version: number, taskID = taskIDFromCreate(request)): TaskResource {
   return {
-    task_id: request.task_id,
+    task_id: taskID,
     entity_id: request.entity_id ?? null,
     status: request.status ?? "pending",
     components: request.components ?? {},
     ...("extra" in request ? { extra: request.extra } : {}),
     metadata: metadata(version)
   };
+}
+
+function taskIDFromCreate(request: TaskCreateRequest): string {
+  return "task_id" in request ? request.task_id : `command-${randomUUID()}`;
 }
 
 function minimalTask(task: TaskResource): EntityCheckInMinimalTask {
