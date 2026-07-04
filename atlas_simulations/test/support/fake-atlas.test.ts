@@ -17,6 +17,23 @@ describe("fake Atlas core", () => {
     expect(checkIn.has_more_tasks).toBe(false);
   });
 
+  it("generates command task IDs when Core owns task creation", async () => {
+    const core = createFakeAtlasCore();
+    const client = core.factory();
+
+    const task = await client.tasks.create({
+      entity_id: "asset-1",
+      components: { command: { type: "goto" } }
+    });
+
+    expect(task.task_id).toMatch(/^command-/);
+    await expect(client.tasks.get(task.task_id)).resolves.toMatchObject({
+      task_id: task.task_id,
+      entity_id: "asset-1",
+      components: { command: { type: "goto" } }
+    });
+  });
+
   it("advances running sync client snapshots when status is polled", async () => {
     const core = createFakeAtlasCore();
     const writer = core.factory();

@@ -113,6 +113,11 @@ export function createScenarioContext(args: {
     assertRunOwnedResourceId(args.runId, resource);
     args.trackCleanupCandidate?.(resource);
   };
+  const trackGeneratedCommandTask = (resource: CreatedResource) => {
+    assertGeneratedCommandTask(resource);
+    args.trackCleanupCandidate?.(resource);
+    args.track(resource);
+  };
   const assertRunOwned = (resource: CreatedResource) => {
     assertRunOwnedResourceId(args.runId, resource);
   };
@@ -120,7 +125,7 @@ export function createScenarioContext(args: {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(rawClient, track, trackCleanupCandidate, assertRunOwned, throwIfCancelled, args.signal);
+    return trackClientCreates(rawClient, track, trackCleanupCandidate, trackGeneratedCommandTask, assertRunOwned, throwIfCancelled, args.signal);
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -151,6 +156,7 @@ function trackClientCreates(
   client: AtlasClientLike,
   track: (resource: CreatedResource) => void,
   trackCleanupCandidate: (resource: CreatedResource) => void,
+  trackGeneratedCommandTask: (resource: CreatedResource) => void,
   assertRunOwned: (resource: CreatedResource) => void,
   throwIfCancelled: () => void,
   signal: AbortSignal
@@ -173,6 +179,14 @@ function trackClientCreates(
     trackCleanupCandidate(resource);
     const created = await operation();
     track(resource);
+    throwIfCancelled();
+    return created;
+  };
+  const createGeneratedCommandTask = async (operation: () => ReturnType<AtlasClientLike["tasks"]["create"]>) => {
+    throwIfCancelled();
+    const created = await operation();
+    const resource = { type: "task", id: created.task_id } satisfies CreatedResource;
+    trackGeneratedCommandTask(resource);
     throwIfCancelled();
     return created;
   };
@@ -219,6 +233,9 @@ function trackClientCreates(
     tasks: {
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
+        if (!("task_id" in task)) {
+          return createGeneratedCommandTask(() => client.tasks.create(task));
+        }
         const resource = { type: "task", id: task.task_id } satisfies CreatedResource;
         return createTracked(resource, () => client.tasks.create(task));
       },
@@ -248,6 +265,12 @@ function trackClientCreates(
     watch: guardedWatch,
     handshake: () => guarded(() => client.handshake())
   };
+}
+
+function assertGeneratedCommandTask(resource: CreatedResource): void {
+  if (resource.type !== "task" || !resource.id.startsWith("command-")) {
+    throw new Error(`generated command task ID must start with command-`);
+  }
 }
 
 function parseFields(fields: readonly ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
