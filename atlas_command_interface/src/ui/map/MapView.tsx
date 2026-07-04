@@ -1,64 +1,43 @@
-import maplibregl, { Marker, type Map as MlMap, type MapGeoJSONFeature, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
+import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
-import {
-  addVertexAfter,
-  displayGeometry,
-  geometryVertices,
-  moveVertex,
-  removeVertex,
-  type Position,
-  type UiRawGeometry,
-  type UiGeometry,
-  type VertexRef
-} from "../../atlas/geometry.js";
-import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { MapReticle } from "./MapReticle.js";
-import {
-  CAMERA_EVENT_TAG,
-  INITIAL_WORLD_BOUNDS,
-  collectLngLatPositions,
-  featureForEntityId,
-  type MapCameraCommand,
-  type MapTarget
-} from "./map-camera.js";
-import { buildMapSources, emptyFeatureCollection, type MapFeature, type MapSources } from "./map-sources.js";
+import { CAMERA_EVENT_TAG, type MapCameraCommand } from "./map-camera.js";
+import { createEditingMarkers, type MapEditing } from "./map-editing.js";
+import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "./map-layers.js";
+import { type MapSources } from "./map-sources.js";
+import { clearMarkers, createSymbolMarkerElement, symbolMarkerFeatures } from "./map-symbol-markers.js";
+import { hoverSelectionTarget, reticleForVisibleTarget, targetBoxForEntityId, type MapReticleTarget } from "./map-targets.js";
 import { useMapCamera } from "./use-map-camera.js";
 import {
   RETICLE_TARGET_SIZE,
   boxFromDrag,
-  boxFromProjectedPositions,
-  boxIntersectsViewport,
   pointFromClient,
   reticleForTarget,
   reticleFromTargetBox,
   squareAround,
   type ReticleState,
-  type ReticleTarget,
   type ScreenPoint,
-  type TargetBox,
   type ZoomOverlayState
 } from "./map-reticle.js";
+import {
+  clientPointInsideRect,
+  cloneStyle,
+  cursorPointsFromEvent,
+  fitWorldOnce,
+  reticlesEqual,
+  webglAvailable,
+  zoomDeltaFromWheel,
+  type CursorHandoffState
+} from "./map-view-utils.js";
 
-const COLORS = {
-  geofeature: "#3fd27a",
-  geofeatureFill: "rgba(63,210,122,0.16)",
-  selected: "#ffffff"
-};
-
-const INTERACTIVE_LAYERS = ["geofeatures-point", "geofeatures-line", "geofeatures-fill"];
 const SCROLL_LOCK_SETTLE_MS = 180;
 const SUPPRESSED_CLICK_FALLBACK_MS = 750;
-const WHEEL_ZOOM_RATE = 1 / 450;
-const DOM_DELTA_LINE = 1;
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
-export type MapReticleTarget = MapTarget;
-
-export type MapEditing = {
-  geometry: UiGeometry;
-  onChange: (geometry: UiGeometry) => void;
-};
+export type { MapEditing } from "./map-editing.js";
+export type { MapReticleTarget } from "./map-targets.js";
+export { buildMapSources } from "./map-sources.js";
 
 type MapViewProps = {
   sources: MapSources;
@@ -75,9 +54,6 @@ type MapViewProps = {
   onBackgroundClick?: () => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
 };
-
-type HoverTarget = ReticleTarget & { entityId: string };
-type CursorHandoffState = { nativePoint: ScreenPoint; visualPoint: ScreenPoint };
 
 export function MapView({
   sources,
@@ -462,46 +438,7 @@ export function MapView({
     if (!map || !mapReady) return;
 
     clearMarkers(editMarkersRef.current);
-    editMarkersRef.current = [];
-
-    const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
-    if (!editing) {
-      overlay?.setData(emptyFeatureCollection() as never);
-      return;
-    }
-
-    overlay?.setData({ type: "FeatureCollection", features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }] } as never);
-
-    const { geometry, onChange } = editing;
-    for (const vertex of geometryVertices(geometry)) {
-      const element = document.createElement("div");
-      element.className = "vertex-handle";
-      element.title = "Drag to move - right-click to remove";
-      const marker = new Marker({ element, draggable: true }).setLngLat([vertex.lng, vertex.lat]).addTo(map);
-      marker.on("dragend", () => {
-        const next = marker.getLngLat();
-        onChange(moveVertex(geometry, vertex.ref, next.lng, next.lat));
-      });
-      element.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        const next = removeVertex(geometry, vertex.ref);
-        if (next) onChange(next);
-      });
-      editMarkersRef.current.push(marker);
-    }
-
-    // Midpoint "add" handles between consecutive vertices.
-    for (const mid of midpoints(geometry)) {
-      const element = document.createElement("div");
-      element.className = "vertex-handle vertex-handle--mid";
-      element.title = "Click to add a vertex";
-      const marker = new Marker({ element, draggable: false }).setLngLat([mid.lng, mid.lat]).addTo(map);
-      element.addEventListener("click", (event) => {
-        event.stopPropagation();
-        onChange(addVertexAfter(geometry, mid.afterRef, mid.lng, mid.lat));
-      });
-      editMarkersRef.current.push(marker);
-    }
+    editMarkersRef.current = createEditingMarkers(map, editing);
   }, [editing, mapReady]);
 
   const updateReticle = (event: PointerEvent<HTMLDivElement> & { currentTarget: HTMLDivElement }) => {
@@ -713,344 +650,3 @@ export function MapView({
     </div>
   );
 }
-
-type Midpoint = { lng: number; lat: number; afterRef: VertexRef };
-
-function midpoints(geometry: UiGeometry): Midpoint[] {
-  if (geometry.type === "Point" || geometry.type === "Feature") return [];
-  const result: Midpoint[] = [];
-  if (geometry.type === "LineString") {
-    for (let index = 0; index < geometry.coordinates.length - 1; index++) {
-      result.push(midpoint(geometry.coordinates[index], geometry.coordinates[index + 1], { kind: "LineString", index }));
-    }
-    return result;
-  }
-  for (const [ringIndex, ring] of geometry.coordinates.entries()) {
-    const open = openRing(ring);
-    for (let index = 0; index < open.length; index++) {
-      const next = open[(index + 1) % open.length];
-      if (!next) continue;
-      result.push(midpoint(open[index], next, { kind: "Polygon", ring: ringIndex, index }));
-    }
-  }
-  return result;
-}
-
-function midpoint(current: Position, next: Position, afterRef: VertexRef): Midpoint {
-  return { lng: (current[0] + next[0]) / 2, lat: (current[1] + next[1]) / 2, afterRef };
-}
-
-function openRing(ring: Position[]): Position[] {
-  if (ring.length >= 2 && positionsEqual(ring[0], ring[ring.length - 1])) {
-    return ring.slice(0, -1);
-  }
-  return [...ring];
-}
-
-function positionsEqual(a: Position | undefined, b: Position | undefined): boolean {
-  if (!a || !b) return false;
-  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
-}
-
-function cursorPointsFromEvent(
-  event: { clientX: number; clientY: number },
-  rect: DOMRect,
-  handoff: CursorHandoffState | null
-): { rawPoint: ScreenPoint; visualPoint: ScreenPoint } {
-  const rawPoint = pointFromClient(event, rect);
-  if (!handoff) return { rawPoint, visualPoint: rawPoint };
-  return {
-    rawPoint,
-    visualPoint: {
-      x: handoff.visualPoint.x + rawPoint.x - handoff.nativePoint.x,
-      y: handoff.visualPoint.y + rawPoint.y - handoff.nativePoint.y
-    }
-  };
-}
-
-function clientPointInsideRect(event: { clientX: number; clientY: number }, rect: DOMRect): boolean {
-  return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
-}
-
-function zoomDeltaFromWheel(event: Pick<WheelEvent<HTMLDivElement>, "deltaMode" | "deltaY" | "shiftKey">): number {
-  let value = event.deltaMode === DOM_DELTA_LINE ? event.deltaY * 40 : event.deltaY;
-  if (event.shiftKey && value) value /= 4;
-  return -value * WHEEL_ZOOM_RATE;
-}
-
-function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    a.x === b.x &&
-    a.y === b.y &&
-    a.targetEntityId === b.targetEntityId &&
-    a.targeted === b.targeted &&
-    boxesEqual(a.target, b.target)
-  );
-}
-
-function boxesEqual(a: TargetBox, b: TargetBox): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-}
-
-function hoverSelectionTarget(
-  event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement },
-  mapRect: DOMRect,
-  point: ScreenPoint,
-  map: MlMap | undefined
-): HoverTarget | null {
-  if (event.target instanceof Element) {
-    const element = event.target.closest<HTMLElement>(".map-symbol-marker");
-    const entityId = element?.dataset.entityId;
-    if (element && entityId && event.currentTarget.contains(element)) {
-      return { entityId, box: boxFromElement(element, mapRect) };
-    }
-  }
-
-  const markerAtPoint = markerTargetAtPoint(event.currentTarget, mapRect, point);
-  if (markerAtPoint) return markerAtPoint;
-
-  if (!map) return null;
-  try {
-    const features = map.queryRenderedFeatures([point.x, point.y], { layers: INTERACTIVE_LAYERS });
-    for (const feature of features) {
-      const box = boxFromFeature(map, feature);
-      const entityId = feature.properties?.entityId;
-      if (box && typeof entityId === "string") return { entityId, box };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function markerTargetAtPoint(mapCanvas: HTMLElement, mapRect: DOMRect, point: ScreenPoint): HoverTarget | null {
-  for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
-    const entityId = element.dataset.entityId;
-    if (!entityId) continue;
-    const box = boxFromElement(element, mapRect);
-    if (point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height) {
-      return { entityId, box };
-    }
-  }
-  return null;
-}
-
-function reticleForVisibleTarget(mapCanvas: HTMLElement | null, map: MlMap, sources: MapSources, target: MapReticleTarget): ReticleState | null {
-  if (!mapCanvas) return null;
-  const box = boxForMapReticleTarget(mapCanvas, map, sources, target);
-  if (!box) return null;
-  const viewport = mapCanvas.getBoundingClientRect();
-  if (!boxIntersectsViewport(box, { width: viewport.width, height: viewport.height })) return null;
-  return reticleForTarget({ id: target.id, entityId: target.type === "entity" ? target.id : undefined, box });
-}
-
-function boxForMapReticleTarget(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, target: MapReticleTarget): TargetBox | null {
-  if (target.type === "entity") return targetBoxForEntityId(mapCanvas, map, sources, target.id);
-  if (target.type === "point") {
-    const point = map.project(target.coordinates);
-    return squareAround({ x: point.x, y: point.y }, 1);
-  }
-  return boxFromGeometry(map, target.geometry);
-}
-
-function targetBoxForEntityId(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, entityId: string): TargetBox | null {
-  return boxForEntityMarker(mapCanvas, entityId) ?? boxForFeature(map, featureForEntityId(sources, entityId));
-}
-
-function boxForEntityMarker(mapCanvas: HTMLElement, entityId: string): TargetBox | null {
-  const mapRect = mapCanvas.getBoundingClientRect();
-  for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
-    if (element.dataset.entityId === entityId) return boxFromElement(element, mapRect);
-  }
-  return null;
-}
-
-function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
-  const rect = element.getBoundingClientRect();
-  return {
-    x: rect.left - mapRect.left,
-    y: rect.top - mapRect.top,
-    width: rect.width,
-    height: rect.height
-  };
-}
-
-function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | null {
-  return boxFromProjectedPositions(collectLngLatPositions(feature.geometry.coordinates), (position) => {
-    const projected = map.project([position[0], position[1]]);
-    return { x: projected.x, y: projected.y };
-  });
-}
-
-function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox | null {
-  return feature ? boxFromGeometry(map, feature.geometry) : null;
-}
-
-function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null {
-  return boxFromProjectedPositions(collectLngLatPositions(geometry.coordinates), (position) => {
-    const projected = map.project([position[0], position[1]]);
-    return { x: projected.x, y: projected.y };
-  });
-}
-
-function pushSources(map: MlMap, sources: MapSources): void {
-  (map.getSource("geofeatures") as maplibregl.GeoJSONSource | undefined)?.setData(sources.geofeatures as never);
-}
-
-function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined): void {
-  const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
-  overlay?.setData(
-    editing
-      ? ({ type: "FeatureCollection", features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }] } as never)
-      : (emptyFeatureCollection() as never)
-  );
-}
-
-function registerSourcesAndLayers(map: MlMap): void {
-  for (const id of ["geofeatures", "editing"]) {
-    if (!map.getSource(id)) {
-      map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
-    }
-  }
-
-  if (!map.getLayer("geofeatures-fill")) {
-    map.addLayer({
-      id: "geofeatures-fill",
-      type: "fill",
-      source: "geofeatures",
-      filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": COLORS.geofeatureFill, "fill-outline-color": COLORS.geofeature }
-    });
-  }
-  if (!map.getLayer("geofeatures-line")) {
-    map.addLayer({
-      id: "geofeatures-line",
-      type: "line",
-      source: "geofeatures",
-      filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
-      paint: {
-        "line-color": COLORS.geofeature,
-        "line-width": ["case", ["boolean", ["get", "selected"], false], 3.5, 2]
-      }
-    });
-  }
-  if (!map.getLayer("geofeatures-point")) {
-    map.addLayer({
-      id: "geofeatures-point",
-      type: "circle",
-      source: "geofeatures",
-      filter: ["==", ["geometry-type"], "Point"],
-      paint: circlePaint(COLORS.geofeature)
-    });
-  }
-
-  // Editing overlay drawn above everything.
-  if (!map.getLayer("editing-fill")) {
-    map.addLayer({
-      id: "editing-fill",
-      type: "fill",
-      source: "editing",
-      filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": "rgba(63,182,255,0.18)" }
-    });
-  }
-  if (!map.getLayer("editing-line")) {
-    map.addLayer({
-      id: "editing-line",
-      type: "line",
-      source: "editing",
-      filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
-      paint: { "line-color": COLORS.selected, "line-width": 2, "line-dasharray": [2, 1.5] }
-    });
-  }
-}
-
-function circlePaint(color: string): maplibregl.CircleLayerSpecification["paint"] {
-  return {
-    "circle-radius": ["case", ["boolean", ["get", "selected"], false], 7, 5],
-    "circle-color": color,
-    "circle-stroke-width": ["case", ["boolean", ["get", "selected"], false], 3, 1.5],
-    "circle-stroke-color": ["case", ["boolean", ["get", "selected"], false], COLORS.selected, "rgba(0,0,0,0.65)"]
-  };
-}
-
-function symbolMarkerFeatures(sources: MapSources): Array<MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } }> {
-  return [...sources.assets.features, ...sources.tracks.features].filter(isPointFeature);
-}
-
-function isPointFeature(feature: MapFeature): feature is MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } } {
-  const [longitude, latitude] = feature.geometry.coordinates;
-  return (
-    feature.geometry.type === "Point" &&
-    Array.isArray(feature.geometry.coordinates) &&
-    feature.geometry.coordinates.length >= 2 &&
-    typeof longitude === "number" &&
-    Number.isFinite(longitude) &&
-    longitude >= -180 &&
-    longitude <= 180 &&
-    typeof latitude === "number" &&
-    Number.isFinite(latitude) &&
-    latitude >= -90 &&
-    latitude <= 90
-  );
-}
-
-function createSymbolMarkerElement(feature: MapFeature & { geometry: { type: "Point"; coordinates: [number, number] } }): HTMLButtonElement {
-  const { properties } = feature;
-  const opacity = properties.linkState === "disconnected" ? 0.58 : properties.linkState === "degraded" ? 0.82 : 1;
-  const rotation = properties.kind === "asset" ? properties.heading : undefined;
-  const symbol =
-    properties.kind === "track"
-      ? defaultSidcIconService.getTrackSymbol({ type: properties.symbolType ?? properties.subtype ?? properties.classification ?? properties.name })
-      : defaultSidcIconService.getAssetSymbol({
-          entityId: properties.entityId,
-          entityType: properties.entityType,
-          modelId: properties.modelId,
-          assetType: properties.assetType,
-          symbolType: properties.symbolType,
-          subtype: properties.subtype
-        });
-  const rendered = defaultSidcIconService.render(symbol, { selected: properties.selected, opacity, rotation });
-  const element = document.createElement("button");
-  element.type = "button";
-  element.className = [
-    "map-symbol-marker",
-    `map-symbol-marker--${properties.kind}`,
-    properties.selected ? "map-symbol-marker--selected" : "",
-    rendered.isFallback ? "map-symbol-marker--fallback" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
-  element.title = properties.name;
-  element.setAttribute("aria-label", `${properties.name} ${properties.kind}`);
-  element.dataset.entityId = properties.entityId;
-  element.innerHTML = rendered.html;
-  return element;
-}
-
-function clearMarkers(markers: Marker[]): void {
-  for (const marker of markers) marker.remove();
-}
-
-function cloneStyle(style: StyleSpecification): StyleSpecification {
-  return JSON.parse(JSON.stringify(style)) as StyleSpecification;
-}
-
-function webglAvailable(): boolean {
-  try {
-    const canvas = document.createElement("canvas");
-    return Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl") ?? canvas.getContext("experimental-webgl"));
-  } catch {
-    return false;
-  }
-}
-
-function fitWorldOnce(map: MlMap, fitWorldOnceRef: { current: boolean }): void {
-  if (fitWorldOnceRef.current) return;
-  fitWorldOnceRef.current = true;
-  map.fitBounds(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { [CAMERA_EVENT_TAG]: true });
-}
-
-export { buildMapSources };

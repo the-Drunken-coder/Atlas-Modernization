@@ -12,170 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
-	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
-
-// ActionError is a base error for action operations.
-type ActionError struct {
-	Message string
-	Code    protocol.ErrorCode
-}
-
-func (e *ActionError) Error() string {
-	return e.Message
-}
-
-// ValidationError is returned when input validation fails.
-type ValidationError struct {
-	ActionError
-	Details []string // Field-level validation errors
-}
-
-// NotFoundError is returned when a resource is not found.
-type NotFoundError struct {
-	ActionError
-	ResourceType ChangeResource
-	ResourceID   string
-}
-
-// NewValidationError creates a new validation error.
-func NewValidationError(message string) *ValidationError {
-	return &ValidationError{
-		ActionError: ActionError{Message: message, Code: protocol.ErrorCodeValidationError},
-	}
-}
-
-// NewEntityNotFoundError creates an entity not found error.
-func NewEntityNotFoundError(entityID string) *NotFoundError {
-	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("Entity '%s' was not found", entityID), Code: protocol.ErrorCodeEntityNotFound},
-		ResourceType: ChangeResourceEntity,
-		ResourceID:   entityID,
-	}
-}
-
-// NewAliasNotFoundError is returned when no entity exists for the given alias.
-func NewAliasNotFoundError(alias string) *NotFoundError {
-	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("No entity was found for alias '%s'", alias), Code: protocol.ErrorCodeEntityAliasNotFound},
-		ResourceType: ChangeResourceEntity,
-		ResourceID:   alias,
-	}
-}
-
-// NewTaskNotFoundError creates a task not found error.
-func NewTaskNotFoundError(taskID string) *NotFoundError {
-	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("Task '%s' was not found", taskID), Code: protocol.ErrorCodeTaskNotFound},
-		ResourceType: ChangeResourceTask,
-		ResourceID:   taskID,
-	}
-}
-
-// NewObjectNotFoundError creates an object not found error.
-func NewObjectNotFoundError(objectID string) *NotFoundError {
-	return &NotFoundError{
-		ActionError:  ActionError{Message: fmt.Sprintf("Object '%s' was not found", objectID), Code: protocol.ErrorCodeObjectNotFound},
-		ResourceType: ChangeResourceObject,
-		ResourceID:   objectID,
-	}
-}
-
-// PreconditionFailedError is returned when If-Match does not match the current resource.
-type PreconditionFailedError struct {
-	ActionError
-}
-
-// NewPreconditionFailedError indicates a write was rejected due to stale If-Match.
-func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
-	resourceType = strings.TrimSpace(resourceType)
-	if resourceType == "" {
-		resourceType = "resource"
-	}
-	return &PreconditionFailedError{
-		ActionError: ActionError{
-			Message: fmt.Sprintf("If-Match precondition failed for %s", resourceType),
-			Code:    protocol.ErrorCodePreconditionFailed,
-		},
-	}
-}
-
-func NewEntityPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("entity")
-}
-
-func NewTaskPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("task")
-}
-
-func NewObjectPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("object")
-}
-
-// ConflictError is returned when a create or update violates a unique constraint.
-type ConflictError struct {
-	ActionError
-}
-
-// NewEntityConflictError reports a duplicate entity id on insert.
-func NewEntityConflictError(entityID string) *ConflictError {
-	return &ConflictError{
-		ActionError: ActionError{
-			Message: fmt.Sprintf("An entity with id '%s' already exists", entityID),
-			Code:    protocol.ErrorCodeEntityAlreadyExists,
-		},
-	}
-}
-
-// NewEntityUniqueConstraintError reports a unique constraint violation on create or update (e.g. duplicate alias).
-func NewEntityUniqueConstraintError() *ConflictError {
-	return &ConflictError{
-		ActionError: ActionError{
-			Message: "Entity conflicts with an existing unique value",
-			Code:    protocol.ErrorCodeEntityAlreadyExists,
-		},
-	}
-}
-
-// NewTaskConflictError reports a duplicate task id on insert.
-func NewTaskConflictError(taskID string) *ConflictError {
-	return &ConflictError{
-		ActionError: ActionError{
-			Message: fmt.Sprintf("A task with id '%s' already exists", taskID),
-			Code:    protocol.ErrorCodeTaskAlreadyExists,
-		},
-	}
-}
-
-// NewObjectConflictError reports a duplicate object id on insert.
-func NewObjectConflictError(objectID string) *ConflictError {
-	return &ConflictError{
-		ActionError: ActionError{
-			Message: fmt.Sprintf("An object with id '%s' already exists", objectID),
-			Code:    protocol.ErrorCodeObjectAlreadyExists,
-		},
-	}
-}
-
-// NewObjectPathConflictError reports a duplicate object storage path.
-func NewObjectPathConflictError() *ConflictError {
-	return &ConflictError{
-		ActionError: ActionError{
-			Message: "Object path conflicts with an existing object",
-			Code:    protocol.ErrorCodeObjectPathConflict,
-		},
-	}
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-func isForeignKeyViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23503"
-}
 
 // EntityActions handles entity business logic.
 type EntityActions struct {
@@ -434,11 +271,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return &entity, nil
 	}
 
-	existingJSON, err := decodeJSONBlobForPatch(entity.JSON, jsonBlobDecodeDefault)
-	if err != nil {
-		return nil, fmt.Errorf("existing entity json is corrupt or invalid: %w", err)
-	}
-
 	// Update type if provided
 	newType := entity.Type
 	if params.EntityType != nil {
@@ -474,12 +306,16 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		}
 	}
 
-	if err := mergeEntityComponents(existingJSON, params.Components); err != nil {
-		return nil, err
-	}
-
-	mergeBlobExtraFields(existingJSON, params.Extra, entityPromotedBlobFields)
-	jsonBytes, err := marshalValidatedJSONBlob(existingJSON, ValidateEntityBlob)
+	jsonBytes, err := patchValidatedJSONBlob(jsonBlobPatch{
+		rawMessage:      entity.JSON,
+		decodeMode:      jsonBlobDecodeDefault,
+		decodeError:     "existing entity json is corrupt or invalid",
+		components:      params.Components,
+		mergeComponents: mergeEntityComponents,
+		extra:           params.Extra,
+		promotedFields:  entityPromotedBlobFields,
+		validate:        ValidateEntityBlob,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -613,65 +449,6 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 	})
 
 	return nil
-}
-
-func queryTasksByEntityForUpdate(ctx context.Context, tx pgx.Tx, entityID string) ([]*models.Task, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT task_id, status, entity_id, json, created_at, updated_at, version
-		FROM tasks WHERE entity_id = $1
-		FOR UPDATE
-	`, entityID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to lock entity tasks before deletion: %w", err)
-	}
-	defer rows.Close()
-	return scanTaskRows(rows)
-}
-
-func queryTasksByIDs(ctx context.Context, tx pgx.Tx, ids []string) (map[string]*models.Task, error) {
-	tasks := make(map[string]*models.Task, len(ids))
-	if len(ids) == 0 {
-		return tasks, nil
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT task_id, status, entity_id, json, created_at, updated_at, version
-		FROM tasks WHERE task_id = ANY($1)
-	`, ids)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load entity tasks after deletion: %w", err)
-	}
-	defer rows.Close()
-	list, err := scanTaskRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	for _, task := range list {
-		tasks[task.TaskID] = task
-	}
-	return tasks, nil
-}
-
-func taskIDs(tasks []*models.Task) []string {
-	ids := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		ids = append(ids, task.TaskID)
-	}
-	return ids
-}
-
-func scanTaskRows(rows pgx.Rows) ([]*models.Task, error) {
-	var tasks []*models.Task
-	for rows.Next() {
-		var task models.Task
-		if err := rows.Scan(&task.TaskID, &task.Status, &task.EntityID, &task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan task: %w", err)
-		}
-		tasks = append(tasks, &task)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate tasks: %w", err)
-	}
-	return tasks, nil
 }
 
 // Count returns the total number of entities.
