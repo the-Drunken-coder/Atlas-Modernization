@@ -24,12 +24,7 @@ func Generate(root string, write bool) ([]string, error) {
 		return nil, err
 	}
 
-	meta, err := LoadMeta(root)
-	if err != nil {
-		return nil, err
-	}
-
-	artifacts, err := BuildArtifacts(root, meta)
+	artifacts, err := BuildArtifacts(root)
 	if err != nil {
 		return nil, err
 	}

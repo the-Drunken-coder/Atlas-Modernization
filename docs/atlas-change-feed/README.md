@@ -1,6 +1,6 @@
 # Atlas Change Feed
 
-The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `atlas_protocol/schema/feed.cue`, Core serves the feed from `Atlas_Core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
+The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `atlas_protocol/schema/jsonschema/atlas.schema.json`, Core serves the feed from `Atlas_Core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
 
 This document is the behavioral contract. The durable rationale lives in the [design decision](../design-decisions/2026-06-12-change-feed-websocket-fat-events.md).
 
@@ -18,7 +18,7 @@ This document is the behavioral contract. The durable rationale lives in the [de
 - Events are fat: each frame carries event type, resource type, global `version`, resource ID, and the full serialized resource when present.
 - Deletes are tombstones. Task delete tombstones may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
 - Object metadata flows over the feed; object content is never pushed.
-- Shapes are authored in CUE and generated into JSON Schema, Go, and TypeScript.
+- Shapes are authored in JSON Schema and generated into Go and TypeScript.
 - The envelope is flat:
 
   ```json

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"cuelang.org/go/cue/cuecontext"
 )
 
 func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
@@ -72,46 +70,6 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 	want := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
 	if !reflect.DeepEqual(errors, want) {
 		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", errors, want)
-	}
-}
-
-func TestConcreteFieldsFromValueExcludesPatternConstraints(t *testing.T) {
-	value := cuecontext.New().CompileString(`{
-		known: int
-		[=~"^custom_"]: int
-	}`)
-	if err := value.Err(); err != nil {
-		t.Fatalf("compile CUE value: %v", err)
-	}
-
-	concreteFields, err := concreteFieldsFromValue(value, "test")
-	if err != nil {
-		t.Fatalf("concreteFieldsFromValue() error = %v", err)
-	}
-	for field := range concreteFields {
-		if strings.HasPrefix(field, "[") {
-			t.Fatalf("concreteFieldsFromValue returned pattern constraint label %q", field)
-		}
-	}
-	if _, ok := concreteFields["known"]; !ok {
-		t.Fatalf("concreteFieldsFromValue missing concrete field known: %v", concreteFields)
-	}
-}
-
-func TestConcreteFieldsFromValueIncludesQuotedBracketLabels(t *testing.T) {
-	value := cuecontext.New().CompileString(`{
-		"[quoted]": int
-	}`)
-	if err := value.Err(); err != nil {
-		t.Fatalf("compile CUE value: %v", err)
-	}
-
-	concreteFields, err := concreteFieldsFromValue(value, "test")
-	if err != nil {
-		t.Fatalf("concreteFieldsFromValue() error = %v", err)
-	}
-	if _, ok := concreteFields["[quoted]"]; !ok {
-		t.Fatalf("concreteFieldsFromValue missing quoted bracket label: %v", concreteFields)
 	}
 }
 
@@ -277,7 +235,7 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 			if len(errors) != 1 {
 				t.Fatalf("errors = %v, want exactly one", errors)
 			}
-			if !strings.Contains(errors[0], "input cannot be encoded as CUE") {
+			if !strings.Contains(errors[0], "input cannot be encoded as JSON") {
 				t.Fatalf("errors[0] = %q, want encoding failure message", errors[0])
 			}
 		})

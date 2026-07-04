@@ -3,31 +3,26 @@ package validator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"math"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
-	"cuelang.org/go/cue"
-	"cuelang.org/go/cue/cuecontext"
-	cueerrors "cuelang.org/go/cue/errors"
-	"cuelang.org/go/cue/load"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	protocolschema "github.com/the-drunken-coder/atlas/atlas_protocol/schema"
 )
 
 const (
-	modulePath         = "github.com/the-drunken-coder/atlas/atlas_protocol"
-	moduleRoot         = "/atlas_protocol"
-	cueLanguageVersion = "v0.16.1"
+	schemaBundlePath     = "jsonschema/atlas.schema.json"
+	schemaBundleLocation = "atlas.schema.json"
+	maxGeometryPositions = 10000
 )
 
 type compiledSchema struct {
-	ctx             *cue.Context
-	root            cue.Value
+	schemas         map[string]*jsonschema.Schema
 	componentFields map[string]map[string]struct{}
 }
 
@@ -37,67 +32,92 @@ var compiled struct {
 	err    error
 }
 
-// evalMu serializes CUE evaluation. The CUE evaluator lazily mutates shared
-// state inside cue.Value, so concurrent Unify/Validate calls against the
-// shared compiled schema race without it.
-var evalMu sync.Mutex
+var schemaDefinitions = []string{
+	"EntityBlob",
+	"TaskBlob",
+	"ObjectBlob",
+	"EntityResource",
+	"TaskResource",
+	"ObjectResource",
+	"ErrorResponse",
+	"FeedEvent",
+	"FeedAuthMessage",
+	"FeedSubscribeMessage",
+	"FeedUnsubscribeMessage",
+	"FeedClientMessage",
+	"FeedHandshakeMessage",
+	"EntityComponents",
+	"TaskComponents",
+	"CommandComponent",
+	"TaskParametersComponent",
+	"TaskProgressComponent",
+	"TaskCatalogComponent",
+	"MediaRefsComponent",
+	"MilViewComponent",
+	"HealthComponent",
+	"SensorRefsComponent",
+	"CommunicationsComponent",
+	"TaskQueueComponent",
+	"StatusComponent",
+	"HeartbeatComponent",
+	"TelemetryComponent",
+	"GeometryComponent",
+}
 
 func ValidateEntityBlob(value any) []string {
-	return validate("#EntityBlob", value)
+	return validate("EntityBlob", value)
 }
 
 func ValidateTaskBlob(value any) []string {
-	return validate("#TaskBlob", value)
+	return validate("TaskBlob", value)
 }
 
 func ValidateObjectBlob(value any) []string {
-	return validate("#ObjectBlob", value)
+	return validate("ObjectBlob", value)
 }
 
 func ValidateEntityResource(value any) []string {
-	return validate("#EntityResource", value)
+	return validate("EntityResource", value)
 }
 
 func ValidateTaskResource(value any) []string {
-	return validate("#TaskResource", value)
+	return validate("TaskResource", value)
 }
 
 func ValidateObjectResource(value any) []string {
-	return validate("#ObjectResource", value)
+	return validate("ObjectResource", value)
 }
 
 func ValidateErrorResponse(value any) []string {
-	return validate("#ErrorResponse", value)
+	return validate("ErrorResponse", value)
 }
 
 func ValidateFeedEvent(value any) []string {
-	errors := validate("#FeedEvent", value)
+	errors := validate("FeedEvent", value)
 	return appendFeedEventContextErrors(errors, value)
 }
 
 func ValidateFeedAuthMessage(value any) []string {
-	return validate("#FeedAuthMessage", value)
+	return validate("FeedAuthMessage", value)
 }
 
 func ValidateFeedSubscribeMessage(value any) []string {
-	return validate("#FeedSubscribeMessage", value)
+	return validate("FeedSubscribeMessage", value)
 }
 
 func ValidateFeedUnsubscribeMessage(value any) []string {
-	return validate("#FeedUnsubscribeMessage", value)
+	return validate("FeedUnsubscribeMessage", value)
 }
 
 func ValidateFeedClientMessage(value any) []string {
-	return validate("#FeedClientMessage", value)
+	return validate("FeedClientMessage", value)
 }
 
 func ValidateFeedHandshakeMessage(value any) []string {
-	return validate("#FeedHandshakeMessage", value)
+	return validate("FeedHandshakeMessage", value)
 }
 
 func appendFeedEventContextErrors(errors []string, value any) []string {
-	// The CUE union owns validity; these checks only add targeted diagnostics for
-	// nullable task routing fields that otherwise produce broad union errors.
 	payload, ok := valueAsMap(value)
 	if !ok || payload["resource_type"] != "task" {
 		return errors
@@ -149,71 +169,71 @@ func valueAsMap(value any) (map[string]any, bool) {
 }
 
 func ValidateEntityComponents(value any) []string {
-	return validate("#EntityComponents", value)
+	return validate("EntityComponents", value)
 }
 
 func ValidateTaskComponents(value any) []string {
-	return validate("#TaskComponents", value)
+	return validate("TaskComponents", value)
 }
 
 func ValidateCommandComponent(value any) []string {
-	return validate("#CommandComponent", value)
+	return validate("CommandComponent", value)
 }
 
 func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {
-	return prefixErrors(validate("#TaskParametersComponent", value), fieldPrefix)
+	return prefixErrors(validate("TaskParametersComponent", value), fieldPrefix)
 }
 
 func ValidateTaskProgressComponent(value any) []string {
-	return validate("#TaskProgressComponent", value)
+	return validate("TaskProgressComponent", value)
 }
 
 func ValidateTaskCatalogComponent(value any) []string {
-	return validate("#TaskCatalogComponent", value)
+	return validate("TaskCatalogComponent", value)
 }
 
 func ValidateMediaRefsComponent(value any) []string {
-	return validate("#MediaRefsComponent", value)
+	return validate("MediaRefsComponent", value)
 }
 
 func ValidateMilViewComponent(value any) []string {
-	return validate("#MilViewComponent", value)
+	return validate("MilViewComponent", value)
 }
 
 func ValidateHealthComponent(value any) []string {
-	return validate("#HealthComponent", value)
+	return validate("HealthComponent", value)
 }
 
 func ValidateSensorRefsComponent(value any) []string {
-	return validate("#SensorRefsComponent", value)
+	return validate("SensorRefsComponent", value)
 }
 
 func ValidateCommunicationsComponent(value any) []string {
-	return validate("#CommunicationsComponent", value)
+	return validate("CommunicationsComponent", value)
 }
 
 func ValidateTaskQueueComponent(value any) []string {
-	return validate("#TaskQueueComponent", value)
+	return validate("TaskQueueComponent", value)
 }
 
 func ValidateStatusComponent(value any) []string {
-	return validate("#StatusComponent", value)
+	return validate("StatusComponent", value)
 }
 
 func ValidateHeartbeatComponent(value any) []string {
-	return validate("#HeartbeatComponent", value)
+	return validate("HeartbeatComponent", value)
 }
 
 func ValidateTelemetryComponent(value any) []string {
-	return validate("#TelemetryComponent", value)
+	return validate("TelemetryComponent", value)
 }
 
 func ValidateGeometryComponent(value any) []string {
-	return validate("#GeometryComponent", value)
+	return validate("GeometryComponent", value)
 }
 
 func validate(definition string, value any) []string {
-	normalized, err := normalizeForCUE(value)
+	normalized, err := normalizeForJSONSchema(value)
 	if err != nil {
 		return []string{fmt.Sprintf("input cannot be decoded as JSON: %v", err)}
 	}
@@ -222,6 +242,9 @@ func validate(definition string, value any) []string {
 			path = "value"
 		}
 		return []string{path + ": must be finite"}
+	}
+	if err := ensureJSONEncodable(normalized); err != nil {
+		return []string{fmt.Sprintf("input cannot be encoded as JSON: %v", err)}
 	}
 
 	schema, err := getSchema()
@@ -232,47 +255,37 @@ func validate(definition string, value any) []string {
 		return errors
 	}
 
-	path := cue.ParsePath(definition)
-	if err := path.Err(); err != nil {
-		return []string{fmt.Sprintf("invalid protocol schema path %q: %v", definition, err)}
+	compiled, ok := schema.schemas[definition]
+	if !ok {
+		return []string{fmt.Sprintf("protocol schema definition %s not found", definition)}
 	}
-
-	evalMu.Lock()
-	defer evalMu.Unlock()
-	def := schema.root.LookupPath(path)
-	if err := def.Err(); err != nil {
-		return []string{fmt.Sprintf("protocol schema definition %s not found: %v", definition, err)}
+	var messages []string
+	if err := compiled.Validate(normalized); err != nil {
+		messages = append(messages, validationErrorMessages(err)...)
 	}
-
-	input := schema.ctx.Encode(normalized)
-	if err := input.Err(); err != nil {
-		return []string{fmt.Sprintf("input cannot be encoded as CUE: %v", err)}
-	}
-	validated := def.Unify(input)
-	if err := validated.Validate(cue.Concrete(true)); err != nil {
-		return cueErrorMessages(err)
-	}
-	return nil
+	messages = append(messages, semanticErrors(definition, normalized)...)
+	sort.Strings(messages)
+	return messages
 }
 
 func unknownComponentErrors(schema *compiledSchema, definition string, value any) []string {
 	switch definition {
-	case "#EntityBlob":
+	case "EntityBlob":
 		blob, ok := value.(map[string]any)
 		if !ok {
 			return nil
 		}
-		return componentUnknowns(blob["components"], schema.componentFields["#EntityComponents"])
-	case "#TaskBlob":
+		return componentUnknowns(blob["components"], schema.componentFields["EntityComponents"])
+	case "TaskBlob":
 		blob, ok := value.(map[string]any)
 		if !ok {
 			return nil
 		}
-		return componentUnknowns(blob["components"], schema.componentFields["#TaskComponents"])
-	case "#EntityComponents":
-		return componentUnknowns(value, schema.componentFields["#EntityComponents"])
-	case "#TaskComponents":
-		return componentUnknowns(value, schema.componentFields["#TaskComponents"])
+		return componentUnknowns(blob["components"], schema.componentFields["TaskComponents"])
+	case "EntityComponents":
+		return componentUnknowns(value, schema.componentFields["EntityComponents"])
+	case "TaskComponents":
+		return componentUnknowns(value, schema.componentFields["TaskComponents"])
 	default:
 		return nil
 	}
@@ -302,46 +315,48 @@ func getSchema() (*compiledSchema, error) {
 }
 
 func loadSchema() (*compiledSchema, error) {
-	overlay, err := schemaOverlay()
+	data, err := protocolschema.Files.ReadFile(schemaBundlePath)
 	if err != nil {
 		return nil, err
 	}
-
-	instances := load.Instances([]string{"./schema"}, &load.Config{
-		Dir:        moduleRoot,
-		ModuleRoot: moduleRoot,
-		Module:     modulePath,
-		Package:    "atlasprotocol",
-		Overlay:    overlay,
-	})
-	if len(instances) != 1 {
-		return nil, fmt.Errorf("load returned %d schema instances", len(instances))
-	}
-	inst := instances[0]
-	if inst.Err != nil {
-		return nil, inst.Err
-	}
-	if inst.Incomplete {
-		return nil, fmt.Errorf("schema imports are incomplete: %v", inst.DepsErrors)
-	}
-
-	ctx := cuecontext.New()
-	root := ctx.BuildInstance(inst)
-	if err := root.Err(); err != nil {
+	var bundle map[string]any
+	if err := json.Unmarshal(data, &bundle); err != nil {
 		return nil, err
 	}
-	componentFields, err := schemaComponentFields(root)
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.AssertFormat()
+	if err := compiler.AddResource(schemaBundleLocation, bundle); err != nil {
+		return nil, err
+	}
+	if _, err := compiler.Compile(schemaBundleLocation); err != nil {
+		return nil, err
+	}
+
+	schemas := make(map[string]*jsonschema.Schema, len(schemaDefinitions))
+	for _, definition := range schemaDefinitions {
+		schema, err := compiler.Compile(schemaDefinitionLocation(definition))
+		if err != nil {
+			return nil, fmt.Errorf("compile %s: %w", definition, err)
+		}
+		schemas[definition] = schema
+	}
+	componentFields, err := schemaComponentFields(bundle)
 	if err != nil {
 		return nil, err
 	}
-	return &compiledSchema{ctx: ctx, root: root, componentFields: componentFields}, nil
+	return &compiledSchema{schemas: schemas, componentFields: componentFields}, nil
 }
 
-func schemaComponentFields(root cue.Value) (map[string]map[string]struct{}, error) {
-	definitions := []string{"#EntityComponents", "#TaskComponents"}
+func schemaDefinitionLocation(definition string) string {
+	return schemaBundleLocation + "#/$defs/" + definition
+}
+
+func schemaComponentFields(bundle map[string]any) (map[string]map[string]struct{}, error) {
+	definitions := []string{"EntityComponents", "TaskComponents"}
 	componentFields := make(map[string]map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
-		fields, err := schemaConcreteFields(root, definition)
+		fields, err := concreteSchemaProperties(bundle, definition)
 		if err != nil {
 			return nil, err
 		}
@@ -350,84 +365,76 @@ func schemaComponentFields(root cue.Value) (map[string]map[string]struct{}, erro
 	return componentFields, nil
 }
 
-func schemaConcreteFields(root cue.Value, definition string) (map[string]struct{}, error) {
-	path := cue.ParsePath(definition)
-	if err := path.Err(); err != nil {
-		return nil, fmt.Errorf("parse schema path %q: %w", definition, err)
+func concreteSchemaProperties(bundle map[string]any, definition string) (map[string]struct{}, error) {
+	defs, ok := bundle["$defs"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("schema bundle has no $defs object")
 	}
-	value := root.LookupPath(path)
-	if err := value.Err(); err != nil {
-		return nil, fmt.Errorf("lookup %s: %w", definition, err)
+	raw, ok := defs[definition].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("schema definition %s not found", definition)
 	}
-	return concreteFieldsFromValue(value, definition)
+	properties, ok := raw["properties"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("schema definition %s has no properties", definition)
+	}
+	fields := make(map[string]struct{}, len(properties))
+	for key := range properties {
+		fields[key] = struct{}{}
+	}
+	return fields, nil
 }
 
-func concreteFieldsFromValue(value cue.Value, label string) (map[string]struct{}, error) {
-	fields, err := value.Fields(cue.Optional(true))
-	if err != nil {
-		return nil, fmt.Errorf("iterate %s fields: %w", label, err)
-	}
-
-	result := map[string]struct{}{}
-	for fields.Next() {
-		selector := fields.Selector()
-		// Optional pattern constraints are present in Fields, but are not concrete
-		// schema keys. Concrete quoted labels still report cue.StringLabel.
-		if selector.LabelType() != cue.StringLabel {
-			continue
-		}
-		result[selector.Unquoted()] = struct{}{}
-	}
-	return result, nil
-}
-
-func schemaOverlay() (map[string]load.Source, error) {
-	overlay := map[string]load.Source{
-		filepath.Join(moduleRoot, "cue.mod", "module.cue"): load.FromString(`module: "` + modulePath + `"
-language: {
-	version: "` + cueLanguageVersion + `"
-}
-`),
-	}
-	err := fs.WalkDir(protocolschema.Files, ".", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".cue") {
-			return nil
-		}
-		content, err := protocolschema.Files.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		overlay[filepath.Join(moduleRoot, "schema", filepath.FromSlash(path))] = load.FromBytes(content)
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build schema overlay: %w", err)
-	}
-	return overlay, nil
-}
-
-func cueErrorMessages(err error) []string {
-	cueErrs := cueerrors.Errors(err)
-	if len(cueErrs) == 0 {
+func validationErrorMessages(err error) []string {
+	var validationErr *jsonschema.ValidationError
+	if !errors.As(err, &validationErr) {
 		return []string{strings.TrimSpace(err.Error())}
 	}
-
-	messages := make([]string, 0, len(cueErrs))
-	for _, cueErr := range cueErrs {
-		message := strings.TrimSpace(cueerrors.String(cueErr))
-		if message == "" {
-			continue
-		}
-		messages = append(messages, message)
-	}
-	sort.Strings(messages)
+	var messages []string
+	collectValidationErrorMessages(validationErr, &messages)
 	if len(messages) == 0 {
 		return []string{strings.TrimSpace(err.Error())}
 	}
+	sort.Strings(messages)
 	return messages
+}
+
+func collectValidationErrorMessages(err *jsonschema.ValidationError, messages *[]string) {
+	if len(err.Causes) > 0 {
+		for _, cause := range err.Causes {
+			collectValidationErrorMessages(cause, messages)
+		}
+		return
+	}
+	message := strings.TrimSpace(err.Error())
+	if unit := err.BasicOutput(); unit != nil && unit.Error != nil {
+		message = unit.Error.String()
+	}
+	path := formatInstanceLocation(err.InstanceLocation)
+	if missing, ok := missingPropertyName(message); ok {
+		path = joinPath(path, missing)
+	}
+	if path != "" {
+		message = path + ": " + message
+	}
+	*messages = append(*messages, message)
+}
+
+func missingPropertyName(message string) (string, bool) {
+	const prefix = "missing property '"
+	if !strings.HasPrefix(message, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(message, prefix)
+	name, _, ok := strings.Cut(rest, "'")
+	return name, ok && name != ""
+}
+
+func formatInstanceLocation(parts []string) string {
+	if len(parts) == 0 {
+		return "value"
+	}
+	return strings.Join(parts, ".")
 }
 
 func prefixErrors(errors []string, fieldPrefix string) []string {
@@ -442,17 +449,14 @@ func prefixErrors(errors []string, fieldPrefix string) []string {
 		if message == "" {
 			continue
 		}
-		message = strings.TrimPrefix(message, "#TaskParametersComponent.")
-		message = strings.TrimPrefix(message, "#TaskParametersComponent")
+		message = strings.TrimPrefix(message, "TaskParametersComponent.")
+		message = strings.TrimPrefix(message, "TaskParametersComponent")
 		prefixed = append(prefixed, fieldPrefix+"."+message)
 	}
 	return prefixed
 }
 
-// normalizeForCUE converts Go JSON decode artifacts into values CUE can unify.
-// encoding/json with UseNumber leaves numeric fields as json.Number, which CUE
-// encodes as strings unless they are normalized to int64 or float64 first.
-func normalizeForCUE(value any) (any, error) {
+func normalizeForJSONSchema(value any) (any, error) {
 	switch typed := value.(type) {
 	case json.RawMessage:
 		return decodeRawJSON(typed)
@@ -462,16 +466,13 @@ func normalizeForCUE(value any) (any, error) {
 		}
 		f, err := typed.Float64()
 		if err != nil {
-			// Preserve oversized or otherwise unparsable numbers as strings so CUE
-			// rejects them through normal schema validation instead of silently
-			// coercing them to malformed numeric values.
 			return typed.String(), nil
 		}
 		return f, nil
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, item := range typed {
-			normalized, err := normalizeForCUE(item)
+			normalized, err := normalizeForJSONSchema(item)
 			if err != nil {
 				return nil, err
 			}
@@ -481,7 +482,7 @@ func normalizeForCUE(value any) (any, error) {
 	case []any:
 		out := make([]any, len(typed))
 		for i, item := range typed {
-			normalized, err := normalizeForCUE(item)
+			normalized, err := normalizeForJSONSchema(item)
 			if err != nil {
 				return nil, err
 			}
@@ -507,7 +508,12 @@ func decodeRawJSON(raw json.RawMessage) (any, error) {
 		}
 		return nil, err
 	}
-	return normalizeForCUE(value)
+	return normalizeForJSONSchema(value)
+}
+
+func ensureJSONEncodable(value any) error {
+	_, err := json.Marshal(value)
+	return err
 }
 
 func firstNonFinitePath(value any, path string) (string, bool) {
@@ -543,4 +549,129 @@ func firstNonFinitePath(value any, path string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func semanticErrors(definition string, value any) []string {
+	switch definition {
+	case "GeometryComponent":
+		return geometrySemanticErrors(value, "")
+	case "EntityComponents":
+		return componentGeometrySemanticErrors(value, "geometry")
+	case "EntityBlob", "EntityResource", "EntityCreateRequest", "EntityUpdateRequest":
+		return resourceGeometrySemanticErrors(value)
+	case "FeedEvent":
+		return feedEventGeometrySemanticErrors(value)
+	default:
+		return nil
+	}
+}
+
+func resourceGeometrySemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return componentGeometrySemanticErrors(payload["components"], "components.geometry")
+}
+
+func feedEventGeometrySemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok || payload["resource_type"] != "entity" {
+		return nil
+	}
+	resource, ok := payload["resource"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return componentGeometrySemanticErrors(resource["components"], "resource.components.geometry")
+}
+
+func componentGeometrySemanticErrors(value any, path string) []string {
+	components, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	geometry, exists := components["geometry"]
+	if !exists {
+		return nil
+	}
+	return geometrySemanticErrors(geometry, path)
+}
+
+func geometrySemanticErrors(value any, path string) []string {
+	geometry, ok := value.(map[string]any)
+	if !ok || geometry["type"] != "Polygon" {
+		return nil
+	}
+	rawCoordinates, ok := geometry["coordinates"].([]any)
+	if !ok {
+		return nil
+	}
+
+	var errors []string
+	totalPositions := 0
+	for i, rawRing := range rawCoordinates {
+		ring, ok := rawRing.([]any)
+		if !ok {
+			continue
+		}
+		totalPositions += len(ring)
+		if len(ring) < 2 {
+			continue
+		}
+		if !positionsEqual(ring[0], ring[len(ring)-1]) {
+			errors = append(errors, joinPath(path, fmt.Sprintf("coordinates.%d", i))+": polygon ring must be closed")
+		}
+	}
+	if totalPositions > maxGeometryPositions {
+		errors = append(errors, joinPath(path, "coordinates")+fmt.Sprintf(": polygon positions must not exceed %d", maxGeometryPositions))
+	}
+	return errors
+}
+
+func positionsEqual(left, right any) bool {
+	leftItems, leftOK := left.([]any)
+	rightItems, rightOK := right.([]any)
+	if !leftOK || !rightOK || len(leftItems) != len(rightItems) {
+		return false
+	}
+	for i := range leftItems {
+		if !jsonScalarsEqual(leftItems[i], rightItems[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func jsonScalarsEqual(left, right any) bool {
+	if leftNumber, ok := numberAsFloat(left); ok {
+		rightNumber, rightOK := numberAsFloat(right)
+		return rightOK && leftNumber == rightNumber
+	}
+	return left == right
+}
+
+func numberAsFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func joinPath(prefix, suffix string) string {
+	if prefix == "" {
+		return suffix
+	}
+	if suffix == "" {
+		return prefix
+	}
+	return prefix + "." + suffix
 }

@@ -792,11 +792,10 @@ func TestGeometryValidation(t *testing.T) {
 	}
 }
 
-func TestGeneratedJSONSchemaConstraints(t *testing.T) {
+func TestCanonicalJSONSchemaConstraints(t *testing.T) {
 	root := moduleRoot(t)
 
-	geometrySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "geometry.schema.json"))
-	geometryDefs := schemaObject(t, geometrySchema["$defs"])
+	geometryDefs := readSchemaDefs(t, root)
 	geoJSONPosition := schemaObject(t, geometryDefs["GeoJSONPosition"])
 	assertSchemaNumber(t, geoJSONPosition, "minItems", 2)
 	assertSchemaMissing(t, geoJSONPosition, "minLength")
@@ -820,29 +819,26 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 		t.Fatalf("GeoJSONCircleFeature.geometry ref = %v, want %q", got, want)
 	}
 
-	objectReferenceSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "object-reference.schema.json"))
+	objectReferenceSchema := schemaObject(t, geometryDefs["ObjectReference"])
 	assertSchemaNumber(t, objectReferenceSchema, "minProperties", 1)
 
-	objectSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "object.schema.json"))
-	objectDefs := schemaObject(t, objectSchema["$defs"])
-	objectReferenceDef := schemaObject(t, objectDefs["ObjectReference"])
+	objectReferenceDef := schemaObject(t, geometryDefs["ObjectReference"])
 	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
+	objectSchema := schemaObject(t, geometryDefs["ObjectBlob"])
 	objectProps := schemaObject(t, objectSchema["properties"])
 	sizeBytes := schemaObject(t, objectProps["size_bytes"])
 	if got, want := sizeBytes["type"], "integer"; got != want {
 		t.Fatalf("object size_bytes type = %v, want %s", got, want)
 	}
 
-	entitySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "entity.schema.json"))
-	entityDefs := schemaObject(t, entitySchema["$defs"])
-	telemetryDef := schemaObject(t, entityDefs["TelemetryComponent"])
+	telemetryDef := schemaObject(t, geometryDefs["TelemetryComponent"])
 	assertSchemaMissing(t, telemetryDef, "$ref")
 	telemetryProps := schemaObject(t, telemetryDef["properties"])
 	latitude := schemaObject(t, telemetryProps["latitude"])
 	if got, want := latitude["$ref"], "#/$defs/Latitude"; got != want {
 		t.Fatalf("telemetry latitude ref = %v, want %s", got, want)
 	}
-	healthDef := schemaObject(t, entityDefs["HealthComponent"])
+	healthDef := schemaObject(t, geometryDefs["HealthComponent"])
 	assertSchemaMissing(t, healthDef, "$ref")
 	healthProps := schemaObject(t, healthDef["properties"])
 	batteryPercent := schemaObject(t, healthProps["battery_percent"])
@@ -1080,9 +1076,9 @@ func assertExamplesValidate(t *testing.T, dir string, validate func(any) []strin
 	}
 }
 
-func readSchema(t *testing.T, path string) map[string]any {
+func readSchemaDefs(t *testing.T, root string) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(root, "schema", "jsonschema", "atlas.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1090,7 +1086,7 @@ func readSchema(t *testing.T, path string) map[string]any {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatal(err)
 	}
-	return schema
+	return schemaObject(t, schema["$defs"])
 }
 
 func schemaObject(t *testing.T, value any) map[string]any {
