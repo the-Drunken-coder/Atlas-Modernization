@@ -81,14 +81,18 @@ export function App() {
     try {
       const apiKey = apiKeyForTarget(targetId);
       const nextHealth = apiKey ? await loadHealth(targetId || undefined, apiKey) : await loadHealth(targetId || undefined);
-      if (requestId !== healthRequestRef.current) return;
-      setHealth(nextHealth);
+      if (!applyHealthResponse(requestId, nextHealth)) return;
       setError(undefined);
     } catch (errorValue) {
-      if (requestId !== healthRequestRef.current) return;
-      setHealth({ ok: false, message: errorMessage(errorValue) });
+      if (!applyHealthResponse(requestId, { ok: false, message: errorMessage(errorValue) })) return;
       throw errorValue;
     }
+  }
+
+  function applyHealthResponse(requestId: number, nextHealth: HealthResponse): boolean {
+    if (requestId !== healthRequestRef.current) return false;
+    setHealth(nextHealth);
+    return true;
   }
 
   function selectTarget(targetId: string) {
