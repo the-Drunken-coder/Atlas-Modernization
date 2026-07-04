@@ -24,11 +24,12 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	defer cancel()
 
 	prefix := fmt.Sprintf("actions-live-%d-", time.Now().UTC().UnixNano())
+	var cleanupTaskIDs []string
 	cleanupActionsLiveRows(ctx, t, pool, prefix)
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
-		cleanupActionsLiveRows(cleanupCtx, t, pool, prefix)
+		cleanupActionsLiveRows(cleanupCtx, t, pool, prefix, cleanupTaskIDs...)
 	})
 
 	baselineVersion, err := CurrentChangeVersion(ctx, pool)
@@ -115,6 +116,7 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create command task: %v", err)
 	}
+	cleanupTaskIDs = append(cleanupTaskIDs, commandTask.TaskID)
 	if !strings.HasPrefix(commandTask.TaskID, "command-") || commandTask.Status != "pending" {
 		t.Fatalf("command task = %#v, want generated pending command task", commandTask)
 	}
@@ -199,6 +201,9 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	if err := taskActions.Delete(ctx, taskID); err != nil {
 		t.Fatalf("Delete task: %v", err)
 	}
+	if err := taskActions.Delete(ctx, commandTask.TaskID); err != nil {
+		t.Fatalf("Delete command task: %v", err)
+	}
 	if err := objectActions.Delete(ctx, objectID); err != nil {
 		t.Fatalf("Delete object: %v", err)
 	}
@@ -224,6 +229,9 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	}
 	if !deletedResourcesContain(changed.DeletedTasks, taskID) {
 		t.Fatalf("deleted tasks = %#v, want %s", changed.DeletedTasks, taskID)
+	}
+	if !deletedResourcesContain(changed.DeletedTasks, commandTask.TaskID) {
+		t.Fatalf("deleted tasks = %#v, want %s", changed.DeletedTasks, commandTask.TaskID)
 	}
 	if !deletedResourcesContain(changed.DeletedObjects, objectID) {
 		t.Fatalf("deleted objects = %#v, want %s", changed.DeletedObjects, objectID)
@@ -263,9 +271,14 @@ func openActionsLivePool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, prefix string) {
+func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, prefix string, taskIDs ...string) {
 	t.Helper()
 	pattern := prefix + "%"
+	for _, taskID := range taskIDs {
+		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
+			t.Fatalf("cleanup live action generated task %q: %v", taskID, err)
+		}
+	}
 	statements := []string{
 		`DELETE FROM storage_deletion_outbox WHERE object_id LIKE $1 OR path LIKE $1`,
 		`DELETE FROM deletions WHERE resource_id LIKE $1`,

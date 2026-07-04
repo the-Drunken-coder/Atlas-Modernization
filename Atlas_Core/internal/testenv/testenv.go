@@ -1,3 +1,4 @@
+// Package testenv contains helpers for tests that skip locally or fail in required integration modes.
 package testenv
 
 import (

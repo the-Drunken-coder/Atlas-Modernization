@@ -310,6 +310,25 @@ func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
 	assertAnyContains(t, errors, "unknown")
 }
 
+func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		validate func(any) []string
+	}{
+		{"entity_create", `{"entity_id":"asset-unknown","entity_type":"asset","components":{"typo":true}}`, ValidateEntityCreateRequest},
+		{"entity_update", `{"components":{"typo":true}}`, ValidateEntityUpdateRequest},
+		{"task_create", `{"task_id":"task-unknown","components":{"typo":true}}`, ValidateTaskCreateRequest},
+		{"task_update", `{"components":{"typo":true}}`, ValidateTaskUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.validate(json.RawMessage(tt.payload))
+			assertAnyContains(t, errors, "Unknown component 'typo'")
+		})
+	}
+}
+
 func TestUnencodableInputReturnsError(t *testing.T) {
 	values := []any{
 		map[string]any{"latitude": make(chan int)},
