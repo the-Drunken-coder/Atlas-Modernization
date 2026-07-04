@@ -41,6 +41,33 @@ describe("loadConfig", () => {
     expect(loadConfig({ env: { ATLAS_BASE_URL: "https://atlascommandapi.org/" }, packageRoot }).atlasBaseUrl).toBe("https://atlascommandapi.org");
   });
 
+  it("builds local and deployed API targets", () => {
+    const packageRoot = tempPackageRoot();
+
+    const config = loadConfig({
+      env: {
+        ATLAS_BASE_URL: "https://atlascommandapi.org/",
+        ATLAS_API_KEY: "legacy-deployed-key",
+        ATLAS_LOCAL_BASE_URL: "http://127.0.0.1:8000/",
+        ATLAS_LOCAL_API_KEY: "local-key"
+      },
+      packageRoot
+    });
+
+    expect(config.defaultAtlasTargetId).toBe("deployed");
+    expect(config.atlasTargets).toEqual([
+      { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", apiKey: "local-key" },
+      { id: "deployed", label: "Atlas Command API", baseUrl: "https://atlascommandapi.org", apiKey: "legacy-deployed-key" }
+    ]);
+  });
+
+  it("allows the default simulation target to be selected explicitly", () => {
+    const packageRoot = tempPackageRoot();
+
+    expect(loadConfig({ env: { ATLAS_SIM_TARGET: "deployed" }, packageRoot }).defaultAtlasTargetId).toBe("deployed");
+    expect(() => loadConfig({ env: { ATLAS_SIM_TARGET: "staging" }, packageRoot })).toThrow("ATLAS_SIM_TARGET must be local or deployed");
+  });
+
   it("does not let undefined env overrides erase .env values", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(path.join(packageRoot, ".env"), "ATLAS_SIM_PORT=5192\n");

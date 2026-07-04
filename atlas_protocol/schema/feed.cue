@@ -21,7 +21,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	alias!:       null | shared.#NonEmptyString
 	components!:  #EntityComponents
 	metadata!:    #MetadataBlock
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 })
 
 #TaskResource: close({
@@ -30,7 +30,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	entity_id!:  null | shared.#NonEmptyString
 	components!: #TaskComponents
 	metadata!:   #MetadataBlock
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 })
 
 #ObjectResource: close({

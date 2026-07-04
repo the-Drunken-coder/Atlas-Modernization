@@ -6,17 +6,30 @@ export type SidebarView = { mode: "list"; list: ListKind } | { mode: "inspector"
 
 export type Selection = { kind: EntityKind; id: string } | null;
 
+/** Where a selection came from. Only sidebar selections claim the camera. */
+export type SelectionOrigin = "sidebar" | "map";
+
+/**
+ * A camera claim on the selected entity. `seq` is bumped on every sidebar
+ * selection so re-selecting the same entity re-flies the camera.
+ */
+export type FocusRequest = { id: string; seq: number };
+
 export type SidebarState = {
   collapsed: boolean;
   view: SidebarView;
   selection: Selection;
+  focusRequest: FocusRequest | null;
+  // Monotonic camera-claim counter. Never reset, even when focusRequest
+  // clears, so a later claim always carries a higher seq than any prior one.
+  focusSeq: number;
 };
 
 export type SidebarAction =
   | { type: "toggleCollapsed" }
   | { type: "setCollapsed"; collapsed: boolean }
   | { type: "openList"; list: ListKind }
-  | { type: "selectEntity"; kind: EntityKind; id: string }
+  | { type: "selectEntity"; kind: EntityKind; id: string; origin: SelectionOrigin }
   | { type: "clearSelection" }
   | { type: "back" };
 
@@ -25,7 +38,9 @@ export const LIST_KINDS: ListKind[] = ["assets", "tracks", "geofeatures", "comma
 export const initialSidebarState: SidebarState = {
   collapsed: false,
   view: { mode: "list", list: "assets" },
-  selection: null
+  selection: null,
+  focusRequest: null,
+  focusSeq: 0
 };
 
 export function listForKind(kind: EntityKind): ListKind {
@@ -45,17 +60,24 @@ export function sidebarReducer(state: SidebarState, action: SidebarAction): Side
     case "openList":
       // Opening a list always expands the rail and shows that list.
       return { ...state, collapsed: false, view: { mode: "list", list: action.list } };
-    case "selectEntity":
+    case "selectEntity": {
+      // Sidebar selections drive the camera; map selections leave it alone
+      // (and release any earlier claim so follow stops).
+      const fromSidebar = action.origin === "sidebar";
       return {
         ...state,
         collapsed: false,
         selection: { kind: action.kind, id: action.id },
+        focusRequest: fromSidebar ? { id: action.id, seq: state.focusSeq + 1 } : null,
+        focusSeq: fromSidebar ? state.focusSeq + 1 : state.focusSeq,
         view: { mode: "inspector", previousList: currentList(state.view) }
       };
+    }
     case "clearSelection":
       return {
         ...state,
         selection: null,
+        focusRequest: null,
         view: state.view.mode === "inspector" ? { mode: "list", list: state.view.previousList } : state.view
       };
     case "back":

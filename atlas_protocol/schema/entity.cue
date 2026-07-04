@@ -30,26 +30,25 @@ import (
 #TaskQueueComponent:      components.#TaskQueueComponent
 #StatusComponent:         components.#StatusComponent
 #HeartbeatComponent:      components.#HeartbeatComponent
-
 #EntityComponents: {
-	telemetry?:      #TelemetryComponent
-	geometry?:       #GeometryComponent
-	task_catalog?:   #TaskCatalogComponent
-	media_refs?:     #MediaRefsComponent
-	mil_view?:       #MilViewComponent
-	health?:         #HealthComponent
-	sensor_refs?:    #SensorRefsComponent
-	communications?: #CommunicationsComponent
-	task_queue?:     #TaskQueueComponent
-	status?:         #StatusComponent
-	heartbeat?:      #HeartbeatComponent
-	[=~"^custom_"]:  shared.#JSONValue
+	telemetry?:      components.#TelemetryComponent
+	geometry?:       components.#GeometryComponent
+	task_catalog?:   components.#TaskCatalogComponent
+	media_refs?:     components.#MediaRefsComponent
+	mil_view?:       components.#MilViewComponent
+	health?:         components.#HealthComponent
+	sensor_refs?:    components.#SensorRefsComponent
+	communications?: components.#CommunicationsComponent
+	task_queue?:     components.#TaskQueueComponent
+	status?:         components.#StatusComponent
+	heartbeat?:      components.#HeartbeatComponent
+	[=~"^custom_"]:  #JSONValue
 }
 
 #EntityBlob: {
 	components?:   #EntityComponents
 	published_at?: shared.#RFC3339Timestamp
-	[string]:      shared.#JSONValue
+	[string]:      #JSONValue
 }
 
 #Meta: {

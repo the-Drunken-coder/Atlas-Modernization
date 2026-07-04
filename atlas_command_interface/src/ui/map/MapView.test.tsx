@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
 import type { StyleSpecification } from "maplibre-gl";
 import { MapView, buildMapSources, type MapReticleTarget } from "./MapView.js";
+import { ASSET_VIEW_ZOOM, FOLLOW_EASE_MS, INITIAL_WORLD_BOUNDS, flyDurationMs, type MapCameraCommand } from "./map-camera.js";
 import type { MapSources } from "./map-sources.js";
 
 type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
+let resizeCallbacks: ResizeObserverCallback[] = [];
 
 const maplibreMock = vi.hoisted(() => {
   class FakeMap {
@@ -20,16 +22,17 @@ const maplibreMock = vi.hoisted(() => {
     readonly sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
     readonly layers = new Map<string, unknown>();
     readonly easeTo = vi.fn();
+    readonly flyTo = vi.fn();
+    readonly stop = vi.fn();
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
-    readonly jumpTo = vi.fn((options: { center?: [number, number] | { lng: number; lat: number }; zoom?: number }) => {
-      if (options.center) this.center = Array.isArray(options.center) ? { lng: options.center[0], lat: options.center[1] } : options.center;
-      if (options.zoom !== undefined) this.zoom = options.zoom;
+    readonly zoomTo = vi.fn();
+    readonly getCenter = vi.fn(() => this.center);
+    readonly resize = vi.fn((eventData?: unknown) => {
+      this.fire("movestart", eventData);
+      this.fire("moveend", eventData);
       return this;
     });
-    readonly stop = vi.fn();
-    readonly zoomTo = vi.fn();
-    readonly resize = vi.fn();
     readonly remove = vi.fn();
     readonly addControl = vi.fn();
     readonly addSource = vi.fn((id: string) => {
@@ -41,7 +44,6 @@ const maplibreMock = vi.hoisted(() => {
     readonly queryRenderedFeatures = vi.fn((_point?: unknown, _options?: unknown): RenderedFeature[] => []);
     readonly getBearing = vi.fn(() => 0);
     readonly getZoom = vi.fn(() => this.zoom);
-    readonly getCenter = vi.fn(() => this.center);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
     readonly cameraForBounds = vi.fn((bounds: [[number, number], [number, number]], options?: { maxZoom?: number }) => ({
@@ -163,20 +165,23 @@ vi.mock("maplibre-gl", () => ({
 
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
-  let animationTime = 0;
+  resizeCallbacks = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+
       observe() {}
       unobserve() {}
       disconnect() {}
     }
   );
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    animationTime += 100;
-    callback(animationTime);
-    return animationTime;
+    callback(0);
+    return 1;
   });
 });
 
@@ -184,28 +189,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-function lastJumpTo(map: (typeof maplibreMock.FakeMap)["instances"][number]): { center?: unknown; zoom?: number } | undefined {
-  return map.jumpTo.mock.calls[map.jumpTo.mock.calls.length - 1]?.[0];
-}
-
-function cameraCallMatches(options: { center?: unknown; zoom?: number }, expectedCenter: [number, number], expectedZoom: number): boolean {
-  const center = centerFromCameraCall(options.center);
-  return Boolean(center && Math.abs(center[0] - expectedCenter[0]) < 0.001 && Math.abs(center[1] - expectedCenter[1]) < 0.001 && Math.abs((options.zoom ?? Number.NaN) - expectedZoom) < 0.001);
-}
-
-function firstCameraCallIndex(map: (typeof maplibreMock.FakeMap)["instances"][number], expectedCenter: [number, number], expectedZoom: number): number {
-  return map.jumpTo.mock.calls.findIndex(([options]) => cameraCallMatches(options, expectedCenter, expectedZoom));
-}
-
-function centerFromCameraCall(center: unknown): [number, number] | null {
-  if (Array.isArray(center) && typeof center[0] === "number" && typeof center[1] === "number") return [center[0], center[1]];
-  if (center && typeof center === "object" && "lng" in center && "lat" in center) {
-    const { lng, lat } = center as { lng: unknown; lat: unknown };
-    if (typeof lng === "number" && typeof lat === "number") return [lng, lat];
-  }
-  return null;
-}
 
 describe("MapView style switching", () => {
   it("creates symbol markers after the initial style load", async () => {
@@ -635,6 +618,7 @@ describe("MapView external reticle targets", () => {
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
     expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
@@ -647,101 +631,25 @@ describe("MapView external reticle targets", () => {
 
     await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
     expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
-  it("focuses selected point targets with explicit camera frames and keeps a fallback reticle", async () => {
+  it("shows the focus reticle without moving the camera", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
     map.fitBounds.mockClear();
-    map.jumpTo.mockClear();
 
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
 
-    await waitFor(() => expect(map.jumpTo).toHaveBeenCalled());
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+    });
     expect(map.easeTo).not.toHaveBeenCalled();
-    expect(map.fitBounds).not.toHaveBeenCalled();
-    expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [70, 80], 4))).toBe(true);
-    expect(firstCameraCallIndex(map, [70, 80], 4)).toBeLessThanOrEqual(6);
-    expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [70, 80], zoom: 16 }));
-    const overlay = document.querySelector<HTMLElement>(".map-reticle");
-    expect(overlay).toHaveClass("map-reticle--targeted");
-    expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
-    expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
-  });
-
-  it("refocuses point targets when coordinates change under the same id", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.jumpTo.mockClear();
-
-    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
-    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [70, 80], zoom: 16 })));
-
-    map.jumpTo.mockClear();
-    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [90, 110] } });
-
-    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [90, 110], zoom: 16 })));
-  });
-
-  it("zooms out before moving to a selected target from a tight view elsewhere", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.zoom = 16;
-    map.center = { lng: -120, lat: 35 };
-    map.jumpTo.mockClear();
-
-    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [-74, 40] } });
-
-    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [-74, 40], zoom: 16 })));
-    expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [-120, 35], 7))).toBe(true);
-    expect(map.jumpTo.mock.calls.some(([options]) => {
-      const center = (options as { center?: [number, number] }).center;
-      return Array.isArray(center) && center[0] > -120 && center[0] < -74 && center[1] > 35 && center[1] < 40;
-    })).toBe(true);
-    expect(map.jumpTo.mock.calls.some(([options]) => cameraCallMatches(options, [-74, 40], 7))).toBe(true);
-  });
-
-  it("retries entity focus when a selected entity becomes locatable", async () => {
-    const focusTarget = { type: "entity", id: "asset-1" } as const;
-    const { map, rerenderMap } = renderMapView({
-      focusTarget,
-      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
-    });
-    map.jumpTo.mockClear();
-
-    rerenderMap({
-      focusTarget,
-      sources: buildMapSources(
-        [entity({ entity_id: "asset-1", components: { telemetry: { latitude: 40, longitude: -74 } } })],
-        undefined
-      )
-    });
-
-    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [-74, 40], zoom: 16 })));
-  });
-
-  it("focuses selected geometry targets with fitBounds", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.easeTo.mockClear();
-    map.fitBounds.mockClear();
-    map.jumpTo.mockClear();
-
-    rerenderMap({
-      focusTarget: {
-        type: "geometry",
-        id: "area-1",
-        geometry: {
-          type: "LineString",
-          coordinates: [
-            [-75, 40],
-            [-73, 42]
-          ]
-        }
-      }
-    });
-
-    await waitFor(() => expect(lastJumpTo(map)).toEqual(expect.objectContaining({ center: [-74, 41], zoom: 16 })));
-    expect(map.cameraForBounds).toHaveBeenCalledWith([[-75, 40], [-73, 42]], { maxZoom: 16, padding: 48 });
-    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
@@ -838,7 +746,232 @@ describe("MapView external reticle targets", () => {
   });
 });
 
+describe("MapView camera commands", () => {
+  const homeView = { center: [0, 0] as [number, number], zoom: 4 };
+  const movedSources = () =>
+    buildMapSources([entity({ entity_id: "asset-1", components: { telemetry: { latitude: 41, longitude: -73 } } })], undefined);
+
+  const startFollowing = async () => {
+    const rendered = renderMapView({ sources: markerSources() });
+    rendered.rerenderMap({ cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(rendered.map.flyTo).toHaveBeenCalledTimes(1));
+    act(() => rendered.map.fire("moveend", { atlasCamera: true, atlasFlySeq: 1 }));
+    rendered.map.easeTo.mockClear();
+    return rendered;
+  };
+
+  it("fits the world once on load with a tagged instant move", async () => {
+    const { map } = renderMapView();
+
+    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { atlasCamera: true }));
+  });
+
+  it("flies point commands to the standard asset view with a tagged arc flight", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      cameraCommand: { seq: 1, target: { type: "point", id: "search-1", coordinates: [70, 80] } },
+      focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] }
+    });
+
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(
+        {
+          center: [70, 80],
+          zoom: ASSET_VIEW_ZOOM,
+          duration: flyDurationMs(homeView, { center: [70, 80], zoom: ASSET_VIEW_ZOOM })
+        },
+        { atlasCamera: true }
+      )
+    );
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    const overlay = document.querySelector<HTMLElement>(".map-reticle");
+    expect(overlay).toHaveClass("map-reticle--targeted");
+  });
+
+  it("flies literal point commands without entering entity follow", async () => {
+    const { map, rerenderMap } = renderMapView({ sources: markerSources() });
+
+    rerenderMap({ cameraCommand: { seq: 1, target: { type: "point", id: "asset-1", coordinates: [70, 80] } } });
+
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({ center: [70, 80], zoom: ASSET_VIEW_ZOOM }),
+        { atlasCamera: true }
+      )
+    );
+    act(() => map.fire("moveend", { atlasCamera: true }));
+    map.easeTo.mockClear();
+
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("does not re-fly for the same command but re-flies when the sequence bumps", async () => {
+    const { map, rerenderMap } = renderMapView({ sources: markerSources() });
+
+    rerenderMap({ cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+
+    rerenderMap({ sources: movedSources() });
+    expect(map.flyTo).toHaveBeenCalledTimes(1);
+
+    rerenderMap({ cameraCommand: { seq: 2, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(2));
+    expect(map.flyTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true, atlasFlySeq: 2 });
+  });
+
+  it("waits for an unlocatable entity and flies once it becomes locatable", async () => {
+    const command: MapCameraCommand = { seq: 1, target: { type: "entity", id: "asset-1" } };
+    const { map, rerenderMap } = renderMapView({
+      cameraCommand: command,
+      sources: buildMapSources([entity({ entity_id: "asset-1" })], undefined)
+    });
+    expect(map.flyTo).not.toHaveBeenCalled();
+
+    rerenderMap({ sources: markerSources() });
+
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({ center: [-74, 40], zoom: ASSET_VIEW_ZOOM }),
+        { atlasCamera: true, atlasFlySeq: 1 }
+      )
+    );
+  });
+
+  it("fits geometry commands with a tagged bounded ease and never follows them", async () => {
+    const { map, rerenderMap } = renderMapView();
+    map.fitBounds.mockClear();
+
+    rerenderMap({
+      cameraCommand: {
+        seq: 1,
+        target: {
+          type: "geometry",
+          id: "area-1",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [-75, 40],
+              [-73, 42]
+            ]
+          }
+        }
+      }
+    });
+
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenCalledWith(
+        [
+          [-75, 40],
+          [-73, 42]
+        ],
+        { duration: 450, maxZoom: 10, padding: 48 },
+        { atlasCamera: true }
+      )
+    );
+    expect(map.flyTo).not.toHaveBeenCalled();
+
+    act(() => map.fire("moveend", { atlasCamera: true }));
+    rerenderMap({ sources: movedSources() });
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("follows the selected entity with short tagged eases as telemetry moves it", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    rerenderMap({ sources: movedSources() });
+
+    await waitFor(() =>
+      expect(map.easeTo).toHaveBeenCalledWith(
+        { center: [-73, 41], duration: FOLLOW_EASE_MS, easing: expect.any(Function) },
+        { atlasCamera: true }
+      )
+    );
+  });
+
+  it("stops following when the user moves the map", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    act(() => map.fire("movestart", {}));
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps following through its own tagged camera moves", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    act(() => map.fire("movestart", { atlasCamera: true }));
+    rerenderMap({ sources: movedSources() });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps following through tagged layout resize moves", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    act(() => {
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+    });
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.resize).toHaveBeenLastCalledWith({ atlasCamera: true });
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true }));
+  });
+
+  it("re-engages follow when the command sequence bumps after a user gesture", async () => {
+    const { map, rerenderMap } = await startFollowing();
+    act(() => map.fire("movestart", {}));
+
+    rerenderMap({ cameraCommand: { seq: 2, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(2));
+    act(() => map.fire("moveend", { atlasCamera: true, atlasFlySeq: 2 }));
+    rerenderMap({ sources: movedSources() });
+
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true }));
+  });
+
+  it("does not chase mid-flight and catches up once the flight lands", async () => {
+    const { map, rerenderMap } = renderMapView({ sources: markerSources() });
+    rerenderMap({ cameraCommand: { seq: 1, target: { type: "entity", id: "asset-1" } } });
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(1));
+    map.easeTo.mockClear();
+
+    rerenderMap({ sources: movedSources() });
+    expect(map.easeTo).not.toHaveBeenCalled();
+
+    act(() => map.fire("moveend", { atlasCamera: true, atlasFlySeq: 1 }));
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledTimes(1));
+    expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true });
+  });
+
+  it("stops following when a box zoom completes", async () => {
+    const { map, rerenderMap } = await startFollowing();
+    const boxZoom = map.options.boxZoom as { boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void };
+
+    boxZoom.boxZoomEnd(map, { x: 12, y: 18 }, { x: 220, y: 140 }, new MouseEvent("mouseup"));
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.fitScreenCoordinates).toHaveBeenCalledWith({ x: 12, y: 18 }, { x: 220, y: 140 }, 0, { linear: true });
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  it("releases follow when the command clears", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    rerenderMap({ cameraCommand: null });
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
+  });
+});
+
 type RenderMapViewProps = {
+  cameraCommand?: MapCameraCommand | null;
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   previewTarget?: MapReticleTarget | null;
@@ -859,6 +992,7 @@ function renderMapView(props: RenderMapViewProps = {}) {
       style={renderProps.style}
       focusTarget={renderProps.focusTarget}
       previewTarget={renderProps.previewTarget}
+      cameraCommand={renderProps.cameraCommand}
       onBackgroundClick={onBackgroundClick}
       onMapContextMenu={onMapContextMenu}
       onSelectEntity={onSelectEntity}
@@ -877,6 +1011,7 @@ function renderMapView(props: RenderMapViewProps = {}) {
         style={renderProps.style}
         focusTarget={renderProps.focusTarget}
         previewTarget={renderProps.previewTarget}
+        cameraCommand={renderProps.cameraCommand}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}
         onSelectEntity={onSelectEntity}
