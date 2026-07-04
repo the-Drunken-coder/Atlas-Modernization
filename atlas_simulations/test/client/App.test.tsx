@@ -1,10 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
+import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
 import { jsonNumber } from "../../src/shared/types.js";
-import type { RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
+import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -20,6 +20,20 @@ const syncScenario: ScenarioDescriptor = {
   summary: "Checks sync",
   acceptsJson: false,
   inputFields: []
+};
+
+const localTarget: AtlasTargetSummary = {
+  id: "local",
+  label: "Local Core",
+  baseUrl: "http://localhost:8000",
+  apiKeyConfigured: true
+};
+
+const deployedTarget: AtlasTargetSummary = {
+  id: "deployed",
+  label: "Atlas Command API",
+  baseUrl: "https://atlascommandapi.org",
+  apiKeyConfigured: true
 };
 
 const run: RunSummary = {
@@ -46,7 +60,18 @@ function cloneRun(overrides: Partial<RunSummary> = {}): RunSummary {
   };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(reason?: unknown): void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 vi.mock("../../src/client/api.js", () => ({
+  loadTargets: vi.fn(async () => ({ targets: [localTarget, deployedTarget], defaultTargetId: localTarget.id })),
   loadHealth: vi.fn(async () => ({ ok: true, status: 200, message: "ok" })),
   loadScenarios: vi.fn(async () => [scenario]),
   loadRuns: vi.fn(async () => []),
@@ -81,6 +106,7 @@ describe("App", () => {
   beforeEach(() => {
     eventSources = [];
     vi.resetAllMocks();
+    vi.mocked(loadTargets).mockResolvedValue({ targets: [localTarget, deployedTarget], defaultTargetId: localTarget.id });
     vi.mocked(loadHealth).mockResolvedValue({ ok: true, status: jsonNumber(200), message: "ok" });
     vi.mocked(loadScenarios).mockResolvedValue([scenario]);
     vi.mocked(loadRun).mockResolvedValue(cloneRun());
@@ -109,6 +135,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(vi.mocked(startRun)).toHaveBeenCalledWith({
         scenarioId: scenario.id,
+        targetId: localTarget.id,
         inputs: { assetCount: 3 },
         jsonInput: '{"note":"ok"}'
       })
@@ -164,8 +191,75 @@ describe("App", () => {
     await waitFor(() =>
       expect(vi.mocked(startRun)).toHaveBeenCalledWith({
         scenarioId: scenario.id,
+        targetId: localTarget.id,
         inputs: { assetCount: 2 }
       })
+    );
+  });
+
+  it("starts a run against the selected API target", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const apiSelect = await screen.findByLabelText("API");
+    await user.selectOptions(apiSelect, deployedTarget.id);
+    await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(deployedTarget.id));
+    await user.click(await screen.findByRole("button", { name: /start/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(startRun)).toHaveBeenCalledWith({
+        scenarioId: scenario.id,
+        targetId: deployedTarget.id,
+        inputs: { assetCount: 2 }
+      })
+    );
+  });
+
+  it("ignores stale health responses after target switches", async () => {
+    const user = userEvent.setup();
+    const localHealth = deferred<HealthResponse>();
+    const deployedHealth = deferred<HealthResponse>();
+    vi.mocked(loadHealth).mockImplementation((targetId) => (targetId === deployedTarget.id ? deployedHealth.promise : localHealth.promise));
+    render(<App />);
+
+    const apiSelect = await screen.findByLabelText("API");
+    await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(localTarget.id));
+    await user.selectOptions(apiSelect, deployedTarget.id);
+    await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(deployedTarget.id));
+
+    await act(async () => {
+      deployedHealth.resolve({ ok: true, status: jsonNumber(200), message: "deployed ok", target: deployedTarget });
+      await deployedHealth.promise;
+    });
+    expect(await screen.findByText("Core reachable")).toBeInTheDocument();
+
+    await act(async () => {
+      localHealth.resolve({ ok: false, status: jsonNumber(503), message: "local down", target: localTarget });
+      await localHealth.promise;
+    });
+
+    expect(screen.getByText("Core reachable")).toBeInTheDocument();
+    expect(screen.queryByText("Core offline")).not.toBeInTheDocument();
+  });
+
+  it("uses the pasted API key when refreshing health and starting a run", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("API key"), "secret-key");
+    await user.click(screen.getByRole("button", { name: "Refresh Core status" }));
+    await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(localTarget.id, "secret-key"));
+
+    await user.click(screen.getByRole("button", { name: /start/i }));
+    await waitFor(() =>
+      expect(vi.mocked(startRun)).toHaveBeenCalledWith(
+        {
+          scenarioId: scenario.id,
+          targetId: localTarget.id,
+          inputs: { assetCount: 2 }
+        },
+        "secret-key"
+      )
     );
   });
 

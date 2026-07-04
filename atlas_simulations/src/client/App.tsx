@@ -1,7 +1,7 @@
 import { Activity, CheckCircle2, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { isCreatedResource, jsonNumber, type HealthResponse, type RunEvent, type RunSummary, type ScenarioDescriptor, type StartRunRequest } from "../shared/types.js";
-import { cleanupRun, loadHealth, loadRuns, loadScenarios, startRun, stopRun } from "./api.js";
+import { isCreatedResource, jsonNumber, type AtlasTargetSummary, type HealthResponse, type RunEvent, type RunSummary, type ScenarioDescriptor, type StartRunRequest } from "../shared/types.js";
+import { cleanupRun, loadHealth, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "./api.js";
 
 type FieldValues = Record<string, string | number | boolean>;
 
@@ -10,6 +10,9 @@ const ACTIVE_RUN_REFRESH_MS = 2_000;
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | undefined>();
+  const [targets, setTargets] = useState<AtlasTargetSummary[]>([]);
+  const [selectedTargetId, setSelectedTargetId] = useState("");
+  const [apiKeysByTargetId, setApiKeysByTargetId] = useState<Record<string, string>>({});
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [inputs, setInputs] = useState<FieldValues>({});
@@ -24,12 +27,18 @@ export function App() {
   const activeRunIdRef = useRef<string | undefined>(undefined);
   const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
   const currentRunIdRef = useRef<string | undefined>(undefined);
+  const healthRequestRef = useRef(0);
   const refreshRunsRequestRef = useRef(0);
   const runsRef = useRef<RunSummary[]>([]);
   const eventsByRunIdRef = useRef<Map<string, RunEvent[]>>(new Map());
 
   useEffect(() => {
-    void refreshHealth().catch(captureError);
+    void loadTargets().then((loaded) => {
+      setTargets(loaded.targets);
+      const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : loaded.targets[0]?.id ?? "";
+      setSelectedTargetId(targetId);
+      return refreshHealth(targetId);
+    }).catch(captureError);
     void loadScenarios().then((loaded) => {
       setScenarios(loaded);
       setSelectedId((current) => current || loaded[0]?.id || "");
@@ -42,6 +51,8 @@ export function App() {
   }, []);
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
+  const selectedTarget = useMemo(() => targets.find((target) => target.id === selectedTargetId), [selectedTargetId, targets]);
+  const selectedApiKey = selectedTargetId ? apiKeysByTargetId[selectedTargetId] ?? "" : "";
   const hasRunningRuns = useMemo(() => runs.some((run) => run.status === "running"), [runs]);
   const hasCleanupInFlight = useMemo(() => !!cleanupRunId && runs.some((run) => run.id === cleanupRunId && !run.cleaned), [cleanupRunId, runs]);
 
@@ -65,15 +76,39 @@ export function App() {
     return () => window.clearInterval(interval);
   }, [hasCleanupInFlight, hasRunningRuns]);
 
-  async function refreshHealth() {
+  async function refreshHealth(targetId = selectedTargetId) {
+    const requestId = ++healthRequestRef.current;
     try {
-      const nextHealth = await loadHealth();
-      setHealth(nextHealth);
+      const apiKey = apiKeyForTarget(targetId);
+      const nextHealth = apiKey ? await loadHealth(targetId || undefined, apiKey) : await loadHealth(targetId || undefined);
+      if (!applyHealthResponse(requestId, nextHealth)) return;
       setError(undefined);
     } catch (errorValue) {
-      setHealth({ ok: false, message: errorMessage(errorValue) });
+      if (!applyHealthResponse(requestId, { ok: false, message: errorMessage(errorValue) })) return;
       throw errorValue;
     }
+  }
+
+  function applyHealthResponse(requestId: number, nextHealth: HealthResponse): boolean {
+    if (requestId !== healthRequestRef.current) return false;
+    setHealth(nextHealth);
+    return true;
+  }
+
+  function selectTarget(targetId: string) {
+    setSelectedTargetId(targetId);
+    setError(undefined);
+    void refreshHealth(targetId).catch(captureError);
+  }
+
+  function setSelectedApiKey(value: string) {
+    if (!selectedTargetId) return;
+    setApiKeysByTargetId((current) => ({ ...current, [selectedTargetId]: value }));
+  }
+
+  function apiKeyForTarget(targetId: string): string | undefined {
+    const trimmed = apiKeysByTargetId[targetId]?.trim();
+    return trimmed ? trimmed : undefined;
   }
 
   async function refreshRuns() {
@@ -140,11 +175,14 @@ export function App() {
           throw new Error("JSON input must be valid JSON");
         }
       }
-      const run = await startRun({
+      const request: StartRunRequest = {
         scenarioId: selected.id,
+        ...(selectedTargetId ? { targetId: selectedTargetId } : {}),
         inputs: submissionInputs(selected, inputs),
         ...(normalizedJsonInput ? { jsonInput: normalizedJsonInput } : {})
-      });
+      };
+      const apiKey = apiKeyForTarget(selectedTargetId);
+      const run = apiKey ? await startRun(request, apiKey) : await startRun(request);
       upsertRun(run);
       selectRun(run);
       await refreshRunsBestEffort();
@@ -331,21 +369,44 @@ export function App() {
           <h1>Atlas Simulations</h1>
           <div className="subtle">Atlas Core</div>
         </div>
-        <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`}>
-          <Activity size={18} aria-hidden="true" />
-          <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
-          <button
-            className="icon-button"
-            type="button"
-            title="Refresh Core status"
-            aria-label="Refresh Core status"
-            onClick={() => {
-              setError(undefined);
-              void refreshHealth().catch(captureError);
-            }}
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-          </button>
+        <div className="topbar-controls">
+          <label className="target-menu">
+            <span>API</span>
+            <select value={selectedTargetId} onChange={(event) => selectTarget(event.target.value)} disabled={!targets.length} title={selectedTarget?.baseUrl}>
+              {targets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.label} ({target.baseUrl})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="api-key-field">
+            <span>API key</span>
+            <input
+              type="password"
+              value={selectedApiKey}
+              onChange={(event) => setSelectedApiKey(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Paste key"
+            />
+          </label>
+          <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`}>
+            <Activity size={18} aria-hidden="true" />
+            <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
+            <button
+              className="icon-button"
+              type="button"
+              title="Refresh Core status"
+              aria-label="Refresh Core status"
+              onClick={() => {
+                setError(undefined);
+                void refreshHealth().catch(captureError);
+              }}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -475,6 +536,7 @@ function RunDetails({ run }: { run: RunSummary | undefined }) {
     <dl className="run-details">
       <div><dt>ID</dt><dd>{run.id}</dd></div>
       <div><dt>Scenario</dt><dd>{run.scenarioName}</dd></div>
+      <div><dt>API</dt><dd>{run.target ? `${run.target.label} (${run.target.baseUrl})` : "-"}</dd></div>
       <div><dt>Started</dt><dd>{formatTime(run.startedAt)}</dd></div>
       <div><dt>Finished</dt><dd>{run.finishedAt ? formatTime(run.finishedAt) : "-"}</dd></div>
       <div><dt>Created</dt><dd>{run.createdResources.length}</dd></div>
@@ -591,6 +653,7 @@ function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary)
     id: incoming.id,
     scenarioId: incoming.scenarioId,
     scenarioName: incoming.scenarioName,
+    ...(incoming.target ?? existing.target ? { target: incoming.target ?? existing.target } : {}),
     status: fresher.status,
     startedAt: incoming.startedAt,
     ...(fresher.finishedAt ? { finishedAt: fresher.finishedAt } : {}),

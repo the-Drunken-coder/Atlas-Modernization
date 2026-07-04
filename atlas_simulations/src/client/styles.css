@@ -16,6 +16,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -41,6 +42,7 @@ button:disabled {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 3px solid #2d6cdf;
   outline-offset: 2px;
@@ -69,6 +71,14 @@ button.icon-button {
   gap: 16px;
   justify-content: space-between;
   margin-bottom: 14px;
+}
+
+.topbar-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 h1,
@@ -100,6 +110,62 @@ h2 {
   gap: 8px;
   min-height: 38px;
   padding: 6px 8px 6px 12px;
+}
+
+.target-menu {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d4d0c6;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px 6px 12px;
+}
+
+.api-key-field {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d4d0c6;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px 6px 12px;
+}
+
+.api-key-field input {
+  max-width: min(34vw, 260px);
+  min-height: 28px;
+  min-width: 180px;
+  padding: 4px 8px;
+}
+
+.api-key-field input::placeholder {
+  color: #8b8a85;
+}
+
+.target-menu span {
+  color: #66635d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.api-key-field span {
+  color: #66635d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.target-menu select {
+  background: #ffffff;
+  border: 1px solid #c9c6bf;
+  border-radius: 6px;
+  color: #202124;
+  max-width: min(52vw, 360px);
+  min-height: 28px;
+  min-width: 190px;
+  padding: 4px 8px;
 }
 
 .health.ok {
@@ -377,9 +443,22 @@ tbody tr {
   }
 
   .topbar,
+  .topbar-controls,
   .panel-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .target-menu,
+  .api-key-field {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .target-menu select,
+  .api-key-field input {
+    max-width: none;
+    width: 100%;
   }
 
   .input-grid {

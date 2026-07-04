@@ -30,6 +30,7 @@ describe("scenario input parsing", () => {
   it("applies defaults and parses JSON input", () => {
     const parsed = parseStartRequest(scenario, {
       scenarioId: "example",
+      targetId: "deployed",
       inputs: { enabled: true },
       jsonInput: '{"note":"ok"}'
     });

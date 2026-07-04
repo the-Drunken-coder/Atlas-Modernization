@@ -1,9 +1,24 @@
-import { jsonNumber, type AssertionResult, type CreatedResource, type JSONNumber, type JSONValue, type RunEvent, type RunEventDetails, type RunStatus, type RunSummary } from "../shared/types.js";
+import {
+  jsonNumber,
+  type AssertionResult,
+  type AtlasTargetSummary,
+  type CreatedResource,
+  type JSONNumber,
+  type JSONValue,
+  type RunEvent,
+  type RunEventDetails,
+  type RunStatus,
+  type RunSummary
+} from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
 import { isNotFoundError } from "./atlas.js";
 import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
 
 type EventSubscriber = (event: RunEvent) => void;
+
+export type RunTarget = AtlasTargetSummary & {
+  clientFactory?: AtlasClientFactory;
+};
 
 const MAX_RUNS = 100;
 const MAX_EVENTS_PER_RUN = 500;
@@ -22,6 +37,8 @@ const EVENT_MESSAGE_TRUNCATION_SUFFIX = "...[truncated]";
 type RunRecord = {
   id: string;
   scenario: Readonly<Scenario>;
+  target?: AtlasTargetSummary;
+  clientFactory: AtlasClientFactory;
   status: RunStatus;
   startedAt: string;
   finishedAt?: string;
@@ -66,7 +83,7 @@ export class RunStore {
     return this.requireRun(id).events.map(cloneValue);
   }
 
-  start(scenario: Readonly<Scenario>, input: ScenarioInput): RunSummary {
+  start(scenario: Readonly<Scenario>, input: ScenarioInput, target?: RunTarget): RunSummary {
     this.pruneRuns(MAX_RUNS - 1);
     if (this.runs.size >= MAX_RUNS) {
       throw new Error("Clean up existing simulation runs before starting another run");
@@ -80,6 +97,8 @@ export class RunStore {
     const run: RunRecord = {
       id,
       scenario,
+      ...(target ? { target: targetSummary(target) } : {}),
+      clientFactory: target?.clientFactory ?? this.clientFactory,
       status: "running",
       startedAt: now,
       inputs: cloneValue(runInput.fields),
@@ -146,7 +165,7 @@ export class RunStore {
     let client: AtlasClientLike;
     const cleanupController = new AbortController();
     try {
-      client = this.clientFactory({ sync: false, signal: cleanupController.signal });
+      client = run.clientFactory({ sync: false, signal: cleanupController.signal });
     } catch (error) {
       run.cleanupError = errorMessage(error);
       this.emit(run, { type: "error", level: "error", message: run.cleanupError });
@@ -223,7 +242,7 @@ export class RunStore {
       const context = createScenarioContext({
         runId: run.id,
         signal: run.controller.signal,
-        clientFactory: this.clientFactory,
+        clientFactory: run.clientFactory,
         registerClient,
         log: (message, data) => {
           if (!run.settled) this.emit(run, { type: "log", message, data });
@@ -405,6 +424,7 @@ function toSummary(run: RunRecord): RunSummary {
     id: run.id,
     scenarioId: run.scenario.id,
     scenarioName: run.scenario.name,
+    ...(run.target ? { target: cloneValue(run.target) } : {}),
     status: run.status,
     startedAt: run.startedAt,
     ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
@@ -415,6 +435,15 @@ function toSummary(run: RunRecord): RunSummary {
     assertions: cloneValue(run.assertions),
     cleaned: run.cleaned,
     ...(run.cleanupError || run.lastError ? { lastError: run.cleanupError ?? run.lastError } : {})
+  };
+}
+
+function targetSummary(target: RunTarget): AtlasTargetSummary {
+  return {
+    id: target.id,
+    label: target.label,
+    baseUrl: target.baseUrl,
+    apiKeyConfigured: target.apiKeyConfigured
   };
 }
 

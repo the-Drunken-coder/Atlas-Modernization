@@ -83,7 +83,7 @@ export function parseStartRequest(scenario: Readonly<Scenario>, request: unknown
 }
 
 function rejectUnknownStartRequestFields(raw: Record<string, unknown>): void {
-  const allowed = new Set(["scenarioId", "inputs", "jsonInput"]);
+  const allowed = new Set(["scenarioId", "targetId", "inputs", "jsonInput"]);
   const unknown = Object.keys(raw).find((key) => !allowed.has(key));
   if (unknown !== undefined) {
     throw new Error(`Unknown start request field: ${unknown}`);

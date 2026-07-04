@@ -1,4 +1,5 @@
 import type {
+  AtlasTargetSummary,
   HealthResponse,
   JSONValue,
   RunListResponse,
@@ -6,14 +7,24 @@ import type {
   ScenarioDescriptor,
   ScenarioListResponse,
   StartRunRequest,
-  StartRunResponse
+  StartRunResponse,
+  TargetListResponse
 } from "../shared/types.js";
 import { isCreatedResource, jsonNumber } from "../shared/types.js";
 
-export async function loadHealth(): Promise<HealthResponse> {
+const TARGET_API_KEY_HEADER = "X-Atlas-Target-Api-Key";
+
+export async function loadTargets(): Promise<TargetListResponse> {
+  return await apiJSON<TargetListResponse>("/api/targets", undefined, isTargetListResponse, "target list response");
+}
+
+export async function loadHealth(targetId?: string, apiKey?: string): Promise<HealthResponse> {
   let response: Response;
+  const url = targetId ? `/api/health?target=${encodeURIComponent(targetId)}` : "/api/health";
+  const headers = new Headers({ Accept: "application/json" });
+  setApiKeyHeader(headers, apiKey);
   try {
-    response = await fetch("/api/health", { headers: { Accept: "application/json" } });
+    response = await fetch(url, { headers });
   } catch (error) {
     return { ok: false, status: jsonNumber(0), message: transportErrorMessage(error) };
   }
@@ -46,14 +57,17 @@ export async function loadRuns(): Promise<RunSummary[]> {
   return response.runs;
 }
 
-export async function startRun(request: StartRunRequest): Promise<RunSummary> {
+export async function startRun(request: StartRunRequest, apiKey?: string): Promise<RunSummary> {
   if (!isStartRunRequest(request)) {
     throw new Error("Invalid start run request");
   }
+  const headers = new Headers();
+  setApiKeyHeader(headers, apiKey);
   const response = await apiJSON<StartRunResponse>(
     "/api/runs",
     {
       method: "POST",
+      headers,
       body: JSON.stringify(request)
     },
     isStartRunResponse,
@@ -119,6 +133,16 @@ async function responseJSON(response: Response): Promise<unknown> {
   return body;
 }
 
+function setApiKeyHeader(headers: Headers, apiKey: string | undefined): void {
+  const normalized = normalizedApiKey(apiKey);
+  if (normalized) headers.set(TARGET_API_KEY_HEADER, normalized);
+}
+
+function normalizedApiKey(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function isHealthResponse(value: unknown): value is HealthResponse {
   return (
     typeof value === "object" &&
@@ -126,7 +150,28 @@ function isHealthResponse(value: unknown): value is HealthResponse {
     "ok" in value &&
     typeof value.ok === "boolean" &&
     (!("status" in value) || value.status === undefined || isFiniteNumber(value.status)) &&
-    (!("message" in value) || value.message === undefined || typeof value.message === "string")
+    (!("message" in value) || value.message === undefined || typeof value.message === "string") &&
+    (!("target" in value) || value.target === undefined || isAtlasTargetSummary(value.target))
+  );
+}
+
+function isTargetListResponse(value: unknown): value is TargetListResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.targets) &&
+    value.targets.every(isAtlasTargetSummary) &&
+    typeof value.defaultTargetId === "string" &&
+    value.targets.some((target) => target.id === value.defaultTargetId)
+  );
+}
+
+function isAtlasTargetSummary(value: unknown): value is AtlasTargetSummary {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    typeof value.baseUrl === "string" &&
+    typeof value.apiKeyConfigured === "boolean"
   );
 }
 
@@ -138,6 +183,7 @@ function isStartRunRequest(value: unknown): value is StartRunRequest {
   return (
     isRecord(value) &&
     typeof value.scenarioId === "string" &&
+    (value.targetId === undefined || typeof value.targetId === "string") &&
     (value.inputs === undefined || isInputRecord(value.inputs)) &&
     (value.jsonInput === undefined || typeof value.jsonInput === "string")
   );
@@ -189,6 +235,7 @@ function isRunSummary(value: unknown): value is RunSummary {
     typeof value.id === "string" &&
     typeof value.scenarioId === "string" &&
     typeof value.scenarioName === "string" &&
+    (value.target === undefined || isAtlasTargetSummary(value.target)) &&
     isRunStatus(value.status) &&
     typeof value.startedAt === "string" &&
     (value.finishedAt === undefined || typeof value.finishedAt === "string") &&

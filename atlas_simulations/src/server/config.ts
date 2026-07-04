@@ -1,13 +1,29 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AtlasClientFactory } from "./atlas.js";
 
 export type SimulationConfig = {
   atlasBaseUrl: string;
   atlasApiKey?: string;
+  atlasTargets?: AtlasTargetConfig[];
+  defaultAtlasTargetId?: string;
   port: number;
   packageRoot: string;
 };
+
+export type AtlasTargetConfig = {
+  id: string;
+  label: string;
+  baseUrl: string;
+  apiKey?: string;
+  clientFactory?: AtlasClientFactory;
+};
+
+const LOCAL_TARGET_ID = "local";
+const DEPLOYED_TARGET_ID = "deployed";
+const DEFAULT_LOCAL_BASE_URL = "http://localhost:8000";
+const DEFAULT_DEPLOYED_BASE_URL = "https://atlascommandapi.org";
 
 export function packageRootFromModule(metaUrl: string = import.meta.url): string {
   return path.resolve(path.dirname(fileURLToPath(metaUrl)), "../..");
@@ -17,12 +33,46 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const packageRoot = options.packageRoot ?? packageRootFromModule();
   const fileEnv = readEnvFile(path.join(packageRoot, ".env"));
   const runtimeEnv = options.env ?? process.env;
-  const atlasBaseUrl = atlasBaseUrlValue(stringValue(runtimeEnv.ATLAS_BASE_URL) ?? stringValue(fileEnv.ATLAS_BASE_URL) ?? "http://localhost:8000");
+  const configuredBaseUrl = stringValue(runtimeEnv.ATLAS_BASE_URL) ?? stringValue(fileEnv.ATLAS_BASE_URL);
+  const atlasBaseUrl = atlasBaseUrlValue(configuredBaseUrl ?? DEFAULT_LOCAL_BASE_URL);
   const atlasApiKey = stringValue(runtimeEnv.ATLAS_API_KEY) ?? stringValue(fileEnv.ATLAS_API_KEY);
+  const localBaseUrl = atlasBaseUrlValue(
+    stringValue(runtimeEnv.ATLAS_LOCAL_BASE_URL) ??
+      stringValue(fileEnv.ATLAS_LOCAL_BASE_URL) ??
+      (isLoopbackUrl(atlasBaseUrl) ? atlasBaseUrl : DEFAULT_LOCAL_BASE_URL)
+  );
+  const deployedBaseUrl = atlasBaseUrlValue(
+    stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL) ??
+      stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL) ??
+      (isLoopbackUrl(atlasBaseUrl) ? DEFAULT_DEPLOYED_BASE_URL : atlasBaseUrl)
+  );
+  const localApiKey = stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY) ?? stringValue(fileEnv.ATLAS_LOCAL_API_KEY) ?? (sameAtlasBaseUrl(localBaseUrl, atlasBaseUrl) ? atlasApiKey : undefined);
+  const deployedApiKey =
+    stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY) ?? (sameAtlasBaseUrl(deployedBaseUrl, atlasBaseUrl) ? atlasApiKey : undefined);
+  const defaultAtlasTargetId = targetIdValue(
+    stringValue(runtimeEnv.ATLAS_SIM_TARGET) ??
+      stringValue(fileEnv.ATLAS_SIM_TARGET) ??
+      (sameAtlasBaseUrl(deployedBaseUrl, atlasBaseUrl) && !isLoopbackUrl(atlasBaseUrl) ? DEPLOYED_TARGET_ID : LOCAL_TARGET_ID)
+  );
   const port = portValue(stringValue(runtimeEnv.ATLAS_SIM_PORT) ?? stringValue(fileEnv.ATLAS_SIM_PORT));
   return {
     atlasBaseUrl,
     ...(atlasApiKey ? { atlasApiKey } : {}),
+    atlasTargets: [
+      {
+        id: LOCAL_TARGET_ID,
+        label: "Local Core",
+        baseUrl: localBaseUrl,
+        ...(localApiKey ? { apiKey: localApiKey } : {})
+      },
+      {
+        id: DEPLOYED_TARGET_ID,
+        label: "Atlas Command API",
+        baseUrl: deployedBaseUrl,
+        ...(deployedApiKey ? { apiKey: deployedApiKey } : {})
+      }
+    ],
+    defaultAtlasTargetId,
     port,
     packageRoot
   };
@@ -59,6 +109,13 @@ function portValue(value: string | undefined): number {
   return parsed;
 }
 
+function targetIdValue(value: string): string {
+  if (value !== LOCAL_TARGET_ID && value !== DEPLOYED_TARGET_ID) {
+    throw new Error(`ATLAS_SIM_TARGET must be ${LOCAL_TARGET_ID} or ${DEPLOYED_TARGET_ID}`);
+  }
+  return value;
+}
+
 function atlasBaseUrlValue(value: string): string {
   let parsed: URL;
   try {
@@ -80,6 +137,14 @@ function atlasBaseUrlValue(value: string): string {
   }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
   return `${parsed.origin}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+}
+
+function sameAtlasBaseUrl(left: string, right: string): boolean {
+  return left === right;
+}
+
+function isLoopbackUrl(value: string): boolean {
+  return isLoopbackHost(new URL(value).hostname);
 }
 
 function isLoopbackHost(hostname: string): boolean {
