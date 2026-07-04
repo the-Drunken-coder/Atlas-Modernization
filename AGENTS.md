@@ -33,7 +33,7 @@ The Atlas Protocol plan uses CUE, but `cue` may not be installed globally in new
 ```sh
 (cd atlas_protocol && go run ./tools/generate)
 (cd atlas_protocol && go run ./tools/check)
-go run cuelang.org/go/cmd/cue@v0.16.1 version
+go run cuelang.org/go/cmd/cue@v0.17.0 version
 ```
 
 When expressing "at least one of these optional fields" in Atlas Protocol CUE, prefer a concrete helper such as `struct.MinFields(1)` on a closed object. A disjunction of required/optional field variants can leave `cue vet` with incomplete optional-field values even when the JSON example looks valid.

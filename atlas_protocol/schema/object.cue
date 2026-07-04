@@ -16,5 +16,5 @@ import (
 	size_bytes?: int & >=0
 	usage_hints?: [...shared.#NonEmptyString]
 	referenced_by?: [...#ObjectReference]
-	[string]: shared.#JSONValue
+	[string]: #JSONValue
 }

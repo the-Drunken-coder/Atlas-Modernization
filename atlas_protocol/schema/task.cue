@@ -13,20 +13,20 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 #CommandComponent: close({
 	type!:       shared.#NonEmptyString
 	id?:         shared.#NonEmptyString
-	target?:     shared.#JSONValue
-	parameters?: shared.#JSONValue
+	target?:     #JSONValue
+	parameters?: #JSONValue
 })
 
 #TaskParametersComponent: {
 	latitude?:  shared.#Latitude
 	longitude?: shared.#Longitude
-	[string]:   shared.#JSONValue
+	[string]:   #JSONValue
 }
 
 #TaskProgressComponent: {
 	percent?:    shared.#FiniteNumber & >=0 & <=100
 	updated_at?: shared.#RFC3339Timestamp
-	[string]:    shared.#JSONValue
+	[string]:    #JSONValue
 }
 
 #TaskComponents: {
@@ -35,10 +35,10 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	progress?:       #TaskProgressComponent
 	target?:         #TaskParametersComponent
 	status_message?: string
-	[=~"^custom_"]:  shared.#JSONValue
+	[=~"^custom_"]:  #JSONValue
 }
 
 #TaskBlob: {
 	components?: #TaskComponents
-	[string]:    shared.#JSONValue
+	[string]:    #JSONValue
 }

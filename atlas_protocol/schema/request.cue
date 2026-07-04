@@ -11,7 +11,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	components?:   #EntityComponents
 	published_at?: shared.#RFC3339Timestamp
 	updated_at?:   shared.#RFC3339Timestamp
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 })
 
 #EntityUpdateRequest: close({
@@ -19,7 +19,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	subtype?:     null | shared.#NonEmptyString
 	alias?:       null | shared.#NonEmptyString
 	components?:  #EntityComponents
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 }) & struct.MinFields(1)
 
 #TaskCreateRequest: close({
@@ -27,14 +27,14 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	status?:     shared.#NonEmptyString
 	entity_id?:  null | shared.#NonEmptyString
 	components?: #TaskComponents
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 })
 
 #TaskUpdateRequest: close({
 	status?:     shared.#NonEmptyString
 	entity_id?:  null | shared.#NonEmptyString
 	components?: #TaskComponents
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 	remove_extra_keys?: [...shared.#NonEmptyString]
 }) & struct.MinFields(1)
 
@@ -46,7 +46,7 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	size_bytes?:   int & >=0
 	usage_hints?: [...shared.#NonEmptyString]
 	referenced_by?: [...#ObjectReference]
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 })
 
 #ObjectUpdateRequest: close({
@@ -56,5 +56,5 @@ import shared "github.com/the-drunken-coder/atlas/atlas_protocol/schema/shared"
 	size_bytes?:   int & >=0
 	usage_hints?: [...shared.#NonEmptyString]
 	referenced_by?: [...#ObjectReference]
-	extra?: {[string]: shared.#JSONValue}
+	extra?: {[string]: #JSONValue}
 }) & struct.MinFields(1)
