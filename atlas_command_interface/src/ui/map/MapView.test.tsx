@@ -10,6 +10,7 @@ type PointLike = { x: number; y: number };
 type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
+let resizeCallbacks: ResizeObserverCallback[] = [];
 
 const maplibreMock = vi.hoisted(() => {
   class FakeMap {
@@ -25,7 +26,11 @@ const maplibreMock = vi.hoisted(() => {
     readonly fitScreenCoordinates = vi.fn();
     readonly fitBounds = vi.fn();
     readonly getCenter = vi.fn(() => ({ lng: 0, lat: 0 }));
-    readonly resize = vi.fn();
+    readonly resize = vi.fn((eventData?: unknown) => {
+      this.fire("movestart", eventData);
+      this.fire("moveend", eventData);
+      return this;
+    });
     readonly remove = vi.fn();
     readonly addControl = vi.fn();
     readonly addSource = vi.fn((id: string) => {
@@ -142,10 +147,15 @@ vi.mock("maplibre-gl", () => ({
 
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
+  resizeCallbacks = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+
       observe() {}
       unobserve() {}
       disconnect() {}
@@ -734,13 +744,32 @@ describe("MapView camera commands", () => {
           zoom: ASSET_VIEW_ZOOM,
           duration: flyDurationMs(homeView, { center: [70, 80], zoom: ASSET_VIEW_ZOOM })
         },
-        { atlasCamera: true, atlasFlySeq: 1 }
+        { atlasCamera: true }
       )
     );
     expect(map.easeTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();
     const overlay = document.querySelector<HTMLElement>(".map-reticle");
     expect(overlay).toHaveClass("map-reticle--targeted");
+  });
+
+  it("flies literal point commands without entering entity follow", async () => {
+    const { map, rerenderMap } = renderMapView({ sources: markerSources() });
+
+    rerenderMap({ cameraCommand: { seq: 1, target: { type: "point", id: "asset-1", coordinates: [70, 80] } } });
+
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(
+        expect.objectContaining({ center: [70, 80], zoom: ASSET_VIEW_ZOOM }),
+        { atlasCamera: true }
+      )
+    );
+    act(() => map.fire("moveend", { atlasCamera: true }));
+    map.easeTo.mockClear();
+
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.easeTo).not.toHaveBeenCalled();
   });
 
   it("does not re-fly for the same command but re-flies when the sequence bumps", async () => {
@@ -842,6 +871,18 @@ describe("MapView camera commands", () => {
     rerenderMap({ sources: movedSources() });
 
     await waitFor(() => expect(map.easeTo).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps following through tagged layout resize moves", async () => {
+    const { map, rerenderMap } = await startFollowing();
+
+    act(() => {
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+    });
+    rerenderMap({ sources: movedSources() });
+
+    expect(map.resize).toHaveBeenLastCalledWith({ atlasCamera: true });
+    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true }));
   });
 
   it("re-engages follow when the command sequence bumps after a user gesture", async () => {

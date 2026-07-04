@@ -116,18 +116,22 @@ export function useMapCamera(args: {
       : undefined;
     const move = geometry && view ? planFocusMove(geometry, view) : null;
     if (!move) {
-      dispatch({ type: "command-pending", seq: command.seq, entityId: command.target.id });
+      if (command.target.type === "entity") dispatch({ type: "command-pending", seq: command.seq, entityId: command.target.id });
+      else dispatch({ type: "command-geometry", seq: command.seq });
       return;
     }
 
     lastAppliedSeqRef.current = command.seq;
     if (move.kind === "fly-to") {
-      lastFollowedCoordsRef.current = move.center;
-      dispatch({ type: "command-point", seq: command.seq, entityId: command.target.id });
-      map.flyTo(
-        { center: move.center, zoom: move.zoom, duration: move.durationMs },
-        { [CAMERA_EVENT_TAG]: true, [FLY_SEQ_TAG]: command.seq }
-      );
+      const eventData =
+        command.target.type === "entity" ? { [CAMERA_EVENT_TAG]: true, [FLY_SEQ_TAG]: command.seq } : { [CAMERA_EVENT_TAG]: true };
+      if (command.target.type === "entity") {
+        lastFollowedCoordsRef.current = move.center;
+        dispatch({ type: "command-point", seq: command.seq, entityId: command.target.id });
+      } else {
+        dispatch({ type: "command-geometry", seq: command.seq });
+      }
+      map.flyTo({ center: move.center, zoom: move.zoom, duration: move.durationMs }, eventData);
       return;
     }
     dispatch({ type: "command-geometry", seq: command.seq });

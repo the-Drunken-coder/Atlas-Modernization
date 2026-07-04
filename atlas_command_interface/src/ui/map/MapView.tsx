@@ -171,9 +171,9 @@ export function MapView({
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
-    const resizeObserver = new ResizeObserver(() => map.resize());
+    const resizeObserver = new ResizeObserver(() => map.resize({ [CAMERA_EVENT_TAG]: true }));
     resizeObserver.observe(containerRef.current);
-    requestAnimationFrame(() => map.resize());
+    requestAnimationFrame(() => map.resize({ [CAMERA_EVENT_TAG]: true }));
 
     const initializeLayers = () => {
       registerSourcesAndLayers(map);
