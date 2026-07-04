@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -490,8 +491,69 @@ func normalizeForJSONSchema(value any) (any, error) {
 		}
 		return out, nil
 	default:
-		return value, nil
+		return normalizeReflectedJSONValue(reflect.ValueOf(value))
 	}
+}
+
+func normalizeReflectedJSONValue(value reflect.Value) (any, error) {
+	if !value.IsValid() {
+		return nil, nil
+	}
+
+	switch value.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if value.IsNil() {
+			return nil, nil
+		}
+		return normalizeForJSONSchema(value.Elem().Interface())
+	case reflect.Map:
+		if value.IsNil() {
+			return nil, nil
+		}
+		if value.Type().Key().Kind() != reflect.String {
+			return nil, fmt.Errorf("unsupported map key type %s", value.Type().Key())
+		}
+		out := make(map[string]any, value.Len())
+		for _, key := range value.MapKeys() {
+			normalized, err := normalizeForJSONSchema(value.MapIndex(key).Interface())
+			if err != nil {
+				return nil, err
+			}
+			out[key.String()] = normalized
+		}
+		return out, nil
+	case reflect.Slice, reflect.Array:
+		if value.Kind() == reflect.Slice && value.IsNil() {
+			return nil, nil
+		}
+		out := make([]any, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			normalized, err := normalizeForJSONSchema(value.Index(i).Interface())
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	case reflect.Struct:
+		return normalizeJSONMarshaler(value.Interface())
+	default:
+		return value.Interface(), nil
+	}
+}
+
+func normalizeJSONMarshaler(value any) (any, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	return normalizeForJSONSchema(decoded)
 }
 
 func decodeRawJSON(raw json.RawMessage) (any, error) {

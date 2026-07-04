@@ -1,6 +1,8 @@
 package artifacts
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -34,6 +36,60 @@ func TestValidateEntityComponentSchemaKeys(t *testing.T) {
 	delete(missingProperties, entityComponentSchemaKeys[len(entityComponentSchemaKeys)-1])
 	if err := validateEntityComponentSchemaKeys(missing); err == nil {
 		t.Fatal("validateEntityComponentSchemaKeys accepted stale descriptor set")
+	}
+}
+
+func TestValidateExampleSetRunsSemanticValidators(t *testing.T) {
+	root := t.TempDir()
+	writeTestSchemaBundle(t, root)
+	exampleDir := filepath.Join(root, "examples", "entities")
+	if err := os.MkdirAll(exampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	invalidPolygon := []byte(`{
+  "components": {
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [[0, 0], [1, 0], [1, 1], [0, 1]]
+      ]
+    }
+  }
+}`)
+	if err := os.WriteFile(filepath.Join(exampleDir, "bad-polygon.json"), invalidPolygon, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := LoadSchemaBundle(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := schemaCompiler(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = validateExampleSet(root, compiler, "entities", "EntityBlob")
+	if err == nil {
+		t.Fatal("validateExampleSet accepted semantically invalid polygon example")
+	}
+	if !strings.Contains(err.Error(), "polygon ring must be closed") {
+		t.Fatalf("validateExampleSet error = %q, want polygon closure error", err)
+	}
+}
+
+func writeTestSchemaBundle(t *testing.T, root string) {
+	t.Helper()
+	source := filepath.Clean(filepath.Join("..", "..", "..", schemaBundlePath))
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, filepath.FromSlash(schemaBundlePath))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

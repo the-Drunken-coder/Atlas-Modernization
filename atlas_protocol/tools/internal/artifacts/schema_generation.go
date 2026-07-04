@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
 
 const (
@@ -29,6 +31,16 @@ var exampleSets = []struct {
 	{dir: "feed/events", definition: "FeedEvent"},
 	{dir: "feed/messages", definition: "FeedClientMessage"},
 	{dir: "feed/server", definition: "FeedHandshakeMessage"},
+}
+
+var exampleValidators = map[string]func(any) []string{
+	"EntityBlob":           protocolvalidator.ValidateEntityBlob,
+	"TaskBlob":             protocolvalidator.ValidateTaskBlob,
+	"ObjectBlob":           protocolvalidator.ValidateObjectBlob,
+	"ErrorResponse":        protocolvalidator.ValidateErrorResponse,
+	"FeedEvent":            protocolvalidator.ValidateFeedEvent,
+	"FeedClientMessage":    protocolvalidator.ValidateFeedClientMessage,
+	"FeedHandshakeMessage": protocolvalidator.ValidateFeedHandshakeMessage,
 }
 
 func ValidateExamples(root string) error {
@@ -74,6 +86,11 @@ func validateExampleSet(root string, compiler *jsonschema.Compiler, dir, definit
 		}
 		if err := schema.Validate(value); err != nil {
 			return fmt.Errorf("%s: validate %s: %w", displayPath(root, example), definition, err)
+		}
+		if validate, ok := exampleValidators[definition]; ok {
+			if errors := validate(value); len(errors) > 0 {
+				return fmt.Errorf("%s: validate %s semantics: %s", displayPath(root, example), definition, strings.Join(errors, "; "))
+			}
 		}
 	}
 	return nil

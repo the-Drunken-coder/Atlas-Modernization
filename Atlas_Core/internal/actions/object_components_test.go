@@ -126,3 +126,19 @@ func TestUploadObjectJSONPreservesExistingBlobFields(t *testing.T) {
 		t.Fatalf("size_bytes = %v, want 1024", got["size_bytes"])
 	}
 }
+
+func TestUploadObjectJSONAcceptsTypedUsageHints(t *testing.T) {
+	data, err := uploadObjectJSON(map[string]interface{}{}, "atlas-media", 1024, []string{"command_catalog"})
+	if err != nil {
+		t.Fatalf("uploadObjectJSON() unexpected error: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	hints, ok := got["usage_hints"].([]interface{})
+	if !ok || len(hints) != 1 || hints[0] != "command_catalog" {
+		t.Fatalf("usage_hints = %#v, want [command_catalog]", got["usage_hints"])
+	}
+}

@@ -117,6 +117,15 @@ func TestNonFinitePaths(t *testing.T) {
 			value:    map[string]any{"latitude": float32(math.NaN())},
 			want:     "latitude: must be finite",
 		},
+		{
+			name:     "typed float slice",
+			validate: ValidateGeometryComponent,
+			value: map[string]any{
+				"type":        "Point",
+				"coordinates": []float64{math.Inf(1), 40.0},
+			},
+			want: "coordinates[0]: must be finite",
+		},
 	}
 
 	for _, tt := range tests {
@@ -181,6 +190,17 @@ func TestMultipleViolationsAreSorted(t *testing.T) {
 	}
 	assertAnyContains(t, errors, "latitude")
 	assertAnyContains(t, errors, "longitude")
+}
+
+func TestObjectBlobAcceptsTypedUsageHints(t *testing.T) {
+	blob := map[string]any{
+		"bucket":      "atlas-media",
+		"size_bytes":  int64(7966),
+		"usage_hints": []string{"command_catalog"},
+	}
+	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
+		t.Fatalf("ValidateObjectBlob(typed usage_hints) errors = %v", errors)
+	}
 }
 
 func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
