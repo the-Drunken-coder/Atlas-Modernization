@@ -24,7 +24,7 @@ Run protocol tests:
 go test ./...
 ```
 
-The wrappers use the pinned CUE toolchain `cuelang.org/go/cmd/cue@v0.16.1`; they do not require a global `cue` binary.
+The wrappers use the pinned CUE toolchain `cuelang.org/go/cmd/cue@v0.17.0`; they do not require a global `cue` binary.
 
 ## Boundary
 

@@ -797,11 +797,11 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 
 	geometrySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "components", "geometry.schema.json"))
 	geometryDefs := schemaObject(t, geometrySchema["$defs"])
-	geoJSONPosition := schemaObject(t, geometryDefs["#GeoJSONPosition"])
+	geoJSONPosition := schemaObject(t, geometryDefs["GeoJSONPosition"])
 	assertSchemaNumber(t, geoJSONPosition, "minItems", 2)
 	assertSchemaMissing(t, geoJSONPosition, "minLength")
 
-	circleProperties := schemaObject(t, geometryDefs["#CircleProperties"])
+	circleProperties := schemaObject(t, geometryDefs["CircleProperties"])
 	if got, want := circleProperties["additionalProperties"], false; got != want {
 		t.Fatalf("CircleProperties additionalProperties = %v, want %v", got, want)
 	}
@@ -813,10 +813,10 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 	radius := schemaObject(t, circlePropertyFields["radius_m"])
 	assertSchemaNumber(t, radius, "exclusiveMinimum", 0)
 
-	circleFeature := schemaObject(t, geometryDefs["#GeoJSONCircleFeature"])
+	circleFeature := schemaObject(t, geometryDefs["GeoJSONCircleFeature"])
 	circleFeatureProps := schemaObject(t, circleFeature["properties"])
 	circleFeatureGeometry := schemaObject(t, circleFeatureProps["geometry"])
-	if got, want := circleFeatureGeometry["$ref"], "#/$defs/%23GeoJSONPoint"; got != want {
+	if got, want := circleFeatureGeometry["$ref"], "#/$defs/GeoJSONPoint"; got != want {
 		t.Fatalf("GeoJSONCircleFeature.geometry ref = %v, want %q", got, want)
 	}
 
@@ -825,7 +825,7 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 
 	objectSchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "object.schema.json"))
 	objectDefs := schemaObject(t, objectSchema["$defs"])
-	objectReferenceDef := schemaObject(t, objectDefs["#ObjectReference"])
+	objectReferenceDef := schemaObject(t, objectDefs["ObjectReference"])
 	assertSchemaNumber(t, objectReferenceDef, "minProperties", 1)
 	objectProps := schemaObject(t, objectSchema["properties"])
 	sizeBytes := schemaObject(t, objectProps["size_bytes"])
@@ -835,14 +835,14 @@ func TestGeneratedJSONSchemaConstraints(t *testing.T) {
 
 	entitySchema := readSchema(t, filepath.Join(root, "generated", "jsonschema", "entity.schema.json"))
 	entityDefs := schemaObject(t, entitySchema["$defs"])
-	telemetryDef := schemaObject(t, entityDefs["#TelemetryComponent"])
+	telemetryDef := schemaObject(t, entityDefs["TelemetryComponent"])
 	assertSchemaMissing(t, telemetryDef, "$ref")
 	telemetryProps := schemaObject(t, telemetryDef["properties"])
 	latitude := schemaObject(t, telemetryProps["latitude"])
-	if got, want := latitude["$ref"], "#/$defs/%23Latitude"; got != want {
+	if got, want := latitude["$ref"], "#/$defs/Latitude"; got != want {
 		t.Fatalf("telemetry latitude ref = %v, want %s", got, want)
 	}
-	healthDef := schemaObject(t, entityDefs["#HealthComponent"])
+	healthDef := schemaObject(t, entityDefs["HealthComponent"])
 	assertSchemaMissing(t, healthDef, "$ref")
 	healthProps := schemaObject(t, healthDef["properties"])
 	batteryPercent := schemaObject(t, healthProps["battery_percent"])

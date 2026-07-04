@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const cueVersion = "v0.16.1"
+const cueVersion = "v0.17.0"
 const cueCommandTimeout = 2 * time.Minute
 
 func ValidateExamples(root string) error {

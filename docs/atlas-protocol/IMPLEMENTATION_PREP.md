@@ -52,10 +52,10 @@ Atlas Core is a consumer of generated protocol artifacts. Generated Go code shou
 
 CUE is the source language. This machine did not have a global `cue` binary on PATH during this prep pass, so the build should use a pinned Go-run toolchain path or a checked-in tool wrapper instead of relying on a developer-global install.
 
-Use CUE `v0.16.1` for the first build slice. This command was verified in this checkout:
+Use CUE `v0.17.0` for the current build slice. This command was verified in this checkout:
 
 ```sh
-go run cuelang.org/go/cmd/cue@v0.16.1 version
+go run cuelang.org/go/cmd/cue@v0.17.0 version
 ```
 
 The public commands for contributors should be wrappers inside `atlas_protocol/tools/`:
