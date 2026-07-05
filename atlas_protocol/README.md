@@ -4,7 +4,7 @@ This is the buildable Atlas Protocol module. It owns reusable data-shape contrac
 
 The canonical schema source is `schema/jsonschema/atlas.schema.json`.
 
-The implemented protocol slice covers entity, task, and object JSON blobs; entity and task component keys; generated validators for documented entity components; task components; object references; `telemetry`; and `geometry`.
+The implemented protocol slice covers entity, task, and object resources; request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client messages; feed handshake messages; generated Go validators; generated TypeScript types and targeted request validators; and revision metadata.
 
 ## Workflow
 

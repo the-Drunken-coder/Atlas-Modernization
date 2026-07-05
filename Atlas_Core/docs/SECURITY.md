@@ -17,11 +17,13 @@ If no override is provided, the service allows:
 - `http://localhost:8080`
 - `http://localhost:5173`
 - `http://localhost:5175`
+- `http://localhost:8787`
 - `http://localhost:4173`
 - `http://127.0.0.1:3000`
 - `http://127.0.0.1:8080`
 - `http://127.0.0.1:5173`
 - `http://127.0.0.1:5175`
+- `http://127.0.0.1:8787`
 - `http://127.0.0.1:4173`
 
 Production origins are not compiled into defaults. Configure each hosted origin explicitly through env/settings.
@@ -91,29 +93,30 @@ API-key-authenticated requests cannot manage API keys. `admin_records` stores ad
 
 The production Docker target does not copy `atlas_core.settings.json.example`
 into the image. Its entrypoint refuses to start unless `ENABLE_API_AUTH=true`
-and `API_AUTH_KEY` is set to a non-empty value other than
-`REPLACE_WITH_SECURE_KEY`. This bootstrap key remains required even when managed
-API keys exist. The auth-disabled example settings file is kept only for the
-development image / loopback-only Compose workflow.
+and `API_AUTH_KEY` is set to a strong value that is non-empty, non-placeholder,
+not common, not too short, not low-entropy, and not sequential. This bootstrap
+key remains required even when managed API keys exist. The auth-disabled example
+settings file is kept only for the development image / loopback-only Compose
+workflow.
 
 ### Startup fail-fast
 
 The process refuses to start when:
 
 - `ENABLE_API_AUTH` / `enable_api_auth` is true and the key is empty
-- The key is still the example placeholder `REPLACE_WITH_SECURE_KEY`
+- The key is still a placeholder or fails the weak-key guard
 - `ENABLE_API_AUTH` / `enable_api_auth` is true and neither `ATLAS_ADMIN_PASSWORD` nor `ATLAS_ADMIN_PASSWORD_FILE` replaces the default development admin password
 
 ### Public unauthenticated paths
 
-`/health`, `/readiness`, `/resources`, and `OPTIONS` skip protected-route auth. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
+`/health`, `/readiness`, `/resources`, and `OPTIONS` skip protected-route auth. `/feed` also bypasses the shared protected-route middleware because websocket clients may need first-message API-key auth, but the feed handler still requires either a preauthenticated API key, a trusted browser session, or a first auth frame when API-key auth is enabled. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
 
 ## Configuration Checklist
 
 - [ ] Rotate database and MinIO credentials per environment, even though Atlas Core treats that storage as disposable runtime state.
 - [ ] Restrict network ingress to trusted operators.
 - [ ] Set explicit `CORS_ORIGINS` for production and constrained `CORS_ORIGIN_PATTERNS` only for trusted preview deployment hostnames.
-- [ ] Set `ENABLE_API_AUTH=true` and a real `API_AUTH_KEY` for production.
+- [ ] Set `ENABLE_API_AUTH=true` and a strong `API_AUTH_KEY` for production.
 - [ ] Override the development `admin` / `password` seed with `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE`.
 - [ ] Keep `ATLAS_ADMIN_COOKIE_SAMESITE=none` for cross-site UI/Core deployments, or set `lax` only for same-site deployments.
 - [ ] Audit environment variables and settings file before release.

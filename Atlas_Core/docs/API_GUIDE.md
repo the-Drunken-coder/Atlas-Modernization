@@ -23,7 +23,7 @@ X-API-Key: <api-key>
 Authorization: Bearer <api-key>
 ```
 
-The `/feed` websocket accepts the browser session cookie during upgrade. Machine clients authenticate with a first JSON message when API-key auth is enabled:
+The `/feed` websocket accepts either an API key on the upgrade request or the browser session cookie from a trusted origin. Machine clients that cannot set websocket headers can authenticate with a first JSON message when API-key auth is enabled:
 
 ```json
 { "action": "auth", "api_key": "example-api-key" }
@@ -405,7 +405,7 @@ Status transition body:
 | `PATCH` | `/objects/{object_id}` | `200` | Update object metadata. |
 | `DELETE` | `/objects/{object_id}` | `204` | Delete object metadata and queue/delete stored content. |
 | `GET` | `/objects/{object_id}/download` | `200` | Stream stored content as an attachment. |
-| `GET` | `/objects/{object_id}/view` | `200` | Stream safe text-like content inline. |
+| `GET` | `/objects/{object_id}/view` | `200`/`415` | Stream safe text-like content inline, force unsafe inline text types to attachment download, or reject unsupported content. |
 
 Metadata create body:
 
@@ -461,7 +461,7 @@ Upload accepts these multipart fields:
 
 Upload does not accept `referenced_by`; create or update object references through `POST /objects` or `PATCH /objects/{object_id}`.
 
-`GET /objects/{object_id}/view` is limited to safe text-based formats and the configured `MAX_VIEW_SIZE_MB`.
+`GET /objects/{object_id}/view` is limited to safe text-based formats and the configured `MAX_VIEW_SIZE_MB`. `text/html` and JavaScript content types are not rendered inline; they are streamed as `application/octet-stream` attachments. Other non-viewable content types return `415 CONTENT_TYPE_NOT_VIEWABLE`. Uploads over `MAX_UPLOAD_SIZE_MB` return `413`; downloads stream as attachments without a separate download size cap.
 
 ## Queries
 
@@ -589,6 +589,11 @@ curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -d '{"username":"admin","password":"password"}'
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
+
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
+  -H 'Origin: http://localhost:5173' \
+  -H 'Content-Type: application/json' \
+  -d '{"entity_id":"asset-1","entity_type":"asset","components":{"task_catalog":{"supported_tasks":["move_to_location"]}}}'
 
 curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks" \
   -H 'Origin: http://localhost:5173' \

@@ -14,8 +14,8 @@ HTTP handlers enforce body limits with `http.MaxBytesReader`:
 - 1 MB: entity create/update and object metadata create/update
 - 256 KB: telemetry updates and check-ins
 - 512 KB: task create/update/status/complete/fail
-- Upload body: bounded by configurable `MAX_UPLOAD_SIZE_MB` (default 100 MB, capped at 10 GB)
-- Inline view: bounded by configurable `MAX_VIEW_SIZE_MB` (default 10 MB, capped at 100 MB)
+- Upload body: bounded by configurable `MAX_UPLOAD_SIZE_MB` (default 100 MB, must be 1..10240 MB; invalid config fails startup)
+- Inline view: bounded by configurable `MAX_VIEW_SIZE_MB` (default 10 MB, must be 1..100 MB; invalid config fails startup)
 
 Implementation:
 
@@ -88,8 +88,8 @@ Implementation:
 | `DATABASE_POOL_RECYCLE` | `3600` | Max connection lifetime (seconds) |
 | `DATABASE_POOL_IDLE_TIMEOUT` | `600` | Max idle connection time (seconds) |
 | `DATABASE_POOL_PRE_PING` | `true` | Enable periodic pool health checks |
-| `MAX_UPLOAD_SIZE_MB` | `100` | Upload request size limit |
-| `MAX_VIEW_SIZE_MB` | `10` | Inline object view size limit |
+| `MAX_UPLOAD_SIZE_MB` | `100` | Upload request size limit; must be `1..10240` |
+| `MAX_VIEW_SIZE_MB` | `10` | Inline object view size limit; must be `1..100` |
 
 ## Verification Checklist
 

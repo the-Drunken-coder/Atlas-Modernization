@@ -17,9 +17,16 @@ type SettingsFile struct {
 	EnableAPIAuth       bool     `json:"enable_api_auth"`
 	APIAuthKey          string   `json:"api_auth_key"`
 	AdminCookieSameSite string   `json:"admin_cookie_samesite"`
-	MaxUploadSizeMB     int64    `json:"max_upload_size_mb"`
-	MaxViewSizeMB       int64    `json:"max_view_size_mb"`
+	MaxUploadSizeMB     *int64   `json:"max_upload_size_mb"`
+	MaxViewSizeMB       *int64   `json:"max_view_size_mb"`
 }
+
+const (
+	maxUploadSizeMinMB int64 = 1
+	maxUploadSizeMaxMB int64 = 10240
+	maxViewSizeMinMB   int64 = 1
+	maxViewSizeMaxMB   int64 = 100
+)
 
 func (c *Config) loadSettingsFile() error {
 	paths := []string{
@@ -82,12 +89,22 @@ func (c *Config) loadSettingsFile() error {
 	if _, ok := os.LookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && settings.AdminCookieSameSite != "" {
 		c.AdminCookieSameSite = settings.AdminCookieSameSite
 	}
-	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && settings.MaxUploadSizeMB > 0 {
-		c.MaxUploadSizeMB = settings.MaxUploadSizeMB
+	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && settings.MaxUploadSizeMB != nil {
+		c.MaxUploadSizeMB = *settings.MaxUploadSizeMB
 	}
-	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && settings.MaxViewSizeMB > 0 {
-		c.MaxViewSizeMB = settings.MaxViewSizeMB
+	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && settings.MaxViewSizeMB != nil {
+		c.MaxViewSizeMB = *settings.MaxViewSizeMB
 	}
 
+	return nil
+}
+
+func (c *Config) validateSizeLimits() error {
+	if c.MaxUploadSizeMB < maxUploadSizeMinMB || c.MaxUploadSizeMB > maxUploadSizeMaxMB {
+		return fmt.Errorf("MAX_UPLOAD_SIZE_MB/max_upload_size_mb must be between %d and %d MB (got %d)", maxUploadSizeMinMB, maxUploadSizeMaxMB, c.MaxUploadSizeMB)
+	}
+	if c.MaxViewSizeMB < maxViewSizeMinMB || c.MaxViewSizeMB > maxViewSizeMaxMB {
+		return fmt.Errorf("MAX_VIEW_SIZE_MB/max_view_size_mb must be between %d and %d MB (got %d)", maxViewSizeMinMB, maxViewSizeMaxMB, c.MaxViewSizeMB)
+	}
 	return nil
 }

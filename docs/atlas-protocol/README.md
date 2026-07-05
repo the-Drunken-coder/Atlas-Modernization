@@ -6,11 +6,11 @@ Atlas Protocol is the reusable contract layer for Atlas data. The buildable modu
 
 - JSON Schema in `atlas_protocol/schema/jsonschema/atlas.schema.json` is the source of truth.
 - Checked-in examples validate against the JSON Schema source.
-- Generated Go types/validators, TypeScript types, and a protocol revision stamp live under `atlas_protocol/generated/`.
+- Generated Go types/validators, TypeScript types, targeted TypeScript request validators, and a protocol revision stamp live under `atlas_protocol/generated/`.
 - Atlas Core consumes generated protocol artifacts; it does not own or duplicate the protocol source.
 - The Atlas SDK imports generated TypeScript directly so SDK, Core, and protocol artifacts move in lockstep.
 
-The implemented contract covers entity, task, and object resources; request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client messages; feed handshake messages; generated validators; and revision metadata.
+The implemented contract covers entity, task, and object resources; request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client messages; feed handshake messages; generated Go validators; generated TypeScript types and targeted request validators; and revision metadata.
 
 ## Boundary
 

@@ -82,7 +82,7 @@ currently enforce heatmap-specific metadata validation.
 ## Size Limits and Pagination
 
 - Object metadata create/update body: `1 MB`
-- Upload size: configurable via `MAX_UPLOAD_SIZE_MB` (default `100`, bounded `1..10240` MB)
-- View size: configurable via `MAX_VIEW_SIZE_MB` (default `10`, bounded `1..100` MB)
+- Upload size: configurable via `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240` MB; invalid config fails startup)
+- View size: configurable via `MAX_VIEW_SIZE_MB` (default `10`, must be `1..100` MB; invalid config fails startup)
 - Multipart in-memory parsing threshold: `32 MB` (overflow spills to disk)
 - Pagination defaults: `limit=100`; `cursor` continues keyset pages; limit clamped to max `500`

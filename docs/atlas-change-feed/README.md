@@ -14,7 +14,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 - Websocket endpoint: `/feed`.
 - Served in-process by Atlas Core.
-- First-message auth when API auth is enabled, so browsers, Node, and CLI clients use the same flow.
+- Auth can happen during the websocket upgrade with an API key or a trusted browser session. Clients that cannot set websocket headers can still use first-message API-key auth when API auth is enabled.
 - Server `hello` frame carries `protocol_revision`, matching `GET /protocol/revision`.
 - Each connection has a bounded send buffer; slow consumers are disconnected and recover through `changed-since`.
 - Keepalive uses websocket ping/pong.

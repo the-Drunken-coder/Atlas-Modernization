@@ -2,15 +2,17 @@
 
 Go-based control-plane service for Atlas entities, tasks, objects, and query snapshots.
 
-PostgreSQL and MinIO are **disposable runtime storage** for Atlas Core. They are
-not systems of record, and operators should not expect rows or blobs to survive
-service restarts. The default startup path recreates the database schema and
-clears the configured object bucket so local runtime state always matches the
-current code.
+Resource tables and the configured MinIO bucket are **disposable runtime
+storage** for Atlas Core. They are not systems of record, and operators should
+not expect resource rows or blobs to survive recreate-mode restarts. The default
+startup path recreates resource tables and clears the configured object bucket
+so local runtime state always matches the current code. `admin_records` is
+preserved for operator credentials, sessions, login throttles, and managed API
+key metadata.
 
 ## Stack
 
-- Go 1.26.1+
+- Go 1.26 with the pinned `go1.26.4` toolchain
 - Chi router
 - PostgreSQL 15+ (the Docker dev stack uses plain Postgres; the app schema is plain tables)
 - MinIO (S3-compatible) for object storage
@@ -58,14 +60,17 @@ docker compose up -d
 The Compose stack builds the development image and bind-mounts
 `atlas_core.settings.json.example`, which intentionally keeps API auth disabled
 for loopback-only local development. The production Docker target does not ship
-that settings file and refuses to start unless `ENABLE_API_AUTH=true` and
-`API_AUTH_KEY` is set to a real, non-placeholder bootstrap secret. Browser
-admins can create additional managed machine keys after sign-in.
+that settings file and refuses to start unless `ENABLE_API_AUTH=true`,
+`API_AUTH_KEY` is set to a strong, non-placeholder bootstrap secret, and
+`ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` replaces the development
+admin password. Browser admins can create additional managed machine keys after
+sign-in.
 
 For the production-image single-host stack:
 
 ```bash
 export API_AUTH_KEY='your-secure-api-key'
+export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
 python3 Atlas_Core/scripts/atlas.py --production
 ```
 
@@ -132,9 +137,9 @@ Key environment variables:
 - `CORS_ORIGINS` (empty string denies all origins; production UI default is `https://atlasinterface.com`)
 - `CORS_ORIGIN_PATTERNS` (constrained preview origins such as Cloudflare Pages branch/PR deployments, for example `https://*.atlas-je0.pages.dev`)
 - `ENABLE_API_AUTH` (default `false` for local/dev runs; required as `true` in the production Docker image)
-- `API_AUTH_KEY` (required bootstrap key when auth enabled; required and non-placeholder in the production Docker image)
-- `MAX_UPLOAD_SIZE_MB` (default `100`)
-- `MAX_VIEW_SIZE_MB` (default `10`)
+- `API_AUTH_KEY` (required bootstrap key when auth enabled; required, strong, and non-placeholder in the production Docker image)
+- `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240`)
+- `MAX_VIEW_SIZE_MB` (default `10`, must be `1..100`)
 
 ## API Surface
 

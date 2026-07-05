@@ -102,11 +102,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	configMB := h.config.MaxViewSizeMB
-	effectiveMaxViewSizeMB := configMB
-	if configMB <= 0 || configMB > 100 {
-		effectiveMaxViewSizeMB = 10
-	}
+	effectiveMaxViewSizeMB := h.config.MaxViewSizeMB
 	maxViewSize := int64(effectiveMaxViewSizeMB) * 1024 * 1024
 	if size > maxViewSize {
 		h.writeError(w, r, http.StatusBadRequest, fmt.Sprintf("File is too large to view (maximum %dMB)", effectiveMaxViewSizeMB), protocol.ErrorCodeFileTooLarge)
@@ -152,11 +148,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	configMB := h.config.MaxUploadSizeMB
-	effectiveMaxUploadSizeMB := configMB
-	if configMB <= 0 || configMB > 10240 {
-		effectiveMaxUploadSizeMB = 100
-	}
+	effectiveMaxUploadSizeMB := h.config.MaxUploadSizeMB
 	maxUploadSize := int64(effectiveMaxUploadSizeMB) * 1024 * 1024
 	const maxMultipartOverhead = 1 * 1024 * 1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+maxMultipartOverhead)

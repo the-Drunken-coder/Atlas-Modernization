@@ -9,4 +9,4 @@ Atlas Core owns authentication, sessions, throttling, and admin storage under `/
 - `GET /admin/auth/me`
 - `/admin/api-keys` key-management routes
 
-Do not reintroduce Worker sessions, `/auth/*`, `/admin/api-keys/*`, `/me/settings`, or `/atlas/*` proxy behavior here. Admin APIs are intentionally separate from the Atlas resource SDK surface so entities, objects, tasks, queries, sync, and feed stay operational-resource-only.
+Do not reintroduce Worker sessions, `/auth/*`, `/me/settings`, or `/atlas/*` proxy behavior here, and do not implement or proxy `/admin/api-keys/*` inside the command interface. Calling Core's `/admin/api-keys` routes directly through `AtlasAdminClient` is expected. Admin APIs are intentionally separate from the Atlas resource SDK surface so entities, objects, tasks, queries, sync, and feed stay operational-resource-only.

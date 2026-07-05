@@ -28,12 +28,9 @@ proxies public HTTPS traffic to the local ATLAS Core API.
    python3 Atlas_Core/scripts/atlas.py --production --tunnel
    ```
 
-   or via Docker Compose directly from `Atlas_Core/docker`:
-
-   ```bash
-   cd Atlas_Core/docker
-   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
-   ```
+   Use `atlas.py` for development tunnel starts. The direct development Compose
+   overlay only injects the tunnel token and bootstrap API key; it does not pass
+   the admin password override that Core requires when API auth is enabled.
 
 The `cloudflared` service runs:
 
@@ -46,15 +43,17 @@ Compose runs do not require or expand `CLOUDFLARE_TUNNEL_TOKEN`.
 Production mode uses the tunnel profile in `docker-compose.production.yml` for
 the same reason.
 
-Tunnel mode also forces `ENABLE_API_AUTH=true` for the API service and requires
-`API_AUTH_KEY` plus `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` to be
-set to real values. The committed example settings file keeps auth disabled for
-local development, but public tunnel traffic must not use that development
-default.
+Managed tunnel starts force `ENABLE_API_AUTH=true` for the API service and
+require `API_AUTH_KEY` plus `ATLAS_ADMIN_PASSWORD` or
+`ATLAS_ADMIN_PASSWORD_FILE` to be set to real values. The committed example
+settings file keeps auth disabled for local development, but public tunnel
+traffic must not use that development default.
 
-Note: Atlas Core's PostgreSQL database and configured MinIO bucket are
-disposable runtime scratch storage. Default startup drops and recreates them
-intentionally; they are not durable systems of record for operators.
+Note: Atlas Core's resource tables and configured MinIO bucket are disposable
+runtime scratch storage. Default startup drops and recreates resource tables and
+clears the configured bucket intentionally; they are not durable systems of
+record for operators. `admin_records` is preserved for operator credentials,
+sessions, login throttles, and managed API key metadata.
 
 It joins the same `atlas_core_network` bridge as the API service and forwards traffic to
 `http://api:8000` inside Compose. Hostname routing is configured in the Cloudflare

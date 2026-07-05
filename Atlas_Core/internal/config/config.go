@@ -107,12 +107,6 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if maxUploadMB < 0 {
-		return nil, fmt.Errorf("invalid MAX_UPLOAD_SIZE_MB: %d", maxUploadMB)
-	}
-	if maxViewMB < 0 {
-		return nil, fmt.Errorf("invalid MAX_VIEW_SIZE_MB: %d", maxViewMB)
-	}
 	cfg := &Config{
 		ServerPort:                getEnv("SERVER_PORT", "8000"),
 		Debug:                     debug,
@@ -148,6 +142,9 @@ func Load() (*Config, error) {
 		if !os.IsNotExist(err) && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
+	}
+	if err := cfg.validateSizeLimits(); err != nil {
+		return nil, err
 	}
 
 	// CORS origins and origin patterns form one allowlist. If either env var is
