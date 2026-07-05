@@ -76,6 +76,42 @@ const (
 	jsonBlobDecodeUseNumber
 )
 
+type jsonBlobPatch struct {
+	rawMessage      json.RawMessage
+	decodeMode      jsonBlobDecodeMode
+	decodeError     string
+	components      map[string]interface{}
+	mergeComponents func(map[string]interface{}, map[string]interface{}) error
+	extra           map[string]interface{}
+	removeExtraKeys []string
+	promotedFields  jsonBlobFieldSet
+	apply           func(map[string]interface{}) error
+	validate        func(map[string]interface{}) error
+}
+
+func patchValidatedJSONBlob(patch jsonBlobPatch) ([]byte, error) {
+	blob, err := decodeJSONBlobForPatch(patch.rawMessage, patch.decodeMode)
+	if err != nil {
+		if patch.decodeError != "" {
+			return nil, fmt.Errorf("%s: %w", patch.decodeError, err)
+		}
+		return nil, err
+	}
+	if patch.mergeComponents != nil {
+		if err := patch.mergeComponents(blob, patch.components); err != nil {
+			return nil, err
+		}
+	}
+	removeBlobExtraKeys(blob, patch.promotedFields, patch.removeExtraKeys...)
+	mergeBlobExtraFields(blob, patch.extra, patch.promotedFields)
+	if patch.apply != nil {
+		if err := patch.apply(blob); err != nil {
+			return nil, err
+		}
+	}
+	return marshalValidatedJSONBlob(blob, patch.validate)
+}
+
 func decodeJSONBlobForPatch(raw json.RawMessage, mode jsonBlobDecodeMode) (map[string]interface{}, error) {
 	if raw == nil {
 		return make(map[string]interface{}), nil

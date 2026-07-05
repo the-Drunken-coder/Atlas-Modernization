@@ -114,7 +114,7 @@ go build -o atlas_core ./cmd/atlas_core
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-**Note**: `EnsureTables()` drops resource tables with `DROP TABLE IF EXISTS ... CASCADE` then recreates them with fresh `CREATE TABLE` statements. Existing resource rows and configured-bucket objects are discarded on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. This is intentional — add any resource seed data you need to `docker/postgres/init.sql` or another bootstrap path.
+**Note**: `EnsureTables()` drops resource tables with `DROP TABLE IF EXISTS ... CASCADE` then recreates them with fresh `CREATE TABLE` statements. Existing resource rows and configured-bucket objects are discarded on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. This is intentional. Atlas Core does not currently have a generic resource seed-data system; `docker/postgres/init.sql` is bootstrap-only for PostgreSQL extensions, grants, and timezone.
 
 ### 2. What Happens on Startup
 
@@ -133,7 +133,7 @@ Bucket clearing failures are startup-fatal in recreate mode; serving with a fres
 
 The `internal/database/db.go` file contains `EnsureTables()` which:
 
-1. Drops tables in reverse-dependency order (tasks first, then entities, objects, deletions)
+1. Drops resource tables and the change version sequence in reverse-dependency order (`storage_deletion_outbox`, tasks, entities, objects, deletions, then `atlas_change_version_seq`)
 2. Recreates tables and indexes with fresh `CREATE TABLE` / `CREATE INDEX` statements
 3. Runs inside the application process via the pgx connection pool
 
@@ -141,7 +141,7 @@ This means:
 
 - **No migration files needed** — DDL in `db.go` is the single source of truth
 - **Every startup gets clean resource tables and bucket** — no schema/blob drift possible under recreate mode
-- **Runtime resource data is disposable** — add seed data to `docker/postgres/init.sql` if needed, and keep durable history outside Atlas Core
+- **Runtime resource data is disposable** — there is no generic resource seed-data path today, and durable history belongs outside Atlas Core
 
 ### 3. Example: Adding a New Column
 
@@ -204,7 +204,7 @@ Then add the corresponding Go struct in `internal/models/models.go` and rebuild.
 
 ### Important Notes
 
-- **Resource data is disposable**: Resource rows and MinIO blobs are lost on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. Seed data goes in `docker/postgres/init.sql`; durable history belongs outside Atlas Core.
+- **Resource data is disposable**: Resource rows and MinIO blobs are lost on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. `docker/postgres/init.sql` is database bootstrap only, not a resource seed system; durable history belongs outside Atlas Core.
 - **Schema changes on restart**: Changes to DDL require an application restart to take effect
 - **Scratch-store workflow**: Not suitable for shared databases or environments where data persistence matters
 

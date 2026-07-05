@@ -77,10 +77,10 @@ The command catalog JSON is validated when seeding via `scripts/seed_command_cat
 
 ## Usage
 
-The command catalog is used by the Atlas system to:
+The checked-in command catalog is embedded into the Atlas Core binary and is used by the Atlas system to:
 
 1. **Validate incoming commands** - Ensure only defined commands can be executed
-2. **Provide command discovery** - Allow clients to discover available commands
+2. **Provide command discovery source data** - Allow startup publishing to expose the same catalog through the object API for browser/reference use
 3. **Parameter validation** - Validate command parameters against the schema
 4. **Documentation** - Serve as a reference for available commands and their usage
 
@@ -90,7 +90,7 @@ To add a new command to the catalog:
 
 1. Add the command definition to the `commands` array in [`command_catalog.json`](command_catalog.json)
 2. Ensure the command follows the structure defined above
-3. From **`Atlas_Core/`**, run `go test ./...` and optionally re-seed: `python scripts/seed_command_catalog.py`
+3. From **`Atlas_Core/`**, run `go test ./...`, rebuild/restart Core so the embedded catalog changes take effect, and optionally publish the catalog object again: `python scripts/seed_command_catalog.py`
 4. Update the seed script if needed: [`scripts/seed_command_catalog.py`](../scripts/seed_command_catalog.py)
 
 ## Best Practices
@@ -103,13 +103,13 @@ To add a new command to the catalog:
 
 ## Seeding the Catalog
 
-The catalog can be seeded to the Atlas system using the seed script (from **`Atlas_Core/`**, same as `go test ./...`):
+The catalog can be published to the Atlas object API using the seed script (from **`Atlas_Core/`**, same as `go test ./...`):
 
 ```bash
 cd Atlas_Core
 python scripts/seed_command_catalog.py --api-url http://localhost:8000
 ```
 
-This uploads the catalog to the Atlas Core API and makes it available for command validation and discovery.
+This uploads the catalog file as the `command_catalog` object and patches the same data into object metadata for browser/reference/discovery use. Runtime command validation does not read that uploaded object; it reads the catalog embedded into the running Core binary. Updating validation therefore requires changing `command_catalog.json`, rebuilding, and restarting Core.
 
-Go `*_test.go` tests cover the Go module; catalog JSON checks are performed by the seed script unless a dedicated catalog test is added later.
+Go `*_test.go` tests cover the Go module, and `command_catalog_test.go` guards catalog JSON structure and protocol-sensitive command details. The seed script performs the same practical validation before publishing through the API.

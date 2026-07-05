@@ -13,9 +13,9 @@ import (
 // Keys read by config.Load() and loadSettingsFile — cleared so tests are not affected by stray process env.
 var loadTestEnvKeys = []string{
 	"MINIO_SECRET_KEY", "MINIO_SECRET_KEY_FILE",
-	"DEBUG", "DATABASE_RECREATE_ON_STARTUP", "DATABASE_ECHO", "DATABASE_POOL_SIZE", "DATABASE_MAX_OVERFLOW",
+	"DEBUG", "DATABASE_RECREATE_ON_STARTUP", "DATABASE_POOL_SIZE", "DATABASE_MAX_OVERFLOW",
 	"DATABASE_POOL_RECYCLE", "DATABASE_POOL_TIMEOUT", "DATABASE_POOL_IDLE_TIMEOUT", "DATABASE_POOL_PRE_PING",
-	"MINIO_SECURE", "MINIO_HTTP_POOL_SIZE", "MINIO_HTTP_POOL_TIMEOUT",
+	"MINIO_SECURE",
 	"ENABLE_API_AUTH", "MAX_UPLOAD_SIZE_MB", "MAX_VIEW_SIZE_MB",
 	"SERVER_PORT", "LOG_LEVEL", "DATABASE_URL",
 	"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_BUCKET", "MINIO_REGION",
@@ -53,6 +53,10 @@ func chdirToTemp(t *testing.T) {
 		t.Fatalf("chdir temp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(wd) })
+}
+
+func int64Ptr(v int64) *int64 {
+	return &v
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -656,8 +660,8 @@ func TestLoadSettingsDoesNotOverrideExplicitEmptyEnv(t *testing.T) {
 	isolateLoadEnv(t)
 	settings := config.SettingsFile{
 		LogLevel:        "DEBUG",
-		MaxUploadSizeMB: 250,
-		MaxViewSizeMB:   25,
+		MaxUploadSizeMB: int64Ptr(250),
+		MaxViewSizeMB:   int64Ptr(25),
 	}
 	data, err := json.Marshal(settings)
 	if err != nil {
@@ -683,6 +687,71 @@ func TestLoadSettingsDoesNotOverrideExplicitEmptyEnv(t *testing.T) {
 	}
 	if cfg.MaxViewSizeMB != 10 {
 		t.Fatalf("expected explicit empty MAX_VIEW_SIZE_MB to keep env default 10, got %d", cfg.MaxViewSizeMB)
+	}
+}
+
+func TestLoadRejectsInvalidSizeLimitEnv(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+		want  string
+	}{
+		{name: "upload zero", key: "MAX_UPLOAD_SIZE_MB", value: "0", want: "MAX_UPLOAD_SIZE_MB"},
+		{name: "upload too large", key: "MAX_UPLOAD_SIZE_MB", value: "10241", want: "MAX_UPLOAD_SIZE_MB"},
+		{name: "view zero", key: "MAX_VIEW_SIZE_MB", value: "0", want: "MAX_VIEW_SIZE_MB"},
+		{name: "view too large", key: "MAX_VIEW_SIZE_MB", value: "101", want: "MAX_VIEW_SIZE_MB"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv(tt.key, tt.value)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected %s=%s to fail", tt.key, tt.value)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %s, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidSizeLimitSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings config.SettingsFile
+		want     string
+	}{
+		{name: "upload zero", settings: config.SettingsFile{MaxUploadSizeMB: int64Ptr(0)}, want: "max_upload_size_mb"},
+		{name: "upload too large", settings: config.SettingsFile{MaxUploadSizeMB: int64Ptr(10241)}, want: "max_upload_size_mb"},
+		{name: "view zero", settings: config.SettingsFile{MaxViewSizeMB: int64Ptr(0)}, want: "max_view_size_mb"},
+		{name: "view too large", settings: config.SettingsFile{MaxViewSizeMB: int64Ptr(101)}, want: "max_view_size_mb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			data, err := json.Marshal(tt.settings)
+			if err != nil {
+				t.Fatalf("marshal settings: %v", err)
+			}
+			if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+				t.Fatalf("write settings: %v", err)
+			}
+
+			_, err = config.Load()
+			if err == nil {
+				t.Fatal("expected invalid settings size limit to fail")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %s, got %v", tt.want, err)
+			}
+		})
 	}
 }
 

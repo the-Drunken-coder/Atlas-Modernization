@@ -1,59 +1,40 @@
-import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  jsonNumber,
-  type AtlasTargetSummary,
-  type HealthResponse,
-  type RunEvent,
-  type RunListResponse,
-  type ScenarioListResponse,
-  type StartRunRequest,
-  type StartRunResponse,
-  type TargetListResponse
+	jsonNumber,
+	type HealthResponse,
+	type RunListResponse,
+	type ScenarioListResponse,
+	type StartRunResponse,
+	type TargetListResponse
 } from "../shared/types.js";
-import { createAtlasClientFactory, type AtlasClientFactory } from "./atlas.js";
+import { createAtlasClientFactory } from "./atlas.js";
 import { loadConfig, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
-import { RunStore, type RunTarget } from "./run-store.js";
+import { streamRunEvents, type EventStream } from "./event-stream.js";
+import {
+	apiKeyForRequest,
+	drainRequestBody,
+	errorMessage,
+	hasLoopbackHost,
+	readRequestBody,
+	readRequestText,
+	RequestBodyError,
+	requireTrustedMutation,
+	safeDecodeURIComponent,
+	sendJSON
+} from "./http-utils.js";
+import { RunStore } from "./run-store.js";
 import { descriptorForScenario, parseStartRequest, type ParsedStart } from "./scenario.js";
 import { findScenario, scenarios } from "./scenario-registry.js";
+import { serveStatic, shouldServeSpaShell } from "./static.js";
+import { createTargetRegistry, runTarget, targetForId, targetForRequest, targetSummary, type TargetRegistry } from "./targets.js";
 
 export type SimulationServer = {
   listen(): Promise<string>;
   close(): Promise<void>;
   store: RunStore;
-};
-
-type EventStream = {
-  response: ServerResponse;
-  close(): void;
-};
-
-type TargetRegistry = {
-  targets: Map<string, AtlasTargetConfig>;
-  summaries: AtlasTargetSummary[];
-  defaultTarget: AtlasTargetConfig;
-  defaultTargetId: string;
-};
-
-const MUTATION_HEADER = "x-atlas-simulations-request";
-const TARGET_API_KEY_HEADER = "x-atlas-target-api-key";
-const MAX_REQUEST_API_KEY_BYTES = 16_384;
-const UI_SECURITY_HEADERS = {
-  "Content-Security-Policy": [
-    "default-src 'self'",
-    "base-uri 'none'",
-    "connect-src 'self'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-    "object-src 'none'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'"
-  ].join("; "),
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY"
 };
 
 export function createSimulationServer(options: { config?: SimulationConfig; store?: RunStore } = {}): SimulationServer {
@@ -267,332 +248,8 @@ async function atlasHealth(target: AtlasTargetConfig): Promise<HealthResponse> {
   }
 }
 
-function createTargetRegistry(config: SimulationConfig): TargetRegistry {
-  const configuredTargets = config.atlasTargets ?? [
-    {
-      id: "configured",
-      label: "Atlas Core",
-      baseUrl: config.atlasBaseUrl,
-      ...(config.atlasApiKey ? { apiKey: config.atlasApiKey } : {})
-    }
-  ];
-  const targets = new Map(configuredTargets.map((target) => [target.id, target]));
-  const defaultTarget = (config.defaultAtlasTargetId ? targets.get(config.defaultAtlasTargetId) : undefined) ?? configuredTargets[0];
-  if (!defaultTarget) throw new Error("At least one Atlas target is required");
-  return {
-    targets,
-    summaries: configuredTargets.map(targetSummary),
-    defaultTarget,
-    defaultTargetId: defaultTarget.id
-  };
-}
-
-function targetForRequest(url: URL, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig | undefined {
-  return targetForId(url.searchParams.get("target") ?? undefined, registry, apiKey);
-}
-
-function targetForId(id: string | undefined, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig | undefined {
-  const target = id ? registry.targets.get(id) : registry.defaultTarget;
-  return target && apiKey ? { ...target, apiKey } : target;
-}
-
-function runTarget(target: AtlasTargetConfig, includeClientFactory: boolean): RunTarget {
-  return {
-    ...targetSummary(target),
-    ...(includeClientFactory ? { clientFactory: clientFactoryForTarget(target) } : {})
-  };
-}
-
-function clientFactoryForTarget(target: AtlasTargetConfig): AtlasClientFactory {
-  return target.clientFactory ?? createAtlasClientFactory(target);
-}
-
-function targetSummary(target: AtlasTargetConfig): AtlasTargetSummary {
-  return {
-    id: target.id,
-    label: target.label,
-    baseUrl: target.baseUrl,
-    apiKeyConfigured: !!target.apiKey
-  };
-}
-
-function apiKeyForRequest(request: IncomingMessage): string | undefined {
-  const header = request.headers[TARGET_API_KEY_HEADER];
-  const value = Array.isArray(header) ? header.at(-1) : header;
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  if (Buffer.byteLength(trimmed, "utf8") > MAX_REQUEST_API_KEY_BYTES) {
-    throw new RequestBodyError(400, "Atlas API key is too large");
-  }
-  return trimmed;
-}
-
-function streamRunEvents(response: ServerResponse, store: RunStore, runId: string, eventStreams: Set<EventStream>): void {
-  response.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive"
-  });
-  response.flushHeaders();
-  try {
-    let unsubscribe: (() => void) | undefined;
-    let stream: EventStream | undefined;
-    let replaying = true;
-    let closeAfterReplay = false;
-    let closeScheduled = false;
-    let dropFurtherEvents = false;
-    const removeStream = () => {
-      unsubscribe?.();
-      unsubscribe = undefined;
-      if (stream) eventStreams.delete(stream);
-    };
-    const close = () => {
-      removeStream();
-      if (!response.writableEnded) response.end();
-    };
-    stream = { response, close };
-    eventStreams.add(stream);
-    const scheduleClose = () => {
-      if (closeScheduled) return;
-      closeScheduled = true;
-      queueMicrotask(close);
-    };
-    const closeAfterCurrentReplay = () => {
-      closeAfterReplay = true;
-      if (!replaying && unsubscribe) scheduleClose();
-    };
-    response.on("close", removeStream);
-    unsubscribe = store.subscribe(runId, (event) => {
-      if (dropFurtherEvents || closeScheduled || response.writableEnded) return;
-      const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
-      if (!wrote) {
-        dropFurtherEvents = true;
-        closeAfterCurrentReplay();
-        return;
-      }
-      if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterCurrentReplay();
-    });
-    replaying = false;
-    if (closeAfterReplay) scheduleClose();
-  } catch (error) {
-    response.write(`event: error\n`);
-    response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);
-    response.end();
-  }
-}
-
-async function readRequestText(request: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  let byteLength = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    byteLength += buffer.byteLength;
-    if (byteLength > 1_000_000) {
-      throw new RequestBodyError(413, "Request body is too large");
-    }
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-async function drainRequestBody(request: IncomingMessage): Promise<void> {
-  await readRequestText(request);
-}
-
-function readJSON(body: string): unknown {
-  if (!body.trim()) return {};
-  try {
-    return JSON.parse(body);
-  } catch {
-    throw new RequestBodyError(400, "Request body must be valid JSON");
-  }
-}
-
-function readRequestBody(bodyText: string): StartRunRequest {
-  try {
-    const body = readJSON(bodyText);
-    if (!isRecord(body)) {
-      throw new RequestBodyError(400, "Request body must be a JSON object");
-    }
-    if (typeof body.scenarioId !== "string") {
-      throw new RequestBodyError(400, "scenarioId is required");
-    }
-    return body as StartRunRequest;
-  } catch (error) {
-    if (error instanceof RequestBodyError) {
-      throw error;
-    }
-    throw new RequestBodyError(400, errorMessage(error));
-  }
-}
-
-function isTerminalRunEvent(event: RunEvent): boolean {
-  return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
-}
-
-function shouldCloseRunEventStream(event: RunEvent, run: { cleaned: boolean } | undefined, replaying: boolean): boolean {
-  if (!isTerminalRunEvent(event)) return false;
-  if (!replaying) return true;
-  return event.type === "cleanup" || run?.cleaned === true;
-}
-
-function sendJSON(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff"
-  });
-  response.end(JSON.stringify(body));
-}
-
-function requireTrustedMutation(request: IncomingMessage, response: ServerResponse): boolean {
-  if (hasTrustedMutation(request)) return true;
-  response.setHeader("Connection", "close");
-  sendJSON(response, 403, { message: "Mutating simulation requests require a local UI request header" });
-  return false;
-}
-
-function hasTrustedMutation(request: IncomingMessage): boolean {
-  if (!hasLoopbackHost(request.headers.host)) return false;
-  return request.headers.origin ? hasSameOrigin(request) : hasMutationHeader(request);
-}
-
-function hasMutationHeader(request: IncomingMessage): boolean {
-  const value = request.headers[MUTATION_HEADER];
-  return Array.isArray(value) ? value.includes("1") : value === "1";
-}
-
-function hasSameOrigin(request: IncomingMessage): boolean {
-  const origin = request.headers.origin;
-  const hostUrl = urlForHost(request.headers.host);
-  if (!origin || !hostUrl) return false;
-  try {
-    const originUrl = new URL(origin);
-    return originUrl.protocol === "http:" && originUrl.host === hostUrl.host && isLoopbackHostname(originUrl.hostname);
-  } catch {
-    return false;
-  }
-}
-
-function hasLoopbackHost(host: string | undefined): boolean {
-  const hostUrl = urlForHost(host);
-  return !!hostUrl && isLoopbackHostname(hostUrl.hostname);
-}
-
-function urlForHost(host: string | undefined): URL | undefined {
-  if (!host) return undefined;
-  try {
-    return new URL(`http://${host}`);
-  } catch {
-    return undefined;
-  }
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
-}
-
-function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string, headOnly = false, allowSpaFallback = true): void {
-  const staticRoot = path.join(packageRoot, "dist/client");
-  const target = safeStaticPath(staticRoot, requestPath);
-  if (target === "invalid-encoding") {
-    response.writeHead(400, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
-    response.end(headOnly ? undefined : "Request path must use valid URL encoding");
-    return;
-  }
-  if (target === "invalid-path") {
-    response.writeHead(400, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
-    response.end(headOnly ? undefined : "Request path must stay inside the client root");
-    return;
-  }
-  const file = target && existsSync(target) && statSync(target).isFile() ? target : allowSpaFallback ? path.join(staticRoot, "index.html") : undefined;
-  if (!file) {
-    response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
-    response.end(headOnly ? undefined : "Static asset not found");
-    return;
-  }
-  if (!existsSync(file)) {
-    response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
-    response.end(headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
-    return;
-  }
-  if (!isRealPathInsideRoot(staticRoot, file)) {
-    response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
-    response.end(headOnly ? undefined : "Static asset not found");
-    return;
-  }
-  if (headOnly) {
-    response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
-    response.end();
-    return;
-  }
-  const stream = createReadStream(file);
-  stream.once("open", () => {
-    response.writeHead(200, { ...UI_SECURITY_HEADERS, "Content-Type": contentType(file) });
-    stream.pipe(response);
-  });
-  stream.on("error", (error) => {
-    if (!response.headersSent) {
-      sendJSON(response, 500, { message: errorMessage(error) });
-      return;
-    }
-    response.destroy(error);
-  });
-}
-
-function shouldServeSpaShell(requestPath: string): boolean {
-  return !requestPath.startsWith("/assets/") && !/\/[^/]+\.[^/]+$/.test(requestPath);
-}
-
-function isRealPathInsideRoot(staticRoot: string, file: string): boolean {
-  const realStaticRoot = realpathSync(staticRoot);
-  const realFile = realpathSync(file);
-  const relative = path.relative(realStaticRoot, realFile);
-  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | "invalid-path" | undefined {
-  const decoded = safeDecodeURIComponent(requestPath);
-  if (decoded === undefined) return "invalid-encoding";
-  if (decoded.split(/[\\/]+/).includes("..")) return "invalid-path";
-  const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, "");
-  const target = path.join(staticRoot, normalized === "/" ? "index.html" : normalized);
-  return target.startsWith(staticRoot) ? target : undefined;
-}
-
-function safeDecodeURIComponent(value: string): string | undefined {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function contentType(file: string): string {
-  if (file.endsWith(".html")) return "text/html; charset=utf-8";
-  if (file.endsWith(".js")) return "text/javascript; charset=utf-8";
-  if (file.endsWith(".css")) return "text/css; charset=utf-8";
-  if (file.endsWith(".svg")) return "image/svg+xml";
-  return "application/octet-stream";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function isCleanupConflict(error: unknown): error is Error {
   return error instanceof Error && error.message === "Wait for the run to finish before cleanup";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-class RequestBodyError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

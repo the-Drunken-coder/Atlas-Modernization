@@ -1,69 +1,32 @@
-import {
-  jsonNumber,
-  type AssertionResult,
-  type AtlasTargetSummary,
-  type CreatedResource,
-  type JSONNumber,
-  type JSONValue,
-  type RunEvent,
-  type RunEventDetails,
-  type RunStatus,
-  type RunSummary
-} from "../shared/types.js";
+import { jsonNumber, type AssertionResult, type CreatedResource, type RunEvent, type RunEventDetails, type RunStatus, type RunSummary } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
 import { isNotFoundError } from "./atlas.js";
 import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
+import {
+  assertEventJSONValue,
+  assertionBytes,
+  boundedAssertionText,
+  boundedEventMessage,
+  errorMessage,
+  eventBytes,
+  hasFailedAssertions,
+  lateAssertion,
+  trimEvents
+} from "./run-store-events.js";
+import {
+  CLEANUP_DELETE_TIMEOUT_MS,
+  CLEANUP_TOTAL_TIMEOUT_MS,
+  MAX_ASSERTION_HISTORY_BYTES_PER_RUN,
+  MAX_ASSERTIONS_PER_RUN,
+  MAX_CREATED_RESOURCES_PER_RUN,
+  MAX_EVENT_HISTORY_BYTES_PER_RUN,
+  MAX_RUNS
+} from "./run-store-limits.js";
+import { cleanupOrder, cleanupResourcesForRun, hasResource, sameResource, stopClientSync, withCleanupTimeout } from "./run-store-resources.js";
+import { targetSummary, toSummary } from "./run-store-summary.js";
+import { cloneValue, runId, timestamp, type EventSubscriber, type RunRecord, type RunTarget } from "./run-store-types.js";
 
-type EventSubscriber = (event: RunEvent) => void;
-
-export type RunTarget = AtlasTargetSummary & {
-  clientFactory?: AtlasClientFactory;
-};
-
-const MAX_RUNS = 100;
-const MAX_EVENTS_PER_RUN = 500;
-const MAX_EVENT_HISTORY_BYTES_PER_RUN = 1_000_000;
-const MAX_CREATED_RESOURCES_PER_RUN = 1_000;
-const MAX_ASSERTIONS_PER_RUN = 1_000;
-const MAX_ASSERTION_HISTORY_BYTES_PER_RUN = 500_000;
-const MAX_ASSERTION_FIELD_BYTES = 8_000;
-const CLEANUP_DELETE_TIMEOUT_MS = 10_000;
-const CLEANUP_TOTAL_TIMEOUT_MS = 30_000;
-const MAX_EVENT_DATA_DEPTH = 200;
-const MAX_EVENT_DATA_NODES = 10_000;
-const MAX_EVENT_DATA_STRING_BYTES = 200_000;
-const EVENT_MESSAGE_TRUNCATION_SUFFIX = "...[truncated]";
-
-type RunRecord = {
-  id: string;
-  scenario: Readonly<Scenario>;
-  target?: AtlasTargetSummary;
-  clientFactory: AtlasClientFactory;
-  status: RunStatus;
-  startedAt: string;
-  finishedAt?: string;
-  inputs: Record<string, string | number | boolean>;
-  jsonInput?: JSONValue;
-  createdResources: CreatedResource[];
-  cleanupResources: CreatedResource[];
-  overflowCleanupResource?: CreatedResource;
-  assertions: AssertionResult[];
-  assertionHistoryBytes: number;
-  events: RunEvent[];
-  eventHistoryBytes: number;
-  subscribers: Set<EventSubscriber>;
-  controller: AbortController;
-  clients: AtlasClientLike[];
-  settled: boolean;
-  cleanupStarted: boolean;
-  cleaned: boolean;
-  cleanupPromise?: Promise<RunSummary>;
-  execution?: Promise<void>;
-  sequence: number;
-  lastError?: string;
-  trackingError?: string;
-  cleanupError?: string;
-};
+export type { RunTarget } from "./run-store-types.js";
 
 export class RunStore {
   private readonly runs = new Map<string, RunRecord>();
@@ -416,223 +379,5 @@ export class RunStore {
       if (!this.runs.has(id)) return id;
     }
     throw new Error("Could not allocate a unique simulation run ID");
-  }
-}
-
-function toSummary(run: RunRecord): RunSummary {
-  return {
-    id: run.id,
-    scenarioId: run.scenario.id,
-    scenarioName: run.scenario.name,
-    ...(run.target ? { target: cloneValue(run.target) } : {}),
-    status: run.status,
-    startedAt: run.startedAt,
-    ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
-    updatedAt: run.events.at(-1)?.timestamp ?? run.finishedAt ?? run.startedAt,
-    inputs: wireInputs(run.inputs),
-    ...(run.jsonInput === undefined ? {} : { jsonInput: cloneValue(run.jsonInput) }),
-    createdResources: cloneValue(run.createdResources),
-    assertions: cloneValue(run.assertions),
-    cleaned: run.cleaned,
-    ...(run.cleanupError || run.lastError ? { lastError: run.cleanupError ?? run.lastError } : {})
-  };
-}
-
-function targetSummary(target: RunTarget): AtlasTargetSummary {
-  return {
-    id: target.id,
-    label: target.label,
-    baseUrl: target.baseUrl,
-    apiKeyConfigured: target.apiKeyConfigured
-  };
-}
-
-function wireInputs(inputs: Record<string, string | number | boolean>): Record<string, string | JSONNumber | boolean> {
-  return Object.fromEntries(
-    Object.entries(inputs).map(([key, value]) => [key, typeof value === "number" ? jsonNumber(value) : value])
-  );
-}
-
-function trimEvents(run: RunRecord): void {
-  const protectedSequence = latestTerminalStatusSequence(run.events);
-  while (run.eventHistoryBytes > MAX_EVENT_HISTORY_BYTES_PER_RUN && run.events.length > 1) {
-    if (!removeOldestTrimmableEvent(run, protectedSequence)) break;
-  }
-  while (run.events.length > MAX_EVENTS_PER_RUN) {
-    if (!removeOldestTrimmableEvent(run, protectedSequence)) break;
-  }
-}
-
-function removeOldestTrimmableEvent(run: RunRecord, protectedSequence: number | undefined): boolean {
-  const index = run.events.findIndex((event) => event.sequence !== protectedSequence);
-  if (index === -1) return false;
-  const [event] = run.events.splice(index, 1);
-  if (event) run.eventHistoryBytes -= eventBytes(event);
-  return true;
-}
-
-function latestTerminalStatusSequence(events: RunEvent[]): number | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event?.type === "status" && event.status !== "running") return event.sequence;
-  }
-  return undefined;
-}
-
-function eventBytes(event: RunEvent): number {
-  return Buffer.byteLength(JSON.stringify(event), "utf8");
-}
-
-function assertionBytes(assertion: AssertionResult): number {
-  return Buffer.byteLength(JSON.stringify(assertion), "utf8");
-}
-
-function cleanupResourcesForRun(run: RunRecord): CreatedResource[] {
-  return run.overflowCleanupResource ? [...run.cleanupResources, run.overflowCleanupResource] : run.cleanupResources;
-}
-
-function hasResource(resources: CreatedResource[], resource: CreatedResource): boolean {
-  return resources.some((current) => sameResource(current, resource));
-}
-
-function sameResource(left: CreatedResource | undefined, right: CreatedResource): boolean {
-  return left?.type === right.type && left.id === right.id;
-}
-
-async function withCleanupTimeout(operation: Promise<void>, controller: AbortController, resource: CreatedResource, timeoutMs = CLEANUP_DELETE_TIMEOUT_MS): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          controller.abort();
-          reject(new Error(`Timed out deleting ${resource.type} ${resource.id}`));
-        }, timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {
-  state.nodes += 1;
-  if (state.nodes > MAX_EVENT_DATA_NODES) {
-    throw new Error(`Run event data must contain at most ${MAX_EVENT_DATA_NODES} values`);
-  }
-  if (depth > MAX_EVENT_DATA_DEPTH) {
-    throw new Error(`Run event data must be nested at most ${MAX_EVENT_DATA_DEPTH} levels`);
-  }
-  if (value === null || typeof value === "boolean") return;
-  if (typeof value === "string") {
-    addEventDataStringBytes(value, state);
-    return;
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("Run event data must contain only finite numbers");
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) assertEventJSONValue(item, depth + 1, state);
-    return;
-  }
-  if (typeof value !== "object") {
-    throw new Error("Run event data must contain only JSON values");
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new Error("Run event data must contain only JSON objects");
-  }
-  const record = value as Record<string, unknown>;
-  for (const key in record) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-    const item = record[key];
-    addEventDataStringBytes(key, state);
-    assertEventJSONValue(item, depth + 1, state);
-  }
-}
-
-function addEventDataStringBytes(value: string, state: { stringBytes: number }): void {
-  state.stringBytes += Buffer.byteLength(value, "utf8");
-  if (state.stringBytes > MAX_EVENT_DATA_STRING_BYTES) {
-    throw new Error(`Run event data strings must total at most ${MAX_EVENT_DATA_STRING_BYTES} bytes`);
-  }
-}
-
-function boundedEventMessage(message: string): string {
-  return boundedText(message, MAX_EVENT_DATA_STRING_BYTES);
-}
-
-function boundedAssertionText(message: string): string {
-  return boundedText(message, MAX_ASSERTION_FIELD_BYTES);
-}
-
-function boundedText(message: string, maxBytes: number): string {
-  if (Buffer.byteLength(message, "utf8") <= maxBytes) return message;
-  const budget = maxBytes - Buffer.byteLength(EVENT_MESSAGE_TRUNCATION_SUFFIX, "utf8");
-  let bytes = 0;
-  let result = "";
-  for (const char of message) {
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (bytes + charBytes > budget) break;
-    bytes += charBytes;
-    result += char;
-  }
-  return `${result}${EVENT_MESSAGE_TRUNCATION_SUFFIX}`;
-}
-
-function hasFailedAssertions(run: RunRecord): boolean {
-  return run.assertions.some((assertion) => !assertion.passed);
-}
-
-function lateAssertion(name: string, passed: boolean, message?: string): AssertionResult {
-  return {
-    id: "assert-late",
-    name,
-    passed,
-    ...(message ? { message } : {}),
-    timestamp: timestamp()
-  };
-}
-
-function stopClientSync(client: AtlasClientLike): unknown {
-  try {
-    client.sync.stop();
-    return undefined;
-  } catch (error) {
-    return error;
-  }
-}
-
-function cloneValue<T>(value: T): T {
-  return structuredClone(value);
-}
-
-function cleanupOrder(resources: CreatedResource[]): CreatedResource[] {
-  const order: Record<CreatedResource["type"], number> = { task: 0, object: 1, entity: 2 };
-  return resources
-    .map((resource, index) => ({ resource, index }))
-    .sort((a, b) => cleanupRank(a.resource, order) - cleanupRank(b.resource, order) || b.index - a.index)
-    .map(({ resource }) => resource);
-}
-
-function cleanupRank(resource: CreatedResource, order: Record<CreatedResource["type"], number>): number {
-  return order[resource.type] ?? 3;
-}
-
-function runId(): string {
-  return `sim-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function timestamp(): string {
-  return new Date().toISOString();
-}
-
-function errorMessage(error: unknown): string {
-  try {
-    return boundedEventMessage(error instanceof Error ? error.message : String(error));
-  } catch {
-    return "Unknown error";
   }
 }

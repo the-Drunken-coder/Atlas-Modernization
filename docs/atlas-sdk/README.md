@@ -1,6 +1,6 @@
 # Atlas SDK
 
-The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: a TypeScript/JavaScript package with a typed HTTP client, an optional sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
+The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=26` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
 
 The SDK is the preferred client path for UI code, asset-side services, and tools. Direct API calls remain acceptable for small tools and non-TypeScript services, but the SDK/CLI should be the default integration surface.
 
@@ -30,7 +30,7 @@ Two components, not three modes:
 The user-facing modes are constructor presets over these components:
 
 ```ts
-new AtlasClient({ baseUrl, apiKey });                    // manual: no sync engine
+new AtlasClient({ baseUrl, apiKey });                    // manual: sync engine exists but is not started
 new AtlasClient({ baseUrl, apiKey, sync: "all" });       // configure sync for all resources
 new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
 ```
@@ -53,7 +53,7 @@ Rules that make this safe:
 
 ### Watch API
 
-`client.entities.watch(id, callback)` (and equivalents per resource type, plus collection-level watches) fires when the cached resource changes. This is the real-time path for UIs: the change-feed event arrives and the UI reacts immediately, with no polling loop. It is the same cache and the same surface — not a separate layer.
+`client.entities.watch(id, callback)` (and equivalents per resource type) fires when the cached resource changes. Collection-level watches use the generic `client.watch(filter, callback)` surface, such as `client.watch({ filter: "type", resource_type: "entity" }, callback)` or `client.watch({ filter: "all" }, callback)`. This is the real-time path for UIs: the change-feed event arrives and the UI reacts immediately, with no polling loop. It is the same cache and the same surface — not a separate layer.
 
 Watcher callbacks receive protocol feed events for server-published changes. They can also receive SDK-local events that are not wire feed frames: `recovered` when `changed-since` reconciliation applies a live resource row, and `local_delete` when a successful local DELETE removes a resource from the cache before Core's versioned tombstone arrives.
 
@@ -83,16 +83,16 @@ The consistency mechanism is `GET /queries/changed-since` with the global versio
 
 An object is two things, treated differently:
 
-- **Metadata** (small JSON: name, type, version, references) — flows over the change feed and lives in the cache like entities and tasks.
+- **Metadata** (small JSON: `object_id`, `path`, `type`, `version`, references, and storage fields) — flows over the change feed and lives in the cache like entities and tasks.
 - **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
 
 Object `referenced_by` entries are normalized to the protocol `ObjectReference` shape: only `entity_id` and `task_id` are emitted. Extra keys in stored object metadata are intentionally not part of the public API response.
 
 ## Types: generated, not hand-written
 
-Resource types come from `atlas_protocol` generated artifacts: the SDK imports `atlas_protocol/generated/typescript/index.ts` directly (by path) rather than copying or hand-writing resource shapes, so protocol changes propagate by regeneration and the SDK stays in lockstep with Core. The generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
+Resource types come from `atlas_protocol` generated artifacts: the SDK compiles the generated TypeScript source into the package and imports it through ESM `.js` specifiers, rather than copying or hand-writing resource shapes. Protocol changes propagate by regeneration and the SDK stays in lockstep with Core. The generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
 
-The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/atlas_sdk/src/*` and the generated `dist/atlas_protocol/generated/typescript/*` module that the SDK imports. Package metadata points `main`, `exports`, and `types` at the built SDK entrypoint.
+The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/atlas_sdk/src/*` and the generated `dist/atlas_protocol/generated/typescript/*` module that the SDK imports. Package metadata points the root export at the built SDK entrypoint, exposes `@the-drunken-coder/atlas-sdk/admin` for browser admin/session and managed API-key calls, and installs the `atlas` CLI binary.
 
 ## CLI and cross-language story
 
@@ -100,9 +100,11 @@ The SDK ships a CLI (`atlas entities get <id>`, `atlas tasks create <json>`, JSO
 
 The language-neutral contract remains Atlas Protocol plus the change-feed consumption rules. A future Python SDK should be a port of that contract, not a new design.
 
+Local package commands are `npm ci`, `npm run build`, `npm test` for Node plus browser tests, and `npm run test:bin` for the CLI smoke.
+
 ## Auth
 
-Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), currently disabled for the local deployment. The SDK accepts `apiKey`, attaches it to HTTP requests and the websocket handshake, and never embeds keys in package output. Keys can be the production bootstrap key or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
+Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`), currently disabled for the local deployment. The SDK `apiKey` option sends `X-API-Key` on HTTP requests and an `auth` frame on the websocket feed connection; it does not send Bearer headers. Keys can be the production bootstrap key or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
 
 ## Composite functions
 
@@ -122,7 +124,7 @@ Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simula
 
 ## Known gaps (explicitly deferred)
 
-- **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `completeTask()` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
+- **Offline/flaky-link writes from assets.** Writes always call the API; there is no SDK queueing or retry outbox for an asset that calls e.g., `client.tasks.complete(...)` while its link is down. Out of scope for v1 — asset software must handle write failures itself until a later phase designs durable retries. Add an SDK outbox only after client identity and idempotency keys exist, so retries can be attributed and safely de-duplicated.
 - **Object upload.** Upload remains a direct Core API call for now; the SDK already has the transport and cache conventions it should follow when this is added.
 - **Auth hardening.** Bootstrap and managed API keys are still full-access machine credentials. Browser UI auth is Core-owned session-cookie auth, not durable client-side API-key state. Per-client identity, scoped/read-only keys, and an audit trail of who tasked an asset are prerequisites before anything broader than the current operator deployment.
 

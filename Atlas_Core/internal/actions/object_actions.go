@@ -2,7 +2,6 @@ package actions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,16 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
-	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
-
-type objectStorage interface {
-	Bucket() string
-	DeleteObjectPath(ctx context.Context, path string) error
-	NewObjectPath(objectID string) string
-	StreamObjectPath(ctx context.Context, objectID, path string) (io.ReadCloser, *storage.ObjectInfo, error)
-	UploadObjectFromReaderToPath(ctx context.Context, objectID, path string, reader io.Reader, size int64, contentType string) (*storage.ObjectInfo, error)
-}
 
 // ObjectActions handles object business logic.
 type ObjectActions struct {
@@ -243,12 +233,6 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 	before := cloneObjectModel(&obj)
 
-	// Parse existing JSON
-	existingJSON, err := decodeObjectJSONForPatch(obj.JSON)
-	if err != nil {
-		return nil, fmt.Errorf("existing object json is corrupt or invalid: %w", err)
-	}
-
 	// Update columns if provided
 	newPath := obj.Path
 	if params.Path != nil {
@@ -270,20 +254,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		}
 	}
 
-	// Update JSON fields
-	if params.SizeBytes != nil {
-		existingJSON[string(objectBlobFieldSizeBytes)] = *params.SizeBytes
-	}
-	if params.UsageHints != nil {
-		existingJSON[string(objectBlobFieldUsageHints)] = params.UsageHints
-	}
-	if params.ReferencedBy != nil {
-		existingJSON[string(objectBlobFieldReferencedBy)] = params.ReferencedBy
-	}
-	mergeBlobExtraFields(existingJSON, params.Extra, objectPromotedBlobFields)
-	applyConfiguredObjectBucket(existingJSON, a.storage)
-
-	jsonBytes, err := marshalValidatedJSONBlob(existingJSON, ValidateObjectBlob)
+	jsonBytes, err := patchValidatedJSONBlob(objectJSONPatch(obj.JSON, params, a.storage))
 	if err != nil {
 		return nil, err
 	}
@@ -374,31 +345,6 @@ func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, o
 		return nil, fmt.Errorf("failed to commit object precondition transaction: %w", err)
 	}
 	return &obj, nil
-}
-
-func applyConfiguredObjectBucket(blob map[string]interface{}, storageClient objectStorage) {
-	if storageClient == nil {
-		delete(blob, string(objectBlobFieldBucket))
-		return
-	}
-	bucket := strings.TrimSpace(storageClient.Bucket())
-	if bucket == "" {
-		delete(blob, string(objectBlobFieldBucket))
-		return
-	}
-	blob[string(objectBlobFieldBucket)] = bucket
-}
-
-// ValidateObjectBlob validates storage-facing object metadata.
-func ValidateObjectBlob(blob map[string]interface{}) error {
-	result := validationResultFromErrors(protocol.ValidateObjectBlob(blob))
-	if !result.HasErrors() {
-		return nil
-	}
-	return NewValidationErrorWithDetails(
-		fmt.Sprintf("Object validation failed (%d errors)", len(result.Errors)),
-		result.Errors,
-	)
 }
 
 // Delete removes an object and its storage.
@@ -500,93 +446,6 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 	}
 
 	return reader, info.ContentType, info.SizeBytes, nil
-}
-
-// GetByEntity retrieves objects referenced by an entity.
-func (a *ObjectActions) GetByEntity(ctx context.Context, entityID string, limit int, cursor string) (*ListPage[*models.MediaObject], error) {
-	return a.getObjectsByJSONReference(ctx, "entity_id", entityID, ValidateEntityID, limit, cursor)
-}
-
-// GetByTask retrieves objects referenced by a task.
-func (a *ObjectActions) GetByTask(ctx context.Context, taskID string, limit int, cursor string) (*ListPage[*models.MediaObject], error) {
-	return a.getObjectsByJSONReference(ctx, "task_id", taskID, ValidateTaskID, limit, cursor)
-}
-
-func (a *ObjectActions) getObjectsByJSONReference(
-	ctx context.Context,
-	refKey, id string,
-	validate func(string) error,
-	limit int,
-	cursor string,
-) (*ListPage[*models.MediaObject], error) {
-	if err := validate(id); err != nil {
-		return nil, err
-	}
-	id = SanitizeID(id)
-
-	limit = ClampListLimit(limit)
-
-	refData := []map[string]string{{refKey: id}}
-	refJSONBytes, err := json.Marshal(refData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal reference JSON: %w", err)
-	}
-	refJSON := string(refJSONBytes)
-
-	return readCursorListPage(ctx, a.pool, cursorListPageOptions[*models.MediaObject]{
-		limit:       limit,
-		cursor:      cursor,
-		cursorLabel: "cursor",
-		operation:   "object reference list",
-		cursorName:  "object reference",
-		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, _ bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.MediaObject, bool, error) {
-			return queryObjectsByJSONReference(ctx, tx, refJSON, snapshotUpperBound, parsedCursor, limit)
-		},
-		rowCursor: func(object *models.MediaObject) (time.Time, string) {
-			return object.CreatedAt, object.ObjectID
-		},
-	})
-}
-
-func queryObjectsByJSONReference(ctx context.Context, tx pgx.Tx, refJSON string, snapshotUpperBound time.Time, parsedCursor *parsedQueryCursor, limit int) ([]*models.MediaObject, bool, error) {
-	whereClauses := []string{"json->'referenced_by' @> $1::jsonb"}
-	args := []interface{}{refJSON}
-	if parsedCursor != nil {
-		cursorUpperBound := parsedCursor.upperBound
-		if cursorUpperBound.IsZero() {
-			cursorUpperBound = snapshotUpperBound
-		}
-		if !cursorUpperBound.IsZero() {
-			whereClauses = append(whereClauses, fmt.Sprintf("created_at <= $%d::timestamptz", len(args)+1))
-			args = append(args, cursorUpperBound)
-		}
-		whereClauses = append(whereClauses, fmt.Sprintf("(created_at, object_id) < ($%d::timestamptz, $%d::varchar)", len(args)+1, len(args)+2))
-		args = append(args, parsedCursor.timestamp, parsedCursor.id)
-	} else {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at <= $%d::timestamptz", len(args)+1))
-		args = append(args, snapshotUpperBound)
-	}
-
-	limitPos := len(args) + 1
-	args = append(args, limit+1)
-	query := fmt.Sprintf(`
-		SELECT object_id, path, content_type, type, json, created_at, updated_at, version
-		FROM objects
-		WHERE %s
-		ORDER BY created_at DESC, object_id DESC
-		LIMIT $%d
-	`, strings.Join(whereClauses, " AND "), limitPos)
-
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to query objects: %w", err)
-	}
-	objects, err := collectObjects(rows)
-	if err != nil {
-		return nil, false, err
-	}
-	out, hasMore := trimToLimitWithMore(objects, limit)
-	return out, hasMore, nil
 }
 
 // Count returns the total number of objects.

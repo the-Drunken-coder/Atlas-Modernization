@@ -44,7 +44,8 @@ export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 Direct production `docker compose -f docker-compose.production.yml ...` commands
 parse the Compose file before contacting Docker, so run them from
 `Atlas_Core/docker` with `.env` present or re-export the same
-`POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, and `MINIO_ROOT_PASSWORD` values first.
+`POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`,
+and `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` values first.
 
 Start the production-image stack:
 
@@ -55,9 +56,11 @@ python3 Atlas_Core/scripts/atlas.py --production
 This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings
 files, binds the API to `127.0.0.1:8000`, and requires API-key auth for API
-routes. `API_AUTH_KEY` is the required bootstrap machine key; browser admins can
-create additional managed machine keys after sign-in. Health, readiness, and
-resource usage endpoints remain unauthenticated.
+routes. `API_AUTH_KEY` is the required strong bootstrap machine key; browser
+admins can create additional managed machine keys after sign-in. Health,
+readiness, resource usage endpoints, and the `/feed` middleware bypass remain
+outside protected-route middleware; the feed handler performs its own API-key or
+browser-session authentication.
 
 ## Production Tunnel
 

@@ -1,6 +1,6 @@
 # Atlas Modernization
 
-This workspace is focused on modernizing the ATLAS Core backend.
+This workspace is the Atlas modernization repo: Core, Protocol, SDK, Command Interface, simulations, and project docs live here as separate modules that move together.
 
 ## What lives here
 
@@ -20,8 +20,10 @@ This workspace is focused on modernizing the ATLAS Core backend.
 
 ## Runtime storage posture
 
-Atlas Core treats PostgreSQL and its configured MinIO bucket as scratch runtime
-state. They are useful while the service is running, but they are not systems of
-record and are not meant to be kept around. By default, startup drops and
-recreates the database schema and clears the configured object bucket so the
-running service always matches the current code.
+Atlas Core treats resource tables and its configured MinIO bucket as scratch
+runtime state. They are useful while the service is running, but they are not
+systems of record and are not meant to be kept around. By default, startup drops
+and recreates resource tables and clears the configured object bucket so the
+running service always matches the current code. The `admin_records` table is
+the narrow durable exception for operator credentials, sessions, login throttles,
+and managed API key metadata.

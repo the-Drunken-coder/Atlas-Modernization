@@ -19,7 +19,7 @@ The browser calls Atlas Core directly through the SDK with `credentials: "includ
 - `AtlasClient` is resource-only: entities, tasks, objects, queries, sync, and feed.
 - `AtlasAdminClient` is admin-only: `auth.login`, `auth.logout`, `auth.me`, and managed API key administration.
 - Admin records never enter the SDK resource cache or full dataset/changed-since responses.
-- The command interface does not own Core auth/session routes, `/atlas/*` proxy routes, feed bridging, API-key injection, or command validation.
+- The command interface does not own Core auth/session routes, `/atlas/*` proxy routes, feed bridging, API-key injection, or authoritative command validation. It still performs non-authoritative UI coercion and availability checks before submitting command tasks to Core.
 - Browser config is build/dev-time Vite config, not a runtime Worker route.
 
 The committed browser config contains only non-secret values: Core base URL defaults, protocol revision, map source IDs, labels, and provider URL templates. Any `VITE_*` provider keys are browser-visible and must be restricted in the provider dashboards.
@@ -38,7 +38,7 @@ Command submission posts a task directly to Core without a client-supplied `task
    python3 Atlas_Core/scripts/atlas.py --dev
    ```
 
-   `atlas.py` starts Docker Compose, waits for PostgreSQL, MinIO, and the API, then seeds the command catalog. Startup seeds the development admin account `admin` / `password`.
+   `atlas.py` starts Docker Compose, waits for PostgreSQL, MinIO, and the API, then publishes the embedded command catalog through the object API for browser/reference use. Startup seeds the development admin account `admin` / `password`.
    If an old local Postgres volume has stale credentials, run `python3 Atlas_Core/scripts/atlas.py --dev --reset-volumes`.
 
 2. Run the Vite app:
@@ -61,7 +61,7 @@ The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `A
 
 ## Map Sources
 
-The browser builds MapLibre raster styles from provider tile URL templates. Public sources are selectable by default; credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time.
+The browser builds MapLibre raster styles from provider tile URL templates. Public sources are selectable by default; credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time. Google Satellite also requires a successful tile-session request; with a key but no session it remains visible as unavailable.
 
 Always available:
 

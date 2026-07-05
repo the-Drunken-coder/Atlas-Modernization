@@ -101,12 +101,12 @@ Collapsed behavior:
 
 - Show icons only.
 - Do not expand on hover.
-- On icon hover, show a small tooltip such as `Assets`, `Tracks`, `Geo Features`, or `Commands`.
+- On icon hover, show a small tooltip such as `Assets`, `Tracks`, `Geo Features`, `Commands`, or `API Keys`.
 
 Expanded behavior:
 
 - Clicking an icon opens the relevant list mode.
-- List modes: assets, tracks, geofeatures, commands.
+- List modes: assets, tracks, geofeatures, commands, and API Keys.
 - Selecting an item from a list or from the map switches the sidebar to inspector mode for that selected item.
 - A back control in inspector mode returns to the previous list mode.
 
@@ -183,7 +183,7 @@ Geofeatures:
 
 ## Geofeature Editing
 
-Support Point, LineString, and Polygon in the first implementation.
+Support Point, LineString, Polygon, and circle geofences persisted as strict GeoJSON `Feature<Point>` values.
 
 Required edit behavior:
 
@@ -213,7 +213,7 @@ Position-based command rule:
 
 - A command is position-based when its `parameters_schema` includes required numeric `latitude` and `longitude` parameters.
 
-Normalize map-point commands to `latitude` and `longitude`. The current catalog has `move_to_location` using `latitude`/`longitude`, while `goto` uses `lat`/`lon`; implementation should update `goto` to `latitude`/`longitude` rather than supporting both names.
+Map-point commands use `latitude` and `longitude`. `move_to_location` and `goto` both use those canonical parameter names; do not add a compatibility shim for `lat`/`lon`.
 
 Add command helper behavior in the command model layer rather than duplicating this logic in React components:
 
@@ -448,7 +448,6 @@ Add new app-specific build, unit, component, and browser smoke commands as the a
 
 ## Open Items To Decide Later
 
-- Exact online tile provider/style URL.
 - Exact icon set.
 - Exact tactical color palette.
 - Asset status taxonomy beyond existing free-form `components.status.value`.
