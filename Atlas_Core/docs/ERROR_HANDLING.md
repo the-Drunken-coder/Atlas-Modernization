@@ -18,7 +18,7 @@ and is generated for Go as `atlasprotocol.ErrorCode`.
 - `ValidationError` (includes `Details []string`)
 - `NotFoundError`
 - `ConflictError` (409 — duplicate id or unique constraint)
-- `PreconditionFailedError` (412 — stale `If-Match` on object PATCH)
+- `PreconditionFailedError` (412 — stale `If-Match` on resource updates)
 - `ActionError` (base typed error)
 
 `NotFoundError` is produced by helpers such as:
@@ -37,7 +37,7 @@ and is generated for Go as `atlasprotocol.ErrorCode`.
 
 `PreconditionFailedError` codes:
 
-- `PRECONDITION_FAILED` — object PATCH rejected due to stale `If-Match` / ETag mismatch
+- `PRECONDITION_FAILED` — resource update rejected due to stale `If-Match` / ETag mismatch
 
 ### Storage-layer errors (`internal/storage`)
 
@@ -71,8 +71,8 @@ Some handlers call `writeError` directly (same envelope, not via `handleActionEr
 | `UNAUTHORIZED` | 401 | API-key or browser-session auth rejected a request |
 | `FEED_UNAVAILABLE` | 503 | Change-feed hub or config is not available |
 | `STORAGE_UNAVAILABLE` | 503 | MinIO not configured |
-| `CONTENT_TYPE_NOT_VIEWABLE` | 400 | Object view on non-text content type |
-| `FILE_TOO_LARGE` | 400 | View/download size exceeded |
+| `CONTENT_TYPE_NOT_VIEWABLE` | 415 | Object view on non-viewable, non-download-forced content type |
+| `FILE_TOO_LARGE` | 400/413 | Inline view size exceeded (`400`) or uploaded file exceeds `MAX_UPLOAD_SIZE_MB` (`413`) |
 | `READ_ERROR` | 500 | Failed to read object from storage |
 | `INVALID_FORM` | 400 | Multipart upload parse failure |
 

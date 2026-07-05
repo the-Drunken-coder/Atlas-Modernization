@@ -20,9 +20,9 @@ Entities are differentiated by their `type` and `subtype` columns:
 | `track` | `person`, `vehicle`, `aircraft` | Observed entities detected by sensors |
 | `geofeature` | `point`, `linestring`, `polygon` | Geographic features and zones |
 
-## Entity Status
+## Entity Connectivity and Status
 
-Entity operational status is tracked via the `communications` component within the JSON blob:
+Entity connectivity is tracked via the `communications` component within the JSON blob:
 
 ```json
 {
@@ -57,6 +57,7 @@ type Entity struct {
 	JSON      json.RawMessage `json:"-" db:"json"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	Version   int64           `json:"version" db:"version"`
 }
 ```
 
