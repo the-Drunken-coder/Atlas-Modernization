@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"cuelang.org/go/cue/cuecontext"
 )
 
 func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
@@ -76,46 +74,6 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 	}
 }
 
-func TestConcreteFieldsFromValueExcludesPatternConstraints(t *testing.T) {
-	value := cuecontext.New().CompileString(`{
-		known: int
-		[=~"^custom_"]: int
-	}`)
-	if err := value.Err(); err != nil {
-		t.Fatalf("compile CUE value: %v", err)
-	}
-
-	concreteFields, err := concreteFieldsFromValue(value, "test")
-	if err != nil {
-		t.Fatalf("concreteFieldsFromValue() error = %v", err)
-	}
-	for field := range concreteFields {
-		if strings.HasPrefix(field, "[") {
-			t.Fatalf("concreteFieldsFromValue returned pattern constraint label %q", field)
-		}
-	}
-	if _, ok := concreteFields["known"]; !ok {
-		t.Fatalf("concreteFieldsFromValue missing concrete field known: %v", concreteFields)
-	}
-}
-
-func TestConcreteFieldsFromValueIncludesQuotedBracketLabels(t *testing.T) {
-	value := cuecontext.New().CompileString(`{
-		"[quoted]": int
-	}`)
-	if err := value.Err(); err != nil {
-		t.Fatalf("compile CUE value: %v", err)
-	}
-
-	concreteFields, err := concreteFieldsFromValue(value, "test")
-	if err != nil {
-		t.Fatalf("concreteFieldsFromValue() error = %v", err)
-	}
-	if _, ok := concreteFields["[quoted]"]; !ok {
-		t.Fatalf("concreteFieldsFromValue missing quoted bracket label: %v", concreteFields)
-	}
-}
-
 func TestNonFinitePaths(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -159,6 +117,15 @@ func TestNonFinitePaths(t *testing.T) {
 			validate: ValidateTelemetryComponent,
 			value:    map[string]any{"latitude": float32(math.NaN())},
 			want:     "latitude: must be finite",
+		},
+		{
+			name:     "typed float slice",
+			validate: ValidateGeometryComponent,
+			value: map[string]any{
+				"type":        "Point",
+				"coordinates": []float64{math.Inf(1), 40.0},
+			},
+			want: "coordinates[0]: must be finite",
 		},
 	}
 
@@ -224,6 +191,17 @@ func TestMultipleViolationsAreSorted(t *testing.T) {
 	}
 	assertAnyContains(t, errors, "latitude")
 	assertAnyContains(t, errors, "longitude")
+}
+
+func TestObjectBlobAcceptsTypedUsageHints(t *testing.T) {
+	blob := map[string]any{
+		"bucket":      "atlas-media",
+		"size_bytes":  int64(7966),
+		"usage_hints": []string{"command_catalog"},
+	}
+	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
+		t.Fatalf("ValidateObjectBlob(typed usage_hints) errors = %v", errors)
+	}
 }
 
 func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
@@ -302,7 +280,7 @@ func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errors := tt.validate(readJSONExample(t, tt.path))
-			assertAnyContains(t, errors, "MinFields")
+			assertAnyContains(t, errors, "minProperties")
 		})
 	}
 
@@ -363,7 +341,7 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 			if len(errors) != 1 {
 				t.Fatalf("errors = %v, want exactly one", errors)
 			}
-			if !strings.Contains(errors[0], "input cannot be encoded as CUE") {
+			if !strings.Contains(errors[0], "input cannot be encoded as JSON") {
 				t.Fatalf("errors[0] = %q, want encoding failure message", errors[0])
 			}
 		})

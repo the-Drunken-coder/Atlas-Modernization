@@ -28,17 +28,14 @@ test ! -d "Atlas Protocol"
 
 The lower-case **`atlas_protocol/`** is the buildable sibling module so Go imports and scripts have a stable path. Keep generated Go artifacts reusable through that sibling module; do not move the protocol source of truth under `Atlas_Core/internal/`.
 
-The Atlas Protocol plan uses CUE, but `cue` may not be installed globally in new worktrees. Use the pinned toolchain path in `docs/atlas-protocol/IMPLEMENTATION_PREP.md` or the `atlas_protocol/tools/` wrappers instead of assuming a global `cue` binary:
+Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas_protocol/schema/jsonschema/atlas.schema.json`**. The protocol tools compile that bundle, validate examples, and regenerate Go/TypeScript artifacts:
 
 ```sh
 (cd atlas_protocol && go run ./tools/generate)
 (cd atlas_protocol && go run ./tools/check)
-go run cuelang.org/go/cmd/cue@v0.17.0 version
 ```
 
-When expressing "at least one of these optional fields" in Atlas Protocol CUE, prefer a concrete helper such as `struct.MinFields(1)` on a closed object. A disjunction of required/optional field variants can leave `cue vet` with incomplete optional-field values even when the JSON example looks valid.
-
-The Atlas Protocol runtime validator uses `cuelang.org/go` against one embedded compiled schema. CUE values are not safe for concurrent shared evaluation here, so keep validation `Unify`/`Validate` calls behind the package-level mutex in `atlas_protocol/validator`.
+Do not recreate `atlas_protocol/generated/jsonschema/`; schema details belong in the canonical bundle. The Atlas Protocol runtime validator uses `github.com/santhosh-tekuri/jsonschema/v6` against compiled schema definitions and preserves a few narrow semantic checks, such as GeoJSON polygon ring closure and total polygon position limits.
 
 This project is super greenfield. It has no users and no real data yet. Prefer the simplest correct long-term design over dirty compatibility shims, duplicated paths, or preserving old architecture just because it already exists. If replacing a subsystem leads to a simpler result, take the rebuild even when the process is more involved; if the quick simple fix is also the clean long-term answer, take that instead. Keep changes scoped to the request, and do not use greenfield status as permission for unrelated refactors.
 

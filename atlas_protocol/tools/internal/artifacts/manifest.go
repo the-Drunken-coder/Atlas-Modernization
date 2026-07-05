@@ -6,8 +6,6 @@ import (
 )
 
 var entityComponentSchemaKeys = []string{
-	// Mirrors atlas_protocol/schema/entity.cue #KnownEntityComponents. Update
-	// this list and rerun go run ./tools/check when entity components change.
 	"telemetry",
 	"geometry",
 	"task_catalog",
@@ -21,8 +19,50 @@ var entityComponentSchemaKeys = []string{
 	"heartbeat",
 }
 
-func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
-	if err := validateEntityComponentSchemaKeys(meta.EntityComponentKeys); err != nil {
+var artifactDefinitions = []string{
+	"EntityBlob",
+	"TaskBlob",
+	"ObjectBlob",
+	"ErrorResponse",
+	"FeedClientMessage",
+	"FeedEvent",
+	"FeedHandshakeMessage",
+	"FeedAuthMessage",
+	"FeedSubscribeMessage",
+	"FeedUnsubscribeMessage",
+	"EntityResource",
+	"MetadataBlock",
+	"ObjectResource",
+	"TaskResource",
+	"TelemetryComponent",
+	"GeometryComponent",
+	"TaskCatalogComponent",
+	"MediaRefsComponent",
+	"MilViewComponent",
+	"HealthComponent",
+	"SensorRefsComponent",
+	"CommunicationsComponent",
+	"TaskQueueComponent",
+	"StatusComponent",
+	"HeartbeatComponent",
+	"CommandComponent",
+	"TaskParametersComponent",
+	"TaskProgressComponent",
+	"ObjectReference",
+	"EntityCreateRequest",
+	"EntityUpdateRequest",
+	"ObjectCreateRequest",
+	"ObjectUpdateRequest",
+	"TaskCreateRequest",
+	"TaskUpdateRequest",
+}
+
+func BuildArtifacts(root string) ([]Artifact, error) {
+	bundle, err := LoadSchemaBundle(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEntityComponentSchemaKeys(bundle); err != nil {
 		return nil, err
 	}
 	revision, err := protocolRevision(root)
@@ -30,195 +70,15 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 		return nil, err
 	}
 
-	entitySchema, err := jsonSchema(root, "#EntityBlob", revision)
-	if err != nil {
-		return nil, err
+	typescriptSchemas := make(map[string][]byte, len(artifactDefinitions))
+	for _, definition := range artifactDefinitions {
+		schema, err := schemaDocumentForDefinition(bundle, definition, revision)
+		if err != nil {
+			return nil, err
+		}
+		typescriptSchemas[definition] = schema
 	}
-	telemetrySchema, err := jsonSchema(root, "#TelemetryComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	geometrySchema, err := jsonSchema(root, "#GeometryComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	taskCatalogSchema, err := jsonSchema(root, "#TaskCatalogComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	mediaRefsSchema, err := jsonSchema(root, "#MediaRefsComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	milViewSchema, err := jsonSchema(root, "#MilViewComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	healthSchema, err := jsonSchema(root, "#HealthComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	sensorRefsSchema, err := jsonSchema(root, "#SensorRefsComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	communicationsSchema, err := jsonSchema(root, "#CommunicationsComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	taskQueueSchema, err := jsonSchema(root, "#TaskQueueComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	statusSchema, err := jsonSchema(root, "#StatusComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	heartbeatSchema, err := jsonSchema(root, "#HeartbeatComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	componentSchemas := [][]byte{
-		telemetrySchema,
-		geometrySchema,
-		taskCatalogSchema,
-		mediaRefsSchema,
-		milViewSchema,
-		healthSchema,
-		sensorRefsSchema,
-		communicationsSchema,
-		taskQueueSchema,
-		statusSchema,
-		heartbeatSchema,
-	}
-	entitySchema, err = hydrateEntityComponentDefs(
-		entitySchema,
-		componentSchemas...,
-	)
-	if err != nil {
-		return nil, err
-	}
-	taskSchema, err := jsonSchema(root, "#TaskBlob", revision)
-	if err != nil {
-		return nil, err
-	}
-	commandSchema, err := jsonSchema(root, "#CommandComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	taskParametersSchema, err := jsonSchema(root, "#TaskParametersComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	taskProgressSchema, err := jsonSchema(root, "#TaskProgressComponent", revision)
-	if err != nil {
-		return nil, err
-	}
-	objectSchema, err := jsonSchema(root, "#ObjectBlob", revision)
-	if err != nil {
-		return nil, err
-	}
-	objectReferenceSchema, err := jsonSchema(root, "#ObjectReference", revision)
-	if err != nil {
-		return nil, err
-	}
-	metadataBlockSchema, err := jsonSchema(root, "#MetadataBlock", revision)
-	if err != nil {
-		return nil, err
-	}
-	entityResourceSchema, err := jsonSchema(root, "#EntityResource", revision)
-	if err != nil {
-		return nil, err
-	}
-	entityResourceSchema, err = hydrateEntityComponentDefs(entityResourceSchema, componentSchemas...)
-	if err != nil {
-		return nil, err
-	}
-	taskResourceSchema, err := jsonSchema(root, "#TaskResource", revision)
-	if err != nil {
-		return nil, err
-	}
-	objectResourceSchema, err := jsonSchema(root, "#ObjectResource", revision)
-	if err != nil {
-		return nil, err
-	}
-	feedEventSchema, err := jsonSchema(root, "#FeedEvent", revision)
-	if err != nil {
-		return nil, err
-	}
-	feedEventSchema, err = hydrateEntityComponentDefs(feedEventSchema, componentSchemas...)
-	if err != nil {
-		return nil, err
-	}
-	feedAuthMessageSchema, err := jsonSchema(root, "#FeedAuthMessage", revision)
-	if err != nil {
-		return nil, err
-	}
-	feedSubscribeMessageSchema, err := jsonSchema(root, "#FeedSubscribeMessage", revision)
-	if err != nil {
-		return nil, err
-	}
-	feedUnsubscribeMessageSchema, err := jsonSchema(root, "#FeedUnsubscribeMessage", revision)
-	if err != nil {
-		return nil, err
-	}
-	feedClientMessageSchema, err := jsonSchema(root, "#FeedClientMessage", revision)
-	if err != nil {
-		return nil, err
-	}
-	feedHandshakeMessageSchema, err := jsonSchema(root, "#FeedHandshakeMessage", revision)
-	if err != nil {
-		return nil, err
-	}
-	errorResponseSchema, err := jsonSchema(root, "#ErrorResponse", revision)
-	if err != nil {
-		return nil, err
-	}
-	entityCreateRequestSchema, err := jsonSchema(root, "#EntityCreateRequest", revision)
-	if err != nil {
-		return nil, err
-	}
-	entityUpdateRequestSchema, err := jsonSchema(root, "#EntityUpdateRequest", revision)
-	if err != nil {
-		return nil, err
-	}
-	objectCreateRequestSchema, err := jsonSchema(root, "#ObjectCreateRequest", revision)
-	if err != nil {
-		return nil, err
-	}
-	objectUpdateRequestSchema, err := jsonSchema(root, "#ObjectUpdateRequest", revision)
-	if err != nil {
-		return nil, err
-	}
-	taskCreateRequestSchema, err := jsonSchema(root, "#TaskCreateRequest", revision)
-	if err != nil {
-		return nil, err
-	}
-	taskUpdateRequestSchema, err := jsonSchema(root, "#TaskUpdateRequest", revision)
-	if err != nil {
-		return nil, err
-	}
-	typescriptSource, err := typeScriptSource(revision, map[string][]byte{
-		"EntityBlob":             entitySchema,
-		"TaskBlob":               taskSchema,
-		"ObjectBlob":             objectSchema,
-		"ErrorResponse":          errorResponseSchema,
-		"EntityCreateRequest":    entityCreateRequestSchema,
-		"EntityUpdateRequest":    entityUpdateRequestSchema,
-		"EntityResource":         entityResourceSchema,
-		"FeedEvent":              feedEventSchema,
-		"FeedAuthMessage":        feedAuthMessageSchema,
-		"FeedSubscribeMessage":   feedSubscribeMessageSchema,
-		"FeedUnsubscribeMessage": feedUnsubscribeMessageSchema,
-		"FeedClientMessage":      feedClientMessageSchema,
-		"FeedHandshakeMessage":   feedHandshakeMessageSchema,
-		"ObjectCreateRequest":    objectCreateRequestSchema,
-		"ObjectUpdateRequest":    objectUpdateRequestSchema,
-		"ObjectResource":         objectResourceSchema,
-		"TaskCreateRequest":      taskCreateRequestSchema,
-		"TaskUpdateRequest":      taskUpdateRequestSchema,
-		"TaskResource":           taskResourceSchema,
-	})
+	typescriptSource, err := typeScriptSource(revision, typescriptSchemas)
 	if err != nil {
 		return nil, err
 	}
@@ -234,47 +94,13 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	artifacts := []Artifact{
 		{Path: "generated/revision.txt", Content: revisionTextSource(revision)},
 		{Path: "generated/go/atlasprotocol/revision.go", Content: goRevision},
 		{Path: "generated/go/atlasprotocol/types.go", Content: goTypes},
 		{Path: "generated/go/atlasprotocol/validators.go", Content: goValidators},
 		{Path: "generated/typescript/index.ts", Content: typescriptSource},
-		{Path: "generated/jsonschema/entity.schema.json", Content: entitySchema},
-		{Path: "generated/jsonschema/error/response.schema.json", Content: errorResponseSchema},
-		{Path: "generated/jsonschema/task.schema.json", Content: taskSchema},
-		{Path: "generated/jsonschema/object.schema.json", Content: objectSchema},
-		{Path: "generated/jsonschema/feed/client-message.schema.json", Content: feedClientMessageSchema},
-		{Path: "generated/jsonschema/feed/event.schema.json", Content: feedEventSchema},
-		{Path: "generated/jsonschema/feed/handshake-message.schema.json", Content: feedHandshakeMessageSchema},
-		{Path: "generated/jsonschema/feed/auth-message.schema.json", Content: feedAuthMessageSchema},
-		{Path: "generated/jsonschema/feed/subscribe-message.schema.json", Content: feedSubscribeMessageSchema},
-		{Path: "generated/jsonschema/feed/unsubscribe-message.schema.json", Content: feedUnsubscribeMessageSchema},
-		{Path: "generated/jsonschema/resources/entity-resource.schema.json", Content: entityResourceSchema},
-		{Path: "generated/jsonschema/resources/metadata-block.schema.json", Content: metadataBlockSchema},
-		{Path: "generated/jsonschema/resources/object-resource.schema.json", Content: objectResourceSchema},
-		{Path: "generated/jsonschema/resources/task-resource.schema.json", Content: taskResourceSchema},
-		{Path: "generated/jsonschema/components/telemetry.schema.json", Content: telemetrySchema},
-		{Path: "generated/jsonschema/components/geometry.schema.json", Content: geometrySchema},
-		{Path: "generated/jsonschema/components/task-catalog.schema.json", Content: taskCatalogSchema},
-		{Path: "generated/jsonschema/components/media-refs.schema.json", Content: mediaRefsSchema},
-		{Path: "generated/jsonschema/components/mil-view.schema.json", Content: milViewSchema},
-		{Path: "generated/jsonschema/components/health.schema.json", Content: healthSchema},
-		{Path: "generated/jsonschema/components/sensor-refs.schema.json", Content: sensorRefsSchema},
-		{Path: "generated/jsonschema/components/communications.schema.json", Content: communicationsSchema},
-		{Path: "generated/jsonschema/components/task-queue.schema.json", Content: taskQueueSchema},
-		{Path: "generated/jsonschema/components/status.schema.json", Content: statusSchema},
-		{Path: "generated/jsonschema/components/heartbeat.schema.json", Content: heartbeatSchema},
-		{Path: "generated/jsonschema/components/command.schema.json", Content: commandSchema},
-		{Path: "generated/jsonschema/components/task-parameters.schema.json", Content: taskParametersSchema},
-		{Path: "generated/jsonschema/components/task-progress.schema.json", Content: taskProgressSchema},
-		{Path: "generated/jsonschema/components/object-reference.schema.json", Content: objectReferenceSchema},
-		{Path: "generated/jsonschema/requests/entity-create.schema.json", Content: entityCreateRequestSchema},
-		{Path: "generated/jsonschema/requests/entity-update.schema.json", Content: entityUpdateRequestSchema},
-		{Path: "generated/jsonschema/requests/object-create.schema.json", Content: objectCreateRequestSchema},
-		{Path: "generated/jsonschema/requests/object-update.schema.json", Content: objectUpdateRequestSchema},
-		{Path: "generated/jsonschema/requests/task-create.schema.json", Content: taskCreateRequestSchema},
-		{Path: "generated/jsonschema/requests/task-update.schema.json", Content: taskUpdateRequestSchema},
 	}
 	sort.Slice(artifacts, func(i, j int) bool {
 		return artifacts[i].Path < artifacts[j].Path
@@ -282,9 +108,25 @@ func BuildArtifacts(root string, meta Meta) ([]Artifact, error) {
 	return artifacts, nil
 }
 
-func validateEntityComponentSchemaKeys(metaKeys []string) error {
+func validateEntityComponentSchemaKeys(bundle schemaBundle) error {
+	defs, err := schemaDefs(bundle)
+	if err != nil {
+		return err
+	}
+	entityComponents, ok := defs["EntityComponents"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("EntityComponents schema definition not found")
+	}
+	properties, ok := entityComponents["properties"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("EntityComponents schema has no properties")
+	}
+
 	expected := stringSet(entityComponentSchemaKeys)
-	actual := stringSet(metaKeys)
+	actual := make(map[string]bool, len(properties))
+	for key := range properties {
+		actual[key] = true
+	}
 
 	var missing []string
 	for key := range actual {
@@ -306,7 +148,7 @@ func validateEntityComponentSchemaKeys(metaKeys []string) error {
 
 	sort.Strings(missing)
 	sort.Strings(stale)
-	return fmt.Errorf("entity component schema manifest mismatch: CUE keys missing from entityComponentSchemaKeys: %v; entityComponentSchemaKeys entries missing from CUE: %v", missing, stale)
+	return fmt.Errorf("entity component schema manifest mismatch: schema keys missing from entityComponentSchemaKeys: %v; entityComponentSchemaKeys entries missing from schema: %v", missing, stale)
 }
 
 func stringSet(values []string) map[string]bool {

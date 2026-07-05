@@ -2,133 +2,164 @@ package artifacts
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
 
-const cueVersion = "v0.17.0"
-const cueCommandTimeout = 2 * time.Minute
+const (
+	schemaBundlePath     = "schema/jsonschema/atlas.schema.json"
+	schemaBundleLocation = "atlas.schema.json"
+)
 
-func ValidateExamples(root string) error {
-	if err := validateExampleSet(root, "entities", "#EntityBlob"); err != nil {
-		return err
-	}
-	if err := validateExampleSet(root, "tasks", "#TaskBlob"); err != nil {
-		return err
-	}
-	if err := validateExampleSet(root, "objects", "#ObjectBlob"); err != nil {
-		return err
-	}
-	if err := validateExampleSet(root, "errors", "#ErrorResponse"); err != nil {
-		return err
-	}
-	if err := validateExampleSet(root, "feed/events", "#FeedEvent"); err != nil {
-		return err
-	}
-	if err := validateExampleSet(root, "feed/messages", "#FeedClientMessage"); err != nil {
-		return err
-	}
-	return validateExampleSet(root, "feed/server", "#FeedHandshakeMessage")
+type schemaBundle map[string]any
+
+var exampleSets = []struct {
+	pattern    string
+	definition string
+}{
+	{pattern: "entities/*.json", definition: "EntityBlob"},
+	{pattern: "tasks/*.json", definition: "TaskBlob"},
+	{pattern: "objects/*.json", definition: "ObjectBlob"},
+	{pattern: "errors/*.json", definition: "ErrorResponse"},
+	{pattern: "feed/events/*.json", definition: "FeedEvent"},
+	{pattern: "feed/messages/*.json", definition: "FeedClientMessage"},
+	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage"},
+	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest"},
+	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest"},
+	{pattern: "requests/task-create.json", definition: "TaskCreateRequest"},
+	{pattern: "requests/task-update.json", definition: "TaskUpdateRequest"},
+	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest"},
+	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest"},
 }
 
-func validateExampleSet(root, name, schema string) error {
-	examples, err := filepath.Glob(filepath.Join(root, "examples", name, "*.json"))
+var exampleValidators = map[string]func(any) []string{
+	"EntityBlob":           protocolvalidator.ValidateEntityBlob,
+	"TaskBlob":             protocolvalidator.ValidateTaskBlob,
+	"ObjectBlob":           protocolvalidator.ValidateObjectBlob,
+	"ErrorResponse":        protocolvalidator.ValidateErrorResponse,
+	"FeedEvent":            protocolvalidator.ValidateFeedEvent,
+	"FeedClientMessage":    protocolvalidator.ValidateFeedClientMessage,
+	"FeedHandshakeMessage": protocolvalidator.ValidateFeedHandshakeMessage,
+	"EntityCreateRequest":  protocolvalidator.ValidateEntityCreateRequest,
+	"EntityUpdateRequest":  protocolvalidator.ValidateEntityUpdateRequest,
+	"TaskCreateRequest":    protocolvalidator.ValidateTaskCreateRequest,
+	"TaskUpdateRequest":    protocolvalidator.ValidateTaskUpdateRequest,
+	"ObjectCreateRequest":  protocolvalidator.ValidateObjectCreateRequest,
+	"ObjectUpdateRequest":  protocolvalidator.ValidateObjectUpdateRequest,
+}
+
+func ValidateExamples(root string) error {
+	bundle, err := LoadSchemaBundle(root)
+	if err != nil {
+		return err
+	}
+	compiler, err := schemaCompiler(bundle)
+	if err != nil {
+		return err
+	}
+
+	for _, set := range exampleSets {
+		if err := validateExampleSet(root, compiler, set.pattern, set.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExampleSet(root string, compiler *jsonschema.Compiler, pattern, definition string) error {
+	schema, err := compiler.Compile(schemaDefinitionLocation(definition))
+	if err != nil {
+		return fmt.Errorf("compile %s: %w", definition, err)
+	}
+	if !strings.ContainsAny(pattern, "*?[") && filepath.Ext(pattern) == "" {
+		pattern = filepath.Join(pattern, "*.json")
+	}
+	examples, err := filepath.Glob(filepath.Join(root, "examples", pattern))
 	if err != nil {
 		return err
 	}
 	if len(examples) == 0 {
-		return fmt.Errorf("no %s examples found", name)
+		return fmt.Errorf("no %s examples found", pattern)
 	}
 	sort.Strings(examples)
 
-	args := []string{"vet", "./schema"}
 	for _, example := range examples {
-		rel, err := filepath.Rel(root, example)
+		data, err := os.ReadFile(example)
 		if err != nil {
 			return err
 		}
-		args = append(args, filepath.ToSlash(rel))
-	}
-	args = append(args, "-d", schema)
-	if _, err := runCue(root, args...); err == nil {
-		return nil
-	} else {
-		var validationErrors []error
-		for _, example := range examples {
-			rel, relErr := filepath.Rel(root, example)
-			if relErr != nil {
-				return relErr
-			}
-			displayPath := filepath.ToSlash(rel)
-			fileArgs := []string{"vet", "./schema", displayPath, "-d", schema}
-			if _, fileErr := runCue(root, fileArgs...); fileErr != nil {
-				validationErrors = append(validationErrors, fmt.Errorf("%s: %w", displayPath, fileErr))
+		value, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("%s: decode JSON: %w", displayPath(root, example), err)
+		}
+		if err := schema.Validate(value); err != nil {
+			return fmt.Errorf("%s: validate %s: %w", displayPath(root, example), definition, err)
+		}
+		if validate, ok := exampleValidators[definition]; ok {
+			if errors := validate(value); len(errors) > 0 {
+				return fmt.Errorf("%s: validate %s semantics: %s", displayPath(root, example), definition, strings.Join(errors, "; "))
 			}
 		}
-		if len(validationErrors) == 0 {
-			return err
-		}
-		return errors.Join(validationErrors...)
 	}
+	return nil
 }
 
-func LoadMeta(root string) (Meta, error) {
-	out, err := runCue(root, "export", "./schema", "-e", "#Meta")
-	if err != nil {
-		return Meta{}, err
-	}
-
-	var meta Meta
-	if err := json.Unmarshal(out, &meta); err != nil {
-		return Meta{}, err
-	}
-	if len(meta.EntityComponentKeys) == 0 {
-		return Meta{}, fmt.Errorf("protocol metadata has no entity component keys")
-	}
-	if len(meta.TaskComponentKeys) == 0 {
-		return Meta{}, fmt.Errorf("protocol metadata has no task component keys")
-	}
-	if meta.MaxGeometryPositions < 1 {
-		return Meta{}, fmt.Errorf("protocol metadata has invalid maxGeometryPositions: %d", meta.MaxGeometryPositions)
-	}
-	return meta, nil
-}
-
-func jsonSchema(root, expr, revision string) ([]byte, error) {
-	args := []string{"def", "./schema", "--out=jsonschema", "-e", expr}
-	out, err := runCue(root, args...)
+func LoadSchemaBundle(root string) (schemaBundle, error) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(schemaBundlePath)))
 	if err != nil {
 		return nil, err
 	}
-	schema, err := markGeneratedJSONSchema(out, revision)
+	var bundle schemaBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", schemaBundlePath, err)
+	}
+	if _, err := schemaDefs(bundle); err != nil {
+		return nil, err
+	}
+	return bundle, nil
+}
+
+func schemaCompiler(bundle schemaBundle) (*jsonschema.Compiler, error) {
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.AssertFormat()
+	if err := compiler.AddResource(schemaBundleLocation, map[string]any(bundle)); err != nil {
+		return nil, fmt.Errorf("add schema bundle: %w", err)
+	}
+	if _, err := compiler.Compile(schemaBundleLocation); err != nil {
+		return nil, fmt.Errorf("compile schema bundle: %w", err)
+	}
+	return compiler, nil
+}
+
+func schemaDocumentForDefinition(bundle schemaBundle, definition, revision string) ([]byte, error) {
+	revision, err := validateProtocolRevision(revision)
 	if err != nil {
 		return nil, err
 	}
-	if isUpdateRequestExpr(expr) {
-		return markRootMinProperties(schema)
-	}
-	return schema, nil
-}
-
-func isUpdateRequestExpr(expr string) bool {
-	return strings.HasSuffix(strings.TrimPrefix(expr, "#"), "UpdateRequest")
-}
-
-func markRootMinProperties(schema []byte) ([]byte, error) {
-	var root map[string]any
-	if err := json.Unmarshal(schema, &root); err != nil {
+	defs, err := schemaDefs(bundle)
+	if err != nil {
 		return nil, err
 	}
-	if schemaType(root) == "object" {
-		root["minProperties"] = float64(1)
+	raw, exists := defs[definition]
+	if !exists {
+		return nil, fmt.Errorf("schema definition %s not found", definition)
 	}
+	root, ok := cloneJSONValue(raw).(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("schema definition %s is not an object", definition)
+	}
+	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+	root["$defs"] = cloneJSONValue(defs)
+	root["x-atlas-protocol-revision"] = revision
+
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, err
@@ -136,20 +167,41 @@ func markRootMinProperties(schema []byte) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-func runCue(root string, args ...string) ([]byte, error) {
-	goArgs := append([]string{"run", "cuelang.org/go/cmd/cue@" + cueVersion}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), cueCommandTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "go", goArgs...)
-	cmd.Dir = root
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil {
-		return nil, fmt.Errorf("cue %s failed: %w\n%s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+func schemaDefs(bundle schemaBundle) (map[string]any, error) {
+	defs, ok := bundle["$defs"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s has no $defs object", schemaBundlePath)
 	}
-	return stdout.Bytes(), nil
+	return defs, nil
+}
+
+func schemaDefinitionLocation(definition string) string {
+	return schemaBundleLocation + "#/$defs/" + definition
+}
+
+func displayPath(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return filepath.ToSlash(rel)
+}
+
+func cloneJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			out[key] = cloneJSONValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = cloneJSONValue(child)
+		}
+		return out
+	default:
+		return typed
+	}
 }
