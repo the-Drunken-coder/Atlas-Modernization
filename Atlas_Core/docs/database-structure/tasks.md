@@ -9,7 +9,6 @@ Implementation references:
 
 - `internal/models/models.go`
 - `internal/actions/task_actions.go`
-- `internal/actions/task_components.go`
 - `internal/actions/component_validation.go`
 
 ## Table Columns
@@ -107,8 +106,8 @@ Sending the current status again is treated as a no-op status transition.
 | `/tasks/{task_id}` | `PATCH` | Merge task update |
 | `/tasks/{task_id}` | `DELETE` | Delete task |
 | `/tasks/{task_id}/acknowledge` | `POST` | Set status to `acknowledged` |
-| `/tasks/{task_id}/complete` | `POST` | Set status to `completed`; optional `result` in request `extra` |
-| `/tasks/{task_id}/fail` | `POST` | Set status to `failed`; optional `error` in request `extra` |
+| `/tasks/{task_id}/complete` | `POST` | Set status to `completed`; optional top-level `result` request field is stored in task `extra.result` |
+| `/tasks/{task_id}/fail` | `POST` | Set status to `failed`; optional top-level `error` request field is stored in task `extra.error` |
 | `/tasks/{task_id}/status` | `POST` | Update status; optional `progress` (percent, 0–100; clamped) → `components.progress.percent`; optional `message` → `components.status_message` |
 | `/entities/{entity_id}/tasks` | `GET` | List tasks for entity (paginated) |
 

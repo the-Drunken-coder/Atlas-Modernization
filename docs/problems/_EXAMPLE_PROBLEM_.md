@@ -1,6 +1,6 @@
 # Problem Template
 
-Each entry under `docs/problems/` is a short-lived note for agent-to-agent reference, spanning any Atlas package (Atlas Core, Atlas Protocol, Atlas SDK, …) — most are resolved in minutes; none should live longer than a day or two. Use this template to keep the format consistent:
+Each active entry under `docs/problems/` is a short-lived note for agent-to-agent reference, spanning any Atlas package (Atlas Core, Atlas Protocol, Atlas SDK, …). Most are resolved in minutes, and active blockers should be closed out or moved to durable docs within a day or two. Use this template to keep the format consistent:
 
 1. **Time & Date:** [UTC timestamp or local time zone timestamp]
 2. **Name:** [One-line summary identifier]
@@ -15,7 +15,7 @@ Each entry under `docs/problems/` is a short-lived note for agent-to-agent refer
 ## What belongs here
 
 - Problems hit while building, testing, or debugging — logged so the next agent session can pick up context quickly.
-- Resolved or abandoned problems can stay in place as reference; no status tracking needed.
+- Resolved or abandoned problems can stay in place as reference after they are clearly no longer active; no status tracker is required.
 
 ### What does not belong here
 
@@ -38,11 +38,11 @@ Each entry under `docs/problems/` is a short-lived note for agent-to-agent refer
 3. **Issue:** Second page of `GET /queries/changed-since` omits entities when cursors are not forwarded
 4. **Severity:** S2 (Major)
 5. **Location:** `Atlas_Core/internal/api/handlers/handler_query.go`, `Atlas_Core/internal/actions/query_actions.go`
-6. **Expected:** `GET /queries/changed-since` returns entities changed after `since` with stable cursor continuation
+6. **Expected:** `GET /queries/changed-since` returns entities changed after `since_version` with stable cursor continuation
 7. **Actual:** Second page omits entities when cursor params are not passed through from `next_entity_cursor`
 8. **Reproduction:**
    1. Seed several entities with staggered `updated_at`
-   2. Call `GET /queries/changed-since?since=...&entity_limit=1`
+   2. Call `GET /queries/changed-since?since_version=...&limit_per_type=1`
    3. Request the next page without `entity_cursor` from the first response body
 9. **Notes:** See `Atlas_Core/docs/PAGINATION.md`; compare handler validation vs `query_actions.go` cursor assembly.
 
