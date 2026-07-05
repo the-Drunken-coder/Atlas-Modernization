@@ -422,6 +422,7 @@ export function App() {
                 type="button"
                 key={scenario.id}
                 aria-pressed={scenario.id === selectedId}
+                aria-label={`${scenario.name} ${scenario.summary}`}
                 onClick={() => selectScenario(scenario.id)}
               >
                 <span>{scenario.name}</span>
