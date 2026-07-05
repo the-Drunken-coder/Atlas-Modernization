@@ -2,5 +2,5 @@
 
 package atlasprotocol
 
-// ProtocolRevision identifies the protocol CUE source used to generate this package.
-const ProtocolRevision = "sha256:fb8871f9e562d81888830090f3420ec76f7c042facaef9d48fdff99cf22263d7"
+// ProtocolRevision identifies the protocol JSON Schema source used to generate this package.
+const ProtocolRevision = "sha256:2f3d403cfa329a7a93e3d463da0fc94a5ae042896ee464c72a9eb40423d92d9f"

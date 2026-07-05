@@ -1,0 +1,9 @@
+{
+  "content_type": "application/json",
+  "usage_hints": ["command_catalog"],
+  "referenced_by": [
+    {
+      "entity_id": "asset-001"
+    }
+  ]
+}

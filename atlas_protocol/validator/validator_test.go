@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
-
-	"cuelang.org/go/cue/cuecontext"
 )
 
 func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
@@ -75,46 +74,6 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 	}
 }
 
-func TestConcreteFieldsFromValueExcludesPatternConstraints(t *testing.T) {
-	value := cuecontext.New().CompileString(`{
-		known: int
-		[=~"^custom_"]: int
-	}`)
-	if err := value.Err(); err != nil {
-		t.Fatalf("compile CUE value: %v", err)
-	}
-
-	concreteFields, err := concreteFieldsFromValue(value, "test")
-	if err != nil {
-		t.Fatalf("concreteFieldsFromValue() error = %v", err)
-	}
-	for field := range concreteFields {
-		if strings.HasPrefix(field, "[") {
-			t.Fatalf("concreteFieldsFromValue returned pattern constraint label %q", field)
-		}
-	}
-	if _, ok := concreteFields["known"]; !ok {
-		t.Fatalf("concreteFieldsFromValue missing concrete field known: %v", concreteFields)
-	}
-}
-
-func TestConcreteFieldsFromValueIncludesQuotedBracketLabels(t *testing.T) {
-	value := cuecontext.New().CompileString(`{
-		"[quoted]": int
-	}`)
-	if err := value.Err(); err != nil {
-		t.Fatalf("compile CUE value: %v", err)
-	}
-
-	concreteFields, err := concreteFieldsFromValue(value, "test")
-	if err != nil {
-		t.Fatalf("concreteFieldsFromValue() error = %v", err)
-	}
-	if _, ok := concreteFields["[quoted]"]; !ok {
-		t.Fatalf("concreteFieldsFromValue missing quoted bracket label: %v", concreteFields)
-	}
-}
-
 func TestNonFinitePaths(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -158,6 +117,15 @@ func TestNonFinitePaths(t *testing.T) {
 			validate: ValidateTelemetryComponent,
 			value:    map[string]any{"latitude": float32(math.NaN())},
 			want:     "latitude: must be finite",
+		},
+		{
+			name:     "typed float slice",
+			validate: ValidateGeometryComponent,
+			value: map[string]any{
+				"type":        "Point",
+				"coordinates": []float64{math.Inf(1), 40.0},
+			},
+			want: "coordinates[0]: must be finite",
 		},
 	}
 
@@ -225,6 +193,17 @@ func TestMultipleViolationsAreSorted(t *testing.T) {
 	assertAnyContains(t, errors, "longitude")
 }
 
+func TestObjectBlobAcceptsTypedUsageHints(t *testing.T) {
+	blob := map[string]any{
+		"bucket":      "atlas-media",
+		"size_bytes":  int64(7966),
+		"usage_hints": []string{"command_catalog"},
+	}
+	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
+		t.Fatalf("ValidateObjectBlob(typed usage_hints) errors = %v", errors)
+	}
+}
+
 func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
 	blob := map[string]any{
 		"bucket":     "atlas-media",
@@ -266,6 +245,91 @@ func TestRawJSONRejectsTrailingValues(t *testing.T) {
 	}
 }
 
+func TestRequestExamplesValidate(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		validate func(any) []string
+	}{
+		{"entity_create", "../examples/requests/entity-create.json", ValidateEntityCreateRequest},
+		{"entity_update", "../examples/requests/entity-update.json", ValidateEntityUpdateRequest},
+		{"task_create", "../examples/requests/task-create.json", ValidateTaskCreateRequest},
+		{"task_update", "../examples/requests/task-update.json", ValidateTaskUpdateRequest},
+		{"object_create", "../examples/requests/object-create.json", ValidateObjectCreateRequest},
+		{"object_update", "../examples/requests/object-update.json", ValidateObjectUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if errors := tt.validate(readJSONExample(t, tt.path)); len(errors) > 0 {
+				t.Fatalf("%s validation errors = %v", tt.path, errors)
+			}
+		})
+	}
+}
+
+func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		validate func(any) []string
+	}{
+		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", ValidateEntityUpdateRequest},
+		{"task_update_empty", "../examples/requests/invalid-task-update-empty.json", ValidateTaskUpdateRequest},
+		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", ValidateObjectUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.validate(readJSONExample(t, tt.path))
+			assertAnyContains(t, errors, "minProperties")
+		})
+	}
+
+	errors := ValidateTaskCreateRequest(json.RawMessage(`{"task_id":"task-unknown","unknown":true}`))
+	assertAnyContains(t, errors, "unknown")
+}
+
+func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		validate func(any) []string
+	}{
+		{"entity_create", `{"entity_id":"asset-unknown","entity_type":"asset","components":{"typo":true}}`, ValidateEntityCreateRequest},
+		{"entity_update", `{"components":{"typo":true}}`, ValidateEntityUpdateRequest},
+		{"task_create", `{"task_id":"task-unknown","components":{"typo":true}}`, ValidateTaskCreateRequest},
+		{"task_update", `{"components":{"typo":true}}`, ValidateTaskUpdateRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := tt.validate(json.RawMessage(tt.payload))
+			assertAnyContains(t, errors, "Unknown component 'typo'")
+		})
+	}
+}
+
+func TestTaskCreateRequestCommandTaskIDRules(t *testing.T) {
+	validCommand := json.RawMessage(`{"entity_id":"asset-command","components":{"command":{"type":"goto"},"parameters":{"latitude":38,"longitude":-77}}}`)
+	if errors := ValidateTaskCreateRequest(validCommand); len(errors) > 0 {
+		t.Fatalf("ValidateTaskCreateRequest(command without task_id) errors = %v", errors)
+	}
+
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"normal_task_requires_task_id", `{"status":"pending"}`, "task_id"},
+		{"command_task_rejects_task_id", `{"task_id":"task-command","entity_id":"asset-command","components":{"command":{"type":"goto"}}}`, "task_id"},
+		{"command_task_requires_entity_id", `{"components":{"command":{"type":"goto"}}}`, "entity_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errors := ValidateTaskCreateRequest(json.RawMessage(tt.payload))
+			assertAnyContains(t, errors, tt.want)
+		})
+	}
+}
+
 func TestUnencodableInputReturnsError(t *testing.T) {
 	values := []any{
 		map[string]any{"latitude": make(chan int)},
@@ -277,11 +341,24 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 			if len(errors) != 1 {
 				t.Fatalf("errors = %v, want exactly one", errors)
 			}
-			if !strings.Contains(errors[0], "input cannot be encoded as CUE") {
+			if !strings.Contains(errors[0], "input cannot be encoded as JSON") {
 				t.Fatalf("errors[0] = %q, want encoding failure message", errors[0])
 			}
 		})
 	}
+}
+
+func readJSONExample(t *testing.T, path string) json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return json.RawMessage(data)
 }
 
 func assertAnyContains(t *testing.T, errors []string, want string) {

@@ -518,6 +518,38 @@ describe("AtlasClient sync", () => {
     });
   });
 
+  it("sends unsubscribe frames and stops delivering removed watch callbacks", async () => {
+    const core = new FakeCore();
+    const filter = { filter: "type", resource_type: "task" } as const;
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "selective",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    await client.subscribe(filter);
+    const watch = vi.fn();
+    const removeWatch = client.watch(filter, watch);
+    await client.connectFeed();
+    const socket = Array.from(core.sockets)[0];
+
+    const first = core.upsertTask(task("task-unsubscribe-before", "asset-1"));
+    core.emit({ event: "create", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first }, { record: false });
+    await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+
+    await client.unsubscribe(filter);
+    removeWatch();
+
+    expect(client.sync.status().subscriptions).toEqual([]);
+    expect(socket.sentMessages).toContainEqual({ action: "unsubscribe", filter: "type", resource_type: "task" });
+    const second = core.upsertTask(task("task-unsubscribe-after", "asset-1"));
+    core.emit({ event: "create", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second }, { record: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(watch).toHaveBeenCalledTimes(1);
+  });
+
   it("caches object content by object version with an LRU cap", async () => {
     const core = new FakeCore();
     core.upsertObject(object("object-1"));

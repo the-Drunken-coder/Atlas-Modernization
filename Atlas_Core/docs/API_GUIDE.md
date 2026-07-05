@@ -8,7 +8,7 @@ This is the quick-reference guide for calling the Atlas Core HTTP API. The defau
 http://localhost:8000
 ```
 
-The canonical resource and wire schemas are generated from Atlas Protocol. Use this guide for route behavior, then use `../../atlas_protocol/examples/` and `../../atlas_protocol/generated/jsonschema/` for exact payload examples and schema details.
+The canonical resource and wire schemas live in Atlas Protocol. Use this guide for route behavior, then use `../../atlas_protocol/examples/` and `../../atlas_protocol/schema/jsonschema/atlas.schema.json` for exact payload examples and schema details.
 
 Atlas Core treats resource tables and the configured MinIO bucket as disposable runtime scratch storage. With the default startup path, the service drops and recreates resource tables and clears the configured bucket, so operators should not treat resource rows or blobs as durable systems of record. `admin_records` is preserved for operator credentials and managed API key metadata.
 

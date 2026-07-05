@@ -145,7 +145,10 @@ function packedTarballName(packOutput) {
 }
 
 async function withFakeCore(callback) {
+  const seenApiKeys = [];
   const server = createServer(async (req, res) => {
+    const apiKey = req.headers["x-api-key"];
+    seenApiKeys.push(Array.isArray(apiKey) ? apiKey.join(",") : apiKey ?? null);
     if (req.method === "GET" && req.url === "/protocol/revision") {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ protocol_revision: protocolRevision }));
@@ -186,7 +189,7 @@ async function withFakeCore(callback) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();
-    await callback(`http://127.0.0.1:${address.port}`);
+    await callback(`http://127.0.0.1:${address.port}`, seenApiKeys);
   } finally {
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
@@ -200,6 +203,13 @@ try {
   mkdirSync(projectDir);
   runStep(`Failed to initialize smoke project at ${projectDir}`, () => run("npm", ["init", "-y", "--silent"], { cwd: projectDir }));
   runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () => run("npm", ["install", tarball, "--silent"], { cwd: projectDir }));
+  const adminImportOutput = runCombined("node", ["--input-type=module", "-e", "import('@the-drunken-coder/atlas-sdk/admin').then((m) => console.log(typeof m.AtlasAdminClient))"], {
+    cwd: projectDir
+  });
+  if (!adminImportOutput.includes("function")) {
+    process.stderr.write(adminImportOutput);
+    throw new Error("installed package did not expose ./admin AtlasAdminClient through package exports");
+  }
 
   const helpOutput = runCombined("npx", ["--no-install", "atlas", "--help"], { cwd: projectDir });
   if (!/usage: atlas/i.test(helpOutput)) {
@@ -207,11 +217,13 @@ try {
     throw new Error("installed atlas binary did not print usage");
   }
 
-  await withFakeCore(async (baseUrl) => {
+  await withFakeCore(async (baseUrl, seenApiKeys) => {
     const task = {
       task_id: "smoke-task"
     };
-    const output = await runCombinedAsync("npx", ["--no-install", "atlas", "--base-url", baseUrl, "tasks", "create", JSON.stringify(task)], { cwd: projectDir });
+    const output = await runCombinedAsync("npx", ["--no-install", "atlas", "--base-url", baseUrl, "--api-key", "smoke-key", "tasks", "create", JSON.stringify(task)], {
+      cwd: projectDir
+    });
     if (!output.includes('"task_id":"smoke-task"')) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not run tasks create successfully");
@@ -219,6 +231,9 @@ try {
     if (!output.includes('"status":"pending"') || !output.includes('"entity_id":null') || !output.includes('"components":{}')) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not print Core task create defaults");
+    }
+    if (!seenApiKeys.includes("smoke-key")) {
+      throw new Error("installed atlas binary did not send --api-key as X-API-Key");
     }
   });
 

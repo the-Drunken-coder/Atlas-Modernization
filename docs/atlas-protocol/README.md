@@ -4,9 +4,9 @@ Atlas Protocol is the reusable contract layer for Atlas data. The buildable modu
 
 ## Current Shape
 
-- CUE in `atlas_protocol/schema/` is the source of truth.
-- Checked-in examples validate against the CUE source.
-- Generated JSON Schema, Go types/validators, TypeScript types, and a protocol revision stamp live under `atlas_protocol/generated/`.
+- JSON Schema in `atlas_protocol/schema/jsonschema/atlas.schema.json` is the source of truth.
+- Checked-in examples validate against the JSON Schema source.
+- Generated Go types/validators, TypeScript types, and a protocol revision stamp live under `atlas_protocol/generated/`.
 - Atlas Core consumes generated protocol artifacts; it does not own or duplicate the protocol source.
 - The Atlas SDK imports generated TypeScript directly so SDK, Core, and protocol artifacts move in lockstep.
 
@@ -36,7 +36,7 @@ If protocol code starts importing a database driver, defining route behavior, or
 
 This repo is still greenfield. Prefer full protocol replacement over compatibility shims:
 
-1. Update the CUE source.
+1. Update the JSON Schema source.
 2. Regenerate artifacts.
 3. Update consumers.
 4. Rebuild and test.
@@ -54,7 +54,7 @@ go run ./tools/check
 go test ./...
 ```
 
-Generated files are checked in and marked `DO NOT EDIT`. Update CUE and rerun the generator rather than editing generated artifacts by hand.
+Generated files are checked in and marked `DO NOT EDIT`. Update JSON Schema and rerun the generator rather than editing generated artifacts by hand.
 
 ## Deferred
 

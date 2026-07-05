@@ -32,7 +32,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"size_bytes": -1,
 			},
 			wantErr: true,
-			errMsg:  []string{"size_bytes", "out of bound >=0"},
+			errMsg:  []string{"size_bytes", "minimum"},
 		},
 		{
 			name: "usage hints must be strings",
@@ -40,7 +40,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"usage_hints": []interface{}{"thumbnail", 123},
 			},
 			wantErr: true,
-			errMsg:  []string{"usage_hints.1", "mismatched types int and string"},
+			errMsg:  []string{"usage_hints.1", "want string"},
 		},
 		{
 			name: "reference must include entity or task",
@@ -48,7 +48,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{}},
 			},
 			wantErr: true,
-			errMsg:  []string{"referenced_by.0", "invalid value"},
+			errMsg:  []string{"referenced_by.0", "minProperties"},
 		},
 		{
 			name: "reference id must be non-empty",
@@ -56,7 +56,7 @@ func TestValidateObjectBlob(t *testing.T) {
 				"referenced_by": []interface{}{map[string]interface{}{"entity_id": " "}},
 			},
 			wantErr: true,
-			errMsg:  []string{"referenced_by", "empty disjunction"},
+			errMsg:  []string{"referenced_by.0.entity_id", "pattern"},
 		},
 	}
 
@@ -96,7 +96,7 @@ func TestUploadObjectJSONValidatesMergedBlob(t *testing.T) {
 	if !ok {
 		t.Fatalf("uploadObjectJSON() error type = %T, want *ValidationError", err)
 	}
-	assertValidationErrorDetailsContainAll(t, validationErr.Details, "referenced_by.0", "invalid value")
+	assertValidationErrorDetailsContainAll(t, validationErr.Details, "referenced_by.0", "minProperties")
 }
 
 func TestUploadObjectJSONPreservesExistingBlobFields(t *testing.T) {
@@ -124,5 +124,21 @@ func TestUploadObjectJSONPreservesExistingBlobFields(t *testing.T) {
 	}
 	if got["size_bytes"] != float64(1024) {
 		t.Fatalf("size_bytes = %v, want 1024", got["size_bytes"])
+	}
+}
+
+func TestUploadObjectJSONAcceptsTypedUsageHints(t *testing.T) {
+	data, err := uploadObjectJSON(map[string]interface{}{}, "atlas-media", 1024, []string{"command_catalog"})
+	if err != nil {
+		t.Fatalf("uploadObjectJSON() unexpected error: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	hints, ok := got["usage_hints"].([]interface{})
+	if !ok || len(hints) != 1 || hints[0] != "command_catalog" {
+		t.Fatalf("usage_hints = %#v, want [command_catalog]", got["usage_hints"])
 	}
 }

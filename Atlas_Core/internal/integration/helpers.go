@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 )
 
 const (
@@ -109,14 +110,14 @@ func SystemAvailable(t *testing.T) bool {
 // SkipIfSystemNotAvailable skips the test if system is not ready.
 func SkipIfSystemNotAvailable(t *testing.T) {
 	if !SystemAvailable(t) {
-		t.Skip("Skipping integration test: Atlas Core system not ready locally")
+		testenv.SkipOrFatal(t, "Atlas Core system not ready locally")
 	}
 	client := NewAPIClient()
 	resp, err := client.Get(context.Background(), "/")
 	if err == nil && resp != nil {
 		defer drainClose(resp)
 		if resp.StatusCode == http.StatusUnauthorized && client.APIKey == "" {
-			t.Skip("Skipping integration test: Atlas Core requires API auth; set ATLAS_API_AUTH_KEY or API_AUTH_KEY")
+			testenv.SkipOrFatal(t, "Atlas Core requires API auth; set ATLAS_API_AUTH_KEY or API_AUTH_KEY")
 		}
 	}
 }

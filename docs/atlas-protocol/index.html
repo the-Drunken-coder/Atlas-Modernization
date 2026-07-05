@@ -98,7 +98,7 @@
   <div class="goal">
     <h3>Detect generated drift</h3>
     <p>A generated revision stamp or content hash tells us whether checked-in artifacts were produced from the
-       current CUE source. It is a freshness check, not backwards-compatible protocol versioning.</p>
+       current JSON Schema source. It is a freshness check, not backwards-compatible protocol versioning.</p>
   </div>
 
   <h2><span class="n">03</span>The boundary that keeps it clean</h2>
@@ -130,7 +130,7 @@
   <h2><span class="n">04</span>How we're growing into it</h2>
   <p>Incrementally, lowest-risk first — this is a sliced implementation, not a big-bang rewrite:</p>
   <ul>
-    <li>Generate Core-facing validators and checked-in JSON Schema from the protocol definitions.</li>
+    <li>Generate Core-facing validators and TypeScript artifacts from the protocol definitions.</li>
     <li>Keep behavior (merge logic, lifecycle, transactions) handwritten in Core.</li>
     <li>Add the TypeScript projection after the Go validator path stays stable.</li>
     <li>Consider database-level validation after the contract has settled.</li>
@@ -141,8 +141,8 @@
     <li><strong>Implemented slices:</strong> entity, task, and object blobs; entity and task components;
         object references; <code>telemetry</code>; and <code>geometry</code>.</li>
     <li><strong>Generated-code workflow:</strong> output is checked in and never hand-edited; the protocol check
-        command fails when artifacts drift from CUE.</li>
-    <li><strong>Deferred work:</strong> TypeScript validators, OpenAPI fragments, database checks, and HTTP
+        command fails when artifacts drift from JSON Schema.</li>
+    <li><strong>Deferred work:</strong> OpenAPI fragments, database checks, and HTTP
         request/response envelope contracts.</li>
   </ul>
 

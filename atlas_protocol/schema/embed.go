@@ -2,7 +2,7 @@ package schema
 
 import "embed"
 
-// Files contains the CUE protocol schemas used by the runtime validator.
+// Files contains the JSON Schema protocol source used by the runtime validator.
 //
-//go:embed *.cue components shared
+//go:embed jsonschema/*.json
 var Files embed.FS

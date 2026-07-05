@@ -34,7 +34,9 @@ export class FakeCore {
   sockets = new Set<FakeWebSocket>();
   feedConnections = 0;
   requests: string[] = [];
-  requestHeaders: Array<{ path: string; ifMatch?: string | null }> = [];
+  requestHeaders: Array<{ path: string; ifMatch?: string | null; apiKey?: string | null }> = [];
+  feedAuthFrames: Array<{ apiKey?: string }> = [];
+  expectedFeedApiKey: string | undefined;
   fullLimitPerType = 0;
   changedSinceLimitPerType = 0;
   readonly recordedVersions = new Set<number>();
@@ -47,9 +49,11 @@ export class FakeCore {
     const parsed = new URL(url);
     const path = parsed.pathname;
     const method = (init?.method ?? "GET").toUpperCase();
-    const ifMatch = new Headers(init?.headers).get("If-Match");
+    const headers = new Headers(init?.headers);
+    const ifMatch = headers.get("If-Match");
+    const apiKey = headers.get("X-API-Key");
     this.requests.push(parsed.pathname + parsed.search);
-    this.requestHeaders.push({ path: parsed.pathname + parsed.search, ifMatch });
+    this.requestHeaders.push({ path: parsed.pathname + parsed.search, ifMatch, apiKey });
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
     if (path === "/queries/full" && method === "GET") {
       try {

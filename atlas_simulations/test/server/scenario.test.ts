@@ -233,6 +233,30 @@ describe("scenario input parsing", () => {
     expect(cleanupCandidates).toEqual([{ type: "entity", id: entityId }]);
   });
 
+  it("tracks generated command task IDs from Core responses", async () => {
+    const tracked: Array<{ type: string; id: string }> = [];
+    const cleanupCandidates: Array<{ type: string; id: string }> = [];
+    const ctx = createScenarioContext({
+      runId: "sim-command-task",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      trackCleanupCandidate: (resource) => cleanupCandidates.push(resource),
+      registerClient: () => undefined
+    });
+
+    const task = await ctx.client.tasks.create({
+      entity_id: ctx.id("asset"),
+      components: { command: { type: "goto" } }
+    });
+
+    expect(task.task_id).toMatch(/^command-/);
+    expect(cleanupCandidates).toEqual([{ type: "task", id: task.task_id }]);
+    expect(tracked).toEqual([{ type: "task", id: task.task_id }]);
+  });
+
   it("rejects created and tracked resources outside the run ID prefix", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const ctx = createScenarioContext({

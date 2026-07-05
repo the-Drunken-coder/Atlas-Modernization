@@ -125,7 +125,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    []string{"command", "mismatched types string and struct"},
+			errMsg:    []string{"command", "want object"},
 		},
 		{
 			name: "unknown task component key",
@@ -150,7 +150,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    []string{"command.type", "out of bound"},
+			errMsg:    []string{"command.type", "pattern"},
 		},
 		{
 			name: "invalid parameters latitude",
@@ -160,7 +160,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    []string{"parameters.latitude", "out of bound"},
+			errMsg:    []string{"parameters.latitude", "maximum"},
 		},
 		{
 			name: "invalid progress percent",
@@ -170,7 +170,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				},
 			},
 			wantError: true,
-			errMsg:    []string{"progress.percent", "out of bound"},
+			errMsg:    []string{"progress.percent", "maximum"},
 		},
 	}
 
