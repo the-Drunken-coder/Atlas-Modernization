@@ -1,5 +1,5 @@
 import type { EntityResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
-import type { CacheEntry, ResourceOf, ResourceValue } from "./types.js";
+import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 
 export type CacheResourceOptions = {
@@ -57,6 +57,14 @@ export class ResourceCache {
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
+  snapshot(): SyncSnapshot {
+    return {
+      entities: liveValues(this.entries.entity),
+      tasks: liveValues(this.entries.task),
+      objects: liveValues(this.entries.object)
+    };
+  }
+
   cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {
     const actualID = resourceID(type, value);
     if (actualID !== id) {
@@ -103,4 +111,14 @@ export class ResourceCache {
     this.locallyNotifiedDeletes.add(key);
     return { previousVersion, previous };
   }
+}
+
+function liveValues<T extends ResourceValue>(entries: Map<string, CacheEntry<T>>): Record<string, T> {
+  const values: Record<string, T> = {};
+  for (const [id, entry] of entries) {
+    if (!entry.deleted && entry.value) {
+      values[id] = entry.value;
+    }
+  }
+  return values;
 }

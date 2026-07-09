@@ -2,10 +2,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
-import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
+import type { AtlasWatchEvent, EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
+import { snapshotFromDataset, type AtlasSnapshot } from "../atlas/store.js";
 import type { AppConfig } from "../app/config.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
@@ -124,20 +125,21 @@ const circleArea: EntityResource = {
 const healthyConnection: ConnectionHealth = { running: true, healthy: true, degraded: false };
 
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
-  let emit: ((event: AtlasWatchEvent) => void) | undefined;
+  let snapshot: AtlasSnapshot = snapshotFromDataset([rover, geofeature], []);
+  let notify: (() => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
-    async loadSnapshot() {
-      return { entities: [rover, geofeature], tasks: [] };
+    snapshot() {
+      return snapshot;
     },
     async loadCommandCatalog() {
       return catalog;
     },
-    watch(onEvent) {
-      emit = onEvent;
+    watch(onSnapshotChanged) {
+      notify = onSnapshotChanged;
       return () => {
-        emit = undefined;
+        notify = undefined;
       };
     },
     async start() {},
@@ -146,23 +148,57 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     },
     async submitCommand(submission) {
       submissions.push(submission);
-      const task = {
+      const task: TaskResource = {
         task_id: "task-1",
         status: "pending",
         entity_id: submission.entityId,
         components: { command: { type: submission.command.id, id: submission.command.id }, parameters: submission.parameters ?? {} },
         metadata: { ...metadata, version: 2 }
       };
-      emit?.({ event: "create", resource_type: "task", id: task.task_id, version: 2, resource: task });
+      snapshot = { ...snapshot, tasks: { ...snapshot.tasks, [task.task_id]: task } };
+      notify?.();
       return task;
     },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       geometryUpdates.push({ entityId, geometry, ifMatchVersion });
-      return { ...geofeature, components: { ...geofeature.components, geometry }, metadata: { ...geofeature.metadata, version: 10 } };
+      const updated = { ...geofeature, components: { ...geofeature.components, geometry }, metadata: { ...geofeature.metadata, version: 10 } };
+      snapshot = { ...snapshot, entities: { ...snapshot.entities, [updated.entity_id]: updated } };
+      notify?.();
+      return updated;
     },
     dispose() {}
   };
-  return { fake, submissions, geometryUpdates, emit: (event: AtlasWatchEvent) => emit?.(event) };
+  return {
+    fake,
+    submissions,
+    geometryUpdates,
+    emit: (event: AtlasWatchEvent) => {
+      snapshot = applyTestEvent(snapshot, event);
+      notify?.();
+    }
+  };
+}
+
+function applyTestEvent(snapshot: AtlasSnapshot, event: AtlasWatchEvent): AtlasSnapshot {
+  if (event.resource_type === "entity") {
+    const entities = { ...snapshot.entities };
+    if (event.event === "delete" || event.event === "local_delete") {
+      delete entities[event.id];
+    } else if ("resource" in event) {
+      entities[event.id] = event.resource as EntityResource;
+    }
+    return { ...snapshot, entities };
+  }
+  if (event.resource_type === "task") {
+    const tasks = { ...snapshot.tasks };
+    if (event.event === "delete" || event.event === "local_delete") {
+      delete tasks[event.id];
+    } else if ("resource" in event) {
+      tasks[event.id] = event.resource as TaskResource;
+    }
+    return { ...snapshot, tasks };
+  }
+  return snapshot;
 }
 
 function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {

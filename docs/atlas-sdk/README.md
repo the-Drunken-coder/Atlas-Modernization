@@ -32,10 +32,9 @@ The user-facing modes are constructor presets over these components:
 ```ts
 new AtlasClient({ baseUrl, apiKey });                    // manual: sync engine exists but is not started
 new AtlasClient({ baseUrl, apiKey, sync: "all" });       // configure sync for all resources
-new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
 ```
 
-Same cache, same feed consumer, same reconciliation logic in all sync presets. The constructor only configures the sync engine: `sync: "all"` seeds an all-resources subscription, while "selective" starts empty and adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)). Call `await client.sync.start()` to hydrate from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll.
+Same cache, same feed consumer, same reconciliation logic in both sync presets. Omitted `sync` or `sync: false` starts with no subscription. `sync: "all"` seeds an all-resources subscription. Explicit `client.subscribe(filter)` and `client.unsubscribe(filter)` calls remain supported for the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md). Call `await client.sync.start()` to hydrate from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll. Initial hydration remains full-dataset hydration regardless of the active subscription set.
 
 ### Unified read surface
 
@@ -56,6 +55,8 @@ Rules that make this safe:
 `client.entities.watch(id, callback)` (and equivalents per resource type) fires when the cached resource changes. Collection-level watches use the generic `client.watch(filter, callback)` surface, such as `client.watch({ filter: "type", resource_type: "entity" }, callback)` or `client.watch({ filter: "all" }, callback)`. This is the real-time path for UIs: the change-feed event arrives and the UI reacts immediately, with no polling loop. It is the same cache and the same surface — not a separate layer.
 
 Watcher callbacks receive protocol feed events for server-published changes. They can also receive SDK-local events that are not wire feed frames: `recovered` when `changed-since` reconciliation applies a live resource row, and `local_delete` when a successful local DELETE removes a resource from the cache before Core's versioned tombstone arrives.
+
+`client.sync.snapshot()` returns a fresh read-only top-level view of the current live entity, task, and object cache. It does not make HTTP requests, register watchers, expose tombstones, or move sync state; it is only a projection of what the sync engine has already accepted.
 
 ### Writes and read-your-writes
 
