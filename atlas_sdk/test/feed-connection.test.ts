@@ -287,13 +287,13 @@ describe("AtlasClient feed connection", () => {
     });
   });
 
-  it("recovers selective subscription gaps through changed-since", async () => {
+  it("recovers explicit filtered subscription gaps through changed-since", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.subscribe({ filter: "type", resource_type: "task" });
@@ -302,14 +302,14 @@ describe("AtlasClient feed connection", () => {
     await client.sync.start();
     core.requests = [];
 
-    const dropped = core.upsertTask(task("task-selective-dropped", "asset-1"));
+    const dropped = core.upsertTask(task("task-filtered-dropped", "asset-1"));
     core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
-    const delivered = core.upsertTask(task("task-selective-delivered", "asset-1"));
+    const delivered = core.upsertTask(task("task-filtered-delivered", "asset-1"));
     core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
 
     await vi.waitFor(() => {
-      expect(watch).toHaveBeenCalledWith(dropped, expect.objectContaining({ event: "recovered", id: "task-selective-dropped" }));
-      expect(watch).toHaveBeenCalledWith(delivered, expect.objectContaining({ event: "recovered", id: "task-selective-delivered" }));
+      expect(watch).toHaveBeenCalledWith(dropped, expect.objectContaining({ event: "recovered", id: "task-filtered-dropped" }));
+      expect(watch).toHaveBeenCalledWith(delivered, expect.objectContaining({ event: "recovered", id: "task-filtered-delivered" }));
     });
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
     expect(client.sync.status().degraded).toBe(false);

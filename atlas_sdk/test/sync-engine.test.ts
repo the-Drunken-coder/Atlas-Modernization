@@ -226,6 +226,44 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("projects live hydrated, feed, recovered, and deleted resources into snapshots", async () => {
+    const core = new FakeCore();
+    const initialEntity = core.upsertEntity(entity("asset-snapshot"));
+    const initialTask = core.upsertTask(task("task-snapshot", initialEntity.entity_id));
+    const initialObject = core.upsertObject(object("object-snapshot"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.sync.start();
+    const hydrated = client.sync.snapshot();
+    expect(hydrated.entities[initialEntity.entity_id]).toEqual(initialEntity);
+    expect(hydrated.tasks[initialTask.task_id]).toEqual(initialTask);
+    expect(hydrated.objects[initialObject.object_id]).toEqual(initialObject);
+
+    const feedUpdate = core.upsertEntity({ ...initialEntity, alias: "feed-update" });
+    const feedEvent = core.events.at(-1);
+    if (!feedEvent) throw new Error("fake core did not record feed update");
+    core.emit(feedEvent, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[feedUpdate.entity_id]).toEqual(feedUpdate));
+
+    const recoveredTask = core.upsertTask({ ...initialTask, status: "acknowledged" });
+    await client.changedSince();
+    expect(client.sync.snapshot().tasks[recoveredTask.task_id]).toEqual(recoveredTask);
+
+    core.deleteTask(recoveredTask.task_id);
+    await client.changedSince();
+    expect(client.sync.snapshot().tasks[recoveredTask.task_id]).toBeUndefined();
+
+    await client.entities.delete(initialEntity.entity_id);
+    expect(client.sync.snapshot().entities[initialEntity.entity_id]).toBeUndefined();
+    expect(client.sync.snapshot().entities).not.toBe(hydrated.entities);
+  });
+
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
     vi.useFakeTimers();
     const core = new FakeCore();
@@ -490,13 +528,13 @@ describe("AtlasClient sync", () => {
     }
   });
 
-  it("honors selective tasks-for-entity routing across reassignment", async () => {
+  it("honors explicit tasks-for-entity subscription routing across reassignment", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.sync.start();
@@ -525,7 +563,7 @@ describe("AtlasClient sync", () => {
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.sync.start();

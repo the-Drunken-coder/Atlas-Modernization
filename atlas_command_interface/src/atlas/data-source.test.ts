@@ -58,28 +58,43 @@ describe("sdk data source", () => {
 
     expect(requestedUrls).toEqual(["https://core.test/protocol/revision", "https://core.test/queries/full"]);
     expect(dataSource.health?.()).toEqual({ running: true, healthy: true, degraded: false });
+    expect(dataSource.snapshot()).toEqual({ entities: {}, tasks: {} });
 
     dataSource.dispose();
 
     expect(dataSource.health?.()).toEqual({ running: false, healthy: false, degraded: false });
   });
 
-  it("paginates entity and task snapshots without paginating objects", async () => {
+  it("uses the hydrated SDK cache snapshot without a second UI hydration", async () => {
     const requestedUrls: string[] = [];
+    let fullRequests = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: unknown) => {
-        requestedUrls.push(String(input));
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url === "https://core.test/protocol/revision") {
+          return new Response(JSON.stringify({ protocol_revision: ATLAS_PROTOCOL_REVISION }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        fullRequests += 1;
         return new Response(
           JSON.stringify({
-            entities: [],
-            tasks: [],
+            entities:
+              fullRequests === 1
+                ? [{ entity_id: "asset-1", entity_type: "asset", subtype: null, components: {}, metadata }]
+                : [{ entity_id: "asset-2", entity_type: "asset", subtype: null, components: {}, metadata }],
+            tasks:
+              fullRequests === 1
+                ? [{ task_id: "task-1", entity_id: "asset-1", status: "pending", components: {}, metadata }]
+                : [{ task_id: "task-2", entity_id: "asset-2", status: "pending", components: {}, metadata }],
             objects: [],
-            has_more_entities: requestedUrls.length === 1,
+            has_more_entities: fullRequests === 1,
             has_more_tasks: false,
-            has_more_objects: requestedUrls.length === 1,
-            next_entity_cursor: "next-entities",
-            next_object_cursor: "next-objects"
+            has_more_objects: false,
+            next_entity_cursor: "next-entities"
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
@@ -87,61 +102,16 @@ describe("sdk data source", () => {
     );
 
     const dataSource = createSdkDataSource(config);
-    await dataSource.loadSnapshot();
+    await dataSource.start();
+    const snapshot = dataSource.snapshot();
 
-    expect(requestedUrls).toHaveLength(2);
-    expect(requestedUrls[0]).toBe("https://core.test/queries/full");
-    expect(requestedUrls[1]).toContain("entity_cursor=next-entities");
-    expect(requestedUrls[1]).not.toContain("object_cursor=");
+    expect(fullRequests).toBe(2);
+    expect(requestedUrls.filter((url) => url.includes("/queries/full")).length).toBe(2);
+    expect(Object.keys(snapshot.entities).sort()).toEqual(["asset-1", "asset-2"]);
+    expect(Object.keys(snapshot.tasks).sort()).toEqual(["task-1", "task-2"]);
   });
 
-  it("stops snapshot pagination when the server keeps returning cursors", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            entities: [],
-            tasks: [],
-            objects: [],
-            has_more_entities: true,
-            has_more_tasks: false,
-            has_more_objects: false,
-            next_entity_cursor: "same-cursor"
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
-      )
-    );
-
-    const dataSource = createSdkDataSource(config);
-    await expect(dataSource.loadSnapshot()).rejects.toThrow("Atlas snapshot pagination exceeded 100 pages");
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(100);
-  });
-
-  it("rejects paginated snapshots when a required cursor is missing", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            entities: [],
-            tasks: [],
-            objects: [],
-            has_more_entities: true,
-            has_more_tasks: false,
-            has_more_objects: false
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
-      )
-    );
-
-    const dataSource = createSdkDataSource(config);
-    await expect(dataSource.loadSnapshot()).rejects.toThrow("Atlas snapshot page indicated more entities without a next cursor");
-  });
-
-  it("creates command tasks directly against Core", async () => {
+  it("creates command tasks through the SDK transport", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     vi.stubGlobal(
       "fetch",

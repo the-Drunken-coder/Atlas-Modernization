@@ -31,11 +31,11 @@ The user-facing modes are constructor presets over these components:
 
 ```ts
 new AtlasClient({ baseUrl, apiKey });                    // manual: sync engine exists but is not started
-new AtlasClient({ baseUrl, apiKey, sync: "all" });       // configure sync for all resources
-new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
+new AtlasClient({ baseUrl, apiKey, sync: "all" });       // seed the all-resources subscription
+new AtlasClient({ baseUrl, apiKey });                     // start with no subscription
 ```
 
-Same cache, same feed consumer, same reconciliation logic in all sync presets. The constructor only configures the sync engine: `sync: "all"` seeds an all-resources subscription, while "selective" starts empty and adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)). Call `await client.sync.start()` to hydrate from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll.
+The constructor only configures the initial subscription: omitted or `sync: false` starts with no subscription, while `sync: "all"` seeds the all-resources subscription. Explicit `client.subscribe(filter)` and `client.unsubscribe(filter)` calls remain supported for filtered delivery (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)). Call `await client.sync.start()` to perform the existing full-dataset hydration from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll.
 
 ### Unified read surface
 

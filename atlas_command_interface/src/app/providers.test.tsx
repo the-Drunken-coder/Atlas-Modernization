@@ -52,16 +52,16 @@ describe("Providers", () => {
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByTestId("atlas-base-url")).toHaveTextContent("https://core.test");
     expect(createDataSource).toHaveBeenCalledWith(config);
-    expect(calls.slice(0, 4)).toEqual(["watch", "start", "loadSnapshot", "loadCommandCatalog"]);
+    expect(calls.slice(0, 4)).toEqual(["watch", "start", "snapshot", "loadCommandCatalog"]);
     await waitFor(() => expect(fetchCalls[0]).toMatchObject(["https://core.test/admin/auth/me", { credentials: "include" }]));
   });
 });
 
 function fakeDataSource(calls: string[]): AtlasDataSource {
   return {
-    async loadSnapshot() {
-      calls.push("loadSnapshot");
-      return { entities: [], tasks: [] };
+    snapshot() {
+      calls.push("snapshot");
+      return { entities: {}, tasks: {} };
     },
     async loadCommandCatalog() {
       calls.push("loadCommandCatalog");

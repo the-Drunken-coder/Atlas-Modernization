@@ -1,5 +1,5 @@
 import type { EntityResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
-import type { CacheEntry, ResourceOf, ResourceValue } from "./types.js";
+import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 
 export type CacheResourceOptions = {
@@ -87,6 +87,22 @@ export class ResourceCache {
 
   versionFor(type: ResourceType, id: string): number {
     return this.entries[type].get(id)?.version ?? 0;
+  }
+
+  snapshot(): SyncSnapshot {
+    const entities: Record<string, EntityResource> = {};
+    const tasks: Record<string, TaskResource> = {};
+    const objects: Record<string, ObjectResource> = {};
+    for (const [id, entry] of this.entries.entity) {
+      if (!entry.deleted && entry.value) entities[id] = entry.value;
+    }
+    for (const [id, entry] of this.entries.task) {
+      if (!entry.deleted && entry.value) tasks[id] = entry.value;
+    }
+    for (const [id, entry] of this.entries.object) {
+      if (!entry.deleted && entry.value) objects[id] = entry.value;
+    }
+    return { entities, tasks, objects };
   }
 
   markRemoteDelete(type: ResourceType, id: string, version: number): void {
