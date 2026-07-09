@@ -30,6 +30,7 @@ import type {
   FullDatasetQueryOptions,
   FullDatasetResponse,
   ReadOptions,
+  SyncSnapshot,
   SyncStatus,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -56,6 +57,7 @@ export type {
   FullDatasetQueryOptions,
   FullDatasetResponse,
   ReadOptions,
+  SyncSnapshot,
   SyncStatus,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -72,7 +74,7 @@ export type AtlasClientOptions = {
   credentials?: RequestCredentials;
   fetch?: FetchLike;
   WebSocket?: WebSocketCtor;
-  sync?: false | "all" | "selective";
+  sync?: false | "all";
   pollIntervalMs?: number;
   objectContentCacheEntries?: number;
   requestTimeoutMs?: number;
@@ -143,7 +145,8 @@ export class AtlasClient {
       await this.engine.start();
     },
     stop: () => this.engine.stop(),
-    status: (): SyncStatus => this.engine.status()
+    status: (): SyncStatus => this.engine.status(),
+    snapshot: (): SyncSnapshot => this.engine.snapshot()
   };
 
   private readonly transport: HttpTransport;

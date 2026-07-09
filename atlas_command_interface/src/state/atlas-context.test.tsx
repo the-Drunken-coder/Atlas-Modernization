@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
-import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "../../../atlas_sdk/src/index.js";
 import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
+import type { AtlasSnapshot } from "../atlas/store.js";
 import { AtlasProvider, useAtlas } from "./atlas-context.js";
 
 function StatusProbe() {
@@ -59,28 +60,29 @@ function entity(alias: string, version: number): EntityResource {
   };
 }
 
+function snapshot(value: EntityResource): AtlasSnapshot {
+  return { entities: { [value.entity_id]: value }, tasks: {} };
+}
+
 describe("AtlasProvider", () => {
-  it("starts live sync before loading the displayed snapshot and replays startup events", async () => {
+  it("registers a cache-change watch, starts sync, then reads the final cache snapshot", async () => {
     const calls: string[] = [];
-    let emit: ((event: AtlasWatchEvent) => void) | undefined;
+    let current = snapshot(entity("Older", 1));
     const fake: AtlasDataSource = {
-      async loadSnapshot() {
-        calls.push("loadSnapshot");
-        return { entities: [entity("Older", 1)], tasks: [] };
+      snapshot() {
+        calls.push("snapshot");
+        return current;
       },
       async loadCommandCatalog() {
         return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
       },
-      watch(onEvent) {
+      watch() {
         calls.push("watch");
-        emit = onEvent;
-        return () => {
-          emit = undefined;
-        };
+        return () => undefined;
       },
       async start() {
         calls.push("start");
-        emit?.({ event: "update", resource_type: "entity", id: "asset-1", version: 2, resource: entity("Newer", 2) });
+        current = snapshot(entity("Newer", 2));
       },
       async submitCommand() {
         throw new Error("not used");
@@ -98,7 +100,7 @@ describe("AtlasProvider", () => {
     );
 
     expect(await screen.findByText("ready")).toBeInTheDocument();
-    expect(calls.slice(0, 3)).toEqual(["watch", "start", "loadSnapshot"]);
+    expect(calls.slice(0, 3)).toEqual(["watch", "start", "snapshot"]);
     expect(screen.getByTestId("entity-names")).toHaveTextContent("Newer");
   });
 
@@ -106,8 +108,8 @@ describe("AtlasProvider", () => {
     const unsubscribe = vi.fn();
     const dispose = vi.fn();
     const fake: AtlasDataSource = {
-      async loadSnapshot() {
-        return { entities: [], tasks: [] };
+      snapshot() {
+        return { entities: {}, tasks: {} };
       },
       async loadCommandCatalog() {
         throw new Error("catalog unavailable");
@@ -141,20 +143,21 @@ describe("AtlasProvider", () => {
     });
   });
 
-  it("keeps newer watch data when an action resolves with a stale resource version", async () => {
-    let emit: ((event: AtlasWatchEvent) => void) | undefined;
+  it("keeps newer cached data when a stale write response resolves", async () => {
+    let current = snapshot(entity("Initial", 1));
+    let refresh: (() => void) | undefined;
     const updateGeometry = vi.fn(async () => entity("Stale Action", 1));
     const fake: AtlasDataSource = {
-      async loadSnapshot() {
-        return { entities: [entity("Initial", 1)], tasks: [] };
+      snapshot() {
+        return current;
       },
       async loadCommandCatalog() {
         return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
       },
-      watch(onEvent) {
-        emit = onEvent;
+      watch(onSnapshotChange) {
+        refresh = onSnapshotChange;
         return () => {
-          emit = undefined;
+          refresh = undefined;
         };
       },
       async start() {},
@@ -174,12 +177,13 @@ describe("AtlasProvider", () => {
     expect(await screen.findByText("ready")).toBeInTheDocument();
 
     act(() => {
-      emit?.({ event: "update", resource_type: "entity", id: "asset-1", version: 2, resource: entity("Fresh Watch", 2) });
+      current = snapshot(entity("Fresh Cache", 2));
+      refresh?.();
     });
-    expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Watch");
+    expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Cache");
 
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(updateGeometry).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Watch"));
+    await waitFor(() => expect(screen.getByTestId("entity-names")).toHaveTextContent("Fresh Cache"));
   });
 });

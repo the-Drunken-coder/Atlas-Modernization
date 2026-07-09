@@ -19,6 +19,7 @@ export {
   type FullDatasetQueryOptions,
   type FullDatasetResponse,
   type ReadOptions,
+  type SyncSnapshot,
   type SyncStatus,
   type TaskCompleteOptions,
   type TaskFailOptions,

@@ -26,8 +26,15 @@ function style(id: string): StyleSpecification {
   return { version: 8, sources: {}, layers: [], metadata: { id } };
 }
 
+function fullResponse(overrides: Record<string, unknown> = {}) {
+  return new Response(
+    JSON.stringify({ entities: [], tasks: [], objects: [], has_more_entities: false, has_more_tasks: false, has_more_objects: false, ...overrides }),
+    { status: 200, headers: { "Content-Type": "application/json" } }
+  );
+}
+
 describe("sdk data source", () => {
-  it("starts live SDK sync and reports sync health", async () => {
+  it("starts live SDK sync, exposes its cache snapshot, and reports sync health", async () => {
     const requestedUrls: string[] = [];
     vi.stubGlobal("WebSocket", undefined);
     vi.stubGlobal(
@@ -41,12 +48,7 @@ describe("sdk data source", () => {
             headers: { "Content-Type": "application/json" }
           });
         }
-        if (url === "https://core.test/queries/full") {
-          return new Response(JSON.stringify({ entities: [], tasks: [], objects: [], has_more_entities: false, has_more_tasks: false, has_more_objects: false }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" }
-          });
-        }
+        if (url === "https://core.test/queries/full") return fullResponse();
         throw new Error(`Unexpected request: ${url}`);
       })
     );
@@ -57,6 +59,7 @@ describe("sdk data source", () => {
     await dataSource.start();
 
     expect(requestedUrls).toEqual(["https://core.test/protocol/revision", "https://core.test/queries/full"]);
+    expect(dataSource.snapshot()).toEqual({ entities: {}, tasks: {} });
     expect(dataSource.health?.()).toEqual({ running: true, healthy: true, degraded: false });
 
     dataSource.dispose();
@@ -64,84 +67,47 @@ describe("sdk data source", () => {
     expect(dataSource.health?.()).toEqual({ running: false, healthy: false, degraded: false });
   });
 
-  it("paginates entity and task snapshots without paginating objects", async () => {
+  it("uses the SDK's multi-page hydration without a second UI dataset request", async () => {
     const requestedUrls: string[] = [];
+    let fullRequests = 0;
+    vi.stubGlobal("WebSocket", undefined);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: unknown) => {
-        requestedUrls.push(String(input));
-        return new Response(
-          JSON.stringify({
-            entities: [],
-            tasks: [],
-            objects: [],
-            has_more_entities: requestedUrls.length === 1,
-            has_more_tasks: false,
-            has_more_objects: requestedUrls.length === 1,
-            next_entity_cursor: "next-entities",
-            next_object_cursor: "next-objects"
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url === "https://core.test/protocol/revision") {
+          return new Response(JSON.stringify({ protocol_revision: ATLAS_PROTOCOL_REVISION }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        if (!url.startsWith("https://core.test/queries/full")) throw new Error(`Unexpected request: ${url}`);
+        fullRequests += 1;
+        if (fullRequests === 1) {
+          return fullResponse({
+            entities: [{ entity_id: "asset-1", entity_type: "asset", subtype: null, alias: "One", components: {}, metadata }],
+            tasks: [{ task_id: "task-1", entity_id: "asset-1", status: "pending", components: {}, metadata }],
+            has_more_entities: true,
+            next_entity_cursor: "next-entity"
+          });
+        }
+        return fullResponse({ entities: [{ entity_id: "asset-2", entity_type: "asset", subtype: null, alias: "Two", components: {}, metadata: { ...metadata, version: 2 } }] });
       })
     );
 
     const dataSource = createSdkDataSource(config);
-    await dataSource.loadSnapshot();
+    await dataSource.start();
+    const snapshot = dataSource.snapshot();
 
-    expect(requestedUrls).toHaveLength(2);
-    expect(requestedUrls[0]).toBe("https://core.test/queries/full");
-    expect(requestedUrls[1]).toContain("entity_cursor=next-entities");
-    expect(requestedUrls[1]).not.toContain("object_cursor=");
+    expect(fullRequests).toBe(2);
+    expect(requestedUrls.filter((url) => url.includes("/queries/full"))).toHaveLength(2);
+    expect(requestedUrls[2]).toContain("entity_cursor=next-entity");
+    expect(Object.keys(snapshot.entities).sort()).toEqual(["asset-1", "asset-2"]);
+    expect(Object.keys(snapshot.tasks)).toEqual(["task-1"]);
   });
 
-  it("stops snapshot pagination when the server keeps returning cursors", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            entities: [],
-            tasks: [],
-            objects: [],
-            has_more_entities: true,
-            has_more_tasks: false,
-            has_more_objects: false,
-            next_entity_cursor: "same-cursor"
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
-      )
-    );
-
-    const dataSource = createSdkDataSource(config);
-    await expect(dataSource.loadSnapshot()).rejects.toThrow("Atlas snapshot pagination exceeded 100 pages");
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(100);
-  });
-
-  it("rejects paginated snapshots when a required cursor is missing", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            entities: [],
-            tasks: [],
-            objects: [],
-            has_more_entities: true,
-            has_more_tasks: false,
-            has_more_objects: false
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
-      )
-    );
-
-    const dataSource = createSdkDataSource(config);
-    await expect(dataSource.loadSnapshot()).rejects.toThrow("Atlas snapshot page indicated more entities without a next cursor");
-  });
-
-  it("creates command tasks directly against Core", async () => {
+  it("creates command tasks through the SDK transport and cache path", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     vi.stubGlobal(
       "fetch",
@@ -169,6 +135,7 @@ describe("sdk data source", () => {
       },
       status: "pending"
     });
+    expect(dataSource.snapshot().tasks).toMatchObject({ t1: task });
   });
 
   it("dispatches auth-expired for Core session failures", async () => {

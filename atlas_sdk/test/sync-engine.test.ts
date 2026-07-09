@@ -39,6 +39,78 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().healthy).toBe(true);
   });
 
+  it("projects hydrated, feed, recovery, and delete changes through fresh cache snapshots", async () => {
+    const core = new FakeCore();
+    const hydratedEntity = core.upsertEntity(entity("asset-hydrated"));
+    const localDeleteEntity = core.upsertEntity(entity("asset-local-delete"));
+    const hydratedTask = core.upsertTask(task("task-hydrated", hydratedEntity.entity_id));
+    const hydratedObject = core.upsertObject(object("object-hydrated"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      const initial = client.sync.snapshot();
+      expect(initial).toMatchObject({
+        entities: { [hydratedEntity.entity_id]: hydratedEntity, [localDeleteEntity.entity_id]: localDeleteEntity },
+        tasks: { [hydratedTask.task_id]: hydratedTask },
+        objects: { [hydratedObject.object_id]: hydratedObject }
+      });
+      expect(client.sync.snapshot()).not.toBe(initial);
+      expect(client.sync.snapshot().entities).not.toBe(initial.entities);
+
+      const remote = core.upsertEntity({ ...entity("asset-remote"), alias: "remote" });
+      core.emit({ event: "update", resource_type: "entity", id: remote.entity_id, version: remote.metadata.version, resource: remote }, { record: false });
+      await vi.waitFor(() => expect(client.sync.snapshot().entities[remote.entity_id]).toEqual(remote));
+
+      const dropped = core.upsertTask(task("task-recovered", hydratedEntity.entity_id));
+      core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+      const delivered = core.upsertTask(task("task-delivered", hydratedEntity.entity_id));
+      core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+      await vi.waitFor(() => {
+        const tasks = client.sync.snapshot().tasks;
+        expect(tasks[dropped.task_id]).toEqual(dropped);
+        expect(tasks[delivered.task_id]).toEqual(delivered);
+      });
+
+      const remoteDelete = core.deleteEntity(remote.entity_id);
+      if (!remoteDelete) throw new Error("fake core did not delete remote entity");
+      core.emit(remoteDelete, { record: false });
+      await vi.waitFor(() => expect(client.sync.snapshot().entities[remote.entity_id]).toBeUndefined());
+
+      await client.entities.delete(localDeleteEntity.entity_id);
+      expect(client.sync.snapshot().entities[localDeleteEntity.entity_id]).toBeUndefined();
+    } finally {
+      client.sync.stop();
+    }
+  });
+
+  it("does not let a stale write response regress the cache snapshot", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-stale-write"));
+    let returnStaleResponse = false;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      if (returnStaleResponse && new URL(String(input)).pathname === `/entities/${original.entity_id}` && init?.method === "PATCH") {
+        return new Response(JSON.stringify(original), { headers: { "Content-Type": "application/json" } });
+      }
+      return core.fetch(String(input), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch, sync: "all", pollIntervalMs: 0 });
+    await client.sync.start();
+    const newer = core.upsertEntity({ ...original, alias: "newer" });
+    await client.changedSince();
+
+    returnStaleResponse = true;
+    await client.entities.update(original.entity_id, { alias: "stale" });
+
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer);
+  });
+
   it("emits recovered events for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
@@ -490,13 +562,13 @@ describe("AtlasClient sync", () => {
     }
   });
 
-  it("honors selective tasks-for-entity routing across reassignment", async () => {
+  it("honors explicit tasks-for-entity routing across reassignment", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.sync.start();
@@ -525,7 +597,7 @@ describe("AtlasClient sync", () => {
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.sync.start();

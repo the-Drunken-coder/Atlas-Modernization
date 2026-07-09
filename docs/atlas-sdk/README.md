@@ -32,10 +32,9 @@ The user-facing modes are constructor presets over these components:
 ```ts
 new AtlasClient({ baseUrl, apiKey });                    // manual: sync engine exists but is not started
 new AtlasClient({ baseUrl, apiKey, sync: "all" });       // configure sync for all resources
-new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
 ```
 
-Same cache, same feed consumer, same reconciliation logic in all sync presets. The constructor only configures the sync engine: `sync: "all"` seeds an all-resources subscription, while "selective" starts empty and adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)). Call `await client.sync.start()` to hydrate from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll.
+Same cache, same feed consumer, same reconciliation logic in both presets. Omitted `sync` (or `sync: false`) starts with no subscription; `sync: "all"` seeds the all-resources subscription. Explicit `client.subscribe(filter)` and `client.unsubscribe(filter)` remain available for the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md). Call `await client.sync.start()` to perform the existing full-dataset hydration from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll.
 
 ### Unified read surface
 
@@ -117,6 +116,8 @@ Task lifecycle helpers wrap the existing Core lifecycle endpoints: `client.tasks
 `client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full task pages are merged into the SDK cache; `fields: "minimal"` returns compact command-oriented task entries.
 
 `client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine manages its own reconciliation cursor.
+
+`client.sync.snapshot()` returns a read-only, keyed projection of the live cache for renderers that already use sync. It performs no request, hydration, watcher registration, or sync-state transition; tombstones and other cache bookkeeping are excluded.
 
 ## Testing
 

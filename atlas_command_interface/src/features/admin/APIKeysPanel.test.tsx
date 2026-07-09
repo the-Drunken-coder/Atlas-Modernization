@@ -14,7 +14,7 @@ const atlasValue: AtlasContextValue = {
 			defaultMapSourceId: "openstreetmap-default",
 			mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
 		},
-	snapshot: emptySnapshot(),
+	snapshot: emptySnapshot,
 	health: { running: true, healthy: true, degraded: false },
 	submitCommand: async () => {
 		throw new Error("not used");

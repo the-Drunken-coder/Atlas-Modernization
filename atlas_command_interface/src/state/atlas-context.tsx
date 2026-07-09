@@ -1,10 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { AtlasWatchEvent, EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
 import { fetchAppConfig, type AppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { createSdkDataSource, type AtlasDataSource, type CommandSubmission, type ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
-import { applyWatchEvent, emptySnapshot, snapshotFromDataset, type AtlasSnapshot } from "../atlas/store.js";
+import { emptySnapshot, type AtlasSnapshot } from "../atlas/store.js";
 
 export type AtlasStatus = "loading" | "ready" | "error";
 
@@ -47,8 +47,6 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
-    let bootstrapped = false;
-    const bufferedEvents: AtlasWatchEvent[] = [];
     const cleanup = () => {
       if (healthTimer) {
         clearInterval(healthTimer);
@@ -69,27 +67,14 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         const dataSource = createDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
 
-        unsubscribe = dataSource.watch((event) => {
-          if (cancelled) return;
-          if (!bootstrapped) {
-            bufferedEvents.push(event);
-            return;
-          }
-          setSnapshot((current) => applyWatchEvent(current, event));
+        unsubscribe = dataSource.watch(() => {
+          if (!cancelled) setSnapshot(dataSource.snapshot());
         });
 
         await dataSource.start();
         if (cancelled) return;
 
-        const dataset = await dataSource.loadSnapshot();
-        if (cancelled) return;
-        let nextSnapshot = snapshotFromDataset(dataset.entities, dataset.tasks);
-        for (const event of bufferedEvents) {
-          nextSnapshot = applyWatchEvent(nextSnapshot, event);
-        }
-        bufferedEvents.length = 0;
-        bootstrapped = true;
-        setSnapshot(nextSnapshot);
+        setSnapshot(dataSource.snapshot());
 
         const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
         if (cancelled) return;
@@ -130,18 +115,12 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
-        const task = await dataSource.submitCommand(submission);
-        setSnapshot((current) => applyWatchEvent(current, { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task }));
-        return task;
+        return dataSource.submitCommand(submission);
       },
       updateGeometry: async (entityId, geometry, ifMatchVersion) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
-        const entity = await dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
-        setSnapshot((current) =>
-          applyWatchEvent(current, { event: "update", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity })
-        );
-        return entity;
+        return dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
       }
     }),
     [status, error, config, snapshot, catalog, health]
