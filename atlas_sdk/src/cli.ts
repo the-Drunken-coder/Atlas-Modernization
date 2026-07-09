@@ -50,7 +50,6 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       apiKey: command.options.apiKey,
       fetch: io.fetch,
       WebSocket: io.WebSocket,
-      sync: "selective",
       requestTimeoutMs: CLI_REQUEST_TIMEOUT_MS
     });
     if (command.kind === "entities.get") {

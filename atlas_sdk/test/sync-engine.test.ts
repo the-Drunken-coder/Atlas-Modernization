@@ -226,6 +226,99 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("returns pure live cache snapshots after paginated hydration and deletes", async () => {
+    const core = new FakeCore();
+    core.fullLimitPerType = 1;
+    const firstEntity = core.upsertEntity(entity("asset-snapshot-1"));
+    const secondEntity = core.upsertEntity(entity("asset-snapshot-2"));
+    const firstTask = core.upsertTask(task("task-snapshot-1", firstEntity.entity_id));
+    const deletedTask = core.upsertTask(task("task-snapshot-deleted", secondEntity.entity_id));
+    const cachedObject = core.upsertObject(object("object-snapshot"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+    const requestCount = core.requests.length;
+    const first = client.sync.snapshot();
+    const second = client.sync.snapshot();
+
+    expect(first).toEqual({
+      entities: { [firstEntity.entity_id]: firstEntity, [secondEntity.entity_id]: secondEntity },
+      tasks: { [firstTask.task_id]: firstTask, [deletedTask.task_id]: deletedTask },
+      objects: { [cachedObject.object_id]: cachedObject }
+    });
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
+    expect(second.entities).not.toBe(first.entities);
+    expect(second.tasks).not.toBe(first.tasks);
+    expect(second.objects).not.toBe(first.objects);
+    expect(core.requests).toHaveLength(requestCount);
+
+    core.deleteTask(deletedTask.task_id);
+    await client.changedSince();
+
+    expect(client.sync.snapshot().tasks).toEqual({ [firstTask.task_id]: firstTask });
+  });
+
+  it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {
+    const core = new FakeCore();
+    const localTask = core.upsertTask(task("task-snapshot-local-delete", "asset-snapshot-feed"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const snapshots = vi.fn(() => client.sync.snapshot());
+    client.watch({ filter: "all" }, snapshots);
+
+    const fedEntity = core.upsertEntity(entity("asset-snapshot-feed"));
+    core.emit({ event: "create", resource_type: "entity", id: fedEntity.entity_id, version: fedEntity.metadata.version, resource: fedEntity }, { record: false });
+    await vi.waitFor(() => expect(snapshots).toHaveReturnedWith(expect.objectContaining({ entities: { [fedEntity.entity_id]: fedEntity } })));
+
+    const recoveredTask = core.upsertTask(task("task-snapshot-recovered", fedEntity.entity_id));
+    await client.changedSince();
+    expect(snapshots).toHaveReturnedWith(expect.objectContaining({ tasks: expect.objectContaining({ [recoveredTask.task_id]: recoveredTask }) }));
+
+    core.deleteEntity(fedEntity.entity_id);
+    await client.changedSince();
+    expect(client.sync.snapshot().entities).not.toHaveProperty(fedEntity.entity_id);
+
+    await client.tasks.delete(localTask.task_id);
+    expect(client.sync.snapshot().tasks).not.toHaveProperty(localTask.task_id);
+  });
+
+  it("does not let a stale write response regress a newer cached resource", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-stale-write"));
+    let resolveWrite!: (response: Response) => void;
+    const staleWrite = new Promise<Response>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === `/entities/${original.entity_id}` && init?.method === "PATCH") return staleWrite;
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const write = client.entities.update(original.entity_id, { alias: "stale response" });
+    const newer = core.upsertEntity({ ...original, alias: "newer feed value" });
+    core.emit({ event: "update", resource_type: "entity", id: newer.entity_id, version: newer.metadata.version, resource: newer }, { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer));
+
+    resolveWrite(Response.json(original));
+    await expect(write).resolves.toEqual(original);
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer);
+  });
+
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
     vi.useFakeTimers();
     const core = new FakeCore();
@@ -490,13 +583,13 @@ describe("AtlasClient sync", () => {
     }
   });
 
-  it("honors selective tasks-for-entity routing across reassignment", async () => {
+  it("honors explicit tasks-for-entity subscriptions across reassignment", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.sync.start();
@@ -525,7 +618,7 @@ describe("AtlasClient sync", () => {
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
       WebSocket: core.attachWebSocketGlobal(),
-      sync: "selective",
+      sync: false,
       pollIntervalMs: 0
     });
     await client.sync.start();

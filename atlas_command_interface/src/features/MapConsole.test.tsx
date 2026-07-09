@@ -2,10 +2,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
-import type { AtlasWatchEvent, EntityResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
+import type { AtlasSnapshot } from "../atlas/store.js";
 import type { AppConfig } from "../app/config.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
@@ -124,20 +125,21 @@ const circleArea: EntityResource = {
 const healthyConnection: ConnectionHealth = { running: true, healthy: true, degraded: false };
 
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
-  let emit: ((event: AtlasWatchEvent) => void) | undefined;
+  let current: AtlasSnapshot = { entities: { [rover.entity_id]: rover, [geofeature.entity_id]: geofeature }, tasks: {} };
+  let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
-    async loadSnapshot() {
-      return { entities: [rover, geofeature], tasks: [] };
+    snapshot() {
+      return current;
     },
     async loadCommandCatalog() {
       return catalog;
     },
-    watch(onEvent) {
-      emit = onEvent;
+    watch(onSnapshot) {
+      notify = onSnapshot;
       return () => {
-        emit = undefined;
+        notify = undefined;
       };
     },
     async start() {},
@@ -153,16 +155,28 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
         components: { command: { type: submission.command.id, id: submission.command.id }, parameters: submission.parameters ?? {} },
         metadata: { ...metadata, version: 2 }
       };
-      emit?.({ event: "create", resource_type: "task", id: task.task_id, version: 2, resource: task });
+      current = { ...current, tasks: { ...current.tasks, [task.task_id]: task } };
+      notify?.(current);
       return task;
     },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       geometryUpdates.push({ entityId, geometry, ifMatchVersion });
-      return { ...geofeature, components: { ...geofeature.components, geometry }, metadata: { ...geofeature.metadata, version: 10 } };
+      const updated = { ...geofeature, components: { ...geofeature.components, geometry }, metadata: { ...geofeature.metadata, version: 10 } };
+      current = { ...current, entities: { ...current.entities, [updated.entity_id]: updated } };
+      notify?.(current);
+      return updated;
     },
     dispose() {}
   };
-  return { fake, submissions, geometryUpdates, emit: (event: AtlasWatchEvent) => emit?.(event) };
+  return {
+    fake,
+    submissions,
+    geometryUpdates,
+    emit: (snapshot: AtlasSnapshot) => {
+      current = snapshot;
+      notify?.(snapshot);
+    }
+  };
 }
 
 function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -303,11 +317,8 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
 
     emit({
-      event: "update",
-      resource_type: "entity",
-      id: "geo-1",
-      version: 7,
-      resource: { ...area, metadata: { ...area.metadata, version: 7 } }
+      entities: { [rover.entity_id]: rover, [area.entity_id]: { ...area, metadata: { ...area.metadata, version: 7 } } },
+      tasks: {}
     });
 
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -425,7 +436,7 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "true");
 
-    emit({ event: "delete", resource_type: "entity", id: "geo-1", version: 2 });
+    emit({ entities: { [rover.entity_id]: rover }, tasks: {} });
 
     expect(await screen.findByText("This item is no longer available.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("map")).toHaveAttribute("data-editing", "false"));

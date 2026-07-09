@@ -26,6 +26,7 @@ import type {
   ReadOptions,
   ResourceOf,
   ResourceValue,
+  SyncSnapshot,
   SyncStatus,
   WatchCallback
 } from "./types.js";
@@ -55,7 +56,7 @@ export class SyncEngine {
     feed: FeedConnectionManager;
     cache: ResourceCache;
     pollIntervalMs: number;
-    initialSync?: false | "all" | "selective";
+    initialSync?: false | "all";
   }) {
     this.transport = options.transport;
     this.feed = options.feed;
@@ -104,6 +105,10 @@ export class SyncEngine {
       lastVersion: this.cache.lastVersion,
       subscriptions: [...this.subscriptions]
     };
+  }
+
+  snapshot(): SyncSnapshot {
+    return this.cache.snapshot();
   }
 
   async subscribe(filter: AtlasSubscription): Promise<void> {

@@ -139,6 +139,12 @@ export type SyncStatus = {
   subscriptions: AtlasSubscription[];
 };
 
+export type SyncSnapshot = {
+  readonly entities: Readonly<Record<string, EntityResource>>;
+  readonly tasks: Readonly<Record<string, TaskResource>>;
+  readonly objects: Readonly<Record<string, ObjectResource>>;
+};
+
 export type ChangedSinceResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
