@@ -33,7 +33,6 @@ import type {
 import { changedSinceToEvents } from "./types.js";
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
-const MAX_SYNC_PAGES = 100;
 
 export class SyncEngine {
   private readonly transport: HttpTransport;
@@ -175,7 +174,6 @@ export class SyncEngine {
     let cursors: ChangedSinceCursors = {};
     const recoveredEvents: AtlasWatchEvent[] = [];
     const seenCursors = new Set<string>();
-    let pages = 0;
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
@@ -183,8 +181,7 @@ export class SyncEngine {
       highWaterVersion = Math.max(highWaterVersion, response.version);
       recoveredEvents.push(...changedSinceToEvents(response));
       cursors = nextChangedSinceCursors(response);
-      pages += 1;
-      assertPaginationProgress("changed-since", cursors, seenCursors, pages);
+      assertPaginationProgress("changed-since", cursors, seenCursors);
     } while (hasMoreChangedSince(cursors));
     for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
       if (!this.isCurrent(generation)) return;
@@ -328,18 +325,23 @@ export class SyncEngine {
   private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
     const seenCursors = new Set<string>();
-    let pages = 0;
+    const entities: EntityResource[] = [];
+    const tasks: TaskResource[] = [];
+    const objects: ObjectResource[] = [];
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<FullDatasetResponse>("GET", fullDatasetPath(cursors));
       if (!this.isCurrent(generation)) return;
-      for (const entity of response.entities ?? []) this.cache.cacheResource("entity", entity.entity_id, entity);
-      for (const task of response.tasks ?? []) this.cache.cacheResource("task", task.task_id, task);
-      for (const object of response.objects ?? []) this.cache.cacheResource("object", object.object_id, object);
+      entities.push(...(response.entities ?? []));
+      tasks.push(...(response.tasks ?? []));
+      objects.push(...(response.objects ?? []));
       cursors = nextFullDatasetCursors(response);
-      pages += 1;
-      assertPaginationProgress("full-dataset", cursors, seenCursors, pages);
+      assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
+    if (!this.isCurrent(generation)) return;
+    for (const entity of entities) this.cache.cacheResource("entity", entity.entity_id, entity);
+    for (const task of tasks) this.cache.cacheResource("task", task.task_id, task);
+    for (const object of objects) this.cache.cacheResource("object", object.object_id, object);
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
@@ -471,8 +473,8 @@ export class SyncEngine {
   }
 
   private markSynchronized(): void {
-    const hasAutomaticUpdates = this.feed.connected || (!this.feed.available && this.pollIntervalMs > 0);
-    this.healthy = hasAutomaticUpdates;
+    const hasAutomaticUpdates = this.feed.connected || this.pollIntervalMs > 0;
+    this.healthy = this.syncRunning && hasAutomaticUpdates;
     this.degraded = this.syncRunning && !hasAutomaticUpdates;
   }
 
@@ -541,9 +543,8 @@ function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
   return Object.keys(cursors).length > 0;
 }
 
-function assertPaginationProgress(label: string, cursors: object, seen: Set<string>, pages: number): void {
+function assertPaginationProgress(label: string, cursors: object, seen: Set<string>): void {
   if (Object.keys(cursors).length === 0) return;
-  if (pages >= MAX_SYNC_PAGES) throw new Error(`Atlas ${label} pagination exceeded ${MAX_SYNC_PAGES} pages`);
   const key = JSON.stringify(Object.entries(cursors).sort(([left], [right]) => left.localeCompare(right)));
   if (seen.has(key)) throw new Error(`Atlas ${label} pagination repeated a cursor state`);
   seen.add(key);

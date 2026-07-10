@@ -27,6 +27,15 @@ describe("AtlasClient sync", () => {
     expect(core.feedConnections).toBe(0);
   });
 
+  it("does not report a stopped engine healthy after a manual changed-since call", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: false, pollIntervalMs: 60_000 });
+
+    await client.changedSince();
+
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+  });
+
   it("hydrates, polls changed-since, updates cache, and serves covered reads from cache", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
@@ -278,7 +287,7 @@ describe("AtlasClient sync", () => {
     expect(fullDatasetRequests).toBe(2);
   });
 
-  it("caps full-dataset pagination", async () => {
+  it("allows advancing full-dataset pagination beyond 100 pages", async () => {
     const core = new FakeCore();
     let fullDatasetRequests = 0;
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -288,14 +297,35 @@ describe("AtlasClient sync", () => {
         entities: [],
         tasks: [],
         objects: [],
-        has_more_entities: true,
-        next_entity_cursor: `cursor-${fullDatasetRequests}`
+        has_more_entities: fullDatasetRequests <= 100,
+        next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination exceeded 100 pages");
-    expect(fullDatasetRequests).toBe(100);
+    await expect(client.sync.start()).resolves.toBeUndefined();
+    expect(fullDatasetRequests).toBe(101);
+  });
+
+  it("does not expose partial hydration when pagination fails", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const partial = entity("asset-partial-hydration");
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      return Response.json({
+        entities: fullDatasetRequests === 1 ? [partial] : [],
+        tasks: [],
+        objects: [],
+        has_more_entities: true,
+        next_entity_cursor: "same-cursor"
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated a cursor state");
+    expect(client.sync.snapshot().entities).toEqual({});
   });
 
   it("falls through to Core when no automatic update path exists", async () => {
@@ -330,6 +360,27 @@ describe("AtlasClient sync", () => {
     } finally {
       client.sync.stop();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats polling as the update path while WebSocket is disconnected", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 60_000
+    });
+
+    try {
+      await client.sync.start();
+      [...core.sockets][0]?.close();
+      await client.changedSince();
+
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+    } finally {
+      client.sync.stop();
     }
   });
 
@@ -837,6 +888,9 @@ describe("AtlasClient sync", () => {
 
     await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true }));
     expect(watch).not.toHaveBeenCalled();
+
+    await client.changedSince();
+    expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
 
     const valid = core.upsertEntity(entity("asset-watch-cross-type-valid"));
     core.emit(
