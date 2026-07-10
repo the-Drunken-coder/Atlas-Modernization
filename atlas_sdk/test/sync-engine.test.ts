@@ -27,11 +27,26 @@ describe("AtlasClient sync", () => {
     expect(core.feedConnections).toBe(0);
   });
 
+  it("does not report a stopped engine healthy after a manual changed-since call", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: false, pollIntervalMs: 60_000 });
+
+    await client.changedSince();
+
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+  });
+
   it("hydrates, polls changed-since, updates cache, and serves covered reads from cache", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
     core.upsertTask(task("task-1", "asset-1"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
     await client.sync.start();
     const updated = core.upsertTask({ ...task("task-1", "asset-1"), status: "acknowledged" });
     await client.changedSince();
@@ -87,6 +102,33 @@ describe("AtlasClient sync", () => {
     expect(watch).toHaveBeenCalledWith(first, expect.objectContaining({ id: "task-page-1", version: first.metadata.version }));
     expect(watch).toHaveBeenCalledWith(second, expect.objectContaining({ id: "task-page-2", version: second.metadata.version }));
     expect(client.sync.status().lastVersion).toBe(core.version);
+  });
+
+  it("rejects repeated changed-since cursor states", async () => {
+    const core = new FakeCore();
+    let changedSinceRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/changed-since") return core.fetch(String(url), init);
+      changedSinceRequests += 1;
+      if (changedSinceRequests > 4) throw new Error("test stopped repeated changed-since pagination");
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: true,
+        next_entity_cursor: "same-cursor",
+        has_more_tasks: true,
+        next_task_cursor: `task-cursor-${changedSinceRequests}`,
+        version: 0
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+
+    await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated entity_cursor");
+    expect(changedSinceRequests).toBe(2);
   });
 
   it("ignores in-flight changed-since results after stop", async () => {
@@ -226,6 +268,139 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("rejects repeated full-dataset cursor states", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      if (fullDatasetRequests > 4) throw new Error("test stopped repeated full-dataset pagination");
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: true,
+        next_entity_cursor: "same-cursor",
+        has_more_tasks: true,
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated entity_cursor");
+    expect(fullDatasetRequests).toBe(2);
+  });
+
+  it("allows advancing full-dataset pagination beyond 100 pages", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: fullDatasetRequests <= 100,
+        next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).resolves.toBeUndefined();
+    expect(fullDatasetRequests).toBe(101);
+  });
+
+  it("does not expose partial hydration when pagination fails", async () => {
+    const core = new FakeCore();
+    const existing = core.upsertEntity(entity("asset-before-failed-hydration"));
+    let failHydration = false;
+    let fullDatasetRequests = 0;
+    const partial = entity("asset-partial-hydration");
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      if (!failHydration) return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      return Response.json({
+        entities: fullDatasetRequests === 1 ? [partial] : [],
+        tasks: [],
+        objects: [],
+        has_more_entities: true,
+        next_entity_cursor: "same-cursor",
+        has_more_tasks: true,
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+    const snapshot = client.sync.snapshot();
+    client.sync.stop();
+    failHydration = true;
+
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated entity_cursor");
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.snapshot().entities).toEqual({ [existing.entity_id]: existing });
+  });
+
+  it("falls through to Core when no automatic update path exists", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-without-updates"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+
+    try {
+      await client.sync.start();
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
+
+      const updated = core.upsertEntity({ ...original, alias: "fresh from Core" });
+      core.requests = [];
+
+      await expect(client.entities.get(original.entity_id)).resolves.toEqual(updated);
+      expect(core.requests).toContain(`/entities/${original.entity_id}`);
+    } finally {
+      client.sync.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats polling as the update path when WebSocket is unavailable", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 60_000 });
+
+    try {
+      await client.sync.start();
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+    } finally {
+      client.sync.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats polling as the update path while WebSocket is disconnected", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 60_000
+    });
+
+    try {
+      await client.sync.start();
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected an initial feed socket");
+      socket.close();
+      await client.changedSince();
+
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+    } finally {
+      client.sync.stop();
+    }
+  });
+
   it("returns pure live cache snapshots after paginated hydration and deletes", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
@@ -247,14 +422,15 @@ describe("AtlasClient sync", () => {
       objects: { [cachedObject.object_id]: cachedObject }
     });
     expect(second).toEqual(first);
-    expect(second).not.toBe(first);
-    expect(second.entities).not.toBe(first.entities);
-    expect(second.tasks).not.toBe(first.tasks);
-    expect(second.objects).not.toBe(first.objects);
+    expect(second).toBe(first);
+    expect(Object.isFrozen(second)).toBe(true);
+    expect(Object.isFrozen(second.entities)).toBe(true);
+    expect(Object.isFrozen(second.entities[firstEntity.entity_id])).toBe(true);
     expect(core.requests).toHaveLength(requestCount);
 
-    first.entities[firstEntity.entity_id].alias = "caller mutation";
-    first.entities[firstEntity.entity_id].metadata.version = 999;
+    expect(() => {
+      first.entities[firstEntity.entity_id].alias = "caller mutation";
+    }).toThrow(TypeError);
     expect(second.entities[firstEntity.entity_id]).toEqual(firstEntity);
     expect(client.sync.snapshot().entities[firstEntity.entity_id]).toEqual(firstEntity);
     await expect(client.entities.get(firstEntity.entity_id)).resolves.toEqual(firstEntity);
@@ -262,7 +438,12 @@ describe("AtlasClient sync", () => {
     core.deleteTask(deletedTask.task_id);
     await client.changedSince();
 
-    expect(client.sync.snapshot().tasks).toEqual({ [firstTask.task_id]: firstTask });
+    const afterDelete = client.sync.snapshot();
+    expect(afterDelete).not.toBe(first);
+    expect(afterDelete.entities).toBe(first.entities);
+    expect(afterDelete.objects).toBe(first.objects);
+    expect(afterDelete.tasks).not.toBe(first.tasks);
+    expect(afterDelete.tasks).toEqual({ [firstTask.task_id]: firstTask });
   });
 
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {
@@ -699,6 +880,23 @@ describe("AtlasClient sync", () => {
     expect(cache.entry("entity", "asset-cache-cross-type")).toBeUndefined();
   });
 
+  it("does not commit a cache entry when snapshot cloning fails", () => {
+    const cache = new ResourceCache();
+    const original = { ...entity("asset-cache-clone-failure"), metadata: metadata(1) };
+    cache.cacheResource("entity", original.entity_id, original);
+    const snapshot = cache.snapshot();
+    const uncloneable = {
+      ...original,
+      alias: "uncloneable update",
+      metadata: metadata(2),
+      invalid_runtime_value: () => undefined
+    };
+
+    expect(() => cache.cacheResource("entity", original.entity_id, uncloneable)).toThrow();
+    expect(cache.value("entity", original.entity_id)).toEqual(original);
+    expect(cache.snapshot()).toBe(snapshot);
+  });
+
   it("does not let feed events whose resource payload crosses resource types stop later events", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -724,6 +922,9 @@ describe("AtlasClient sync", () => {
 
     await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true }));
     expect(watch).not.toHaveBeenCalled();
+
+    await client.changedSince();
+    expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
 
     const valid = core.upsertEntity(entity("asset-watch-cross-type-valid"));
     core.emit(

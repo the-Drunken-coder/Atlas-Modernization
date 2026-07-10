@@ -2,6 +2,7 @@ import { ATLAS_PROTOCOL_REVISION, type FeedEvent, type FeedHandshakeMessage } fr
 import { subscriptionMessage } from "./subscriptions.js";
 import type { AtlasSubscription, WebSocketCtor, WebSocketEventType, WebSocketLike, WebSocketListener } from "./types.js";
 
+const WS_OPEN = 1;
 const WS_CLOSED = 3;
 
 type ActiveFeedConnection = {
@@ -40,6 +41,10 @@ export class FeedConnectionManager {
 
   get available(): boolean {
     return this.WebSocketImpl !== undefined;
+  }
+
+  get connected(): boolean {
+    return this.socket?.readyState === WS_OPEN;
   }
 
   async connect(options: FeedConnectOptions): Promise<void> {

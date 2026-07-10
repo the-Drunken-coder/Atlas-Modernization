@@ -37,7 +37,7 @@ new AtlasClient({ baseUrl, apiKey, sync: "all" }); // seed the all-resources sub
 
 Omitted `sync` and `sync: false` start with no subscription; `sync: "all"` seeds an all-resources subscription. Call `client.subscribe(filter)` and `client.unsubscribe(filter)` to manage explicit filters (the subscription primitives are defined in the [change feed doc](../atlas-change-feed/README.md)). `await client.sync.start()` still performs the existing full-dataset hydration from `GET /queries/full` before it connects the websocket feed and begins the changed-since safety-net poll, regardless of the initial subscription setting.
 
-`client.sync.snapshot()` synchronously projects the live cache into read-only records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition, returns fresh record objects on each call, and omits cache tombstones and other internal bookkeeping.
+`client.sync.snapshot()` synchronously projects the live cache into frozen records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition and omits cache tombstones and other internal bookkeeping. Snapshot references stay stable until the cache changes; each accepted change clones and freezes only that resource, replaces only its resource-type record, and preserves the other records by reference.
 
 ### Unified read surface
 
@@ -50,6 +50,7 @@ Rules that make this safe:
 
 - **Always async.** Every read returns a Promise even when served from cache, so the two paths are indistinguishable to callers except in speed.
 - **Degraded fallthrough.** The engine tracks connection state and its last confirmed global version. If the feed is disconnected or a version gap is unreconciled, the engine marks itself degraded and reads fall through to the API until it catches up. The cache only answers when it is entitled to.
+- **An update path is required.** A runtime with neither a WebSocket implementation nor a positive polling interval remains degraded after hydration, so covered point reads continue to call Core instead of trusting a frozen cache.
 - **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state.
 - **Plain returns + sync status.** Functions return plain data (no metadata envelope). Observability currently comes from `client.sync.status()`; read-source debug hooks are deferred until a real caller needs them.
 

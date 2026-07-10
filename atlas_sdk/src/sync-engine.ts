@@ -173,6 +173,7 @@ export class SyncEngine {
     let highWaterVersion = sinceVersion;
     let cursors: ChangedSinceCursors = {};
     const recoveredEvents: AtlasWatchEvent[] = [];
+    const seenCursors = new Map<string, Set<string>>();
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
@@ -180,6 +181,7 @@ export class SyncEngine {
       highWaterVersion = Math.max(highWaterVersion, response.version);
       recoveredEvents.push(...changedSinceToEvents(response));
       cursors = nextChangedSinceCursors(response);
+      assertPaginationProgress("changed-since", cursors, seenCursors);
     } while (hasMoreChangedSince(cursors));
     for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
       if (!this.isCurrent(generation)) return;
@@ -191,8 +193,7 @@ export class SyncEngine {
     }
     if (!this.isCurrent(generation)) return;
     this.cache.lastVersion = Math.max(this.cache.lastVersion, highWaterVersion);
-    this.degraded = false;
-    this.healthy = this.syncRunning;
+    this.markSynchronized();
   }
 
   async connectAndRecoverFeed(): Promise<void> {
@@ -281,8 +282,7 @@ export class SyncEngine {
     await this.hydrate(generation);
     if (!this.isCurrent(generation)) return;
     this.syncRunning = true;
-    this.healthy = true;
-    this.degraded = false;
+    this.markSynchronized();
     if (this.feed.available) {
       try {
         await this.connectAndRecoverFeedForGeneration(generation);
@@ -324,15 +324,24 @@ export class SyncEngine {
 
   private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
+    const seenCursors = new Map<string, Set<string>>();
+    const entities: EntityResource[] = [];
+    const tasks: TaskResource[] = [];
+    const objects: ObjectResource[] = [];
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<FullDatasetResponse>("GET", fullDatasetPath(cursors));
       if (!this.isCurrent(generation)) return;
-      for (const entity of response.entities ?? []) this.cache.cacheResource("entity", entity.entity_id, entity);
-      for (const task of response.tasks ?? []) this.cache.cacheResource("task", task.task_id, task);
-      for (const object of response.objects ?? []) this.cache.cacheResource("object", object.object_id, object);
+      entities.push(...(response.entities ?? []));
+      tasks.push(...(response.tasks ?? []));
+      objects.push(...(response.objects ?? []));
       cursors = nextFullDatasetCursors(response);
+      assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
+    if (!this.isCurrent(generation)) return;
+    for (const entity of entities) this.cache.cacheResource("entity", entity.entity_id, entity);
+    for (const task of tasks) this.cache.cacheResource("task", task.task_id, task);
+    for (const object of objects) this.cache.cacheResource("object", object.object_id, object);
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
@@ -463,6 +472,12 @@ export class SyncEngine {
     return this.subscriptions.some((sub) => covers(sub, filter));
   }
 
+  private markSynchronized(): void {
+    const hasAutomaticUpdates = this.feed.connected || this.pollIntervalMs > 0;
+    this.healthy = this.syncRunning && hasAutomaticUpdates;
+    this.degraded = this.syncRunning && !hasAutomaticUpdates;
+  }
+
   private advanceCursor(event: FeedEvent, enabled: boolean): void {
     if (enabled) {
       this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
@@ -526,6 +541,18 @@ function hasMoreFullDataset(cursors: FullDatasetCursors): boolean {
 
 function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
   return Object.keys(cursors).length > 0;
+}
+
+function assertPaginationProgress(label: string, cursors: object, seen: Map<string, Set<string>>): void {
+  for (const [stream, cursor] of Object.entries(cursors)) {
+    let values = seen.get(stream);
+    if (!values) {
+      values = new Set<string>();
+      seen.set(stream, values);
+    }
+    if (values.has(cursor)) throw new Error(`Atlas ${label} pagination repeated ${stream}`);
+    values.add(cursor);
+  }
 }
 
 function requireCursor(cursor: string | undefined, name: string): string {

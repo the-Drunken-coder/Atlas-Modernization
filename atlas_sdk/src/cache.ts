@@ -7,6 +7,35 @@ export type CacheResourceOptions = {
   advanceCursor?: boolean;
 };
 
+type SnapshotRecords = {
+  [TType in ResourceType]: SnapshotRecord<ResourceOf<TType>>;
+};
+
+class SnapshotRecord<T> {
+  private readonly entries = new Map<string, T>();
+  private value: Readonly<Record<string, T>> = Object.freeze({});
+  private dirty = false;
+
+  set(id: string, value: T): void {
+    this.entries.set(id, immutableClone(value));
+    this.dirty = true;
+  }
+
+  remove(id: string): boolean {
+    if (!this.entries.delete(id)) return false;
+    this.dirty = true;
+    return true;
+  }
+
+  snapshot(): Readonly<Record<string, T>> {
+    if (this.dirty) {
+      this.value = Object.freeze(Object.fromEntries(this.entries));
+      this.dirty = false;
+    }
+    return this.value;
+  }
+}
+
 export class ObjectContentCache {
   private readonly maxEntries: number;
   private readonly entries = new Map<string, ArrayBuffer>();
@@ -46,6 +75,13 @@ export class ResourceCache {
   };
   readonly pendingDeletes = new Set<string>();
   readonly locallyNotifiedDeletes = new Set<string>();
+  private readonly snapshotRecords: SnapshotRecords = {
+    entity: new SnapshotRecord<EntityResource>(),
+    task: new SnapshotRecord<TaskResource>(),
+    object: new SnapshotRecord<ObjectResource>()
+  };
+  private snapshotValue = snapshotFromRecords(this.snapshotRecords);
+  private snapshotDirty = false;
   lastVersion = 0;
 
   entry<TType extends ResourceType>(type: TType, id: string): CacheEntry<ResourceOf<TType>> | undefined {
@@ -58,11 +94,11 @@ export class ResourceCache {
   }
 
   snapshot(): SyncSnapshot {
-    return {
-      entities: liveValues(this.entries.entity),
-      tasks: liveValues(this.entries.task),
-      objects: liveValues(this.entries.object)
-    };
+    if (this.snapshotDirty) {
+      this.snapshotValue = snapshotFromRecords(this.snapshotRecords);
+      this.snapshotDirty = false;
+    }
+    return this.snapshotValue;
   }
 
   cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {
@@ -80,6 +116,7 @@ export class ResourceCache {
       return false;
     }
     const key = resourceCacheKey(type, id);
+    this.updateSnapshot(type, id, value);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
     this.entries[type].set(id, { value, version, deleted: false, detail: type === "object" && options?.detail === true });
@@ -99,6 +136,7 @@ export class ResourceCache {
 
   markRemoteDelete(type: ResourceType, id: string, version: number): void {
     this.entries[type].set(id, { version, deleted: true });
+    this.removeFromSnapshot(type, id);
   }
 
   markLocalDelete(type: ResourceType, id: string): { previousVersion: number; previous?: ResourceValue } {
@@ -111,12 +149,27 @@ export class ResourceCache {
     this.locallyNotifiedDeletes.add(key);
     return { previousVersion, previous };
   }
+
+  private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {
+    this.snapshotRecords[type].set(id, value);
+    this.snapshotDirty = true;
+  }
+
+  private removeFromSnapshot<TType extends ResourceType>(type: TType, id: string): void {
+    if (this.snapshotRecords[type].remove(id)) this.snapshotDirty = true;
+  }
 }
 
-function liveValues<T>(entries: Map<string, CacheEntry<T>>): Readonly<Record<string, T>> {
-  const values: Record<string, T> = {};
-  for (const [id, entry] of entries) {
-    if (!entry.deleted && entry.value) values[id] = structuredClone(entry.value);
-  }
-  return values;
+function snapshotFromRecords(records: SnapshotRecords): SyncSnapshot {
+  return Object.freeze({ entities: records.entity.snapshot(), tasks: records.task.snapshot(), objects: records.object.snapshot() });
+}
+
+function immutableClone<T>(value: T): T {
+  return deepFreeze(structuredClone(value));
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  for (const key of Object.keys(value)) deepFreeze(Reflect.get(value, key));
+  return Object.freeze(value);
 }

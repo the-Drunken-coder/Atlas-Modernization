@@ -88,7 +88,7 @@ describe("sdk data source", () => {
       tasks: { [firstTask.task_id]: firstTask, [secondTask.task_id]: secondTask }
     });
     expect(requestedUrls.filter((url) => url.includes("/queries/full"))).toHaveLength(2);
-    expect(dataSource.health?.()).toEqual({ running: true, healthy: true, degraded: false });
+    expect(dataSource.health?.()).toEqual({ running: true, healthy: false, degraded: true });
 
     dataSource.dispose();
 
