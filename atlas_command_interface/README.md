@@ -32,6 +32,8 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 ## Local Development
 
+Use Node 24 LTS from the repository root `.nvmrc` before installing dependencies.
+
 1. Start local Atlas Core from this checkout:
 
    ```bash
@@ -85,6 +87,7 @@ Use these settings for the Pages project:
 - Project name: `atlas`
 - Production branch: `main`
 - Root directory: `atlas_command_interface`
+- Node version: `24` (from `.nvmrc`)
 - Build command: `npm run build`
 - Build output directory: `dist/client`
 
@@ -93,6 +96,8 @@ The Core API is exposed through Cloudflare Tunnel at `https://atlascommandapi.or
 ## Checks
 
 ```bash
+npm --prefix atlas_command_interface run lint
+npm --prefix atlas_command_interface run format:check -- --since=origin/main
 npm --prefix atlas_command_interface test
 npm --prefix atlas_command_interface run typecheck
 npm --prefix atlas_command_interface run build

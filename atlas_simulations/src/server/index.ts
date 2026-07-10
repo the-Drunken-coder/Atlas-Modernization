@@ -1,29 +1,28 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-	jsonNumber,
-	type HealthResponse,
-	type RunListResponse,
-	type ScenarioListResponse,
-	type StartRunResponse,
-	type TargetListResponse
+  jsonNumber,
+  type HealthResponse,
+  type RunListResponse,
+  type ScenarioListResponse,
+  type StartRunResponse,
+  type TargetListResponse
 } from "../shared/types.js";
 import { createAtlasClientFactory } from "./atlas.js";
 import { loadConfig, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
 import { streamRunEvents, type EventStream } from "./event-stream.js";
 import {
-	apiKeyForRequest,
-	drainRequestBody,
-	errorMessage,
-	hasLoopbackHost,
-	readRequestBody,
-	readRequestText,
-	RequestBodyError,
-	requireTrustedMutation,
-	safeDecodeURIComponent,
-	sendJSON
+  apiKeyForRequest,
+  drainRequestBody,
+  errorMessage,
+  hasLoopbackHost,
+  readRequestBody,
+  readRequestText,
+  RequestBodyError,
+  requireTrustedMutation,
+  safeDecodeURIComponent,
+  sendJSON
 } from "./http-utils.js";
 import { RunStore } from "./run-store.js";
 import { descriptorForScenario, parseStartRequest, type ParsedStart } from "./scenario.js";
@@ -109,7 +108,7 @@ async function handleRequest(
       return;
     }
     const health = await atlasHealth(target);
-    sendJSON(response, health.ok ? 200 : health.status ?? 503, health satisfies HealthResponse);
+    sendJSON(response, health.ok ? 200 : (health.status ?? 503), health satisfies HealthResponse);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/scenarios") {
@@ -141,7 +140,9 @@ async function handleRequest(
       sendJSON(response, 400, { message: errorMessage(error) });
       return;
     }
-    sendJSON(response, 201, { run: store.start(scenario, parsed.input, runTarget(target, ownsStore || body.targetId !== undefined)) } satisfies StartRunResponse);
+    sendJSON(response, 201, {
+      run: store.start(scenario, parsed.input, runTarget(target, ownsStore || body.targetId !== undefined))
+    } satisfies StartRunResponse);
     return;
   }
   const runMatch = /^\/api\/runs\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname);
@@ -254,10 +255,13 @@ function isCleanupConflict(error: unknown): error is Error {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const app = createSimulationServer();
-  app.listen().then((url) => {
-    console.log(`Atlas Simulations server listening on ${url}`);
-  }).catch((error) => {
-    console.error(errorMessage(error));
-    process.exitCode = 1;
-  });
+  app
+    .listen()
+    .then((url) => {
+      console.log(`Atlas Simulations server listening on ${url}`);
+    })
+    .catch((error) => {
+      console.error(errorMessage(error));
+      process.exitCode = 1;
+    });
 }

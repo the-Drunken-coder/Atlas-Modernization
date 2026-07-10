@@ -41,18 +41,25 @@ export function App() {
   const refreshRunsRequestRef = useRef(0);
   const runsRef = useRef<RunSummary[]>([]);
   const eventsByRunIdRef = useRef<Map<string, RunEvent[]>>(new Map());
+  const effectsRef = useRef({ captureError, refreshHealth, refreshRuns, refreshRunsBestEffort });
+  effectsRef.current = { captureError, refreshHealth, refreshRuns, refreshRunsBestEffort };
 
   useEffect(() => {
-    void loadTargets().then((loaded) => {
-      setTargets(loaded.targets);
-      const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : loaded.targets[0]?.id ?? "";
-      setSelectedTargetId(targetId);
-      return refreshHealth(targetId);
-    }).catch(captureError);
-    void loadScenarios().then((loaded) => {
-      setScenarios(loaded);
-      setSelectedId((current) => current || loaded[0]?.id || "");
-    }).catch(captureError);
+    const { captureError, refreshHealth, refreshRuns } = effectsRef.current;
+    void loadTargets()
+      .then((loaded) => {
+        setTargets(loaded.targets);
+        const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : (loaded.targets[0]?.id ?? "");
+        setSelectedTargetId(targetId);
+        return refreshHealth(targetId);
+      })
+      .catch(captureError);
+    void loadScenarios()
+      .then((loaded) => {
+        setScenarios(loaded);
+        setSelectedId((current) => current || loaded[0]?.id || "");
+      })
+      .catch(captureError);
     void refreshRuns().catch(captureError);
     return () => {
       activeRunIdRef.current = undefined;
@@ -62,7 +69,7 @@ export function App() {
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
   const selectedTarget = useMemo(() => targets.find((target) => target.id === selectedTargetId), [selectedTargetId, targets]);
-  const selectedApiKey = selectedTargetId ? apiKeysByTargetId[selectedTargetId] ?? "" : "";
+  const selectedApiKey = selectedTargetId ? (apiKeysByTargetId[selectedTargetId] ?? "") : "";
   const hasRunningRuns = useMemo(() => runs.some((run) => run.status === "running"), [runs]);
   const hasCleanupInFlight = useMemo(() => !!cleanupRunId && runs.some((run) => run.id === cleanupRunId && !run.cleaned), [cleanupRunId, runs]);
 
@@ -82,7 +89,7 @@ export function App() {
 
   useEffect(() => {
     if (!hasRunningRuns && !hasCleanupInFlight) return;
-    const interval = window.setInterval(() => void refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
+    const interval = window.setInterval(() => void effectsRef.current.refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
     return () => window.clearInterval(interval);
   }, [hasCleanupInFlight, hasRunningRuns]);
 
@@ -420,7 +427,11 @@ export function App() {
         </div>
       </header>
 
-      {error ? <div className="error-banner" role="alert">{error}</div> : null}
+      {error ? (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      ) : null}
 
       <section className="workspace">
         <aside className="panel scenario-panel">
@@ -454,7 +465,12 @@ export function App() {
                 <Square size={16} aria-hidden="true" />
                 Stop
               </button>
-              <button type="button" title="Cleanup run resources" onClick={() => void cleanupCurrentRun()} disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.cleaned}>
+              <button
+                type="button"
+                title="Cleanup run resources"
+                onClick={() => void cleanupCurrentRun()}
+                disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.cleaned}
+              >
                 <Trash2 size={16} aria-hidden="true" />
                 Cleanup
               </button>

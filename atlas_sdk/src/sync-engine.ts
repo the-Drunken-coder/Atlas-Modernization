@@ -241,15 +241,11 @@ export class SyncEngine {
     const resource = await this.transport.json<TResource>(method, path, body, ifMatchVersion);
     const id = resourceID(type, resource);
     const event = eventName ?? (method === "POST" ? "create" : "update");
-    this.applyEvent(
-      resourceUpsertEvent(type, event, id, resource.metadata.version, resource),
-      { detail: type === "object", advanceCursor: false }
-    );
+    this.applyEvent(resourceUpsertEvent(type, event, id, resource.metadata.version, resource), { detail: type === "object", advanceCursor: false });
     return resource;
   }
 
   async checkInEntity<TTask extends TaskResource | EntityCheckInMinimalTask>(
-    id: string,
     path: string,
     body: EntityCheckInBody,
     ifMatchVersion?: number
@@ -261,10 +257,7 @@ export class SyncEngine {
     );
     for (const task of response.tasks) {
       if (isTaskResource(task)) {
-        this.applyEvent(
-          { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task },
-          { advanceCursor: false }
-        );
+        this.applyEvent({ event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task }, { advanceCursor: false });
       }
     }
     return response;

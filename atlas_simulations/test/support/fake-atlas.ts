@@ -6,18 +6,13 @@ import {
   type EntityCheckInMinimalTask,
   type EntityCreateRequest,
   type EntityResource,
-  type EntityUpdateRequest,
   type ObjectCreateRequest,
   type ObjectResource,
   type ResourceType,
   type TaskCreateRequest,
   type TaskResource
 } from "../../../atlas_sdk/src/index.js";
-import type {
-  AtlasClientLike,
-  AtlasClientFactory,
-  ClientMode
-} from "../../src/server/atlas.js";
+import type { AtlasClientLike, AtlasClientFactory, ClientMode } from "../../src/server/atlas.js";
 
 type FakeCoreState = {
   version: number;
@@ -307,7 +302,10 @@ function visibleValues<T extends VersionedResource>(state: FakeCoreState, client
   return [...values.values()]
     .map((history) => visibleSnapshot(history, version))
     .filter((value): value is T => value !== undefined)
-    .filter((value) => !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version, value.metadata.version))
+    .filter(
+      (value) =>
+        !isDeletedAt(state, type, resourceId(value as { entity_id?: string; task_id?: string; object_id?: string }, type), version, value.metadata.version)
+    )
     .map(cloneValue);
 }
 
@@ -369,7 +367,13 @@ function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, 
   return event.resource_type === "task" && (resource as TaskResource).entity_id === filter.entity_id;
 }
 
-function deleteValue<T extends VersionedResource>(state: FakeCoreState, clientState: FakeClientState, values: ResourceHistory<T>, id: string, type: string): void {
+function deleteValue<T extends VersionedResource>(
+  state: FakeCoreState,
+  clientState: FakeClientState,
+  values: ResourceHistory<T>,
+  id: string,
+  type: string
+): void {
   const value = requireValue(values, id, type);
   if (isDeletedAt(state, type, id, state.version, value.metadata.version)) throw notFound(type, id);
   commitVersion(state, clientState);
@@ -406,7 +410,9 @@ function cloneValue<T>(value: T): T {
 }
 
 function isDeletedAt(state: FakeCoreState, type: string, id: string, visibleVersionValue: number, resourceVersion: number): boolean {
-  return (state.tombstones.get(resourceKey(type, id)) ?? []).some((deletedVersion) => deletedVersion > resourceVersion && deletedVersion <= visibleVersionValue);
+  return (state.tombstones.get(resourceKey(type, id)) ?? []).some(
+    (deletedVersion) => deletedVersion > resourceVersion && deletedVersion <= visibleVersionValue
+  );
 }
 
 function resourceKey(type: string, id: string): string {

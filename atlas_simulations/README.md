@@ -27,6 +27,8 @@ The API key is read only by the local Node server. Browser code calls same-origi
 
 ## Development
 
+Use Node 24 LTS from the repository root `.nvmrc` before installing dependencies.
+
 Start the local API server:
 
 ```bash
@@ -44,6 +46,8 @@ Open http://127.0.0.1:5174.
 ## Checks
 
 ```bash
+npm --prefix atlas_simulations run lint
+npm --prefix atlas_simulations run format:check -- --since=origin/main
 npm --prefix atlas_simulations test
 npm --prefix atlas_simulations run typecheck
 npm --prefix atlas_simulations run build
