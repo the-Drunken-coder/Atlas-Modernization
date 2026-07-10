@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StyleSpecification } from "maplibre-gl";
-import { ATLAS_PROTOCOL_REVISION, type EntityResource, type TaskResource } from "../../../atlas_sdk/src/index.js";
+import { ATLAS_PROTOCOL_REVISION, type EntityResource, type TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { createSdkDataSource } from "./data-source.js";
 import type { CommandDefinition } from "./command-model.js";
 import type { UiGeometry } from "./geometry.js";

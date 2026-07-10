@@ -427,9 +427,10 @@ Geofeature editing tests:
 Existing package checks should continue to pass:
 
 ```bash
-npm --prefix atlas_command_interface test
-npm --prefix atlas_command_interface run typecheck
-npm --prefix atlas_command_interface run build
+npm run build:sdk
+npm test --workspace @the-drunken-coder/atlas-command-interface
+npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
+npm run build:command-interface
 ```
 
 Add new app-specific build, unit, component, and browser smoke commands as the app scaffolding is introduced.

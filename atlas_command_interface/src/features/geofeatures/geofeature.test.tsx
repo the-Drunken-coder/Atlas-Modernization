@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { UiGeometry } from "../../atlas/geometry.js";
 import { GeofeatureInspector } from "./GeofeatureInspector.js";
 

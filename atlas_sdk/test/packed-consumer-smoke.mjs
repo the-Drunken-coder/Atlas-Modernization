@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,9 @@ const KILL_GRACE_MS = 2_000;
 const testDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(testDir);
 const protocolRevision = readFileSync(join(testDir, "../../atlas_protocol/generated/revision.txt"), "utf8").trim();
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const staleDistSentinel = join(packageRoot, "dist/stale-package-output.txt");
+const typeScriptCLI = join(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "bin/tsc");
 let tmpdirPath;
 
 function run(command, args, options = {}) {
@@ -197,12 +201,49 @@ async function withFakeCore(callback) {
 
 try {
   tmpdirPath = mkdtempSync(join(tmpdir(), "atlas-sdk-"));
-  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () => run("npm", ["pack", packageRoot, "--pack-destination", tmpdirPath, "--json", "--silent"]));
+  mkdirSync(dirname(staleDistSentinel), { recursive: true });
+  writeFileSync(staleDistSentinel, "prepack must remove this file\n");
+  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () => run(npmCommand, ["pack", packageRoot, "--pack-destination", tmpdirPath, "--json", "--silent"]));
   const tarball = join(tmpdirPath, packedTarballName(packOutput));
   const projectDir = join(tmpdirPath, "project");
   mkdirSync(projectDir);
-  runStep(`Failed to initialize smoke project at ${projectDir}`, () => run("npm", ["init", "-y", "--silent"], { cwd: projectDir }));
-  runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () => run("npm", ["install", tarball, "--silent"], { cwd: projectDir }));
+  runStep(`Failed to initialize smoke project at ${projectDir}`, () => run(npmCommand, ["init", "-y", "--silent"], { cwd: projectDir }));
+  runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () => run(npmCommand, ["install", tarball, "--silent"], { cwd: projectDir }));
+  const installedPackageRoot = join(projectDir, "node_modules/@the-drunken-coder/atlas-sdk");
+  if (existsSync(join(installedPackageRoot, "dist/stale-package-output.txt"))) {
+    throw new Error("prepack included stale dist output in the installed package");
+  }
+  for (const filename of ["README.md", "LICENSE", "package.json"]) {
+    if (!existsSync(join(installedPackageRoot, filename))) {
+      throw new Error(`installed package is missing ${filename}`);
+    }
+  }
+  const installedPackageJSON = JSON.parse(readFileSync(join(installedPackageRoot, "package.json"), "utf8"));
+  for (const field of ["name", "version", "description", "author", "license", "repository", "homepage", "bugs", "publishConfig", "exports", "bin"]) {
+    if (installedPackageJSON[field] === undefined) {
+      throw new Error(`installed package.json is missing ${field}`);
+    }
+  }
+  const installedBin = join(projectDir, "node_modules/.bin", process.platform === "win32" ? "atlas.cmd" : "atlas");
+  if (!existsSync(installedBin)) {
+    throw new Error("npm did not install the atlas binary from package.json bin metadata");
+  }
+  const atlasCLI = join(installedPackageRoot, installedPackageJSON.bin.atlas);
+
+  const rootImportOutput = runCombined(
+    "node",
+    [
+      "--input-type=module",
+      "-e",
+      "import('@the-drunken-coder/atlas-sdk').then((m) => console.log(JSON.stringify({ client: typeof m.AtlasClient, revision: m.ATLAS_PROTOCOL_REVISION, validTask: m.isTaskCreateRequest({ task_id: 'smoke-task' }) })))"
+    ],
+    { cwd: projectDir }
+  );
+  const rootImport = JSON.parse(rootImportOutput);
+  if (rootImport.client !== "function" || rootImport.revision !== protocolRevision || rootImport.validTask !== true) {
+    throw new Error(`installed root export or generated protocol artifact is invalid: ${rootImportOutput}`);
+  }
+
   const adminImportOutput = runCombined("node", ["--input-type=module", "-e", "import('@the-drunken-coder/atlas-sdk/admin').then((m) => console.log(typeof m.AtlasAdminClient))"], {
     cwd: projectDir
   });
@@ -211,7 +252,28 @@ try {
     throw new Error("installed package did not expose ./admin AtlasAdminClient through package exports");
   }
 
-  const helpOutput = runCombined("npx", ["--no-install", "atlas", "--help"], { cwd: projectDir });
+  const typeConsumer = join(projectDir, "consumer.mts");
+  writeFileSync(
+    typeConsumer,
+    `import { AtlasClient, ATLAS_PROTOCOL_REVISION, isTaskCreateRequest, type EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { AtlasAdminClient, type AdminAPIKey } from "@the-drunken-coder/atlas-sdk/admin";
+
+const clientConstructor: typeof AtlasClient = AtlasClient;
+const adminConstructor: typeof AtlasAdminClient = AtlasAdminClient;
+const revision: string = ATLAS_PROTOCOL_REVISION;
+const entity: EntityResource | undefined = undefined;
+const apiKey: AdminAPIKey | undefined = undefined;
+const validTask: boolean = isTaskCreateRequest({ task_id: "smoke-task" });
+void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
+`
+  );
+  runStep("Installed package TypeScript declarations did not compile", () =>
+    run(process.execPath, [typeScriptCLI, "--noEmit", "--strict", "--target", "ES2022", "--lib", "ES2022,DOM", "--module", "NodeNext", "--moduleResolution", "NodeNext", typeConsumer], {
+      cwd: projectDir
+    })
+  );
+
+  const helpOutput = runCombined(process.execPath, [atlasCLI, "--help"], { cwd: projectDir });
   if (!/usage: atlas/i.test(helpOutput)) {
     process.stderr.write(helpOutput);
     throw new Error("installed atlas binary did not print usage");
@@ -221,7 +283,7 @@ try {
     const task = {
       task_id: "smoke-task"
     };
-    const output = await runCombinedAsync("npx", ["--no-install", "atlas", "--base-url", baseUrl, "--api-key", "smoke-key", "tasks", "create", JSON.stringify(task)], {
+    const output = await runCombinedAsync(process.execPath, [atlasCLI, "--base-url", baseUrl, "--api-key", "smoke-key", "tasks", "create", JSON.stringify(task)], {
       cwd: projectDir
     });
     if (!output.includes('"task_id":"smoke-task"')) {
@@ -237,7 +299,8 @@ try {
     }
   });
 
-  runCombined("npx", ["--no-install", "atlas", "not-a-command"], { cwd: projectDir, expectStatus: 2 });
+  runCombined(process.execPath, [atlasCLI, "not-a-command"], { cwd: projectDir, expectStatus: 2 });
 } finally {
+  rmSync(staleDistSentinel, { force: true });
   if (tmpdirPath) rmSync(tmpdirPath, { recursive: true, force: true });
 }

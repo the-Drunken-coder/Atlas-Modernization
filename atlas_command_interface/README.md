@@ -32,7 +32,13 @@ Command submission posts a task directly to Core without a client-supplied `task
 
 ## Local Development
 
-1. Start local Atlas Core from this checkout:
+1. Install the JavaScript workspace from the repository root with Node.js 26:
+
+   ```bash
+   npm ci
+   ```
+
+2. Start local Atlas Core from this checkout:
 
    ```bash
    python3 Atlas_Core/scripts/atlas.py --dev
@@ -41,10 +47,10 @@ Command submission posts a task directly to Core without a client-supplied `task
    `atlas.py` starts Docker Compose, waits for PostgreSQL, MinIO, and the API, then publishes the embedded command catalog through the object API for browser/reference use. Startup seeds the development admin account `admin` / `password`.
    If an old local Postgres volume has stale credentials, run `python3 Atlas_Core/scripts/atlas.py --dev --reset-volumes`.
 
-2. Run the Vite app:
+3. Build the local SDK package and run the Vite app:
 
    ```bash
-   npm --prefix atlas_command_interface run dev
+   npm run dev:command-interface
    ```
 
 Open http://127.0.0.1:5173/map and sign in with `admin` / `password`.
@@ -52,7 +58,7 @@ Open http://127.0.0.1:5173/map and sign in with `admin` / `password`.
 If you need a different Core URL:
 
 ```bash
-VITE_ATLAS_CORE_BASE_URL=https://api.example.test npm --prefix atlas_command_interface run dev
+VITE_ATLAS_CORE_BASE_URL=https://api.example.test npm run dev:command-interface
 ```
 
 For local map-provider testing, copy `atlas_command_interface/.env.example` to `atlas_command_interface/.env.local` and fill only the provider keys you want to enable. `.env.local` is ignored by git.
@@ -84,16 +90,20 @@ Use these settings for the Pages project:
 
 - Project name: `atlas`
 - Production branch: `main`
-- Root directory: `atlas_command_interface`
-- Build command: `npm run build`
-- Build output directory: `dist/client`
+- Root directory: `/`
+- Build command: `npm run build:command-interface`
+- Build output directory: `atlas_command_interface/dist/client`
+- Node version: `26` (committed in the root `.node-version`)
+
+The repository root must remain the Pages root so dependency installation uses the workspace lockfile and links the local SDK package. For a manual Wrangler deploy from the repository root, run `npm run deploy:command-interface`.
 
 The Core API is exposed through Cloudflare Tunnel at `https://atlascommandapi.org`, with `https://api.atlasinterface.com` as the browser-facing alias for the same tunnel service. Core must allow `https://atlasinterface.com` plus the trusted Pages preview pattern in `CORS_ORIGIN_PATTERNS`.
 
 ## Checks
 
 ```bash
-npm --prefix atlas_command_interface test
-npm --prefix atlas_command_interface run typecheck
-npm --prefix atlas_command_interface run build
+npm run build:sdk
+npm test --workspace @the-drunken-coder/atlas-command-interface
+npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
+npm run build:command-interface
 ```

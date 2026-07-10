@@ -21,9 +21,6 @@ env:
   PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
   PROTOCOL_GO_SUM_FILE: atlas_protocol/go.sum
   PROTOCOL_WORKING_DIRECTORY: atlas_protocol
-  SDK_WORKING_DIRECTORY: atlas_sdk
-  COMMAND_INTERFACE_WORKING_DIRECTORY: atlas_command_interface
-  SIMULATIONS_WORKING_DIRECTORY: atlas_simulations
   WORKING_DIRECTORY: Atlas_Core
 
 jobs:
@@ -127,9 +124,6 @@ jobs:
   atlas-sdk:
     name: atlas-sdk
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.SDK_WORKING_DIRECTORY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -139,52 +133,49 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "26"
+          node-version-file: .node-version
           cache: npm
-          cache-dependency-path: ${{ env.SDK_WORKING_DIRECTORY }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install SDK dependencies
+      - name: Install JavaScript workspace dependencies
         run: npm ci
 
       - name: Install browser test runtime
-        run: timeout 10m npx --no-install playwright install chromium
+        run: timeout 10m node node_modules/playwright/cli.js install chromium
 
       - name: Build Atlas SDK
-        run: npm run build
+        run: npm run build:sdk
 
       - name: Verify Atlas SDK package output
         run: |
           missing=0
-          test -d dist/atlas_sdk/src || { echo "::error::missing dist/atlas_sdk/src"; missing=1; }
-          test -f dist/atlas_sdk/src/index.js || { echo "::error::missing dist/atlas_sdk/src/index.js"; missing=1; }
-          test -f dist/atlas_sdk/src/index.d.ts || { echo "::error::missing dist/atlas_sdk/src/index.d.ts"; missing=1; }
-          test -f dist/atlas_sdk/src/cli.js || { echo "::error::missing dist/atlas_sdk/src/cli.js"; missing=1; }
-          test -f dist/atlas_sdk/src/cli.d.ts || { echo "::error::missing dist/atlas_sdk/src/cli.d.ts"; missing=1; }
-          test -f dist/atlas_sdk/src/admin.js || { echo "::error::missing dist/atlas_sdk/src/admin.js"; missing=1; }
-          test -f dist/atlas_sdk/src/admin.d.ts || { echo "::error::missing dist/atlas_sdk/src/admin.d.ts"; missing=1; }
-          test -d dist/atlas_protocol/generated/typescript || { echo "::error::missing dist/atlas_protocol/generated/typescript"; missing=1; }
-          test -f dist/atlas_protocol/generated/typescript/index.js || { echo "::error::missing dist/atlas_protocol/generated/typescript/index.js"; missing=1; }
-          test -f dist/atlas_protocol/generated/typescript/index.d.ts || { echo "::error::missing dist/atlas_protocol/generated/typescript/index.d.ts"; missing=1; }
+          test -d atlas_sdk/dist/atlas_sdk/src || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src"; missing=1; }
+          test -f atlas_sdk/dist/atlas_sdk/src/index.js || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/index.js"; missing=1; }
+          test -f atlas_sdk/dist/atlas_sdk/src/index.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/index.d.ts"; missing=1; }
+          test -f atlas_sdk/dist/atlas_sdk/src/cli.js || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/cli.js"; missing=1; }
+          test -f atlas_sdk/dist/atlas_sdk/src/cli.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/cli.d.ts"; missing=1; }
+          test -f atlas_sdk/dist/atlas_sdk/src/admin.js || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/admin.js"; missing=1; }
+          test -f atlas_sdk/dist/atlas_sdk/src/admin.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_sdk/src/admin.d.ts"; missing=1; }
+          test -d atlas_sdk/dist/atlas_protocol/generated/typescript || { echo "::error::missing atlas_sdk/dist/atlas_protocol/generated/typescript"; missing=1; }
+          test -f atlas_sdk/dist/atlas_protocol/generated/typescript/index.js || { echo "::error::missing atlas_sdk/dist/atlas_protocol/generated/typescript/index.js"; missing=1; }
+          test -f atlas_sdk/dist/atlas_protocol/generated/typescript/index.d.ts || { echo "::error::missing atlas_sdk/dist/atlas_protocol/generated/typescript/index.d.ts"; missing=1; }
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-          node scripts/verify-package-entrypoints.js
+          node atlas_sdk/scripts/verify-package-entrypoints.js
 
-      - name: Smoke test Atlas SDK CLI binary
-        run: npm run test:bin
+      - name: Smoke test packed Atlas SDK consumer
+        run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
 
       - name: Run Atlas SDK Node tests
-        run: npm run test:node
+        run: npm run test:node --workspace @the-drunken-coder/atlas-sdk
 
       - name: Run Atlas SDK browser tests
-        run: npm run test:browser
+        run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
   atlas-command-interface:
     name: atlas-command-interface
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.COMMAND_INTERFACE_WORKING_DIRECTORY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -194,28 +185,28 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "26"
+          node-version-file: .node-version
           cache: npm
-          cache-dependency-path: ${{ env.COMMAND_INTERFACE_WORKING_DIRECTORY }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install command interface dependencies
+      - name: Install JavaScript workspace dependencies
         run: npm ci
 
+      - name: Build Atlas SDK dependency
+        run: npm run build:sdk
+
       - name: Type-check command interface
-        run: npm run typecheck
+        run: npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
 
       - name: Test command interface
-        run: npm test
+        run: npm test --workspace @the-drunken-coder/atlas-command-interface
 
       - name: Build command interface
-        run: npm run build
+        run: npm run build --workspace @the-drunken-coder/atlas-command-interface
 
   atlas-simulations:
     name: atlas-simulations
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.SIMULATIONS_WORKING_DIRECTORY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -225,21 +216,24 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "26"
+          node-version-file: .node-version
           cache: npm
-          cache-dependency-path: ${{ env.SIMULATIONS_WORKING_DIRECTORY }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install simulations dependencies
+      - name: Install JavaScript workspace dependencies
         run: npm ci
 
+      - name: Build Atlas SDK dependency
+        run: npm run build:sdk
+
       - name: Type-check simulations
-        run: npm run typecheck
+        run: npm run typecheck --workspace @the-drunken-coder/atlas-simulations
 
       - name: Test simulations
-        run: npm test
+        run: npm test --workspace @the-drunken-coder/atlas-simulations
 
       - name: Build simulations
-        run: npm run build
+        run: npm run build --workspace @the-drunken-coder/atlas-simulations
 
   build:
     name: build

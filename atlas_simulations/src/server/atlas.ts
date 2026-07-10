@@ -2,7 +2,7 @@ import {
   AtlasAPIError,
   AtlasClient,
   type AtlasClientOptions
-} from "../../../atlas_sdk/src/index.js";
+} from "@the-drunken-coder/atlas-sdk";
 import type { AtlasTargetConfig, SimulationConfig } from "./config.js";
 
 export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {

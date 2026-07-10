@@ -1,4 +1,4 @@
-import type { TaskResource } from "../../../../atlas_sdk/src/index.js";
+import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { formatRelativeTime } from "../../atlas/format.js";
 import { taskCommandId, taskStatusMessage } from "../../atlas/tasks.js";
 import { TaskStatusPill } from "../../ui/primitives/StatusPill.js";

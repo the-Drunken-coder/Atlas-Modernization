@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AtlasAdminClient, type AdminAPIKey, type AdminCreatedAPIKey } from "../../../../atlas_sdk/src/admin.js";
+import { AtlasAdminClient, type AdminAPIKey, type AdminCreatedAPIKey } from "@the-drunken-coder/atlas-sdk/admin";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { CopyIcon, PlusIcon, TrashIcon } from "../../ui/primitives/icons.js";

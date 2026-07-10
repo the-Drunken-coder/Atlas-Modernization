@@ -12,7 +12,7 @@ import {
   type ResourceType,
   type TaskCreateRequest,
   type TaskResource
-} from "../../../atlas_sdk/src/index.js";
+} from "@the-drunken-coder/atlas-sdk";
 import type {
   AtlasClientLike,
   AtlasClientFactory,

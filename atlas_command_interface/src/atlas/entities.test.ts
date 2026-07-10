@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EntityResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import {
   entityClassification,
   entityDisplayName,

@@ -27,16 +27,22 @@ The API key is read only by the local Node server. Browser code calls same-origi
 
 ## Development
 
-Start the local API server:
+Install the JavaScript workspace once from the repository root with Node.js 26:
 
 ```bash
-npm --prefix atlas_simulations run dev:server
+npm ci
+```
+
+Start the local API server (building the local SDK package first):
+
+```bash
+npm run dev:simulations-server
 ```
 
 Start the browser UI:
 
 ```bash
-npm --prefix atlas_simulations run dev
+npm run dev:simulations
 ```
 
 Open http://127.0.0.1:5174.
@@ -44,7 +50,8 @@ Open http://127.0.0.1:5174.
 ## Checks
 
 ```bash
-npm --prefix atlas_simulations test
-npm --prefix atlas_simulations run typecheck
-npm --prefix atlas_simulations run build
+npm run build:sdk
+npm test --workspace @the-drunken-coder/atlas-simulations
+npm run typecheck --workspace @the-drunken-coder/atlas-simulations
+npm run build:simulations
 ```

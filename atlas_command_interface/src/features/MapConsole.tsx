@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
 import type { ConnectionHealth } from "../atlas/data-source.js";

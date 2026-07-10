@@ -3,7 +3,7 @@ import {
   type EntityResource,
   type JSONValue,
   type TaskResource
-} from "../../../atlas_sdk/src/index.js";
+} from "@the-drunken-coder/atlas-sdk";
 import type { AppConfig } from "../app/config.js";
 import {
   buildCommandTaskRequest,

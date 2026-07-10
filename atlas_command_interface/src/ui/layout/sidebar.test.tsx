@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { EntityList } from "../../features/EntityList.js";
 import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
 import { SidebarPanel } from "./SidebarPanel.js";

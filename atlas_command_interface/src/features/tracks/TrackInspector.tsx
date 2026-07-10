@@ -1,4 +1,4 @@
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import {
   entityAltitude,
   entityClassification,

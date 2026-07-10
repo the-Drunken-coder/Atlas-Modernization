@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { parseCommandCatalog } from "./command-model.js";
 import { commandTargeting, commandsForTargeting, evaluateCommand, formParameters } from "./command-targeting.js";
 
