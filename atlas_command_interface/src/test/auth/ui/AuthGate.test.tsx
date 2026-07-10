@@ -18,7 +18,7 @@ describe("AuthGate", () => {
       </AuthGate>
     );
 
-    expect(await screen.findByLabelText("Username")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Username")).toHaveFocus();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
     expect(fetchStub.calls[0]?.[0]).toBe("https://core.test/admin/auth/me");
     expect(fetchStub.calls[0]?.[1]).toMatchObject({ credentials: "include" });
@@ -61,6 +61,9 @@ describe("AuthGate", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("map console")).toBeInTheDocument();
+    expect(screen.getByText("Signed in as")).toBeInTheDocument();
+    expect(screen.getByText("operator")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
     expect(fetchStub.calls[1]).toMatchObject([
       "https://core.test/admin/auth/login",
       {
@@ -72,6 +75,52 @@ describe("AuthGate", () => {
       username: "operator",
       password: "correct-password"
     });
+  });
+
+  it("logs out through Core and returns focus to the login form", async () => {
+    const user = userEvent.setup();
+    const fetchStub = stubFetch([
+      { status: 200, body: { user: { username: "operator", role: "admin" } } },
+      { status: 204 }
+    ]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Log out" }));
+
+    expect(await screen.findByLabelText("Username")).toHaveFocus();
+    expect(screen.queryByText("map console")).not.toBeInTheDocument();
+    expect(fetchStub.calls[1]).toMatchObject([
+      "https://core.test/admin/auth/logout",
+      {
+        method: "POST",
+        credentials: "include"
+      }
+    ]);
+  });
+
+  it("keeps the workspace mounted when logout fails", async () => {
+    const user = userEvent.setup();
+    stubFetch([
+      { status: 200, body: { user: { username: "operator", role: "admin" } } },
+      { status: 503, body: { message: "logout unavailable" } }
+    ]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Log out" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("logout unavailable");
+    expect(screen.getByText("map console")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log out" })).toBeEnabled();
   });
 
   it("returns to logged-out state when Atlas auth expires", async () => {
@@ -107,12 +156,12 @@ describe("AuthGate", () => {
   });
 });
 
-function stubFetch(responses: Array<{ status: number; body: unknown }>): { calls: Array<[RequestInfo | URL, RequestInit | undefined]> } {
+function stubFetch(responses: Array<{ status: number; body?: unknown }>): { calls: Array<[RequestInfo | URL, RequestInit | undefined]> } {
   const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push([input, init]);
     const response = responses.shift() ?? responses.at(-1) ?? { status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } };
-    return new Response(JSON.stringify(response.body), { status: response.status, headers: { "Content-Type": "application/json" } });
+    return new Response(response.status === 204 ? null : JSON.stringify(response.body), { status: response.status, headers: { "Content-Type": "application/json" } });
   });
   vi.stubGlobal("fetch", fetchMock);
   return { calls };

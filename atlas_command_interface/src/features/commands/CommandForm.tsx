@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { JSONValue } from "../../../../atlas_sdk/src/index.js";
 import type { CommandDefinition, CommandParameterSchema } from "../../atlas/command-model.js";
 import type { CommandTargeting } from "../../atlas/command-targeting.js";
@@ -19,6 +19,30 @@ export type CommandFormProps = {
 export function CommandForm(props: CommandFormProps) {
   const { command, targeting, formParameters, mapPoint, submitting, error, onCancel, onSubmit } = props;
   const [values, setValues] = useState<Record<string, string>>({});
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+
+  useEffect(
+    () => () => {
+      if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+    },
+    []
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submitting) {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      } else if (event.key === "Tab") {
+        keepFocusInDialog(event, dialogRef.current);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onCancel, submitting]);
 
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
 
@@ -48,11 +72,19 @@ export function CommandForm(props: CommandFormProps) {
   };
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Send ${command.name}`}>
+    <div
+      ref={dialogRef}
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+    >
       <div className="modal">
         <div className="modal__header">
-          <span className="modal__title">{command.name}</span>
-          <IconButton label="Close" onClick={onCancel}>
+          <span className="modal__title" id={titleId}>
+            {command.name}
+          </span>
+          <IconButton label="Close" autoFocus disabled={submitting} onClick={onCancel}>
             <CloseIcon size={16} />
           </IconButton>
         </div>
@@ -83,6 +115,27 @@ export function CommandForm(props: CommandFormProps) {
       </div>
     </div>
   );
+}
+
+function keepFocusInDialog(event: KeyboardEvent, dialog: HTMLElement | null): void {
+  if (!dialog) return;
+  const controls = Array.from(
+    dialog.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  );
+  if (controls.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  const activeElement = document.activeElement;
+  const reachedEdge = event.shiftKey ? activeElement === first : activeElement === last;
+  if (reachedEdge || !dialog.contains(activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
 }
 
 function ParameterField({

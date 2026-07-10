@@ -49,7 +49,11 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   }
 
   if (state.status === "authenticated") {
-    return <>{children}</>;
+    return (
+      <AuthenticatedShell baseUrl={baseUrl} username={state.username} onLoggedOut={() => setState({ status: "unauthenticated" })}>
+        {children}
+      </AuthenticatedShell>
+    );
   }
 
   if (state.status === "error") {
@@ -67,6 +71,53 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   }
 
   return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
+}
+
+function AuthenticatedShell({
+  baseUrl,
+  username,
+  children,
+  onLoggedOut
+}: {
+  baseUrl: string;
+  username: string;
+  children: ReactNode;
+  onLoggedOut: () => void;
+}) {
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const logout = async () => {
+    setLoggingOut(true);
+    setError(undefined);
+    try {
+      await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.logout();
+      onLoggedOut();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setLoggingOut(false);
+    }
+  };
+
+  return (
+    <section className="authenticated-shell">
+      <header className="session-bar" aria-label="User session">
+        <div className="session-bar__identity">
+          <span>Signed in as</span>
+          <strong>{username}</strong>
+        </div>
+        {error ? (
+          <span className="session-bar__error" role="alert">
+            {error}
+          </span>
+        ) : null}
+        <Button variant="ghost" disabled={loggingOut} onClick={() => void logout()}>
+          {loggingOut ? "Logging out..." : "Log out"}
+        </Button>
+      </header>
+      <div className="authenticated-shell__workspace">{children}</div>
+    </section>
+  );
 }
 
 function errorMessage(error: unknown): string {
@@ -117,7 +168,7 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
         </div>
         <label className="field">
           <span className="field__label">Username</span>
-          <input className="input" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+          <input className="input" autoComplete="username" autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
         </label>
         <label className="field">
           <span className="field__label">Password</span>
