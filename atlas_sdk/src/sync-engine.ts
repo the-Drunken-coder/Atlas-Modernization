@@ -444,7 +444,7 @@ export class SyncEngine {
     }
     this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
     this.advanceCursor(event, advanceCursor);
-    this.notify(event, event.resource, previous);
+    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
   }
 
   private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
@@ -462,7 +462,7 @@ export class SyncEngine {
     this.cache.pendingDeletes.delete(key);
     this.cache.locallyNotifiedDeletes.delete(key);
     this.cache.cacheResource(event.resource_type, event.id, event.resource);
-    this.notify(event, event.resource, previous);
+    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {

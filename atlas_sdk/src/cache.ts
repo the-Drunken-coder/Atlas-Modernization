@@ -17,7 +17,7 @@ class SnapshotRecord<T> {
   private dirty = false;
 
   set(id: string, value: T): void {
-    this.entries.set(id, immutableClone(value));
+    this.entries.set(id, value);
     this.dirty = true;
   }
 
@@ -51,12 +51,12 @@ export class ObjectContentCache {
     }
     this.entries.delete(key);
     this.entries.set(key, value);
-    return value;
+    return value.slice(0);
   }
 
   set(key: string, value: ArrayBuffer): void {
     this.entries.delete(key);
-    this.entries.set(key, value);
+    this.entries.set(key, value.slice(0));
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) {
@@ -115,11 +115,12 @@ export class ResourceCache {
     if (existing && existing.version === version && !isDetailUpgrade) {
       return false;
     }
+    const immutableValue = immutableClone(value);
     const key = resourceCacheKey(type, id);
-    this.updateSnapshot(type, id, value);
+    this.updateSnapshot(type, id, immutableValue);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
-    this.entries[type].set(id, { value, version, deleted: false, detail: type === "object" && options?.detail === true });
+    this.entries[type].set(id, { value: immutableValue, version, deleted: false, detail: type === "object" && options?.detail === true });
     if (options?.advanceCursor !== false) {
       this.lastVersion = Math.max(this.lastVersion, version);
     }
