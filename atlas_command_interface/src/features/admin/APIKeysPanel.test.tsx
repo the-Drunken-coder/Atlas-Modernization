@@ -16,6 +16,7 @@ const atlasValue: AtlasContextValue = {
 		},
 	snapshot: emptySnapshot(),
 	health: { running: true, healthy: true, degraded: false },
+	reconnect() {},
 	submitCommand: async () => {
 		throw new Error("not used");
 	},

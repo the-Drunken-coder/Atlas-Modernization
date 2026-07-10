@@ -43,6 +43,34 @@ describe("AuthGate", () => {
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 
+  it("retries the initial Core session check only when the operator requests it", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Core is unavailable"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByText("Core is unavailable")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry connection" }));
+
+    expect(await screen.findByText("map console")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("renders children after successful login", async () => {
     const user = userEvent.setup();
     const fetchStub = stubFetch([

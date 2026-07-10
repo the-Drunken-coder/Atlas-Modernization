@@ -12,9 +12,11 @@ type SessionResponse = { authenticated: false } | { authenticated: true; user: {
 
 export function AuthGate({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
+  const [sessionAttempt, setSessionAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setState({ status: "loading" });
     const checkSession = async () => {
       try {
         const data = await loadSession(baseUrl);
@@ -38,7 +40,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
       cancelled = true;
       window.removeEventListener("atlas-auth-expired", expireSession);
     };
-  }, [baseUrl]);
+  }, [baseUrl, sessionAttempt]);
 
   if (state.status === "loading") {
     return (
@@ -61,6 +63,15 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
             <h1>Core unavailable</h1>
           </div>
           <div className="banner banner--error">{state.error}</div>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setState({ status: "loading" });
+              setSessionAttempt((attempt) => attempt + 1);
+            }}
+          >
+            Retry connection
+          </Button>
         </div>
       </main>
     );

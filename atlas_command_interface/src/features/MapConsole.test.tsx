@@ -306,6 +306,36 @@ describe("MapConsole command flow", () => {
     expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
   });
 
+  it("offers a one-shot connection retry after initial SDK startup fails", async () => {
+    const user = userEvent.setup();
+    const failedDispose = vi.fn();
+    const failing: AtlasDataSource = {
+      ...makeFakeDataSource().fake,
+      async start() {
+        throw new Error("Core startup failed");
+      },
+      dispose: failedDispose
+    };
+    const recovered = makeFakeDataSource().fake;
+    const createDataSource = vi.fn().mockReturnValueOnce(failing).mockReturnValueOnce(recovered);
+
+    render(
+      <AtlasProvider loadConfig={async () => appConfig()} createDataSource={createDataSource}>
+        <MapConsole />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("Core startup failed")).toBeInTheDocument();
+    expect(createDataSource).toHaveBeenCalledTimes(1);
+    expect(failedDispose).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry connection" }));
+
+    expect(await screen.findByText("Rover")).toBeInTheDocument();
+    expect(createDataSource).toHaveBeenCalledTimes(2);
+    expect(failedDispose).toHaveBeenCalledTimes(1);
+  });
+
   it("saves geometry edits with the version captured when editing started", async () => {
     const user = userEvent.setup();
     const { fake, geometryUpdates, emit } = makeFakeDataSource();

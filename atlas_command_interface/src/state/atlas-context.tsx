@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
 import { fetchAppConfig, type AppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
@@ -15,6 +15,7 @@ export type AtlasContextValue = {
   snapshot: AtlasSnapshot;
   catalog?: CommandCatalog;
   health: ConnectionHealth;
+  reconnect: () => void;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
@@ -41,10 +42,12 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
   const [catalog, setCatalog] = useState<CommandCatalog>();
   const [snapshot, setSnapshot] = useState<AtlasSnapshot>(emptySnapshot);
   const [health, setHealth] = useState<ConnectionHealth>(DEFAULT_HEALTH);
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
   const dataSourceRef = useRef<AtlasDataSource | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
+    let catalogGeneration = 0;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
     const cleanup = () => {
@@ -58,6 +61,12 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       dataSourceRef.current = undefined;
     };
 
+    setStatus("loading");
+    setError(undefined);
+    setSnapshot(emptySnapshot());
+    setCatalog(undefined);
+    setHealth(DEFAULT_HEALTH);
+
     (async () => {
       try {
         const resolvedConfig = providedConfig ?? (await loadConfig());
@@ -67,19 +76,26 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         const dataSource = createDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
 
-        unsubscribe = dataSource.watch((nextSnapshot) => {
-          if (cancelled) return;
-          setSnapshot(nextSnapshot);
-        });
+        unsubscribe = dataSource.watch(
+          (nextSnapshot) => {
+            if (cancelled) return;
+            setSnapshot(nextSnapshot);
+          },
+          (nextCatalog) => {
+            catalogGeneration++;
+            if (!cancelled) setCatalog(nextCatalog);
+          }
+        );
 
         await dataSource.start();
         if (cancelled) return;
 
         setSnapshot(dataSource.snapshot());
 
+        const catalogRequest = ++catalogGeneration;
         const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
         if (cancelled) return;
-        if (loadedCatalog) setCatalog(loadedCatalog);
+        if (catalogRequest === catalogGeneration) setCatalog(loadedCatalog);
 
         setStatus("ready");
 
@@ -101,9 +117,16 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
 
     return () => {
       cancelled = true;
+      catalogGeneration++;
       cleanup();
     };
-  }, [providedConfig, loadConfig, createDataSource]);
+  }, [providedConfig, loadConfig, createDataSource, connectionAttempt]);
+
+  const reconnect = useCallback(() => {
+    setStatus("loading");
+    setError(undefined);
+    setConnectionAttempt((attempt) => attempt + 1);
+  }, []);
 
   const value = useMemo<AtlasContextValue>(
     () => ({
@@ -113,6 +136,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       snapshot,
       catalog,
       health,
+      reconnect,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
@@ -124,7 +148,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         return dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
       }
     }),
-    [status, error, config, snapshot, catalog, health]
+    [status, error, config, snapshot, catalog, health, reconnect]
   );
 
   return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;

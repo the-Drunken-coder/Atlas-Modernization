@@ -16,7 +16,7 @@ import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
 import type { MapCameraCommand } from "../ui/map/map-camera.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
-import { SelectField } from "../ui/primitives/controls.js";
+import { Button, SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
@@ -218,9 +218,12 @@ export function MapConsole() {
   }
   if (atlas.status === "error") {
     return (
-      <div className="app-error">
+      <div className="app-error" role="alert">
         <span>Could not connect to Atlas Core.</span>
         <code>{atlas.error}</code>
+        <Button variant="primary" onClick={atlas.reconnect}>
+          Retry connection
+        </Button>
       </div>
     );
   }
