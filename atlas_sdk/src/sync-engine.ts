@@ -173,7 +173,7 @@ export class SyncEngine {
     let highWaterVersion = sinceVersion;
     let cursors: ChangedSinceCursors = {};
     const recoveredEvents: AtlasWatchEvent[] = [];
-    const seenCursors = new Set<string>();
+    const seenCursors = new Map<string, Set<string>>();
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
@@ -324,7 +324,7 @@ export class SyncEngine {
 
   private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
-    const seenCursors = new Set<string>();
+    const seenCursors = new Map<string, Set<string>>();
     const entities: EntityResource[] = [];
     const tasks: TaskResource[] = [];
     const objects: ObjectResource[] = [];
@@ -543,11 +543,16 @@ function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
   return Object.keys(cursors).length > 0;
 }
 
-function assertPaginationProgress(label: string, cursors: object, seen: Set<string>): void {
-  if (Object.keys(cursors).length === 0) return;
-  const key = JSON.stringify(Object.entries(cursors).sort(([left], [right]) => left.localeCompare(right)));
-  if (seen.has(key)) throw new Error(`Atlas ${label} pagination repeated a cursor state`);
-  seen.add(key);
+function assertPaginationProgress(label: string, cursors: object, seen: Map<string, Set<string>>): void {
+  for (const [stream, cursor] of Object.entries(cursors)) {
+    let values = seen.get(stream);
+    if (!values) {
+      values = new Set<string>();
+      seen.set(stream, values);
+    }
+    if (values.has(cursor)) throw new Error(`Atlas ${label} pagination repeated ${stream}`);
+    values.add(cursor);
+  }
 }
 
 function requireCursor(cursor: string | undefined, name: string): string {

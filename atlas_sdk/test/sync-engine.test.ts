@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type EntityResource, type FeedEvent, type ResourceType } from "../src";
+import { AtlasClient, type FeedEvent, type ResourceType } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -120,12 +120,14 @@ describe("AtlasClient sync", () => {
         deleted_objects: [],
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
+        has_more_tasks: true,
+        next_task_cursor: `task-cursor-${changedSinceRequests}`,
         version: 0
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
 
-    await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated a cursor state");
+    await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated entity_cursor");
     expect(changedSinceRequests).toBe(2);
   });
 
@@ -278,12 +280,14 @@ describe("AtlasClient sync", () => {
         tasks: [],
         objects: [],
         has_more_entities: true,
-        next_entity_cursor: "same-cursor"
+        next_entity_cursor: "same-cursor",
+        has_more_tasks: true,
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated a cursor state");
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated entity_cursor");
     expect(fullDatasetRequests).toBe(2);
   });
 
@@ -322,7 +326,9 @@ describe("AtlasClient sync", () => {
         tasks: [],
         objects: [],
         has_more_entities: true,
-        next_entity_cursor: "same-cursor"
+        next_entity_cursor: "same-cursor",
+        has_more_tasks: true,
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
@@ -332,7 +338,7 @@ describe("AtlasClient sync", () => {
     client.sync.stop();
     failHydration = true;
 
-    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated a cursor state");
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated entity_cursor");
     expect(client.sync.snapshot()).toBe(snapshot);
     expect(client.sync.snapshot().entities).toEqual({ [existing.entity_id]: existing });
   });
@@ -884,7 +890,7 @@ describe("AtlasClient sync", () => {
       alias: "uncloneable update",
       metadata: metadata(2),
       invalid_runtime_value: () => undefined
-    } as unknown as EntityResource;
+    };
 
     expect(() => cache.cacheResource("entity", original.entity_id, uncloneable)).toThrow();
     expect(cache.value("entity", original.entity_id)).toEqual(original);
