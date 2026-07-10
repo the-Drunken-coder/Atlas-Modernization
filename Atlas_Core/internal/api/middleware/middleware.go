@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -92,7 +93,7 @@ func Recoverer(next http.Handler) http.Handler {
 			if recovered == nil {
 				return
 			}
-			if err, ok := recovered.(error); ok && err == http.ErrAbortHandler {
+			if err, ok := recovered.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 				panic(recovered)
 			}
 

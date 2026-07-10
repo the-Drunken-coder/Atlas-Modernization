@@ -6,6 +6,7 @@ package middleware_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -217,7 +218,9 @@ func TestRecovererLogsPanicWithRequestID(t *testing.T) {
 
 func TestRecovererPreservesAbortHandlerPanic(t *testing.T) {
 	defer func() {
-		if recovered := recover(); recovered != http.ErrAbortHandler {
+		recovered := recover()
+		err, ok := recovered.(error)
+		if !ok || !errors.Is(err, http.ErrAbortHandler) {
 			t.Fatalf("expected http.ErrAbortHandler panic, got %v", recovered)
 		}
 	}()
