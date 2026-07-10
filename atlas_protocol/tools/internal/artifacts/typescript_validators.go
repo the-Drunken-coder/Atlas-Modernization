@@ -72,10 +72,6 @@ func hasRuntimeValidator(typeName string) bool {
 	return false
 }
 
-func (g *typeScriptGenerator) runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
-	return g.runtimeValidatorExpressionWithRefs(valueExpr, schema, map[string]bool{})
-}
-
 func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr string, schema typeScriptSchema, seenRefs map[string]bool) (string, error) {
 	if ref, ok := schema["$ref"].(string); ok {
 		refExpression, err := g.runtimeRefValidatorExpression(valueExpr, ref, seenRefs)
