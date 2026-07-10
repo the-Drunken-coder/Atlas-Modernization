@@ -78,9 +78,30 @@ python3 Atlas_Core/scripts/atlas.py --production --tunnel
 ```
 
 `ATLAS_TUNNEL_HOSTNAME` defaults to `atlascommandapi.org`. The tunnel container
-joins the Compose network and forwards traffic to `http://api:8000`.
+forwards traffic to `http://api:8000` over a dedicated `172.30.0.0/29` ingress
+bridge shared only with Core. Compose pins Core to `172.30.0.2`, pins
+`cloudflared` to `172.30.0.3`, and configures Core to trust only the tunnel
+peer's `172.30.0.3/32` client-IP headers. Direct clients remain keyed by their
+socket address and cannot spoof `CF-Connecting-IP` or `X-Forwarded-For`.
 For the browser interface, `api.atlasinterface.com` is the default Core URL and
 points at the same tunnel service as `atlascommandapi.org`.
+
+`atlas.py` recreates the Compose containers and networks during a managed
+restart. When upgrading a host with direct Compose commands, run the documented
+`down --remove-orphans` command with both Compose files before starting the
+tunnel so Docker can create the dedicated ingress bridge. If `172.30.0.0/29`
+conflicts with a host
+route, change the subnet, the two static service addresses, and
+`TRUSTED_PROXY_CIDRS` together; the trusted value must remain the exact
+`cloudflared` `/32`.
+
+For a non-Compose reverse proxy, leave `TRUSTED_PROXY_CIDRS` empty unless Core's
+socket peer is that proxy. Then configure only the exact peer `/32` or `/128`.
+The proxy must overwrite `CF-Connecting-IP`, or remove it and append its
+observed client to `X-Forwarded-For`; passing client-supplied values through is
+unsafe.
+Never use Cloudflare's public edge ranges for Tunnel: Core connects to the local
+`cloudflared` process, not directly to the edge.
 
 The production Core environment should allow the Pages origins that can call
 cookie-authenticated admin/resource routes:
@@ -134,7 +155,14 @@ Production tunnel logs:
 
 ```bash
 cd Atlas_Core/docker
-docker compose -f docker-compose.production.yml --profile tunnel logs -f api cloudflared
+docker compose -f docker-compose.production.yml -f docker-compose.tunnel.yml logs -f api cloudflared
+```
+
+Stop a production tunnel deployment and remove its dedicated ingress network:
+
+```bash
+cd Atlas_Core/docker
+docker compose -f docker-compose.production.yml -f docker-compose.tunnel.yml down --remove-orphans
 ```
 
 Stop containers without deleting volumes:

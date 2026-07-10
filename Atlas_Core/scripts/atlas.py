@@ -34,7 +34,7 @@ API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
 DEFAULT_TUNNEL_HOSTNAME = "atlascommandapi.org"
 TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 DEV_COMPOSE_FILE = "docker-compose.yml"
-DEV_TUNNEL_COMPOSE_FILE = "docker-compose.tunnel.yml"
+TUNNEL_COMPOSE_FILE = "docker-compose.tunnel.yml"
 PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
 
 
@@ -350,11 +350,15 @@ def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_re
     raise Exception(f"Database schema not ready after {max_retries} attempts")
 
 
-def compose_down_command(*, production=False, remove_volumes=False):
+def compose_down_command(*, production=False, tunnel=False, remove_volumes=False):
     """Return the docker compose down command for the selected deployment mode."""
     cmd = ["docker", "compose"]
     if production:
         cmd.extend(["-f", PRODUCTION_COMPOSE_FILE])
+        if tunnel:
+            cmd.extend(["-f", TUNNEL_COMPOSE_FILE])
+    elif tunnel:
+        cmd.extend(["-f", DEV_COMPOSE_FILE, "-f", TUNNEL_COMPOSE_FILE])
     cmd.extend(["down", "--remove-orphans"])
     if remove_volumes:
         cmd.extend(["--volumes", "--rmi", "local"])
@@ -367,22 +371,22 @@ def compose_up_command(*, production=False, tunnel=False, service=None):
     if production:
         cmd.extend(["-f", PRODUCTION_COMPOSE_FILE])
         if tunnel:
-            cmd.extend(["--profile", "tunnel"])
+            cmd.extend(["-f", TUNNEL_COMPOSE_FILE])
     elif tunnel:
-        cmd.extend(["-f", DEV_COMPOSE_FILE, "-f", DEV_TUNNEL_COMPOSE_FILE])
+        cmd.extend(["-f", DEV_COMPOSE_FILE, "-f", TUNNEL_COMPOSE_FILE])
     cmd.extend(["up", "-d", "--build"])
     if service:
         cmd.append(service)
     return cmd
 
 
-def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False):
+def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, tunnel=False):
     """Stop containers and optionally delete related volumes/images."""
     print("[STOP] Stopping existing containers...")
     docker_dir = os.path.join(atlas_core_dir, "docker")
     if remove_volumes:
         print("[STOP] Removing container volumes and local images...")
-    cmd = compose_down_command(production=production, remove_volumes=remove_volumes)
+    cmd = compose_down_command(production=production, tunnel=tunnel, remove_volumes=remove_volumes)
     result = subprocess.run(
         cmd,
         cwd=docker_dir,
@@ -536,7 +540,12 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             if not ensure_tunnel_token():
                 sys.exit(1)
 
-        cleanup_containers(atlas_core_dir, remove_volumes=reset_volumes, production=production)
+        cleanup_containers(
+            atlas_core_dir,
+            remove_volumes=reset_volumes,
+            production=production,
+            tunnel=tunnel,
+        )
 
         if db_only:
             print("[START] Starting PostgreSQL container...")

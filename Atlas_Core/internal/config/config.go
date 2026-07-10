@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"strings"
 )
@@ -42,8 +43,9 @@ type Config struct {
 	EnableAPIAuth bool
 	APIAuthKey    string
 
-	// Browser admin sessions
+	// Browser admin sessions and login throttling
 	AdminCookieSameSite string
+	TrustedProxyCIDRs   []netip.Prefix
 
 	// Upload limits
 	MaxUploadSizeMB int64 // Maximum file upload size in megabytes
@@ -168,6 +170,12 @@ func Load() (*Config, error) {
 			return nil, err
 		}
 		cfg.CORSOriginPatterns = patterns
+	}
+	if trustedProxyCIDRs, ok := os.LookupEnv("TRUSTED_PROXY_CIDRS"); ok {
+		cfg.TrustedProxyCIDRs, err = parseTrustedProxyCIDRs(trustedProxyCIDRs)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := validateCORSOrigins(cfg.CORSOrigins); err != nil {
