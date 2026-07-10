@@ -13,7 +13,7 @@ export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
   sync: Pick<AtlasClient["sync"], "start" | "stop" | "status">;
 };
 
-export type ClientMode = false | "all" | "selective";
+export type ClientMode = false | "all";
 
 export type AtlasClientFactory = (options?: { sync?: ClientMode; pollIntervalMs?: number; signal?: AbortSignal }) => AtlasClientLike;
 

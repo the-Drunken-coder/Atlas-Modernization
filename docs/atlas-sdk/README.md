@@ -27,15 +27,17 @@ Two components, not three modes:
 1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. Standalone telemetry patching and object upload are still direct API calls until they are added to the SDK.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
-The user-facing modes are constructor presets over these components:
+The constructor can optionally seed the all-resources subscription:
 
 ```ts
-new AtlasClient({ baseUrl, apiKey });                    // manual: sync engine exists but is not started
-new AtlasClient({ baseUrl, apiKey, sync: "all" });       // configure sync for all resources
-new AtlasClient({ baseUrl, apiKey, sync: "selective" }); // hybrid: explicit subscriptions
+new AtlasClient({ baseUrl, apiKey });              // no initial subscription
+new AtlasClient({ baseUrl, apiKey, sync: false }); // no initial subscription
+new AtlasClient({ baseUrl, apiKey, sync: "all" }); // seed the all-resources subscription
 ```
 
-Same cache, same feed consumer, same reconciliation logic in all sync presets. The constructor only configures the sync engine: `sync: "all"` seeds an all-resources subscription, while "selective" starts empty and adds `client.subscribe(filter)` calls (filters are the subscription primitives defined in the [change feed doc](../atlas-change-feed/README.md)). Call `await client.sync.start()` to hydrate from `GET /queries/full`, connect the websocket feed when available, and begin the changed-since safety-net poll.
+Omitted `sync` and `sync: false` start with no subscription; `sync: "all"` seeds an all-resources subscription. Call `client.subscribe(filter)` and `client.unsubscribe(filter)` to manage explicit filters (the subscription primitives are defined in the [change feed doc](../atlas-change-feed/README.md)). `await client.sync.start()` still performs the existing full-dataset hydration from `GET /queries/full` before it connects the websocket feed and begins the changed-since safety-net poll, regardless of the initial subscription setting.
+
+`client.sync.snapshot()` synchronously projects the live cache into read-only records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition, returns fresh record objects on each call, and omits cache tombstones and other internal bookkeeping.
 
 ### Unified read surface
 
