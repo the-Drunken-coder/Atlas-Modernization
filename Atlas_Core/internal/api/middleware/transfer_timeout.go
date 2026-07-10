@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -21,7 +20,7 @@ func transferIdleTimeout(idle time.Duration, now func() time.Time) func(http.Han
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			controller := http.NewResponseController(w)
-			if err := supportedDeadlineError(controller.SetWriteDeadline(time.Time{})); err != nil {
+			if err := controller.SetWriteDeadline(time.Time{}); err != nil {
 				http.Error(w, "failed to configure transfer deadline", http.StatusInternalServerError)
 				return
 			}
@@ -33,7 +32,7 @@ func transferIdleTimeout(idle time.Duration, now func() time.Time) func(http.Han
 				now:            now,
 			}
 			if r.Body != nil {
-				if err := supportedDeadlineError(controller.SetReadDeadline(now().Add(idle))); err != nil {
+				if err := controller.SetReadDeadline(now().Add(idle)); err != nil {
 					http.Error(writer, "failed to configure transfer deadline", http.StatusInternalServerError)
 					return
 				}
@@ -50,13 +49,6 @@ func transferIdleTimeout(idle time.Duration, now func() time.Time) func(http.Han
 	}
 }
 
-func supportedDeadlineError(err error) error {
-	if errors.Is(err, http.ErrNotSupported) {
-		return nil
-	}
-	return err
-}
-
 type transferRequestBody struct {
 	io.ReadCloser
 	controller *http.ResponseController
@@ -65,7 +57,7 @@ type transferRequestBody struct {
 }
 
 func (b *transferRequestBody) Read(p []byte) (int, error) {
-	if err := supportedDeadlineError(b.controller.SetReadDeadline(b.now().Add(b.idle))); err != nil {
+	if err := b.controller.SetReadDeadline(b.now().Add(b.idle)); err != nil {
 		return 0, err
 	}
 	return b.ReadCloser.Read(p)
@@ -83,12 +75,12 @@ func (w *transferResponseWriter) Unwrap() http.ResponseWriter {
 }
 
 func (w *transferResponseWriter) WriteHeader(statusCode int) {
-	_ = supportedDeadlineError(w.controller.SetWriteDeadline(w.now().Add(w.idle)))
+	_ = w.controller.SetWriteDeadline(w.now().Add(w.idle))
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (w *transferResponseWriter) Write(p []byte) (int, error) {
-	if err := supportedDeadlineError(w.controller.SetWriteDeadline(w.now().Add(w.idle))); err != nil {
+	if err := w.controller.SetWriteDeadline(w.now().Add(w.idle)); err != nil {
 		return 0, err
 	}
 	return w.ResponseWriter.Write(p)

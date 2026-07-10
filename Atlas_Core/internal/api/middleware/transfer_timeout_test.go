@@ -124,6 +124,23 @@ func TestTransferIdleTimeoutPreservesBodyLimitAndContext(t *testing.T) {
 	}
 }
 
+func TestTransferIdleTimeoutRejectsUnsupportedDeadlineControl(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/download", nil)
+	called := false
+
+	TransferIdleTimeout(30*time.Second)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	})).ServeHTTP(recorder, req)
+
+	if called {
+		t.Fatal("handler ran without connection deadline support")
+	}
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", recorder.Code)
+	}
+}
+
 func TestTransferIdleTimeoutOverridesRealServerWriteTimeout(t *testing.T) {
 	handler := TransferIdleTimeout(time.Second)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(60 * time.Millisecond)
