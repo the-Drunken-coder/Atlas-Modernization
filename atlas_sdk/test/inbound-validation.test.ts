@@ -1,0 +1,395 @@
+import { describe, expect, it, vi } from "vitest";
+import { ATLAS_PROTOCOL_REVISION, AtlasClient } from "../src";
+import { FeedConnectionManager } from "../src/feed-connection.js";
+import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
+import { FakeWebSocket } from "./support/fake-websocket.js";
+
+const validEntity = (id: string, version: number) => ({ ...entity(id), metadata: metadata(version) });
+const validTask = (id: string, entityID: string | null, version: number) => ({
+  ...task(id, entityID),
+  metadata: metadata(version)
+});
+const validObject = (id: string, version: number) => ({ ...object(id), metadata: metadata(version) });
+const fullPage = (overrides: Record<string, unknown> = {}) => ({
+  entities: [],
+  tasks: [],
+  objects: [],
+  has_more_entities: false,
+  has_more_tasks: false,
+  has_more_objects: false,
+  ...overrides
+});
+const changedPage = (overrides: Record<string, unknown> = {}) => ({
+  entities: [],
+  tasks: [],
+  objects: [],
+  deleted_entities: [],
+  deleted_tasks: [],
+  deleted_objects: [],
+  has_more_entities: false,
+  has_more_tasks: false,
+  has_more_objects: false,
+  has_more_deleted_entities: false,
+  has_more_deleted_tasks: false,
+  has_more_deleted_objects: false,
+  version: 4,
+  ...overrides
+});
+
+describe("AtlasClient inbound response validation", () => {
+  it("rejects a malformed HTTP handshake even when the protocol revision matches", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json({ protocol_revision: ATLAS_PROTOCOL_REVISION, unexpected: true })
+    });
+
+    await expect(client.handshake()).rejects.toThrow("Atlas response failed validation for GET /protocol/revision");
+  });
+
+  it.each<[string, unknown]>([
+    ["missing a required resource array", { entities: [], objects: [] }],
+    ["containing a resource in the wrong bucket", fullPage({ entities: [validTask("task-wrong-bucket", null, 1)] })],
+    ["containing malformed resource metadata", fullPage({ entities: [validEntity("asset-zero-version", 0)] })],
+    ["omitting a pagination flag", fullPage({ has_more_tasks: undefined })],
+    ["declaring another page without a cursor", fullPage({ has_more_entities: true })],
+    ["sending a cursor without another page", fullPage({ next_entity_cursor: "orphan" })]
+  ])("rejects a malformed full-dataset envelope %s", async (_name, payload) => {
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });
+
+    await expect(client.queries.full()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
+  });
+
+  it.each<[string, unknown]>([
+    ["missing its high-water version", changedPage({ version: undefined })],
+    ["with a fractional high-water version", changedPage({ version: 4.5 })],
+    ["whose high-water version precedes since_version", changedPage({ version: 3 })],
+    ["containing a stale resource version", changedPage({ entities: [validEntity("asset-stale", 4)], version: 5 })],
+    ["containing a resource beyond its high-water version", changedPage({ entities: [validEntity("asset-future", 6)], version: 5 })],
+    ["containing malformed resource metadata", changedPage({ tasks: [validTask("task-zero-version", null, 0)], version: 5 })],
+    ["containing a tombstone in the wrong bucket", changedPage({ deleted_entities: [{ id: "asset-deleted", type: "task", version: 5 }], version: 5 })],
+    ["containing a malformed tombstone version", changedPage({ deleted_tasks: [{ id: "task-deleted", type: "task", version: 0 }], version: 5 })],
+    ["omitting a pagination flag", changedPage({ has_more_deleted_objects: undefined })],
+    ["sending a cursor without another page", changedPage({ next_deleted_object_cursor: "orphan" })]
+  ])("rejects a malformed changed-since envelope %s", async (_name, payload) => {
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });
+
+    await expect(client.queries.changedSince(4)).rejects.toThrow(
+      "Atlas response failed validation for GET /queries/changed-since?since_version=4"
+    );
+  });
+
+  it("rejects point responses for a different resource id without poisoning the cache", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json(validEntity("asset-other", 1)),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    const snapshot = client.sync.snapshot();
+
+    await expect(client.entities.get("asset-requested", { fresh: true })).rejects.toThrow(
+      "Atlas entity response id asset-other does not match requested id asset-requested"
+    );
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.status().lastVersion).toBe(0);
+  });
+
+  it("accepts the payload field on HTTP ObjectResponse values", async () => {
+    const response = {
+      ...validObject("object-http-payload", 1),
+      payload: { label: "thermal", nested: { confidence: 0.91 }, values: [1, true, null] }
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
+
+    await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
+  });
+
+  it("keeps hydration atomic when a later page is malformed", async () => {
+    const core = new FakeCore();
+    const existing = core.upsertEntity(entity("asset-hydration-baseline"));
+    let malformedHydration = false;
+    let page = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (!malformedHydration || new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      page += 1;
+      if (page === 1) {
+        return Response.json(
+          fullPage({
+            entities: [validEntity("asset-uncommitted-page", existing.metadata.version + 1)],
+            has_more_entities: true,
+            next_entity_cursor: "next"
+          })
+        );
+      }
+      return Response.json({ entities: [], objects: [] });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+    const snapshot = client.sync.snapshot();
+    const cursor = client.sync.status().lastVersion;
+    client.sync.stop();
+    malformedHydration = true;
+
+    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full?entity_cursor=next");
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.snapshot().entities).toEqual({ [existing.entity_id]: existing });
+    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-uncommitted-page");
+    expect(client.sync.status()).toMatchObject({ running: false, lastVersion: cursor });
+  });
+
+  it("degrades a running sync without partial mutation and recovers from a later valid changed-since response", async () => {
+    const core = new FakeCore();
+    const existing = core.upsertEntity(entity("asset-recovery-baseline"));
+    let malformedChangedSince = false;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (!malformedChangedSince || new URL(String(url)).pathname !== "/queries/changed-since") return core.fetch(String(url), init);
+      return Response.json(
+        changedPage({
+          entities: [validEntity("asset-uncommitted-recovery", existing.metadata.version + 1)],
+          deleted_entities: [{ id: "", type: "entity", version: existing.metadata.version + 1 }],
+          version: existing.metadata.version + 1
+        })
+      );
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 60_000 });
+
+    try {
+      await client.sync.start();
+      const recovered = core.upsertTask(task("task-valid-recovery", existing.entity_id));
+      const snapshot = client.sync.snapshot();
+      const cursor = client.sync.status().lastVersion;
+      malformedChangedSince = true;
+
+      await expect(client.changedSince()).rejects.toThrow("Atlas response failed validation");
+      expect(client.sync.snapshot()).toBe(snapshot);
+      expect(client.sync.snapshot().entities).not.toHaveProperty("asset-uncommitted-recovery");
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true, lastVersion: cursor });
+
+      malformedChangedSince = false;
+      await expect(client.changedSince()).resolves.toBeUndefined();
+      expect(client.sync.snapshot().tasks[recovered.task_id]).toEqual(recovered);
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false, lastVersion: recovered.metadata.version });
+    } finally {
+      client.sync.stop();
+    }
+  });
+
+  it("rejects changed-since watermark drift across pages without committing the first page", async () => {
+    const core = new FakeCore();
+    const existing = core.upsertEntity(entity("asset-watermark-baseline"));
+    let driftWatermark = false;
+    let page = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (!driftWatermark || new URL(String(url)).pathname !== "/queries/changed-since") return core.fetch(String(url), init);
+      page += 1;
+      if (page === 1) {
+        return Response.json(
+          changedPage({
+            entities: [validEntity("asset-uncommitted-watermark", existing.metadata.version + 1)],
+            has_more_entities: true,
+            next_entity_cursor: "next",
+            version: existing.metadata.version + 1
+          })
+        );
+      }
+      return Response.json(changedPage({ version: existing.metadata.version + 2 }));
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 60_000 });
+
+    try {
+      await client.sync.start();
+      const snapshot = client.sync.snapshot();
+      const cursor = client.sync.status().lastVersion;
+      driftWatermark = true;
+
+      await expect(client.changedSince()).rejects.toThrow();
+      expect(page).toBe(2);
+      expect(client.sync.snapshot()).toBe(snapshot);
+      expect(client.sync.snapshot().entities).not.toHaveProperty("asset-uncommitted-watermark");
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true, lastVersion: cursor });
+    } finally {
+      client.sync.stop();
+    }
+  });
+
+  it("validates the whole check-in envelope before mutating entity or task cache state", async () => {
+    const core = new FakeCore();
+    const existingEntity = core.upsertEntity(entity("asset-checkin-atomic"));
+    const existingTask = core.upsertTask(task("task-checkin-atomic", existingEntity.entity_id));
+    let malformedCheckIn = false;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (!malformedCheckIn || path !== `/entities/${existingEntity.entity_id}/checkin`) return core.fetch(String(url), init);
+      return Response.json({
+        entity: { ...existingEntity, alias: "must not leak", metadata: metadata(existingTask.metadata.version + 1) },
+        tasks: [
+          {
+            ...existingTask,
+            entity_id: "asset-other",
+            status: "acknowledged",
+            metadata: metadata(existingTask.metadata.version + 2)
+          }
+        ],
+        task_count: 1,
+        task_limit: 10,
+        has_more_tasks: false
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+    const entityWatch = vi.fn();
+    const taskWatch = vi.fn();
+    client.entities.watch(existingEntity.entity_id, entityWatch);
+    client.tasks.watch(existingTask.task_id, taskWatch);
+    const snapshot = client.sync.snapshot();
+    const cursor = client.sync.status().lastVersion;
+    malformedCheckIn = true;
+
+    await expect(client.entities.checkIn(existingEntity.entity_id)).rejects.toThrow("Atlas response failed validation");
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.snapshot().entities[existingEntity.entity_id]).toEqual(existingEntity);
+    expect(client.sync.snapshot().tasks[existingTask.task_id]).toEqual(existingTask);
+    expect(client.sync.status().lastVersion).toBe(cursor);
+    expect(entityWatch).not.toHaveBeenCalled();
+    expect(taskWatch).not.toHaveBeenCalled();
+    client.sync.stop();
+  });
+});
+
+describe("AtlasClient inbound feed validation", () => {
+  it("rejects a malformed feed hello even when the protocol revision matches", async () => {
+    const core = new FakeCore();
+    class MalformedHelloWebSocket extends FakeWebSocket {
+      constructor(url: string) {
+        super(url, core);
+        queueMicrotask(() => this.receive({ type: "hello", protocol_revision: ATLAS_PROTOCOL_REVISION, unexpected: true }));
+      }
+    }
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: MalformedHelloWebSocket,
+      feedHandshakeTimeoutMs: 1_000
+    });
+
+    await expect(
+      manager.connect({
+        subscriptions: [{ filter: "all" }],
+        onEvent: () => undefined,
+        onEventError: () => undefined,
+        onClose: () => undefined
+      })
+    ).rejects.toThrow("feed did not send a valid protocol hello");
+    expect(core.sockets.size).toBe(0);
+  });
+
+  it("degrades after a replacement feed sends a malformed hello and bypasses covered cache reads", async () => {
+    const core = new FakeCore();
+    class MalformedReplacementWebSocket extends FakeWebSocket {
+      constructor(url: string) {
+        super(url, core);
+        if (core.feedConnections === 2) {
+          queueMicrotask(() => this.receive({ type: "hello", protocol_revision: ATLAS_PROTOCOL_REVISION, unexpected: true }));
+        }
+      }
+    }
+    const cached = core.upsertEntity(entity("asset-replacement-fallback"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: MalformedReplacementWebSocket,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+      const snapshot = client.sync.snapshot();
+      expect(snapshot.entities[cached.entity_id]).toEqual(cached);
+      expect(Object.isFrozen(snapshot.entities[cached.entity_id])).toBe(true);
+
+      const fresh = core.upsertEntity({ ...cached, alias: "fresh from HTTP" });
+      core.requests = [];
+
+      await expect(client.connectFeed()).rejects.toThrow("feed did not send a valid protocol hello");
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
+      await expect(client.entities.get(cached.entity_id)).resolves.toEqual(fresh);
+      expect(core.requests).toContain(`/entities/${cached.entity_id}`);
+    } finally {
+      client.sync.stop();
+    }
+  });
+
+  it("drops malformed feed frames without changing cache state and still accepts a later valid event", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      const watch = vi.fn();
+      client.watch({ filter: "all" }, watch);
+      const snapshot = client.sync.snapshot();
+      const resource = validEntity("asset-invalid-feed", 1);
+      const unsafeVersion = Number.MAX_SAFE_INTEGER + 1;
+      const malformedFrames: unknown[] = [
+        { type: "hello", protocol_revision: ATLAS_PROTOCOL_REVISION, unexpected: true },
+        { event: "unknown", resource_type: "entity", id: resource.entity_id, version: 1, resource },
+        { event: "update", resource_type: "entity", id: "asset-wrong-id", version: 1, resource },
+        { event: "update", resource_type: "entity", id: resource.entity_id, version: 2, resource },
+        {
+          event: "update",
+          resource_type: "entity",
+          id: resource.entity_id,
+          version: unsafeVersion,
+          resource: { ...resource, metadata: metadata(unsafeVersion) }
+        },
+        {
+          event: "update",
+          resource_type: "entity",
+          id: resource.entity_id,
+          version: 1,
+          resource: { ...resource, metadata: { ...resource.metadata, created_at: "not-a-timestamp" } }
+        },
+        {
+          event: "update",
+          resource_type: "entity",
+          id: resource.entity_id,
+          version: 1,
+          resource: validTask("task-cross-type", null, 1)
+        }
+      ];
+
+      for (const frame of malformedFrames) socket.receive(frame);
+
+      expect(client.sync.snapshot()).toBe(snapshot);
+      expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true, lastVersion: 0 });
+      expect(watch).not.toHaveBeenCalled();
+
+      const valid = core.upsertEntity(entity("asset-valid-after-malformed-feed"));
+      socket.receive({
+        event: "update",
+        resource_type: "entity",
+        id: valid.entity_id,
+        version: valid.metadata.version,
+        resource: valid
+      });
+
+      await vi.waitFor(() => expect(client.sync.snapshot().entities[valid.entity_id]).toEqual(valid));
+      expect(watch).toHaveBeenCalledWith(valid, expect.objectContaining({ id: valid.entity_id, version: valid.metadata.version }));
+      await client.changedSince();
+      expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false, lastVersion: valid.metadata.version });
+    } finally {
+      client.sync.stop();
+    }
+  });
+});

@@ -1,6 +1,7 @@
-import { ATLAS_PROTOCOL_REVISION, type FeedEvent, type FeedHandshakeMessage } from "./protocol.js";
+import { ATLAS_PROTOCOL_REVISION, type FeedEvent } from "./protocol.js";
 import { subscriptionMessage } from "./subscriptions.js";
 import type { AtlasSubscription, WebSocketCtor, WebSocketEventType, WebSocketLike, WebSocketListener } from "./types.js";
+import { isInboundFeedEvent, isInboundFeedHandshake } from "./validation.js";
 
 const WS_OPEN = 1;
 const WS_CLOSED = 3;
@@ -103,9 +104,9 @@ export class FeedConnectionManager {
           return;
         }
         try {
-          const data = JSON.parse(String(message.data)) as FeedHandshakeMessage;
-          if (data.type !== "hello") {
-            finish(() => reject(new Error("feed did not send protocol hello")));
+          const data: unknown = JSON.parse(String(message.data));
+          if (!isInboundFeedHandshake(data)) {
+            finish(() => reject(new TypeError("feed did not send a valid protocol hello")));
             return;
           }
           assertRevision(data.protocol_revision);
@@ -182,13 +183,17 @@ export class FeedConnectionManager {
         return;
       }
       try {
-        const data = JSON.parse(String(message.data));
-        if (data.type === "hello") {
+        const data: unknown = JSON.parse(String(message.data));
+        if (isInboundFeedHandshake(data)) {
+          assertRevision(data.protocol_revision);
           return;
+        }
+        if (!isInboundFeedEvent(data)) {
+          throw new TypeError("feed sent an invalid event");
         }
         eventChain = eventChain.then(async () => {
           try {
-            await options.onEvent(data as FeedEvent);
+            await options.onEvent(data);
           } catch {
             reportEventError();
           }

@@ -80,6 +80,12 @@ describe("AtlasClient sync", () => {
       deleted_entities: [{ id: "entity-v1", type: "entity", version: 1 }],
       deleted_tasks: [{ id: "task-v3", type: "task", version: 3, entity_id: null }],
       deleted_objects: [],
+      has_more_entities: false,
+      has_more_tasks: false,
+      has_more_objects: false,
+      has_more_deleted_entities: false,
+      has_more_deleted_tasks: false,
+      has_more_deleted_objects: false,
       version: 5
     };
 
@@ -122,6 +128,10 @@ describe("AtlasClient sync", () => {
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
         next_task_cursor: `task-cursor-${changedSinceRequests}`,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
         version: 0
       });
     };
@@ -156,6 +166,12 @@ describe("AtlasClient sync", () => {
           deleted_entities: [],
           deleted_tasks: [],
           deleted_objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false,
+          has_more_deleted_entities: false,
+          has_more_deleted_tasks: false,
+          has_more_deleted_objects: false,
           version: 1
         }),
         { headers: { "Content-Type": "application/json" } }
@@ -282,7 +298,8 @@ describe("AtlasClient sync", () => {
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
-        next_task_cursor: `task-cursor-${fullDatasetRequests}`
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`,
+        has_more_objects: false
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
@@ -302,7 +319,9 @@ describe("AtlasClient sync", () => {
         tasks: [],
         objects: [],
         has_more_entities: fullDatasetRequests <= 100,
-        next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined
+        next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined,
+        has_more_tasks: false,
+        has_more_objects: false
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
@@ -316,7 +335,7 @@ describe("AtlasClient sync", () => {
     const existing = core.upsertEntity(entity("asset-before-failed-hydration"));
     let failHydration = false;
     let fullDatasetRequests = 0;
-    const partial = entity("asset-partial-hydration");
+    const partial = { ...entity("asset-partial-hydration"), metadata: metadata(1) };
     const fetchImpl: typeof fetch = async (url, init) => {
       if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
       if (!failHydration) return core.fetch(String(url), init);
@@ -328,7 +347,8 @@ describe("AtlasClient sync", () => {
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
-        next_task_cursor: `task-cursor-${fullDatasetRequests}`
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`,
+        has_more_objects: false
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });

@@ -3,6 +3,7 @@ import type {
   EntityResource,
   FeedEvent,
   JSONValue,
+  ObjectResponse,
   ObjectResource,
   ResourceType,
   TaskDeleteEvent,
@@ -148,16 +149,16 @@ export type SyncSnapshot = {
 export type ChangedSinceResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
-  objects: ObjectResource[];
+  objects: ObjectResponse[];
   deleted_entities?: DeletedResource[];
   deleted_tasks?: DeletedResource[];
   deleted_objects?: DeletedResource[];
-  has_more_entities?: boolean;
-  has_more_tasks?: boolean;
-  has_more_objects?: boolean;
-  has_more_deleted_entities?: boolean;
-  has_more_deleted_tasks?: boolean;
-  has_more_deleted_objects?: boolean;
+  has_more_entities: boolean;
+  has_more_tasks: boolean;
+  has_more_objects: boolean;
+  has_more_deleted_entities: boolean;
+  has_more_deleted_tasks: boolean;
+  has_more_deleted_objects: boolean;
   next_entity_cursor?: string;
   next_task_cursor?: string;
   next_object_cursor?: string;
@@ -165,15 +166,16 @@ export type ChangedSinceResponse = {
   next_deleted_task_cursor?: string;
   next_deleted_object_cursor?: string;
   version: number;
+  timestamp?: string;
 };
 
 export type FullDatasetResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
-  objects: ObjectResource[];
-  has_more_entities?: boolean;
-  has_more_tasks?: boolean;
-  has_more_objects?: boolean;
+  objects: ObjectResponse[];
+  has_more_entities: boolean;
+  has_more_tasks: boolean;
+  has_more_objects: boolean;
   next_entity_cursor?: string;
   next_task_cursor?: string;
   next_object_cursor?: string;
@@ -184,6 +186,7 @@ export type DeletedResource = {
   type: ResourceType;
   version: number;
   entity_id?: string | null;
+  deleted_at?: string;
 };
 
 export type ResourceByType = {

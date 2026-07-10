@@ -44,7 +44,14 @@ describe("AtlasClient HTTP", () => {
       receivers.push(this);
       const body = String(url).includes("/admin/")
         ? { user: { username: "admin", role: "admin" } }
-        : { entities: [], tasks: [], objects: [] };
+        : {
+            entities: [],
+            tasks: [],
+            objects: [],
+            has_more_entities: false,
+            has_more_tasks: false,
+            has_more_objects: false
+          };
       return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     } as typeof fetch;
     vi.stubGlobal("fetch", fetchImpl);
@@ -60,7 +67,7 @@ describe("AtlasClient HTTP", () => {
 
   it("fails loudly on protocol revision mismatch", async () => {
     const core = new FakeCore();
-    core.revision = "sha256:mismatch";
+    core.revision = `sha256:${"0".repeat(64)}`;
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
     await expect(client.handshake()).rejects.toBeInstanceOf(ProtocolMismatchError);
   });
@@ -95,7 +102,14 @@ describe("AtlasClient HTTP", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ entities: [], tasks: [], objects: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, credentials: "include" });
 
