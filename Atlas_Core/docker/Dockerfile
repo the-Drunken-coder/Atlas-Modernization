@@ -2,7 +2,7 @@
 # Production runtime: slim alpine:3.24. Go stages pin golang:1.26.4-alpine by digest (refresh when bumping Go in go.mod).
 
 # Build stage: multi-arch index digest for golang:1.26.4-alpine (not the per-platform manifest SHA).
-FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 
 # Alpine packages (base is alpine3.24); refresh versions when bumping the Go base image.
 RUN apk add --no-cache git ca-certificates
@@ -29,7 +29,7 @@ COPY Atlas_Core/internal/ ./internal/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o atlas_core ./cmd/atlas_core
 
 # Development stage: use the same multi-arch index digest as the builder stage.
-FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS development
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS development
 
 # Alpine packages (match builder stage).
 RUN apk add --no-cache ca-certificates curl
