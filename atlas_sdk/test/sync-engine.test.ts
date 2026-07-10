@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type FeedEvent, type ResourceType } from "../src";
+import { AtlasClient, type EntityResource, type FeedEvent, type ResourceType, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -185,6 +185,26 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(core.version);
   });
 
+  it("replaces pre-start point-read cache state at the hydration watermark", async () => {
+    const core = new FakeCore();
+    const cached = core.upsertEntity(entity("asset-deleted-before-hydration"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.entities.get(cached.entity_id)).resolves.toEqual(cached);
+    expect(client.sync.snapshot().entities).toEqual({ [cached.entity_id]: cached });
+    const deletion = core.deleteEntity(cached.entity_id);
+    if (!deletion) throw new Error("fake core did not delete the hydration fixture");
+
+    await client.sync.start();
+
+    const snapshot = client.sync.snapshot();
+    expect(snapshot.entities).toEqual({});
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.entities)).toBe(true);
+    expect(client.sync.status().lastVersion).toBe(deletion.version);
+    expect(core.requests).toContain(`/queries/changed-since?since_version=${deletion.version}`);
+  });
+
   it("does not advance the global change cursor from optimistic local writes", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-write"));
@@ -268,6 +288,112 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("recovers changes after the initial full-dataset watermark instead of advancing from later pages", async () => {
+    const core = new FakeCore();
+    core.version = 1000;
+    const staleEntity = core.upsertEntity(entity("asset-hydration-race"));
+    const snapshotVersion = staleEntity.metadata.version;
+    const fullDatasetRequests: string[] = [];
+    const changedSinceVersions: string[] = [];
+    let concurrentUpdate!: EntityResource;
+    let laterPageTask!: TaskResource;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/queries/full") {
+        fullDatasetRequests.push(parsed.pathname + parsed.search);
+        if (fullDatasetRequests.length === 1) {
+          concurrentUpdate = core.upsertEntity({ ...staleEntity, alias: "updated between full pages" });
+          laterPageTask = core.upsertTask(task("task-hydration-later-page", staleEntity.entity_id));
+          return Response.json({
+            entities: [staleEntity],
+            tasks: [],
+            objects: [],
+            version: snapshotVersion,
+            has_more_tasks: true,
+            next_task_cursor: "later-task-page"
+          });
+        }
+        expect(parsed.searchParams.get("task_cursor")).toBe("later-task-page");
+        return Response.json({
+          entities: [],
+          tasks: [laterPageTask],
+          objects: [],
+          version: snapshotVersion
+        });
+      }
+      if (parsed.pathname === "/queries/changed-since") {
+        changedSinceVersions.push(parsed.searchParams.get("since_version") ?? "");
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+
+      expect(fullDatasetRequests).toHaveLength(2);
+      expect(changedSinceVersions[0]).toBe(String(snapshotVersion));
+      expect(concurrentUpdate.metadata.version).toBe(1002);
+      expect(laterPageTask.metadata.version).toBe(1003);
+      expect(client.sync.snapshot().entities[staleEntity.entity_id]).toEqual(concurrentUpdate);
+      expect(client.sync.snapshot().tasks[laterPageTask.task_id]).toEqual(laterPageTask);
+      expect(client.sync.status().lastVersion).toBe(1003);
+    } finally {
+      client.sync.stop();
+    }
+  });
+
+  it("rejects missing full-dataset version watermarks", async () => {
+    const core = new FakeCore();
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      return Response.json({ entities: [], tasks: [], objects: [] });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+    expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
+  });
+
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid full-dataset version watermark %s", async (version) => {
+    const core = new FakeCore();
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      return Response.json({ entities: [], tasks: [], objects: [], version });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+  });
+
+  it("rejects changing full-dataset version watermarks", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        version: fullDatasetRequests,
+        has_more_entities: fullDatasetRequests === 1,
+        next_entity_cursor: fullDatasetRequests === 1 ? "next-page" : undefined
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("changed version watermark from 1 to 2");
+    expect(fullDatasetRequests).toBe(2);
+    expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
+  });
+
   it("rejects repeated full-dataset cursor states", async () => {
     const core = new FakeCore();
     let fullDatasetRequests = 0;
@@ -279,6 +405,7 @@ describe("AtlasClient sync", () => {
         entities: [],
         tasks: [],
         objects: [],
+        version: 0,
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
@@ -301,6 +428,7 @@ describe("AtlasClient sync", () => {
         entities: [],
         tasks: [],
         objects: [],
+        version: 0,
         has_more_entities: fullDatasetRequests <= 100,
         next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined
       });
@@ -325,6 +453,7 @@ describe("AtlasClient sync", () => {
         entities: fullDatasetRequests === 1 ? [partial] : [],
         tasks: [],
         objects: [],
+        version: core.version,
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,

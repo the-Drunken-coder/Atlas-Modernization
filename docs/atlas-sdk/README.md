@@ -80,7 +80,7 @@ The consistency mechanism is `GET /queries/changed-since` with the global versio
 - **Reconnect:** after any websocket reconnect, one `changed-since` call from the last known version restores consistency; the engine is degraded (reads fall through to the API) until it completes.
 - **Version-guarded application:** reconciliation applies returned events in ascending version order and updates cache entries only when `event.version > cachedVersion`. A tombstone is a versioned cache entry, so an older resource payload cannot restore a resource after a newer delete has been applied.
 - **Safety-net poll:** a lazy periodic `changed-since` call (interval on the order of minutes, configurable) as a backstop; a no-change response is nearly free. This is a backstop, not the mechanism.
-- **Hydration:** `GET /queries/full` on engine start. At expected scale (10–20 assets, low hundreds of tracks from ADS-B ingest, never thousands) this is one or a few pages and subscribe-`all` in a browser tab is trivially fine.
+- **Hydration:** `GET /queries/full` on engine start. The engine retains the response's stable `version` across every continuation page, caches hydrated resources without advancing the global cursor from their individual versions, then drains `changed-since` from that pre-hydration baseline before synchronization is current. A later full-dataset page may legitimately contain a resource newer than the baseline; reconciliation still starts from the baseline so an earlier-page concurrent update cannot be skipped. At expected scale (10–20 assets, low hundreds of tracks from ADS-B ingest, never thousands) hydration is one or a few pages and subscribe-`all` in a browser tab is trivially fine.
 
 ## Objects
 

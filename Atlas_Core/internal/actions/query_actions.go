@@ -54,20 +54,28 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&txUpperBound); err != nil {
 		return nil, fmt.Errorf("read snapshot timestamp: %w", err)
 	}
+	txSnapshotVersion, err := readSnapshotVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 
-	entCur, err := parseQueryCursor(entCurRaw, "entity_cursor")
+	entCur, err := parseFullDatasetCursor(entCurRaw, "entity_cursor")
 	if err != nil {
 		return nil, err
 	}
-	taskCur, err := parseQueryCursor(taskCurRaw, "task_cursor")
+	taskCur, err := parseFullDatasetCursor(taskCurRaw, "task_cursor")
 	if err != nil {
 		return nil, err
 	}
-	objCur, err := parseQueryCursor(objCurRaw, "object_cursor")
+	objCur, err := parseFullDatasetCursor(objCurRaw, "object_cursor")
 	if err != nil {
 		return nil, err
 	}
 	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, entCur, taskCur, objCur)
+	if err != nil {
+		return nil, err
+	}
+	snapshotVersion, err := fullDatasetSnapshotVersion(txSnapshotVersion, entCur, taskCur, objCur)
 	if err != nil {
 		return nil, err
 	}
@@ -107,13 +115,14 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 		Entities:        entities,
 		Tasks:           tasks,
 		Objects:         objects,
+		Version:         snapshotVersion,
 		HasMoreEntities: hasMoreEnt,
 		HasMoreTasks:    hasMoreTasks,
 		HasMoreObjects:  hasMoreObj,
 	}
 	if hasMoreEnt && len(entities) > 0 {
 		last := entities[len(entities)-1]
-		cur, err := encodeRowCursor(last.CreatedAt, last.EntityID, snapshotUpperBound)
+		cur, err := encodeFullDatasetCursor(last.CreatedAt, last.EntityID, snapshotUpperBound, snapshotVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode entity cursor: %w", err)
 		}
@@ -121,7 +130,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	}
 	if hasMoreTasks && len(tasks) > 0 {
 		last := tasks[len(tasks)-1]
-		cur, err := encodeRowCursor(last.CreatedAt, last.TaskID, snapshotUpperBound)
+		cur, err := encodeFullDatasetCursor(last.CreatedAt, last.TaskID, snapshotUpperBound, snapshotVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode task cursor: %w", err)
 		}
@@ -129,7 +138,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	}
 	if hasMoreObj && len(objects) > 0 {
 		last := objects[len(objects)-1]
-		cur, err := encodeRowCursor(last.CreatedAt, last.ObjectID, snapshotUpperBound)
+		cur, err := encodeFullDatasetCursor(last.CreatedAt, last.ObjectID, snapshotUpperBound, snapshotVersion)
 		if err != nil {
 			return nil, fmt.Errorf("encode object cursor: %w", err)
 		}
