@@ -1,6 +1,11 @@
 package artifacts
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+
+	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
+)
 
 func runtimeValidatorHelpersSource() string {
 	var builder strings.Builder
@@ -35,6 +40,28 @@ func runtimeValidatorHelpersSource() string {
 	builder.WriteString("    basePrototype = Object.getPrototypeOf(basePrototype);\n")
 	builder.WriteString("  }\n")
 	builder.WriteString("  return prototype === basePrototype;\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("const atlasProtocolMaxGeometryPositions = ")
+	builder.WriteString(strconv.Itoa(protocolvalidator.MaxGeometryPositions))
+	builder.WriteString(";\n\n")
+	builder.WriteString("function atlasProtocolHasValidPolygonSemantics(value: unknown): boolean {\n")
+	builder.WriteString("  if (!atlasProtocolIsRecord(value) || value[\"type\"] !== \"Polygon\" || !Array.isArray(value[\"coordinates\"])) {\n")
+	builder.WriteString("    return false;\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("  let totalPositions = 0;\n")
+	builder.WriteString("  for (const ring of value[\"coordinates\"]) {\n")
+	builder.WriteString("    if (!Array.isArray(ring) || ring.length < 2 || !atlasProtocolPositionsEqual(ring[0], ring[ring.length - 1])) {\n")
+	builder.WriteString("      return false;\n")
+	builder.WriteString("    }\n")
+	builder.WriteString("    totalPositions += ring.length;\n")
+	builder.WriteString("    if (totalPositions > atlasProtocolMaxGeometryPositions) {\n")
+	builder.WriteString("      return false;\n")
+	builder.WriteString("    }\n")
+	builder.WriteString("  }\n")
+	builder.WriteString("  return true;\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("function atlasProtocolPositionsEqual(left: unknown, right: unknown): boolean {\n")
+	builder.WriteString("  return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => item === right[index]);\n")
 	builder.WriteString("}\n\n")
 	builder.WriteString("function atlasProtocolIsNonEmptyString(value: unknown): value is string {\n")
 	builder.WriteString("  return typeof value === \"string\" && value.trim() !== \"\";\n")
