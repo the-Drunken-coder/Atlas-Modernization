@@ -7,13 +7,6 @@ import (
 	"path/filepath"
 )
 
-type Meta struct {
-	EntityComponentKeys  []string `json:"entityComponentKeys"`
-	TaskComponentKeys    []string `json:"taskComponentKeys"`
-	GeoJSONTypes         []string `json:"geoJSONTypes"`
-	MaxGeometryPositions int      `json:"maxGeometryPositions"`
-}
-
 type Artifact struct {
 	Path    string
 	Content []byte

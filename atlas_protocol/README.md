@@ -1,6 +1,6 @@
 # Atlas Protocol
 
-This is the buildable Atlas Protocol module. It owns reusable data-shape contracts and generated validation artifacts for Atlas data. Planning and reference docs live in `../docs/atlas-protocol/`.
+This is the buildable Atlas Protocol module. It owns reusable data-shape contracts, an ergonomic Go API, and generated validation artifacts for Atlas data. Planning and reference docs live in `../docs/atlas-protocol/`.
 
 The canonical schema source is `schema/jsonschema/atlas.schema.json`.
 
@@ -14,7 +14,7 @@ Regenerate checked-in artifacts:
 go run ./tools/generate
 ```
 
-Check examples and generated artifact freshness without rewriting files:
+Check examples, authored Go/schema parity, and generated artifact freshness without rewriting files:
 
 ```sh
 go run ./tools/check
@@ -28,6 +28,6 @@ go test ./...
 
 ## Boundary
 
-Generated Go lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Atlas Core consumes this module through a local `replace` during development, but generated protocol artifacts should not move under `Atlas_Core/internal/`.
+The reusable Go package lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Its `types.go` file is authored for Go ergonomics, while `go run ./tools/check` derives the supported wire shapes and enums from the canonical schema and fails if that public API drifts. Atlas Core consumes this module through a local `replace` during development; protocol code should not move under `Atlas_Core/internal/`.
 
-Generated files are checked in and marked `DO NOT EDIT`; update `schema/jsonschema/atlas.schema.json` and rerun `go run ./tools/generate` instead.
+Generated validators, TypeScript, and revision files are checked in and marked `DO NOT EDIT`; update `schema/jsonschema/atlas.schema.json` and rerun `go run ./tools/generate`. Update authored `types.go` alongside schema changes when the parity check identifies a Go API change.

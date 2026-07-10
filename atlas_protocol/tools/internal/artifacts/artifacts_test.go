@@ -6,38 +6,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
-
-func TestValidateEntityComponentSchemaKeys(t *testing.T) {
-	validProperties := map[string]any{}
-	for _, key := range entityComponentSchemaKeys {
-		validProperties[key] = map[string]any{"type": "object"}
-	}
-	validBundle := schemaBundle{
-		"$defs": map[string]any{
-			"EntityComponents": map[string]any{
-				"properties": validProperties,
-			},
-		},
-	}
-	if err := validateEntityComponentSchemaKeys(validBundle); err != nil {
-		t.Fatalf("validateEntityComponentSchemaKeys canonical keys: %v", err)
-	}
-
-	extra := schemaBundle(cloneMap(map[string]any(validBundle)))
-	extraProperties := extra["$defs"].(map[string]any)["EntityComponents"].(map[string]any)["properties"].(map[string]any)
-	extraProperties["new_component"] = map[string]any{"type": "object"}
-	if err := validateEntityComponentSchemaKeys(extra); err == nil {
-		t.Fatal("validateEntityComponentSchemaKeys accepted missing descriptor for new_component")
-	}
-
-	missing := schemaBundle(cloneMap(map[string]any(validBundle)))
-	missingProperties := missing["$defs"].(map[string]any)["EntityComponents"].(map[string]any)["properties"].(map[string]any)
-	delete(missingProperties, entityComponentSchemaKeys[len(entityComponentSchemaKeys)-1])
-	if err := validateEntityComponentSchemaKeys(missing); err == nil {
-		t.Fatal("validateEntityComponentSchemaKeys accepted stale descriptor set")
-	}
-}
 
 func TestValidateExampleSetRunsSemanticValidators(t *testing.T) {
 	root := t.TempDir()
@@ -68,7 +39,11 @@ func TestValidateExampleSetRunsSemanticValidators(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = validateExampleSet(root, compiler, "entities", "EntityBlob")
+	err = validateExampleSet(root, compiler, exampleSet{
+		pattern:            "entities",
+		definition:         "EntityBlob",
+		semanticValidation: protocolvalidator.ValidateEntityBlob,
+	})
 	if err == nil {
 		t.Fatal("validateExampleSet accepted semantically invalid polygon example")
 	}
@@ -269,6 +244,26 @@ func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRequestValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
+	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
+		"WidgetRequest": {
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"widget_id": map[string]any{"type": "string"},
+			},
+			"required": []any{"widget_id"},
+		},
+	}}
+	source, err := requestValidatorSource(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(source, "export function isWidgetRequest(value: unknown): value is WidgetRequest") {
+		t.Fatalf("requestValidatorSource did not discover WidgetRequest:\n%s", source)
 	}
 }
 

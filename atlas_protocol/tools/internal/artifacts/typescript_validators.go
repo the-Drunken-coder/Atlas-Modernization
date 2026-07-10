@@ -7,23 +7,18 @@ import (
 	"strings"
 )
 
-var requestValidatorTypeNames = []string{
-	"EntityCreateRequest",
-	"EntityUpdateRequest",
-	"ObjectCreateRequest",
-	"ObjectUpdateRequest",
-	"TaskCreateRequest",
-	"TaskUpdateRequest",
-}
-
 func requestValidatorSource(g *typeScriptGenerator) (string, error) {
 	var builder strings.Builder
 	generated := false
-	for _, name := range requestValidatorTypeNames {
-		schema, ok := g.defs[name]
-		if !ok {
-			continue
+	requestNames := make([]string, 0)
+	for name := range g.defs {
+		if strings.HasSuffix(name, "Request") {
+			requestNames = append(requestNames, name)
 		}
+	}
+	sort.Strings(requestNames)
+	for _, name := range requestNames {
+		schema := g.defs[name]
 		generated = true
 		check, err := g.runtimeValidatorExpression("value", schema)
 		if err != nil {

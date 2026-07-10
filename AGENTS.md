@@ -26,9 +26,9 @@ test ! -d "Atlas Protocol"
 ! rg -n '\]\([^)]*Atlas( |%20|\\ )Protocol/' .
 ```
 
-The lower-case **`atlas_protocol/`** is the buildable sibling module so Go imports and scripts have a stable path. Keep generated Go artifacts reusable through that sibling module; do not move the protocol source of truth under `Atlas_Core/internal/`.
+The lower-case **`atlas_protocol/`** is the buildable sibling module so Go imports and scripts have a stable path. Keep the reusable Go package in that sibling module; do not move the protocol source of truth under `Atlas_Core/internal/`.
 
-Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas_protocol/schema/jsonschema/atlas.schema.json`**. The protocol tools compile that bundle, validate examples, and regenerate Go/TypeScript artifacts:
+Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas_protocol/schema/jsonschema/atlas.schema.json`**. The protocol tools compile that bundle, validate examples, structurally check the authored Go API in `generated/go/atlasprotocol/types.go`, and regenerate Go validators/revision metadata plus TypeScript artifacts:
 
 ```sh
 (cd atlas_protocol && go run ./tools/generate)
