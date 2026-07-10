@@ -309,10 +309,13 @@ describe("AtlasClient sync", () => {
 
   it("does not expose partial hydration when pagination fails", async () => {
     const core = new FakeCore();
+    const existing = core.upsertEntity(entity("asset-before-failed-hydration"));
+    let failHydration = false;
     let fullDatasetRequests = 0;
     const partial = entity("asset-partial-hydration");
     const fetchImpl: typeof fetch = async (url, init) => {
       if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      if (!failHydration) return core.fetch(String(url), init);
       fullDatasetRequests += 1;
       return Response.json({
         entities: fullDatasetRequests === 1 ? [partial] : [],
@@ -324,8 +327,14 @@ describe("AtlasClient sync", () => {
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
+    await client.sync.start();
+    const snapshot = client.sync.snapshot();
+    client.sync.stop();
+    failHydration = true;
+
     await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated a cursor state");
-    expect(client.sync.snapshot().entities).toEqual({});
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.snapshot().entities).toEqual({ [existing.entity_id]: existing });
   });
 
   it("falls through to Core when no automatic update path exists", async () => {
