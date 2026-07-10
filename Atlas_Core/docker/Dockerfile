@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for ATLAS Core System (Go)
-# Production runtime: slim alpine:3.24. Go stages pin golang:1.26.4-alpine by digest (refresh when bumping Go in go.mod).
+# Production runtime: slim alpine:3.24. Go stages pin the Alpine Go image by digest.
 
-# Build stage: multi-arch index digest for golang:1.26.4-alpine (not the per-platform manifest SHA).
+# Build stage: multi-arch index digest (not the per-platform manifest SHA).
 FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 
 # Alpine packages (base is alpine3.24); refresh versions when bumping the Go base image.
