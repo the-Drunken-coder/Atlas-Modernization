@@ -241,6 +241,77 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	}
 }
 
+func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
+	pool := openActionsLivePool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	prefix := fmt.Sprintf("checkin-failure-%d-", time.Now().UTC().UnixNano())
+	entityID := prefix + "asset"
+	cleanupActionsLiveRows(ctx, t, pool, prefix)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		cleanupActionsLiveRows(cleanupCtx, t, pool, prefix)
+	})
+
+	created, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{
+		EntityID:   entityID,
+		EntityType: "asset",
+		Components: map[string]interface{}{
+			"status": map[string]interface{}{"value": "idle", "last_update": "2026-07-10T12:00:00Z"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create check-in entity: %v", err)
+	}
+
+	closedPool, err := pgxpool.New(ctx, pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("create closed task pool: %v", err)
+	}
+	closedPool.Close()
+
+	sink := &recordingChangeSink{}
+	checkins := NewEntityCheckinActions(
+		NewEntityActionsWithChangeSink(pool, sink),
+		NewTaskActions(closedPool),
+	)
+	params := EntityCheckinParams{
+		EntityID:        entityID,
+		ExpectedVersion: &created.Version,
+		TaskStatuses:    []string{"pending", "acknowledged"},
+		TaskLimit:       10,
+		Components: map[string]interface{}{
+			"heartbeat": map[string]interface{}{"last_seen": "2026-07-10T12:01:00Z"},
+			"telemetry": map[string]interface{}{"latitude": 38.8977, "longitude": -77.0365, "last_update": "2026-07-10T12:01:00Z"},
+		},
+	}
+
+	if _, err := checkins.CheckIn(ctx, params); err == nil {
+		t.Fatal("CheckIn with closed task pool succeeded, want task read failure")
+	}
+	unchanged, err := NewEntityActions(pool).Get(ctx, entityID)
+	if err != nil {
+		t.Fatalf("get entity after failed check-in: %v", err)
+	}
+	if unchanged.Version != created.Version || !bytes.Equal(unchanged.JSON, created.JSON) {
+		t.Fatalf("failed check-in changed entity: before version/json=%d/%s after=%d/%s", created.Version, created.JSON, unchanged.Version, unchanged.JSON)
+	}
+	if sink.called {
+		t.Fatalf("failed check-in published change: %#v", sink.change)
+	}
+
+	retry := NewEntityCheckinActions(NewEntityActionsWithChangeSink(pool, sink), NewTaskActions(pool))
+	result, err := retry.CheckIn(ctx, params)
+	if err != nil {
+		t.Fatalf("retry check-in with original version: %v", err)
+	}
+	if result.Entity.Version <= created.Version {
+		t.Fatalf("retry entity version = %d, want greater than %d", result.Entity.Version, created.Version)
+	}
+}
+
 func openActionsLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicitDBURL := actionsTestDatabaseURL()

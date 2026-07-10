@@ -306,6 +306,8 @@ Check-in response:
 }
 ```
 
+Core validates and reads the requested task page before committing the heartbeat, status, or telemetry update. A malformed `task_cursor` or task-read failure therefore returns an error without changing the entity components or version and without publishing a feed event. The task read and entity write use separate transactions, so the returned task page is the snapshot selected immediately before the entity update; concurrent task changes may appear on the next check-in.
+
 ## Tasks
 
 | Method | Path | Status | Purpose |

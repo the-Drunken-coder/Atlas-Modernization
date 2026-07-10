@@ -70,6 +70,7 @@ The response includes:
 - `next_task_cursor` when another task page exists
 
 Check-in task pages are ordered by `(updated_at DESC, task_id DESC)`.
+Malformed `task_cursor` values return `400 VALIDATION_ERROR` before the check-in mutates the entity. A task-page read failure likewise leaves the heartbeat, telemetry, entity version, and feed unchanged.
 
 ## Query endpoints (`/queries/full`, `/queries/changed-since`)
 

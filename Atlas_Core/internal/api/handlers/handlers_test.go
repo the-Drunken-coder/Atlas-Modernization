@@ -784,6 +784,26 @@ func TestEntityCheckinRejectsOffset(t *testing.T) {
 	}
 }
 
+func TestEntityCheckinRejectsMalformedTaskCursorBeforeDatabaseAccess(t *testing.T) {
+	handler := newTestHandler()
+	handler.checkinActions = actions.NewEntityCheckinActions(actions.NewEntityActions(nil), actions.NewTaskActions(nil))
+	rec := httptest.NewRecorder()
+	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?task_cursor=not-base64", `{}`), "entity_id", "entity-1")
+
+	handler.EntityCheckin(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if body["message"] != "Invalid query cursor" {
+		t.Fatalf("expected invalid cursor message, got %v", body["message"])
+	}
+}
+
 func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
