@@ -11,6 +11,8 @@ from atlas import (
     DEFAULT_TUNNEL_HOSTNAME,
     compose_down_command,
     compose_up_command,
+    database_recreate_on_startup_enabled,
+    print_storage_notice,
     public_base_url_from_hostname,
     start_containers,
     verify_tunnel_connection,
@@ -32,6 +34,18 @@ class FakeHTTPResponse:
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
+    def test_storage_mode_defaults_match_compose_stacks(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(database_recreate_on_startup_enabled(production=False))
+            self.assertFalse(database_recreate_on_startup_enabled(production=True))
+
+    def test_storage_notice_describes_selected_mode(self) -> None:
+        with patch.dict("os.environ", {}, clear=True), patch("builtins.print") as output:
+            print_storage_notice(production=False)
+            self.assertIn("clears resource rows", output.call_args.args[0])
+            print_storage_notice(production=True)
+            self.assertIn("Durable storage mode", output.call_args.args[0])
+
     def test_public_base_url_from_hostname_formats_bare_hostnames(self) -> None:
         self.assertEqual(public_base_url_from_hostname("example.com"), "https://example.com")
         self.assertEqual(public_base_url_from_hostname("example.com/"), "https://example.com")
@@ -160,7 +174,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             patch("atlas.ensure_minio_secrets", return_value={}),
             patch("atlas.ensure_postgres_password", return_value={}),
             patch("atlas.persist_compose_env_values"),
-            patch("atlas.print_disposable_storage_notice"),
+            patch("atlas.print_storage_notice"),
             patch("atlas.ensure_api_auth") as ensure_api_auth,
             patch("atlas.cleanup_containers"),
             patch("atlas.subprocess.run") as run,

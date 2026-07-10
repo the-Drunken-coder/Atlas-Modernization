@@ -142,8 +142,8 @@ func TestCoreSchemaTables(t *testing.T) {
 	}
 }
 
-func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
-	ddl := strings.Join(coreSchemaCreateDDL(), "\n")
+func TestBaselineSchemaDDLIncludesCursorIndexes(t *testing.T) {
+	ddl := strings.Join(baselineSchemaDDL(), "\n")
 	want := []string{
 		"CREATE INDEX idx_entities_created_cursor ON entities(created_at DESC, entity_id DESC)",
 		"CREATE INDEX idx_entities_updated_cursor ON entities(updated_at DESC, entity_id DESC)",
@@ -169,124 +169,20 @@ func TestCoreSchemaCreateDDLIncludesCursorIndexes(t *testing.T) {
 	}
 }
 
-func TestCoreSchemaDropDDLIncludesAllCoreTables(t *testing.T) {
-	ddl := strings.Join(coreSchemaDropDDL(), "\n")
-	for _, table := range coreSchemaTables {
-		if table == "admin_records" {
-			if strings.Contains(ddl, "DROP TABLE IF EXISTS admin_records CASCADE") {
-				t.Fatalf("admin_records should survive recreate-mode drops, got:\n%s", ddl)
-			}
-			continue
-		}
-		if !strings.Contains(ddl, "DROP TABLE IF EXISTS "+table+" CASCADE") {
-			t.Fatalf("expected drop DDL to include %q, got:\n%s", table, ddl)
+func TestScratchDataResetClearsResourcesOnly(t *testing.T) {
+	ddl := strings.Join(scratchDataResetDDL(), "\n")
+	for _, table := range []string{"storage_deletion_outbox", "tasks", "entities", "objects", "deletions"} {
+		if !strings.Contains(ddl, table) {
+			t.Fatalf("scratch reset should include %q, got:\n%s", table, ddl)
 		}
 	}
-}
-
-func TestCoreSchemaCheckRequiresCurrentColumnsAndSequence(t *testing.T) {
-	query := &recordingSchemaCheckQuery{
-		tableCount:      len(coreSchemaTables),
-		sequencePresent: true,
-		contextColumn: schemaColumn{
-			udtName:              "jsonb",
-			isNullable:           "NO",
-			defaultIsEmptyObject: true,
-		},
-	}
-
-	ok, err := coreSchemaTablesPresent(context.Background(), query)
-	if err != nil {
-		t.Fatalf("coreSchemaTablesPresent returned error: %v", err)
-	}
-	if !ok {
-		t.Fatal("coreSchemaTablesPresent = false, want true from fake row")
-	}
-
-	if len(query.sqls) != 3 {
-		t.Fatalf("schema check query count = %d, want 3: %#v", len(query.sqls), query.sqls)
-	}
-	if len(query.args) != 3 || len(query.args[0]) != 1 {
-		t.Fatalf("schema check args = %#v, want table list on first query only", query.args)
-	}
-	tableNames, ok := query.args[0][0].([]string)
-	if !ok {
-		t.Fatalf("schema check table args = %#v, want []string", query.args[0][0])
-	}
-	if !equalStringSets(tableNames, coreSchemaTables) {
-		t.Fatalf("schema check table args = %#v, want %#v", tableNames, coreSchemaTables)
-	}
-	if len(query.args[1]) != 0 || len(query.args[2]) != 0 {
-		t.Fatalf("schema check extra args = %#v, want no sequence/context args", query.args[1:])
-	}
-}
-
-func TestCoreSchemaCheckRejectsWrongObjectKinds(t *testing.T) {
-	currentContextColumn := schemaColumn{
-		udtName:              "jsonb",
-		isNullable:           "NO",
-		defaultIsEmptyObject: true,
-	}
-	tests := []struct {
-		name            string
-		tableCount      int
-		sequencePresent bool
-	}{
-		{
-			name:            "missing base table or table replaced by view",
-			tableCount:      len(coreSchemaTables) - 1,
-			sequencePresent: true,
-		},
-		{
-			name:            "change version object is not a sequence",
-			tableCount:      len(coreSchemaTables),
-			sequencePresent: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ok, err := coreSchemaTablesPresent(context.Background(), &recordingSchemaCheckQuery{
-				tableCount:      tt.tableCount,
-				sequencePresent: tt.sequencePresent,
-				contextColumn:   currentContextColumn,
-			})
-			if err != nil {
-				t.Fatalf("coreSchemaTablesPresent returned error: %v", err)
-			}
-			if ok {
-				t.Fatal("coreSchemaTablesPresent = true, want false")
-			}
-		})
-	}
-}
-
-func TestCoreSchemaDeletionsContextQueryParses(t *testing.T) {
-	dbURL, explicitDBURL := databaseTestURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema parse tests")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-
-	conn, err := pgx.Connect(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
+	for _, durable := range []string{"admin_records", "atlas_schema_migrations"} {
+		if strings.Contains(ddl, durable) {
+			t.Fatalf("scratch reset should preserve %q, got:\n%s", durable, ddl)
 		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
 	}
-	defer func() {
-		if err := conn.Close(context.Background()); err != nil {
-			t.Errorf("close test database connection: %v", err)
-		}
-	}()
-
-	var udtName, isNullable string
-	var defaultIsEmptyObject bool
-	err = conn.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("deletions context schema query should parse and execute without alias errors: %v", err)
+	if !strings.Contains(ddl, "ALTER SEQUENCE atlas_change_version_seq RESTART WITH 1") {
+		t.Fatalf("scratch reset should restart change versions, got:\n%s", ddl)
 	}
 }
 
@@ -331,7 +227,7 @@ func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 	if _, err := conn.Exec(ctx, "SET search_path TO "+quotedSchema); err != nil {
 		t.Fatalf("set test schema search_path: %v", err)
 	}
-	for _, stmt := range coreSchemaCreateDDL() {
+	for _, stmt := range baselineSchemaDDL() {
 		if _, err := conn.Exec(ctx, stmt); err != nil {
 			t.Fatalf("apply schema DDL %q: %v", stmt, err)
 		}
@@ -424,95 +320,6 @@ func databaseTestURL() (string, bool) {
 		Path:   "/atlas_core",
 	}
 	return dbURL.String(), false
-}
-
-func equalStringSets(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	counts := make(map[string]int, len(left))
-	for _, value := range left {
-		counts[value]++
-	}
-	for _, value := range right {
-		counts[value]--
-		if counts[value] < 0 {
-			return false
-		}
-	}
-	return true
-}
-
-type recordingSchemaCheckQuery struct {
-	sqls            []string
-	args            [][]any
-	tableCount      int
-	sequencePresent bool
-	contextColumn   schemaColumn
-	err             error
-}
-
-type schemaColumn struct {
-	udtName              string
-	isNullable           string
-	defaultIsEmptyObject bool
-}
-
-func (q *recordingSchemaCheckQuery) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
-	q.sqls = append(q.sqls, sql)
-	q.args = append(q.args, append([]any(nil), args...))
-	if q.err != nil {
-		return schemaCheckRow{err: q.err}
-	}
-	switch len(q.sqls) {
-	case 1:
-		return schemaCheckRow{values: []any{q.tableCount}}
-	case 2:
-		return schemaCheckRow{values: []any{q.sequencePresent}}
-	case 3:
-		return schemaCheckRow{values: []any{q.contextColumn.udtName, q.contextColumn.isNullable, q.contextColumn.defaultIsEmptyObject}}
-	default:
-		return schemaCheckRow{err: fmt.Errorf("unexpected schema check query: %s", sql)}
-	}
-}
-
-type schemaCheckRow struct {
-	values []any
-	err    error
-}
-
-func (r schemaCheckRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
-	}
-	if len(dest) != len(r.values) {
-		return fmt.Errorf("schemaCheckRow destination count = %d, want %d", len(dest), len(r.values))
-	}
-	for index, value := range r.values {
-		switch target := dest[index].(type) {
-		case *bool:
-			typed, ok := value.(bool)
-			if !ok {
-				return fmt.Errorf("schemaCheckRow value %d = %T, want bool", index, value)
-			}
-			*target = typed
-		case *int:
-			typed, ok := value.(int)
-			if !ok {
-				return fmt.Errorf("schemaCheckRow value %d = %T, want int", index, value)
-			}
-			*target = typed
-		case *string:
-			typed, ok := value.(string)
-			if !ok {
-				return fmt.Errorf("schemaCheckRow value %d = %T, want string", index, value)
-			}
-			*target = typed
-		default:
-			return fmt.Errorf("schemaCheckRow destination %d = %T", index, dest[index])
-		}
-	}
-	return nil
 }
 
 func assertConstraintViolation(t *testing.T, err error, constraint string) {

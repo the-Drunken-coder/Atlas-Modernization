@@ -66,13 +66,13 @@ Atlas Core supports two protected-route auth modes:
 
 Browser sessions use an `atlas_session` cookie with `HttpOnly; Secure`. The default SameSite mode is `None` so the Cloudflare-hosted UI can call a separately hosted Core with `credentials: "include"`. Set `ATLAS_ADMIN_COOKIE_SAMESITE=lax` only when the UI and Core are same-site.
 
-The development startup path seeds a disposable admin account:
+The development startup path seeds a development-only default admin credential:
 
 - username: `admin`
 - password: `password`
 - role: `admin`
 
-This is for development scratch storage only. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
+This credential is for local development only; its `admin_records` row still survives scratch data resets. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 
 Optional API key auth is controlled by:
 
@@ -87,7 +87,7 @@ Managed API key administration is browser-session-only:
 - `POST /admin/api-keys`
 - `DELETE /admin/api-keys/{key_id}`
 
-API-key-authenticated requests cannot manage API keys. `admin_records` stores admin accounts, sessions, login throttles, and managed API key metadata; it is preserved across recreate-mode resource table refreshes.
+API-key-authenticated requests cannot manage API keys. `admin_records` stores admin accounts, sessions, login throttles, and managed API key metadata. It is durable production data included in full-database backup/restore, and it also survives explicit development scratch-mode resource refreshes.
 
 ### Production Docker image
 
@@ -113,7 +113,7 @@ The process refuses to start when:
 
 ## Configuration Checklist
 
-- [ ] Rotate database and MinIO credentials per environment, even though Atlas Core treats that storage as disposable runtime state.
+- [ ] Rotate database and MinIO credentials per environment, protect their durable volumes, and test paired PostgreSQL/MinIO backup restoration.
 - [ ] Restrict network ingress to trusted operators.
 - [ ] Set explicit `CORS_ORIGINS` for production and constrained `CORS_ORIGIN_PATTERNS` only for trusted preview deployment hostnames.
 - [ ] Set `ENABLE_API_AUTH=true` and a strong `API_AUTH_KEY` for production.

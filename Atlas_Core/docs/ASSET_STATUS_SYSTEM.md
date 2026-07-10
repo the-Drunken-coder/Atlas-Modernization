@@ -43,9 +43,9 @@ Valid `link_state` values:
 
 ## Database Storage
 
-Entities are stored in the disposable runtime `entities` table. On normal startup,
-Atlas Core drops and recreates this schema from the DDL in `internal/database/db.go`;
-do not treat existing rows as durable history.
+Entities are stored durably in the production `entities` table. Startup applies
+ordered migrations and verifies schema drift before serving. Development Compose
+uses explicit scratch mode, where entity rows are intentionally cleared.
 
 ```go
 // Entity represents an entity in the system (asset, track, geofeature, etc.).

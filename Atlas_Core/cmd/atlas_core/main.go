@@ -134,14 +134,22 @@ func main() {
 	if cfg.MinIOSecretKey != "" {
 		storageClient, err = storage.NewClient(cfg)
 		if err != nil {
-			logger.Warn().Err(err).Msg("Failed to initialize storage client")
+			if !cfg.DatabaseRecreateOnStartup {
+				logger.Fatal().Err(err).Msg("Failed to initialize durable storage client")
+			}
+			logger.Warn().Err(err).Msg("Failed to initialize development storage client")
 		} else {
 			// Ensure bucket exists
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := storageClient.EnsureBucket(ctx); err != nil {
-				logger.Warn().Err(err).Msg("Failed to ensure storage bucket exists")
+				cancel()
+				if !cfg.DatabaseRecreateOnStartup {
+					logger.Fatal().Err(err).Msg("Failed to ensure durable storage bucket exists")
+				}
+				logger.Warn().Err(err).Msg("Failed to ensure development storage bucket exists")
+			} else {
+				cancel()
 			}
-			cancel()
 			if cfg.DatabaseRecreateOnStartup {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				if err := storageClient.EmptyBucket(ctx); err != nil {

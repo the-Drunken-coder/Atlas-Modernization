@@ -81,3 +81,18 @@ jobs:
       - name: Tear down Atlas Core stack
         if: always()
         run: docker compose -f docker/docker-compose.yml down -v --remove-orphans
+
+  production-persistence:
+    name: production-persistence
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Verify durable production clean install and restart
+        run: ./scripts/test_production_persistence.sh

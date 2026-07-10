@@ -10,7 +10,7 @@ http://localhost:8000
 
 The canonical resource and wire schemas live in Atlas Protocol. Use this guide for route behavior, then use `../../atlas_protocol/examples/` and `../../atlas_protocol/schema/jsonschema/atlas.schema.json` for exact payload examples and schema details.
 
-Atlas Core treats resource tables and the configured MinIO bucket as disposable runtime scratch storage. With the default startup path, the service drops and recreates resource tables and clears the configured bucket, so operators should not treat resource rows or blobs as durable systems of record. `admin_records` is preserved for operator credentials and managed API key metadata.
+Atlas Core preserves resource tables, `admin_records`, schema migration history, and the configured MinIO bucket in production. Startup applies verified transactional migrations and fails on ledger/catalog drift. Development Compose separately enables an explicit scratch reset that clears resource rows and MinIO while preserving the verified schema, migration history, and local `admin_records`.
 
 ## Common Rules
 

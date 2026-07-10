@@ -49,11 +49,10 @@ require `API_AUTH_KEY` plus `ATLAS_ADMIN_PASSWORD` or
 settings file keeps auth disabled for local development, but public tunnel
 traffic must not use that development default.
 
-Note: Atlas Core's resource tables and configured MinIO bucket are disposable
-runtime scratch storage. Default startup drops and recreates resource tables and
-clears the configured bucket intentionally; they are not durable systems of
-record for operators. `admin_records` is preserved for operator credentials,
-sessions, login throttles, and managed API key metadata.
+Note: Atlas Core's production PostgreSQL and configured MinIO bucket are durable
+and must be backed up/restored together. Only development Compose enables the
+explicit scratch reset that clears resource rows and MinIO while preserving the
+verified schema, migration history, and local `admin_records`.
 
 It joins the same `atlas_core_network` bridge as the API service and forwards traffic to
 `http://api:8000` inside Compose. Hostname routing is configured in the Cloudflare

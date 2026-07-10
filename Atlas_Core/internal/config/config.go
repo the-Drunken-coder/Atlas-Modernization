@@ -63,7 +63,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbRecreateOnStartup, err := getEnvBool("DATABASE_RECREATE_ON_STARTUP", true)
+	dbRecreateOnStartup, err := getEnvBool("DATABASE_RECREATE_ON_STARTUP", false)
 	if err != nil {
 		return nil, err
 	}
