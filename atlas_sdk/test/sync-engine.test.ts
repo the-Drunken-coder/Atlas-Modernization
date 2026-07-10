@@ -31,7 +31,13 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
     core.upsertTask(task("task-1", "asset-1"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
     await client.sync.start();
     const updated = core.upsertTask({ ...task("task-1", "asset-1"), status: "acknowledged" });
     await client.changedSince();
@@ -87,6 +93,31 @@ describe("AtlasClient sync", () => {
     expect(watch).toHaveBeenCalledWith(first, expect.objectContaining({ id: "task-page-1", version: first.metadata.version }));
     expect(watch).toHaveBeenCalledWith(second, expect.objectContaining({ id: "task-page-2", version: second.metadata.version }));
     expect(client.sync.status().lastVersion).toBe(core.version);
+  });
+
+  it("rejects repeated changed-since cursor states", async () => {
+    const core = new FakeCore();
+    let changedSinceRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/changed-since") return core.fetch(String(url), init);
+      changedSinceRequests += 1;
+      if (changedSinceRequests > 4) throw new Error("test stopped repeated changed-since pagination");
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: true,
+        next_entity_cursor: "same-cursor",
+        version: 0
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+
+    await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated a cursor state");
+    expect(changedSinceRequests).toBe(2);
   });
 
   it("ignores in-flight changed-since results after stop", async () => {
@@ -226,6 +257,82 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("rejects repeated full-dataset cursor states", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      if (fullDatasetRequests > 4) throw new Error("test stopped repeated full-dataset pagination");
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: true,
+        next_entity_cursor: "same-cursor"
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination repeated a cursor state");
+    expect(fullDatasetRequests).toBe(2);
+  });
+
+  it("caps full-dataset pagination", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        has_more_entities: true,
+        next_entity_cursor: `cursor-${fullDatasetRequests}`
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("Atlas full-dataset pagination exceeded 100 pages");
+    expect(fullDatasetRequests).toBe(100);
+  });
+
+  it("falls through to Core when no automatic update path exists", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-without-updates"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+
+    try {
+      await client.sync.start();
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
+
+      const updated = core.upsertEntity({ ...original, alias: "fresh from Core" });
+      core.requests = [];
+
+      await expect(client.entities.get(original.entity_id)).resolves.toEqual(updated);
+      expect(core.requests).toContain(`/entities/${original.entity_id}`);
+    } finally {
+      client.sync.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats polling as the update path when WebSocket is unavailable", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 60_000 });
+
+    try {
+      await client.sync.start();
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+    } finally {
+      client.sync.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("returns pure live cache snapshots after paginated hydration and deletes", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
@@ -247,14 +354,15 @@ describe("AtlasClient sync", () => {
       objects: { [cachedObject.object_id]: cachedObject }
     });
     expect(second).toEqual(first);
-    expect(second).not.toBe(first);
-    expect(second.entities).not.toBe(first.entities);
-    expect(second.tasks).not.toBe(first.tasks);
-    expect(second.objects).not.toBe(first.objects);
+    expect(second).toBe(first);
+    expect(Object.isFrozen(second)).toBe(true);
+    expect(Object.isFrozen(second.entities)).toBe(true);
+    expect(Object.isFrozen(second.entities[firstEntity.entity_id])).toBe(true);
     expect(core.requests).toHaveLength(requestCount);
 
-    first.entities[firstEntity.entity_id].alias = "caller mutation";
-    first.entities[firstEntity.entity_id].metadata.version = 999;
+    expect(() => {
+      first.entities[firstEntity.entity_id].alias = "caller mutation";
+    }).toThrow(TypeError);
     expect(second.entities[firstEntity.entity_id]).toEqual(firstEntity);
     expect(client.sync.snapshot().entities[firstEntity.entity_id]).toEqual(firstEntity);
     await expect(client.entities.get(firstEntity.entity_id)).resolves.toEqual(firstEntity);
@@ -262,7 +370,12 @@ describe("AtlasClient sync", () => {
     core.deleteTask(deletedTask.task_id);
     await client.changedSince();
 
-    expect(client.sync.snapshot().tasks).toEqual({ [firstTask.task_id]: firstTask });
+    const afterDelete = client.sync.snapshot();
+    expect(afterDelete).not.toBe(first);
+    expect(afterDelete.entities).toBe(first.entities);
+    expect(afterDelete.objects).toBe(first.objects);
+    expect(afterDelete.tasks).not.toBe(first.tasks);
+    expect(afterDelete.tasks).toEqual({ [firstTask.task_id]: firstTask });
   });
 
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {

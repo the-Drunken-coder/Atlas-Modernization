@@ -42,6 +42,10 @@ export class FeedConnectionManager {
     return this.WebSocketImpl !== undefined;
   }
 
+  get connected(): boolean {
+    return this.socket !== undefined;
+  }
+
   async connect(options: FeedConnectOptions): Promise<void> {
     if (!this.WebSocketImpl) {
       throw new Error("AtlasClient requires a WebSocket implementation");

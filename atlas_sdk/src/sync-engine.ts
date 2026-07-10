@@ -33,6 +33,7 @@ import type {
 import { changedSinceToEvents } from "./types.js";
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
+const MAX_SYNC_PAGES = 100;
 
 export class SyncEngine {
   private readonly transport: HttpTransport;
@@ -173,6 +174,8 @@ export class SyncEngine {
     let highWaterVersion = sinceVersion;
     let cursors: ChangedSinceCursors = {};
     const recoveredEvents: AtlasWatchEvent[] = [];
+    const seenCursors = new Set<string>();
+    let pages = 0;
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<ChangedSinceResponse>("GET", changedSincePath(sinceVersion, cursors));
@@ -180,6 +183,8 @@ export class SyncEngine {
       highWaterVersion = Math.max(highWaterVersion, response.version);
       recoveredEvents.push(...changedSinceToEvents(response));
       cursors = nextChangedSinceCursors(response);
+      pages += 1;
+      assertPaginationProgress("changed-since", cursors, seenCursors, pages);
     } while (hasMoreChangedSince(cursors));
     for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
       if (!this.isCurrent(generation)) return;
@@ -191,8 +196,7 @@ export class SyncEngine {
     }
     if (!this.isCurrent(generation)) return;
     this.cache.lastVersion = Math.max(this.cache.lastVersion, highWaterVersion);
-    this.degraded = false;
-    this.healthy = this.syncRunning;
+    this.markSynchronized();
   }
 
   async connectAndRecoverFeed(): Promise<void> {
@@ -281,8 +285,7 @@ export class SyncEngine {
     await this.hydrate(generation);
     if (!this.isCurrent(generation)) return;
     this.syncRunning = true;
-    this.healthy = true;
-    this.degraded = false;
+    this.markSynchronized();
     if (this.feed.available) {
       try {
         await this.connectAndRecoverFeedForGeneration(generation);
@@ -324,6 +327,8 @@ export class SyncEngine {
 
   private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
+    const seenCursors = new Set<string>();
+    let pages = 0;
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json<FullDatasetResponse>("GET", fullDatasetPath(cursors));
@@ -332,6 +337,8 @@ export class SyncEngine {
       for (const task of response.tasks ?? []) this.cache.cacheResource("task", task.task_id, task);
       for (const object of response.objects ?? []) this.cache.cacheResource("object", object.object_id, object);
       cursors = nextFullDatasetCursors(response);
+      pages += 1;
+      assertPaginationProgress("full-dataset", cursors, seenCursors, pages);
     } while (hasMoreFullDataset(cursors));
   }
 
@@ -463,6 +470,12 @@ export class SyncEngine {
     return this.subscriptions.some((sub) => covers(sub, filter));
   }
 
+  private markSynchronized(): void {
+    const hasAutomaticUpdates = this.feed.connected || (!this.feed.available && this.pollIntervalMs > 0);
+    this.healthy = hasAutomaticUpdates;
+    this.degraded = this.syncRunning && !hasAutomaticUpdates;
+  }
+
   private advanceCursor(event: FeedEvent, enabled: boolean): void {
     if (enabled) {
       this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
@@ -526,6 +539,14 @@ function hasMoreFullDataset(cursors: FullDatasetCursors): boolean {
 
 function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
   return Object.keys(cursors).length > 0;
+}
+
+function assertPaginationProgress(label: string, cursors: object, seen: Set<string>, pages: number): void {
+  if (Object.keys(cursors).length === 0) return;
+  if (pages >= MAX_SYNC_PAGES) throw new Error(`Atlas ${label} pagination exceeded ${MAX_SYNC_PAGES} pages`);
+  const key = JSON.stringify(Object.entries(cursors).sort(([left], [right]) => left.localeCompare(right)));
+  if (seen.has(key)) throw new Error(`Atlas ${label} pagination repeated a cursor state`);
+  seen.add(key);
 }
 
 function requireCursor(cursor: string | undefined, name: string): string {
