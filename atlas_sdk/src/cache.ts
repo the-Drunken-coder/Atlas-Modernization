@@ -116,7 +116,7 @@ export class ResourceCache {
 function liveValues<T>(entries: Map<string, CacheEntry<T>>): Readonly<Record<string, T>> {
   const values: Record<string, T> = {};
   for (const [id, entry] of entries) {
-    if (!entry.deleted && entry.value) values[id] = entry.value;
+    if (!entry.deleted && entry.value) values[id] = structuredClone(entry.value);
   }
   return values;
 }

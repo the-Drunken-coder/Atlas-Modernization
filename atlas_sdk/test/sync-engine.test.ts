@@ -253,6 +253,12 @@ describe("AtlasClient sync", () => {
     expect(second.objects).not.toBe(first.objects);
     expect(core.requests).toHaveLength(requestCount);
 
+    first.entities[firstEntity.entity_id].alias = "caller mutation";
+    first.entities[firstEntity.entity_id].metadata.version = 999;
+    expect(second.entities[firstEntity.entity_id]).toEqual(firstEntity);
+    expect(client.sync.snapshot().entities[firstEntity.entity_id]).toEqual(firstEntity);
+    await expect(client.entities.get(firstEntity.entity_id)).resolves.toEqual(firstEntity);
+
     core.deleteTask(deletedTask.task_id);
     await client.changedSince();
 
