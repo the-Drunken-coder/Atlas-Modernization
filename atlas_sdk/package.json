@@ -51,12 +51,12 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@vitest/browser": "4.1.9",
-    "@vitest/browser-playwright": "4.1.9",
+    "@vitest/browser": "4.1.10",
+    "@vitest/browser-playwright": "4.1.10",
     "@playwright/test": "1.61.1",
-    "@types/node": "26.1.0",
+    "@types/node": "26.1.1",
     "playwright": "1.61.1",
     "typescript": "6.0.3",
-    "vitest": "4.1.9"
+    "vitest": "4.1.10"
   }
 }
