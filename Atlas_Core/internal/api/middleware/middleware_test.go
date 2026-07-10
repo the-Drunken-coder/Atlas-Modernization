@@ -33,8 +33,8 @@ func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 		"/health///":                 true,
 		"/readiness":                 true,
 		"/readiness/":                true,
-		"/resources":                 true,
-		"/resources/":                true,
+		"/resources":                 false,
+		"/resources/":                false,
 		"/":                          false,
 		"/entities/":                 false,
 		"/health/live":               false,
@@ -148,6 +148,84 @@ func TestRequestLoggerLogsMethodPathStatusAndResponseSize(t *testing.T) {
 			t.Fatalf("expected log output to contain %s, got %q", expected, logLine)
 		}
 	}
+}
+
+func TestRequestLoggerPropagatesRequestID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+
+	handler := chimw.RequestID(middleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zerolog.Ctx(r.Context()).Warn().Msg("downstream warning")
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set(chimw.RequestIDHeader, "request-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := strings.Count(logBuf.String(), `"request_id":"request-123"`); got != 2 {
+		t.Fatalf("expected downstream and completion logs to carry request ID, got %d in %q", got, logBuf.String())
+	}
+}
+
+func TestRequestLoggerPropagatesRequestIDWithoutLoggingReadinessRequest(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+
+	handler := chimw.RequestID(middleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zerolog.Ctx(r.Context()).Warn().Msg("readiness warning")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+	req.Header.Set(chimw.RequestIDHeader, "readiness-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	logLine := logBuf.String()
+	if !strings.Contains(logLine, `"request_id":"readiness-123"`) {
+		t.Fatalf("expected readiness warning to carry request ID, got %q", logLine)
+	}
+	if strings.Contains(logLine, `"message":"HTTP GET /readiness`) {
+		t.Fatalf("expected readiness completion log to remain suppressed, got %q", logLine)
+	}
+}
+
+func TestRecovererLogsPanicWithRequestID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+	handler := chimw.RequestID(middleware.RequestLogger(logger)(middleware.Recoverer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	}))))
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req.Header.Set(chimw.RequestIDHeader, "panic-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	logs := logBuf.String()
+	for _, expected := range []string{`"level":"error"`, `"request_id":"panic-123"`, `"panic":"boom"`, `"message":"HTTP handler panic"`} {
+		if !strings.Contains(logs, expected) {
+			t.Fatalf("expected panic log to contain %s, got %q", expected, logs)
+		}
+	}
+}
+
+func TestRecovererPreservesAbortHandlerPanic(t *testing.T) {
+	defer func() {
+		if recovered := recover(); recovered != http.ErrAbortHandler {
+			t.Fatalf("expected http.ErrAbortHandler panic, got %v", recovered)
+		}
+	}()
+
+	handler := middleware.Recoverer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
 }
 
 func TestCombinedAuthValidKeyCallsNextHandler(t *testing.T) {
@@ -305,6 +383,37 @@ func TestCombinedAuthProtectsRootPath(t *testing.T) {
 	}
 }
 
+func TestCombinedAuthProtectsResourcesBeforeHandler(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("expected resources handler to be blocked before collecting host metrics")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+
+	authorizedReq := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	authorizedReq.Header.Set("X-API-Key", "test-secret-key")
+	authorizedRec := httptest.NewRecorder()
+	handler.ServeHTTP(authorizedRec, authorizedReq)
+
+	if !called {
+		t.Fatal("expected authenticated request to reach resources handler")
+	}
+	if authorizedRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", authorizedRec.Code)
+	}
+}
+
 func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	called := false
 	handler := middleware.CombinedAuth("", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +434,7 @@ func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 }
 
 func TestCombinedAuthEmptyConfiguredKeyStillAllowsPublicPaths(t *testing.T) {
-	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/", "/resources", "/resources/"} {
+	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/"} {
 		t.Run(path, func(t *testing.T) {
 			called := false
 			handler := middleware.CombinedAuth("", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

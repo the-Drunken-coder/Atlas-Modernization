@@ -25,7 +25,7 @@ func (h *Handler) ListObjects(w http.ResponseWriter, r *http.Request) {
 
 	objects := serializers.SerializeObjectsForList(page.Items)
 	setPaginationHeaders(w, page.Limit, len(objects), page.HasMore, page.NextCursor)
-	writeJSON(w, http.StatusOK, objects)
+	writeJSON(w, r, http.StatusOK, objects)
 }
 
 // CreateObject handles POST /objects.
@@ -49,7 +49,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, obj.Version)
-	writeJSON(w, http.StatusCreated, serializers.SerializeObject(obj))
+	writeJSON(w, r, http.StatusCreated, serializers.SerializeObject(obj))
 }
 
 // GetObject handles GET /objects/{object_id}.
@@ -63,7 +63,7 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, obj.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeObject(obj))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeObject(obj))
 }
 
 // UpdateObject handles PATCH /objects/{object_id}.
@@ -94,7 +94,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, obj.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeObject(obj))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeObject(obj))
 }
 
 // DeleteObject handles DELETE /objects/{object_id}.
@@ -125,7 +125,7 @@ func (h *Handler) GetObjectsByEntity(w http.ResponseWriter, r *http.Request) {
 
 	objects := serializers.SerializeObjectsForList(page.Items)
 	setPaginationHeaders(w, page.Limit, len(objects), page.HasMore, page.NextCursor)
-	writeJSON(w, http.StatusOK, objects)
+	writeJSON(w, r, http.StatusOK, objects)
 }
 
 // GetObjectsByTask handles GET /tasks/{task_id}/objects.
@@ -144,5 +144,5 @@ func (h *Handler) GetObjectsByTask(w http.ResponseWriter, r *http.Request) {
 
 	objects := serializers.SerializeObjectsForList(page.Items)
 	setPaginationHeaders(w, page.Limit, len(objects), page.HasMore, page.NextCursor)
-	writeJSON(w, http.StatusOK, objects)
+	writeJSON(w, r, http.StatusOK, objects)
 }

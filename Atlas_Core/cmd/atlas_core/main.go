@@ -178,7 +178,7 @@ func main() {
 	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.RequestID)
 	r.Use(custommiddleware.RequestLogger(logger))
-	r.Use(middleware.Recoverer)
+	r.Use(custommiddleware.Recoverer)
 	r.Use(middleware.Compress(5))
 
 	// Add CORS

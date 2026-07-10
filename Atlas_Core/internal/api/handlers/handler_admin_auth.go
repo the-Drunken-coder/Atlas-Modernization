@@ -48,12 +48,11 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusTooManyRequests, "too many login attempts, try again later", protocol.ErrorCodeTooManyAttempts)
 			return
 		}
-		h.logger.Error().Err(err).Msg("admin login failed")
-		h.writeError(w, r, http.StatusInternalServerError, "admin login failed", protocol.ErrorCodeInternalServerError)
+		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "admin login failed", protocol.ErrorCodeInternalServerError, err)
 		return
 	}
 	h.adminAuth.SetSessionCookie(w, token, session.ExpiresAt)
-	writeJSON(w, http.StatusOK, adminMeResponse{User: adminUserResponse{
+	writeJSON(w, r, http.StatusOK, adminMeResponse{User: adminUserResponse{
 		Username:  session.Username,
 		Role:      session.Role,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
@@ -69,7 +68,7 @@ func (h *Handler) AdminLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.adminAuth.Logout(r.Context(), r); err != nil {
-		h.logger.Warn().Err(err).Msg("admin logout failed")
+		h.requestLogger(r).Warn().Err(err).Msg("admin logout failed")
 	}
 	h.adminAuth.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
@@ -85,7 +84,7 @@ func (h *Handler) AdminMe(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusUnauthorized, "unauthorized", protocol.ErrorCodeUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, adminMeResponse{User: adminUserResponse{
+	writeJSON(w, r, http.StatusOK, adminMeResponse{User: adminUserResponse{
 		Username:  session.Username,
 		Role:      session.Role,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),

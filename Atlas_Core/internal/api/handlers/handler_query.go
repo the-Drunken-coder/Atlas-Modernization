@@ -145,7 +145,7 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, serializeFullDatasetResult(data))
+	writeJSON(w, r, http.StatusOK, serializeFullDatasetResult(data))
 }
 
 // GetChangedSince handles GET /queries/changed-since.
@@ -180,5 +180,5 @@ func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, serializeChangedSinceResult(data))
+	writeJSON(w, r, http.StatusOK, serializeChangedSinceResult(data))
 }

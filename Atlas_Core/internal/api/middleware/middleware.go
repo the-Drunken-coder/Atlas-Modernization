@@ -5,12 +5,15 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"crypto/subtle"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/rs/zerolog"
@@ -28,7 +31,7 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 
 	switch normalized {
-	case "/health", "/readiness", "/resources", "/admin/auth/login":
+	case "/health", "/readiness", "/admin/auth/login":
 		return true
 	default:
 		return false
@@ -39,6 +42,12 @@ func IsPublicUnauthenticatedPath(path string) bool {
 func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestLogger := logger
+			if requestID := chimiddleware.GetReqID(r.Context()); requestID != "" {
+				requestLogger = logger.With().Str("request_id", requestID).Logger()
+			}
+			r = r.WithContext(requestLogger.WithContext(r.Context()))
+
 			if isUnloggedHealthPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
@@ -53,7 +62,7 @@ func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 
 			duration := time.Since(start)
 
-			logger.Info().
+			requestLogger.Info().
 				Str("method", r.Method).
 				Str("path", r.URL.Path).
 				Int("status", ww.statusCode).
@@ -73,6 +82,33 @@ func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 func isUnloggedHealthPath(path string) bool {
 	normalized := strings.TrimRight(path, "/")
 	return normalized == "/health" || normalized == "/readiness"
+}
+
+// Recoverer logs panics through the request-scoped logger before returning 500.
+func Recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			if err, ok := recovered.(error); ok && err == http.ErrAbortHandler {
+				panic(recovered)
+			}
+
+			zerolog.Ctx(r.Context()).Error().
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Str("panic", fmt.Sprint(recovered)).
+				Str("stack", string(debug.Stack())).
+				Msg("HTTP handler panic")
+			if r.Header.Get("Connection") != "Upgrade" {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func isLogoutPath(path string) bool {

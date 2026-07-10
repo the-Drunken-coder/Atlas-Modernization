@@ -214,8 +214,10 @@ Go service.
 
 ## Logging
 
-Structured `zerolog` logs include request method/path/status/duration and error identifiers
-(`error_id`).
+Structured `zerolog` logs include `request_id` correlation plus request
+method/path/status/duration and handler error identifiers (`error_id`). Handler
+error-envelope 4xx diagnostics use warning severity; 5xx error envelopes and
+panic recovery use error severity.
 
 ## More Docs
 
