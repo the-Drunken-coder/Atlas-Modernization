@@ -15,6 +15,9 @@ type RenderedFeature = { geometry: { type: string; coordinates: unknown }; prope
 let resizeCallbacks: ResizeObserverCallback[] = [];
 
 const maplibreMock = vi.hoisted(() => {
+  const markerOperations = { created: 0, setLngLat: 0, addTo: 0, remove: 0 };
+  const markerCoordinates = new WeakMap<HTMLElement, [number, number]>();
+
   class FakeMap {
     static instances: FakeMap[] = [];
 
@@ -119,21 +122,28 @@ const maplibreMock = vi.hoisted(() => {
 
   class FakeMarker {
     readonly element?: HTMLElement;
+    coordinates: [number, number] = [0, 0];
 
     constructor(options?: { element?: HTMLElement }) {
       this.element = options?.element;
+      markerOperations.created += 1;
     }
 
-    setLngLat(): this {
+    setLngLat(coordinates: [number, number]): this {
+      this.coordinates = [...coordinates];
+      if (this.element) markerCoordinates.set(this.element, this.coordinates);
+      markerOperations.setLngLat += 1;
       return this;
     }
 
     addTo(map: FakeMap): this {
+      markerOperations.addTo += 1;
       if (this.element) map.getContainer().appendChild(this.element);
       return this;
     }
 
     remove(): void {
+      markerOperations.remove += 1;
       this.element?.remove();
     }
 
@@ -142,13 +152,13 @@ const maplibreMock = vi.hoisted(() => {
     }
 
     getLngLat(): { lng: number; lat: number } {
-      return { lng: 0, lat: 0 };
+      return { lng: this.coordinates[0], lat: this.coordinates[1] };
     }
   }
 
   class FakeControl {}
 
-  return { FakeControl, FakeMap, FakeMarker };
+  return { FakeControl, FakeMap, FakeMarker, markerCoordinates, markerOperations };
 });
 
 vi.mock("maplibre-gl", () => ({
@@ -166,6 +176,7 @@ vi.mock("maplibre-gl", () => ({
 
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
+  resetMarkerOperationCounts();
   resizeCallbacks = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
@@ -300,4 +311,19 @@ export function rect(left: number, top: number, width: number, height: number): 
 
 export function notifyResizeObservers(): void {
   for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+}
+
+export function markerOperationCounts() {
+  return { ...maplibreMock.markerOperations };
+}
+
+export function markerCoordinatesFor(element: HTMLElement): [number, number] | undefined {
+  return maplibreMock.markerCoordinates.get(element);
+}
+
+export function resetMarkerOperationCounts(): void {
+  maplibreMock.markerOperations.created = 0;
+  maplibreMock.markerOperations.setLngLat = 0;
+  maplibreMock.markerOperations.addTo = 0;
+  maplibreMock.markerOperations.remove = 0;
 }
