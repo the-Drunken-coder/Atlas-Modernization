@@ -15,6 +15,8 @@ git diff --check
 
 The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
 
+Atlas Core production object-size settings must be passed through `Atlas_Core/docker/docker-compose.production.yml`; keep `MAX_UPLOAD_SIZE_MB` and `MAX_VIEW_SIZE_MB` aligned with `Atlas_Core/docker/.env.example`. Development Compose intentionally leaves those environment variables unset so a custom `ATLAS_CORE_SETTINGS_FILE` can own the limits.
+
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.
 
 Codex-created worktrees may not be checked out on the PR branch even when they are inside this repository. If the local tree looks unexpectedly small or detached, run `git worktree list` and inspect the branch checkout before deciding the PR contents are missing.

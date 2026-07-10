@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,17 @@ func TestValidateObjectBlob(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUploadObjectJSONUsesStoredSizeLimit(t *testing.T) {
+	_, err := uploadObjectJSON(
+		map[string]interface{}{"payload": strings.Repeat("x", maxStoredJSONBlobBytes)},
+		"atlas-media",
+		1024,
+		nil,
+	)
+
+	assertValidationDetailsContain(t, err, "final stored JSON")
 }
 
 func TestUploadObjectJSONValidatesMergedBlob(t *testing.T) {

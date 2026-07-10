@@ -64,6 +64,11 @@ type ChangedSinceResult struct {
 // MaxFullQueryLimit is the maximum number of records per type returned by GetFullDataset.
 const MaxFullQueryLimit = 1000
 
+// A full-query page stops before retaining more than this much raw JSON for
+// any one resource stream. Per-stream budgets keep every stream independently
+// cursorable when another stream contains larger records.
+const maxQueryJSONBytesPerType = 8 * maxStoredJSONBlobBytes
+
 // MaxChangedSinceLimit is the default safety cap for changed-since queries.
 const MaxChangedSinceLimit = 5000
 

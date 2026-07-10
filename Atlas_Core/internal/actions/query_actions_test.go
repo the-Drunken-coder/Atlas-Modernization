@@ -3,11 +3,90 @@ package actions
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
+
+func TestGetFullDatasetByteBudgetPreservesCursorContinuation(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	prefix := fmt.Sprintf("zzzz-full-byte-page-%d", time.Now().UTC().UnixNano())
+	ids := make([]string, 10)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%s-%02d", prefix, i)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, ids); err != nil {
+			t.Errorf("cleanup byte-budget entities: %v", err)
+		}
+	})
+
+	payload := strings.Repeat("x", 950*1024)
+	for _, id := range ids {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO entities (entity_id, type, json)
+			VALUES ($1, 'asset', jsonb_build_object('payload', $2::text))
+		`, id, payload); err != nil {
+			t.Fatalf("insert byte-budget entity %q: %v", id, err)
+		}
+	}
+
+	actions := NewQueryActions(pool)
+	page, err := actions.GetFullDataset(ctx, &FullDatasetLimits{EntityLimit: MaxFullQueryLimit})
+	if err != nil {
+		t.Fatalf("GetFullDataset first page: %v", err)
+	}
+	if !page.HasMoreEntities || page.NextEntityCursor == "" {
+		t.Fatalf("first page hasMore=%v cursor=%q, want byte-truncated continuation", page.HasMoreEntities, page.NextEntityCursor)
+	}
+
+	seen := make(map[string]struct{}, len(ids))
+	collectTestEntities := func(entities []*models.Entity) {
+		for _, entity := range entities {
+			if !strings.HasPrefix(entity.EntityID, prefix) {
+				continue
+			}
+			if _, duplicate := seen[entity.EntityID]; duplicate {
+				t.Fatalf("entity %q repeated across byte-limited pages", entity.EntityID)
+			}
+			seen[entity.EntityID] = struct{}{}
+		}
+	}
+	collectTestEntities(page.Entities)
+	if len(seen) == 0 || len(seen) == len(ids) {
+		t.Fatalf("first page returned %d/%d byte-budget fixtures, want a non-empty short page", len(seen), len(ids))
+	}
+
+	cursor := page.NextEntityCursor
+	for continuation := 0; len(seen) < len(ids) && continuation < 3; continuation++ {
+		if cursor == "" {
+			t.Fatalf("continuation %d has no cursor with %d/%d fixtures returned", continuation+1, len(seen), len(ids))
+		}
+		page, err = actions.GetFullDataset(ctx, &FullDatasetLimits{
+			EntityLimit:  MaxFullQueryLimit,
+			EntityCursor: &cursor,
+		})
+		if err != nil {
+			t.Fatalf("GetFullDataset continuation %d: %v", continuation+1, err)
+		}
+		collectTestEntities(page.Entities)
+		cursor = page.NextEntityCursor
+		if !page.HasMoreEntities && len(seen) < len(ids) {
+			break
+		}
+	}
+	if len(seen) != len(ids) {
+		t.Fatalf("byte-limited continuation returned %d/%d fixtures; cursor skipped rows", len(seen), len(ids))
+	}
+}
 
 func TestCurrentChangeVersionIncludesBurnedSequenceValues(t *testing.T) {
 	pool := openActionsTestPool(t)

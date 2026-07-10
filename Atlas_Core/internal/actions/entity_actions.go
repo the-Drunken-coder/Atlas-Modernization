@@ -201,7 +201,7 @@ func (a *EntityActions) List(ctx context.Context, limit int, cursor string) (*Li
 		operation:   "entity list",
 		cursorName:  "entity",
 		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Entity, bool, error) {
-			return queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+			return queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
 		},
 		rowCursor: func(entity *models.Entity) (time.Time, string) {
 			return entity.CreatedAt, entity.EntityID

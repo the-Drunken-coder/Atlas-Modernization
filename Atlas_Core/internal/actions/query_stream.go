@@ -193,6 +193,75 @@ func openVersionCursorPagedRows(ctx context.Context, tx pgx.Tx, opts versionCurs
 	})
 }
 
+type rowIterator interface {
+	Close()
+	Err() error
+	Next() bool
+}
+
+func collectByteBoundedRows[T any](
+	rows rowIterator,
+	limit, maxBytes int,
+	resource string,
+	scan func() (T, int, error),
+) ([]T, bool, error) {
+	defer rows.Close()
+
+	items := make([]T, 0, limit)
+	retainedBytes := 0
+	for rows.Next() {
+		item, size, err := scan()
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to scan %s: %w", resource, err)
+		}
+		if size > maxBytes {
+			return nil, false, fmt.Errorf("stored %s JSON is %d bytes, exceeding the %d-byte query page budget", resource, size, maxBytes)
+		}
+		if len(items) == limit || retainedBytes > maxBytes-size {
+			return items, true, nil
+		}
+		items = append(items, item)
+		retainedBytes += size
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("error iterating %s rows: %w", resource, err)
+	}
+	return items, false, nil
+}
+
+func collectByteBoundedEntities(rows pgx.Rows, limit, maxBytes int) ([]*models.Entity, bool, error) {
+	return collectByteBoundedRows(rows, limit, maxBytes, "entity", func() (*models.Entity, int, error) {
+		var entity models.Entity
+		err := rows.Scan(
+			&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
+			&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
+		)
+		return &entity, len(entity.JSON), err
+	})
+}
+
+func collectByteBoundedTasks(rows pgx.Rows, limit, maxBytes int) ([]*models.Task, bool, error) {
+	return collectByteBoundedRows(rows, limit, maxBytes, "task", func() (*models.Task, int, error) {
+		var task models.Task
+		err := rows.Scan(
+			&task.TaskID, &task.Status, &task.EntityID, &task.JSON,
+			&task.CreatedAt, &task.UpdatedAt, &task.Version,
+		)
+		return &task, len(task.JSON), err
+	})
+}
+
+func collectByteBoundedObjects(rows pgx.Rows, limit, maxBytes int) ([]*models.MediaObject, bool, error) {
+	return collectByteBoundedRows(rows, limit, maxBytes, "object", func() (*models.MediaObject, int, error) {
+		var object models.MediaObject
+		err := rows.Scan(
+			&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
+			&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
+		)
+		return &object, len(object.JSON), err
+	})
+}
+
 func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
 	if rows == nil {
 		return nil, nil
@@ -289,7 +358,7 @@ func queryEntities(
 	since, snapshotUpper time.Time,
 	continuation bool,
 	cursor *parsedQueryCursor,
-	limit int,
+	limit, maxJSONBytes int,
 ) ([]*models.Entity, bool, error) {
 	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
 		selectFrom:         entitySelectSQL,
@@ -303,6 +372,9 @@ func queryEntities(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query entities: %w", err)
+	}
+	if maxJSONBytes > 0 {
+		return collectByteBoundedEntities(rows, limit, maxJSONBytes)
 	}
 	items, err := collectEntities(rows)
 	if err != nil {
@@ -319,7 +391,7 @@ func queryTasks(
 	since, snapshotUpper time.Time,
 	continuation bool,
 	cursor *parsedQueryCursor,
-	limit int,
+	limit, maxJSONBytes int,
 ) ([]*models.Task, bool, error) {
 	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
 		selectFrom:         taskSelectSQL,
@@ -333,6 +405,9 @@ func queryTasks(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query tasks: %w", err)
+	}
+	if maxJSONBytes > 0 {
+		return collectByteBoundedTasks(rows, limit, maxJSONBytes)
 	}
 	items, err := collectTasks(rows)
 	if err != nil {
@@ -380,7 +455,7 @@ func queryObjects(
 	since, snapshotUpper time.Time,
 	continuation bool,
 	cursor *parsedQueryCursor,
-	limit int,
+	limit, maxJSONBytes int,
 ) ([]*models.MediaObject, bool, error) {
 	rows, err := openCursorPagedRows(ctx, tx, cursorPageOpts{
 		selectFrom:         objectSelectSQL,
@@ -394,6 +469,9 @@ func queryObjects(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query objects: %w", err)
+	}
+	if maxJSONBytes > 0 {
+		return collectByteBoundedObjects(rows, limit, maxJSONBytes)
 	}
 	items, err := collectObjects(rows)
 	if err != nil {
@@ -409,7 +487,7 @@ func queryEntitiesByVersion(
 	sinceVersion, snapshotUpperVersion int64,
 	continuation bool,
 	cursor *parsedVersionCursor,
-	limit int,
+	limit, maxJSONBytes int,
 ) ([]*models.Entity, bool, error) {
 	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
 		selectFrom:           entitySelectSQL,
@@ -422,6 +500,9 @@ func queryEntitiesByVersion(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query versioned entities: %w", err)
+	}
+	if maxJSONBytes > 0 {
+		return collectByteBoundedEntities(rows, limit, maxJSONBytes)
 	}
 	items, err := collectEntities(rows)
 	if err != nil {
@@ -437,7 +518,7 @@ func queryTasksByVersion(
 	sinceVersion, snapshotUpperVersion int64,
 	continuation bool,
 	cursor *parsedVersionCursor,
-	limit int,
+	limit, maxJSONBytes int,
 ) ([]*models.Task, bool, error) {
 	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
 		selectFrom:           taskSelectSQL,
@@ -450,6 +531,9 @@ func queryTasksByVersion(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query versioned tasks: %w", err)
+	}
+	if maxJSONBytes > 0 {
+		return collectByteBoundedTasks(rows, limit, maxJSONBytes)
 	}
 	items, err := collectTasks(rows)
 	if err != nil {
@@ -465,7 +549,7 @@ func queryObjectsByVersion(
 	sinceVersion, snapshotUpperVersion int64,
 	continuation bool,
 	cursor *parsedVersionCursor,
-	limit int,
+	limit, maxJSONBytes int,
 ) ([]*models.MediaObject, bool, error) {
 	rows, err := openVersionCursorPagedRows(ctx, tx, versionCursorPageOpts{
 		selectFrom:           objectSelectSQL,
@@ -478,6 +562,9 @@ func queryObjectsByVersion(
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query versioned objects: %w", err)
+	}
+	if maxJSONBytes > 0 {
+		return collectByteBoundedObjects(rows, limit, maxJSONBytes)
 	}
 	items, err := collectObjects(rows)
 	if err != nil {
