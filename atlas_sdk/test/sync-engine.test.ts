@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type FeedEvent, type ResourceType } from "../src";
+import { AtlasClient, type EntityResource, type FeedEvent, type ResourceType } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -375,7 +375,9 @@ describe("AtlasClient sync", () => {
 
     try {
       await client.sync.start();
-      [...core.sockets][0]?.close();
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected an initial feed socket");
+      socket.close();
       await client.changedSince();
 
       expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
@@ -861,6 +863,23 @@ describe("AtlasClient sync", () => {
 
     expect(() => cacheResource("entity", "asset-cache-cross-type", taskPayload)).toThrow("cannot be used as entity");
     expect(cache.entry("entity", "asset-cache-cross-type")).toBeUndefined();
+  });
+
+  it("does not commit a cache entry when snapshot cloning fails", () => {
+    const cache = new ResourceCache();
+    const original = { ...entity("asset-cache-clone-failure"), metadata: metadata(1) };
+    cache.cacheResource("entity", original.entity_id, original);
+    const snapshot = cache.snapshot();
+    const uncloneable = {
+      ...original,
+      alias: "uncloneable update",
+      metadata: metadata(2),
+      invalid_runtime_value: () => undefined
+    } as unknown as EntityResource;
+
+    expect(() => cache.cacheResource("entity", original.entity_id, uncloneable)).toThrow();
+    expect(cache.value("entity", original.entity_id)).toEqual(original);
+    expect(cache.snapshot()).toBe(snapshot);
   });
 
   it("does not let feed events whose resource payload crosses resource types stop later events", async () => {

@@ -116,10 +116,10 @@ export class ResourceCache {
       return false;
     }
     const key = resourceCacheKey(type, id);
+    this.updateSnapshot(type, id, value);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
     this.entries[type].set(id, { value, version, deleted: false, detail: type === "object" && options?.detail === true });
-    this.updateSnapshot(type, id, value);
     if (options?.advanceCursor !== false) {
       this.lastVersion = Math.max(this.lastVersion, version);
     }
