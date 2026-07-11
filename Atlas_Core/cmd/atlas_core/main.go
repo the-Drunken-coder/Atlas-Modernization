@@ -69,16 +69,21 @@ func initializeStorage(ctx context.Context, cfg *config.Config) (*storage.Client
 		}
 		return nil, fmt.Errorf("initialize durable storage client: %w", err)
 	}
-	if err := client.EnsureBucket(ctx); err != nil {
-		if cfg.DatabaseRecreateOnStartup {
+	if cfg.DatabaseRecreateOnStartup {
+		if err := client.EnsureBucket(ctx); err != nil {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("ensure durable storage bucket exists: %w", err)
-	}
-	if cfg.DatabaseRecreateOnStartup {
 		if err := client.EmptyBucket(ctx); err != nil {
 			return nil, fmt.Errorf("clear disposable storage bucket: %w", err)
 		}
+		return client, nil
+	}
+	exists, err := client.BucketExists(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check durable storage bucket: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("durable storage bucket %q does not exist; restore the paired MinIO backup before startup", client.Bucket())
 	}
 	return client, nil
 }

@@ -76,6 +76,25 @@ func TestInitializeStorageDurableConfigurationRejectsUnavailableStorage(t *testi
 	}
 }
 
+func TestInitializeStorageDurableConfigurationRejectsMissingBucket(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isBucketProbe := r.URL.Path == "/atlas/" && (r.Method == http.MethodHead || (r.Method == http.MethodGet && r.URL.Query().Has("location")))
+		if !isBucketProbe {
+			http.Error(w, r.Method+" "+r.URL.String(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("<Error><Code>NoSuchBucket</Code></Error>"))
+	}))
+	defer server.Close()
+
+	_, err := initializeStorage(context.Background(), storageConfig(strings.TrimPrefix(server.URL, "http://"), false))
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("missing durable bucket error = %v", err)
+	}
+}
+
 func TestInitializeStorageDisposableDevelopmentAllowsUnavailableStorage(t *testing.T) {
 	client, err := initializeStorage(context.Background(), storageConfig("", true))
 	if err != nil {

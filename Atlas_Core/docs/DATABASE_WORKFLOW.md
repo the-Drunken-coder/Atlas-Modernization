@@ -48,7 +48,7 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup initializes MinIO and ensures the configured bucket exists. It never calls `EmptyBucket`. A configured bucket that cannot be initialized is startup-fatal.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose waits for `minio-init` to provision the bucket on a clean deployment.
 
 ## Baseline migration v1
 

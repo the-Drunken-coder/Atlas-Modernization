@@ -278,13 +278,13 @@ def wait_for_api(max_retries=30, delay=2.0):
 def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-media"):
     """Ensure the MinIO bucket exists using mc client.
 
-    Note: The Go service also ensures the bucket exists on startup,
-    but this provides an early check during container initialization.
+    Production Core requires the bucket to exist before startup; the
+    minio-init container owns bucket creation for Compose deployments.
     """
     print(f"[BUILD] Ensuring MinIO bucket exists: {bucket}")
 
-    # The minio-init container in docker compose handles bucket creation,
-    # but we verify it here as a fallback
+    # The minio-init container in docker compose handles bucket creation;
+    # verify that prerequisite before Core starts.
     try:
         result = subprocess.run(
             ["docker", "exec", container_name, "mc", "stat", f"local/{bucket}"],
