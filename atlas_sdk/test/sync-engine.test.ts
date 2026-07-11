@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type FeedEvent, type ResourceType } from "../src";
+import { AtlasClient, type ResourceType } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -917,7 +917,7 @@ describe("AtlasClient sync", () => {
     expect(cache.snapshot()).toBe(snapshot);
   });
 
-  it("does not let feed events whose resource payload crosses resource types stop later events", async () => {
+  it("recovers when a feed event payload crosses resource types", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -931,20 +931,21 @@ describe("AtlasClient sync", () => {
     client.watch({ filter: "type", resource_type: "entity" }, watch);
 
     const taskPayload = { ...task("task-watch-cross-type", null), metadata: metadata(1) };
-    const mismatchedEvent = {
+    const socket = [...core.sockets][0];
+    if (!socket) throw new Error("expected a connected fake websocket");
+    socket.receive({
       event: "update",
       resource_type: "entity",
       id: "asset-watch-cross-type",
       version: 1,
       resource: taskPayload
-    } as unknown as FeedEvent;
-    core.emit(mismatchedEvent, { record: false });
+    });
 
     await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true }));
     expect(watch).not.toHaveBeenCalled();
 
-    await client.changedSince();
-    expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
+    await vi.waitFor(() => expect(core.feedConnections).toBe(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false }));
 
     const valid = core.upsertEntity(entity("asset-watch-cross-type-valid"));
     core.emit(

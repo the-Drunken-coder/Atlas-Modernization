@@ -78,6 +78,34 @@ describe("AtlasClient inbound response validation", () => {
     );
   });
 
+  it.each([
+    ["entity without entity_id", "deleted_entities", { id: "asset-deleted", type: "entity", version: 5 }],
+    ["task without entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5 }],
+    ["task with null entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5, entity_id: null }],
+    ["task with entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5, entity_id: "asset-1" }],
+    ["object without entity_id", "deleted_objects", { id: "object-deleted", type: "object", version: 5 }]
+  ] as const)("accepts a valid %s tombstone", async (_name, bucket, tombstone) => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json(changedPage({ [bucket]: [tombstone], version: 5 }))
+    });
+
+    await expect(client.queries.changedSince(4)).resolves.toMatchObject({ [bucket]: [tombstone] });
+  });
+
+  it.each([
+    ["entity with entity_id", "deleted_entities", { id: "asset-deleted", type: "entity", version: 5, entity_id: "asset-1" }],
+    ["task with empty entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5, entity_id: "" }],
+    ["object with entity_id", "deleted_objects", { id: "object-deleted", type: "object", version: 5, entity_id: null }]
+  ] as const)("rejects an invalid %s tombstone", async (_name, bucket, tombstone) => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json(changedPage({ [bucket]: [tombstone], version: 5 }))
+    });
+
+    await expect(client.queries.changedSince(4)).rejects.toThrow("Atlas response failed validation");
+  });
+
   it("rejects point responses for a different resource id without poisoning the cache", async () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -256,6 +284,29 @@ describe("AtlasClient inbound response validation", () => {
     expect(taskWatch).not.toHaveBeenCalled();
     client.sync.stop();
   });
+
+  it.each([
+    ["omitted entity_id", undefined, true],
+    ["matching entity_id", "asset-checkin-minimal", true],
+    ["wrong entity_id", "asset-other", false]
+  ] as const)("validates a minimal check-in task with %s", async (_name, entityID, valid) => {
+    const checkedIn = validEntity("asset-checkin-minimal", 1);
+    const minimalTask = { task_id: "task-minimal", status: "pending", ...(entityID === undefined ? {} : { entity_id: entityID }) };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json({
+        entity: checkedIn,
+        tasks: [minimalTask],
+        task_count: 1,
+        task_limit: 10,
+        has_more_tasks: false
+      })
+    });
+    const result = client.entities.checkIn(checkedIn.entity_id, { fields: "minimal" });
+
+    if (valid) await expect(result).resolves.toMatchObject({ tasks: [minimalTask] });
+    else await expect(result).rejects.toThrow("Atlas response failed validation");
+  });
 });
 
 describe("AtlasClient inbound feed validation", () => {
@@ -322,7 +373,7 @@ describe("AtlasClient inbound feed validation", () => {
     }
   });
 
-  it("drops malformed feed frames without changing cache state and still accepts a later valid event", async () => {
+  it("recovers from a malformed feed frame through reconnect and changed-since without polling", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -341,53 +392,23 @@ describe("AtlasClient inbound feed validation", () => {
       const snapshot = client.sync.snapshot();
       const resource = validEntity("asset-invalid-feed", 1);
       const unsafeVersion = Number.MAX_SAFE_INTEGER + 1;
-      const malformedFrames: unknown[] = [
-        { type: "hello", protocol_revision: ATLAS_PROTOCOL_REVISION, unexpected: true },
-        { event: "unknown", resource_type: "entity", id: resource.entity_id, version: 1, resource },
-        { event: "update", resource_type: "entity", id: "asset-wrong-id", version: 1, resource },
-        { event: "update", resource_type: "entity", id: resource.entity_id, version: 2, resource },
-        {
-          event: "update",
-          resource_type: "entity",
-          id: resource.entity_id,
-          version: unsafeVersion,
-          resource: { ...resource, metadata: metadata(unsafeVersion) }
-        },
-        {
-          event: "update",
-          resource_type: "entity",
-          id: resource.entity_id,
-          version: 1,
-          resource: { ...resource, metadata: { ...resource.metadata, created_at: "not-a-timestamp" } }
-        },
-        {
-          event: "update",
-          resource_type: "entity",
-          id: resource.entity_id,
-          version: 1,
-          resource: validTask("task-cross-type", null, 1)
-        }
-      ];
-
-      for (const frame of malformedFrames) socket.receive(frame);
+      socket.receive({
+        event: "update",
+        resource_type: "entity",
+        id: resource.entity_id,
+        version: unsafeVersion,
+        resource: { ...resource, metadata: metadata(unsafeVersion) }
+      });
 
       expect(client.sync.snapshot()).toBe(snapshot);
       expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true, lastVersion: 0 });
       expect(watch).not.toHaveBeenCalled();
 
-      const valid = core.upsertEntity(entity("asset-valid-after-malformed-feed"));
-      socket.receive({
-        event: "update",
-        resource_type: "entity",
-        id: valid.entity_id,
-        version: valid.metadata.version,
-        resource: valid
-      });
-
-      await vi.waitFor(() => expect(client.sync.snapshot().entities[valid.entity_id]).toEqual(valid));
-      expect(watch).toHaveBeenCalledWith(valid, expect.objectContaining({ id: valid.entity_id, version: valid.metadata.version }));
-      await client.changedSince();
-      expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false, lastVersion: valid.metadata.version });
+      const recovered = core.upsertEntity(entity("asset-recovered-after-malformed-feed"));
+      await vi.waitFor(() => expect(core.feedConnections).toBe(2), { timeout: 2_000 });
+      await vi.waitFor(() => expect(client.sync.snapshot().entities[recovered.entity_id]).toEqual(recovered));
+      expect(watch).toHaveBeenCalledWith(recovered, expect.objectContaining({ id: recovered.entity_id, version: recovered.metadata.version }));
+      expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false, lastVersion: recovered.metadata.version });
     } finally {
       client.sync.stop();
     }

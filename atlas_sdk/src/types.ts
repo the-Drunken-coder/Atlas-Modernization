@@ -150,9 +150,9 @@ export type ChangedSinceResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
   objects: ObjectResponse[];
-  deleted_entities?: DeletedResource[];
-  deleted_tasks?: DeletedResource[];
-  deleted_objects?: DeletedResource[];
+  deleted_entities?: DeletedResourceByType["entity"][];
+  deleted_tasks?: DeletedResourceByType["task"][];
+  deleted_objects?: DeletedResourceByType["object"][];
   has_more_entities: boolean;
   has_more_tasks: boolean;
   has_more_objects: boolean;
@@ -181,13 +181,20 @@ export type FullDatasetResponse = {
   next_object_cursor?: string;
 };
 
-export type DeletedResource = {
+type DeletedResourceBase<TType extends ResourceType> = {
   id: string;
-  type: ResourceType;
+  type: TType;
   version: number;
-  entity_id?: string | null;
   deleted_at?: string;
 };
+
+type DeletedResourceByType = {
+  entity: DeletedResourceBase<"entity">;
+  task: DeletedResourceBase<"task"> & { entity_id?: string | null };
+  object: DeletedResourceBase<"object">;
+};
+
+export type DeletedResource = DeletedResourceByType[ResourceType];
 
 export type ResourceByType = {
   entity: EntityResource;

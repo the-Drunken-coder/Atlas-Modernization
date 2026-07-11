@@ -200,6 +200,7 @@ export class FeedConnectionManager {
         });
       } catch {
         reportEventError();
+        socket.close();
       }
     });
     socket.addEventListener("close", () => {

@@ -111,7 +111,7 @@ export function entityCheckInResponseValidator(
       !Array.isArray(value.tasks) ||
       !value.tasks.every((task) =>
         fields === "minimal"
-          ? isEntityCheckInMinimalTask(task) && task.entity_id === expectedEntityID
+          ? isEntityCheckInMinimalTask(task) && (!hasOwn(task, "entity_id") || task.entity_id === expectedEntityID)
           : isTaskResource(task) && task.entity_id === expectedEntityID
       ) ||
       !isSafeNonNegativeInteger(value.task_count) ||
