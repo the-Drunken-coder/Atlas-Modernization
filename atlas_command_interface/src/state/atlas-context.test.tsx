@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../atlas_sdk/src/index.js";
 import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
+import type { CommandCatalog } from "../atlas/command-model.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { AtlasProvider, useAtlas } from "./atlas-context.js";
 
@@ -64,6 +65,42 @@ function entity(alias: string, version: number): EntityResource {
     components: {},
     metadata: { ...metadata, version }
   };
+}
+
+function catalog(name: string): CommandCatalog {
+  return { type: "command_catalog", name, description: "Test", commands: [] };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
+function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
+  let emitCatalog: ((catalog: CommandCatalog | null | undefined) => void) | undefined;
+  const loadCatalog = vi.fn(loadCommandCatalog);
+  const dataSource: AtlasDataSource = {
+    snapshot: () => ({ entities: {}, tasks: {} }),
+    loadCommandCatalog: loadCatalog,
+    watch(_onSnapshot, onCatalog) {
+      emitCatalog = onCatalog;
+      return () => {
+        emitCatalog = undefined;
+      };
+    },
+    async start() {},
+    async submitCommand() {
+      throw new Error("not used");
+    },
+    async updateGeometry() {
+      throw new Error("not used");
+    },
+    dispose() {}
+  };
+  return { dataSource, loadCommandCatalog: loadCatalog, emitCatalog: (value: CommandCatalog | null | undefined) => emitCatalog?.(value) };
 }
 
 describe("AtlasProvider", () => {
@@ -217,6 +254,81 @@ describe("AtlasProvider", () => {
     act(() => emitCatalog?.(nextCatalog));
 
     expect(screen.getByTestId("catalog-name")).toHaveTextContent("Updated");
+  });
+
+  it("accepts startup data when a live invalidation arrives before startup resolves", async () => {
+    const startup = deferred<CommandCatalog>();
+    const fake = catalogDataSource(() => startup.promise);
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake.dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    await waitFor(() => expect(fake.loadCommandCatalog).toHaveBeenCalledTimes(1));
+    act(() => fake.emitCatalog(undefined));
+    await act(async () => startup.resolve(catalog("Startup")));
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(screen.getByTestId("catalog-name")).toHaveTextContent("Startup");
+  });
+
+  it("keeps the startup catalog when live detail retries fail", async () => {
+    const startup = deferred<CommandCatalog>();
+    const fake = catalogDataSource(() => startup.promise);
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake.dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    await waitFor(() => expect(fake.loadCommandCatalog).toHaveBeenCalledTimes(1));
+    act(() => fake.emitCatalog(undefined));
+    await act(async () => startup.resolve(catalog("Startup")));
+    expect(await screen.findByTestId("catalog-name")).toHaveTextContent("Startup");
+
+    act(() => fake.emitCatalog(undefined));
+    expect(screen.getByTestId("catalog-name")).toHaveTextContent("Startup");
+  });
+
+  it("lets a successfully fetched newer live catalog supersede startup", async () => {
+    const startup = deferred<CommandCatalog>();
+    const fake = catalogDataSource(() => startup.promise);
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake.dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    await waitFor(() => expect(fake.loadCommandCatalog).toHaveBeenCalledTimes(1));
+    act(() => {
+      fake.emitCatalog(undefined);
+      fake.emitCatalog(catalog("Live"));
+    });
+    await act(async () => startup.resolve(catalog("Startup")));
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(screen.getByTestId("catalog-name")).toHaveTextContent("Live");
+  });
+
+  it("publishes the catalog during normal startup", async () => {
+    const startup = deferred<CommandCatalog>();
+    const fake = catalogDataSource(() => startup.promise);
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake.dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    await waitFor(() => expect(fake.loadCommandCatalog).toHaveBeenCalledTimes(1));
+    await act(async () => startup.resolve(catalog("Startup")));
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(screen.getByTestId("catalog-name")).toHaveTextContent("Startup");
   });
 
   it("keeps newer watch data when an action resolves with a stale resource version", async () => {

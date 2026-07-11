@@ -204,7 +204,7 @@ describe("sdk data source", () => {
 
     core.deleteObject(COMMAND_CATALOG_OBJECT_ID, true);
     await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith(undefined);
+    expect(catalogs).toHaveBeenLastCalledWith(null);
     expect(catalogs).toHaveBeenCalledTimes(3);
 
     dataSource.dispose();

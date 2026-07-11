@@ -82,8 +82,9 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
             setSnapshot(nextSnapshot);
           },
           (nextCatalog) => {
+            if (nextCatalog === undefined) return;
             catalogGeneration++;
-            if (!cancelled) setCatalog(nextCatalog);
+            if (!cancelled) setCatalog(nextCatalog ?? undefined);
           }
         );
 

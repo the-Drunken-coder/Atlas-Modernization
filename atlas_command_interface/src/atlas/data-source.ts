@@ -29,7 +29,8 @@ export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: b
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
-  watch(onSnapshot: (snapshot: AtlasSnapshot) => void, onCatalog?: (catalog: CommandCatalog | undefined) => void): () => void;
+  /** Catalog values and null are completed refreshes; undefined only signals that a refresh is pending. */
+  watch(onSnapshot: (snapshot: AtlasSnapshot) => void, onCatalog?: (catalog: CommandCatalog | null | undefined) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
@@ -96,8 +97,11 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
         const refresh = ++catalogGeneration;
         clearCatalogRetry();
-        onCatalog(undefined);
-        if (event.event !== "delete" && event.event !== "local_delete") void refreshCatalog(refresh, 0);
+        if (event.event === "delete" || event.event === "local_delete") onCatalog(null);
+        else {
+          onCatalog(undefined);
+          void refreshCatalog(refresh, 0);
+        }
       });
       return () => {
         active = false;
