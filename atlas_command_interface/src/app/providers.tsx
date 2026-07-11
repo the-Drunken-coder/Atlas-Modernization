@@ -3,15 +3,41 @@ import { AuthGate } from "../auth/ui/AuthGate.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { Button } from "../ui/primitives/controls.js";
-import { fetchAppConfig, type AppConfig } from "./config.js";
+import { coreConfigFromEnv, fetchAppConfig, type AppConfig, type CoreConfig } from "./config.js";
 
 export type ProvidersProps = {
   children: ReactNode;
+  coreConfig?: CoreConfig;
   loadConfig?: () => Promise<AppConfig>;
   createDataSource?: (config: AppConfig) => AtlasDataSource;
 };
 
-export function Providers({ children, loadConfig = fetchAppConfig, createDataSource }: ProvidersProps) {
+export function Providers({ children, coreConfig: providedCoreConfig, loadConfig = fetchAppConfig, createDataSource }: ProvidersProps) {
+  let coreConfig: CoreConfig;
+  try {
+    coreConfig = providedCoreConfig ?? coreConfigFromEnv(import.meta.env);
+  } catch (cause) {
+    return (
+      <div className="app-error">
+        <span>{cause instanceof Error ? cause.message : String(cause)}</span>
+      </div>
+    );
+  }
+
+  return (
+    <AuthGate baseUrl={coreConfig.atlasBaseUrl}>
+      <AtlasBootstrap loadConfig={loadConfig} createDataSource={createDataSource}>
+        {children}
+      </AtlasBootstrap>
+    </AuthGate>
+  );
+}
+
+function AtlasBootstrap({
+  children,
+  loadConfig,
+  createDataSource
+}: Required<Pick<ProvidersProps, "loadConfig">> & Omit<ProvidersProps, "loadConfig" | "coreConfig">) {
   const [config, setConfig] = useState<AppConfig>();
   const [error, setError] = useState<string>();
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -58,10 +84,8 @@ export function Providers({ children, loadConfig = fetchAppConfig, createDataSou
   }
 
   return (
-    <AuthGate baseUrl={config.atlasBaseUrl}>
-      <AtlasProvider config={config} createDataSource={createDataSource}>
-        {children}
-      </AtlasProvider>
-    </AuthGate>
+    <AtlasProvider config={config} createDataSource={createDataSource}>
+      {children}
+    </AtlasProvider>
   );
 }

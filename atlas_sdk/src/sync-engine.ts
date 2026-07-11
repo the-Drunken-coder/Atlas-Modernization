@@ -235,9 +235,10 @@ export class SyncEngine {
     body: unknown,
     type: TType,
     ifMatchVersion?: number,
-    eventName?: "create" | "update"
+    eventName?: "create" | "update",
+    signal?: AbortSignal
   ): Promise<TResource> {
-    const resource = await this.transport.json<TResource>(method, path, body, ifMatchVersion);
+    const resource = await this.transport.json<TResource>(method, path, body, ifMatchVersion, signal);
     const id = resourceID(type, resource);
     const event = eventName ?? (method === "POST" ? "create" : "update");
     this.applyEvent(resourceUpsertEvent(type, event, id, resource.metadata.version, resource), { detail: type === "object", advanceCursor: false });

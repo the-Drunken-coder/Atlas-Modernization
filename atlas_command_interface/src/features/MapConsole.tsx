@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
@@ -46,6 +46,7 @@ export function MapConsole() {
 
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
+  const commandDismissedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -53,6 +54,12 @@ export function MapConsole() {
   const [saveError, setSaveError] = useState<string>();
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
   const [previewEntityId, setPreviewEntityId] = useState<string>();
+
+  const dismissCommandForm = useCallback(() => {
+    commandDismissedRef.current = true;
+    setCommandForm(null);
+    setSubmitError(undefined);
+  }, []);
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
@@ -62,15 +69,13 @@ export function MapConsole() {
   // Drop transient command UI when the selected entity changes.
   useEffect(() => {
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
-  }, [selectedId]);
+    dismissCommandForm();
+  }, [selectedId, dismissCommandForm]);
 
   useEffect(() => {
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
-  }, [catalog]);
+    dismissCommandForm();
+  }, [catalog, dismissCommandForm]);
 
   // Drop an edit session when the selection moves to another entity.
   useEffect(() => {
@@ -85,11 +90,10 @@ export function MapConsole() {
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
+    dismissCommandForm();
     setEdit(null);
     setSaveError(undefined);
-  }, [selectedId, selectedEntityId]);
+  }, [selectedId, selectedEntityId, dismissCommandForm]);
 
   useEffect(() => {
     const config = atlas.config;
@@ -139,16 +143,20 @@ export function MapConsole() {
   const submit = useCallback(
     async (availability: CommandAvailability, parameters: Record<string, JSONValue>, errorFormState?: CommandFormState) => {
       if (!selectedEntity) return;
+      commandDismissedRef.current = false;
       setSubmitting(true);
       setSubmitError(undefined);
       try {
         await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
         setCommandForm(null);
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        setSubmitError(message);
-        setCommandForm((current) => current ?? errorFormState ?? null);
+        if (!commandDismissedRef.current) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          setSubmitError(message);
+          setCommandForm((current) => current ?? errorFormState ?? null);
+        }
       } finally {
+        commandDismissedRef.current = false;
         setSubmitting(false);
       }
     },
@@ -191,11 +199,10 @@ export function MapConsole() {
         setMapMenu(null);
         return;
       }
-      setCommandForm(null);
-      setSubmitError(undefined);
+      dismissCommandForm();
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
-    [selectedEntity]
+    [selectedEntity, dismissCommandForm]
   );
 
   const startEdit = useCallback(() => {
@@ -374,6 +381,12 @@ export function MapConsole() {
         />
       ) : null}
 
+      {submitting && !commandForm ? (
+        <div className="banner banner--info" role="status">
+          Command submission pending…
+        </div>
+      ) : null}
+
       {commandForm && selectedEntity ? (
         <CommandForm
           command={commandForm.availability.command}
@@ -382,7 +395,7 @@ export function MapConsole() {
           mapPoint={commandForm.mapPoint}
           submitting={submitting}
           error={submitError}
-          onCancel={() => setCommandForm(null)}
+          onCancel={dismissCommandForm}
           onSubmit={(parameters) => void submit(commandForm.availability, parameters, commandForm)}
         />
       ) : null}
