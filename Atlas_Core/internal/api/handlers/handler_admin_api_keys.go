@@ -33,15 +33,14 @@ func (h *Handler) AdminListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	keys, err := h.adminAuth.ListAPIKeys(r.Context())
 	if err != nil {
-		h.logger.Error().Err(err).Msg("list admin api keys failed")
-		h.writeError(w, r, http.StatusInternalServerError, "list api keys failed", protocol.ErrorCodeInternalServerError)
+		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "list api keys failed", protocol.ErrorCodeInternalServerError, err)
 		return
 	}
 	resp := make([]adminAPIKeyResponse, 0, len(keys))
 	for _, key := range keys {
 		resp = append(resp, adminAPIKeyResponseFromMetadata(key))
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *Handler) AdminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -67,11 +66,10 @@ func (h *Handler) AdminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusBadRequest, err.Error(), protocol.ErrorCodeValidationError)
 			return
 		}
-		h.logger.Error().Err(err).Msg("create admin api key failed")
-		h.writeError(w, r, http.StatusInternalServerError, "create api key failed", protocol.ErrorCodeInternalServerError)
+		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "create api key failed", protocol.ErrorCodeInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, adminCreateAPIKeyResponse{
+	writeJSON(w, r, http.StatusCreated, adminCreateAPIKeyResponse{
 		adminAPIKeyResponse: adminAPIKeyResponseFromMetadata(created.APIKeyMetadata),
 		APIKey:              created.APIKey,
 	})
@@ -90,8 +88,7 @@ func (h *Handler) AdminRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusNotFound, "api key not found", protocol.ErrorCodeValidationError)
 			return
 		}
-		h.logger.Error().Err(err).Str("api_key_id", keyID).Msg("revoke admin api key failed")
-		h.writeError(w, r, http.StatusInternalServerError, "revoke api key failed", protocol.ErrorCodeInternalServerError)
+		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "revoke api key failed", protocol.ErrorCodeInternalServerError, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

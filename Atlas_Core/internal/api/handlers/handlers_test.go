@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
+	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
@@ -75,6 +77,22 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]interfa
 		t.Fatalf("failed to decode response body: %v", err)
 	}
 	return body
+}
+
+func findLogEvent(t *testing.T, logs, message string) map[string]interface{} {
+	t.Helper()
+
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("failed to decode log event: %v", err)
+		}
+		if event["message"] == message {
+			return event
+		}
+	}
+	t.Fatalf("log message %q not found in %q", message, logs)
+	return nil
 }
 
 func routeRequest(method, target, body string) *http.Request {
@@ -203,6 +221,85 @@ func TestReadinessCheckWithoutDBReturnsUnhealthy(t *testing.T) {
 	}
 	if dbCheck["status"] != "unhealthy" {
 		t.Fatalf("expected unhealthy database, got %v", dbCheck["status"])
+	}
+	storageCheck, ok := checks["storage"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected storage check, got %T", checks["storage"])
+	}
+	if storageCheck["status"] != "unconfigured" {
+		t.Fatalf("expected deliberately unconfigured storage, got %v", storageCheck["status"])
+	}
+}
+
+func TestReadinessCheckWithConfiguredStorageClientMissingReturnsUnhealthy(t *testing.T) {
+	handler := newTestHandler()
+	handler.config.MinIOSecretKey = "configured-secret"
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+
+	handler.ReadinessCheck(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	checks := decodeBody(t, rec)["checks"].(map[string]interface{})
+	storageCheck := checks["storage"].(map[string]interface{})
+	if storageCheck["status"] != "unhealthy" {
+		t.Fatalf("expected unhealthy configured storage, got %v", storageCheck["status"])
+	}
+}
+
+func TestReadinessCheckWithUnreachableStorageReturnsUnhealthy(t *testing.T) {
+	storageClient, err := storage.NewClient(&config.Config{
+		MinIOEndpoint:  "127.0.0.1:1",
+		MinIOAccessKey: "atlas",
+		MinIOSecretKey: "configured-secret",
+		MinioBucket:    "atlas-media",
+	})
+	if err != nil {
+		t.Fatalf("create storage client: %v", err)
+	}
+	handler := newTestHandler()
+	handler.storage = storageClient
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readiness", nil).WithContext(ctx)
+
+	handler.ReadinessCheck(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	checks := decodeBody(t, rec)["checks"].(map[string]interface{})
+	storageCheck := checks["storage"].(map[string]interface{})
+	if storageCheck["status"] != "unhealthy" {
+		t.Fatalf("expected unhealthy unreachable storage, got %v", storageCheck["status"])
+	}
+}
+
+func TestReadinessOutcome(t *testing.T) {
+	tests := []struct {
+		name         string
+		database     string
+		storage      string
+		wantStatus   string
+		wantHTTPCode int
+	}{
+		{name: "all dependencies healthy", database: "healthy", storage: "healthy", wantStatus: "healthy", wantHTTPCode: http.StatusOK},
+		{name: "database unavailable", database: "unhealthy", storage: "healthy", wantStatus: "unhealthy", wantHTTPCode: http.StatusServiceUnavailable},
+		{name: "configured storage unavailable", database: "healthy", storage: "unhealthy", wantStatus: "unhealthy", wantHTTPCode: http.StatusServiceUnavailable},
+		{name: "storage deliberately unconfigured", database: "healthy", storage: "unconfigured", wantStatus: "degraded", wantHTTPCode: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, httpCode := readinessOutcome(tt.database, tt.storage)
+			if status != tt.wantStatus || httpCode != tt.wantHTTPCode {
+				t.Fatalf("readinessOutcome(%q, %q) = (%q, %d), want (%q, %d)", tt.database, tt.storage, status, httpCode, tt.wantStatus, tt.wantHTTPCode)
+			}
+		})
 	}
 }
 
@@ -1091,6 +1188,89 @@ func TestHandleActionErrorMapsKnownErrorTypes(t *testing.T) {
 				t.Fatal("expected error_id to be populated")
 			}
 		})
+	}
+}
+
+func TestHandlerErrorLogsUseRequestIDAndStatusSeverity(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		wantLevel string
+		wantCause bool
+	}{
+		{name: "client error", status: http.StatusBadRequest, wantLevel: "warn"},
+		{name: "server error", status: http.StatusServiceUnavailable, wantLevel: "error", wantCause: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			handler := newTestHandler()
+			handler.logger = zerolog.New(&logBuf)
+			wrapped := chimiddleware.RequestID(custommiddleware.RequestLogger(handler.logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handler.writeErrorWithCause(w, r, tt.status, "logged error", protocol.ErrorCodeInternalServerError, testError("cause"))
+			})))
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set(chimiddleware.RequestIDHeader, "request-123")
+			rec := httptest.NewRecorder()
+
+			wrapped.ServeHTTP(rec, req)
+
+			event := findLogEvent(t, logBuf.String(), "logged error")
+			if event["level"] != tt.wantLevel {
+				t.Fatalf("expected %s level, got %v", tt.wantLevel, event["level"])
+			}
+			if event["request_id"] != "request-123" {
+				t.Fatalf("expected request ID, got %v", event["request_id"])
+			}
+			_, hasCause := event["error"]
+			if hasCause != tt.wantCause {
+				t.Fatalf("cause logged = %v, want %v", hasCause, tt.wantCause)
+			}
+		})
+	}
+}
+
+func TestValidationErrorLogUsesRequestIDAndWarningSeverity(t *testing.T) {
+	var logBuf bytes.Buffer
+	handler := newTestHandler()
+	handler.logger = zerolog.New(&logBuf)
+	wrapped := chimiddleware.RequestID(custommiddleware.RequestLogger(handler.logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.writeValidationError(w, r, actions.NewValidationError("bad field"))
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/entities", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "validation-123")
+	rec := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(rec, req)
+
+	event := findLogEvent(t, logBuf.String(), "bad field")
+	if event["level"] != "warn" {
+		t.Fatalf("expected warning level, got %v", event["level"])
+	}
+	if event["request_id"] != "validation-123" {
+		t.Fatalf("expected request ID, got %v", event["request_id"])
+	}
+}
+
+func TestWriteJSONEncodingErrorUsesRequestID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+	wrapped := chimiddleware.RequestID(custommiddleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, r, http.StatusOK, make(chan int))
+	})))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "encoding-123")
+	rec := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(rec, req)
+
+	event := findLogEvent(t, logBuf.String(), "writeJSON: failed to encode response")
+	if event["level"] != "error" {
+		t.Fatalf("expected error level, got %v", event["level"])
+	}
+	if event["request_id"] != "encoding-123" {
+		t.Fatalf("expected request ID, got %v", event["request_id"])
 	}
 }
 

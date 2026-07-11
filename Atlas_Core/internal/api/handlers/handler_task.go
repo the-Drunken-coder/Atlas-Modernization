@@ -23,7 +23,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 	tasks := serializers.SerializeTasks(page.Items)
 	setPaginationHeaders(w, page.Limit, len(tasks), page.HasMore, page.NextCursor)
-	writeJSON(w, http.StatusOK, tasks)
+	writeJSON(w, r, http.StatusOK, tasks)
 }
 
 // CreateTask handles POST /tasks.
@@ -43,7 +43,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusCreated, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusCreated, serializers.SerializeTask(task))
 }
 
 // GetTask handles GET /tasks/{task_id}.
@@ -57,7 +57,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // UpdateTask handles PATCH /tasks/{task_id}.
@@ -83,7 +83,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // DeleteTask handles DELETE /tasks/{task_id}.
@@ -114,7 +114,7 @@ func (h *Handler) GetTasksByEntity(w http.ResponseWriter, r *http.Request) {
 
 	tasks := serializers.SerializeTasks(page.Items)
 	setPaginationHeaders(w, page.Limit, len(tasks), page.HasMore, page.NextCursor)
-	writeJSON(w, http.StatusOK, tasks)
+	writeJSON(w, r, http.StatusOK, tasks)
 }
 
 // AcknowledgeTask handles POST /tasks/{task_id}/acknowledge.
@@ -132,7 +132,7 @@ func (h *Handler) AcknowledgeTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // CompleteTask handles POST /tasks/{task_id}/complete.
@@ -158,7 +158,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // FailTask handles POST /tasks/{task_id}/fail.
@@ -184,7 +184,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // TaskStatus handles POST /tasks/{task_id}/status.
@@ -215,5 +215,5 @@ func (h *Handler) TaskStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeTask(task))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
