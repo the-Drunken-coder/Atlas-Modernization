@@ -129,7 +129,10 @@ describe("sdk data source", () => {
     vi.stubGlobal("WebSocket", BlockedWebSocket);
     const core = new TestCore();
     const original = core.upsertEntity(entity("asset-poll"));
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
     const dataSource = createSdkDataSource(config);
     const snapshots = vi.fn();
     dataSource.watch(snapshots);
@@ -158,7 +161,10 @@ describe("sdk data source", () => {
     vi.useFakeTimers();
     const core = new TestCore();
     const original = core.upsertEntity(entity("asset-reconnect"));
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
     vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
     const dataSource = createSdkDataSource(config);
     const snapshots = vi.fn();
@@ -192,7 +198,10 @@ describe("sdk data source", () => {
     const core = new TestCore();
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Original catalog"));
     core.upsertObject("other-object", "other");
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
     vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
     const dataSource = createSdkDataSource(config);
     const catalogs = vi.fn();
@@ -218,9 +227,7 @@ describe("sdk data source", () => {
     await vi.advanceTimersByTimeAsync(999);
     expect(catalogs).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() =>
-      expect(catalogs).toHaveBeenLastCalledWith({ status: "loaded", catalog: expect.objectContaining({ name: "Updated catalog" }) })
-    );
+    await vi.waitFor(() => expect(catalogs).toHaveBeenLastCalledWith({ status: "loaded", catalog: expect.objectContaining({ name: "Updated catalog" }) }));
     expect(catalogs).toHaveBeenCalledTimes(2);
     expect(core.requests.filter((request) => request === `/objects/${COMMAND_CATALOG_OBJECT_ID}`)).toHaveLength(2);
 
@@ -236,7 +243,10 @@ describe("sdk data source", () => {
     vi.useFakeTimers();
     const core = new TestCore();
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Original catalog"));
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
     vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
     const dataSource = createSdkDataSource(config);
     const catalogs = vi.fn();
@@ -265,7 +275,10 @@ describe("sdk data source", () => {
     vi.useFakeTimers();
     const core = new TestCore();
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Startup catalog"));
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
     vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
     const dataSource = createSdkDataSource(config);
     const catalogs = vi.fn();
@@ -503,7 +516,10 @@ class TestWebSocket {
   readyState = 0;
   private readonly listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
 
-  constructor(readonly url: string, private readonly core: TestCore) {
+  constructor(
+    readonly url: string,
+    private readonly core: TestCore
+  ) {
     core.feedConnections++;
     core.sockets.add(this);
     queueMicrotask(() => {

@@ -1,9 +1,4 @@
-import {
-  AtlasClient,
-  type EntityResource,
-  type JSONValue,
-  type TaskResource
-} from "../../../atlas_sdk/src/index.js";
+import { AtlasClient, type EntityResource, type JSONValue, type TaskResource } from "../../../atlas_sdk/src/index.js";
 import type { AppConfig } from "../app/config.js";
 import {
   buildCommandTaskRequest,
@@ -26,11 +21,7 @@ export type CommandSubmission = {
 
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean };
 
-export type CatalogUpdate =
-  | { status: "pending" }
-  | { status: "loaded"; catalog: CommandCatalog }
-  | { status: "failed" }
-  | { status: "deleted" };
+export type CatalogUpdate = { status: "pending" } | { status: "loaded"; catalog: CommandCatalog } | { status: "failed" } | { status: "deleted" };
 
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
@@ -132,11 +123,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
-      return client.entities.update(
-        entityId,
-        { components: { geometry } },
-        ifMatchVersion === undefined ? undefined : { ifMatchVersion }
-      );
+      return client.entities.update(entityId, { components: { geometry } }, ifMatchVersion === undefined ? undefined : { ifMatchVersion });
     },
 
     dispose() {

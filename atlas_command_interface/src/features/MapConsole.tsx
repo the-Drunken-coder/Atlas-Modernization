@@ -27,10 +27,10 @@ import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES: Record<ListKind, string> = {
   assets: "Assets",
-	tracks: "Tracks",
-	geofeatures: "Geo Features",
-	commands: "Commands",
-	apiKeys: "API Keys"
+  tracks: "Tracks",
+  geofeatures: "Geo Features",
+  commands: "Commands",
+  apiKeys: "API Keys"
 };
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
@@ -94,7 +94,9 @@ export function MapConsole() {
   useEffect(() => {
     const config = atlas.config;
     if (!config) return;
-    setSelectedMapSourceId((current) => (current && config.mapSources.some((source) => source.id === current && source.style) ? current : config.defaultMapSourceId));
+    setSelectedMapSourceId((current) =>
+      current && config.mapSources.some((source) => source.id === current && source.style) ? current : config.defaultMapSourceId
+    );
   }, [atlas.config]);
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
@@ -106,7 +108,10 @@ export function MapConsole() {
     },
     [atlas.config]
   );
-  const previewTarget = useMemo(() => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined), [previewEntityId, snapshot.entities]);
+  const previewTarget = useMemo(
+    () => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined),
+    [previewEntityId, snapshot.entities]
+  );
   const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
   // Camera intent is derived from the sidebar's claim, not the snapshot, so
   // its identity only changes when the user asks to go somewhere.
@@ -248,8 +253,7 @@ export function MapConsole() {
     );
   }
 
-  const activeList: ListKind | null =
-    sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
+  const activeList: ListKind | null = sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId)) ??
@@ -334,7 +338,11 @@ export function MapConsole() {
                   styleId={selectedMapSource.id}
                   style={selectedMapSource.style}
                   selectedId={selectedId}
-                  editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
+                  editing={
+                    edit
+                      ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
+                      : undefined
+                  }
                   focusTarget={focusTarget}
                   previewTarget={previewTarget}
                   cameraCommand={cameraCommand}

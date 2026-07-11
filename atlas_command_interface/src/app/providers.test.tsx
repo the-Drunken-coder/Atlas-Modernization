@@ -36,7 +36,10 @@ describe("Providers", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         fetchCalls.push([input, init]);
-        return new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
       })
     );
 
@@ -61,7 +64,10 @@ describe("Providers", () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } })
+      )
     );
     const loadConfig = vi.fn().mockRejectedValueOnce(new Error("config unavailable")).mockResolvedValue(config);
     const calls: string[] = [];

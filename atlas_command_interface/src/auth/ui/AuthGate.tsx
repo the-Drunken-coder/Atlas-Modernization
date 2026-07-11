@@ -132,13 +132,7 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
         </label>
         <label className="field">
           <span className="field__label">Password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
+          <input className="input" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         {error ? <div className="banner banner--error">{error}</div> : null}
         <Button type="submit" variant="primary" disabled={submitting || username.trim() === "" || password === ""}>
