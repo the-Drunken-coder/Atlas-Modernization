@@ -56,7 +56,9 @@ export function MapConsole() {
   const [previewEntityId, setPreviewEntityId] = useState<string>();
 
   const dismissCommandForm = useCallback(() => {
-    submitAbortRef.current?.abort();
+    const controller = submitAbortRef.current;
+    submitAbortRef.current = undefined;
+    controller?.abort();
     setSubmitting(false);
     setCommandForm(null);
     setSubmitError(undefined);
@@ -157,8 +159,10 @@ export function MapConsole() {
         setSubmitError(message);
         setCommandForm((current) => current ?? errorFormState ?? null);
       } finally {
-        if (submitAbortRef.current === controller) submitAbortRef.current = undefined;
-        setSubmitting(false);
+        if (submitAbortRef.current === controller) {
+          submitAbortRef.current = undefined;
+          setSubmitting(false);
+        }
       }
     },
     [atlas, selectedEntity]
