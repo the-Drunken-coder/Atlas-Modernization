@@ -94,7 +94,8 @@ export class AtlasClient {
 
   readonly tasks = {
     get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
-    create: (task: TaskCreateRequest) => this.engine.writeResource("POST", "/tasks", task, "task"),
+    create: (task: TaskCreateRequest, options?: { signal?: AbortSignal }) =>
+      this.engine.writeResource("POST", "/tasks", task, "task", undefined, undefined, options?.signal),
     update: (id: string, patch: TaskUpdateRequest, options?: { ifMatchVersion?: number }) =>
       this.engine.writeResource("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),

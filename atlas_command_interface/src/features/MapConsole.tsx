@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
@@ -46,6 +46,7 @@ export function MapConsole() {
 
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
+  const submitAbortRef = useRef<AbortController | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -130,14 +131,18 @@ export function MapConsole() {
       if (!selectedEntity) return;
       setSubmitting(true);
       setSubmitError(undefined);
+      const controller = new AbortController();
+      submitAbortRef.current = controller;
       try {
-        await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
+        await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters, signal: controller.signal });
         setCommandForm(null);
       } catch (cause) {
+        if (controller.signal.aborted) return;
         const message = cause instanceof Error ? cause.message : String(cause);
         setSubmitError(message);
         setCommandForm((current) => current ?? errorFormState ?? null);
       } finally {
+        if (submitAbortRef.current === controller) submitAbortRef.current = undefined;
         setSubmitting(false);
       }
     },
@@ -365,7 +370,10 @@ export function MapConsole() {
           mapPoint={commandForm.mapPoint}
           submitting={submitting}
           error={submitError}
-          onCancel={() => setCommandForm(null)}
+          onCancel={() => {
+            submitAbortRef.current?.abort();
+            setCommandForm(null);
+          }}
           onSubmit={(parameters) => void submit(commandForm.availability, parameters, commandForm)}
         />
       ) : null}

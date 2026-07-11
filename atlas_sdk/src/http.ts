@@ -48,8 +48,8 @@ export class HttpTransport {
     this.requestTimeoutMs = options.requestTimeoutMs;
   }
 
-  async json<T>(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<T> {
-    const response = await this.raw(method, path, body, ifMatchVersion);
+  async json<T>(method: string, path: string, body?: unknown, ifMatchVersion?: number, signal?: AbortSignal): Promise<T> {
+    const response = await this.raw(method, path, body, ifMatchVersion, signal);
     if (response.status === 204) {
       // Core uses 204 only for void responses such as DELETE.
       return undefined as T;
@@ -57,7 +57,7 @@ export class HttpTransport {
     return (await response.json()) as T;
   }
 
-  async raw(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<Response> {
+  async raw(method: string, path: string, body?: unknown, ifMatchVersion?: number, signal?: AbortSignal): Promise<Response> {
     const headers = new Headers();
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
@@ -66,7 +66,8 @@ export class HttpTransport {
       method,
       headers,
       credentials: this.credentials,
-      body: body === undefined ? undefined : JSON.stringify(body)
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal
     });
     if (!response.ok) {
       const payload = await readErrorPayload(response);
@@ -83,7 +84,7 @@ export class HttpTransport {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
-      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+      return await this.fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal });
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);

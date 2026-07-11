@@ -136,6 +136,24 @@ describe("sdk data source", () => {
     expect(new Headers(calls[1].init.headers).get("If-Match")).toBe('"v2"');
   });
 
+  it("aborts a pending command request through the SDK transport", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: unknown, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        })
+      )
+    );
+    const dataSource = createSdkDataSource(config);
+    const controller = new AbortController();
+    const request = dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, signal: controller.signal });
+
+    controller.abort();
+
+    await expect(request).rejects.toBeDefined();
+  });
+
   it("dispatches auth-expired for Core session failures", async () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", { dispatchEvent });
