@@ -91,6 +91,23 @@ func TestTransferIdleTimeoutStopsIdleClientReader(t *testing.T) {
 	}
 }
 
+func TestTransferIdleTimeoutSkipsReadDeadlineWithoutRequestBody(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/download", nil)
+
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != http.NoBody {
+			t.Fatalf("request body = %T, want http.NoBody", r.Body)
+		}
+		_, _ = w.Write([]byte("ok"))
+	})).ServeHTTP(writer, req)
+
+	if !writer.readDeadline.IsZero() {
+		t.Fatalf("read deadline = %v, want none", writer.readDeadline)
+	}
+}
+
 func TestTransferIdleTimeoutRefreshesAfterSlowSuccessfulWrite(t *testing.T) {
 	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
 	writer := newDeadlineTestWriter(clock)

@@ -33,7 +33,7 @@ func transferIdleTimeout(idle time.Duration, now func() time.Time) func(http.Han
 				idle:           idle,
 				now:            now,
 			}
-			if r.Body != nil {
+			if r.Body != nil && r.Body != http.NoBody {
 				if err := controller.SetReadDeadline(now().Add(idle)); err != nil {
 					http.Error(writer, "failed to configure transfer deadline", http.StatusInternalServerError)
 					return
