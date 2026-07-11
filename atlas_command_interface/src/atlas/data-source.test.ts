@@ -41,6 +41,7 @@ describe("sdk data source", () => {
     const secondEntity = entity("asset-2", 2);
     const firstTask = task("task-1", firstEntity.entity_id, 3);
     const secondTask = task("task-2", secondEntity.entity_id, 4);
+    const hydrationVersion = 3;
     const requestedUrls: string[] = [];
     vi.stubGlobal("WebSocket", undefined);
     vi.stubGlobal(
@@ -53,6 +54,7 @@ describe("sdk data source", () => {
         }
         if (url === "https://core.test/queries/full") {
           return Response.json({
+            version: hydrationVersion,
             entities: [firstEntity],
             tasks: [firstTask],
             objects: [],
@@ -65,12 +67,30 @@ describe("sdk data source", () => {
         }
         if (url.includes("/queries/full?") && url.includes("entity_cursor=next-entities") && url.includes("task_cursor=next-tasks")) {
           return Response.json({
+            version: hydrationVersion,
             entities: [secondEntity],
             tasks: [secondTask],
             objects: [],
             has_more_entities: false,
             has_more_tasks: false,
             has_more_objects: false
+          });
+        }
+        if (url === `https://core.test/queries/changed-since?since_version=${hydrationVersion}`) {
+          return Response.json({
+            version: secondTask.metadata.version,
+            entities: [],
+            tasks: [secondTask],
+            objects: [],
+            deleted_entities: [],
+            deleted_tasks: [],
+            deleted_objects: [],
+            has_more_entities: false,
+            has_more_tasks: false,
+            has_more_objects: false,
+            has_more_deleted_entities: false,
+            has_more_deleted_tasks: false,
+            has_more_deleted_objects: false
           });
         }
         throw new Error(`Unexpected request: ${url}`);
@@ -83,11 +103,11 @@ describe("sdk data source", () => {
     await dataSource.start();
 
     expect(requestedUrls.filter((url) => url.includes("/queries/full"))).toHaveLength(2);
+    expect(requestedUrls).toContain(`https://core.test/queries/changed-since?since_version=${hydrationVersion}`);
     expect(dataSource.snapshot()).toEqual({
       entities: { [firstEntity.entity_id]: firstEntity, [secondEntity.entity_id]: secondEntity },
       tasks: { [firstTask.task_id]: firstTask, [secondTask.task_id]: secondTask }
     });
-    expect(requestedUrls.filter((url) => url.includes("/queries/full"))).toHaveLength(2);
     expect(dataSource.health?.()).toEqual({ running: true, healthy: false, degraded: true });
 
     dataSource.dispose();

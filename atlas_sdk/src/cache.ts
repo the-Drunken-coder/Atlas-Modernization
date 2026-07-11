@@ -27,6 +27,11 @@ class SnapshotRecord<T> {
     return true;
   }
 
+  clear(): void {
+    this.entries.clear();
+    this.dirty = true;
+  }
+
   snapshot(): Readonly<Record<string, T>> {
     if (this.dirty) {
       this.value = Object.freeze(Object.fromEntries(this.entries));
@@ -99,6 +104,24 @@ export class ResourceCache {
       this.snapshotDirty = false;
     }
     return this.snapshotValue;
+  }
+
+  replaceHydratedResources(
+    resources: { entities: readonly EntityResource[]; tasks: readonly TaskResource[]; objects: readonly ObjectResource[] }
+  ): void {
+    this.entries.entity.clear();
+    this.entries.task.clear();
+    this.entries.object.clear();
+    this.snapshotRecords.entity.clear();
+    this.snapshotRecords.task.clear();
+    this.snapshotRecords.object.clear();
+    this.snapshotDirty = true;
+    this.pendingDeletes.clear();
+    this.locallyNotifiedDeletes.clear();
+    this.lastVersion = 0;
+    for (const entity of resources.entities) this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
+    for (const task of resources.tasks) this.cacheResource("task", task.task_id, task, { advanceCursor: false });
+    for (const object of resources.objects) this.cacheResource("object", object.object_id, object, { advanceCursor: false });
   }
 
   cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {

@@ -903,6 +903,23 @@ func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
 	}
 }
 
+func TestFullDatasetVersionJSONPresence(t *testing.T) {
+	response := serializeFullDatasetResult(&actions.FullDatasetResult{})
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal full dataset response: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode full dataset response: %v", err)
+	}
+	version, ok := decoded["version"]
+	if !ok || version != float64(0) {
+		t.Fatalf("full dataset response version = %#v, present %v; want required zero watermark", version, ok)
+	}
+}
+
 func TestChangedSinceDeletedTaskEntityIDJSONPresence(t *testing.T) {
 	entityID := "asset-1"
 	response := serializeChangedSinceResult(&actions.ChangedSinceResult{

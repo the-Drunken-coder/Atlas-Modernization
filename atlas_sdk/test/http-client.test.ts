@@ -441,6 +441,7 @@ describe("AtlasClient HTTP", () => {
     const changed = await client.queries.changedSince(0, { limitPerType: 1, taskCursor: "1", deletedTaskCursor: "1" });
 
     expect(full.entities).toEqual([]);
+    expect(full.version).toBe(core.version);
     expect(changed.tasks).toEqual([]);
     expect(core.requests).toContain("/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor=1");
     expect(core.requests).toContain("/queries/changed-since?since_version=0&limit_per_type=1&task_cursor=1&deleted_task_cursor=1");
