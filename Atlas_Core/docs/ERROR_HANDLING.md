@@ -6,8 +6,8 @@ _Revision: 2026-07-10_
 
 Atlas Core returns a consistent JSON error envelope from **HTTP handler** code paths. Error mapping is
 implemented in `internal/api/handlers/handler_http.go` (`handleActionError`, `writeError`,
-`writeValidationError`). The canonical error-code enum lives in Atlas Protocol as `#ErrorCode`
-and is generated for Go as `atlasprotocol.ErrorCode`.
+`writeValidationError`). The canonical error-code enum lives in Atlas Protocol as `$defs/ErrorCode`;
+running `go run ./tools/check` from `atlas_protocol/` structurally enforces the matching authored Go enum `atlasprotocol.ErrorCode`.
 
 **Exception:** auth middleware (`internal/api/middleware/middleware.go`) returns **401 Unauthorized** with a small JSON body (`success`, `message`, `error_code`) and does **not** include `error_id`, `timestamp`, or `path`. Treat API-key and browser-session auth failures separately from handler-generated errors.
 
@@ -84,7 +84,7 @@ Handler-generated error responses use:
 
 - `success` (`false`)
 - `message`
-- `error_code` (one of Atlas Protocol `#ErrorCode`)
+- `error_code` (one of Atlas Protocol `$defs/ErrorCode`)
 - `error_id`
 - `timestamp`
 - `path` (when available)

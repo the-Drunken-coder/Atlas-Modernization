@@ -25,7 +25,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "run: go run ./tools/generate")
 		os.Exit(1)
 	}
-	fmt.Println("Atlas Protocol generated artifacts are fresh")
+	fmt.Println("Atlas Protocol examples, Go contracts, and generated artifacts are current")
 }
 
 func fatal(err error) {

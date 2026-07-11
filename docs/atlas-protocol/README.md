@@ -6,8 +6,8 @@ Atlas Protocol is the reusable contract layer for Atlas data. The buildable modu
 
 - JSON Schema in `atlas_protocol/schema/jsonschema/atlas.schema.json` is the source of truth.
 - Checked-in examples validate against the JSON Schema source.
-- Generated Go types/validators, TypeScript types, targeted TypeScript request validators, and a protocol revision stamp live under `atlas_protocol/generated/`.
-- Atlas Core consumes generated protocol artifacts; it does not own or duplicate the protocol source.
+- Authored, schema-parity-checked Go types plus generated Go validators, TypeScript types, targeted TypeScript request validators, and a protocol revision stamp live under `atlas_protocol/generated/`.
+- Atlas Core consumes the reusable protocol package; it does not own or duplicate the protocol source.
 - The Atlas SDK imports generated TypeScript directly so SDK, Core, and protocol artifacts move in lockstep.
 
 The implemented contract covers entity, task, and object resources; request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client messages; feed handshake messages; generated Go validators; generated TypeScript types and targeted request validators; and revision metadata.
@@ -37,7 +37,7 @@ If protocol code starts importing a database driver, defining route behavior, or
 This repo is still greenfield. Prefer full protocol replacement over compatibility shims:
 
 1. Update the JSON Schema source.
-2. Regenerate artifacts.
+2. Update the authored Go API when its supported contracts change, then regenerate artifacts.
 3. Update consumers.
 4. Rebuild and test.
 
@@ -54,7 +54,7 @@ go run ./tools/check
 go test ./...
 ```
 
-Generated files are checked in and marked `DO NOT EDIT`. Update JSON Schema and rerun the generator rather than editing generated artifacts by hand.
+Generated validators, TypeScript, and revision files are checked in and marked `DO NOT EDIT`. Update JSON Schema and rerun the generator rather than editing those artifacts by hand. The authored Go `types.go` is the exception: edit it intentionally when the structural parity check reports a supported contract change.
 
 ## Deferred
 

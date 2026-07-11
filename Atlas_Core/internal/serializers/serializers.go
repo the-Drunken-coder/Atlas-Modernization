@@ -13,7 +13,7 @@ import (
 // APIMetadataTimeLayout matches metadata.created_at / updated_at in JSON responses.
 const APIMetadataTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
 
-// MetadataBlock uses the generated protocol metadata shape.
+// MetadataBlock uses the schema-parity-checked protocol metadata shape.
 type MetadataBlock = protocol.MetadataBlock
 
 // StrongETag returns a strong quoted ETag for resource concurrency (If-Match).

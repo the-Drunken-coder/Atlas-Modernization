@@ -28,7 +28,7 @@ var runtimeValidatorTypeNames = []string{
 func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 	var builder strings.Builder
 	generated := false
-	for _, name := range runtimeValidatorTypeNames {
+	for _, name := range runtimeValidatorNames(g) {
 		schema, ok := g.defs[name]
 		if !ok {
 			continue
@@ -57,6 +57,22 @@ func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 	}
 	builder.WriteString(runtimeValidatorHelpersSource())
 	return builder.String(), nil
+}
+
+func runtimeValidatorNames(g *typeScriptGenerator) []string {
+	names := append([]string(nil), runtimeValidatorTypeNames...)
+	known := make(map[string]bool, len(names))
+	for _, name := range names {
+		known[name] = true
+	}
+	requests := make([]string, 0)
+	for name := range g.defs {
+		if strings.HasSuffix(name, "Request") && !known[name] {
+			requests = append(requests, name)
+		}
+	}
+	sort.Strings(requests)
+	return append(names, requests...)
 }
 
 func validatorFunctionName(typeName string) string {
