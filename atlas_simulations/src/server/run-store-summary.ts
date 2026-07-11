@@ -25,6 +25,7 @@ export function targetSummary(target: RunTarget): AtlasTargetSummary {
     id: target.id,
     label: target.label,
     baseUrl: target.baseUrl,
+    deployed: target.deployed,
     apiKeyConfigured: target.apiKeyConfigured
   };
 }

@@ -28,6 +28,25 @@ func TestObjectExamplesValidate(t *testing.T) {
 	assertExamplesValidate(t, filepath.Join(root, "examples", "objects"), protocol.ValidateObjectBlob)
 }
 
+func TestGeneratedValidatorsRejectCyclicValues(t *testing.T) {
+	cyclicMap := map[string]any{}
+	cyclicMap["self"] = cyclicMap
+	cyclicSlice := make([]any, 1)
+	cyclicSlice[0] = cyclicSlice
+	var cyclicPointer any
+	cyclicPointer = &cyclicPointer
+
+	for name, value := range map[string]any{
+		"map":     cyclicMap,
+		"slice":   cyclicSlice,
+		"pointer": cyclicPointer,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertErrorContains(t, protocol.ValidateEntityBlob(value), "cyclic value")
+		})
+	}
+}
+
 func TestErrorExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
 	assertExamplesValidate(t, filepath.Join(root, "examples", "errors"), protocol.ValidateErrorResponse)

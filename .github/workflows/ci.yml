@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  BIOME_SINCE: ${{ github.event.pull_request.base.sha || github.event.before }}
   GO_VERSION_FILE: Atlas_Core/go.mod
   GO_SUM_FILE: Atlas_Core/go.sum
   PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
@@ -134,17 +135,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "26"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: ${{ env.SDK_WORKING_DIRECTORY }}/package-lock.json
 
       - name: Install SDK dependencies
         run: npm ci
+
+      - name: Audit SDK dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint Atlas SDK
+        run: npm run lint
+
+      - name: Check formatting of changed Atlas SDK files
+        run: npm run format:check -- --since="$BIOME_SINCE"
 
       - name: Install browser test runtime
         run: timeout 10m npx --no-install playwright install chromium
@@ -189,17 +200,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "26"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: ${{ env.COMMAND_INTERFACE_WORKING_DIRECTORY }}/package-lock.json
 
       - name: Install command interface dependencies
         run: npm ci
+
+      - name: Audit command interface dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint command interface
+        run: npm run lint
+
+      - name: Check formatting of changed command interface files
+        run: npm run format:check -- --since="$BIOME_SINCE"
 
       - name: Type-check command interface
         run: npm run typecheck
@@ -220,17 +241,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "26"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: ${{ env.SIMULATIONS_WORKING_DIRECTORY }}/package-lock.json
 
       - name: Install simulations dependencies
         run: npm ci
+
+      - name: Audit simulations dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint simulations
+        run: npm run lint
+
+      - name: Check formatting of changed simulations files
+        run: npm run format:check -- --since="$BIOME_SINCE"
 
       - name: Type-check simulations
         run: npm run typecheck
@@ -322,6 +353,15 @@ jobs:
           CLOUDFLARE_TUNNEL_TOKEN: dummy
           API_AUTH_KEY: dummy-ci-api-auth-key
         run: docker compose -f docker/docker-compose.yml -f docker/docker-compose.tunnel.yml config --quiet
+
+      - name: Validate production Docker Compose config
+        env:
+          POSTGRES_PASSWORD: atlas-ci
+          MINIO_ROOT_USER: atlas
+          MINIO_ROOT_PASSWORD: atlas-ci
+          API_AUTH_KEY: dummy-ci-api-auth-key
+          ATLAS_ADMIN_PASSWORD: atlas-ci-admin-password
+        run: docker compose -f docker/docker-compose.production.yml config --quiet
 
   docker-build:
     name: docker-build

@@ -19,7 +19,8 @@ import (
 const (
 	schemaBundlePath     = "jsonschema/atlas.schema.json"
 	schemaBundleLocation = "atlas.schema.json"
-	maxGeometryPositions = 10000
+	// MaxGeometryPositions is the aggregate position limit for one Polygon.
+	MaxGeometryPositions = 10000
 )
 
 type compiledSchema struct {
@@ -470,7 +471,17 @@ func prefixErrors(errors []string, fieldPrefix string) []string {
 	return prefixed
 }
 
+type jsonReference struct {
+	typeOf  reflect.Type
+	pointer uintptr
+	length  int
+}
+
 func normalizeForJSONSchema(value any) (any, error) {
+	return normalizeForJSONSchemaValue(value, make(map[jsonReference]struct{}))
+}
+
+func normalizeForJSONSchemaValue(value any, active map[jsonReference]struct{}) (any, error) {
 	switch typed := value.(type) {
 	case json.RawMessage:
 		return decodeRawJSON(typed)
@@ -483,42 +494,32 @@ func normalizeForJSONSchema(value any) (any, error) {
 			return typed.String(), nil
 		}
 		return f, nil
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for key, item := range typed {
-			normalized, err := normalizeForJSONSchema(item)
-			if err != nil {
-				return nil, err
-			}
-			out[key] = normalized
-		}
-		return out, nil
-	case []any:
-		out := make([]any, len(typed))
-		for i, item := range typed {
-			normalized, err := normalizeForJSONSchema(item)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = normalized
-		}
-		return out, nil
 	default:
-		return normalizeReflectedJSONValue(reflect.ValueOf(value))
+		return normalizeReflectedJSONValue(reflect.ValueOf(value), active)
 	}
 }
 
-func normalizeReflectedJSONValue(value reflect.Value) (any, error) {
+func normalizeReflectedJSONValue(value reflect.Value, active map[jsonReference]struct{}) (any, error) {
 	if !value.IsValid() {
 		return nil, nil
 	}
 
 	switch value.Kind() {
-	case reflect.Interface, reflect.Pointer:
+	case reflect.Interface:
 		if value.IsNil() {
 			return nil, nil
 		}
-		return normalizeForJSONSchema(value.Elem().Interface())
+		return normalizeForJSONSchemaValue(value.Elem().Interface(), active)
+	case reflect.Pointer:
+		if value.IsNil() {
+			return nil, nil
+		}
+		release, err := enterJSONReference(value, active)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		return normalizeForJSONSchemaValue(value.Elem().Interface(), active)
 	case reflect.Map:
 		if value.IsNil() {
 			return nil, nil
@@ -526,22 +527,42 @@ func normalizeReflectedJSONValue(value reflect.Value) (any, error) {
 		if value.Type().Key().Kind() != reflect.String {
 			return nil, fmt.Errorf("unsupported map key type %s", value.Type().Key())
 		}
+		release, err := enterJSONReference(value, active)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 		out := make(map[string]any, value.Len())
 		for _, key := range value.MapKeys() {
-			normalized, err := normalizeForJSONSchema(value.MapIndex(key).Interface())
+			normalized, err := normalizeForJSONSchemaValue(value.MapIndex(key).Interface(), active)
 			if err != nil {
 				return nil, err
 			}
 			out[key.String()] = normalized
 		}
 		return out, nil
-	case reflect.Slice, reflect.Array:
-		if value.Kind() == reflect.Slice && value.IsNil() {
+	case reflect.Slice:
+		if value.IsNil() {
 			return nil, nil
 		}
+		release, err := enterJSONReference(value, active)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 		out := make([]any, value.Len())
 		for i := 0; i < value.Len(); i++ {
-			normalized, err := normalizeForJSONSchema(value.Index(i).Interface())
+			normalized, err := normalizeForJSONSchemaValue(value.Index(i).Interface(), active)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	case reflect.Array:
+		out := make([]any, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			normalized, err := normalizeForJSONSchemaValue(value.Index(i).Interface(), active)
 			if err != nil {
 				return nil, err
 			}
@@ -549,13 +570,25 @@ func normalizeReflectedJSONValue(value reflect.Value) (any, error) {
 		}
 		return out, nil
 	case reflect.Struct:
-		return normalizeJSONMarshaler(value.Interface())
+		return normalizeJSONMarshaler(value.Interface(), active)
 	default:
 		return value.Interface(), nil
 	}
 }
 
-func normalizeJSONMarshaler(value any) (any, error) {
+func enterJSONReference(value reflect.Value, active map[jsonReference]struct{}) (func(), error) {
+	reference := jsonReference{typeOf: value.Type(), pointer: value.Pointer(), length: -1}
+	if value.Kind() == reflect.Slice {
+		reference.length = value.Len()
+	}
+	if _, exists := active[reference]; exists {
+		return nil, fmt.Errorf("cyclic value of type %s", value.Type())
+	}
+	active[reference] = struct{}{}
+	return func() { delete(active, reference) }, nil
+}
+
+func normalizeJSONMarshaler(value any, active map[jsonReference]struct{}) (any, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -566,7 +599,7 @@ func normalizeJSONMarshaler(value any) (any, error) {
 	if err := decoder.Decode(&decoded); err != nil {
 		return nil, err
 	}
-	return normalizeForJSONSchema(decoded)
+	return normalizeForJSONSchemaValue(decoded, active)
 }
 
 func decodeRawJSON(raw json.RawMessage) (any, error) {
@@ -698,8 +731,8 @@ func geometrySemanticErrors(value any, path string) []string {
 			errors = append(errors, joinPath(path, fmt.Sprintf("coordinates.%d", i))+": polygon ring must be closed")
 		}
 	}
-	if totalPositions > maxGeometryPositions {
-		errors = append(errors, joinPath(path, "coordinates")+fmt.Sprintf(": polygon positions must not exceed %d", maxGeometryPositions))
+	if totalPositions > MaxGeometryPositions {
+		errors = append(errors, joinPath(path, "coordinates")+fmt.Sprintf(": polygon positions must not exceed %d", MaxGeometryPositions))
 	}
 	return errors
 }

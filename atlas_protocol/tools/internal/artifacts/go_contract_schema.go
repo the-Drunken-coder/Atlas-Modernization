@@ -63,6 +63,9 @@ func (context goSchemaContext) structFields(definitions []string) (map[string]sc
 	for field, schemas := range fieldSchemas {
 		typeName, err := context.fieldType(field, schemas)
 		if err != nil {
+			if len(definitions) == 1 {
+				return nil, fmt.Errorf("schema path $defs/%s/properties/%s: %w", definitions[0], field, err)
+			}
 			return nil, fmt.Errorf("field %s: %w", field, err)
 		}
 		fields[field] = schemaGoField{typeName: typeName, optional: requiredCounts[field] != len(variants)}
@@ -169,9 +172,33 @@ func (context goSchemaContext) schemaType(schema map[string]any, seen map[string
 	case "number":
 		return "float64", nil
 	case "array":
-		items, ok := schema["items"].(map[string]any)
-		if !ok {
+		prefixItems, hasPrefixItems := schema["prefixItems"]
+		if hasPrefixItems {
+			items, ok := prefixItems.([]any)
+			if !ok || len(items) == 0 {
+				return "", fmt.Errorf("prefixItems must be a non-empty array of schemas")
+			}
+			for index, item := range items {
+				if _, object := item.(map[string]any); !object {
+					if _, boolean := item.(bool); !boolean {
+						return "", fmt.Errorf("prefixItems[%d] must be an object or boolean schema", index)
+					}
+				}
+			}
+			if _, homogeneous := schema["items"].(map[string]any); !homogeneous {
+				return "", fmt.Errorf("prefixItems without object-valued items requires unsupported Go tuple projection")
+			}
+		}
+		rawItems, hasItems := schema["items"]
+		if !hasItems || rawItems == true {
 			return "[]JSONValue", nil
+		}
+		items, ok := rawItems.(map[string]any)
+		if !ok {
+			if rawItems == false {
+				return "", fmt.Errorf("items: false cannot be represented by a Go slice")
+			}
+			return "", fmt.Errorf("items must be an object or boolean schema")
 		}
 		itemType, err := context.schemaType(items, cloneBoolMap(seen))
 		if err != nil {

@@ -267,6 +267,31 @@ func TestRequestValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 	}
 }
 
+func TestTypeScriptRuntimePolygonRefIncludesSemanticValidation(t *testing.T) {
+	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
+		"GeoJSONPolygon": {
+			"type": "object",
+			"properties": map[string]any{
+				"type":        map[string]any{"const": "Polygon"},
+				"coordinates": map[string]any{"type": "array"},
+			},
+		},
+	}}
+	expression, err := generator.runtimeRefValidatorExpression("value", "#/$defs/GeoJSONPolygon", map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(expression, "atlasProtocolHasValidPolygonSemantics(value)") {
+		t.Fatalf("polygon validator expression missing semantic check: %s", expression)
+	}
+	helpers := runtimeValidatorHelpersSource()
+	for _, want := range []string{"atlasProtocolMaxGeometryPositions = 10000", "atlasProtocolPositionsEqual"} {
+		if !strings.Contains(helpers, want) {
+			t.Fatalf("runtime helpers missing %q", want)
+		}
+	}
+}
+
 func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testing.T) {
 	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
 		"EntityCreateRequest": []byte(`{

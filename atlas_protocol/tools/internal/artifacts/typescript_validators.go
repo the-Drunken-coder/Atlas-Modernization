@@ -139,7 +139,14 @@ func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, re
 	}
 	nextSeenRefs := cloneSeenRefs(seenRefs)
 	nextSeenRefs[name] = true
-	return g.runtimeValidatorExpressionWithRefs(valueExpr, schema, nextSeenRefs)
+	expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, schema, nextSeenRefs)
+	if err != nil {
+		return "", err
+	}
+	if name == "GeoJSONPolygon" {
+		expression = "(" + expression + " && atlasProtocolHasValidPolygonSemantics(" + valueExpr + "))"
+	}
+	return expression, nil
 }
 
 func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema) string {

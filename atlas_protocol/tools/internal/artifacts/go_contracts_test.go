@@ -3,6 +3,7 @@ package artifacts
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,16 @@ func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 				schemaProperties(t, bundle, "ObjectResource")["size_bytes"] = map[string]any{"type": "string"}
 			},
 			want: "field size_bytes type drifted",
+		},
+		{
+			name: "tuple-only array",
+			mutate: func(t *testing.T, bundle schemaBundle) {
+				schemaProperties(t, bundle, "ObjectResource")["size_bytes"] = map[string]any{
+					"type":        "array",
+					"prefixItems": []any{map[string]any{"type": "integer"}},
+				}
+			},
+			want: "schema path $defs/ObjectResource/properties/size_bytes: prefixItems without object-valued items requires unsupported Go tuple projection",
 		},
 		{
 			name: "direct enum",
@@ -157,6 +168,43 @@ func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 			err := validateGoContracts(root, bundle)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validateGoContracts error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestSchemaTypeDistinguishesArrayShapes(t *testing.T) {
+	context := goSchemaContext{}
+	tests := []struct {
+		name    string
+		schema  map[string]any
+		want    string
+		wantErr string
+	}{
+		{name: "unconstrained", schema: map[string]any{"type": "array"}, want: "[]JSONValue"},
+		{name: "homogeneous", schema: map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, want: "[]string"},
+		{name: "boolean true items", schema: map[string]any{"type": "array", "items": true}, want: "[]JSONValue"},
+		{name: "boolean false items", schema: map[string]any{"type": "array", "items": false}, wantErr: "items: false cannot be represented by a Go slice"},
+		{name: "prefix and homogeneous items", schema: map[string]any{"type": "array", "prefixItems": []any{map[string]any{"type": "number"}}, "items": map[string]any{"type": "number"}}, want: "[]float64"},
+		{name: "prefix only", schema: map[string]any{"type": "array", "prefixItems": []any{map[string]any{"type": "string"}}}, wantErr: "prefixItems without object-valued items requires unsupported Go tuple projection"},
+		{name: "prefix and true items", schema: map[string]any{"type": "array", "prefixItems": []any{map[string]any{"type": "string"}}, "items": true}, wantErr: "prefixItems without object-valued items requires unsupported Go tuple projection"},
+		{name: "prefix and false items", schema: map[string]any{"type": "array", "prefixItems": []any{map[string]any{"type": "string"}}, "items": false}, wantErr: "prefixItems without object-valued items requires unsupported Go tuple projection"},
+		{name: "malformed items", schema: map[string]any{"type": "array", "items": "string"}, wantErr: "items must be an object or boolean schema"},
+		{name: "malformed prefixItems", schema: map[string]any{"type": "array", "prefixItems": "string", "items": map[string]any{"type": "string"}}, wantErr: "prefixItems must be a non-empty array of schemas"},
+		{name: "malformed prefix item", schema: map[string]any{"type": "array", "prefixItems": []any{float64(1)}, "items": map[string]any{"type": "string"}}, wantErr: "prefixItems[0] must be an object or boolean schema"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := context.schemaType(test.schema, map[string]bool{})
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("schemaType error = %v, want %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("schemaType = %q, %v; want %q", got, err, test.want)
 			}
 		})
 	}
@@ -275,6 +323,21 @@ func TestBuildArtifactsLeavesGoTypesAuthored(t *testing.T) {
 		if artifact.Path == authoredGoTypesPath {
 			t.Fatalf("BuildArtifacts still generates %s", authoredGoTypesPath)
 		}
+	}
+}
+
+func TestBuildArtifactsIsDeterministic(t *testing.T) {
+	root, _ := canonicalGoContractFixture(t)
+	first, err := BuildArtifacts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildArtifacts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("BuildArtifacts returned different artifacts for the same schema")
 	}
 }
 

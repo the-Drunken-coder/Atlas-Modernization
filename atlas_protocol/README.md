@@ -26,6 +26,12 @@ Run protocol tests:
 go test ./...
 ```
 
+`conformance/request-validation.json` is the shared request corpus used by the
+canonical schema, Go validator, generated TypeScript predicates, and selected
+Core handlers. Cases separate `schema_valid` from full runtime `valid` because
+polygon closure and aggregate position limits are semantic checks that draft
+2020-12 JSON Schema cannot express.
+
 ## Boundary
 
 The reusable Go package lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Its `types.go` file is authored for Go ergonomics, while `go run ./tools/check` derives the supported wire shapes and enums from the canonical schema and fails if that public API drifts. Atlas Core consumes this module through a local `replace` during development; protocol code should not move under `Atlas_Core/internal/`.

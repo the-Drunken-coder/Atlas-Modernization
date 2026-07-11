@@ -224,6 +224,7 @@ assert_status 200 "GET /queries/full" && \
   assert_json '.entities | type == "array"' "GET /queries/full entities" && \
   assert_json '.tasks    | type == "array"' "GET /queries/full tasks" && \
   assert_json '.objects  | type == "array"' "GET /queries/full objects" && \
+  assert_json '.version  | type == "number"' "GET /queries/full version watermark" && \
   assert_json '.entities | length >= 1'     "GET /queries/full entity count" && \
   assert_json '.tasks    | length >= 1'     "GET /queries/full task count"
 # shellcheck disable=SC2016 # $e/$t are jq --arg variables, not shell expansions
