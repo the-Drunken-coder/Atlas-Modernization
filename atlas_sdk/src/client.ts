@@ -11,14 +11,11 @@ import type {
   TaskUpdateRequest
 } from "./protocol.js";
 import { ObjectContentCache, ResourceCache } from "./cache.js";
-import { FeedConnectionManager, ProtocolMismatchError } from "./feed-connection.js";
-import { AtlasAPIError, ConflictError, HttpTransport } from "./http.js";
+import { FeedConnectionManager } from "./feed-connection.js";
+import { HttpTransport } from "./http.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
-  AtlasLocalDeleteWatchEvent,
-  AtlasRecoveredWatchEvent,
   AtlasSubscription,
-  AtlasWatchEvent,
   ChangedSinceQueryOptions,
   ChangedSinceResponse,
   EntityCheckInBody,
@@ -211,7 +208,7 @@ export class AtlasClient {
 
   private async checkInEntity(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
     const { path, body } = checkInRequest(id, options);
-    return this.engine.checkInEntity<EntityCheckInMinimalTask | TaskResource>(id, path, body, options?.ifMatchVersion);
+    return this.engine.checkInEntity<EntityCheckInMinimalTask | TaskResource>(path, body, options?.ifMatchVersion);
   }
 
   private async objectContent(id: string): Promise<ArrayBuffer> {
