@@ -437,7 +437,13 @@ func TestCombinedAuthAllowsAdminSessionToAccessResourcesWhenAPIAuthDisabled(t *t
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	req.AddCookie(&http.Cookie{Name: admin.CookieName, Value: "valid-session"})
+	req.AddCookie(&http.Cookie{
+		Name:     admin.CookieName,
+		Value:    "valid-session",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if !called || rec.Code != http.StatusOK {
