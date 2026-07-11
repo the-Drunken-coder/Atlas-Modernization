@@ -1,6 +1,6 @@
 import type { AtlasTargetSummary } from "../shared/types.js";
 import { createAtlasClientFactory, type AtlasClientFactory } from "./atlas.js";
-import type { AtlasTargetConfig, SimulationConfig } from "./config.js";
+import { isDeployedAtlasUrl, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
 import type { RunTarget } from "./run-store.js";
 
 export type TargetRegistry = {
@@ -39,6 +39,31 @@ export function targetForId(id: string | undefined, registry: TargetRegistry, ap
   return target && apiKey ? { ...target, apiKey } : target;
 }
 
+export function targetForRun(
+  runTarget: Pick<AtlasTargetSummary, "id" | "baseUrl">,
+  registry: TargetRegistry,
+  apiKey: string | undefined
+): AtlasTargetConfig {
+  const configured = registry.targets.get(runTarget.id);
+  if (apiKey) {
+    return {
+      id: runTarget.id,
+      label: "Recovered deployed Core",
+      baseUrl: runTarget.baseUrl,
+      apiKey
+    };
+  }
+  if (configured && targetSummary(configured).baseUrl !== runTarget.baseUrl) {
+    throw new Error(`Atlas target ${runTarget.id} no longer matches the run cleanup target`);
+  }
+  const target = configured ?? {
+    id: runTarget.id,
+    label: "Recovered deployed Core",
+    baseUrl: runTarget.baseUrl
+  };
+  return target;
+}
+
 export function runTarget(target: AtlasTargetConfig, includeClientFactory: boolean): RunTarget {
   return {
     ...targetSummary(target),
@@ -55,6 +80,7 @@ export function targetSummary(target: AtlasTargetConfig): AtlasTargetSummary {
     id: target.id,
     label: target.label,
     baseUrl: target.baseUrl,
+    deployed: isDeployedAtlasUrl(target.baseUrl),
     apiKeyConfigured: !!target.apiKey
   };
 }

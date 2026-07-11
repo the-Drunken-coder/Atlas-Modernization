@@ -363,6 +363,9 @@ Patch body:
 }
 ```
 
+Omitting `entity_id` from a task patch preserves the current assignment, `null`
+unlinks the task, and a non-empty string assigns it to that entity.
+
 Complete body is optional:
 
 ```json
@@ -482,14 +485,17 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `object_cursor` | Continue objects from `next_object_cursor`. |
 
 Full-query resource streams return at most 1000 rows; changed-since resource streams return at
-most 5000. Both retain at most 8 MiB of stored JSON per resource type per page. A byte-limited
-short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination.
-Stored resource JSON is capped at 1 MiB after create/update merging.
+most 5000. Both retain at most 8 MiB of estimated serialized response data per resource type per
+page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as
+count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging.
+
+The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
 
 Response:
 
 ```json
 {
+  "version": 42,
   "entities": [],
   "tasks": [],
   "objects": [],

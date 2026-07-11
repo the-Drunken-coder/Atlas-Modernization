@@ -17,7 +17,7 @@ class SnapshotRecord<T> {
   private dirty = false;
 
   set(id: string, value: T): void {
-    this.entries.set(id, immutableClone(value));
+    this.entries.set(id, value);
     this.dirty = true;
   }
 
@@ -25,6 +25,11 @@ class SnapshotRecord<T> {
     if (!this.entries.delete(id)) return false;
     this.dirty = true;
     return true;
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.dirty = true;
   }
 
   snapshot(): Readonly<Record<string, T>> {
@@ -51,12 +56,12 @@ export class ObjectContentCache {
     }
     this.entries.delete(key);
     this.entries.set(key, value);
-    return value;
+    return value.slice(0);
   }
 
   set(key: string, value: ArrayBuffer): void {
     this.entries.delete(key);
-    this.entries.set(key, value);
+    this.entries.set(key, value.slice(0));
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) {
@@ -101,6 +106,24 @@ export class ResourceCache {
     return this.snapshotValue;
   }
 
+  replaceHydratedResources(
+    resources: { entities: readonly EntityResource[]; tasks: readonly TaskResource[]; objects: readonly ObjectResource[] }
+  ): void {
+    this.entries.entity.clear();
+    this.entries.task.clear();
+    this.entries.object.clear();
+    this.snapshotRecords.entity.clear();
+    this.snapshotRecords.task.clear();
+    this.snapshotRecords.object.clear();
+    this.snapshotDirty = true;
+    this.pendingDeletes.clear();
+    this.locallyNotifiedDeletes.clear();
+    this.lastVersion = 0;
+    for (const entity of resources.entities) this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
+    for (const task of resources.tasks) this.cacheResource("task", task.task_id, task, { advanceCursor: false });
+    for (const object of resources.objects) this.cacheResource("object", object.object_id, object, { advanceCursor: false });
+  }
+
   cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {
     const actualID = resourceID(type, value);
     if (actualID !== id) {
@@ -115,11 +138,12 @@ export class ResourceCache {
     if (existing && existing.version === version && !isDetailUpgrade) {
       return false;
     }
+    const immutableValue = immutableClone(value);
     const key = resourceCacheKey(type, id);
-    this.updateSnapshot(type, id, value);
+    this.updateSnapshot(type, id, immutableValue);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
-    this.entries[type].set(id, { value, version, deleted: false, detail: type === "object" && options?.detail === true });
+    this.entries[type].set(id, { value: immutableValue, version, deleted: false, detail: type === "object" && options?.detail === true });
     if (options?.advanceCursor !== false) {
       this.lastVersion = Math.max(this.lastVersion, version);
     }
