@@ -23,6 +23,14 @@ describe("scenario input parsing", () => {
     expect(() => parseStartRequest(scenario, { scenarioId: "other" })).toThrow("scenarioId must be example");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: null })).toThrow("inputs must be a JSON object");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: [] })).toThrow("inputs must be a JSON object");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", targetId: " " })).toThrow("targetId must be a non-empty string");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", targetId: 12 })).toThrow("targetId must be a non-empty string");
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", confirmDeployedMutation: false })).toThrow(
+      "confirmDeployedMutation must be true when provided"
+    );
+    expect(() => parseStartRequest(scenario, { scenarioId: "example", confirmDeployedMutation: "true" })).toThrow(
+      "confirmDeployedMutation must be true when provided"
+    );
     expect(() => parseStartRequest(scenario, { scenarioId: "example", jsonInput: 12 })).toThrow("jsonInput must be a string");
     expect(() => parseStartRequest(scenario, { scenarioId: "example", inputs: {}, typo: true })).toThrow("Unknown start request field: typo");
   });
@@ -31,9 +39,12 @@ describe("scenario input parsing", () => {
     const parsed = parseStartRequest(scenario, {
       scenarioId: "example",
       targetId: "deployed",
+      confirmDeployedMutation: true,
       inputs: { enabled: true },
       jsonInput: '{"note":"ok"}'
     });
+    expect(parsed.targetId).toBe("deployed");
+    expect(parsed.confirmDeployedMutation).toBe(true);
     expect(parsed.input.fields).toEqual({ count: 2, name: "alpha", enabled: true });
     expect(parsed.input.json).toEqual({ note: "ok" });
   });
@@ -255,6 +266,30 @@ describe("scenario input parsing", () => {
     expect(task.task_id).toMatch(/^command-/);
     expect(cleanupCandidates).toEqual([{ type: "task", id: task.task_id }]);
     expect(tracked).toEqual([{ type: "task", id: task.task_id }]);
+  });
+
+  it("requires explicit run-owned task IDs when generated task IDs are disabled", async () => {
+    const core = createFakeAtlasCore();
+    const tracked: Array<{ type: string; id: string }> = [];
+    const ctx = createScenarioContext({
+      runId: "sim-deployed-task",
+      signal: new AbortController().signal,
+      clientFactory: core.factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      registerClient: () => undefined,
+      allowGeneratedTaskIds: false
+    });
+
+    await expect(
+      ctx.client.tasks.create({
+        entity_id: ctx.id("asset"),
+        components: { command: { type: "goto" } }
+      })
+    ).rejects.toThrow("Deployed simulations require an explicit run-owned task ID");
+    expect(core.state.tasks.size).toBe(0);
+    expect(tracked).toEqual([]);
   });
 
   it("rejects created and tracked resources outside the run ID prefix", async () => {

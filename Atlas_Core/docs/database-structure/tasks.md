@@ -113,8 +113,10 @@ Sending the current status again is treated as a no-op status transition.
 
 `PATCH /tasks/{task_id}` accepts `status`, `entity_id`, `components`, `extra`,
 and `remove_extra_keys`. `extra` merges JSON keys and preserves explicit `null`
-values. `remove_extra_keys` removes specified top-level keys from the task's
-`extra` object. When the same key appears in both `remove_extra_keys` and
+values. Omitting `entity_id` preserves the current link, explicit `null` unlinks
+the task, and a non-empty string assigns it to that entity. `remove_extra_keys`
+removes specified top-level keys from the task's `extra` object. When the same
+key appears in both `remove_extra_keys` and
 `extra`, the `extra` value wins, so the key is atomically updated rather than
 removed. Protected task fields such as `components`, `status`, `entity_id`, and
 `version` are never removed by `remove_extra_keys`.

@@ -20,7 +20,7 @@ export default defineConfig(({ command, mode }) => {
 });
 
 function devServer(mode: string) {
-  const env = loadEnv(mode, packageRoot, "ATLAS_SIM_");
+  const env = { ...loadEnv(mode, packageRoot, ""), ...process.env };
   const simulationPort = loadConfig({ env, packageRoot }).port;
   if (simulationPort === VITE_PORT) {
     throw new Error("ATLAS_SIM_PORT must differ from the Vite dev server port 5174");

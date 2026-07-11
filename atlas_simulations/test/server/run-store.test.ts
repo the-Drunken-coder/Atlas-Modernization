@@ -1,5 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { RunStore } from "../../src/server/run-store.js";
+import type { AtlasClientFactory } from "../../src/server/atlas.js";
+import { CleanupLedger } from "../../src/server/cleanup-ledger.js";
+import { RunStore, type RunTarget } from "../../src/server/run-store.js";
 import type { Scenario, ScenarioInput } from "../../src/server/scenario.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
@@ -830,4 +835,168 @@ describe("RunStore", () => {
     expect(logEvent).toBeDefined();
     expect(Buffer.byteLength(logEvent!.message, "utf8")).toBeLessThanOrEqual(200_000);
   });
+
+  it("persists deployed cleanup candidates before sending create requests", async () => {
+    const { directory, ledger } = temporaryLedger();
+    try {
+      const core = createFakeAtlasCore();
+      let resourcesObservedByCore: Array<{ type: string; id: string }> | undefined;
+      const factory: AtlasClientFactory = (options) => {
+        const client = core.factory(options);
+        return {
+          ...client,
+          entities: {
+            ...client.entities,
+            create: async (entity) => {
+              resourcesObservedByCore = ledger.load()[0]?.resources;
+              return client.entities.create(entity);
+            }
+          }
+        };
+      };
+      const store = new RunStore(factory, { ledger });
+      const scenario = createOneEntityScenario();
+
+      const started = store.start(scenario, { fields: {} }, deployedTarget(factory));
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+      expect(resourcesObservedByCore).toEqual([{ type: "entity", id: expect.stringMatching(`${started.id}-`) }]);
+      expect(ledger.load()[0]?.resources).toEqual(resourcesObservedByCore);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers deployed runs as abandoned and retains their ledger until cleanup succeeds", async () => {
+    const { directory, ledger } = temporaryLedger();
+    try {
+      const core = createFakeAtlasCore();
+      const original = new RunStore(core.factory, { ledger });
+      const started = original.start(createOneEntityScenario(), { fields: {} }, deployedTarget(core.factory));
+      await vi.waitFor(() => expect(original.get(started.id)?.status).toBe("completed"));
+      const resource = ledger.load()[0]?.resources[0];
+
+      const recovered = new RunStore(core.factory, {
+        ledger: new CleanupLedger(path.join(directory, "state", "runs")),
+        resolveTarget: (target) => deployedTarget(core.factory, target)
+      });
+
+      expect(recovered.get(started.id)).toMatchObject({
+        status: "abandoned",
+        cleaned: false,
+        createdResources: [resource],
+        lastError: expect.stringContaining("restarted before explicit cleanup")
+      });
+      expect(recovered.events(started.id)).toEqual([
+        expect.objectContaining({ type: "status", status: "abandoned", level: "warn" })
+      ]);
+
+      const failingCleanupFactory: AtlasClientFactory = (options) => {
+        const client = core.factory(options);
+        return {
+          ...client,
+          entities: {
+            ...client.entities,
+            delete: async () => {
+              throw new Error("cleanup unavailable");
+            }
+          }
+        };
+      };
+      await expect(recovered.cleanup(started.id, failingCleanupFactory)).rejects.toThrow("cleanup unavailable");
+      expect(new CleanupLedger(path.join(directory, "state", "runs")).load()).toHaveLength(1);
+
+      await expect(recovered.cleanup(started.id, core.factory)).resolves.toMatchObject({ status: "abandoned", cleaned: true });
+      expect(new CleanupLedger(path.join(directory, "state", "runs")).load()).toEqual([]);
+      expect(core.state.deleted).toEqual([`entity:${resource?.id}`]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps local runs out of the deployed cleanup ledger", async () => {
+    const { directory, ledger } = temporaryLedger();
+    try {
+      const core = createFakeAtlasCore();
+      const store = new RunStore(core.factory, { ledger });
+      const started = store.start(createOneEntityScenario(), { fields: {} }, localTarget(core.factory));
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+
+      expect(ledger.load()).toEqual([]);
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+      expect(ledger.load()).toEqual([]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks Core-generated task IDs for deployed runs before mutation", async () => {
+    const { directory, ledger } = temporaryLedger();
+    try {
+      const core = createFakeAtlasCore();
+      const store = new RunStore(core.factory, { ledger });
+      const scenario: Scenario = {
+        id: "generated-deployed-task",
+        name: "Generated deployed task",
+        summary: "Must not create an unledgerable task",
+        acceptsJson: false,
+        inputFields: [],
+        async run(ctx) {
+          await ctx.createTask({
+            entity_id: ctx.id("asset"),
+            components: { command: { type: "goto" } }
+          });
+        }
+      };
+
+      const started = store.start(scenario, { fields: {} }, deployedTarget(core.factory));
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+
+      expect(store.get(started.id)?.lastError).toBe("Deployed simulations require an explicit run-owned task ID");
+      expect(core.state.tasks.size).toBe(0);
+      expect(ledger.load()[0]?.resources).toEqual([]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+function createOneEntityScenario(): Scenario {
+  return {
+    id: "durable-entity",
+    name: "Durable entity",
+    summary: "Creates one cleanup target",
+    acceptsJson: false,
+    inputFields: [],
+    async run(ctx) {
+      await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
+    }
+  };
+}
+
+function deployedTarget(
+  clientFactory: AtlasClientFactory,
+  target: { id: string; label: string; baseUrl: string } = {
+    id: "deployed",
+    label: "Deployed Core",
+    baseUrl: "https://atlas.example.test"
+  }
+): RunTarget {
+  return { ...target, deployed: true, apiKeyConfigured: false, clientFactory };
+}
+
+function localTarget(clientFactory: AtlasClientFactory): RunTarget {
+  return {
+    id: "local",
+    label: "Local Core",
+    baseUrl: "http://127.0.0.1:8000",
+    deployed: false,
+    apiKeyConfigured: false,
+    clientFactory
+  };
+}
+
+function temporaryLedger(): { directory: string; ledger: CleanupLedger } {
+  const directory = mkdtempSync(path.join(tmpdir(), "atlas-simulations-run-store-"));
+  return { directory, ledger: new CleanupLedger(path.join(directory, "state", "runs")) };
+}

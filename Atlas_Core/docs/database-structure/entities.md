@@ -219,7 +219,7 @@ Validation is performed in `internal/actions/component_validation.go` and relate
 | `media_refs[].role` | `camera_feed` / `thumbnail` / `heatmap_data` |
 | `sensor_refs[].sensor_id` | Required, non-empty string |
 | `sensor_refs[].type` | Required, non-empty string |
-| Geometry coordinates | Lat −90–90, Lon −180–180; max 10,000 points per geometry |
+| Geometry coordinates | Lat −90–90, Lon −180–180; polygon rings must close and contain at most 10,000 positions in aggregate |
 | Circle Feature `properties.radius_m` | > 0 |
 | Entity ID pattern | Max 50 chars; `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` |
 | Request body (create/update) | Max 1 MB |
