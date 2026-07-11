@@ -6,6 +6,7 @@ services:
       # Only the pinned cloudflared peer may supply browser-client IP headers.
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.30.0.3/32}
     networks:
+      atlas_core_network:
       atlas_tunnel_network:
         ipv4_address: 172.30.0.2
 
