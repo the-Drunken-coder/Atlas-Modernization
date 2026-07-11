@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"reflect"
 	"strings"
@@ -20,6 +21,7 @@ var loadTestEnvKeys = []string{
 	"SERVER_PORT", "LOG_LEVEL", "DATABASE_URL",
 	"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_BUCKET", "MINIO_REGION",
 	"API_AUTH_KEY", "CORS_ORIGINS", "CORS_ORIGIN_PATTERNS", "ATLAS_ADMIN_COOKIE_SAMESITE",
+	"TRUSTED_PROXY_CIDRS",
 }
 
 func isolateLoadEnv(t *testing.T) {
@@ -258,6 +260,60 @@ func TestCORSOriginPatternsRejectUnsafeWildcards(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "CORS origin patterns") {
 				t.Fatalf("expected CORS origin patterns error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadTrustedProxyCIDRs(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	t.Setenv("TRUSTED_PROXY_CIDRS", "172.30.0.3/32, 2001:db8:1::5/128")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	want := []netip.Prefix{
+		netip.MustParsePrefix("172.30.0.3/32"),
+		netip.MustParsePrefix("2001:db8:1::5/128"),
+	}
+	if !reflect.DeepEqual(cfg.TrustedProxyCIDRs, want) {
+		t.Fatalf("TrustedProxyCIDRs = %#v, want %#v", cfg.TrustedProxyCIDRs, want)
+	}
+}
+
+func TestLoadTrustedProxyCIDRsDefaultsEmpty(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(cfg.TrustedProxyCIDRs) != 0 {
+		t.Fatalf("TrustedProxyCIDRs = %#v, want empty", cfg.TrustedProxyCIDRs)
+	}
+}
+
+func TestLoadTrustedProxyCIDRsRejectsUnsafeValues(t *testing.T) {
+	for _, value := range []string{
+		"172.30.0.3",
+		"not-a-cidr",
+		"10.20.30.40/8",
+		"2001:db8::5/64",
+		"0.0.0.0/0",
+		"::/0",
+		"::ffff:172.30.0.3/128",
+	} {
+		t.Run(value, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			t.Setenv("TRUSTED_PROXY_CIDRS", value)
+
+			_, err := config.Load()
+			if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXY_CIDRS") {
+				t.Fatalf("Load() error = %v, want trusted-proxy CIDR error", err)
 			}
 		})
 	}

@@ -38,7 +38,7 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSONRequestBody(w, r, &req, false) {
 		return
 	}
-	token, session, err := h.adminAuth.Login(r.Context(), req.Username, req.Password, admin.ClientIP(r), time.Now().UTC())
+	token, session, err := h.adminAuth.Login(r.Context(), req.Username, req.Password, admin.ClientIP(r, h.config.TrustedProxyCIDRs), time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, admin.ErrInvalidCredentials) {
 			h.writeError(w, r, http.StatusUnauthorized, "invalid username or password", protocol.ErrorCodeUnauthorized)
