@@ -363,6 +363,9 @@ Patch body:
 }
 ```
 
+Omitting `entity_id` from a task patch preserves the current assignment, `null`
+unlinks the task, and a non-empty string assigns it to that entity.
+
 Complete body is optional:
 
 ```json
