@@ -96,4 +96,9 @@ When limit query params are omitted or zero:
 - `GET /queries/full` — up to **1000** rows per resource type (`entity_limit`, `task_limit`, `object_limit`)
 - `GET /queries/changed-since` — up to **5000** rows per type when `limit_per_type` is zero
 
+Both query endpoints retain at most **8 MiB of stored JSON per resource type per page**. If that
+byte budget is reached before the requested row count, the response is a normal short page: the
+matching `has_more_*` field is true and `next_*_cursor` continues from the last returned row. Every
+stored resource JSON blob is capped at 1 MiB, so each stream can always make progress.
+
 Invalid limit query params on these endpoints return **400** `VALIDATION_ERROR`.

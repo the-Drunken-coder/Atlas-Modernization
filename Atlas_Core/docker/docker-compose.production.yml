@@ -29,6 +29,8 @@ services:
       # atlas.py and the production entrypoint enforce one admin password source before startup.
       ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:-}
       ATLAS_ADMIN_PASSWORD_FILE: ${ATLAS_ADMIN_PASSWORD_FILE:-}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
+      MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

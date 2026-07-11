@@ -83,7 +83,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	var entities []*models.Entity
 	var hasMoreEnt bool
 	if !skipCursorStream(continuation, entCur) {
-		entities, hasMoreEnt, err = queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, entCur != nil, entCur, entityLimit)
+		entities, hasMoreEnt, err = queryEntities(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, entCur != nil, entCur, entityLimit, maxQueryJSONBytesPerType)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +92,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	var tasks []*models.Task
 	var hasMoreTasks bool
 	if !skipCursorStream(continuation, taskCur) {
-		tasks, hasMoreTasks, err = queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, taskCur != nil, taskCur, taskLimit)
+		tasks, hasMoreTasks, err = queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, taskCur != nil, taskCur, taskLimit, maxQueryJSONBytesPerType)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +101,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	var objects []*models.MediaObject
 	var hasMoreObj bool
 	if !skipCursorStream(continuation, objCur) {
-		objects, hasMoreObj, err = queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, objCur != nil, objCur, objectLimit)
+		objects, hasMoreObj, err = queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, objCur != nil, objCur, objectLimit, maxQueryJSONBytesPerType)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +235,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	var entities []*models.Entity
 	var hasMoreEnt bool
 	if !skipCursorStream(continuation, entCur) {
-		entities, hasMoreEnt, err = queryEntitiesByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, entCur != nil, entCur, limit)
+		entities, hasMoreEnt, err = queryEntitiesByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, entCur != nil, entCur, limit, maxQueryJSONBytesPerType)
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +244,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	var tasks []*models.Task
 	var hasMoreTasks bool
 	if !skipCursorStream(continuation, taskCur) {
-		tasks, hasMoreTasks, err = queryTasksByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, taskCur != nil, taskCur, limit)
+		tasks, hasMoreTasks, err = queryTasksByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, taskCur != nil, taskCur, limit, maxQueryJSONBytesPerType)
 		if err != nil {
 			return nil, err
 		}
@@ -253,7 +253,7 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	var objects []*models.MediaObject
 	var hasMoreObj bool
 	if !skipCursorStream(continuation, objCur) {
-		objects, hasMoreObj, err = queryObjectsByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, objCur != nil, objCur, limit)
+		objects, hasMoreObj, err = queryObjectsByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, objCur != nil, objCur, limit, maxQueryJSONBytesPerType)
 		if err != nil {
 			return nil, err
 		}
