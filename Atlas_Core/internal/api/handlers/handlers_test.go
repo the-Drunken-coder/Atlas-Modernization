@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+	"github.com/the-drunken-coder/atlas/atlas_protocol/conformance"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -639,6 +641,61 @@ func TestNullablePatchStringDistinguishesAbsentNullAndValue(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskRequestEntityIDDistinguishesAbsentNullAndValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    *string
+	}{
+		{name: "absent", payload: `{"status":"pending"}`},
+		{name: "null", payload: `{"entity_id":null}`, want: stringPointer("")},
+		{name: "value", payload: `{"entity_id":"asset-2"}`, want: stringPointer("asset-2")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request updateTaskRequest
+			if err := json.Unmarshal([]byte(tt.payload), &request); err != nil {
+				t.Fatal(err)
+			}
+			got := request.actionParams(nil).EntityID
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("EntityID = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateEntityRejectsInvalidConformanceRequests(t *testing.T) {
+	cases, err := conformance.LoadRequestValidationCases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range cases {
+		if testCase.Definition != "EntityCreateRequest" || testCase.Valid {
+			continue
+		}
+		t.Run(testCase.Name, func(t *testing.T) {
+			handler := newTestHandler()
+			handler.entityActions = actions.NewEntityActions(nil)
+			recorder := httptest.NewRecorder()
+			request := routeRequest(http.MethodPost, "/entities", string(testCase.Value))
+
+			handler.CreateEntity(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", recorder.Code)
+			}
+			if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
+				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
 func TestCreateTaskRequestDefaultsStatusToPending(t *testing.T) {
 	params := createTaskRequest{TaskID: "task-1"}.actionParams()
 	if params.Status != "pending" {
@@ -784,6 +841,26 @@ func TestEntityCheckinRejectsOffset(t *testing.T) {
 	}
 }
 
+func TestEntityCheckinRejectsMalformedTaskCursorBeforeDatabaseAccess(t *testing.T) {
+	handler := newTestHandler()
+	handler.checkinActions = actions.NewEntityCheckinActions(actions.NewEntityActions(nil), actions.NewTaskActions(nil))
+	rec := httptest.NewRecorder()
+	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?task_cursor=not-base64", `{}`), "entity_id", "entity-1")
+
+	handler.EntityCheckin(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if body["message"] != "Invalid query cursor" {
+		t.Fatalf("expected invalid cursor message, got %v", body["message"])
+	}
+}
+
 func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -843,6 +920,23 @@ func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
 	errs, _ := details["errors"].([]interface{})
 	if len(errs) == 0 {
 		t.Fatalf("expected details.errors for invalid since")
+	}
+}
+
+func TestFullDatasetVersionJSONPresence(t *testing.T) {
+	response := serializeFullDatasetResult(&actions.FullDatasetResult{})
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal full dataset response: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode full dataset response: %v", err)
+	}
+	version, ok := decoded["version"]
+	if !ok || version != float64(0) {
+		t.Fatalf("full dataset response version = %#v, present %v; want required zero watermark", version, ok)
 	}
 }
 

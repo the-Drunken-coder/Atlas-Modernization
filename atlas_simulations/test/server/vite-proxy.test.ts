@@ -11,6 +11,8 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 let app: SimulationServer | undefined;
 let vite: ViteDevServer | undefined;
 let previousSimPort: string | undefined;
+let previousEnableDeployed: string | undefined;
+let previousDeployedBaseUrl: string | undefined;
 
 afterEach(async () => {
   await vite?.close();
@@ -23,6 +25,10 @@ afterEach(async () => {
     process.env.ATLAS_SIM_PORT = previousSimPort;
   }
   previousSimPort = undefined;
+  restoreEnv("ATLAS_SIM_ENABLE_DEPLOYED", previousEnableDeployed);
+  restoreEnv("ATLAS_DEPLOYED_BASE_URL", previousDeployedBaseUrl);
+  previousEnableDeployed = undefined;
+  previousDeployedBaseUrl = undefined;
 });
 
 describe("Vite dev proxy", () => {
@@ -33,7 +39,11 @@ describe("Vite dev proxy", () => {
     });
     const simulationBaseUrl = await app.listen();
     previousSimPort = process.env.ATLAS_SIM_PORT;
+    previousEnableDeployed = process.env.ATLAS_SIM_ENABLE_DEPLOYED;
+    previousDeployedBaseUrl = process.env.ATLAS_DEPLOYED_BASE_URL;
     process.env.ATLAS_SIM_PORT = new URL(simulationBaseUrl).port;
+    process.env.ATLAS_SIM_ENABLE_DEPLOYED = "true";
+    process.env.ATLAS_DEPLOYED_BASE_URL = "https://atlas.example.test";
 
     vite = await createViteServer({
       root: packageRoot,
@@ -52,3 +62,8 @@ describe("Vite dev proxy", () => {
     });
   });
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

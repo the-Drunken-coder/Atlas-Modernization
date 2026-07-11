@@ -8,6 +8,7 @@ export type SimulationConfig = {
   atlasApiKey?: string;
   atlasTargets?: AtlasTargetConfig[];
   defaultAtlasTargetId?: string;
+  cleanupLedgerDirectory?: string;
   port: number;
   packageRoot: string;
 };
@@ -23,7 +24,6 @@ export type AtlasTargetConfig = {
 const LOCAL_TARGET_ID = "local";
 const DEPLOYED_TARGET_ID = "deployed";
 const DEFAULT_LOCAL_BASE_URL = "http://localhost:8000";
-const DEFAULT_DEPLOYED_BASE_URL = "https://atlascommandapi.org";
 
 export function packageRootFromModule(metaUrl: string = import.meta.url): string {
   return path.resolve(path.dirname(fileURLToPath(metaUrl)), "../..");
@@ -34,29 +34,37 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const fileEnv = readEnvFile(path.join(packageRoot, ".env"));
   const runtimeEnv = options.env ?? process.env;
   const configuredBaseUrl = stringValue(runtimeEnv.ATLAS_BASE_URL) ?? stringValue(fileEnv.ATLAS_BASE_URL);
-  const atlasBaseUrl = atlasBaseUrlValue(configuredBaseUrl ?? DEFAULT_LOCAL_BASE_URL);
+  const legacyBaseUrl = atlasBaseUrlValue(configuredBaseUrl ?? DEFAULT_LOCAL_BASE_URL);
+  if (!isLoopbackUrl(legacyBaseUrl)) {
+    throw new Error("ATLAS_BASE_URL must target loopback; configure deployed Core with ATLAS_SIM_ENABLE_DEPLOYED and ATLAS_DEPLOYED_BASE_URL");
+  }
   const atlasApiKey = stringValue(runtimeEnv.ATLAS_API_KEY) ?? stringValue(fileEnv.ATLAS_API_KEY);
   const localBaseUrl = atlasBaseUrlValue(
     stringValue(runtimeEnv.ATLAS_LOCAL_BASE_URL) ??
       stringValue(fileEnv.ATLAS_LOCAL_BASE_URL) ??
-      (isLoopbackUrl(atlasBaseUrl) ? atlasBaseUrl : DEFAULT_LOCAL_BASE_URL)
+      legacyBaseUrl,
+    "ATLAS_LOCAL_BASE_URL"
   );
-  const deployedBaseUrl = atlasBaseUrlValue(
-    stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL) ??
-      stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL) ??
-      (isLoopbackUrl(atlasBaseUrl) ? DEFAULT_DEPLOYED_BASE_URL : atlasBaseUrl)
+  if (!isLoopbackUrl(localBaseUrl)) throw new Error("ATLAS_LOCAL_BASE_URL must target loopback");
+  const localApiKey = stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY) ?? stringValue(fileEnv.ATLAS_LOCAL_API_KEY) ?? atlasApiKey;
+  const enableDeployed = booleanValue(
+    stringValue(runtimeEnv.ATLAS_SIM_ENABLE_DEPLOYED) ?? stringValue(fileEnv.ATLAS_SIM_ENABLE_DEPLOYED),
+    "ATLAS_SIM_ENABLE_DEPLOYED"
   );
-  const localApiKey = stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY) ?? stringValue(fileEnv.ATLAS_LOCAL_API_KEY) ?? (sameAtlasBaseUrl(localBaseUrl, atlasBaseUrl) ? atlasApiKey : undefined);
-  const deployedApiKey =
-    stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY) ?? (sameAtlasBaseUrl(deployedBaseUrl, atlasBaseUrl) ? atlasApiKey : undefined);
-  const defaultAtlasTargetId = targetIdValue(
-    stringValue(runtimeEnv.ATLAS_SIM_TARGET) ??
-      stringValue(fileEnv.ATLAS_SIM_TARGET) ??
-      (sameAtlasBaseUrl(deployedBaseUrl, atlasBaseUrl) && !isLoopbackUrl(atlasBaseUrl) ? DEPLOYED_TARGET_ID : LOCAL_TARGET_ID)
-  );
+  const configuredDeployedBaseUrl = stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL) ?? stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
+  const deployedApiKey = stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY);
+  const selectedTargetId = targetIdValue(stringValue(runtimeEnv.ATLAS_SIM_TARGET) ?? stringValue(fileEnv.ATLAS_SIM_TARGET) ?? LOCAL_TARGET_ID);
+  if (!enableDeployed && (configuredDeployedBaseUrl || deployedApiKey || selectedTargetId === DEPLOYED_TARGET_ID)) {
+    throw new Error("Set ATLAS_SIM_ENABLE_DEPLOYED=true before configuring or selecting a deployed target");
+  }
+  if (enableDeployed && !configuredDeployedBaseUrl) {
+    throw new Error("ATLAS_DEPLOYED_BASE_URL is required when ATLAS_SIM_ENABLE_DEPLOYED=true");
+  }
+  const deployedBaseUrl = configuredDeployedBaseUrl ? atlasBaseUrlValue(configuredDeployedBaseUrl, "ATLAS_DEPLOYED_BASE_URL") : undefined;
+  if (deployedBaseUrl && isLoopbackUrl(deployedBaseUrl)) throw new Error("ATLAS_DEPLOYED_BASE_URL must not target loopback");
   const port = portValue(stringValue(runtimeEnv.ATLAS_SIM_PORT) ?? stringValue(fileEnv.ATLAS_SIM_PORT));
   return {
-    atlasBaseUrl,
+    atlasBaseUrl: localBaseUrl,
     ...(atlasApiKey ? { atlasApiKey } : {}),
     atlasTargets: [
       {
@@ -65,14 +73,12 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
         baseUrl: localBaseUrl,
         ...(localApiKey ? { apiKey: localApiKey } : {})
       },
-      {
-        id: DEPLOYED_TARGET_ID,
-        label: "Atlas Command API",
-        baseUrl: deployedBaseUrl,
-        ...(deployedApiKey ? { apiKey: deployedApiKey } : {})
-      }
+      ...(deployedBaseUrl
+        ? [{ id: DEPLOYED_TARGET_ID, label: "Deployed Core", baseUrl: deployedBaseUrl, ...(deployedApiKey ? { apiKey: deployedApiKey } : {}) }]
+        : [])
     ],
-    defaultAtlasTargetId,
+    defaultAtlasTargetId: selectedTargetId,
+    cleanupLedgerDirectory: path.join(packageRoot, ".atlas-simulations", "runs"),
     port,
     packageRoot
   };
@@ -96,6 +102,13 @@ function stringValue(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function booleanValue(value: string | undefined, name: string): boolean {
+  if (value === undefined) return false;
+  if (value.toLowerCase() === "true") return true;
+  if (value.toLowerCase() === "false") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 function portValue(value: string | undefined): number {
   const trimmed = stringValue(value);
   if (!trimmed) return 5180;
@@ -116,35 +129,35 @@ function targetIdValue(value: string): string {
   return value;
 }
 
-function atlasBaseUrlValue(value: string): string {
+function atlasBaseUrlValue(value: string, name = "ATLAS_BASE_URL"): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+    throw new Error(`${name} must be a valid HTTP(S) URL`);
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("ATLAS_BASE_URL must be a valid HTTP(S) URL");
+    throw new Error(`${name} must be a valid HTTP(S) URL`);
   }
   if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
-    throw new Error("ATLAS_BASE_URL must use HTTPS unless it targets loopback");
+    throw new Error(`${name} must use HTTPS unless it targets loopback`);
   }
   if (parsed.username || parsed.password) {
-    throw new Error("ATLAS_BASE_URL must not include embedded credentials");
+    throw new Error(`${name} must not include embedded credentials`);
   }
   if (parsed.search || parsed.hash) {
-    throw new Error("ATLAS_BASE_URL must not include a query string or fragment");
+    throw new Error(`${name} must not include a query string or fragment`);
   }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
   return `${parsed.origin}${parsed.pathname === "/" ? "" : parsed.pathname}`;
 }
 
-function sameAtlasBaseUrl(left: string, right: string): boolean {
-  return left === right;
-}
-
 function isLoopbackUrl(value: string): boolean {
   return isLoopbackHost(new URL(value).hostname);
+}
+
+export function isDeployedAtlasUrl(value: string): boolean {
+  return !isLoopbackUrl(value);
 }
 
 function isLoopbackHost(hostname: string): boolean {

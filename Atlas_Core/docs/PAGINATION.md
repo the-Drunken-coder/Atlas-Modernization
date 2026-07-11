@@ -70,6 +70,7 @@ The response includes:
 - `next_task_cursor` when another task page exists
 
 Check-in task pages are ordered by `(updated_at DESC, task_id DESC)`.
+Malformed `task_cursor` values return `400 VALIDATION_ERROR` before the check-in mutates the entity. A task-page read failure likewise leaves the heartbeat, telemetry, entity version, and feed unchanged.
 
 ## Query endpoints (`/queries/full`, `/queries/changed-since`)
 
@@ -83,6 +84,8 @@ These endpoints use per-type **limits** and opaque cursors. When a stream is tru
 | `next_deleted_entity_cursor` | `deleted_entity_cursor` |
 | `next_deleted_task_cursor` | `deleted_task_cursor` |
 | `next_deleted_object_cursor` | `deleted_object_cursor` |
+
+For **`GET /queries/full`**, every response includes a **`version`** captured before the first page is read. The opaque continuation cursors carry that hydration baseline, so every page in the same traversal repeats the same `version` even when a later page contains a resource whose `metadata.version` is newer. Clients must not advance their global sync cursor from hydrated resource versions. Consume all full-dataset pages, use the response `version` as the baseline, then drain `GET /queries/changed-since?since_version=<version>` before treating the hydrated state as current.
 
 For **`GET /queries/changed-since`**, use **`since_version`** as the incremental boundary. The response includes a monotonic **`version`** watermark; pass that value as `since_version` on the next poll after all pages for the current response are consumed. While following cursors for a truncated response, keep the same `since_version` and pass back the `next_*_cursor` value unchanged as the matching `*_cursor` query parameter. Treat every cursor as opaque: do not parse or construct it.
 

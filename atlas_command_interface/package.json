@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Cloudflare Pages-hosted Atlas Command map console.",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "vite",
@@ -16,6 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome lint .",
+    "format:check": "biome format --changed --no-errors-on-unmatched .",
     "deploy:pages": "npm run build && wrangler pages deploy dist/client --project-name atlas"
   },
   "dependencies": {
@@ -26,10 +28,11 @@
     "sidc-kit": "^0.3.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.3",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^26.0.0",
+    "@types/node": "^24.13.3",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
