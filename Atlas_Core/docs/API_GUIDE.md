@@ -1,6 +1,6 @@
 # Atlas Core API Guide
 
-_Revision: 2026-06-21_
+_Revision: 2026-07-10_
 
 This is the quick-reference guide for calling the Atlas Core HTTP API. The default local base URL is:
 
@@ -22,6 +22,8 @@ Protected Core routes accept the Core-owned browser session cookie. Local browse
 X-API-Key: <api-key>
 Authorization: Bearer <api-key>
 ```
+
+`GET /health`, `GET /readiness`, `OPTIONS`, and `POST /admin/auth/login` are the public HTTP exceptions. `GET /resources` is an operator diagnostic and requires the same protected-route API-key or admin-session authentication as resource data routes.
 
 The `/feed` websocket accepts either an API key on the upgrade request or the browser session cookie from a trusted origin. Machine clients that cannot set websocket headers can authenticate with a first JSON message when API-key auth is enabled:
 
@@ -45,6 +47,8 @@ Most non-streaming endpoints return JSON. Handler-generated errors use this shap
 ```
 
 Auth middleware errors are smaller and only include `success`, `message`, and `error_code`.
+
+Clients may send `X-Request-ID` to preserve an existing trace identifier; otherwise Core generates one. Structured request and request-scoped error logs include that value as `request_id`. The response `error_id` is a separate identifier for one handler-generated error instance.
 
 Common statuses:
 
@@ -168,11 +172,13 @@ Object detail responses:
 | `GET` | `/` | `200` | Returns service metadata and top-level endpoints. |
 | `GET` | `/health` | `200` | Liveness only. Skips auth. |
 | `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
-| `GET` | `/resources` | `200` | Returns CPU, memory, disk, and Go process usage. Skips protected-route auth. |
+| `GET` | `/resources` | `200` | Returns operator CPU, memory, disk, and Go process diagnostics. Requires protected-route auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
-`GET /resources` reports host-level metrics, not cgroup-aware container limits. Disk `used_percent` is based on space unavailable to the service, so it may differ from `df`-style `Use%`.
+Readiness is HTTP `503` with `status: "unhealthy"` when the database is unavailable or configured storage cannot be initialized, reached, or verified. A missing configured bucket is also unhealthy. With a healthy database, deliberately omitting storage credentials keeps DB-only/local Core available as HTTP `200` with `status: "degraded"` and the storage check marked `unconfigured`; use `/health` when only process liveness matters.
+
+`GET /resources` reports host-level metrics, not cgroup-aware container limits. It performs a 100 ms CPU sample plus host and Go runtime memory/disk inspection, so reserve it for bounded operator diagnostics rather than high-frequency polling. Disk `used_percent` is based on space unavailable to the service, so it may differ from `df`-style `Use%`.
 
 Feed behavior:
 
@@ -306,6 +312,8 @@ Check-in response:
 }
 ```
 
+Core validates and reads the requested task page before committing the heartbeat, status, or telemetry update. A malformed `task_cursor` or task-read failure therefore returns an error without changing the entity components or version and without publishing a feed event. The task read and entity write use separate transactions, so the returned task page is the snapshot selected immediately before the entity update; concurrent task changes may appear on the next check-in.
+
 ## Tasks
 
 | Method | Path | Status | Purpose |
@@ -362,6 +370,9 @@ Patch body:
   "remove_extra_keys": ["old_note"]
 }
 ```
+
+Omitting `entity_id` from a task patch preserves the current assignment, `null`
+unlinks the task, and a non-empty string assigns it to that entity.
 
 Complete body is optional:
 
@@ -481,10 +492,13 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `task_cursor` | Continue tasks from `next_task_cursor`. |
 | `object_cursor` | Continue objects from `next_object_cursor`. |
 
+The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
+
 Response:
 
 ```json
 {
+  "version": 42,
   "entities": [],
   "tasks": [],
   "objects": [],

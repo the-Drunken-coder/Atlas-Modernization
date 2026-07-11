@@ -139,6 +139,8 @@ Response:
 }
 ```
 
+The server resolves the requested task page before it commits the entity update. If task pagination is invalid or the task read fails, the check-in returns an error without changing heartbeat, telemetry, status, entity version, or the change feed. The task read and entity write are separate transactions, so concurrent task changes may appear on the next check-in.
+
 Optional query parameters: `status_filter` (default `pending,acknowledged`), `limit` (1–20, default 10), `fields` (`minimal` for compact task payloads), `since` (RFC3339 timestamp to filter tasks).
 
 ### Get Entity
@@ -169,7 +171,7 @@ The `telemetry` component in the JSON blob tracks position and motion:
 
 - Create entities via `POST /entities` with required `entity_type` and optional `subtype`
 - Update telemetry via `PATCH /entities/{entity_id}/telemetry` to refresh position data
-- Use `POST /entities/{entity_id}/checkin` for regular asset reporting to update telemetry, status, and fetch pending tasks all at once
+- Use `POST /entities/{entity_id}/checkin` for regular asset reporting to update telemetry and status and fetch pending tasks in one request
 - The `updated_at` timestamp is automatically updated on any entity modification
 - Use the `communications.link_state` component to track connection status
 

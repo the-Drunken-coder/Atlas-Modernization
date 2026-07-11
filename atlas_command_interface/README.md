@@ -26,6 +26,14 @@ Anonymous visits load only the public login shell and check `/admin/auth/me`. Th
 
 The committed browser config contains only non-secret values: Core base URL defaults, protocol revision, map source IDs, labels, and provider URL templates. Any `VITE_*` provider keys are browser-visible and must be restricted in the provider dashboards.
 
+## Live Updates and Startup Recovery
+
+The websocket feed is the low-latency update path. The SDK also runs its default two-minute `changed-since` poll as a low-traffic safety net, so the console still converges when a browser, proxy, or tunnel blocks websockets or reconnect recovery is slow. Polling remains a backstop rather than a replacement for the feed.
+
+If the safety-net request fails, the SDK keeps its degraded/read-through behavior: covered point reads go back to Core instead of trusting a cache that may be stale. Command catalog object events fail closed while a fresh object-detail read runs because feed events contain object metadata, not catalog content; transient detail failures use a small bounded retry budget.
+
+Configuration, session-check, and initial SDK connection failures expose one-shot operator retry actions. They do not start an automatic retry loop; each click performs one new attempt, and a failed SDK startup is disposed before the replacement data source starts.
+
 ## Commands
 
 Command availability fails closed. An asset can receive a command only when its `components.task_catalog.supported_tasks` array explicitly lists that command ID.
@@ -33,6 +41,8 @@ Command availability fails closed. An asset can receive a command only when its 
 Command submission posts a task directly to Core without a client-supplied `task_id`. Core validates the command catalog, target entity support, and parameters, then generates a `command-<uuid>` task ID. Non-command task creation keeps the normal Atlas Core task contract.
 
 ## Local Development
+
+Use Node 24 LTS from the repository root `.nvmrc` before installing dependencies.
 
 1. Start local Atlas Core from this checkout:
 
@@ -89,6 +99,7 @@ Use these settings for the Pages project:
 - Project name: `atlas`
 - Production branch: `main`
 - Root directory: `atlas_command_interface`
+- Node version: `24` (from `.nvmrc`)
 - Build command: `npm run build`
 - Build output directory: `dist/client`
 
@@ -99,6 +110,8 @@ The production build emits `dist/client/_headers` with the static Pages security
 ## Checks
 
 ```bash
+npm --prefix atlas_command_interface run lint
+npm --prefix atlas_command_interface run format:check -- --since=origin/main
 npm --prefix atlas_command_interface test
 npm --prefix atlas_command_interface run typecheck
 npm --prefix atlas_command_interface run build

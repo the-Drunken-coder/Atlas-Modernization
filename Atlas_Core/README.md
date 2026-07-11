@@ -192,7 +192,7 @@ Key environment variables:
 - `GET /queries/full`
 - `GET /queries/changed-since?since_version=<version>`
 
-Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. `changed-since` returns a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
+Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. `full` returns one stable pre-hydration `version` across all continuation pages; after consuming them, drain `changed-since` from that baseline instead of deriving a cursor from resource metadata. `changed-since` returns a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
 
 ### Check-in query params
 
@@ -214,8 +214,10 @@ Go service.
 
 ## Logging
 
-Structured `zerolog` logs include request method/path/status/duration and error identifiers
-(`error_id`).
+Structured `zerolog` logs include `request_id` correlation plus request
+method/path/status/duration and handler error identifiers (`error_id`). Handler
+error-envelope 4xx diagnostics use warning severity; 5xx error envelopes and
+panic recovery use error severity.
 
 ## More Docs
 

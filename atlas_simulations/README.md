@@ -11,21 +11,31 @@ ATLAS_BASE_URL=http://localhost:8000
 ATLAS_API_KEY=replace-with-local-core-key
 ATLAS_LOCAL_BASE_URL=http://localhost:8000
 ATLAS_LOCAL_API_KEY=replace-with-local-core-key
-ATLAS_DEPLOYED_BASE_URL=https://atlascommandapi.org
-ATLAS_DEPLOYED_API_KEY=replace-with-deployed-core-key
 ATLAS_SIM_TARGET=local
 ATLAS_SIM_PORT=5180
 ```
 
-The top API menu exposes a local target and a deployed target. `ATLAS_BASE_URL` and `ATLAS_API_KEY` still work as the legacy/default connection and decide the initial menu selection unless `ATLAS_SIM_TARGET` is set. Use `ATLAS_LOCAL_*` and `ATLAS_DEPLOYED_*` when the two targets need different URLs or API keys.
+The workbench exposes only the loopback target by default. To make a deployed Core available, explicitly add all of the following to `.env`:
 
-You can also paste an API key into the topbar while the workbench is running. That key is kept in browser memory and sent only to the local simulation server for the selected target; it is not written to `.env` or returned in run summaries.
+```text
+ATLAS_SIM_ENABLE_DEPLOYED=true
+ATLAS_DEPLOYED_BASE_URL=https://api.atlasinterface.com
+ATLAS_DEPLOYED_API_KEY=replace-with-deployed-core-key
+```
 
-Keep normal simulation work pointed at a local Atlas Core (`ATLAS_LOCAL_BASE_URL=http://localhost:8000`). The deployed target accepts HTTPS Atlas Core targets, including `ATLAS_DEPLOYED_BASE_URL=https://atlascommandapi.org`, for isolated, disposable tenants because run state is local to this workbench and cleanup can only remove resources while the run remains in memory. If the workbench restarts before cleanup, remote resources from that run may be left behind. Plain HTTP is only accepted for loopback development URLs. The workbench server itself is still served on loopback only; that browser-facing guard is separate from the selected Atlas Core target.
+`ATLAS_DEPLOYED_BASE_URL` is required and must be a non-loopback HTTPS URL. A deployed target is never inferred from `ATLAS_BASE_URL`, and the local target remains selected unless `ATLAS_SIM_TARGET=deployed` is also set. The UI displays a danger state for every non-loopback target and requires a fresh confirmation before each run starts. The server enforces that confirmation independently.
 
-The API key is read only by the local Node server. Browser code calls same-origin simulation routes and never receives the key.
+You can also paste an API key into the topbar while the workbench is running. That key is kept in browser memory and sent only to the local simulation server for the selected target; it is not written to `.env`, the cleanup ledger, or run summaries. After a restart, paste the key again before cleaning up a recovered run if no deployed key is configured in `.env`.
+
+Keep normal simulation work pointed at a local Atlas Core (`ATLAS_LOCAL_BASE_URL=http://localhost:8000`). Deployed runs are intended only for isolated, disposable tenants. Their run identity, exact target URL, and run-owned cleanup candidates are recorded in one file per run under `.atlas-simulations/runs/` before mutation. The ledger directory is owner-only (`0700`) and each run file is owner-readable/writable only (`0600`). On restart, outstanding runs appear as `abandoned`; the workbench never resumes or cleans them automatically. Review them and use the explicit Cleanup action. Plain HTTP is accepted only for loopback Core URLs. The workbench server itself remains bound to `127.0.0.1`.
+
+Deployed scenarios must provide explicit run-owned task IDs. Core-generated `command-*` task IDs remain available to local scenarios only because their IDs are not known early enough to record safely before a remote mutation.
+
+Configured API keys are read only by the local Node server. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
 
 ## Development
+
+Use Node 24 LTS from the repository root `.nvmrc` before installing dependencies.
 
 Start the local API server:
 
@@ -44,6 +54,8 @@ Open http://127.0.0.1:5174.
 ## Checks
 
 ```bash
+npm --prefix atlas_simulations run lint
+npm --prefix atlas_simulations run format:check -- --since=origin/main
 npm --prefix atlas_simulations test
 npm --prefix atlas_simulations run typecheck
 npm --prefix atlas_simulations run build

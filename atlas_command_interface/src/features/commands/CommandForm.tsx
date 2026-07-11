@@ -82,7 +82,7 @@ export function CommandForm(props: CommandFormProps) {
       <div className="modal">
         <div className="modal__header">
           <span className="modal__title" id={titleId}>
-            {command.name}
+            Send {command.name}
           </span>
           <IconButton label={submitting ? "Cancel command request" : "Close"} autoFocus onClick={onCancel}>
             <CloseIcon size={16} />

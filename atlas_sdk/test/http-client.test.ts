@@ -252,6 +252,55 @@ describe("AtlasClient HTTP", () => {
     await expect(client.entities.update("asset-1", { alias: "new" }, { ifMatchVersion: 0 })).rejects.toBeInstanceOf(ConflictError);
   });
 
+  it("keeps fresh read and write return mutation from changing cached resources", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const created = await client.entities.create({
+      entity_id: "asset-owned-write",
+      entity_type: "asset",
+      alias: "server value",
+      components: { health: { battery_percent: 72 } }
+    });
+    Reflect.set(created, "alias", "write return mutation");
+    if (created.components.health) Reflect.set(created.components.health, "battery_percent", 0);
+
+    expect(client.sync.snapshot().entities[created.entity_id]).toMatchObject({
+      alias: "server value",
+      components: { health: { battery_percent: 72 } }
+    });
+    await expect(client.entities.get(created.entity_id)).resolves.toMatchObject({
+      alias: "server value",
+      components: { health: { battery_percent: 72 } }
+    });
+
+    const latest = core.upsertEntity({
+      ...entity(created.entity_id),
+      alias: "fresh server value",
+      components: { health: { battery_percent: 73 } }
+    });
+    const fresh = await client.entities.get(created.entity_id, { fresh: true });
+    expect(fresh).toEqual(latest);
+    Reflect.set(fresh, "alias", "fresh read mutation");
+    if (fresh.components.health) Reflect.set(fresh.components.health, "battery_percent", 1);
+
+    expect(client.sync.snapshot().entities[created.entity_id]).toMatchObject({
+      alias: "fresh server value",
+      components: { health: { battery_percent: 73 } }
+    });
+    await expect(client.entities.get(created.entity_id)).resolves.toMatchObject({
+      alias: "fresh server value",
+      components: { health: { battery_percent: 73 } }
+    });
+  });
+
   it("offers task lifecycle helpers as cache-aware update operations", async () => {
     const core = new FakeCore();
     const ackBase = core.upsertTask(task("task-ack", "asset-1"));
@@ -392,6 +441,7 @@ describe("AtlasClient HTTP", () => {
     const changed = await client.queries.changedSince(0, { limitPerType: 1, taskCursor: "1", deletedTaskCursor: "1" });
 
     expect(full.entities).toEqual([]);
+    expect(full.version).toBe(core.version);
     expect(changed.tasks).toEqual([]);
     expect(core.requests).toContain("/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor=1");
     expect(core.requests).toContain("/queries/changed-since?since_version=0&limit_per_type=1&task_cursor=1&deleted_task_cursor=1");

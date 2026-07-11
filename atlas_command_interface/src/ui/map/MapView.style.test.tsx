@@ -20,6 +20,7 @@ describe("MapView style switching", () => {
       onStyleSwitchError
     });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    const marker = canvas.querySelector(".map-symbol-marker");
 
     rerenderMap({ styleId: "b", style: style("b", { throwOnSetStyle: true }) });
 
@@ -29,7 +30,7 @@ describe("MapView style switching", () => {
         activeStyleId: "a"
       })
     );
-    expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1);
+    expect(canvas.querySelector(".map-symbol-marker")).toBe(marker);
     expect(map.setStyle).toHaveBeenCalledTimes(1);
   });
 
@@ -37,6 +38,7 @@ describe("MapView style switching", () => {
     const nextStyle = style("b");
     const { canvas, map, rerenderMap } = renderMapView({ sources: markerSources(), styleId: "a", style: style("a") });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    const marker = canvas.querySelector(".map-symbol-marker");
 
     rerenderMap({ styleId: "b", style: nextStyle });
 
@@ -46,6 +48,6 @@ describe("MapView style switching", () => {
     act(() => map.fire("style.load"));
 
     await waitFor(() => expect(map.sources.has("geofeatures")).toBe(true));
-    expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1);
+    expect(canvas.querySelector(".map-symbol-marker")).toBe(marker);
   });
 });

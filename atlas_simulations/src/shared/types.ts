@@ -62,7 +62,7 @@ export type AssertionResult = {
   timestamp: string;
 };
 
-export type RunStatus = "running" | "completed" | "failed" | "cancelled";
+export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "abandoned";
 
 type RunEventBase = {
   sequence: JSONNumber;
@@ -105,6 +105,7 @@ export type RunSummary = {
 export type StartRunRequest = {
   scenarioId: string;
   targetId?: string;
+  confirmDeployedMutation?: true;
   inputs?: Record<string, string | JSONNumber | boolean>;
   jsonInput?: string;
 };
@@ -128,6 +129,7 @@ export type AtlasTargetSummary = {
   id: string;
   label: string;
   baseUrl: string;
+  deployed: boolean;
   apiKeyConfigured: boolean;
 };
 

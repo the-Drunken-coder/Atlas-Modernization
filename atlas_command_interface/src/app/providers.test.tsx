@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig, CoreConfig } from "./config.js";
@@ -58,7 +59,10 @@ describe("Providers", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         startupOrder.push("session");
         fetchCalls.push([input, init]);
-        return new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
       })
     );
 
@@ -85,6 +89,34 @@ describe("Providers", () => {
     expect(calls.slice(0, 4)).toEqual(["watch", "start", "snapshot", "loadCommandCatalog"]);
     expect(startupOrder.slice(0, 3)).toEqual(["session", "map-config", "data-source"]);
     await waitFor(() => expect(fetchCalls[0]).toMatchObject(["https://core.test/admin/auth/me", { credentials: "include" }]));
+  });
+
+  it("retries configuration once when the operator requests it", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } })
+      )
+    );
+    const loadConfig = vi.fn().mockRejectedValueOnce(new Error("config unavailable")).mockResolvedValue(config);
+    const calls: string[] = [];
+
+    render(
+      <Providers loadConfig={loadConfig} createDataSource={() => fakeDataSource(calls)}>
+        <StartupProbe />
+      </Providers>
+    );
+
+    expect(await screen.findByText("config unavailable")).toBeInTheDocument();
+    expect(loadConfig).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry configuration" }));
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(loadConfig).toHaveBeenCalledTimes(2);
+    expect(calls.slice(0, 4)).toEqual(["watch", "start", "snapshot", "loadCommandCatalog"]);
   });
 });
 

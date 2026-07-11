@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AuthGate } from "../auth/ui/AuthGate.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
 import { AtlasProvider } from "../state/atlas-context.js";
+import { Button } from "../ui/primitives/controls.js";
 import { coreConfigFromEnv, fetchAppConfig, type AppConfig, type CoreConfig } from "./config.js";
 
 export type ProvidersProps = {
@@ -25,9 +26,66 @@ export function Providers({ children, coreConfig: providedCoreConfig, loadConfig
 
   return (
     <AuthGate baseUrl={coreConfig.atlasBaseUrl}>
-      <AtlasProvider loadConfig={loadConfig} createDataSource={createDataSource}>
+      <AtlasBootstrap loadConfig={loadConfig} createDataSource={createDataSource}>
         {children}
-      </AtlasProvider>
+      </AtlasBootstrap>
     </AuthGate>
+  );
+}
+
+function AtlasBootstrap({
+  children,
+  loadConfig,
+  createDataSource
+}: Required<Pick<ProvidersProps, "loadConfig">> & Omit<ProvidersProps, "loadConfig" | "coreConfig">) {
+  const [config, setConfig] = useState<AppConfig>();
+  const [error, setError] = useState<string>();
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setConfig(undefined);
+    setError(undefined);
+    void loadConfig()
+      .then((next) => {
+        if (!cancelled) setConfig(next);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadConfig, loadAttempt]);
+
+  if (error) {
+    return (
+      <div className="app-error" role="alert">
+        <span>Could not load command interface configuration.</span>
+        <code>{error}</code>
+        <Button
+          variant="primary"
+          onClick={() => {
+            setError(undefined);
+            setLoadAttempt((attempt) => attempt + 1);
+          }}
+        >
+          Retry configuration
+        </Button>
+      </div>
+    );
+  }
+  if (!config) {
+    return (
+      <div className="app-loading">
+        <span>Loading configuration...</span>
+      </div>
+    );
+  }
+
+  return (
+    <AtlasProvider config={config} createDataSource={createDataSource}>
+      {children}
+    </AtlasProvider>
   );
 }
