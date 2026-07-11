@@ -19,7 +19,6 @@ import type {
   ChangedSinceCursors,
   ChangedSinceResponse,
   EntityCheckInBody,
-  EntityCheckInMinimalTask,
   EntityCheckInResponse,
   FullDatasetCursors,
   FullDatasetResponse,

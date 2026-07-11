@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type EntityResource, type FeedEvent, type ResourceType, type TaskResource } from "../src";
+import { AtlasClient, type ResourceType, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
