@@ -57,10 +57,8 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     return catalogFromObject(object);
   };
   const loadCommandCatalog = async (): Promise<CommandCatalog> => {
-    const generation = ++catalogGeneration;
-    const catalog = await fetchCommandCatalog();
-    if (generation !== catalogGeneration) throw new Error("Command catalog refresh was superseded");
-    return catalog;
+    catalogGeneration++;
+    return fetchCommandCatalog();
   };
 
   return {

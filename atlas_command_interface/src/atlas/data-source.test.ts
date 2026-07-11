@@ -259,6 +259,36 @@ describe("sdk data source", () => {
     dataSource.dispose();
   });
 
+  it("does not reject an in-flight startup catalog when live detail retries fail", async () => {
+    vi.useFakeTimers();
+    const core = new TestCore();
+    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Startup catalog"));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init)));
+    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
+    const dataSource = createSdkDataSource(config);
+    const catalogs = vi.fn();
+    dataSource.watch(() => undefined, catalogs);
+
+    const start = dataSource.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await start;
+
+    const releaseStartup = core.delayNextObjectResponse();
+    const startupCatalog = dataSource.loadCommandCatalog();
+    await vi.advanceTimersByTimeAsync(0);
+    core.objectFailures = 4;
+    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Unreachable live catalog"), true);
+
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(catalogs).toHaveBeenCalledTimes(1);
+    expect(catalogs).toHaveBeenLastCalledWith(undefined);
+
+    releaseStartup();
+    await expect(startupCatalog).resolves.toMatchObject({ name: "Startup catalog" });
+
+    dataSource.dispose();
+  });
+
   it("routes command and geometry writes through SDK cache notifications", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     const createdTask = task("task-created", "asset-1", 2);
