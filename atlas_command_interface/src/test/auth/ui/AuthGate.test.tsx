@@ -112,7 +112,7 @@ describe("AuthGate", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("map console")).toBeInTheDocument();
-    expect(screen.getByText("Signed in as")).toBeInTheDocument();
+    expect(screen.getByText("Operator")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
     expect(fetchStub.calls[1]).toMatchObject([

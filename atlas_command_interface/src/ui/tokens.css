@@ -1,96 +1,78 @@
-/* Semantic design tokens for the dark-only tactical console. Feature components
-   reference these variables instead of raw color literals. */
 :root,
 .atlas-dark {
   color-scheme: dark;
 
-  /* Backgrounds & surfaces */
-  --bg-base: #070a0f;
-  --bg-app: #0b0f16;
-  --surface-1: #111722;
-  --surface-2: #161d2b;
-  --surface-3: #1d2737;
-  --surface-hover: #222d40;
+  --bg-base: #070a09;
+  --bg-app: #0a0e0d;
+  --surface-1: #101513;
+  --surface-2: #151c19;
+  --surface-3: #1c2521;
+  --surface-hover: #202b26;
+  --surface-elevated: rgba(16, 21, 19, 0.94);
 
-  /* Borders */
-  --border: #232c3b;
-  --border-strong: #33415a;
+  --border: #26302c;
+  --border-strong: #3c4943;
+  --border-soft: rgba(255, 255, 255, 0.06);
 
-  /* Text levels */
-  --text-1: #e7edf4;
-  --text-2: #9aa7b8;
-  --text-3: #61708a;
-  --text-on-accent: #04121d;
+  --text-1: #f2f4ee;
+  --text-2: #a7b0a9;
+  --text-3: #69746e;
+  --text-on-accent: #10150f;
 
-  /* Accent */
-  --accent: #3fb6ff;
-  --accent-strong: #6cc7ff;
-  --accent-muted: rgba(63, 182, 255, 0.16);
+  --accent: #c7f36a;
+  --accent-strong: #d8ff82;
+  --accent-muted: rgba(199, 243, 106, 0.12);
+  --accent-border: rgba(199, 243, 106, 0.28);
 
-  /* Feedback */
-  --success: #3fd27a;
-  --warning: #f5c451;
-  --error: #ff5d5d;
-  --info: #5aa0ff;
+  --success: #6ee7a0;
+  --warning: #f4c96b;
+  --error: #ff7b75;
+  --info: #78b9ff;
 
-  /* Selection / hover */
   --selected: #ffffff;
-  --selected-ring: rgba(63, 182, 255, 0.55);
+  --selected-ring: rgba(199, 243, 106, 0.52);
+  --status-pending: #f4c96b;
+  --status-acknowledged: #78b9ff;
+  --status-completed: #6ee7a0;
+  --status-failed: #ff7b75;
+  --status-cancelled: #85908a;
+  --link-connected: #6ee7a0;
+  --link-degraded: #f4c96b;
+  --link-disconnected: #ff7b75;
+  --link-unknown: #85908a;
+  --heartbeat-fresh: #6ee7a0;
+  --heartbeat-stale: #f4c96b;
+  --heartbeat-offline: #ff7b75;
+  --class-friendly: #78b9ff;
+  --class-hostile: #ff7b75;
+  --class-neutral: #6ee7a0;
+  --class-civilian: #d2a5ff;
+  --class-unknown: #a7b0a9;
 
-  /* Task status */
-  --status-pending: #f5c451;
-  --status-acknowledged: #5aa0ff;
-  --status-completed: #3fd27a;
-  --status-failed: #ff5d5d;
-  --status-cancelled: #7a8699;
-
-  /* Communications link state */
-  --link-connected: #3fd27a;
-  --link-degraded: #f5c451;
-  --link-disconnected: #ff5d5d;
-  --link-unknown: #7a8699;
-
-  /* Heartbeat freshness */
-  --heartbeat-fresh: #3fd27a;
-  --heartbeat-stale: #f5c451;
-  --heartbeat-offline: #ff5d5d;
-
-  /* Classification */
-  --class-friendly: #5aa0ff;
-  --class-hostile: #ff5d5d;
-  --class-neutral: #3fd27a;
-  --class-civilian: #c08bff;
-  --class-unknown: #9aa7b8;
-
-  /* Map overlay colors */
-  --map-asset: #3fb6ff;
-  --map-track: #f5c451;
-  --map-geofeature: #3fd27a;
-  --map-geofeature-fill: rgba(63, 210, 122, 0.14);
+  --map-asset: #a9e4ff;
+  --map-track: #f4c96b;
+  --map-geofeature: #8be6a9;
+  --map-geofeature-fill: rgba(110, 231, 160, 0.13);
   --map-selected: #ffffff;
   --map-vertex: #ffffff;
   --map-vertex-mid: rgba(255, 255, 255, 0.45);
 
-  /* Geometry */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-
-  /* Spacing scale */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
-
-  --rail-width: 52px;
-  --panel-width: 332px;
-
-  --font-sans: system-ui, -apple-system, "Segoe UI", roboto, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", menlo, consolas, monospace;
-
-  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --space-6: 32px;
+  --rail-width: 164px;
+  --panel-width: 340px;
+  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --shadow-panel: 0 22px 70px rgba(0, 0, 0, 0.38);
+  --shadow-menu: 0 16px 40px rgba(0, 0, 0, 0.48);
 }
 
 * {
@@ -113,10 +95,45 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button {
-  font-family: inherit;
+button,
+input,
+select {
+  font: inherit;
+}
+
+button,
+a,
+input,
+select,
+[tabindex] {
+  outline-color: var(--accent);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 a {
   color: var(--accent);
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--border-strong);
+  background-clip: padding-box;
 }

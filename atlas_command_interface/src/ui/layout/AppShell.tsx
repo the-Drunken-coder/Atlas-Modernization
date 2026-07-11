@@ -7,9 +7,9 @@ type AppShellProps = {
   map: ReactNode;
 };
 
-const DEFAULT_PANEL_WIDTH = 275;
-const MIN_PANEL_WIDTH = 180;
-const MAX_PANEL_WIDTH = 520;
+const DEFAULT_PANEL_WIDTH = 340;
+const MIN_PANEL_WIDTH = 280;
+const MAX_PANEL_WIDTH = 480;
 const PANEL_WIDTH_STEP = 24;
 
 function clampPanelWidth(width: number): number {
@@ -69,8 +69,14 @@ export function AppShell({ collapsed, rail, panel, map }: AppShellProps) {
   );
 
   return (
-    <div className="app-shell">
-      <div className="sidebar" data-collapsed={collapsed} data-resizing={dragStart ? true : undefined} style={shellStyle}>
+    <main className="app-shell">
+      <aside
+        className="sidebar"
+        aria-label="Atlas workspace navigation"
+        data-collapsed={collapsed}
+        data-resizing={dragStart ? true : undefined}
+        style={shellStyle}
+      >
         {rail}
         {panel}
         {collapsed ? null : (
@@ -92,8 +98,10 @@ export function AppShell({ collapsed, rail, panel, map }: AppShellProps) {
             tabIndex={0}
           />
         )}
-      </div>
-      <div className="map-region">{map}</div>
-    </div>
+      </aside>
+      <section className="map-region" aria-label="Operational map">
+        {map}
+      </section>
+    </main>
   );
 }

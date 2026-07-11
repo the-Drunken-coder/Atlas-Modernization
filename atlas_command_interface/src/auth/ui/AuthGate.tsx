@@ -63,7 +63,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
       <main className="login-shell">
         <div className="login-panel" role="alert">
           <div className="login-panel__header">
-            <span className="login-panel__eyebrow">Atlas</span>
+            <span className="login-panel__eyebrow">Atlas Command</span>
             <h1>Core unavailable</h1>
           </div>
           <div className="banner banner--error">{state.error}</div>
@@ -103,9 +103,26 @@ function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { base
   return (
     <section className="authenticated-shell">
       <header className="session-bar" aria-label="User session">
+        <div className="session-bar__product">
+          <span className="session-bar__mark" aria-hidden>
+            +
+          </span>
+          <span>
+            <strong>Atlas</strong>
+            <small>Command interface</small>
+          </span>
+        </div>
+        <div className="session-bar__environment">
+          <span /> Core operations
+        </div>
         <div className="session-bar__identity">
-          <span>Signed in as</span>
-          <strong>{username}</strong>
+          <span className="session-bar__avatar" aria-hidden>
+            {username.slice(0, 1).toUpperCase()}
+          </span>
+          <span>
+            <small>Operator</small>
+            <strong>{username}</strong>
+          </span>
         </div>
         {error ? (
           <span className="session-bar__error" role="alert">
@@ -193,8 +210,12 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
     <main className="login-shell">
       <form className="login-panel" aria-label="Atlas login" onSubmit={submit}>
         <div className="login-panel__header">
-          <span className="login-panel__eyebrow">Atlas</span>
-          <h1>Sign in</h1>
+          <span className="login-panel__mark" aria-hidden>
+            +
+          </span>
+          <span className="login-panel__eyebrow">Atlas Command</span>
+          <h1>Welcome back</h1>
+          <p>Sign in to access the live operational workspace.</p>
         </div>
         <label className="field">
           <span className="field__label">Username</span>

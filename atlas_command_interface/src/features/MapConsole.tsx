@@ -362,8 +362,20 @@ export function MapConsole() {
                   }}
                   onStyleSwitchError={handleMapStyleSwitchError}
                 />
-                <ConnectionBadge health={atlas.health} />
-                <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
+                <div className="map-topbar">
+                  <div className="map-topbar__title">
+                    <span className="map-topbar__eyebrow">Live workspace</span>
+                    <strong>Operational picture</strong>
+                  </div>
+                  <div className="map-topbar__spacer" />
+                  <ConnectionBadge health={atlas.health} />
+                  <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
+                </div>
+                <div className="map-summary" aria-label="Operational totals">
+                  <SummaryMetric label="Assets" value={counts.asset} tone="asset" />
+                  <SummaryMetric label="Tracks" value={counts.track} tone="track" />
+                  <SummaryMetric label="Features" value={counts.geofeature} tone="feature" />
+                </div>
               </div>
             </div>
           </>
@@ -405,7 +417,7 @@ export function MapConsole() {
 
 function MapSourcePicker({ sources, value, onChange }: { sources: MapSourceConfig[]; value: string; onChange: (value: string) => void }) {
   return (
-    <div className="map-overlay-tr map-source-control">
+    <div className="map-source-control">
       <SelectField
         label="Map"
         value={value}
@@ -419,6 +431,16 @@ function MapSourcePicker({ sources, value, onChange }: { sources: MapSourceConfi
           if (source?.style) onChange(source.id);
         }}
       />
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value, tone }: { label: string; value: number; tone: "asset" | "track" | "feature" }) {
+  return (
+    <div className="map-summary__metric" data-tone={tone}>
+      <span className="map-summary__dot" />
+      <strong>{value}</strong>
+      <span>{label}</span>
     </div>
   );
 }

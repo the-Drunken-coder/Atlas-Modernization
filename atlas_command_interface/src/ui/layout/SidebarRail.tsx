@@ -12,10 +12,10 @@ type RailItem = {
 };
 
 const PRIMARY_RAIL_ITEMS: RailItem[] = [
-	{ list: "assets", label: "Assets", Icon: AssetsIcon, kind: "asset" },
-	{ list: "tracks", label: "Tracks", Icon: TracksIcon, kind: "track" },
-	{ list: "geofeatures", label: "Geo Features", Icon: GeofeaturesIcon, kind: "geofeature" },
-	{ list: "commands", label: "Commands", Icon: CommandsIcon }
+  { list: "assets", label: "Assets", Icon: AssetsIcon, kind: "asset" },
+  { list: "tracks", label: "Tracks", Icon: TracksIcon, kind: "track" },
+  { list: "geofeatures", label: "Geo Features", Icon: GeofeaturesIcon, kind: "geofeature" },
+  { list: "commands", label: "Commands", Icon: CommandsIcon }
 ];
 
 const ADMIN_RAIL_ITEMS: RailItem[] = [{ list: "apiKeys", label: "API Keys", Icon: KeyIcon }];
@@ -30,20 +30,34 @@ type SidebarRailProps = {
 
 export function SidebarRail({ collapsed, activeList, counts, onSelectList, onToggleCollapsed }: SidebarRailProps) {
   return (
-    <div className="rail">
-      <div className="rail__brand" aria-hidden>
-        <BrandIcon size={22} />
+    <nav className="rail" aria-label="Workspace sections">
+      <div className="rail__brand" aria-label="Atlas Command">
+        <span className="rail__brand-mark">
+          <BrandIcon size={22} />
+        </span>
+        <span className="rail__brand-copy">
+          <strong>ATLAS</strong>
+          <small>COMMAND</small>
+        </span>
       </div>
-			{PRIMARY_RAIL_ITEMS.map((item) => (
-				<RailButton key={item.list} item={item} active={activeList === item.list} count={item.kind === undefined ? 0 : counts[item.kind]} onSelect={onSelectList} />
-			))}
-			<div className="rail__spacer" />
-			{ADMIN_RAIL_ITEMS.map((item) => (
-				<RailButton key={item.list} item={item} active={activeList === item.list} count={0} onSelect={onSelectList} />
-			))}
-			<Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-				<button
-					type="button"
+      <span className="rail__section-label">Operational</span>
+      {PRIMARY_RAIL_ITEMS.map((item) => (
+        <RailButton
+          key={item.list}
+          item={item}
+          active={activeList === item.list}
+          count={item.kind === undefined ? 0 : counts[item.kind]}
+          onSelect={onSelectList}
+        />
+      ))}
+      <div className="rail__spacer" />
+      <span className="rail__section-label">System</span>
+      {ADMIN_RAIL_ITEMS.map((item) => (
+        <RailButton key={item.list} item={item} active={activeList === item.list} count={0} onSelect={onSelectList} />
+      ))}
+      <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+        <button
+          type="button"
           className="rail-button"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-pressed={collapsed}
@@ -52,17 +66,20 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
           <CollapseIcon size={20} style={collapsed ? { transform: "scaleX(-1)" } : undefined} />
         </button>
       </Tooltip>
-		</div>
-	);
+    </nav>
+  );
 }
 
 function RailButton({ item, active, count, onSelect }: { item: RailItem; active: boolean; count: number; onSelect: (list: ListKind) => void }) {
-	return (
-		<Tooltip label={item.label}>
-			<button type="button" className="rail-button" aria-label={item.label} aria-pressed={active} data-active={active} onClick={() => onSelect(item.list)}>
-				<item.Icon size={20} />
-				{count > 0 ? <span className="rail-button__badge">{count}</span> : null}
-			</button>
-		</Tooltip>
-	);
+  return (
+    <Tooltip label={item.label}>
+      <button type="button" className="rail-button" aria-label={item.label} aria-pressed={active} data-active={active} onClick={() => onSelect(item.list)}>
+        <span className="rail-button__icon">
+          <item.Icon size={19} />
+        </span>
+        <span className="rail-button__label">{item.label}</span>
+        {count > 0 ? <span className="rail-button__badge">{count}</span> : null}
+      </button>
+    </Tooltip>
+  );
 }
