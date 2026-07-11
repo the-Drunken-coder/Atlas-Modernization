@@ -162,6 +162,7 @@ export class SyncEngine {
         onEventError: () => {
           this.degraded = true;
           this.healthy = false;
+          this.scheduleReconnect();
         },
         onClose: () => {
           if (!this.syncRunning) {

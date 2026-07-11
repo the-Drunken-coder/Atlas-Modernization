@@ -264,7 +264,7 @@ describe("AtlasClient feed connection", () => {
     expect(secondCore.sockets.size).toBe(0);
   });
 
-  it("marks the sync engine degraded when feed gap recovery fails", async () => {
+  it("retries after feed gap recovery fails", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -276,15 +276,24 @@ describe("AtlasClient feed connection", () => {
     await client.sync.start();
     await client.connectFeed();
 
-    core.upsertTask(task("task-gap-fail", "asset-1"));
-    const second = core.upsertTask({ ...task("task-gap-fail", "asset-1"), status: "acknowledged" });
-    core.failChangedSince = true;
-    core.emit({ event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second }, { record: false });
+    try {
+      core.upsertTask(task("task-gap-fail", "asset-1"));
+      const second = core.upsertTask({ ...task("task-gap-fail", "asset-1"), status: "acknowledged" });
+      core.failChangedSince = true;
+      core.emit({ event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second }, { record: false });
 
-    await vi.waitFor(() => {
-      expect(client.sync.status().degraded).toBe(true);
-      expect(client.sync.status().healthy).toBe(false);
-    });
+      await vi.waitFor(() => {
+        expect(client.sync.status().degraded).toBe(true);
+        expect(client.sync.status().healthy).toBe(false);
+      });
+
+      core.failChangedSince = false;
+      await vi.waitFor(() => expect(core.feedConnections).toBe(2), { timeout: 2_000 });
+      await vi.waitFor(() => expect(client.sync.snapshot().tasks[second.task_id]).toEqual(second), { timeout: 2_000 });
+      expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false, lastVersion: second.metadata.version });
+    } finally {
+      client.sync.stop();
+    }
   });
 
   it("recovers explicit subscription gaps through changed-since", async () => {
