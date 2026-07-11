@@ -197,7 +197,7 @@ func (context goSchemaContext) schemaType(schema map[string]any, seen map[string
 
 func schemaObjectVariants(schema map[string]any, defs map[string]any, seen map[string]bool) ([]schemaObjectVariant, error) {
 	if ref, ok := schema["$ref"].(string); ok {
-		if err := validateSchemaKeywords(schema, "Go struct object shape", "$ref"); err != nil {
+		if err := validateSchemaKeywords(schema, "go struct object shape", "$ref"); err != nil {
 			return nil, err
 		}
 		definition, err := schemaDefinitionFromRef(ref)
@@ -217,7 +217,7 @@ func schemaObjectVariants(schema map[string]any, defs map[string]any, seen map[s
 	}
 	for _, keyword := range []string{"anyOf"} {
 		if rawVariants, ok := schema[keyword].([]any); ok {
-			if err := validateSchemaKeywords(schema, "Go struct object shape", keyword); err != nil {
+			if err := validateSchemaKeywords(schema, "go struct object shape", keyword); err != nil {
 				return nil, err
 			}
 			var variants []schemaObjectVariant
@@ -239,7 +239,7 @@ func schemaObjectVariants(schema map[string]any, defs map[string]any, seen map[s
 		return nil, fmt.Errorf("oneOf object unions are not supported for Go struct parity")
 	}
 	if constant, ok := schema["const"].(map[string]any); ok {
-		if err := validateSchemaKeywords(schema, "Go struct object shape", "const"); err != nil {
+		if err := validateSchemaKeywords(schema, "go struct object shape", "const"); err != nil {
 			return nil, err
 		}
 		properties := make(map[string]map[string]any, len(constant))
@@ -281,7 +281,7 @@ func schemaObjectVariants(schema map[string]any, defs map[string]any, seen map[s
 	if patterns, ok := schema["patternProperties"].(map[string]any); ok && len(patterns) > 0 {
 		return nil, fmt.Errorf("pattern properties cannot be represented by a fixed Go struct")
 	}
-	if err := validateSchemaKeywords(schema, "Go struct object shape", "additionalProperties", "minProperties", "properties", "required", "type"); err != nil {
+	if err := validateSchemaKeywords(schema, "go struct object shape", "additionalProperties", "minProperties", "properties", "required", "type"); err != nil {
 		return nil, err
 	}
 	additionalProperties, explicit := schema["additionalProperties"].(bool)

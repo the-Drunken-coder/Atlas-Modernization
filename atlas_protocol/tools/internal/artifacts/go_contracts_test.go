@@ -56,7 +56,7 @@ func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 				definition := schemaDefinition(t, bundle, "ErrorCode")
 				definition["enum"] = append(definition["enum"].([]any), "NEW_ERROR")
 			},
-			want: "Go enum ErrorCode drifted",
+			want: "go enum ErrorCode drifted",
 		},
 		{
 			name: "enum sibling constraint",
@@ -71,7 +71,7 @@ func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 				constant := schemaDefinition(t, bundle, "SubscribeAllMessage")["const"].(map[string]any)
 				constant["filter"] = "everything"
 			},
-			want: "Go enum FeedFilter drifted",
+			want: "go enum FeedFilter drifted",
 		},
 		{
 			name: "synthetic discriminator",
@@ -146,7 +146,7 @@ func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 					"required": []any{"extra"},
 				}
 			},
-			want: "Go struct object shape uses unsupported schema keywords [not]",
+			want: "go struct object shape uses unsupported schema keywords [not]",
 		},
 	}
 
@@ -196,7 +196,7 @@ func TestValidateGoContractsRejectsAuthoredSourceDrift(t *testing.T) {
 			name:        "enum constant name",
 			old:         "ErrorCodeInvalidJSON",
 			replacement: "ErrorCodeBadJSON",
-			want:        "Go enum ErrorCode drifted",
+			want:        "go enum ErrorCode drifted",
 		},
 		{
 			name:        "type alias identity",

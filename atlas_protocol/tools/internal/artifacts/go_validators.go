@@ -52,7 +52,7 @@ var goValidatorFunctions = []goValidatorFunction{
 func validateGoValidatorFunctions(defs map[string]any) error {
 	for _, function := range goValidatorFunctions {
 		if (function.validate == nil) == (function.validateWithPrefix == nil) {
-			return fmt.Errorf("Go validator %s must have exactly one runtime implementation", function.name)
+			return fmt.Errorf("go validator %s must have exactly one runtime implementation", function.name)
 		}
 		implementation := any(function.validate)
 		expectedParams, expectedArgs := "value any", "value"
@@ -61,19 +61,19 @@ func validateGoValidatorFunctions(defs map[string]any) error {
 			expectedParams, expectedArgs = "value any, fieldPrefix string", "value, fieldPrefix"
 		}
 		if function.params != expectedParams || function.args != expectedArgs {
-			return fmt.Errorf("Go validator %s signature manifest does not match its runtime implementation", function.name)
+			return fmt.Errorf("go validator %s signature manifest does not match its runtime implementation", function.name)
 		}
 		implementationName := runtime.FuncForPC(reflect.ValueOf(implementation).Pointer()).Name()
 		implementationName = implementationName[strings.LastIndex(implementationName, ".")+1:]
 		if implementationName != function.name {
-			return fmt.Errorf("Go validator %s points to runtime implementation %s", function.name, implementationName)
+			return fmt.Errorf("go validator %s points to runtime implementation %s", function.name, implementationName)
 		}
 		definition := strings.TrimPrefix(function.name, "Validate")
 		if definition == function.name {
-			return fmt.Errorf("Go validator %s does not follow the Validate<Definition> convention", function.name)
+			return fmt.Errorf("go validator %s does not follow the Validate<Definition> convention", function.name)
 		}
 		if _, ok := defs[definition]; !ok {
-			return fmt.Errorf("Go validator %s references missing schema definition %s", function.name, definition)
+			return fmt.Errorf("go validator %s references missing schema definition %s", function.name, definition)
 		}
 	}
 	return nil

@@ -100,7 +100,7 @@ func validateGoContracts(root string, bundle schemaBundle) error {
 		return err
 	}
 	if parsed.aliases["JSONValue"] != "any" {
-		return fmt.Errorf("Go contract JSONValue must remain an alias of any, got %q", parsed.aliases["JSONValue"])
+		return fmt.Errorf("go contract JSONValue must remain an alias of any, got %q", parsed.aliases["JSONValue"])
 	}
 
 	defs, err := schemaDefs(bundle)
@@ -133,7 +133,7 @@ func validateGoEnumContracts(parsed parsedGoContracts, defs map[string]any) erro
 	for _, contract := range goEnumContracts {
 		expectedTypes[contract.goType] = true
 		if !parsed.stringTypes[contract.goType] {
-			return fmt.Errorf("Go enum %s must be declared with underlying type string", contract.goType)
+			return fmt.Errorf("go enum %s must be declared with underlying type string", contract.goType)
 		}
 		definitions := contract.definitions
 		if len(definitions) == 0 {
@@ -141,7 +141,7 @@ func validateGoEnumContracts(parsed parsedGoContracts, defs map[string]any) erro
 		}
 		expected, err := schemaStringValues(defs, definitions, contract.property)
 		if err != nil {
-			return fmt.Errorf("Go enum %s: %w", contract.goType, err)
+			return fmt.Errorf("go enum %s: %w", contract.goType, err)
 		}
 		prefix := contract.constantPrefix
 		if prefix == "" {
@@ -160,7 +160,7 @@ func validateGoEnumContracts(parsed parsedGoContracts, defs map[string]any) erro
 		sort.Strings(expectedConstants)
 		sort.Strings(actualConstants)
 		if !reflect.DeepEqual(actualConstants, expectedConstants) {
-			return fmt.Errorf("Go enum %s drifted from schema: Go=%v schema=%v", contract.goType, actualConstants, expectedConstants)
+			return fmt.Errorf("go enum %s drifted from schema: Go=%v schema=%v", contract.goType, actualConstants, expectedConstants)
 		}
 	}
 
@@ -216,49 +216,49 @@ func validateGoStructContracts(parsed parsedGoContracts, defs map[string]any) er
 		}
 		expected, err := context.structFields(definitions)
 		if err != nil {
-			return fmt.Errorf("Go struct %s: %w", contract.goType, err)
+			return fmt.Errorf("go struct %s: %w", contract.goType, err)
 		}
 		for field, constant := range contract.syntheticFields {
 			expectedField, ok := expected[field]
 			if !ok || expectedField.optional {
-				return fmt.Errorf("Go struct %s synthetic field %s must be required by schema", contract.goType, field)
+				return fmt.Errorf("go struct %s synthetic field %s must be required by schema", contract.goType, field)
 			}
 			values, err := schemaStringValues(defs, definitions, field)
 			if err != nil {
-				return fmt.Errorf("Go struct %s synthetic field %s: %w", contract.goType, field, err)
+				return fmt.Errorf("go struct %s synthetic field %s: %w", contract.goType, field, err)
 			}
 			constantValue, ok := goConstantValue(parsed.enums, constant)
 			if !ok || len(values) != 1 || values[0] != constantValue {
-				return fmt.Errorf("Go struct %s synthetic field %s drifted from %s: schema=%v Go=%q", contract.goType, field, constant, values, constantValue)
+				return fmt.Errorf("go struct %s synthetic field %s drifted from %s: schema=%v Go=%q", contract.goType, field, constant, values, constantValue)
 			}
 			delete(expected, field)
 		}
 		for field, override := range contract.typeOverrides {
 			expectedField, ok := expected[field]
 			if !ok {
-				return fmt.Errorf("Go struct %s type override references unknown schema field %s", contract.goType, field)
+				return fmt.Errorf("go struct %s type override references unknown schema field %s", contract.goType, field)
 			}
 			if expectedField.typeName != override.schemaType {
-				return fmt.Errorf("Go struct %s field %s override requires schema type %s, got %s", contract.goType, field, override.schemaType, expectedField.typeName)
+				return fmt.Errorf("go struct %s field %s override requires schema type %s, got %s", contract.goType, field, override.schemaType, expectedField.typeName)
 			}
 			expectedField.typeName = override.goType
 			expected[field] = expectedField
 		}
 		actual := parsed.structs[contract.goType]
 		if actualKeys, expectedKeys := sortedMapKeys(actual), sortedMapKeys(expected); !reflect.DeepEqual(actualKeys, expectedKeys) {
-			return fmt.Errorf("Go struct %s fields drifted from schema: Go=%v schema=%v", contract.goType, actualKeys, expectedKeys)
+			return fmt.Errorf("go struct %s fields drifted from schema: Go=%v schema=%v", contract.goType, actualKeys, expectedKeys)
 		}
 		for _, jsonName := range sortedMapKeys(expected) {
 			actualField := actual[jsonName]
 			expectedField := expected[jsonName]
 			if actualField.name != goFieldName(jsonName) {
-				return fmt.Errorf("Go struct %s field %s must use Go name %s, got %s", contract.goType, jsonName, goFieldName(jsonName), actualField.name)
+				return fmt.Errorf("go struct %s field %s must use Go name %s, got %s", contract.goType, jsonName, goFieldName(jsonName), actualField.name)
 			}
 			if actualField.typeName != expectedField.typeName {
-				return fmt.Errorf("Go struct %s field %s type drifted from schema: Go=%s schema=%s", contract.goType, jsonName, actualField.typeName, expectedField.typeName)
+				return fmt.Errorf("go struct %s field %s type drifted from schema: Go=%s schema=%s", contract.goType, jsonName, actualField.typeName, expectedField.typeName)
 			}
 			if actualField.optional != expectedField.optional {
-				return fmt.Errorf("Go struct %s field %s optionality drifted from schema: omitempty=%t schema-required=%t", contract.goType, jsonName, actualField.optional, !expectedField.optional)
+				return fmt.Errorf("go struct %s field %s optionality drifted from schema: omitempty=%t schema-required=%t", contract.goType, jsonName, actualField.optional, !expectedField.optional)
 			}
 		}
 	}
@@ -309,7 +309,7 @@ func parseGoContracts(directory string) (parsedGoContracts, error) {
 				if spec.Assign.IsValid() {
 					parsed.aliases[spec.Name.Name] = typeName
 					if exported && spec.Name.Name != "JSONValue" {
-						return parsedGoContracts{}, fmt.Errorf("Go contract %s must be a defined type; only JSONValue may be an alias", spec.Name.Name)
+						return parsedGoContracts{}, fmt.Errorf("go contract %s must be a defined type; only JSONValue may be an alias", spec.Name.Name)
 					}
 					continue
 				}
@@ -422,16 +422,16 @@ func parseGoEnumConstants(file *ast.File, stringTypes map[string]bool, enums map
 				continue
 			}
 			if len(values) != len(spec.Names) {
-				return fmt.Errorf("Go enum %s constants must each have one explicit string value", typeName)
+				return fmt.Errorf("go enum %s constants must each have one explicit string value", typeName)
 			}
 			for i, name := range spec.Names {
 				literal, ok := values[i].(*ast.BasicLit)
 				if !ok || literal.Kind != token.STRING {
-					return fmt.Errorf("Go enum constant %s must be a string literal", name.Name)
+					return fmt.Errorf("go enum constant %s must be a string literal", name.Name)
 				}
 				value, err := strconv.Unquote(literal.Value)
 				if err != nil {
-					return fmt.Errorf("Go enum constant %s: %w", name.Name, err)
+					return fmt.Errorf("go enum constant %s: %w", name.Name, err)
 				}
 				enums[typeName] = append(enums[typeName], goEnumValue{name: name.Name, value: value})
 			}
@@ -476,15 +476,6 @@ func goConstantSuffix(value string) string {
 		parts[index] = strings.ToUpper(part[:1]) + part[1:]
 	}
 	return strings.Join(parts, "")
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func boolStringSet(values []string) map[string]bool {
