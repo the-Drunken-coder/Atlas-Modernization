@@ -66,6 +66,12 @@ export function MapConsole() {
     setSubmitError(undefined);
   }, [selectedId]);
 
+  useEffect(() => {
+    setMapMenu(null);
+    setCommandForm(null);
+    setSubmitError(undefined);
+  }, [catalog]);
+
   // Drop an edit session when the selection moves to another entity.
   useEffect(() => {
     if (edit && edit.entityId !== selectedId) {

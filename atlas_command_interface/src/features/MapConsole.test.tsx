@@ -4,7 +4,7 @@ import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "../../../atlas_sdk/src/index.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
-import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
+import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import type { AppConfig } from "../app/config.js";
@@ -78,6 +78,12 @@ const catalog = parseCommandCatalog({
         longitude: { type: "number", description: "Longitude", minimum: -180, maximum: 180, required: true }
       }
     },
+    {
+      id: "set_speed",
+      name: "Set Speed",
+      description: "Set travel speed.",
+      parameters_schema: { speed: { type: "number", description: "Speed", minimum: 0, required: true } }
+    },
     { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
   ]
 });
@@ -87,7 +93,7 @@ const rover: EntityResource = {
   entity_type: "asset",
   subtype: null,
   alias: "Rover",
-  components: { task_catalog: { supported_tasks: ["hold_position", "goto"] }, telemetry: { latitude: 40, longitude: -74 } },
+  components: { task_catalog: { supported_tasks: ["hold_position", "goto", "set_speed"] }, telemetry: { latitude: 40, longitude: -74 } },
   metadata
 };
 
@@ -127,6 +133,7 @@ const healthyConnection: ConnectionHealth = { running: true, healthy: true, degr
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
   let current: AtlasSnapshot = { entities: { [rover.entity_id]: rover, [geofeature.entity_id]: geofeature }, tasks: {} };
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
+  let notifyCatalog: ((update: CatalogUpdate) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
@@ -136,10 +143,12 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     async loadCommandCatalog() {
       return catalog;
     },
-    watch(onSnapshot) {
+    watch(onSnapshot, onCatalog) {
       notify = onSnapshot;
+      notifyCatalog = onCatalog;
       return () => {
         notify = undefined;
+        notifyCatalog = undefined;
       };
     },
     async start() {},
@@ -175,7 +184,8 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     emit: (snapshot: AtlasSnapshot) => {
       current = snapshot;
       notify?.(snapshot);
-    }
+    },
+    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update)
   };
 }
 
@@ -226,6 +236,21 @@ describe("MapConsole command flow", () => {
 
     // The created task arrives over the feed and shows as pending in history.
     expect(await screen.findByText("Pending")).toBeInTheDocument();
+  });
+
+  it("closes an open command form when the live catalog becomes unavailable", async () => {
+    const user = userEvent.setup();
+    const { fake, emitCatalog, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
+
+    act(() => emitCatalog({ status: "failed" }));
+
+    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
+    expect(submissions).toHaveLength(0);
   });
 
   it("passes hovered sidebar entities to the map as preview targets", async () => {
