@@ -112,10 +112,11 @@ reviews:
         outdated environment variables, and missing verification commands.
     - path: "atlas_protocol/schema/**"
       instructions: |
-        Treat CUE schema as protocol source of truth. Flag incomplete constraints,
-        accidental compatibility aliases, optional-field disjunctions that leave
-        incomplete values, schema/example drift, and missing updates to generated
-        Go, JSON Schema, protocol tests, and docs.
+        Treat draft 2020-12 JSON Schema in
+        atlas_protocol/schema/jsonschema/atlas.schema.json as the protocol source
+        of truth. Flag incomplete constraints, accidental compatibility aliases,
+        schema/example drift, hand-edited generated artifacts, and missing updates
+        to generated Go/TypeScript artifacts, protocol tests, and docs.
     - path: "atlas_protocol/tools/**"
       instructions: |
         Review generators for deterministic output, stable ordering, error
@@ -125,7 +126,8 @@ reviews:
     - path: "atlas_protocol/generated/**"
       instructions: |
         Generated artifacts may still reveal generator or schema drift. Check
-        whether generated Go, JSON Schema, and examples are mutually consistent.
+        whether generated Go, generated TypeScript, examples, and the canonical
+        JSON Schema source are mutually consistent.
         Do not ask for hand edits to generated files; ask for generator/schema
         fixes and regeneration.
     - path: "atlas_protocol/protocoltest/**"
@@ -197,7 +199,7 @@ reviews:
       - enabled: true
         name: "verify generated artifacts"
         instructions: |
-          Reconcile schema, generator, generated Go, JSON Schema, examples, and
+          Reconcile schema, generator, generated Go, TypeScript, examples, and
           protocol tests. Prefer source/generator fixes over hand-editing generated
           output.
 
@@ -227,9 +229,10 @@ reviews:
         name: "Protocol artifact freshness"
         instructions: |
           If atlas_protocol/schema, atlas_protocol/tools, or generated protocol
-          artifacts change, the PR must keep generated Go, JSON Schema, examples,
-          and protocol tests consistent. Flag stale generated output or hand edits
-          that should have come from the generator.
+          artifacts change, the PR must keep canonical JSON Schema, generated
+          Go, generated TypeScript, examples, and protocol tests consistent. Flag
+          stale generated output or hand edits that should have come from the
+          generator.
       - mode: "error"
         name: "Module boundary"
         instructions: |
@@ -378,8 +381,9 @@ code_generation:
           failures, transaction/storage cleanup paths, and API contract regressions.
       - path: "atlas_protocol/**"
         instructions: |
-          Prefer tests that prove schema, generated Go, JSON Schema, raw JSON
-          validators, examples, and artifact freshness stay aligned.
+          Prefer tests that prove canonical JSON Schema, generated Go, generated
+          TypeScript, raw JSON validators, examples, and artifact freshness stay
+          aligned.
 
 issue_enrichment:
   auto_enrich:
