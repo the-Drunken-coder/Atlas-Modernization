@@ -13,11 +13,7 @@ export type UiGeometry = UiRawGeometry | UiCircleFeature;
 
 export type GeometryKind = UiGeometry["type"];
 
-export type VertexRef =
-  | { kind: "Point" }
-  | { kind: "Circle" }
-  | { kind: "LineString"; index: number }
-  | { kind: "Polygon"; ring: number; index: number };
+export type VertexRef = { kind: "Point" } | { kind: "Circle" } | { kind: "LineString"; index: number } | { kind: "Polygon"; ring: number; index: number };
 
 export type EditableVertex = {
   ref: VertexRef;
@@ -285,10 +281,6 @@ function isFinitePosition(value: Position): boolean {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function isClosedRing(ring: Position[]): boolean {
-  return ring.length >= 2 && positionsEqual(ring[0], ring[ring.length - 1]);
 }
 
 function toPosition(value: Position): Position {

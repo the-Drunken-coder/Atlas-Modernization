@@ -25,10 +25,13 @@ services:
       ENABLE_API_AUTH: "true"
       CORS_ORIGINS: ${CORS_ORIGINS:-https://atlasinterface.com}
       CORS_ORIGIN_PATTERNS: ${CORS_ORIGIN_PATTERNS:-https://*.atlas-je0.pages.dev}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       API_AUTH_KEY: ${API_AUTH_KEY:?API_AUTH_KEY must be set}
       # atlas.py and the production entrypoint enforce one admin password source before startup.
       ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:-}
       ATLAS_ADMIN_PASSWORD_FILE: ${ATLAS_ADMIN_PASSWORD_FILE:-}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
+      MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -108,22 +111,6 @@ services:
         mc mb --ignore-existing myminio/atlas-media
         case "$$ENABLE_PUBLIC_MINIO" in true|1|yes|on) mc anonymous set download myminio/atlas-media ;; esac
         echo 'MinIO bucket initialized successfully'
-    networks:
-      - atlas_core_network
-
-  # Optional Cloudflare Tunnel public edge.
-  cloudflared:
-    profiles:
-      - tunnel
-    image: cloudflare/cloudflared:2026.5.2@sha256:12ff5c6992a9863db4da270746af7c244bcaee49353039af8104268a18d6c4f0
-    container_name: atlas_core_cloudflared
-    restart: unless-stopped
-    # atlas.py enforces CLOUDFLARE_TUNNEL_TOKEN before managed tunnel starts.
-    # Keep a default here so `docker compose config` works without the tunnel profile.
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-missing-cloudflare-tunnel-token}
-    depends_on:
-      api:
-        condition: service_healthy
     networks:
       - atlas_core_network
 

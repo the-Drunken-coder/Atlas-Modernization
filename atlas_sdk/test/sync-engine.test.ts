@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type EntityResource, type FeedEvent, type ResourceType, type TaskResource } from "../src";
+import { AtlasClient, type ResourceType, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -80,6 +80,12 @@ describe("AtlasClient sync", () => {
       deleted_entities: [{ id: "entity-v1", type: "entity", version: 1 }],
       deleted_tasks: [{ id: "task-v3", type: "task", version: 3, entity_id: null }],
       deleted_objects: [],
+      has_more_entities: false,
+      has_more_tasks: false,
+      has_more_objects: false,
+      has_more_deleted_entities: false,
+      has_more_deleted_tasks: false,
+      has_more_deleted_objects: false,
       version: 5
     };
 
@@ -122,6 +128,10 @@ describe("AtlasClient sync", () => {
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
         next_task_cursor: `task-cursor-${changedSinceRequests}`,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
         version: 0
       });
     };
@@ -156,6 +166,12 @@ describe("AtlasClient sync", () => {
           deleted_entities: [],
           deleted_tasks: [],
           deleted_objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false,
+          has_more_deleted_entities: false,
+          has_more_deleted_tasks: false,
+          has_more_deleted_objects: false,
           version: 1
         }),
         { headers: { "Content-Type": "application/json" } }
@@ -310,6 +326,8 @@ describe("AtlasClient sync", () => {
             objects: [],
             version: snapshotVersion,
             has_more_tasks: true,
+            has_more_entities: false,
+            has_more_objects: false,
             next_task_cursor: "later-task-page"
           });
         }
@@ -318,7 +336,10 @@ describe("AtlasClient sync", () => {
           entities: [],
           tasks: [laterPageTask],
           objects: [],
-          version: snapshotVersion
+          version: snapshotVersion,
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
         });
       }
       if (parsed.pathname === "/queries/changed-since") {
@@ -353,11 +374,11 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     const fetchImpl: typeof fetch = async (url, init) => {
       if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
-      return Response.json({ entities: [], tasks: [], objects: [] });
+      return Response.json({ entities: [], tasks: [], objects: [], has_more_entities: false, has_more_tasks: false, has_more_objects: false });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
     expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
   });
 
@@ -365,11 +386,11 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     const fetchImpl: typeof fetch = async (url, init) => {
       if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
-      return Response.json({ entities: [], tasks: [], objects: [], version });
+      return Response.json({ entities: [], tasks: [], objects: [], version, has_more_entities: false, has_more_tasks: false, has_more_objects: false });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
   });
 
   it("rejects changing full-dataset version watermarks", async () => {
@@ -384,6 +405,8 @@ describe("AtlasClient sync", () => {
         objects: [],
         version: fullDatasetRequests,
         has_more_entities: fullDatasetRequests === 1,
+        has_more_tasks: false,
+        has_more_objects: false,
         next_entity_cursor: fullDatasetRequests === 1 ? "next-page" : undefined
       });
     };
@@ -409,7 +432,8 @@ describe("AtlasClient sync", () => {
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
-        next_task_cursor: `task-cursor-${fullDatasetRequests}`
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`,
+        has_more_objects: false
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
@@ -430,7 +454,9 @@ describe("AtlasClient sync", () => {
         objects: [],
         version: 0,
         has_more_entities: fullDatasetRequests <= 100,
-        next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined
+        next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined,
+        has_more_tasks: false,
+        has_more_objects: false
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
@@ -444,7 +470,7 @@ describe("AtlasClient sync", () => {
     const existing = core.upsertEntity(entity("asset-before-failed-hydration"));
     let failHydration = false;
     let fullDatasetRequests = 0;
-    const partial = entity("asset-partial-hydration");
+    const partial = { ...entity("asset-partial-hydration"), metadata: metadata(1) };
     const fetchImpl: typeof fetch = async (url, init) => {
       if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
       if (!failHydration) return core.fetch(String(url), init);
@@ -457,7 +483,8 @@ describe("AtlasClient sync", () => {
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
-        next_task_cursor: `task-cursor-${fullDatasetRequests}`
+        next_task_cursor: `task-cursor-${fullDatasetRequests}`,
+        has_more_objects: false
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
@@ -649,7 +676,10 @@ describe("AtlasClient sync", () => {
     client.watch({ filter: "all" }, snapshots);
 
     const fedEntity = core.upsertEntity(entity("asset-snapshot-feed"));
-    core.emit({ event: "create", resource_type: "entity", id: fedEntity.entity_id, version: fedEntity.metadata.version, resource: fedEntity }, { record: false });
+    core.emit(
+      { event: "create", resource_type: "entity", id: fedEntity.entity_id, version: fedEntity.metadata.version, resource: fedEntity },
+      { record: false }
+    );
     await vi.waitFor(() => expect(snapshots).toHaveReturnedWith(expect.objectContaining({ entities: { [fedEntity.entity_id]: fedEntity } })));
 
     const recoveredTask = core.upsertTask(task("task-snapshot-recovered", fedEntity.entity_id));
@@ -957,9 +987,9 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     const value = core.upsertEntity(entity("asset-duplicate-version"));
 
-    expect(() =>
-      core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value })
-    ).toThrow("duplicate fake core event version");
+    expect(() => core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value })).toThrow(
+      "duplicate fake core event version"
+    );
   });
 
   it("keeps successful writes successful when watch callbacks throw", async () => {
@@ -978,7 +1008,9 @@ describe("AtlasClient sync", () => {
     });
 
     try {
-      await expect(client.entities.create({ entity_id: "asset-throwing-write-watch", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-throwing-write-watch" });
+      await expect(client.entities.create({ entity_id: "asset-throwing-write-watch", entity_type: "asset" })).resolves.toMatchObject({
+        entity_id: "asset-throwing-write-watch"
+      });
       expect(client.sync.status().degraded).toBe(false);
       expect(errorSpy).toHaveBeenCalled();
     } finally {
@@ -1150,7 +1182,7 @@ describe("AtlasClient sync", () => {
     expect(cache.snapshot()).toBe(snapshot);
   });
 
-  it("does not let feed events whose resource payload crosses resource types stop later events", async () => {
+  it("recovers when a feed event payload crosses resource types", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -1164,26 +1196,24 @@ describe("AtlasClient sync", () => {
     client.watch({ filter: "type", resource_type: "entity" }, watch);
 
     const taskPayload = { ...task("task-watch-cross-type", null), metadata: metadata(1) };
-    const mismatchedEvent = {
+    const socket = [...core.sockets][0];
+    if (!socket) throw new Error("expected a connected fake websocket");
+    socket.receive({
       event: "update",
       resource_type: "entity",
       id: "asset-watch-cross-type",
       version: 1,
       resource: taskPayload
-    } as unknown as FeedEvent;
-    core.emit(mismatchedEvent, { record: false });
+    });
 
     await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: false, degraded: true }));
     expect(watch).not.toHaveBeenCalled();
 
-    await client.changedSince();
-    expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
+    await vi.waitFor(() => expect(core.feedConnections).toBe(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false }));
 
     const valid = core.upsertEntity(entity("asset-watch-cross-type-valid"));
-    core.emit(
-      { event: "update", resource_type: "entity", id: valid.entity_id, version: valid.metadata.version, resource: valid },
-      { record: false }
-    );
+    core.emit({ event: "update", resource_type: "entity", id: valid.entity_id, version: valid.metadata.version, resource: valid }, { record: false });
 
     await vi.waitFor(() => {
       expect(watch).toHaveBeenCalledWith(valid, expect.objectContaining({ resource_type: "entity", id: valid.entity_id }));
@@ -1222,5 +1252,4 @@ describe("AtlasClient sync", () => {
     expect(() => parseSubscriptionKey(JSON.stringify(["id", "task"]))).toThrow("invalid subscription key");
     expect(() => parseSubscriptionKey(JSON.stringify(["tasks_for_entity", ""]))).toThrow("invalid subscription key");
   });
-
 });

@@ -56,7 +56,7 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 		builder.WriteString(gen.typeFor(gen.defs[name], name, 0))
 		builder.WriteString(";\n\n")
 	}
-	validatorSource, err := requestValidatorSource(gen)
+	validatorSource, err := runtimeValidatorSource(gen)
 	if err != nil {
 		return nil, err
 	}

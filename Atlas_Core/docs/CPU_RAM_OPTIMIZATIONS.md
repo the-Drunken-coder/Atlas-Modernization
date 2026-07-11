@@ -16,6 +16,7 @@ HTTP handlers enforce body limits with `http.MaxBytesReader`:
 - 512 KB: task create/update/status/complete/fail
 - Upload body: bounded by configurable `MAX_UPLOAD_SIZE_MB` (default 100 MB, must be 1..10240 MB; invalid config fails startup)
 - Inline view: bounded by configurable `MAX_VIEW_SIZE_MB` (default 10 MB, must be 1..100 MB; invalid config fails startup)
+- Final stored resource JSON: fixed 1 MiB cap after create/update merge, so repeated small patches cannot grow one row without bound
 
 Implementation:
 
@@ -34,9 +35,11 @@ List actions clamp pagination:
 - HTTP list handlers reject negative limits and any offset parameter with 400 Bad Request (`parseListPagination` / `parseNonNegativeIntQuery`)
 - returned limit is clamped via `actions.ClampListLimit` before list queries run
 
-Full dataset query also has an upper bound:
+Query resource streams also have upper bounds:
 
-- `MaxFullQueryLimit = 1000` rows per resource type
+- Full dataset: `MaxFullQueryLimit = 1000` rows per resource type
+- Changed since: `MaxChangedSinceLimit = 5000` rows per resource/tombstone type
+- Both query endpoints retain at most 8 MiB of raw JSON per resource type and page; reaching the byte budget returns a normal short page with `has_more_*` and a continuation cursor
 
 Implementation:
 
@@ -64,7 +67,9 @@ Implementation:
 
 Download responses stream from storage reader to HTTP response writer using `io.Copy`, avoiding
 full buffering for download endpoints. Inline view endpoints intentionally read fully into memory,
-but only after max-size checks.
+but only after max-size checks. Upload, download, and view routes use a 30-second sliding idle
+deadline, so transfers that keep making progress may run longer than the server's ordinary
+30-second absolute read/write deadline while stalled transfers are still terminated.
 
 Implementation:
 
@@ -96,4 +101,4 @@ Implementation:
 - Monitor RSS over sustained traffic and idle windows.
 - Verify DB pool counts remain within configured limits.
 - Confirm 413/400 behavior for oversized request bodies.
-- Validate full-dataset endpoint behavior on large datasets (cap at 1000 per type).
+- Validate query endpoint behavior on large datasets (count caps plus 8 MiB raw JSON per resource type/page).

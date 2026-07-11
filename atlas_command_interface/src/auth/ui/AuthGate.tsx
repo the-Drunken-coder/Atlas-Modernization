@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "../../../../atlas_sdk/src/admin.js";
 import { Button } from "../../ui/primitives/controls.js";
 
@@ -12,9 +12,11 @@ type SessionResponse = { authenticated: false } | { authenticated: true; user: {
 
 export function AuthGate({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
+  const [sessionAttempt, setSessionAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setState({ status: "loading" });
     const checkSession = async () => {
       try {
         const data = await loadSession(baseUrl);
@@ -38,7 +40,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
       cancelled = true;
       window.removeEventListener("atlas-auth-expired", expireSession);
     };
-  }, [baseUrl]);
+  }, [baseUrl, sessionAttempt]);
 
   if (state.status === "loading") {
     return (
@@ -49,7 +51,11 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   }
 
   if (state.status === "authenticated") {
-    return <>{children}</>;
+    return (
+      <AuthenticatedShell baseUrl={baseUrl} username={state.username} onLoggedOut={() => setState({ status: "unauthenticated" })}>
+        {children}
+      </AuthenticatedShell>
+    );
   }
 
   if (state.status === "error") {
@@ -61,12 +67,87 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
             <h1>Core unavailable</h1>
           </div>
           <div className="banner banner--error">{state.error}</div>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setState({ status: "loading" });
+              setSessionAttempt((attempt) => attempt + 1);
+            }}
+          >
+            Retry connection
+          </Button>
         </div>
       </main>
     );
   }
 
   return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
+}
+
+function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { baseUrl: string; username: string; children: ReactNode; onLoggedOut: () => void }) {
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const logout = async () => {
+    setLoggingOut(true);
+    setError(undefined);
+    try {
+      await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.logout();
+      onLoggedOut();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setLoggingOut(false);
+    }
+  };
+
+  return (
+    <section className="authenticated-shell">
+      <header className="session-bar" aria-label="User session">
+        <div className="session-bar__identity">
+          <span>Signed in as</span>
+          <strong>{username}</strong>
+        </div>
+        {error ? (
+          <span className="session-bar__error" role="alert">
+            {error}
+          </span>
+        ) : null}
+        <Button variant="ghost" disabled={loggingOut} onClick={() => void logout()}>
+          {loggingOut ? "Logging out..." : "Log out"}
+        </Button>
+      </header>
+      <div className="authenticated-shell__workspace">
+        <WorkspaceErrorBoundary onRetry={() => window.location.reload()} onLogout={() => void logout()}>
+          {children}
+        </WorkspaceErrorBoundary>
+      </div>
+    </section>
+  );
+}
+
+export class WorkspaceErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void; onLogout: () => void }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="app-error" role="alert">
+        <span>The map workspace failed to load.</span>
+        <div>
+          <Button variant="primary" onClick={this.props.onRetry}>
+            Retry
+          </Button>
+          <Button variant="ghost" onClick={this.props.onLogout}>
+            Log out
+          </Button>
+        </div>
+      </div>
+    );
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -117,17 +198,11 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
         </div>
         <label className="field">
           <span className="field__label">Username</span>
-          <input className="input" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+          <input className="input" autoComplete="username" autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
         </label>
         <label className="field">
           <span className="field__label">Password</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
+          <input className="input" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>
         {error ? <div className="banner banner--error">{error}</div> : null}
         <Button type="submit" variant="primary" disabled={submitting || username.trim() === "" || password === ""}>

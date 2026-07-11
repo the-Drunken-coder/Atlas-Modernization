@@ -20,39 +20,26 @@ const (
 
 type schemaBundle map[string]any
 
-var exampleSets = []struct {
-	pattern    string
-	definition string
-}{
-	{pattern: "entities/*.json", definition: "EntityBlob"},
-	{pattern: "tasks/*.json", definition: "TaskBlob"},
-	{pattern: "objects/*.json", definition: "ObjectBlob"},
-	{pattern: "errors/*.json", definition: "ErrorResponse"},
-	{pattern: "feed/events/*.json", definition: "FeedEvent"},
-	{pattern: "feed/messages/*.json", definition: "FeedClientMessage"},
-	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage"},
-	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest"},
-	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest"},
-	{pattern: "requests/task-create.json", definition: "TaskCreateRequest"},
-	{pattern: "requests/task-update.json", definition: "TaskUpdateRequest"},
-	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest"},
-	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest"},
+type exampleSet struct {
+	pattern            string
+	definition         string
+	semanticValidation func(any) []string
 }
 
-var exampleValidators = map[string]func(any) []string{
-	"EntityBlob":           protocolvalidator.ValidateEntityBlob,
-	"TaskBlob":             protocolvalidator.ValidateTaskBlob,
-	"ObjectBlob":           protocolvalidator.ValidateObjectBlob,
-	"ErrorResponse":        protocolvalidator.ValidateErrorResponse,
-	"FeedEvent":            protocolvalidator.ValidateFeedEvent,
-	"FeedClientMessage":    protocolvalidator.ValidateFeedClientMessage,
-	"FeedHandshakeMessage": protocolvalidator.ValidateFeedHandshakeMessage,
-	"EntityCreateRequest":  protocolvalidator.ValidateEntityCreateRequest,
-	"EntityUpdateRequest":  protocolvalidator.ValidateEntityUpdateRequest,
-	"TaskCreateRequest":    protocolvalidator.ValidateTaskCreateRequest,
-	"TaskUpdateRequest":    protocolvalidator.ValidateTaskUpdateRequest,
-	"ObjectCreateRequest":  protocolvalidator.ValidateObjectCreateRequest,
-	"ObjectUpdateRequest":  protocolvalidator.ValidateObjectUpdateRequest,
+var exampleSets = []exampleSet{
+	{pattern: "entities/*.json", definition: "EntityBlob", semanticValidation: protocolvalidator.ValidateEntityBlob},
+	{pattern: "tasks/*.json", definition: "TaskBlob", semanticValidation: protocolvalidator.ValidateTaskBlob},
+	{pattern: "objects/*.json", definition: "ObjectBlob", semanticValidation: protocolvalidator.ValidateObjectBlob},
+	{pattern: "errors/*.json", definition: "ErrorResponse", semanticValidation: protocolvalidator.ValidateErrorResponse},
+	{pattern: "feed/events/*.json", definition: "FeedEvent", semanticValidation: protocolvalidator.ValidateFeedEvent},
+	{pattern: "feed/messages/*.json", definition: "FeedClientMessage", semanticValidation: protocolvalidator.ValidateFeedClientMessage},
+	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage", semanticValidation: protocolvalidator.ValidateFeedHandshakeMessage},
+	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest", semanticValidation: protocolvalidator.ValidateEntityCreateRequest},
+	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest", semanticValidation: protocolvalidator.ValidateEntityUpdateRequest},
+	{pattern: "requests/task-create.json", definition: "TaskCreateRequest", semanticValidation: protocolvalidator.ValidateTaskCreateRequest},
+	{pattern: "requests/task-update.json", definition: "TaskUpdateRequest", semanticValidation: protocolvalidator.ValidateTaskUpdateRequest},
+	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest", semanticValidation: protocolvalidator.ValidateObjectCreateRequest},
+	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest", semanticValidation: protocolvalidator.ValidateObjectUpdateRequest},
 }
 
 func ValidateExamples(root string) error {
@@ -66,18 +53,19 @@ func ValidateExamples(root string) error {
 	}
 
 	for _, set := range exampleSets {
-		if err := validateExampleSet(root, compiler, set.pattern, set.definition); err != nil {
+		if err := validateExampleSet(root, compiler, set); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateExampleSet(root string, compiler *jsonschema.Compiler, pattern, definition string) error {
-	schema, err := compiler.Compile(schemaDefinitionLocation(definition))
+func validateExampleSet(root string, compiler *jsonschema.Compiler, set exampleSet) error {
+	schema, err := compiler.Compile(schemaDefinitionLocation(set.definition))
 	if err != nil {
-		return fmt.Errorf("compile %s: %w", definition, err)
+		return fmt.Errorf("compile %s: %w", set.definition, err)
 	}
+	pattern := set.pattern
 	if !strings.ContainsAny(pattern, "*?[") && filepath.Ext(pattern) == "" {
 		pattern = filepath.Join(pattern, "*.json")
 	}
@@ -100,11 +88,11 @@ func validateExampleSet(root string, compiler *jsonschema.Compiler, pattern, def
 			return fmt.Errorf("%s: decode JSON: %w", displayPath(root, example), err)
 		}
 		if err := schema.Validate(value); err != nil {
-			return fmt.Errorf("%s: validate %s: %w", displayPath(root, example), definition, err)
+			return fmt.Errorf("%s: validate %s: %w", displayPath(root, example), set.definition, err)
 		}
-		if validate, ok := exampleValidators[definition]; ok {
-			if errors := validate(value); len(errors) > 0 {
-				return fmt.Errorf("%s: validate %s semantics: %s", displayPath(root, example), definition, strings.Join(errors, "; "))
+		if set.semanticValidation != nil {
+			if errors := set.semanticValidation(value); len(errors) > 0 {
+				return fmt.Errorf("%s: validate %s semantics: %s", displayPath(root, example), set.definition, strings.Join(errors, "; "))
 			}
 		}
 	}

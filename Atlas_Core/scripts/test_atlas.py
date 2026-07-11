@@ -135,7 +135,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ],
         )
 
-    def test_compose_up_command_uses_production_tunnel_profile(self) -> None:
+    def test_compose_up_command_uses_production_tunnel_overlay(self) -> None:
         self.assertEqual(
             compose_up_command(production=True, tunnel=True),
             [
@@ -143,11 +143,26 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 "compose",
                 "-f",
                 "docker-compose.production.yml",
-                "--profile",
-                "tunnel",
+                "-f",
+                "docker-compose.tunnel.yml",
                 "up",
                 "-d",
                 "--build",
+            ],
+        )
+
+    def test_compose_down_command_uses_production_tunnel_overlay(self) -> None:
+        self.assertEqual(
+            compose_down_command(production=True, tunnel=True),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.production.yml",
+                "-f",
+                "docker-compose.tunnel.yml",
+                "down",
+                "--remove-orphans",
             ],
         )
 

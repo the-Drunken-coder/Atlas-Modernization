@@ -3,6 +3,7 @@ import type {
   EntityResource,
   FeedEvent,
   JSONValue,
+  ObjectResponse,
   ObjectResource,
   ResourceType,
   TaskDeleteEvent,
@@ -148,16 +149,16 @@ export type SyncSnapshot = {
 export type ChangedSinceResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
-  objects: ObjectResource[];
-  deleted_entities?: DeletedResource[];
-  deleted_tasks?: DeletedResource[];
-  deleted_objects?: DeletedResource[];
-  has_more_entities?: boolean;
-  has_more_tasks?: boolean;
-  has_more_objects?: boolean;
-  has_more_deleted_entities?: boolean;
-  has_more_deleted_tasks?: boolean;
-  has_more_deleted_objects?: boolean;
+  objects: ObjectResponse[];
+  deleted_entities?: DeletedResourceByType["entity"][];
+  deleted_tasks?: DeletedResourceByType["task"][];
+  deleted_objects?: DeletedResourceByType["object"][];
+  has_more_entities: boolean;
+  has_more_tasks: boolean;
+  has_more_objects: boolean;
+  has_more_deleted_entities: boolean;
+  has_more_deleted_tasks: boolean;
+  has_more_deleted_objects: boolean;
   next_entity_cursor?: string;
   next_task_cursor?: string;
   next_object_cursor?: string;
@@ -165,27 +166,36 @@ export type ChangedSinceResponse = {
   next_deleted_task_cursor?: string;
   next_deleted_object_cursor?: string;
   version: number;
+  timestamp?: string;
 };
 
 export type FullDatasetResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
-  objects: ObjectResource[];
+  objects: ObjectResponse[];
   version: number;
-  has_more_entities?: boolean;
-  has_more_tasks?: boolean;
-  has_more_objects?: boolean;
+  has_more_entities: boolean;
+  has_more_tasks: boolean;
+  has_more_objects: boolean;
   next_entity_cursor?: string;
   next_task_cursor?: string;
   next_object_cursor?: string;
 };
 
-export type DeletedResource = {
+type DeletedResourceBase<TType extends ResourceType> = {
   id: string;
-  type: ResourceType;
+  type: TType;
   version: number;
-  entity_id?: string | null;
+  deleted_at?: string;
 };
+
+type DeletedResourceByType = {
+  entity: DeletedResourceBase<"entity">;
+  task: DeletedResourceBase<"task"> & { entity_id?: string | null };
+  object: DeletedResourceBase<"object">;
+};
+
+export type DeletedResource = DeletedResourceByType[ResourceType];
 
 export type ResourceByType = {
   entity: EntityResource;
@@ -243,23 +253,41 @@ export type CacheEntry<T> = {
 export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatchEvent[] {
   const events: ChangedSinceWatchEvent[] = [
     ...(response.entities ?? []).map(
-      (entity): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "entity", id: entity.entity_id, version: entity.metadata.version, resource: entity })
+      (entity): ChangedSinceWatchEvent => ({
+        event: "recovered",
+        resource_type: "entity",
+        id: entity.entity_id,
+        version: entity.metadata.version,
+        resource: entity
+      })
     ),
     ...(response.tasks ?? []).map(
       (task): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task })
     ),
     ...(response.objects ?? []).map(
-      (object): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "object", id: object.object_id, version: object.metadata.version, resource: object })
+      (object): ChangedSinceWatchEvent => ({
+        event: "recovered",
+        resource_type: "object",
+        id: object.object_id,
+        version: object.metadata.version,
+        resource: object
+      })
     ),
-    ...(response.deleted_entities ?? []).map((item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "entity", id: item.id, version: item.version })),
-    ...(response.deleted_tasks ?? []).map((item): TaskDeleteEvent => ({
-      event: "delete",
-      resource_type: "task",
-      id: item.id,
-      version: item.version,
-      entity_id: item.entity_id
-    })),
-    ...(response.deleted_objects ?? []).map((item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "object", id: item.id, version: item.version }))
+    ...(response.deleted_entities ?? []).map(
+      (item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "entity", id: item.id, version: item.version })
+    ),
+    ...(response.deleted_tasks ?? []).map(
+      (item): TaskDeleteEvent => ({
+        event: "delete",
+        resource_type: "task",
+        id: item.id,
+        version: item.version,
+        entity_id: item.entity_id
+      })
+    ),
+    ...(response.deleted_objects ?? []).map(
+      (item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "object", id: item.id, version: item.version })
+    )
   ];
   return events.sort((left, right) => left.version - right.version);
 }

@@ -86,6 +86,27 @@ func TestInitializeStorageDisposableDevelopmentAllowsUnavailableStorage(t *testi
 	}
 }
 
+func TestNewHTTPServerRetainsOrdinaryRequestProtection(t *testing.T) {
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	server := newHTTPServer(":1234", handler)
+
+	if server.Addr != ":1234" || server.Handler == nil {
+		t.Fatalf("server address/handler = %q %T, want :1234 and supplied handler", server.Addr, server.Handler)
+	}
+	if server.ReadHeaderTimeout != 10*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %s, want 10s", server.ReadHeaderTimeout)
+	}
+	if server.ReadTimeout != 30*time.Second {
+		t.Fatalf("ReadTimeout = %s, want 30s", server.ReadTimeout)
+	}
+	if server.WriteTimeout != 30*time.Second {
+		t.Fatalf("WriteTimeout = %s, want 30s", server.WriteTimeout)
+	}
+	if server.IdleTimeout != 120*time.Second {
+		t.Fatalf("IdleTimeout = %s, want 2m", server.IdleTimeout)
+	}
+}
+
 func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) {
 	origins := []string{"http://localhost:3000"}
 

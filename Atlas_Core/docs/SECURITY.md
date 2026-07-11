@@ -1,6 +1,6 @@
 # Security Considerations
 
-_Revision: 2026-05-29_
+_Revision: 2026-07-10_
 
 ## Cross-Origin Resource Sharing (CORS)
 
@@ -52,10 +52,45 @@ Broad credentialed-CORS wildcards such as `*`, `https://*`, `https://*.pages.dev
 
 - `AllowCredentials` is enabled so trusted browser origins can send Core-owned session cookies.
 - Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
-- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID`
+- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID` (structured-log correlation)
 - Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
 Operators should prefer exact trusted origins. Use constrained origin patterns only for deployment systems that generate per-branch hostnames. Unsafe cookie-authenticated browser methods are rejected unless the `Origin` header matches configured CORS origins or constrained origin patterns.
+
+## Trusted Proxy Client IPs
+
+Browser-admin login failures are limited by both username and client IP: eight
+failures within 15 minutes throttle that key until the window expires. Forwarded
+client-IP headers are therefore security-sensitive.
+
+`TRUSTED_PROXY_CIDRS` is an environment-only, comma-separated list of the
+immediate reverse-proxy peers allowed to supply those headers. It defaults to an
+empty list. For a direct request, Core always uses the socket peer and ignores
+`CF-Connecting-IP` and `X-Forwarded-For`, so an arbitrary client cannot choose
+its throttle bucket.
+
+For a configured trusted peer, Core prefers a single valid
+`CF-Connecting-IP`. If that header is absent, Core walks `X-Forwarded-For` from
+right to left, skipping configured trusted hops. A missing, malformed, or
+ambiguous authoritative forwarded identity produces no IP bucket instead of
+falling back to the shared proxy address; the username throttle remains active.
+This prevents malformed proxy traffic from recreating a proxy-wide admin
+lockout.
+
+Cloudflare Tunnel origins see the local `cloudflared` process IP, and Cloudflare
+recommends `CF-Connecting-IP` as the consistent single-IP HTTP header. The
+bundled tunnel Compose files therefore put only Core and `cloudflared` on a
+dedicated `172.30.0.0/29` ingress bridge, pin `cloudflared` to `172.30.0.3`, and
+trust only `172.30.0.3/32`. Do not configure Cloudflare edge ranges or a broad
+Docker subnet: neither identifies the immediate trusted peer narrowly enough.
+Keep Cloudflare's visitor-IP headers enabled. See Cloudflare's
+[request-header reference](https://developers.cloudflare.com/fundamentals/reference/http-headers/)
+and [Tunnel source-IP behavior](https://developers.cloudflare.com/cloudflare-one/networks/connectivity-options/).
+
+Any peer in `TRUSTED_PROXY_CIDRS` can choose the resolved client identity. A
+custom proxy must therefore overwrite `CF-Connecting-IP`, or remove it and
+append the client address it observed to `X-Forwarded-For`; never trust a peer
+that passes both headers through unchanged.
 
 ## Authentication
 
@@ -109,7 +144,7 @@ The process refuses to start when:
 
 ### Public unauthenticated paths
 
-`/health`, `/readiness`, `/resources`, and `OPTIONS` skip protected-route auth. `/feed` also bypasses the shared protected-route middleware because websocket clients may need first-message API-key auth, but the feed handler still requires either a preauthenticated API key, a trusted browser session, or a first auth frame when API-key auth is enabled. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
+`/health`, `/readiness`, and `OPTIONS` skip protected-route auth. `/resources` requires an API key or admin session because it performs per-request CPU/runtime inspection and exposes host/process capacity details. `/feed` also bypasses the shared protected-route middleware because websocket clients may need first-message API-key auth, but the feed handler still requires either a preauthenticated API key, a trusted browser session, or a first auth frame when API-key auth is enabled. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
 
 ## Configuration Checklist
 
@@ -119,4 +154,5 @@ The process refuses to start when:
 - [ ] Set `ENABLE_API_AUTH=true` and a strong `API_AUTH_KEY` for production.
 - [ ] Override the development `admin` / `password` seed with `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE`.
 - [ ] Keep `ATLAS_ADMIN_COOKIE_SAMESITE=none` for cross-site UI/Core deployments, or set `lax` only for same-site deployments.
+- [ ] Leave `TRUSTED_PROXY_CIDRS` empty for direct deployments; behind a custom proxy, trust only its exact immediate peer `/32` or `/128`.
 - [ ] Audit environment variables and settings file before release.

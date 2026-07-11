@@ -599,6 +599,96 @@ func TestEntityCheckin(t *testing.T) {
 	t.Logf("Entity %s checked in and left as artifact", entityID)
 }
 
+func TestEntityCheckinInvalidCursorDoesNotConsumeIfMatch(t *testing.T) {
+	SkipIfSystemNotAvailable(t)
+
+	client := NewAPIClient()
+	ctx := context.Background()
+	entityID := fmt.Sprintf("%s-checkin-cursor", TestArtifactPrefix())
+
+	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
+		"entity_id":   entityID,
+		"entity_type": "asset",
+		"components": map[string]interface{}{
+			"status": map[string]interface{}{
+				"value":       "idle",
+				"last_update": "2026-07-10T12:00:00Z",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create invalid-cursor check-in fixture: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (invalid cursor fixture)")
+	initialETag := requireETag(t, resp)
+	drainClose(resp)
+
+	checkinBody := map[string]interface{}{
+		"status":    "online",
+		"latitude":  38.8977,
+		"longitude": -77.0365,
+	}
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPost,
+		"/entities/"+entityID+"/checkin?task_cursor=not-base64",
+		checkinBody,
+		map[string]string{"If-Match": initialETag},
+	)
+	if err != nil {
+		t.Fatalf("invalid-cursor check-in: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusBadRequest, "POST /entities/{id}/checkin (invalid cursor)")
+	var errorBody map[string]interface{}
+	if err := ParseResponse(resp, &errorBody); err != nil {
+		t.Fatalf("parse invalid-cursor response: %v", err)
+	}
+	if errorBody["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("invalid-cursor error_code = %v, want VALIDATION_ERROR", errorBody["error_code"])
+	}
+
+	resp, err = client.Get(ctx, "/entities/"+entityID)
+	if err != nil {
+		t.Fatalf("get entity after invalid-cursor check-in: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "GET /entities/{id} after invalid cursor")
+	if got := requireETag(t, resp); got != initialETag {
+		t.Fatalf("invalid-cursor check-in changed ETag from %q to %q", initialETag, got)
+	}
+	var unchanged map[string]interface{}
+	if err := ParseResponse(resp, &unchanged); err != nil {
+		t.Fatalf("parse entity after invalid-cursor check-in: %v", err)
+	}
+	components, ok := unchanged["components"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("entity components = %T, want object", unchanged["components"])
+	}
+	if _, exists := components["heartbeat"]; exists {
+		t.Fatalf("invalid-cursor check-in wrote heartbeat: %#v", components["heartbeat"])
+	}
+	if _, exists := components["telemetry"]; exists {
+		t.Fatalf("invalid-cursor check-in wrote telemetry: %#v", components["telemetry"])
+	}
+
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPost,
+		"/entities/"+entityID+"/checkin",
+		checkinBody,
+		map[string]string{"If-Match": initialETag},
+	)
+	if err != nil {
+		t.Fatalf("retry check-in with original If-Match: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "POST /entities/{id}/checkin retry")
+	if got := requireETag(t, resp); got == initialETag {
+		t.Fatalf("successful retry kept stale ETag %q", got)
+	}
+	drainClose(resp)
+}
+
 // TestEntityListPagination tests entity listing with pagination
 func TestEntityListPagination(t *testing.T) {
 	SkipIfSystemNotAvailable(t)

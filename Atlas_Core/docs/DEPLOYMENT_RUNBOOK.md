@@ -36,6 +36,16 @@ python3 Atlas_Core/scripts/atlas.py --production
 
 Production Compose sets `DATABASE_RECREATE_ON_STARTUP=false`. The production image refuses to start if destructive mode is enabled, API auth is disabled, the bootstrap API key is missing/placeholder, or neither admin password source is set.
 
+This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
+Dockerfile `production` target, omits development bind mounts and settings
+files, binds the API to `127.0.0.1:8000`, and requires API-key auth for API
+routes. `API_AUTH_KEY` is the required strong bootstrap machine key; browser
+admins can create additional managed machine keys after sign-in. Health,
+readiness, and the `/feed` middleware bypass remain outside protected-route
+middleware; the feed handler performs its own API-key or browser-session
+authentication. The host/process `/resources` diagnostic requires a protected
+API key or admin session.
+
 For a public edge, add the tunnel values and start the same production stack with its tunnel profile:
 
 ```bash
@@ -44,12 +54,49 @@ export ATLAS_TUNNEL_HOSTNAME='atlascommandapi.org'
 python3 Atlas_Core/scripts/atlas.py --production --tunnel
 ```
 
-The production Core environment should allow only the intended Pages origins:
+`ATLAS_TUNNEL_HOSTNAME` defaults to `atlascommandapi.org`. The tunnel container
+forwards traffic to `http://api:8000` over a dedicated `172.30.0.0/29` ingress
+bridge shared only with Core. Compose pins Core to `172.30.0.2`, pins
+`cloudflared` to `172.30.0.3`, and configures Core to trust only the tunnel
+peer's `172.30.0.3/32` client-IP headers. Direct clients remain keyed by their
+socket address and cannot spoof `CF-Connecting-IP` or `X-Forwarded-For`.
+For the browser interface, `api.atlasinterface.com` is the default Core URL and
+points at the same tunnel service as `atlascommandapi.org`.
+
+`atlas.py` recreates the Compose containers and networks during a managed
+restart. When upgrading a host with direct Compose commands, run the documented
+`down --remove-orphans` command with both Compose files before starting the
+tunnel so Docker can create the dedicated ingress bridge. If `172.30.0.0/29`
+conflicts with a host
+route, change the subnet, the two static service addresses, and
+`TRUSTED_PROXY_CIDRS` together; the trusted value must remain the exact
+`cloudflared` `/32`.
+
+For a non-Compose reverse proxy, leave `TRUSTED_PROXY_CIDRS` empty unless Core's
+socket peer is that proxy. Then configure only the exact peer `/32` or `/128`.
+The proxy must overwrite `CF-Connecting-IP`, or remove it and append its
+observed client to `X-Forwarded-For`; passing client-supplied values through is
+unsafe.
+Never use Cloudflare's public edge ranges for Tunnel: Core connects to the local
+`cloudflared` process, not directly to the edge.
+
+The production Core environment should allow the Pages origins that can call
+cookie-authenticated admin/resource routes:
 
 ```bash
 CORS_ORIGINS=https://atlasinterface.com
 CORS_ORIGIN_PATTERNS=https://*.atlas-je0.pages.dev
 ```
+
+## Readiness Policy
+
+Use `/health` for process liveness and `/readiness` for traffic admission:
+
+- HTTP `200` with `healthy` means the database and configured MinIO bucket are reachable.
+- HTTP `200` with `degraded` is reserved for an intentionally storage-unconfigured local or DB-only process.
+- HTTP `503` with `unhealthy` means the database is unavailable or configured storage could not be initialized, reached, or verified. A missing configured bucket is also unhealthy because object operations cannot succeed.
+
+Do not route production traffic while readiness is `503`. Inspect the API and MinIO logs, confirm `MINIO_ENDPOINT`, credentials, network reachability, and `MINIO_BUCKET`, then restore MinIO or its bucket. Readiness returns to `200` after the configured bucket check succeeds. In recreate mode, a storage failure during bucket clearing remains startup-fatal so an empty database is never served alongside stale blobs.
 
 ## Pre-deploy backup
 
@@ -205,9 +252,32 @@ mc alias remove atlas-production
 
 ## Logs and shutdown
 
+Core accepts an existing `X-Request-ID` and includes it as `request_id` on structured request and request-scoped error logs; otherwise it generates one. Handler error-envelope 4xx diagnostics use warning severity, while 5xx error envelopes and panic recovery use error severity. Readiness dependency warnings remain warning-level probe diagnostics even when readiness is `503`. Use `request_id` to follow one request across access and failure records; `error_id` identifies one handler error response.
+
+Production logs:
+
 ```bash
 docker compose -f Atlas_Core/docker/docker-compose.production.yml logs -f api postgres minio
+```
+
+Production tunnel logs:
+
+```bash
+docker compose -f Atlas_Core/docker/docker-compose.production.yml \
+  -f Atlas_Core/docker/docker-compose.tunnel.yml logs -f api cloudflared
+```
+
+Stop containers without deleting volumes:
+
+```bash
 docker compose -f Atlas_Core/docker/docker-compose.production.yml down --remove-orphans
+```
+
+Stop a production tunnel deployment and remove its dedicated ingress network:
+
+```bash
+docker compose -f Atlas_Core/docker/docker-compose.production.yml \
+  -f Atlas_Core/docker/docker-compose.tunnel.yml down --remove-orphans
 ```
 
 `down` preserves named volumes. The following command destroys the production database, all `admin_records`, migration history, and the MinIO bucket volume; it is not a rollback mechanism:

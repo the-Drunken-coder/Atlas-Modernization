@@ -65,7 +65,7 @@ type cpuSnapshot struct {
 
 // Resources handles GET /resources with lightweight host and process usage metrics.
 func (h *Handler) Resources(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, collectResources(r.Context(), time.Now().UTC(), "/"))
+	writeJSON(w, r, http.StatusOK, collectResources(r.Context(), time.Now().UTC(), "/"))
 }
 
 // collectResources assembles a host-level process and machine usage snapshot.

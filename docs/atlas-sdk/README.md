@@ -1,10 +1,10 @@
 # Atlas SDK
 
-The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=26` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
+The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=24` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
 
 The SDK is the preferred client path for UI code, asset-side services, and tools. Direct API calls remain acceptable for small tools and non-TypeScript services, but the SDK/CLI should be the default integration surface.
 
-**Sole consumer:** Atlas currently has one developer/operator. The package carries no compatibility promise; breaking changes are preferred over shims. The SDK keeps lockstep upgrades safe by comparing its generated `ATLAS_PROTOCOL_REVISION` with Core over `GET /protocol/revision` and the feed `hello` frame.
+**Sole consumer:** Atlas currently has one developer/operator. The package carries no compatibility promise; breaking changes are preferred over shims. The SDK checks its generated `ATLAS_PROTOCOL_REVISION` against Core over `GET /protocol/revision` and the feed `hello` frame, then validates inbound resource and feed payloads before they can reach cache state.
 
 ## Design goals
 
@@ -50,6 +50,7 @@ Rules that make this safe:
 
 - **Always async.** Every read returns a Promise even when served from cache, so the two paths are indistinguishable to callers except in speed.
 - **Degraded fallthrough.** The engine tracks connection state and its last confirmed global version. If the feed is disconnected or a version gap is unreconciled, the engine marks itself degraded and reads fall through to the API until it catches up. The cache only answers when it is entitled to.
+- **Validated inbound state.** HTTP resources, full and changed-since pages, feed handshakes, and feed events pass generated Atlas Protocol predicates plus narrow envelope and ID/version-coherence checks before cache mutation. A malformed sync/feed payload leaves cached state untouched and marks a running sync degraded.
 - **An update path is required.** A runtime with neither a WebSocket implementation nor a positive polling interval remains degraded after hydration, so covered point reads continue to call Core instead of trusting a frozen cache.
 - **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state.
 - **Plain returns + sync status.** Functions return plain data (no metadata envelope). Observability currently comes from `client.sync.status()`; read-source debug hooks are deferred until a real caller needs them.
@@ -103,7 +104,7 @@ The SDK ships a CLI (`atlas entities get <id>`, `atlas tasks create <json>`, JSO
 
 The language-neutral contract remains Atlas Protocol plus the change-feed consumption rules. A future Python SDK should be a port of that contract, not a new design.
 
-Local package commands are `npm ci`, `npm run build`, `npm test` for Node plus browser tests, and `npm run test:bin` for the CLI smoke.
+Local package commands are `npm ci`, `npm run lint`, `npm run format:check -- --since=origin/main`, `npm run build`, `npm test` for Node plus browser tests, and `npm run test:bin` for the CLI smoke. CI also runs `npm audit --audit-level=high` against the complete dependency tree.
 
 ## Auth
 

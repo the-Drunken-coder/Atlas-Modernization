@@ -25,6 +25,8 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
+const objectTransferIdleTimeout = 30 * time.Second
+
 func atlasCORSOptions(allowedOrigins []string, allowedOriginPatterns []string) cors.Options {
 	return cors.Options{
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -79,6 +81,17 @@ func initializeStorage(ctx context.Context, cfg *config.Config) (*storage.Client
 		}
 	}
 	return client, nil
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 }
 
 func main() {
@@ -185,7 +198,7 @@ func main() {
 	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.RequestID)
 	r.Use(custommiddleware.RequestLogger(logger))
-	r.Use(middleware.Recoverer)
+	r.Use(custommiddleware.Recoverer)
 	r.Use(middleware.Compress(5))
 
 	// Add CORS
@@ -242,26 +255,20 @@ func main() {
 	// Object routes
 	r.Get("/objects", handler.ListObjects)
 	r.Post("/objects", handler.CreateObject)
-	r.Post("/objects/upload", handler.UploadObject)
+	transferTimeout := custommiddleware.TransferIdleTimeout(objectTransferIdleTimeout)
+	r.With(transferTimeout).Post("/objects/upload", handler.UploadObject)
 	r.Get("/objects/{object_id}", handler.GetObject)
 	r.Patch("/objects/{object_id}", handler.UpdateObject)
 	r.Delete("/objects/{object_id}", handler.DeleteObject)
-	r.Get("/objects/{object_id}/download", handler.DownloadObject)
-	r.Get("/objects/{object_id}/view", handler.ViewObject)
+	r.With(transferTimeout).Get("/objects/{object_id}/download", handler.DownloadObject)
+	r.With(transferTimeout).Get("/objects/{object_id}/view", handler.ViewObject)
 
 	// Query routes
 	r.Get("/queries/full", handler.GetFullDataset)
 	r.Get("/queries/changed-since", handler.GetChangedSince)
 
 	// Create server
-	server := &http.Server{
-		Addr:              ":" + cfg.ServerPort,
-		Handler:           r,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
+	server := newHTTPServer(":"+cfg.ServerPort, r)
 
 	// Start server in goroutine
 	go func() {

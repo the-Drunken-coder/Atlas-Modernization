@@ -20,6 +20,11 @@ type cursorListPageOptions[T any] struct {
 }
 
 func readCursorListPage[T any](ctx context.Context, pool *pgxpool.Pool, opts cursorListPageOptions[T]) (*ListPage[T], error) {
+	parsedCursor, err := parseQueryCursor(opts.cursor, opts.cursorLabel)
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
 		AccessMode: pgx.ReadOnly,
@@ -38,10 +43,6 @@ func readCursorListPage[T any](ctx context.Context, pool *pgxpool.Pool, opts cur
 		return nil, fmt.Errorf("read %s snapshot timestamp: %w", opts.operation, err)
 	}
 
-	parsedCursor, err := parseQueryCursor(opts.cursor, opts.cursorLabel)
-	if err != nil {
-		return nil, err
-	}
 	snapshotUpperBound, continuation, err := continuationUpperBound(txUpperBound, parsedCursor)
 	if err != nil {
 		return nil, err

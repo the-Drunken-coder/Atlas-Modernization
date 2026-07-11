@@ -24,7 +24,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 - Events are fat: each frame carries event type, resource type, global `version`, resource ID, and the full serialized resource when present.
 - Deletes are tombstones. Task delete tombstones may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
 - Object metadata flows over the feed; object content is never pushed.
-- Shapes are authored in JSON Schema and generated into Go and TypeScript.
+- Shapes are authored in JSON Schema, structurally checked against the authored Go API, and generated into TypeScript and Go validators.
 - The envelope is flat:
 
   ```json

@@ -34,44 +34,6 @@ var compiled struct {
 	err    error
 }
 
-var schemaDefinitions = []string{
-	"EntityBlob",
-	"TaskBlob",
-	"ObjectBlob",
-	"EntityResource",
-	"TaskResource",
-	"ObjectResource",
-	"ErrorResponse",
-	"EntityCreateRequest",
-	"EntityUpdateRequest",
-	"TaskCreateRequest",
-	"TaskUpdateRequest",
-	"ObjectCreateRequest",
-	"ObjectUpdateRequest",
-	"FeedEvent",
-	"FeedAuthMessage",
-	"FeedSubscribeMessage",
-	"FeedUnsubscribeMessage",
-	"FeedClientMessage",
-	"FeedHandshakeMessage",
-	"EntityComponents",
-	"TaskComponents",
-	"CommandComponent",
-	"TaskParametersComponent",
-	"TaskProgressComponent",
-	"TaskCatalogComponent",
-	"MediaRefsComponent",
-	"MilViewComponent",
-	"HealthComponent",
-	"SensorRefsComponent",
-	"CommunicationsComponent",
-	"TaskQueueComponent",
-	"StatusComponent",
-	"HeartbeatComponent",
-	"TelemetryComponent",
-	"GeometryComponent",
-}
-
 func ValidateEntityBlob(value any) []string {
 	return validate("EntityBlob", value)
 }
@@ -377,8 +339,17 @@ func loadSchema() (*compiledSchema, error) {
 		return nil, err
 	}
 
-	schemas := make(map[string]*jsonschema.Schema, len(schemaDefinitions))
-	for _, definition := range schemaDefinitions {
+	defs, ok := bundle["$defs"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("schema bundle has no $defs object")
+	}
+	definitions := make([]string, 0, len(defs))
+	for definition := range defs {
+		definitions = append(definitions, definition)
+	}
+	sort.Strings(definitions)
+	schemas := make(map[string]*jsonschema.Schema, len(definitions))
+	for _, definition := range definitions {
 		schema, err := compiler.Compile(schemaDefinitionLocation(definition))
 		if err != nil {
 			return nil, fmt.Errorf("compile %s: %w", definition, err)

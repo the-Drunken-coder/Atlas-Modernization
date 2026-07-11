@@ -1,6 +1,7 @@
-import { ATLAS_PROTOCOL_REVISION, type FeedEvent, type FeedHandshakeMessage } from "./protocol.js";
+import { ATLAS_PROTOCOL_REVISION, type FeedEvent } from "./protocol.js";
 import { subscriptionMessage } from "./subscriptions.js";
 import type { AtlasSubscription, WebSocketCtor, WebSocketEventType, WebSocketLike, WebSocketListener } from "./types.js";
+import { isInboundFeedEvent, isInboundFeedHandshake } from "./validation.js";
 
 const WS_OPEN = 1;
 const WS_CLOSED = 3;
@@ -18,7 +19,10 @@ export type FeedConnectOptions = {
 };
 
 export class ProtocolMismatchError extends Error {
-  constructor(readonly expected: string, readonly actual: string) {
+  constructor(
+    readonly expected: string,
+    readonly actual: string
+  ) {
     super(`Atlas protocol revision mismatch: SDK ${expected}, Core ${actual}`);
     this.name = "ProtocolMismatchError";
   }
@@ -94,18 +98,15 @@ export class FeedConnectionManager {
         clearTimeout(timer);
         fn();
       };
-      const timer = setTimeout(
-        () => finish(() => reject(new Error("feed protocol hello timed out"))),
-        this.feedHandshakeTimeoutMs
-      );
+      const timer = setTimeout(() => finish(() => reject(new Error("feed protocol hello timed out"))), this.feedHandshakeTimeoutMs);
       const onMessage: WebSocketListener = (message) => {
         if (settled) {
           return;
         }
         try {
-          const data = JSON.parse(String(message.data)) as FeedHandshakeMessage;
-          if (data.type !== "hello") {
-            finish(() => reject(new Error("feed did not send protocol hello")));
+          const data: unknown = JSON.parse(String(message.data));
+          if (!isInboundFeedHandshake(data)) {
+            finish(() => reject(new TypeError("feed did not send a valid protocol hello")));
             return;
           }
           assertRevision(data.protocol_revision);
@@ -135,10 +136,7 @@ export class FeedConnectionManager {
           clearTimeout(timer);
           fn();
         };
-        const timer = setTimeout(
-          () => finish(() => reject(new Error("feed websocket open timed out"))),
-          this.feedHandshakeTimeoutMs
-        );
+        const timer = setTimeout(() => finish(() => reject(new Error("feed websocket open timed out"))), this.feedHandshakeTimeoutMs);
         const onOpen = () => finish(resolve);
         const onClose = () => finish(() => reject(new Error("feed websocket closed before opening")));
         const onError = () => finish(() => reject(new Error("feed websocket failed to open")));
@@ -182,19 +180,24 @@ export class FeedConnectionManager {
         return;
       }
       try {
-        const data = JSON.parse(String(message.data));
-        if (data.type === "hello") {
+        const data: unknown = JSON.parse(String(message.data));
+        if (isInboundFeedHandshake(data)) {
+          assertRevision(data.protocol_revision);
           return;
+        }
+        if (!isInboundFeedEvent(data)) {
+          throw new TypeError("feed sent an invalid event");
         }
         eventChain = eventChain.then(async () => {
           try {
-            await options.onEvent(data as FeedEvent);
+            await options.onEvent(data);
           } catch {
             reportEventError();
           }
         });
       } catch {
         reportEventError();
+        socket.close();
       }
     });
     socket.addEventListener("close", () => {
@@ -236,11 +239,7 @@ export function assertRevision(actual: string): void {
   }
 }
 
-function removeSocketListener(
-  socket: WebSocketLike,
-  type: WebSocketEventType,
-  listener: WebSocketListener
-): void {
+function removeSocketListener(socket: WebSocketLike, type: WebSocketEventType, listener: WebSocketListener): void {
   if (socket.removeEventListener) {
     socket.removeEventListener(type, listener);
     return;

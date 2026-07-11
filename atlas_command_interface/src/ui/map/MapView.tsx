@@ -6,7 +6,15 @@ import { CAMERA_EVENT_TAG, type MapCameraCommand } from "./map-camera.js";
 import { createEditingMarkers, type MapEditing } from "./map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "./map-layers.js";
 import { type MapSources } from "./map-sources.js";
-import { clearMarkers, createSymbolMarkerElement, symbolMarkerFeatures } from "./map-symbol-markers.js";
+import {
+  clearMarkers,
+  createSymbolMarkerElement,
+  symbolMarkerFeatures,
+  symbolMarkerPositionsEqual,
+  symbolMarkerPresentationsEqual,
+  updateSymbolMarkerElement,
+  type SymbolMarkerFeature
+} from "./map-symbol-markers.js";
 import { hoverSelectionTarget, reticleForVisibleTarget, targetBoxForEntityId, type MapReticleTarget } from "./map-targets.js";
 import { useMapCamera } from "./use-map-camera.js";
 import {
@@ -55,6 +63,12 @@ type MapViewProps = {
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
 };
 
+type SymbolMarkerEntry = {
+  marker: Marker;
+  element: HTMLButtonElement;
+  feature: SymbolMarkerFeature;
+};
+
 export function MapView({
   sources,
   styleId,
@@ -74,13 +88,14 @@ export function MapView({
   const mapRef = useRef<MlMap | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
+  const initialMapRef = useRef({ initialCenter, style, styleId });
   const currentStyleIdRef = useRef<string | undefined>(undefined);
   const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
   const fitWorldOnceRef = useRef(initialCenter !== undefined);
   const editMarkersRef = useRef<Marker[]>([]);
-  const symbolMarkersRef = useRef<Marker[]>([]);
+  const symbolMarkersRef = useRef<Map<string, SymbolMarkerEntry>>(new Map());
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
   const scrollLockedRef = useRef(false);
@@ -106,6 +121,26 @@ export function MapView({
   editingRef.current = editing;
   const zoomDragging = zoomOverlay !== null;
   const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
+  const mapActionsRef = useRef({
+    notifyUserGesture,
+    restoreReticleAtCurrentZoomPoint,
+    restoreReticleAtScreenPoint,
+    restoreReticleFromClientPoint,
+    setReticleState,
+    setZoomOverlayState,
+    suppressNextClick,
+    syncTargetReticle
+  });
+  mapActionsRef.current = {
+    notifyUserGesture,
+    restoreReticleAtCurrentZoomPoint,
+    restoreReticleAtScreenPoint,
+    restoreReticleFromClientPoint,
+    setReticleState,
+    setZoomOverlayState,
+    suppressNextClick,
+    syncTargetReticle
+  };
 
   useEffect(() => {
     reticleRef.current = reticle;
@@ -131,22 +166,23 @@ export function MapView({
     }
 
     let map: MlMap;
+    const initialMap = initialMapRef.current;
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: cloneStyle(style),
-        center: initialCenter ?? [0, 0],
-        zoom: initialCenter ? 11 : 0,
+        style: cloneStyle(initialMap.style),
+        center: initialMap.initialCenter ?? [0, 0],
+        zoom: initialMap.initialCenter ? 11 : 0,
         renderWorldCopies: false,
         dragRotate: false,
         pitchWithRotate: false,
         attributionControl: false,
         boxZoom: {
           boxZoomEnd: (zoomMap, start, end) => {
-            suppressNextClick();
-            restoreReticleAtScreenPoint(end);
-            setZoomOverlayState(null);
-            notifyUserGesture();
+            mapActionsRef.current.suppressNextClick();
+            mapActionsRef.current.restoreReticleAtScreenPoint(end);
+            mapActionsRef.current.setZoomOverlayState(null);
+            mapActionsRef.current.notifyUserGesture();
             zoomMap.fitScreenCoordinates(start, end, zoomMap.getBearing(), { linear: true });
           }
         }
@@ -157,7 +193,7 @@ export function MapView({
     }
 
     mapRef.current = map;
-    currentStyleIdRef.current = styleId;
+    currentStyleIdRef.current = initialMap.styleId;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -190,8 +226,8 @@ export function MapView({
     map.on("style.load", initializeLayers);
     if (map.isStyleLoaded()) initializeLayers();
     map.on("boxzoomcancel", () => {
-      restoreReticleAtCurrentZoomPoint();
-      setZoomOverlayState(null);
+      mapActionsRef.current.restoreReticleAtCurrentZoomPoint();
+      mapActionsRef.current.setZoomOverlayState(null);
     });
     map.on("error", (event) => {
       // Tile/style errors should not blank the operator picture. Keep overlays
@@ -215,9 +251,8 @@ export function MapView({
       setMapReady(false);
       resizeObserver.disconnect();
       clearMarkers(editMarkersRef.current);
-      clearMarkers(symbolMarkersRef.current);
+      clearSymbolMarkers(symbolMarkersRef.current);
       editMarkersRef.current = [];
-      symbolMarkersRef.current = [];
       scrollLockedRef.current = false;
       scrollLockedExternalReticleRef.current = false;
       cursorHandoffRef.current = null;
@@ -230,8 +265,7 @@ export function MapView({
       map.remove();
       mapRef.current = undefined;
     };
-    // The map is created once; props are synced via the effects below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Changing props are synchronized through refs and the effects below.
   }, [mapError]);
 
   // Sync basemap style while keeping the map camera and re-adding Atlas overlays.
@@ -278,6 +312,50 @@ export function MapView({
     }
   }, [sources]);
 
+  // Reconcile asset/track DOM markers before reticles read their boxes for this snapshot.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const markers = symbolMarkersRef.current;
+    const visibleIds = new Set<string>();
+
+    for (const feature of symbolMarkerFeatures(sources)) {
+      const entityId = feature.properties.entityId;
+      visibleIds.add(entityId);
+      const current = markers.get(entityId);
+      if (current) {
+        if (!symbolMarkerPositionsEqual(current.feature, feature)) current.marker.setLngLat(feature.geometry.coordinates);
+        if (!symbolMarkerPresentationsEqual(current.feature, feature)) updateSymbolMarkerElement(current.element, feature);
+        current.feature = feature;
+        continue;
+      }
+
+      const element = createSymbolMarkerElement(feature);
+      const marker = new Marker({ element, anchor: "center" }).setLngLat(feature.geometry.coordinates).addTo(map);
+      const entry: SymbolMarkerEntry = { marker, element, feature };
+      element.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = entry.feature;
+        handlersRef.current.onSelectEntity(current.properties.entityId);
+        handlersRef.current.onMapContextMenu({
+          lng: current.geometry.coordinates[0],
+          lat: current.geometry.coordinates[1],
+          x: event.clientX,
+          y: event.clientY
+        });
+      });
+      markers.set(entityId, entry);
+    }
+
+    for (const [entityId, entry] of markers) {
+      if (visibleIds.has(entityId)) continue;
+      entry.marker.remove();
+      markers.delete(entityId);
+    }
+  }, [sources, mapReady]);
+
   useEffect(() => {
     if (!zoomDragging) return;
 
@@ -298,16 +376,16 @@ export function MapView({
     };
 
     const finishZoomDrag = (event: globalThis.MouseEvent) => {
-      suppressNextClick();
-      restoreReticleFromClientPoint(event);
-      setZoomOverlayState(null);
+      mapActionsRef.current.suppressNextClick();
+      mapActionsRef.current.restoreReticleFromClientPoint(event);
+      mapActionsRef.current.setZoomOverlayState(null);
     };
 
     const cancelZoomDrag = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        suppressNextClick();
-        restoreReticleAtCurrentZoomPoint();
-        setZoomOverlayState(null);
+        mapActionsRef.current.suppressNextClick();
+        mapActionsRef.current.restoreReticleAtCurrentZoomPoint();
+        mapActionsRef.current.setZoomOverlayState(null);
       }
     };
 
@@ -330,7 +408,7 @@ export function MapView({
       const rect = mapCanvas.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
         cursorHandoffRef.current = null;
-        setReticleState(null);
+        mapActionsRef.current.setReticleState(null);
       }
     };
 
@@ -345,8 +423,9 @@ export function MapView({
     const entityId = reticle?.targetEntityId;
     if (!map || !mapReady || !entityId) return;
 
-    const syncTargetBox = () => syncTargetReticle(entityId);
+    const syncTargetBox = () => mapActionsRef.current.syncTargetReticle(entityId);
 
+    syncTargetBox();
     map.on("move", syncTargetBox);
     map.on("zoom", syncTargetBox);
     map.on("moveend", syncTargetBox);
@@ -401,36 +480,6 @@ export function MapView({
       map.off("moveend", syncFocusReticle);
     };
   }, [focusTarget, mapReady, scrollLocked, sources, zoomDragging]);
-
-  // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-
-    clearMarkers(symbolMarkersRef.current);
-    symbolMarkersRef.current = [];
-
-    for (const feature of symbolMarkerFeatures(sources)) {
-      const element = createSymbolMarkerElement(feature);
-      element.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        handlersRef.current.onSelectEntity(feature.properties.entityId);
-        handlersRef.current.onMapContextMenu({
-          lng: feature.geometry.coordinates[0],
-          lat: feature.geometry.coordinates[1],
-          x: event.clientX,
-          y: event.clientY
-        });
-      });
-      symbolMarkersRef.current.push(new Marker({ element, anchor: "center" }).setLngLat(feature.geometry.coordinates).addTo(map));
-    }
-
-    return () => {
-      clearMarkers(symbolMarkersRef.current);
-      symbolMarkersRef.current = [];
-    };
-  }, [sources, mapReady]);
 
   // Sync the editing overlay (live geometry + draggable handles).
   useEffect(() => {
@@ -529,11 +578,7 @@ export function MapView({
     handlersRef.current.onBackgroundClick?.();
   };
 
-  const visibleReticle = zoomOverlay
-    ? reticleFromTargetBox(boxFromDrag(zoomOverlay))
-    : scrollLocked
-      ? reticle
-      : (reticle ?? previewReticle ?? focusReticle);
+  const visibleReticle = zoomOverlay ? reticleFromTargetBox(boxFromDrag(zoomOverlay)) : scrollLocked ? reticle : (reticle ?? previewReticle ?? focusReticle);
 
   activeReticleRef.current = visibleReticle;
 
@@ -649,4 +694,9 @@ export function MapView({
       ) : null}
     </div>
   );
+}
+
+function clearSymbolMarkers(markers: Map<string, SymbolMarkerEntry>): void {
+  for (const entry of markers.values()) entry.marker.remove();
+  markers.clear();
 }

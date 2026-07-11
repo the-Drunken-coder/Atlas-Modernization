@@ -178,7 +178,7 @@ func (a *TaskActions) List(ctx context.Context, limit int, cursor string) (*List
 		operation:   "task list",
 		cursorName:  "task",
 		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.Task, bool, error) {
-			return queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+			return queryTasks(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
 		},
 		rowCursor: func(task *models.Task) (time.Time, string) {
 			return task.CreatedAt, task.TaskID

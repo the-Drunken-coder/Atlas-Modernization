@@ -5,7 +5,10 @@ package middleware_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +16,7 @@ import (
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 )
 
@@ -33,8 +37,8 @@ func TestIsPublicUnauthenticatedPathNormalizesTrailingSlashes(t *testing.T) {
 		"/health///":                 true,
 		"/readiness":                 true,
 		"/readiness/":                true,
-		"/resources":                 true,
-		"/resources/":                true,
+		"/resources":                 false,
+		"/resources/":                false,
 		"/":                          false,
 		"/entities/":                 false,
 		"/health/live":               false,
@@ -148,6 +152,86 @@ func TestRequestLoggerLogsMethodPathStatusAndResponseSize(t *testing.T) {
 			t.Fatalf("expected log output to contain %s, got %q", expected, logLine)
 		}
 	}
+}
+
+func TestRequestLoggerPropagatesRequestID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+
+	handler := chimw.RequestID(middleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zerolog.Ctx(r.Context()).Warn().Msg("downstream warning")
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/entities", nil)
+	req.Header.Set(chimw.RequestIDHeader, "request-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := strings.Count(logBuf.String(), `"request_id":"request-123"`); got != 2 {
+		t.Fatalf("expected downstream and completion logs to carry request ID, got %d in %q", got, logBuf.String())
+	}
+}
+
+func TestRequestLoggerPropagatesRequestIDWithoutLoggingReadinessRequest(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+
+	handler := chimw.RequestID(middleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zerolog.Ctx(r.Context()).Warn().Msg("readiness warning")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+	req.Header.Set(chimw.RequestIDHeader, "readiness-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	logLine := logBuf.String()
+	if !strings.Contains(logLine, `"request_id":"readiness-123"`) {
+		t.Fatalf("expected readiness warning to carry request ID, got %q", logLine)
+	}
+	if strings.Contains(logLine, `"message":"HTTP GET /readiness`) {
+		t.Fatalf("expected readiness completion log to remain suppressed, got %q", logLine)
+	}
+}
+
+func TestRecovererLogsPanicWithRequestID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+	handler := chimw.RequestID(middleware.RequestLogger(logger)(middleware.Recoverer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	}))))
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req.Header.Set(chimw.RequestIDHeader, "panic-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	logs := logBuf.String()
+	for _, expected := range []string{`"level":"error"`, `"request_id":"panic-123"`, `"panic":"boom"`, `"message":"HTTP handler panic"`} {
+		if !strings.Contains(logs, expected) {
+			t.Fatalf("expected panic log to contain %s, got %q", expected, logs)
+		}
+	}
+}
+
+func TestRecovererPreservesAbortHandlerPanic(t *testing.T) {
+	defer func() {
+		recovered := recover()
+		err, ok := recovered.(error)
+		if !ok || !errors.Is(err, http.ErrAbortHandler) {
+			t.Fatalf("expected http.ErrAbortHandler panic, got %v", recovered)
+		}
+	}()
+
+	handler := middleware.Recoverer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
 }
 
 func TestCombinedAuthValidKeyCallsNextHandler(t *testing.T) {
@@ -305,6 +389,68 @@ func TestCombinedAuthProtectsRootPath(t *testing.T) {
 	}
 }
 
+func TestCombinedAuthProtectsResourcesInEveryAPIAuthMode(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("api_auth_enabled=%t", enabled), func(t *testing.T) {
+			called := false
+			handler := middleware.CombinedAuth("test-secret-key", enabled, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resources", nil))
+			if called || rec.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated request: called = %t, status = %d; want false, 401", called, rec.Code)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+			req.Header.Set("X-API-Key", "test-secret-key")
+			rec = httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if !called || rec.Code != http.StatusOK {
+				t.Fatalf("authenticated request: called = %t, status = %d; want true, 200", called, rec.Code)
+			}
+		})
+	}
+}
+
+type stubAuthenticator struct{}
+
+func (stubAuthenticator) AuthenticateAPIKeyResult(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (stubAuthenticator) AuthenticateRequest(_ context.Context, r *http.Request) (admin.AuthenticatedSession, error) {
+	cookie, err := r.Cookie(admin.CookieName)
+	if err != nil || cookie.Value != "valid-session" {
+		return admin.AuthenticatedSession{}, admin.ErrInvalidSession
+	}
+	return admin.AuthenticatedSession{Username: "admin"}, nil
+}
+
+func TestCombinedAuthAllowsAdminSessionToAccessResourcesWhenAPIAuthDisabled(t *testing.T) {
+	called := false
+	handler := middleware.CombinedAuth("", false, stubAuthenticator{}, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	req.AddCookie(&http.Cookie{
+		Name:     admin.CookieName,
+		Value:    "valid-session",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if !called || rec.Code != http.StatusOK {
+		t.Fatalf("admin session request: called = %t, status = %d; want true, 200", called, rec.Code)
+	}
+}
+
 func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 	called := false
 	handler := middleware.CombinedAuth("", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +471,7 @@ func TestCombinedAuthEmptyConfiguredKeyRejectsProtectedRoutes(t *testing.T) {
 }
 
 func TestCombinedAuthEmptyConfiguredKeyStillAllowsPublicPaths(t *testing.T) {
-	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/", "/resources", "/resources/"} {
+	for _, path := range []string{"/health", "/health/", "/readiness", "/readiness/"} {
 		t.Run(path, func(t *testing.T) {
 			called := false
 			handler := middleware.CombinedAuth("", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
