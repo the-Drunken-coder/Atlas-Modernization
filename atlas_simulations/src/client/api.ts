@@ -86,8 +86,15 @@ export async function stopRun(id: string): Promise<RunSummary> {
   return response.run;
 }
 
-export async function cleanupRun(id: string): Promise<RunSummary> {
-  const response = await apiJSON<{ run: RunSummary }>(`/api/runs/${encodeURIComponent(id)}/cleanup`, { method: "POST" }, isRunResponse, "run response");
+export async function cleanupRun(id: string, apiKey?: string): Promise<RunSummary> {
+  const headers = new Headers();
+  setApiKeyHeader(headers, apiKey);
+  const response = await apiJSON<{ run: RunSummary }>(
+    `/api/runs/${encodeURIComponent(id)}/cleanup`,
+    { method: "POST", headers },
+    isRunResponse,
+    "run response"
+  );
   return response.run;
 }
 
@@ -171,6 +178,7 @@ function isAtlasTargetSummary(value: unknown): value is AtlasTargetSummary {
     typeof value.id === "string" &&
     typeof value.label === "string" &&
     typeof value.baseUrl === "string" &&
+    typeof value.deployed === "boolean" &&
     typeof value.apiKeyConfigured === "boolean"
   );
 }
@@ -184,6 +192,7 @@ function isStartRunRequest(value: unknown): value is StartRunRequest {
     isRecord(value) &&
     typeof value.scenarioId === "string" &&
     (value.targetId === undefined || typeof value.targetId === "string") &&
+    (value.confirmDeployedMutation === undefined || value.confirmDeployedMutation === true) &&
     (value.inputs === undefined || isInputRecord(value.inputs)) &&
     (value.jsonInput === undefined || typeof value.jsonInput === "string")
   );
@@ -252,7 +261,7 @@ function isRunSummary(value: unknown): value is RunSummary {
 }
 
 function isRunStatus(value: unknown): boolean {
-  return value === "running" || value === "completed" || value === "failed" || value === "cancelled";
+  return value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned";
 }
 
 function isInputRecord(value: unknown): boolean {

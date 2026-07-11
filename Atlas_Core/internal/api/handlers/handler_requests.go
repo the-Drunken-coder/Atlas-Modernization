@@ -121,7 +121,7 @@ func (r createTaskRequest) actionParams() actions.CreateTaskParams {
 
 type updateTaskRequest struct {
 	Status          *string                `json:"status,omitempty"`
-	EntityID        *string                `json:"entity_id,omitempty"`
+	EntityID        nullablePatchString    `json:"entity_id,omitempty"`
 	Components      map[string]interface{} `json:"components,omitempty"`
 	Extra           map[string]interface{} `json:"extra,omitempty"`
 	RemoveExtraKeys []string               `json:"remove_extra_keys,omitempty"`
@@ -130,7 +130,7 @@ type updateTaskRequest struct {
 func (r updateTaskRequest) actionParams(expectedVersion *int64) actions.UpdateTaskParams {
 	return actions.UpdateTaskParams{
 		Status:          r.Status,
-		EntityID:        r.EntityID,
+		EntityID:        r.EntityID.actionValue(),
 		Components:      r.Components,
 		Extra:           r.Extra,
 		RemoveExtraKeys: r.RemoveExtraKeys,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type FeedEvent, type ResourceType } from "../src";
+import { AtlasClient, type EntityResource, type FeedEvent, type ResourceType, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -185,6 +185,26 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(core.version);
   });
 
+  it("replaces pre-start point-read cache state at the hydration watermark", async () => {
+    const core = new FakeCore();
+    const cached = core.upsertEntity(entity("asset-deleted-before-hydration"));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.entities.get(cached.entity_id)).resolves.toEqual(cached);
+    expect(client.sync.snapshot().entities).toEqual({ [cached.entity_id]: cached });
+    const deletion = core.deleteEntity(cached.entity_id);
+    if (!deletion) throw new Error("fake core did not delete the hydration fixture");
+
+    await client.sync.start();
+
+    const snapshot = client.sync.snapshot();
+    expect(snapshot.entities).toEqual({});
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.entities)).toBe(true);
+    expect(client.sync.status().lastVersion).toBe(deletion.version);
+    expect(core.requests).toContain(`/queries/changed-since?since_version=${deletion.version}`);
+  });
+
   it("does not advance the global change cursor from optimistic local writes", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-write"));
@@ -268,6 +288,112 @@ describe("AtlasClient sync", () => {
     expect(core.requests.some((request) => request.startsWith("/queries/full?") && request.includes("task_cursor="))).toBe(true);
   });
 
+  it("recovers changes after the initial full-dataset watermark instead of advancing from later pages", async () => {
+    const core = new FakeCore();
+    core.version = 1000;
+    const staleEntity = core.upsertEntity(entity("asset-hydration-race"));
+    const snapshotVersion = staleEntity.metadata.version;
+    const fullDatasetRequests: string[] = [];
+    const changedSinceVersions: string[] = [];
+    let concurrentUpdate!: EntityResource;
+    let laterPageTask!: TaskResource;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/queries/full") {
+        fullDatasetRequests.push(parsed.pathname + parsed.search);
+        if (fullDatasetRequests.length === 1) {
+          concurrentUpdate = core.upsertEntity({ ...staleEntity, alias: "updated between full pages" });
+          laterPageTask = core.upsertTask(task("task-hydration-later-page", staleEntity.entity_id));
+          return Response.json({
+            entities: [staleEntity],
+            tasks: [],
+            objects: [],
+            version: snapshotVersion,
+            has_more_tasks: true,
+            next_task_cursor: "later-task-page"
+          });
+        }
+        expect(parsed.searchParams.get("task_cursor")).toBe("later-task-page");
+        return Response.json({
+          entities: [],
+          tasks: [laterPageTask],
+          objects: [],
+          version: snapshotVersion
+        });
+      }
+      if (parsed.pathname === "/queries/changed-since") {
+        changedSinceVersions.push(parsed.searchParams.get("since_version") ?? "");
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+
+      expect(fullDatasetRequests).toHaveLength(2);
+      expect(changedSinceVersions[0]).toBe(String(snapshotVersion));
+      expect(concurrentUpdate.metadata.version).toBe(1002);
+      expect(laterPageTask.metadata.version).toBe(1003);
+      expect(client.sync.snapshot().entities[staleEntity.entity_id]).toEqual(concurrentUpdate);
+      expect(client.sync.snapshot().tasks[laterPageTask.task_id]).toEqual(laterPageTask);
+      expect(client.sync.status().lastVersion).toBe(1003);
+    } finally {
+      client.sync.stop();
+    }
+  });
+
+  it("rejects missing full-dataset version watermarks", async () => {
+    const core = new FakeCore();
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      return Response.json({ entities: [], tasks: [], objects: [] });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+    expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
+  });
+
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid full-dataset version watermark %s", async (version) => {
+    const core = new FakeCore();
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      return Response.json({ entities: [], tasks: [], objects: [], version });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+  });
+
+  it("rejects changing full-dataset version watermarks", async () => {
+    const core = new FakeCore();
+    let fullDatasetRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+      fullDatasetRequests += 1;
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        version: fullDatasetRequests,
+        has_more_entities: fullDatasetRequests === 1,
+        next_entity_cursor: fullDatasetRequests === 1 ? "next-page" : undefined
+      });
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await expect(client.sync.start()).rejects.toThrow("changed version watermark from 1 to 2");
+    expect(fullDatasetRequests).toBe(2);
+    expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
+  });
+
   it("rejects repeated full-dataset cursor states", async () => {
     const core = new FakeCore();
     let fullDatasetRequests = 0;
@@ -279,6 +405,7 @@ describe("AtlasClient sync", () => {
         entities: [],
         tasks: [],
         objects: [],
+        version: 0,
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
@@ -301,6 +428,7 @@ describe("AtlasClient sync", () => {
         entities: [],
         tasks: [],
         objects: [],
+        version: 0,
         has_more_entities: fullDatasetRequests <= 100,
         next_entity_cursor: fullDatasetRequests <= 100 ? `cursor-${fullDatasetRequests}` : undefined
       });
@@ -325,6 +453,7 @@ describe("AtlasClient sync", () => {
         entities: fullDatasetRequests === 1 ? [partial] : [],
         tasks: [],
         objects: [],
+        version: core.version,
         has_more_entities: true,
         next_entity_cursor: "same-cursor",
         has_more_tasks: true,
@@ -446,6 +575,65 @@ describe("AtlasClient sync", () => {
     expect(afterDelete.tasks).toEqual({ [firstTask.task_id]: firstTask });
   });
 
+  it("uses one immutable resource value for cache reads and snapshots", () => {
+    const cache = new ResourceCache();
+    const source = {
+      ...entity("asset-cache-owned"),
+      alias: "server value",
+      components: { health: { battery_percent: 87 } },
+      metadata: metadata(1)
+    };
+
+    expect(cache.cacheResource("entity", source.entity_id, source)).toBe(true);
+    const cached = cache.value("entity", source.entity_id);
+    const snapshot = cache.snapshot();
+
+    expect(cached).toBe(snapshot.entities[source.entity_id]);
+    expect(cached).not.toBe(source);
+    expect(Object.isFrozen(cached)).toBe(true);
+    expect(Object.isFrozen(cached?.components.health)).toBe(true);
+
+    Reflect.set(source, "alias", "source mutation");
+    Reflect.set(source.components.health, "battery_percent", 1);
+    if (cached) {
+      Reflect.set(cached, "alias", "read mutation");
+      if (cached.components.health) Reflect.set(cached.components.health, "battery_percent", 0);
+    }
+
+    expect(cache.value("entity", source.entity_id)?.alias).toBe("server value");
+    expect(cache.value("entity", source.entity_id)?.components.health?.battery_percent).toBe(87);
+    expect(cache.snapshot()).toBe(snapshot);
+    expect(cache.snapshot().entities[source.entity_id].alias).toBe("server value");
+  });
+
+  it("preserves snapshot references and version guards across object detail upgrades", () => {
+    const cache = new ResourceCache();
+    const cachedEntity = { ...entity("asset-detail-reference"), metadata: metadata(1) };
+    const summary = { ...object("object-detail-upgrade"), metadata: metadata(2) };
+    cache.cacheResource("entity", cachedEntity.entity_id, cachedEntity);
+    cache.cacheResource("object", summary.object_id, summary);
+    const beforeDetail = cache.snapshot();
+    const detail = { ...summary, payload: { nested: { confidence: 0.91 } } };
+
+    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
+    const afterDetail = cache.snapshot();
+
+    expect(afterDetail).not.toBe(beforeDetail);
+    expect(afterDetail.entities).toBe(beforeDetail.entities);
+    expect(afterDetail.objects).not.toBe(beforeDetail.objects);
+    expect(cache.value("object", detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
+    expect(cache.entry("object", detail.object_id)).toMatchObject({ version: 2, detail: true });
+    expect(afterDetail.objects[detail.object_id]).toMatchObject({ payload: detail.payload });
+    expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "payload").nested)).toBe(true);
+
+    const stale = { ...summary, type: "stale", metadata: metadata(1) };
+    expect(cache.cacheResource("object", stale.object_id, stale, { detail: true })).toBe(false);
+    expect(cache.cacheResource("object", summary.object_id, summary)).toBe(false);
+    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(false);
+    expect(cache.snapshot()).toBe(afterDetail);
+    expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, payload: detail.payload });
+  });
+
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {
     const core = new FakeCore();
     const localTask = core.upsertTask(task("task-snapshot-local-delete", "asset-snapshot-feed"));
@@ -504,6 +692,34 @@ describe("AtlasClient sync", () => {
     resolveWrite(Response.json(original));
     await expect(write).resolves.toEqual(original);
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer);
+  });
+
+  it("keeps cached previous values intact for tasks-for-entity routing", async () => {
+    const core = new FakeCore();
+    const original = core.upsertTask(task("task-owned-previous", "asset-old"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const cached = await client.tasks.get(original.task_id);
+    Reflect.set(cached, "entity_id", "asset-caller-mutation");
+    const watch = vi.fn();
+    client.watch({ filter: "tasks_for_entity", entity_id: "asset-old" }, watch);
+
+    const reassigned = core.upsertTask({ ...original, entity_id: "asset-new" });
+    core.emit(
+      { event: "update", resource_type: "task", id: reassigned.task_id, version: reassigned.metadata.version, resource: reassigned },
+      { record: false }
+    );
+
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(reassigned, expect.objectContaining({ event: "update", id: reassigned.task_id }));
+    });
+    expect(client.sync.snapshot().tasks[original.task_id].entity_id).toBe("asset-new");
   });
 
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
@@ -770,6 +986,35 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("isolates cache state and later watchers from watch callback mutation", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const id = "asset-mutating-watch";
+    const mutationResults: boolean[] = [];
+    client.entities.watch(id, (value) => {
+      if (value) mutationResults.push(Reflect.set(value, "alias", "watch mutation"));
+    });
+    const observer = vi.fn();
+    client.entities.watch(id, observer);
+
+    const updated = core.upsertEntity({ ...entity(id), alias: "server value" });
+    core.emit({ event: "update", resource_type: "entity", id, version: updated.metadata.version, resource: updated }, { record: false });
+
+    await vi.waitFor(() => {
+      expect(observer).toHaveBeenCalledWith(expect.objectContaining({ alias: "server value" }), expect.objectContaining({ id }));
+    });
+    expect(mutationResults).toEqual([false]);
+    expect(client.sync.snapshot().entities[id].alias).toBe("server value");
+    await expect(client.entities.get(id)).resolves.toMatchObject({ alias: "server value" });
+  });
+
   it("honors explicit tasks-for-entity subscriptions across reassignment", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -830,15 +1075,23 @@ describe("AtlasClient sync", () => {
     expect(watch).toHaveBeenCalledTimes(1);
   });
 
-  it("caches object content by object version with an LRU cap", async () => {
+  it("returns isolated buffers while caching object content by version", async () => {
     const core = new FakeCore();
     core.upsertObject(object("object-1"));
     const fetchSpy = vi.fn(core.fetch);
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchSpy, sync: "all", pollIntervalMs: 0, objectContentCacheEntries: 1 });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchSpy, sync: "all", pollIntervalMs: 0, objectContentCacheEntries: 4 });
     await client.sync.start();
-    await client.objects.content("object-1");
-    await client.objects.content("object-1");
+    const first = await client.objects.content("object-1");
+    new Uint8Array(first)[0] = 99;
+    const second = await client.objects.content("object-1");
+    new Uint8Array(second)[1] = 88;
+    const third = await client.objects.content("object-1");
     const downloads = fetchSpy.mock.calls.filter(([url]) => String(url).includes("/download"));
+
+    expect([...new Uint8Array(second)]).toEqual([1, 88, 3]);
+    expect([...new Uint8Array(third)]).toEqual([1, 2, 3]);
+    expect(second).not.toBe(first);
+    expect(third).not.toBe(second);
     expect(downloads).toHaveLength(1);
   });
 
