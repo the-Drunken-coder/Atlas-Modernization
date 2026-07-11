@@ -31,14 +31,11 @@ export function updateSymbolMarkerElement(element: HTMLButtonElement, feature: S
         });
   const rendered = defaultSidcIconService.render(symbol, { selected: properties.selected, opacity, rotation });
   element.type = "button";
-  element.className = [
-    "map-symbol-marker",
-    `map-symbol-marker--${properties.kind}`,
-    properties.selected ? "map-symbol-marker--selected" : "",
-    rendered.isFallback ? "map-symbol-marker--fallback" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
+  element.classList.add("map-symbol-marker");
+  element.classList.toggle("map-symbol-marker--asset", properties.kind === "asset");
+  element.classList.toggle("map-symbol-marker--track", properties.kind === "track");
+  element.classList.toggle("map-symbol-marker--selected", properties.selected);
+  element.classList.toggle("map-symbol-marker--fallback", rendered.isFallback);
   element.title = properties.name;
   element.setAttribute("aria-label", `${properties.name} ${properties.kind}`);
   element.dataset.entityId = properties.entityId;

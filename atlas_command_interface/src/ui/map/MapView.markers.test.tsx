@@ -60,6 +60,8 @@ describe("MapView symbol marker reconciliation", () => {
 
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
     const element = markerFor(canvas, initial.entity_id);
+    expect(element).toHaveClass("maplibregl-marker", "maplibregl-marker-anchor-center", "map-symbol-marker--track");
+    element.classList.add("map-symbol-marker--asset");
     element.focus();
     const moved = moveTrack(initial, 0.25);
     resetMarkerOperationCounts();
@@ -68,7 +70,13 @@ describe("MapView symbol marker reconciliation", () => {
     rerenderMap({ sources: buildMapSources([moved], moved.entity_id) });
 
     expect(markerFor(canvas, initial.entity_id)).toBe(element);
-    expect(element).toHaveClass("map-symbol-marker--selected");
+    expect(element).toHaveClass(
+      "maplibregl-marker",
+      "maplibregl-marker-anchor-center",
+      "map-symbol-marker--track",
+      "map-symbol-marker--selected"
+    );
+    expect(element).not.toHaveClass("map-symbol-marker--asset");
     expect(element).toHaveFocus();
     expect(markerOperationCounts()).toEqual({ created: 0, setLngLat: 1, addTo: 0, remove: 0 });
     expect(renderSymbol).toHaveBeenCalledTimes(1);

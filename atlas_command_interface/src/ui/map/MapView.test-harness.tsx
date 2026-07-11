@@ -124,8 +124,9 @@ const maplibreMock = vi.hoisted(() => {
     readonly element?: HTMLElement;
     coordinates: [number, number] = [0, 0];
 
-    constructor(options?: { element?: HTMLElement }) {
+    constructor(options?: { element?: HTMLElement; anchor?: string }) {
       this.element = options?.element;
+      this.element?.classList.add("maplibregl-marker", `maplibregl-marker-anchor-${options?.anchor ?? "center"}`);
       markerOperations.created += 1;
     }
 
