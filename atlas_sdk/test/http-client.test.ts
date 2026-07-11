@@ -48,6 +48,7 @@ describe("AtlasClient HTTP", () => {
             entities: [],
             tasks: [],
             objects: [],
+            version: 0,
             has_more_entities: false,
             has_more_tasks: false,
             has_more_objects: false
@@ -106,6 +107,7 @@ describe("AtlasClient HTTP", () => {
         entities: [],
         tasks: [],
         objects: [],
+        version: 0,
         has_more_entities: false,
         has_more_tasks: false,
         has_more_objects: false

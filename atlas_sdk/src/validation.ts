@@ -65,6 +65,7 @@ export const isFullDatasetResponse: ResponseValidator<FullDatasetResponse> = (va
   isArrayOf(value.entities, isEntityResource) &&
   isArrayOf(value.tasks, isTaskResource) &&
   isArrayOf(value.objects, isObjectResponse) &&
+  isSafeNonNegativeInteger(value.version) &&
   hasValidPagination(value, fullPaginationFields);
 
 export function changedSinceResponseValidator(sinceVersion: number): ResponseValidator<ChangedSinceResponse> {

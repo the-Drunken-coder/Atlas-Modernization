@@ -14,6 +14,7 @@ const fullPage = (overrides: Record<string, unknown> = {}) => ({
   entities: [],
   tasks: [],
   objects: [],
+  version: 0,
   has_more_entities: false,
   has_more_tasks: false,
   has_more_objects: false,
@@ -48,6 +49,8 @@ describe("AtlasClient inbound response validation", () => {
 
   it.each<[string, unknown]>([
     ["missing a required resource array", { entities: [], objects: [] }],
+    ["missing its version watermark", fullPage({ version: undefined })],
+    ["with a fractional version watermark", fullPage({ version: 1.5 })],
     ["containing a resource in the wrong bucket", fullPage({ entities: [validTask("task-wrong-bucket", null, 1)] })],
     ["containing malformed resource metadata", fullPage({ entities: [validEntity("asset-zero-version", 0)] })],
     ["omitting a pagination flag", fullPage({ has_more_tasks: undefined })],

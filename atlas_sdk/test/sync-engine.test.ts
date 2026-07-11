@@ -378,7 +378,7 @@ describe("AtlasClient sync", () => {
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
     expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
   });
 
@@ -390,7 +390,7 @@ describe("AtlasClient sync", () => {
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("version watermark must be a non-negative safe integer");
+    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
   });
 
   it("rejects changing full-dataset version watermarks", async () => {
