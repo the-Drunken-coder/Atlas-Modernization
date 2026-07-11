@@ -6,7 +6,15 @@ import { CAMERA_EVENT_TAG, type MapCameraCommand } from "./map-camera.js";
 import { createEditingMarkers, type MapEditing } from "./map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "./map-layers.js";
 import { type MapSources } from "./map-sources.js";
-import { clearMarkers, createSymbolMarkerElement, symbolMarkerFeatures } from "./map-symbol-markers.js";
+import {
+  clearMarkers,
+  createSymbolMarkerElement,
+  symbolMarkerFeatures,
+  symbolMarkerPositionsEqual,
+  symbolMarkerPresentationsEqual,
+  updateSymbolMarkerElement,
+  type SymbolMarkerFeature
+} from "./map-symbol-markers.js";
 import { hoverSelectionTarget, reticleForVisibleTarget, targetBoxForEntityId, type MapReticleTarget } from "./map-targets.js";
 import { useMapCamera } from "./use-map-camera.js";
 import {
@@ -55,6 +63,12 @@ type MapViewProps = {
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
 };
 
+type SymbolMarkerEntry = {
+  marker: Marker;
+  element: HTMLButtonElement;
+  feature: SymbolMarkerFeature;
+};
+
 export function MapView({
   sources,
   styleId,
@@ -81,7 +95,7 @@ export function MapView({
   const eventsRegisteredRef = useRef(false);
   const fitWorldOnceRef = useRef(initialCenter !== undefined);
   const editMarkersRef = useRef<Marker[]>([]);
-  const symbolMarkersRef = useRef<Marker[]>([]);
+  const symbolMarkersRef = useRef<Map<string, SymbolMarkerEntry>>(new Map());
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu, onBackgroundClick });
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
   const scrollLockedRef = useRef(false);
@@ -237,9 +251,8 @@ export function MapView({
       setMapReady(false);
       resizeObserver.disconnect();
       clearMarkers(editMarkersRef.current);
-      clearMarkers(symbolMarkersRef.current);
+      clearSymbolMarkers(symbolMarkersRef.current);
       editMarkersRef.current = [];
-      symbolMarkersRef.current = [];
       scrollLockedRef.current = false;
       scrollLockedExternalReticleRef.current = false;
       cursorHandoffRef.current = null;
@@ -298,6 +311,50 @@ export function MapView({
       pushSources(map, sources);
     }
   }, [sources]);
+
+  // Reconcile asset/track DOM markers before reticles read their boxes for this snapshot.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const markers = symbolMarkersRef.current;
+    const visibleIds = new Set<string>();
+
+    for (const feature of symbolMarkerFeatures(sources)) {
+      const entityId = feature.properties.entityId;
+      visibleIds.add(entityId);
+      const current = markers.get(entityId);
+      if (current) {
+        if (!symbolMarkerPositionsEqual(current.feature, feature)) current.marker.setLngLat(feature.geometry.coordinates);
+        if (!symbolMarkerPresentationsEqual(current.feature, feature)) updateSymbolMarkerElement(current.element, feature);
+        current.feature = feature;
+        continue;
+      }
+
+      const element = createSymbolMarkerElement(feature);
+      const marker = new Marker({ element, anchor: "center" }).setLngLat(feature.geometry.coordinates).addTo(map);
+      const entry: SymbolMarkerEntry = { marker, element, feature };
+      element.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const current = entry.feature;
+        handlersRef.current.onSelectEntity(current.properties.entityId);
+        handlersRef.current.onMapContextMenu({
+          lng: current.geometry.coordinates[0],
+          lat: current.geometry.coordinates[1],
+          x: event.clientX,
+          y: event.clientY
+        });
+      });
+      markers.set(entityId, entry);
+    }
+
+    for (const [entityId, entry] of markers) {
+      if (visibleIds.has(entityId)) continue;
+      entry.marker.remove();
+      markers.delete(entityId);
+    }
+  }, [sources, mapReady]);
 
   useEffect(() => {
     if (!zoomDragging) return;
@@ -368,6 +425,7 @@ export function MapView({
 
     const syncTargetBox = () => mapActionsRef.current.syncTargetReticle(entityId);
 
+    syncTargetBox();
     map.on("move", syncTargetBox);
     map.on("zoom", syncTargetBox);
     map.on("moveend", syncTargetBox);
@@ -422,36 +480,6 @@ export function MapView({
       map.off("moveend", syncFocusReticle);
     };
   }, [focusTarget, mapReady, scrollLocked, sources, zoomDragging]);
-
-  // Sync NATO-style asset/track DOM markers generated from the Atlas symbol catalog.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-
-    clearMarkers(symbolMarkersRef.current);
-    symbolMarkersRef.current = [];
-
-    for (const feature of symbolMarkerFeatures(sources)) {
-      const element = createSymbolMarkerElement(feature);
-      element.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        handlersRef.current.onSelectEntity(feature.properties.entityId);
-        handlersRef.current.onMapContextMenu({
-          lng: feature.geometry.coordinates[0],
-          lat: feature.geometry.coordinates[1],
-          x: event.clientX,
-          y: event.clientY
-        });
-      });
-      symbolMarkersRef.current.push(new Marker({ element, anchor: "center" }).setLngLat(feature.geometry.coordinates).addTo(map));
-    }
-
-    return () => {
-      clearMarkers(symbolMarkersRef.current);
-      symbolMarkersRef.current = [];
-    };
-  }, [sources, mapReady]);
 
   // Sync the editing overlay (live geometry + draggable handles).
   useEffect(() => {
@@ -666,4 +694,9 @@ export function MapView({
       ) : null}
     </div>
   );
+}
+
+function clearSymbolMarkers(markers: Map<string, SymbolMarkerEntry>): void {
+  for (const entry of markers.values()) entry.marker.remove();
+  markers.clear();
 }

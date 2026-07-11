@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AuthGate } from "../auth/ui/AuthGate.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
 import { AtlasProvider } from "../state/atlas-context.js";
+import { Button } from "../ui/primitives/controls.js";
 import { fetchAppConfig, type AppConfig } from "./config.js";
 
 export type ProvidersProps = {
@@ -13,9 +14,12 @@ export type ProvidersProps = {
 export function Providers({ children, loadConfig = fetchAppConfig, createDataSource }: ProvidersProps) {
   const [config, setConfig] = useState<AppConfig>();
   const [error, setError] = useState<string>();
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setConfig(undefined);
+    setError(undefined);
     void loadConfig()
       .then((next) => {
         if (!cancelled) setConfig(next);
@@ -26,12 +30,22 @@ export function Providers({ children, loadConfig = fetchAppConfig, createDataSou
     return () => {
       cancelled = true;
     };
-  }, [loadConfig]);
+  }, [loadConfig, loadAttempt]);
 
   if (error) {
     return (
-      <div className="app-loading">
-        <span>{error}</span>
+      <div className="app-error" role="alert">
+        <span>Could not load command interface configuration.</span>
+        <code>{error}</code>
+        <Button
+          variant="primary"
+          onClick={() => {
+            setError(undefined);
+            setLoadAttempt((attempt) => attempt + 1);
+          }}
+        >
+          Retry configuration
+        </Button>
       </div>
     );
   }
