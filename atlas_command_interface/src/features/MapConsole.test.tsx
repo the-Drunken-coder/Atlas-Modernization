@@ -253,6 +253,30 @@ describe("MapConsole command flow", () => {
     expect(submissions).toHaveLength(0);
   });
 
+  it("aborts a pending command when catalog cleanup hides its form", async () => {
+    const user = userEvent.setup();
+    const { fake, emitCatalog } = makeFakeDataSource();
+    let signal: AbortSignal | undefined;
+    fake.submitCommand = async (submission) => {
+      signal = submission.signal;
+      await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal?.reason), { once: true }));
+      throw new Error("unreachable");
+    };
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+
+    act(() => emitCatalog({ status: "failed" }));
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+
+    act(() => emitCatalog({ status: "loaded", catalog }));
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
+  });
+
   it("passes hovered sidebar entities to the map as preview targets", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();

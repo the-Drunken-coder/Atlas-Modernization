@@ -55,6 +55,13 @@ export function MapConsole() {
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
   const [previewEntityId, setPreviewEntityId] = useState<string>();
 
+  const dismissCommandForm = useCallback(() => {
+    submitAbortRef.current?.abort();
+    setSubmitting(false);
+    setCommandForm(null);
+    setSubmitError(undefined);
+  }, []);
+
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
   const selectedId = selection?.id;
@@ -63,15 +70,13 @@ export function MapConsole() {
   // Drop transient command UI when the selected entity changes.
   useEffect(() => {
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
-  }, [selectedId]);
+    dismissCommandForm();
+  }, [selectedId, dismissCommandForm]);
 
   useEffect(() => {
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
-  }, [catalog]);
+    dismissCommandForm();
+  }, [catalog, dismissCommandForm]);
 
   // Drop an edit session when the selection moves to another entity.
   useEffect(() => {
@@ -86,11 +91,10 @@ export function MapConsole() {
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
+    dismissCommandForm();
     setEdit(null);
     setSaveError(undefined);
-  }, [selectedId, selectedEntityId]);
+  }, [selectedId, selectedEntityId, dismissCommandForm]);
 
   useEffect(() => {
     const config = atlas.config;
@@ -196,11 +200,10 @@ export function MapConsole() {
         setMapMenu(null);
         return;
       }
-      setCommandForm(null);
-      setSubmitError(undefined);
+      dismissCommandForm();
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
-    [selectedEntity]
+    [selectedEntity, dismissCommandForm]
   );
 
   const startEdit = useCallback(() => {
@@ -387,10 +390,7 @@ export function MapConsole() {
           mapPoint={commandForm.mapPoint}
           submitting={submitting}
           error={submitError}
-          onCancel={() => {
-            submitAbortRef.current?.abort();
-            setCommandForm(null);
-          }}
+          onCancel={dismissCommandForm}
           onSubmit={(parameters) => void submit(commandForm.availability, parameters, commandForm)}
         />
       ) : null}
