@@ -8,7 +8,7 @@ import {
   type ObjectResource,
   type ObjectResponse,
   type TaskResource
-} from "../../../atlas_sdk/src/index.js";
+} from "@the-drunken-coder/atlas-sdk";
 import { createSdkDataSource } from "./data-source.js";
 import { COMMAND_CATALOG_OBJECT_ID, type CommandDefinition } from "./command-model.js";
 import type { UiGeometry } from "./geometry.js";

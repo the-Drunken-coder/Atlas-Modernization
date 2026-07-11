@@ -1,5 +1,5 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { AtlasAdminClient } from "../../../../atlas_sdk/src/admin.js";
+import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Button } from "../../ui/primitives/controls.js";
 
 type AuthState =

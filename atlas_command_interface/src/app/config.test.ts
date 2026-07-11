@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
+import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
 import { appConfigFromEnv, coreConfigFromEnv, fetchAppConfig } from "./config.js";
 
 afterEach(() => {

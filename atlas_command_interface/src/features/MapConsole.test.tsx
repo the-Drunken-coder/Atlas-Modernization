@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";

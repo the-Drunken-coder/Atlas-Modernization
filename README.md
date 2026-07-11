@@ -26,6 +26,19 @@ Linting covers each package in full. Formatting is checked only for JavaScript/T
 - **`atlas_simulations/`** — local Atlas simulation workbench: trusted scenario scripts, server-side SDK clients, and a browser UI for running local simulation runs.
 - **`docs/`** — project-level documentation that spans packages, including Atlas Protocol planning/reference docs in [`docs/atlas-protocol/`](docs/atlas-protocol/) and Atlas SDK design docs in [`docs/atlas-sdk/`](docs/atlas-sdk/).
 
+## JavaScript workspace
+
+The SDK, command interface, and simulations are npm workspaces with one root lockfile. Use Node.js 26 and install their dependencies once from the repository root:
+
+```bash
+npm ci
+npm run build
+```
+
+`atlas_command_interface` and `atlas_simulations` declare `@the-drunken-coder/atlas-sdk` as a normal dependency and consume only its public package exports. Root development/build scripts compile the SDK before either consumer so a clean checkout exercises the same export map and built artifacts that a published package will expose.
+
+Useful focused commands are `npm run build:sdk`, `npm run build:command-interface`, `npm run build:simulations`, `npm run dev:command-interface`, `npm run dev:simulations`, and `npm run dev:simulations-server`.
+
 ## Agent guidance
 
 - **`AGENTS.md`** — hard constraints, commands, and recurring gotchas for agents working in this repo.

@@ -1,4 +1,4 @@
-import type { EntityResource, JSONValue, ObjectResponse } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, JSONValue, ObjectResponse } from "@the-drunken-coder/atlas-sdk";
 
 export const COMMAND_CATALOG_OBJECT_ID = "command_catalog";
 

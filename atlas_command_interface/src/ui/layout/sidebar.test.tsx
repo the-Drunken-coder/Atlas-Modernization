@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useReducer } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { EntityList } from "../../features/EntityList.js";
 import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
 import { SidebarPanel } from "./SidebarPanel.js";
@@ -54,11 +54,11 @@ describe("sidebar rail + panel", () => {
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Collapse panel" }));
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
-	    // The rail icon buttons remain in the DOM.
-	    expect(screen.getByRole("button", { name: "Assets" })).toBeInTheDocument();
-	    expect(screen.getByRole("button", { name: "Geo Features" })).toBeInTheDocument();
-	    expect(screen.getByRole("button", { name: "API Keys" })).toBeInTheDocument();
-	  });
+    // The rail icon buttons remain in the DOM.
+    expect(screen.getByRole("button", { name: "Assets" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Geo Features" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "API Keys" })).toBeInTheDocument();
+  });
 
   it("shows a tooltip when an icon is focused", async () => {
     render(<Harness />);
@@ -72,15 +72,15 @@ describe("sidebar rail + panel", () => {
     expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "false");
 
-	    await user.click(screen.getByRole("button", { name: "Geo Features" }));
-	    expect(screen.getByText("list geofeatures")).toBeInTheDocument();
-	    expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "false");
-	    expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    expect(screen.getByText("list geofeatures")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Assets" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Geo Features" })).toHaveAttribute("aria-pressed", "true");
 
-	    await user.click(screen.getByRole("button", { name: "API Keys" }));
-	    expect(screen.getByText("list apiKeys")).toBeInTheDocument();
-	    expect(screen.getByRole("button", { name: "API Keys" })).toHaveAttribute("aria-pressed", "true");
-	  });
+    await user.click(screen.getByRole("button", { name: "API Keys" }));
+    expect(screen.getByText("list apiKeys")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "API Keys" })).toHaveAttribute("aria-pressed", "true");
+  });
 
   it("switches to inspector mode when a list item is selected", async () => {
     const user = userEvent.setup();

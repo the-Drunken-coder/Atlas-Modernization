@@ -1,13 +1,5 @@
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
-import {
-  entityAltitude,
-  entityClassification,
-  entityDisplayName,
-  entityHeading,
-  entityLastSeen,
-  entityPosition,
-  entitySpeed
-} from "../../atlas/entities.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { entityAltitude, entityClassification, entityDisplayName, entityHeading, entityLastSeen, entityPosition, entitySpeed } from "../../atlas/entities.js";
 import { formatNumber, formatRelativeTime } from "../../atlas/format.js";
 import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";

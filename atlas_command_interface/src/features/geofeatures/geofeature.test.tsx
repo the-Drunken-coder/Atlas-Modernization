@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { UiGeometry } from "../../atlas/geometry.js";
 import { GeofeatureInspector } from "./GeofeatureInspector.js";
 
@@ -10,7 +10,15 @@ const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T0
 
 const polygon: UiGeometry = {
   type: "Polygon",
-  coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2], [-74.2, 40.1]]]
+  coordinates: [
+    [
+      [-74.2, 40.1],
+      [-74.1, 40.1],
+      [-74.1, 40.2],
+      [-74.2, 40.2],
+      [-74.2, 40.1]
+    ]
+  ]
 };
 const circle: UiGeometry = {
   type: "Feature",

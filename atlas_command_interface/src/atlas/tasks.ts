@@ -1,4 +1,4 @@
-import type { JSONValue, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { JSONValue, TaskResource } from "@the-drunken-coder/atlas-sdk";
 
 export const TASK_STATUSES = ["pending", "acknowledged", "completed", "failed", "cancelled"] as const;
 export type TaskStatusName = (typeof TASK_STATUSES)[number];

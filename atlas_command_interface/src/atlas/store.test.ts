@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { emptySnapshot, type AtlasSnapshot } from "./store.js";
 import { listEntities, tasksForEntity } from "./selectors.js";
 
