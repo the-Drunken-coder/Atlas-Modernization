@@ -68,7 +68,9 @@ auth_curl() {
 
 mc() {
     docker run --rm \
+        --user "$(id -u):$(id -g)" \
         --network "${PROJECT_NAME}_atlas_core_network" \
+        -e HOME=/tmp \
         -e "MC_HOST_atlas=http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000" \
         -v "${MARKER_DIR}:/backup" \
         "${MC_IMAGE}" "$@"
