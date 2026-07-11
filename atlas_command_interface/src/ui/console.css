@@ -857,7 +857,6 @@
 .map-canvas {
   position: absolute;
   inset: 0;
-  cursor: none;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -870,11 +869,12 @@
   height: 100%;
 }
 
-.map-canvas .maplibregl-canvas,
-.map-canvas .maplibregl-canvas-container,
-.map-canvas .maplibregl-marker,
-.map-canvas .map-symbol-marker,
-.map-canvas .vertex-handle {
+.map-canvas--custom-cursor,
+.map-canvas--custom-cursor .maplibregl-canvas,
+.map-canvas--custom-cursor .maplibregl-canvas-container,
+.map-canvas--custom-cursor .maplibregl-marker,
+.map-canvas--custom-cursor .map-symbol-marker,
+.map-canvas--custom-cursor .vertex-handle {
   cursor: none !important;
 }
 
@@ -969,6 +969,20 @@
     height 90ms ease-out;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .map-reticle--targeted .map-reticle__line,
+  .map-reticle--targeted .map-reticle__target {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .map-reticle {
+    --map-reticle-line-color: Highlight;
+    --map-reticle-line-shadow: none;
+  }
+}
+
 .map-canvas--scrolling .map-reticle__line,
 .map-canvas--scrolling .map-reticle__target,
 .map-reticle--scrolling .map-reticle__line,
@@ -1025,7 +1039,6 @@
   background: transparent;
   color: inherit;
   line-height: 0;
-  cursor: none;
 }
 
 .map-symbol-marker:focus-visible {
@@ -1069,7 +1082,6 @@
   border-radius: 50%;
   background: var(--map-vertex);
   border: 2px solid var(--accent);
-  cursor: none;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 
@@ -1078,7 +1090,6 @@
   height: 9px;
   background: var(--map-vertex-mid);
   border-color: var(--map-vertex);
-  cursor: none;
 }
 
 /* ---------- JSON drawer ---------- */

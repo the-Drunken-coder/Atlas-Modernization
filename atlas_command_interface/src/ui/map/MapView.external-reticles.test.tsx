@@ -55,6 +55,21 @@ describe("MapView external reticle targets", () => {
     expect(map.fitBounds).not.toHaveBeenCalled();
   });
 
+  it("keeps the native cursor for external reticles until the pointer drives the reticle", async () => {
+    const { canvas, rerenderMap } = renderMapView();
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
+
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+    expect(canvas).not.toHaveClass("map-canvas--custom-cursor");
+
+    firePointerMove(canvas, { clientX: 180, clientY: 140 });
+    await waitFor(() => expect(canvas).toHaveClass("map-canvas--custom-cursor"));
+
+    fireEvent.pointerLeave(canvas);
+    await waitFor(() => expect(canvas).not.toHaveClass("map-canvas--custom-cursor"));
+    expect(document.querySelector(".map-reticle")).toBeInTheDocument();
+  });
+
   it("keeps a focused marker reticle aligned when a feed snapshot moves it", async () => {
     const initial = entity({
       entity_id: "track-1",

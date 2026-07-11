@@ -94,17 +94,39 @@ describe("MapView zoom overlay", () => {
     expect(onSelectEntity).toHaveBeenCalledWith("asset-top");
   });
 
-  it("selects canvas features from direct clicks without a hover reticle", () => {
-    const { canvas, map, onBackgroundClick, onSelectEntity } = renderMapView();
-    map.queryRenderedFeatures.mockReturnValue([
-      { geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-1" } }
-    ]);
+  it("cycles to the next overlapping entity when the selected one is clicked again", () => {
+    const { canvas, onSelectEntity } = renderMapView({ selectedId: "asset-top" });
+    appendMarker(canvas, "asset-top", rect(70, 90, 20, 20));
+    appendMarker(canvas, "asset-lower", rect(70, 90, 20, 20));
 
     fireEvent.click(canvas, { clientX: 80, clientY: 100 });
 
-    expect(map.queryRenderedFeatures).toHaveBeenCalledWith([70, 80], {
-      layers: ["geofeatures-point", "geofeatures-line", "geofeatures-fill"]
-    });
+    expect(onSelectEntity).toHaveBeenCalledWith("asset-lower");
+  });
+
+  it("wraps overlap cycling back to the first entity under the cursor", () => {
+    const { canvas, onSelectEntity } = renderMapView({ selectedId: "asset-lower" });
+    appendMarker(canvas, "asset-top", rect(70, 90, 20, 20));
+    appendMarker(canvas, "asset-lower", rect(70, 90, 20, 20));
+
+    fireEvent.click(canvas, { clientX: 80, clientY: 100 });
+
+    expect(onSelectEntity).toHaveBeenCalledWith("asset-top");
+  });
+
+  it("selects canvas features from direct clicks without a hover reticle", () => {
+    const { canvas, map, onBackgroundClick, onSelectEntity } = renderMapView();
+    map.queryRenderedFeatures.mockReturnValue([{ geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-1" } }]);
+
+    fireEvent.click(canvas, { clientX: 80, clientY: 100 });
+
+    expect(map.queryRenderedFeatures).toHaveBeenCalledWith(
+      [
+        [62, 72],
+        [78, 88]
+      ],
+      { layers: ["geofeatures-point", "geofeatures-line", "geofeatures-fill"] }
+    );
     expect(onSelectEntity).toHaveBeenCalledWith("geo-1");
     expect(onBackgroundClick).not.toHaveBeenCalled();
   });
@@ -147,5 +169,24 @@ describe("MapView zoom overlay", () => {
 
     expect(onSelectEntity).not.toHaveBeenCalled();
     expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
+  it("releases click suppression when its fallback timer expires", async () => {
+    const { canvas, onBackgroundClick } = renderMapView();
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+    await waitFor(() => expect(document.querySelector(".map-reticle--zoom")).toBeInTheDocument());
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.mouseUp(window, { button: 0, clientX: 150, clientY: 180 });
+      fireEvent.click(canvas);
+      expect(onBackgroundClick).not.toHaveBeenCalled();
+
+      act(() => vi.advanceTimersByTime(750));
+      fireEvent.click(canvas);
+      expect(onBackgroundClick).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

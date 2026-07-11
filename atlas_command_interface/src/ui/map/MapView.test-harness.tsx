@@ -13,6 +13,8 @@ type Listener = (event?: unknown) => void;
 type ListenerEntry = { listener: Listener; once: boolean };
 type RenderedFeature = { geometry: { type: string; coordinates: unknown }; properties?: { entityId?: string } };
 let resizeCallbacks: ResizeObserverCallback[] = [];
+let animationFrames = new Map<number, FrameRequestCallback>();
+let nextAnimationFrameId = 0;
 
 const maplibreMock = vi.hoisted(() => {
   const markerOperations = { created: 0, setLngLat: 0, addTo: 0, remove: 0 };
@@ -179,6 +181,8 @@ beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
   resetMarkerOperationCounts();
   resizeCallbacks = [];
+  animationFrames = new Map();
+  nextAnimationFrameId = 0;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => ({}) as CanvasRenderingContext2D);
   vi.stubGlobal(
     "ResizeObserver",
@@ -193,9 +197,17 @@ beforeEach(() => {
     }
   );
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    callback(0);
-    return 1;
+    const frameId = ++nextAnimationFrameId;
+    animationFrames.set(frameId, callback);
+    queueMicrotask(() => {
+      const pending = animationFrames.get(frameId);
+      if (!pending) return;
+      animationFrames.delete(frameId);
+      pending(0);
+    });
+    return frameId;
   });
+  vi.stubGlobal("cancelAnimationFrame", (frameId: number) => animationFrames.delete(frameId));
 });
 
 afterEach(() => {
@@ -208,6 +220,7 @@ type RenderMapViewProps = {
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   previewTarget?: MapReticleTarget | null;
+  selectedId?: string;
   sources?: MapSources;
   styleId?: string;
   style?: StyleSpecification;
@@ -223,6 +236,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       sources={renderProps.sources}
       styleId={renderProps.styleId}
       style={renderProps.style}
+      selectedId={renderProps.selectedId}
       focusTarget={renderProps.focusTarget}
       previewTarget={renderProps.previewTarget}
       cameraCommand={renderProps.cameraCommand}
@@ -242,6 +256,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         sources={renderProps.sources}
         styleId={renderProps.styleId}
         style={renderProps.style}
+        selectedId={renderProps.selectedId}
         focusTarget={renderProps.focusTarget}
         previewTarget={renderProps.previewTarget}
         cameraCommand={renderProps.cameraCommand}
@@ -252,7 +267,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       />
     );
   };
-  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap };
+  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap, unmount: result.unmount };
 }
 
 export function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {

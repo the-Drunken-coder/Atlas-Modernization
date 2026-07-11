@@ -1,11 +1,12 @@
 import type { Map as MlMap, MapGeoJSONFeature } from "maplibre-gl";
-import type { MouseEvent, PointerEvent } from "react";
 import type { UiRawGeometry } from "../../atlas/geometry.js";
 import { collectLngLatPositions, featureForEntityId, type MapTarget } from "./map-camera.js";
 import type { MapFeature, MapSources } from "./map-sources.js";
 import {
+  HOVER_MAGNET_RADIUS,
   boxFromProjectedPositions,
   boxIntersectsViewport,
+  distanceToBox,
   reticleForTarget,
   squareAround,
   type ReticleState,
@@ -17,36 +18,79 @@ import { INTERACTIVE_LAYERS } from "./map-layers.js";
 
 export type MapReticleTarget = MapTarget;
 export type HoverTarget = ReticleTarget & { entityId: string };
+export type MarkerBoxCache = { entries: HoverTarget[] | null };
+type MapPointerTargetEvent = { currentTarget: HTMLDivElement; target: EventTarget | null };
+
+export function createMarkerBoxCache(): MarkerBoxCache {
+  return { entries: null };
+}
+
+export function invalidateMarkerBoxCache(cache: MarkerBoxCache): void {
+  cache.entries = null;
+}
 
 export function hoverSelectionTarget(
-  event: (PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>) & { currentTarget: HTMLDivElement },
+  event: MapPointerTargetEvent,
   mapRect: DOMRect,
   point: ScreenPoint,
-  map: MlMap | undefined
+  map: MlMap | undefined,
+  cache: MarkerBoxCache
 ): HoverTarget | null {
+  return hoverSelectionTargets(event, mapRect, point, map, cache)[0] ?? null;
+}
+
+/**
+ * All selectable entities within HOVER_MAGNET_RADIUS of the cursor, nearest
+ * markers first, then rendered canvas features in draw order.
+ */
+export function hoverSelectionTargets(
+  event: MapPointerTargetEvent,
+  mapRect: DOMRect,
+  point: ScreenPoint,
+  map: MlMap | undefined,
+  cache: MarkerBoxCache
+): HoverTarget[] {
+  const candidates: HoverTarget[] = [];
+  const seen = new Set<string>();
+  const push = (target: HoverTarget) => {
+    if (seen.has(target.entityId)) return;
+    seen.add(target.entityId);
+    candidates.push(target);
+  };
+
   if (event.target instanceof Element) {
     const element = event.target.closest<HTMLElement>(".map-symbol-marker");
     const entityId = element?.dataset.entityId;
     if (element && entityId && event.currentTarget.contains(element)) {
-      return { entityId, box: boxFromElement(element, mapRect) };
+      push({ entityId, box: boxFromElement(element, mapRect) });
     }
   }
 
-  const markerAtPoint = markerTargetAtPoint(event.currentTarget, mapRect, point);
-  if (markerAtPoint) return markerAtPoint;
+  const markers = cachedMarkerBoxes(cache, event.currentTarget, mapRect)
+    .map((entry) => ({ entry, distance: distanceToBox(point, entry.box) }))
+    .filter(({ distance }) => distance <= HOVER_MAGNET_RADIUS)
+    .sort((a, b) => a.distance - b.distance);
+  for (const { entry } of markers) push(entry);
 
-  if (!map) return null;
+  if (!map) return candidates;
   try {
-    const features = map.queryRenderedFeatures([point.x, point.y], { layers: INTERACTIVE_LAYERS });
+    const features = map.queryRenderedFeatures(
+      [
+        [point.x - HOVER_MAGNET_RADIUS, point.y - HOVER_MAGNET_RADIUS],
+        [point.x + HOVER_MAGNET_RADIUS, point.y + HOVER_MAGNET_RADIUS]
+      ],
+      { layers: INTERACTIVE_LAYERS }
+    );
     for (const feature of features) {
-      const box = boxFromFeature(map, feature);
       const entityId = feature.properties?.entityId;
-      if (box && typeof entityId === "string") return { entityId, box };
+      if (typeof entityId !== "string" || seen.has(entityId)) continue;
+      const box = boxFromFeature(map, feature);
+      if (box) push({ entityId, box });
     }
   } catch {
-    return null;
+    return candidates;
   }
-  return null;
+  return candidates;
 }
 
 export function reticleForVisibleTarget(mapCanvas: HTMLElement | null, map: MlMap, sources: MapSources, target: MapReticleTarget): ReticleState | null {
@@ -62,16 +106,15 @@ export function targetBoxForEntityId(mapCanvas: HTMLElement, map: MlMap, sources
   return boxForEntityMarker(mapCanvas, entityId) ?? boxForFeature(map, featureForEntityId(sources, entityId));
 }
 
-function markerTargetAtPoint(mapCanvas: HTMLElement, mapRect: DOMRect, point: ScreenPoint): HoverTarget | null {
+function cachedMarkerBoxes(cache: MarkerBoxCache, mapCanvas: HTMLElement, mapRect: DOMRect): HoverTarget[] {
+  if (cache.entries) return cache.entries;
+  const entries: HoverTarget[] = [];
   for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
     const entityId = element.dataset.entityId;
-    if (!entityId) continue;
-    const box = boxFromElement(element, mapRect);
-    if (point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height) {
-      return { entityId, box };
-    }
+    if (entityId) entries.push({ entityId, box: boxFromElement(element, mapRect) });
   }
-  return null;
+  cache.entries = entries;
+  return entries;
 }
 
 function boxForMapReticleTarget(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, target: MapReticleTarget): TargetBox | null {
@@ -102,10 +145,7 @@ function boxFromElement(element: HTMLElement, mapRect: DOMRect): TargetBox {
 }
 
 function boxFromFeature(map: MlMap, feature: MapGeoJSONFeature): TargetBox | null {
-  return boxFromProjectedPositions(collectLngLatPositions(feature.geometry.coordinates), (position) => {
-    const projected = map.project([position[0], position[1]]);
-    return { x: projected.x, y: projected.y };
-  });
+  return boxFromCoordinates(map, feature.geometry.coordinates);
 }
 
 function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox | null {
@@ -113,7 +153,11 @@ function boxForFeature(map: MlMap, feature: MapFeature | undefined): TargetBox |
 }
 
 function boxFromGeometry(map: MlMap, geometry: UiRawGeometry): TargetBox | null {
-  return boxFromProjectedPositions(collectLngLatPositions(geometry.coordinates), (position) => {
+  return boxFromCoordinates(map, geometry.coordinates);
+}
+
+function boxFromCoordinates(map: MlMap, coordinates: unknown): TargetBox | null {
+  return boxFromProjectedPositions(collectLngLatPositions(coordinates), (position) => {
     const projected = map.project([position[0], position[1]]);
     return { x: projected.x, y: projected.y };
   });
