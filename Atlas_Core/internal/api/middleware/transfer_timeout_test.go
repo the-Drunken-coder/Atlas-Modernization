@@ -75,6 +75,35 @@ func TestTransferIdleTimeoutStopsIdleClientWriter(t *testing.T) {
 	}
 }
 
+func TestTransferIdleTimeoutRefreshesAfterSlowSuccessfulRead(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	body := &deadlineTestBody{
+		clock:  clock,
+		writer: writer,
+		chunks: [][]byte{[]byte("a"), []byte("b")},
+		delays: []time.Duration{29 * time.Second, 2 * time.Second},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/objects/upload", body)
+
+	var readErr error
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		buffer := make([]byte, 1)
+		if _, readErr = r.Body.Read(buffer); readErr == nil {
+			clock.advance(2 * time.Second)
+			_, readErr = r.Body.Read(buffer)
+		}
+	})).ServeHTTP(writer, req)
+
+	if readErr != nil {
+		t.Fatalf("second read after recent progress: %v", readErr)
+	}
+	want := time.Unix(1_700_000_000, 0).Add(63 * time.Second)
+	if writer.readDeadline.Before(want) {
+		t.Fatalf("final read deadline = %v, want at least %v", writer.readDeadline, want)
+	}
+}
+
 func TestTransferIdleTimeoutStopsIdleClientReader(t *testing.T) {
 	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
 	writer := newDeadlineTestWriter(clock)
@@ -410,6 +439,9 @@ func (w *deadlineTestWriter) Write(p []byte) (int, error) {
 }
 
 func (w *deadlineTestWriter) SetReadDeadline(deadline time.Time) error {
+	if !w.readDeadline.IsZero() && w.clock.Now().After(w.readDeadline) {
+		return os.ErrDeadlineExceeded
+	}
 	w.readDeadline = deadline
 	return nil
 }

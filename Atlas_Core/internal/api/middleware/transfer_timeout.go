@@ -62,7 +62,13 @@ func (b *transferRequestBody) Read(p []byte) (int, error) {
 	if err := b.controller.SetReadDeadline(b.now().Add(b.idle)); err != nil {
 		return 0, err
 	}
-	return b.ReadCloser.Read(p)
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		if deadlineErr := b.controller.SetReadDeadline(b.now().Add(b.idle)); err == nil {
+			err = deadlineErr
+		}
+	}
+	return n, err
 }
 
 type transferResponseWriter struct {
