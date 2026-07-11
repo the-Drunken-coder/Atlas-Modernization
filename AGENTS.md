@@ -13,6 +13,8 @@ git worktree list
 git diff --check
 ```
 
+The local Codex shell may provide Node 25 (and the bundled workspace runtime may be older) while `atlas_sdk/package.json` requires Node 26. Local `npm` commands can therefore emit an engine warning even when they run successfully; use the Node 26 GitHub Actions SDK job as the authoritative engine-compatibility check.
+
 The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
 
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.

@@ -44,7 +44,15 @@ describe("AtlasClient HTTP", () => {
       receivers.push(this);
       const body = String(url).includes("/admin/")
         ? { user: { username: "admin", role: "admin" } }
-        : { entities: [], tasks: [], objects: [] };
+        : {
+            entities: [],
+            tasks: [],
+            objects: [],
+            version: 0,
+            has_more_entities: false,
+            has_more_tasks: false,
+            has_more_objects: false
+          };
       return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     } as typeof fetch;
     vi.stubGlobal("fetch", fetchImpl);
@@ -60,7 +68,7 @@ describe("AtlasClient HTTP", () => {
 
   it("fails loudly on protocol revision mismatch", async () => {
     const core = new FakeCore();
-    core.revision = "sha256:mismatch";
+    core.revision = `sha256:${"0".repeat(64)}`;
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
     await expect(client.handshake()).rejects.toBeInstanceOf(ProtocolMismatchError);
   });
@@ -95,7 +103,15 @@ describe("AtlasClient HTTP", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ entities: [], tasks: [], objects: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        version: 0,
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, credentials: "include" });
 
@@ -214,7 +230,9 @@ describe("AtlasClient HTTP", () => {
     expect(isEntityUpdateRequest({})).toBe(false);
 
     expect(isTaskCreateRequest({ task_id: "task-valid", entity_id: null, components: { parameters: { latitude: 38, longitude: -77 } } })).toBe(true);
-    expect(isTaskCreateRequest({ entity_id: "asset-command", components: { command: { type: "goto" }, parameters: { latitude: 38, longitude: -77 } } })).toBe(true);
+    expect(isTaskCreateRequest({ entity_id: "asset-command", components: { command: { type: "goto" }, parameters: { latitude: 38, longitude: -77 } } })).toBe(
+      true
+    );
     expect(isTaskCreateRequest({ task_id: "task-invalid", components: { parameters: { latitude: 91 } } })).toBe(false);
     expect(isTaskCreateRequest({ task_id: "task-command-invalid", entity_id: "asset-command", components: { command: { type: "goto" } } })).toBe(false);
     expect(isTaskCreateRequest({ components: { command: { type: "goto" } } })).toBe(false);
@@ -347,7 +365,10 @@ describe("AtlasClient HTTP", () => {
       pollIntervalMs: 0
     });
     await client.sync.start();
-    const pending = core.upsertTask({ ...task("task-checkin-pending", "asset-checkin"), components: { command: { type: "move", parameters: { latitude: 1 } } } });
+    const pending = core.upsertTask({
+      ...task("task-checkin-pending", "asset-checkin"),
+      components: { command: { type: "move", parameters: { latitude: 1 } } }
+    });
     core.upsertTask({ ...task("task-checkin-completed", "asset-checkin"), status: "completed" });
     const entityWatch = vi.fn();
     const taskWatch = vi.fn();
@@ -380,8 +401,12 @@ describe("AtlasClient HTTP", () => {
     });
     await expect(client.entities.get("asset-checkin")).resolves.toEqual(response.entity);
     await expect(client.tasks.get("task-checkin-pending")).resolves.toEqual(response.tasks[0]);
-    expect(core.requests.some((request) => request.includes("/entities/asset-checkin/checkin?status_filter=pending&limit=1&since=2026-06-12T00%3A00%3A00.000Z"))).toBe(true);
-    expect(core.requestHeaders.find((request) => request.path.startsWith("/entities/asset-checkin/checkin?"))?.ifMatch).toBe(`"v${baseEntity.metadata.version}"`);
+    expect(
+      core.requests.some((request) => request.includes("/entities/asset-checkin/checkin?status_filter=pending&limit=1&since=2026-06-12T00%3A00%3A00.000Z"))
+    ).toBe(true);
+    expect(core.requestHeaders.find((request) => request.path.startsWith("/entities/asset-checkin/checkin?"))?.ifMatch).toBe(
+      `"v${baseEntity.metadata.version}"`
+    );
     expect(entityWatch).toHaveBeenCalledWith(expect.objectContaining({ entity_id: "asset-checkin" }), expect.objectContaining({ event: "update" }));
     expect(taskWatch).toHaveBeenCalledWith(expect.objectContaining({ task_id: "task-checkin-pending" }), expect.objectContaining({ event: "update" }));
   });
@@ -531,7 +556,10 @@ describe("AtlasClient HTTP", () => {
     ).resolves.toMatchObject({ payload: { label: "thermal" } });
 
     const feedObject = core.upsertObject({ ...object("object-feed-cache"), type: "log" });
-    core.emit({ event: "update", resource_type: "object", id: feedObject.object_id, version: feedObject.metadata.version, resource: feedObject }, { record: false });
+    core.emit(
+      { event: "update", resource_type: "object", id: feedObject.object_id, version: feedObject.metadata.version, resource: feedObject },
+      { record: false }
+    );
 
     await vi.waitFor(() => {
       expect(client.sync.status().lastVersion).toBeGreaterThanOrEqual(feedObject.metadata.version);

@@ -7,25 +7,38 @@ import (
 	"strings"
 )
 
-var requestValidatorTypeNames = []string{
+var runtimeValidatorTypeNames = []string{
 	"EntityCreateRequest",
 	"EntityUpdateRequest",
 	"ObjectCreateRequest",
 	"ObjectUpdateRequest",
 	"TaskCreateRequest",
 	"TaskUpdateRequest",
+	"EntityResource",
+	"TaskResource",
+	"ObjectResource",
+	"FeedEvent",
+	"FeedHandshakeMessage",
+	"JSONValue",
+	"ProtocolRevision",
+	"ResourceType",
+	"RFC3339Timestamp",
 }
 
-func requestValidatorSource(g *typeScriptGenerator) (string, error) {
+func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 	var builder strings.Builder
 	generated := false
-	for _, name := range requestValidatorTypeNames {
+	for _, name := range runtimeValidatorTypeNames {
 		schema, ok := g.defs[name]
 		if !ok {
 			continue
 		}
 		generated = true
-		check, err := g.runtimeValidatorExpression("value", schema)
+		check := "atlasProtocolIsJSONValue(value)"
+		var err error
+		if name != "JSONValue" {
+			check, err = g.runtimeValidatorExpressionWithRefs("value", schema, map[string]bool{name: true})
+		}
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", name, err)
 		}
@@ -50,8 +63,13 @@ func validatorFunctionName(typeName string) string {
 	return "is" + typeName
 }
 
-func (g *typeScriptGenerator) runtimeValidatorExpression(valueExpr string, schema typeScriptSchema) (string, error) {
-	return g.runtimeValidatorExpressionWithRefs(valueExpr, schema, map[string]bool{})
+func hasRuntimeValidator(typeName string) bool {
+	for _, name := range runtimeValidatorTypeNames {
+		if name == typeName {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr string, schema typeScriptSchema, seenRefs map[string]bool) (string, error) {
@@ -127,6 +145,11 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 
 func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, ref string, seenRefs map[string]bool) (string, error) {
 	name := typeNameFromRef(ref)
+	if !seenRefs[name] && hasRuntimeValidator(name) {
+		if _, ok := g.defs[name]; ok {
+			return validatorFunctionName(name) + "(" + valueExpr + ")", nil
+		}
+	}
 	switch name {
 	case "JSONValue":
 		return "atlasProtocolIsJSONValue(" + valueExpr + ")", nil

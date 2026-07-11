@@ -142,7 +142,10 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
         version: visibleVersion(state, clientState),
         entities: visibleValues(state, clientState, state.entities, "entity"),
         tasks: visibleValues(state, clientState, state.tasks, "task"),
-        objects: visibleValues(state, clientState, state.objects, "object")
+        objects: visibleValues(state, clientState, state.objects, "object"),
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
       })
     },
     sync: {
