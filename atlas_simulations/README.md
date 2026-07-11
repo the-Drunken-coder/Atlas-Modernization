@@ -35,18 +35,22 @@ Configured API keys are read only by the local Node server. Browser code calls s
 
 ## Development
 
-Use Node 24 LTS from the repository root `.nvmrc` before installing dependencies.
-
-Start the local API server:
+Use Node 24 LTS from the repository root `.nvmrc`, then install the JavaScript workspace once from the repository root:
 
 ```bash
-npm --prefix atlas_simulations run dev:server
+npm ci
+```
+
+Start the local API server (building the local SDK package first):
+
+```bash
+npm run dev:simulations-server
 ```
 
 Start the browser UI:
 
 ```bash
-npm --prefix atlas_simulations run dev
+npm run dev:simulations
 ```
 
 Open http://127.0.0.1:5174.
@@ -54,9 +58,10 @@ Open http://127.0.0.1:5174.
 ## Checks
 
 ```bash
-npm --prefix atlas_simulations run lint
-npm --prefix atlas_simulations run format:check -- --since=origin/main
-npm --prefix atlas_simulations test
-npm --prefix atlas_simulations run typecheck
-npm --prefix atlas_simulations run build
+npm run build:sdk
+npm run lint --workspace @the-drunken-coder/atlas-simulations
+npm run format:check --workspace @the-drunken-coder/atlas-simulations -- --since=origin/main
+npm test --workspace @the-drunken-coder/atlas-simulations
+npm run typecheck --workspace @the-drunken-coder/atlas-simulations
+npm run build:simulations
 ```

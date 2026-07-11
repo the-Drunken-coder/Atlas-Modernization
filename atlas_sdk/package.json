@@ -9,6 +9,10 @@
     "url": "git+https://github.com/the-Drunken-coder/Atlas-Modernization.git",
     "directory": "atlas_sdk"
   },
+  "homepage": "https://github.com/the-Drunken-coder/Atlas-Modernization/tree/main/atlas_sdk#readme",
+  "bugs": {
+    "url": "https://github.com/the-Drunken-coder/Atlas-Modernization/issues"
+  },
   "keywords": [
     "atlas",
     "atlas-core",
@@ -40,13 +44,17 @@
   "bin": {
     "atlas": "./dist/atlas_sdk/src/cli.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json",
     "prebuild": "node ./scripts/generate-package-metadata.mjs",
-    "prepack": "npm run build",
+    "prepack": "npm run clean && npm run build",
+    "test:package": "node ./test/packed-consumer-smoke.mjs",
     "lint": "biome lint .",
     "format:check": "biome format --changed --no-errors-on-unmatched .",
-    "test:bin": "node ./test/bin-smoke.mjs",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test": "npm run test:node && npm run test:browser"

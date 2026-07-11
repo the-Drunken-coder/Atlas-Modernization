@@ -28,33 +28,7 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: npm
-    directory: /atlas_sdk
-    schedule:
-      interval: weekly
-    groups:
-      npm-minor-patch:
-        update-types:
-          - minor
-          - patch
-        patterns:
-          - "*"
-    open-pull-requests-limit: 5
-
-  - package-ecosystem: npm
-    directory: /atlas_command_interface
-    schedule:
-      interval: weekly
-    groups:
-      npm-minor-patch:
-        update-types:
-          - minor
-          - patch
-        patterns:
-          - "*"
-    open-pull-requests-limit: 5
-
-  - package-ecosystem: npm
-    directory: /atlas_simulations
+    directory: /
     schedule:
       interval: weekly
     groups:

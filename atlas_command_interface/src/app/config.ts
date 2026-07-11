@@ -1,4 +1,4 @@
-import { ATLAS_PROTOCOL_REVISION } from "../../../atlas_sdk/src/index.js";
+import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 
 export type MapSourceConfig = {

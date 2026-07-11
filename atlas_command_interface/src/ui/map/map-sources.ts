@@ -1,13 +1,5 @@
-import type { EntityResource } from "../../../../atlas_sdk/src/index.js";
-import {
-  entityClassification,
-  entityDisplayName,
-  entityGeometry,
-  entityHeading,
-  entityKind,
-  entityLinkState,
-  entityPosition
-} from "../../atlas/entities.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { entityClassification, entityDisplayName, entityGeometry, entityHeading, entityKind, entityLinkState, entityPosition } from "../../atlas/entities.js";
 import { displayGeometry, type UiRawGeometry } from "../../atlas/geometry.js";
 
 export type MapFeatureProperties = {

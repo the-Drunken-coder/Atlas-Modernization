@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource, JSONValue } from "../../../../atlas_sdk/src/index.js";
+import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { parseCommandCatalog } from "../../atlas/command-model.js";
 import { commandsForTargeting, formParameters } from "../../atlas/command-targeting.js";
 import { CommandForm } from "./CommandForm.js";

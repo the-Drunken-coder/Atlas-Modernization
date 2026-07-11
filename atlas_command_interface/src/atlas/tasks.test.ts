@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { JSONValue, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { JSONValue, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { taskParameters } from "./tasks.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };

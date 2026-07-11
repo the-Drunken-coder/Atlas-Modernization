@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { EntityResource, TaskResource } from "../../../atlas_sdk/src/index.js";
+import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { fetchAppConfig, type AppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { createSdkDataSource, type AtlasDataSource, type CommandSubmission, type ConnectionHealth } from "../atlas/data-source.js";

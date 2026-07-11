@@ -1,10 +1,5 @@
-import type { EntityResource } from "../../../atlas_sdk/src/index.js";
-import {
-  type CommandCatalog,
-  type CommandDefinition,
-  type CommandParameterSchema,
-  supportedCommandIds
-} from "./command-model.js";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { type CommandCatalog, type CommandDefinition, type CommandParameterSchema, supportedCommandIds } from "./command-model.js";
 
 // Parameters that a map-point command receives from the right-click coordinate.
 // They are never asked for in a form because the map fills them in.
@@ -29,9 +24,7 @@ export type CommandAvailability = {
  * `latitude` and `longitude` parameters. Everything else is a sidebar command.
  */
 export function commandTargeting(command: CommandDefinition): CommandTargeting {
-  return isRequiredNumber(command.parameters_schema.latitude) && isRequiredNumber(command.parameters_schema.longitude)
-    ? "map_point"
-    : "none";
+  return isRequiredNumber(command.parameters_schema.latitude) && isRequiredNumber(command.parameters_schema.longitude) ? "map_point" : "none";
 }
 
 /** Parameters the operator still has to provide for the given targeting. */
