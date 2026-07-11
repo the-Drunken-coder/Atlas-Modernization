@@ -1,6 +1,6 @@
 # Security Considerations
 
-_Revision: 2026-05-29_
+_Revision: 2026-07-10_
 
 ## Cross-Origin Resource Sharing (CORS)
 
@@ -52,7 +52,7 @@ Broad credentialed-CORS wildcards such as `*`, `https://*`, `https://*.pages.dev
 
 - `AllowCredentials` is enabled so trusted browser origins can send Core-owned session cookies.
 - Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
-- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID`
+- Allowed request headers: `Accept`, `Authorization`, `Content-Type`, `If-Match`, `X-API-Key`, `X-Request-ID` (structured-log correlation)
 - Exposed headers: `ETag`, `X-Has-More`, `X-Next-Cursor`, `X-Limit`, `X-Returned-Count`, `Content-Length`
 
 Operators should prefer exact trusted origins. Use constrained origin patterns only for deployment systems that generate per-branch hostnames. Unsafe cookie-authenticated browser methods are rejected unless the `Origin` header matches configured CORS origins or constrained origin patterns.
@@ -109,7 +109,7 @@ The process refuses to start when:
 
 ### Public unauthenticated paths
 
-`/health`, `/readiness`, `/resources`, and `OPTIONS` skip protected-route auth. `/feed` also bypasses the shared protected-route middleware because websocket clients may need first-message API-key auth, but the feed handler still requires either a preauthenticated API key, a trusted browser session, or a first auth frame when API-key auth is enabled. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
+`/health`, `/readiness`, and `OPTIONS` skip protected-route auth. `/resources` requires an API key or admin session because it performs per-request CPU/runtime inspection and exposes host/process capacity details. `/feed` also bypasses the shared protected-route middleware because websocket clients may need first-message API-key auth, but the feed handler still requires either a preauthenticated API key, a trusted browser session, or a first auth frame when API-key auth is enabled. `POST /admin/auth/login` is public so the browser can establish a session. `POST /admin/auth/logout` is origin-gated, and `GET /admin/auth/me` remains protected.
 
 ## Configuration Checklist
 

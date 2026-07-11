@@ -69,8 +69,13 @@ export class AtlasAdminClient {
 }
 
 function isAdminMeResponse(value: unknown): value is AdminMeResponse {
-  return isRecord(value) && isRecord(value.user) && isNonEmptyString(value.user.username) && isNonEmptyString(value.user.role) &&
-    (value.user.expires_at === undefined || isNonEmptyString(value.user.expires_at));
+  return (
+    isRecord(value) &&
+    isRecord(value.user) &&
+    isNonEmptyString(value.user.username) &&
+    isNonEmptyString(value.user.role) &&
+    (value.user.expires_at === undefined || isNonEmptyString(value.user.expires_at))
+  );
 }
 
 function isAdminAPIKeyList(value: unknown): value is AdminAPIKey[] {
@@ -78,12 +83,14 @@ function isAdminAPIKeyList(value: unknown): value is AdminAPIKey[] {
 }
 
 function isAdminAPIKey(value: unknown): value is AdminAPIKey {
-  return isRecord(value) &&
+  return (
+    isRecord(value) &&
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.name) &&
     isNonEmptyString(value.key_prefix) &&
     isNonEmptyString(value.created_at) &&
-    isNonEmptyString(value.created_by);
+    isNonEmptyString(value.created_by)
+  );
 }
 
 function isAdminCreatedAPIKey(value: unknown): value is AdminCreatedAPIKey {

@@ -163,6 +163,22 @@ func (a *EntityActions) Get(ctx context.Context, entityID string) (*models.Entit
 	return &entity, nil
 }
 
+func (a *EntityActions) checkExpectedVersion(ctx context.Context, entityID string, expectedVersion *int64) error {
+	if err := ValidateEntityID(entityID); err != nil {
+		return err
+	}
+
+	var currentVersion int64
+	err := a.pool.QueryRow(ctx, "SELECT version FROM entities WHERE entity_id = $1", SanitizeID(entityID)).Scan(&currentVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return NewEntityNotFoundError(SanitizeID(entityID))
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get entity version: %w", err)
+	}
+	return checkExpectedVersion("entity", expectedVersion, currentVersion)
+}
+
 // GetByAlias retrieves an entity by alias.
 func (a *EntityActions) GetByAlias(ctx context.Context, alias string) (*models.Entity, error) {
 	normalized, err := NormalizeAlias(alias)

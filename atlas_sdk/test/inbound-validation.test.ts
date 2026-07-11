@@ -76,9 +76,7 @@ describe("AtlasClient inbound response validation", () => {
   ])("rejects a malformed changed-since envelope %s", async (_name, payload) => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });
 
-    await expect(client.queries.changedSince(4)).rejects.toThrow(
-      "Atlas response failed validation for GET /queries/changed-since?since_version=4"
-    );
+    await expect(client.queries.changedSince(4)).rejects.toThrow("Atlas response failed validation for GET /queries/changed-since?since_version=4");
   });
 
   it.each([
@@ -298,13 +296,14 @@ describe("AtlasClient inbound response validation", () => {
     const minimalTask = { task_id: "task-minimal", status: "pending", ...(entityID === undefined ? {} : { entity_id: entityID }) };
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
-      fetch: async () => Response.json({
-        entity: checkedIn,
-        tasks: [minimalTask],
-        task_count: 1,
-        task_limit: 10,
-        has_more_tasks: false
-      })
+      fetch: async () =>
+        Response.json({
+          entity: checkedIn,
+          tasks: [minimalTask],
+          task_count: 1,
+          task_limit: 10,
+          has_more_tasks: false
+        })
     });
     const result = client.entities.checkIn(checkedIn.entity_id, { fields: "minimal" });
 

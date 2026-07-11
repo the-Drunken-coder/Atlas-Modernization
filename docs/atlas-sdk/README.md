@@ -1,6 +1,6 @@
 # Atlas SDK
 
-The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=26` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
+The Atlas SDK (`atlas_sdk/`) is the single client for Atlas Core: the `@the-drunken-coder/atlas-sdk` TypeScript/JavaScript package with a typed HTTP client, an optional started sync engine (local cache + change feed consumer + reconciliation), a bundled `atlas` CLI, and Node/browser test suites. It targets Node `>=24` and browser runtimes with web-standard `fetch` and `WebSocket`. Public npm publishing is a convenience release step for this greenfield repo, not a compatibility promise.
 
 The SDK is the preferred client path for UI code, asset-side services, and tools. Direct API calls remain acceptable for small tools and non-TypeScript services, but the SDK/CLI should be the default integration surface.
 
@@ -104,7 +104,7 @@ The SDK ships a CLI (`atlas entities get <id>`, `atlas tasks create <json>`, JSO
 
 The language-neutral contract remains Atlas Protocol plus the change-feed consumption rules. A future Python SDK should be a port of that contract, not a new design.
 
-Local package commands are `npm ci`, `npm run build`, `npm test` for Node plus browser tests, and `npm run test:bin` for the CLI smoke.
+Local package commands are `npm ci`, `npm run lint`, `npm run format:check -- --since=origin/main`, `npm run build`, `npm test` for Node plus browser tests, and `npm run test:bin` for the CLI smoke. CI also runs `npm audit --audit-level=high` against the complete dependency tree.
 
 ## Auth
 

@@ -10,21 +10,12 @@ import type {
   TaskUpdateRequest
 } from "./protocol.js";
 import { ObjectContentCache, ResourceCache } from "./cache.js";
-import { FeedConnectionManager, ProtocolMismatchError } from "./feed-connection.js";
-import { AtlasAPIError, ConflictError, HttpTransport } from "./http.js";
+import { FeedConnectionManager } from "./feed-connection.js";
+import { HttpTransport } from "./http.js";
 import { SyncEngine } from "./sync-engine.js";
-import {
-  changedSinceResponseValidator,
-  isEntityResource,
-  isFullDatasetResponse,
-  isObjectResponse,
-  isTaskResource
-} from "./validation.js";
+import { changedSinceResponseValidator, isEntityResource, isFullDatasetResponse, isObjectResponse, isTaskResource } from "./validation.js";
 import type {
-  AtlasLocalDeleteWatchEvent,
-  AtlasRecoveredWatchEvent,
   AtlasSubscription,
-  AtlasWatchEvent,
   ChangedSinceQueryOptions,
   EntityCheckInBody,
   EntityCheckInMethod,
@@ -97,8 +88,18 @@ export class AtlasClient {
 
   readonly tasks = {
     get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
-    create: (task: TaskCreateRequest) =>
-      this.engine.writeResource("POST", "/tasks", task, "task", "task_id" in task ? task.task_id : undefined, isTaskResource),
+    create: (task: TaskCreateRequest, options?: { signal?: AbortSignal }) =>
+      this.engine.writeResource(
+        "POST",
+        "/tasks",
+        task,
+        "task",
+        "task_id" in task ? task.task_id : undefined,
+        isTaskResource,
+        undefined,
+        undefined,
+        options?.signal
+      ),
     update: (id: string, patch: TaskUpdateRequest, options?: { ifMatchVersion?: number }) =>
       this.engine.writeResource("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", id, isTaskResource, options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),

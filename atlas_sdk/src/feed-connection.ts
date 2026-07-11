@@ -19,7 +19,10 @@ export type FeedConnectOptions = {
 };
 
 export class ProtocolMismatchError extends Error {
-  constructor(readonly expected: string, readonly actual: string) {
+  constructor(
+    readonly expected: string,
+    readonly actual: string
+  ) {
     super(`Atlas protocol revision mismatch: SDK ${expected}, Core ${actual}`);
     this.name = "ProtocolMismatchError";
   }
@@ -95,10 +98,7 @@ export class FeedConnectionManager {
         clearTimeout(timer);
         fn();
       };
-      const timer = setTimeout(
-        () => finish(() => reject(new Error("feed protocol hello timed out"))),
-        this.feedHandshakeTimeoutMs
-      );
+      const timer = setTimeout(() => finish(() => reject(new Error("feed protocol hello timed out"))), this.feedHandshakeTimeoutMs);
       const onMessage: WebSocketListener = (message) => {
         if (settled) {
           return;
@@ -136,10 +136,7 @@ export class FeedConnectionManager {
           clearTimeout(timer);
           fn();
         };
-        const timer = setTimeout(
-          () => finish(() => reject(new Error("feed websocket open timed out"))),
-          this.feedHandshakeTimeoutMs
-        );
+        const timer = setTimeout(() => finish(() => reject(new Error("feed websocket open timed out"))), this.feedHandshakeTimeoutMs);
         const onOpen = () => finish(resolve);
         const onClose = () => finish(() => reject(new Error("feed websocket closed before opening")));
         const onError = () => finish(() => reject(new Error("feed websocket failed to open")));
@@ -242,11 +239,7 @@ export function assertRevision(actual: string): void {
   }
 }
 
-function removeSocketListener(
-  socket: WebSocketLike,
-  type: WebSocketEventType,
-  listener: WebSocketListener
-): void {
+function removeSocketListener(socket: WebSocketLike, type: WebSocketEventType, listener: WebSocketListener): void {
   if (socket.removeEventListener) {
     socket.removeEventListener(type, listener);
     return;

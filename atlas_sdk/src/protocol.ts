@@ -20,7 +20,7 @@ export {
 } from "../../atlas_protocol/generated/typescript/index.js";
 
 export type ObjectResponse = ObjectResource & {
-  "payload"?: { [key: string]: JSONValue };
+  payload?: { [key: string]: JSONValue };
 };
 
 export type {

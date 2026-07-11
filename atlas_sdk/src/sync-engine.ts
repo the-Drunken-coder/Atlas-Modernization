@@ -194,11 +194,7 @@ export class SyncEngine {
       const seenCursors = new Map<string, Set<string>>();
       do {
         if (!this.isCurrent(generation)) return;
-        const response = await this.transport.json(
-          "GET",
-          changedSincePath(sinceVersion, cursors),
-          changedSinceResponseValidator(sinceVersion)
-        );
+        const response = await this.transport.json("GET", changedSincePath(sinceVersion, cursors), changedSinceResponseValidator(sinceVersion));
         if (!this.isCurrent(generation)) return;
         if (snapshotVersion !== undefined && response.version !== snapshotVersion) {
           throw new TypeError("Atlas changed-since pagination changed response version");
@@ -273,28 +269,20 @@ export class SyncEngine {
     expectedID: string | undefined,
     validate: ResponseValidator<TResource>,
     ifMatchVersion?: number,
-    eventName?: "create" | "update"
+    eventName?: "create" | "update",
+    signal?: AbortSignal
   ): Promise<TResource> {
-    const resource = await this.transport.json(method, path, validate, body, ifMatchVersion);
+    const resource = await this.transport.json(method, path, validate, body, ifMatchVersion, signal);
     const id = resourceID(type, resource);
     if (expectedID !== undefined && id !== expectedID) {
       throw new TypeError(`Atlas ${type} response id ${id} does not match requested id ${expectedID}`);
     }
     const event = eventName ?? (method === "POST" ? "create" : "update");
-    this.applyEvent(
-      resourceUpsertEvent(type, event, id, resource.metadata.version, resource),
-      { detail: type === "object", advanceCursor: false }
-    );
+    this.applyEvent(resourceUpsertEvent(type, event, id, resource.metadata.version, resource), { detail: type === "object", advanceCursor: false });
     return resource;
   }
 
-  async checkInEntity(
-    id: string,
-    path: string,
-    body: EntityCheckInBody,
-    fields: "full" | "minimal",
-    ifMatchVersion?: number
-  ): Promise<EntityCheckInResponse> {
+  async checkInEntity(id: string, path: string, body: EntityCheckInBody, fields: "full" | "minimal", ifMatchVersion?: number): Promise<EntityCheckInResponse> {
     const response = await this.transport.json("POST", path, entityCheckInResponseValidator(id, fields), body, ifMatchVersion);
     this.applyEvent(
       { event: "update", resource_type: "entity", id: response.entity.entity_id, version: response.entity.metadata.version, resource: response.entity },
@@ -302,10 +290,7 @@ export class SyncEngine {
     );
     for (const task of response.tasks) {
       if (isTaskResource(task)) {
-        this.applyEvent(
-          { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task },
-          { advanceCursor: false }
-        );
+        this.applyEvent({ event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task }, { advanceCursor: false });
       }
     }
     return response;
@@ -586,11 +571,7 @@ function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
   return Object.keys(cursors).length > 0;
 }
 
-function assertExpectedResourceID<TType extends ResourceType>(
-  type: TType,
-  expectedID: string,
-  resource: ResourceOf<TType>
-): void {
+function assertExpectedResourceID<TType extends ResourceType>(type: TType, expectedID: string, resource: ResourceOf<TType>): void {
   const actualID = resourceID(type, resource);
   if (actualID !== expectedID) {
     throw new TypeError(`Atlas ${type} response id ${actualID} does not match requested id ${expectedID}`);

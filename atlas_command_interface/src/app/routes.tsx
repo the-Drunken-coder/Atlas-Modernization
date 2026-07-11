@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { MapConsole } from "../features/MapConsole.js";
 import { Providers } from "./providers.js";
+
+const MapConsole = lazy(() => import("../features/MapConsole.js").then((module) => ({ default: module.MapConsole })));
 
 /**
  * Route table. `/map` is the only real workspace; `/home` and any unknown path
@@ -22,7 +23,13 @@ export function AppRoutes() {
   return (
     <BrowserRouter>
       <Providers>
-        <ConsoleRoutes mapElement={<MapConsole />} />
+        <ConsoleRoutes
+          mapElement={
+            <Suspense fallback={<div className="app-loading">Loading map workspace...</div>}>
+              <MapConsole />
+            </Suspense>
+          }
+        />
       </Providers>
     </BrowserRouter>
   );

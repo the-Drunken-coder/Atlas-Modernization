@@ -43,25 +43,32 @@ export function App() {
   const refreshRunsRequestRef = useRef(0);
   const runsRef = useRef<RunSummary[]>([]);
   const eventsByRunIdRef = useRef<Map<string, RunEvent[]>>(new Map());
+  const effectsRef = useRef({ captureError, refreshHealth, refreshRuns, refreshRunsBestEffort });
+  effectsRef.current = { captureError, refreshHealth, refreshRuns, refreshRunsBestEffort };
 
   useEffect(() => {
+    const { captureError, refreshHealth, refreshRuns } = effectsRef.current;
     let cancelled = false;
-    void loadTargets().then((loaded) => {
-      if (cancelled) return;
-      setTargets(loaded.targets);
-      const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : loaded.targets[0]?.id ?? "";
-      setSelectedTargetId(targetId);
-      return refreshHealth(targetId);
-    }).catch((errorValue) => {
-      if (!cancelled) captureError(errorValue);
-    });
-    void loadScenarios().then((loaded) => {
-      if (cancelled) return;
-      setScenarios(loaded);
-      setSelectedId((current) => current || loaded[0]?.id || "");
-    }).catch((errorValue) => {
-      if (!cancelled) captureError(errorValue);
-    });
+    void loadTargets()
+      .then((loaded) => {
+        if (cancelled) return;
+        setTargets(loaded.targets);
+        const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : (loaded.targets[0]?.id ?? "");
+        setSelectedTargetId(targetId);
+        return refreshHealth(targetId);
+      })
+      .catch((errorValue) => {
+        if (!cancelled) captureError(errorValue);
+      });
+    void loadScenarios()
+      .then((loaded) => {
+        if (cancelled) return;
+        setScenarios(loaded);
+        setSelectedId((current) => current || loaded[0]?.id || "");
+      })
+      .catch((errorValue) => {
+        if (!cancelled) captureError(errorValue);
+      });
     void refreshRuns().catch((errorValue) => {
       if (!cancelled) captureError(errorValue);
     });
@@ -74,7 +81,7 @@ export function App() {
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
   const selectedTarget = useMemo(() => targets.find((target) => target.id === selectedTargetId), [selectedTargetId, targets]);
-  const selectedApiKey = selectedTargetId ? apiKeysByTargetId[selectedTargetId] ?? "" : "";
+  const selectedApiKey = selectedTargetId ? (apiKeysByTargetId[selectedTargetId] ?? "") : "";
   const hasRunningRuns = useMemo(() => runs.some((run) => run.status === "running"), [runs]);
   const hasCleanupInFlight = useMemo(() => !!cleanupRunId && runs.some((run) => run.id === cleanupRunId && !run.cleaned), [cleanupRunId, runs]);
 
@@ -94,7 +101,7 @@ export function App() {
 
   useEffect(() => {
     if (!hasRunningRuns && !hasCleanupInFlight) return;
-    const interval = window.setInterval(() => void refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
+    const interval = window.setInterval(() => void effectsRef.current.refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
     return () => window.clearInterval(interval);
   }, [hasCleanupInFlight, hasRunningRuns]);
 
@@ -339,7 +346,8 @@ export function App() {
     if (!currentRun || mutationPending) return;
     const targetRunId = currentRun.id;
     const recoveryApiKey = recoveryApiKeysByRunId[targetRunId]?.trim();
-    const targetApiKey = currentRun.status === "abandoned" ? (recoveryApiKey || undefined) : currentRun.target ? apiKeyForTarget(currentRun.target.id) : undefined;
+    const targetApiKey =
+      currentRun.status === "abandoned" ? recoveryApiKey || undefined : currentRun.target ? apiKeyForTarget(currentRun.target.id) : undefined;
     setError(undefined);
     setMutationPending(true);
     try {
@@ -450,7 +458,11 @@ export function App() {
         </div>
       </header>
 
-      {error ? <div className="error-banner" role="alert">{error}</div> : null}
+      {error ? (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      ) : null}
 
       {selectedTarget?.deployed ? (
         <section className="deployed-warning" role="alert" aria-labelledby="deployed-warning-title">
@@ -458,14 +470,11 @@ export function App() {
           <div className="deployed-warning-content">
             <strong id="deployed-warning-title">Deployed Core selected</strong>
             <p>
-              Starting a simulation will mutate remote resources on <strong>{selectedTarget.label}</strong> at <code>{selectedTarget.baseUrl}</code>. Cleanup is explicit.
+              Starting a simulation will mutate remote resources on <strong>{selectedTarget.label}</strong> at <code>{selectedTarget.baseUrl}</code>. Cleanup is
+              explicit.
             </p>
             <label className="deployed-confirmation">
-              <input
-                type="checkbox"
-                checked={deployedMutationConfirmed}
-                onChange={(event) => setDeployedMutationConfirmed(event.target.checked)}
-              />
+              <input type="checkbox" checked={deployedMutationConfirmed} onChange={(event) => setDeployedMutationConfirmed(event.target.checked)} />
               <span>I understand this start will mutate the deployed Core.</span>
             </label>
           </div>
@@ -510,7 +519,12 @@ export function App() {
                 <Square size={16} aria-hidden="true" />
                 Stop
               </button>
-              <button type="button" title="Cleanup run resources" onClick={() => void cleanupCurrentRun()} disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.cleaned}>
+              <button
+                type="button"
+                title="Cleanup run resources"
+                onClick={() => void cleanupCurrentRun()}
+                disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.cleaned}
+              >
                 <Trash2 size={16} aria-hidden="true" />
                 Cleanup
               </button>

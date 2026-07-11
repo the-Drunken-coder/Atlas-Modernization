@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
@@ -37,12 +37,19 @@ func generateErrorID() string {
 // writeJSON writes a JSON response. If encoding fails after the status header
 // has been sent, the error is logged because the HTTP status code can no longer
 // be changed.
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Error().Err(err).Int("status", status).Msg("writeJSON: failed to encode response")
+		zerolog.Ctx(r.Context()).Error().Err(err).Int("status", status).Msg("writeJSON: failed to encode response")
 	}
+}
+
+func (h *Handler) requestLogger(r *http.Request) *zerolog.Logger {
+	if logger := zerolog.Ctx(r.Context()); logger.GetLevel() != zerolog.Disabled {
+		return logger
+	}
+	return &h.logger
 }
 
 // writeError writes an error response.
@@ -62,7 +69,12 @@ func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, st
 		Path:      r.URL.Path,
 	}
 
-	event := h.logger.Error().
+	logger := h.requestLogger(r)
+	event := logger.Warn()
+	if status >= http.StatusInternalServerError {
+		event = logger.Error()
+	}
+	event = event.
 		Str("error_id", errorID).
 		Str("error_code", string(errorCode)).
 		Str("path", r.URL.Path).
@@ -73,7 +85,7 @@ func (h *Handler) writeErrorWithCause(w http.ResponseWriter, r *http.Request, st
 	}
 	event.Msg(message)
 
-	writeJSON(w, status, resp)
+	writeJSON(w, r, status, resp)
 }
 
 // writeValidationError writes a validation error response with details.
@@ -95,8 +107,7 @@ func (h *Handler) writeValidationError(w http.ResponseWriter, r *http.Request, v
 		}
 	}
 
-	// Log the error
-	h.logger.Error().
+	h.requestLogger(r).Warn().
 		Str("error_id", errorID).
 		Str("error_code", string(validationErr.Code)).
 		Str("path", r.URL.Path).
@@ -105,7 +116,7 @@ func (h *Handler) writeValidationError(w http.ResponseWriter, r *http.Request, v
 		Interface("details", validationErr.Details).
 		Msg(validationErr.Message)
 
-	writeJSON(w, http.StatusBadRequest, resp)
+	writeJSON(w, r, http.StatusBadRequest, resp)
 }
 
 // handleActionError handles errors from action functions.

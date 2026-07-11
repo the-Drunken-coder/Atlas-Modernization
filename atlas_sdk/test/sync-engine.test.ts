@@ -676,7 +676,10 @@ describe("AtlasClient sync", () => {
     client.watch({ filter: "all" }, snapshots);
 
     const fedEntity = core.upsertEntity(entity("asset-snapshot-feed"));
-    core.emit({ event: "create", resource_type: "entity", id: fedEntity.entity_id, version: fedEntity.metadata.version, resource: fedEntity }, { record: false });
+    core.emit(
+      { event: "create", resource_type: "entity", id: fedEntity.entity_id, version: fedEntity.metadata.version, resource: fedEntity },
+      { record: false }
+    );
     await vi.waitFor(() => expect(snapshots).toHaveReturnedWith(expect.objectContaining({ entities: { [fedEntity.entity_id]: fedEntity } })));
 
     const recoveredTask = core.upsertTask(task("task-snapshot-recovered", fedEntity.entity_id));
@@ -984,9 +987,9 @@ describe("AtlasClient sync", () => {
     const core = new FakeCore();
     const value = core.upsertEntity(entity("asset-duplicate-version"));
 
-    expect(() =>
-      core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value })
-    ).toThrow("duplicate fake core event version");
+    expect(() => core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value })).toThrow(
+      "duplicate fake core event version"
+    );
   });
 
   it("keeps successful writes successful when watch callbacks throw", async () => {
@@ -1005,7 +1008,9 @@ describe("AtlasClient sync", () => {
     });
 
     try {
-      await expect(client.entities.create({ entity_id: "asset-throwing-write-watch", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-throwing-write-watch" });
+      await expect(client.entities.create({ entity_id: "asset-throwing-write-watch", entity_type: "asset" })).resolves.toMatchObject({
+        entity_id: "asset-throwing-write-watch"
+      });
       expect(client.sync.status().degraded).toBe(false);
       expect(errorSpy).toHaveBeenCalled();
     } finally {
@@ -1208,10 +1213,7 @@ describe("AtlasClient sync", () => {
     await vi.waitFor(() => expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false }));
 
     const valid = core.upsertEntity(entity("asset-watch-cross-type-valid"));
-    core.emit(
-      { event: "update", resource_type: "entity", id: valid.entity_id, version: valid.metadata.version, resource: valid },
-      { record: false }
-    );
+    core.emit({ event: "update", resource_type: "entity", id: valid.entity_id, version: valid.metadata.version, resource: valid }, { record: false });
 
     await vi.waitFor(() => {
       expect(watch).toHaveBeenCalledWith(valid, expect.objectContaining({ resource_type: "entity", id: valid.entity_id }));
@@ -1250,5 +1252,4 @@ describe("AtlasClient sync", () => {
     expect(() => parseSubscriptionKey(JSON.stringify(["id", "task"]))).toThrow("invalid subscription key");
     expect(() => parseSubscriptionKey(JSON.stringify(["tasks_for_entity", ""]))).toThrow("invalid subscription key");
   });
-
 });

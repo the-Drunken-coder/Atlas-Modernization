@@ -7,8 +7,8 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
-// EntityCheckinActions coordinates the entity check-in write with the follow-up
-// task query used by the check-in response.
+// EntityCheckinActions coordinates the task-page read with the entity check-in
+// write used by the response.
 type EntityCheckinActions struct {
 	entityActions *EntityActions
 	taskActions   *TaskActions
@@ -40,17 +40,28 @@ type EntityCheckinResult struct {
 	Tasks  *ListPage[*models.Task]
 }
 
-// CheckIn applies check-in components to an entity and retrieves matching tasks.
+// CheckIn retrieves the complete task page before applying check-in components.
+// Once the entity update commits, no fallible database work remains.
 func (a *EntityCheckinActions) CheckIn(ctx context.Context, params EntityCheckinParams) (*EntityCheckinResult, error) {
-	entity, err := a.entityActions.Update(ctx, params.EntityID, UpdateEntityParams{
-		Components:      params.Components,
-		ExpectedVersion: params.ExpectedVersion,
-	})
-	if err != nil {
+	if _, err := normalizeCheckinTaskLimit(params.TaskLimit); err != nil {
+		return nil, err
+	}
+	if _, err := parseQueryCursor(params.TaskCursor, "task_cursor"); err != nil {
+		return nil, err
+	}
+	if err := a.entityActions.checkExpectedVersion(ctx, params.EntityID, params.ExpectedVersion); err != nil {
 		return nil, err
 	}
 
 	tasks, err := a.taskActions.GetByEntityFiltered(ctx, params.EntityID, params.TaskStatuses, params.Since, params.TaskLimit, params.TaskCursor)
+	if err != nil {
+		return nil, err
+	}
+
+	entity, err := a.entityActions.Update(ctx, params.EntityID, UpdateEntityParams{
+		Components:      params.Components,
+		ExpectedVersion: params.ExpectedVersion,
+	})
 	if err != nil {
 		return nil, err
 	}
