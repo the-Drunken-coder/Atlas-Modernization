@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Focused durable-production integration test for clean install and full restart.
+# Focused durable-production integration test for clean install, restart, and paired restore.
 
 set -euo pipefail
 

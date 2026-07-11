@@ -94,5 +94,5 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify durable production clean install and restart
+      - name: Verify durable production clean install, restart, and paired restore
         run: ./scripts/test_production_persistence.sh
