@@ -64,6 +64,7 @@ export class FakeCore {
           entities: entityPage.items,
           tasks: taskPage.items,
           objects: objectPage.items,
+          version: this.version,
           has_more_entities: entityPage.hasMore,
           has_more_tasks: taskPage.hasMore,
           has_more_objects: objectPage.hasMore,

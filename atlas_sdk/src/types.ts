@@ -173,6 +173,7 @@ export type FullDatasetResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
   objects: ObjectResponse[];
+  version: number;
   has_more_entities: boolean;
   has_more_tasks: boolean;
   has_more_objects: boolean;

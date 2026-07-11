@@ -144,6 +144,7 @@ describe("AtlasClient inbound response validation", () => {
         return Response.json(
           fullPage({
             entities: [validEntity("asset-uncommitted-page", existing.metadata.version + 1)],
+            version: existing.metadata.version,
             has_more_entities: true,
             next_entity_cursor: "next"
           })

@@ -84,6 +84,8 @@ These endpoints use per-type **limits** and opaque cursors. When a stream is tru
 | `next_deleted_task_cursor` | `deleted_task_cursor` |
 | `next_deleted_object_cursor` | `deleted_object_cursor` |
 
+For **`GET /queries/full`**, every response includes a **`version`** captured before the first page is read. The opaque continuation cursors carry that hydration baseline, so every page in the same traversal repeats the same `version` even when a later page contains a resource whose `metadata.version` is newer. Clients must not advance their global sync cursor from hydrated resource versions. Consume all full-dataset pages, use the response `version` as the baseline, then drain `GET /queries/changed-since?since_version=<version>` before treating the hydrated state as current.
+
 For **`GET /queries/changed-since`**, use **`since_version`** as the incremental boundary. The response includes a monotonic **`version`** watermark; pass that value as `since_version` on the next poll after all pages for the current response are consumed. While following cursors for a truncated response, keep the same `since_version` and pass back the `next_*_cursor` value unchanged as the matching `*_cursor` query parameter. Treat every cursor as opaque: do not parse or construct it.
 
 ### Per-type caps

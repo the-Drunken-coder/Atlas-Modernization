@@ -185,10 +185,9 @@ export class SyncEngine {
     this.degraded = false;
   }
 
-  async changedSince(generation = this.lifecycleGeneration): Promise<void> {
+  async changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<void> {
     try {
       if (!this.isCurrent(generation)) return;
-      const sinceVersion = this.cache.lastVersion;
       let snapshotVersion: number | undefined;
       let cursors: ChangedSinceCursors = {};
       const recoveredEvents: AtlasWatchEvent[] = [];
@@ -366,6 +365,7 @@ export class SyncEngine {
 
   private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
+    let snapshotVersion: number | undefined;
     const seenCursors = new Map<string, Set<string>>();
     const entities: EntityResource[] = [];
     const tasks: TaskResource[] = [];
@@ -374,6 +374,11 @@ export class SyncEngine {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json("GET", fullDatasetPath(cursors), isFullDatasetResponse);
       if (!this.isCurrent(generation)) return;
+      const responseVersion = requireFullDatasetVersion(response.version);
+      if (snapshotVersion !== undefined && responseVersion !== snapshotVersion) {
+        throw new Error(`Atlas full-dataset pagination changed version watermark from ${snapshotVersion} to ${responseVersion}`);
+      }
+      snapshotVersion = responseVersion;
       entities.push(...(response.entities ?? []));
       tasks.push(...(response.tasks ?? []));
       objects.push(...(response.objects ?? []));
@@ -381,9 +386,9 @@ export class SyncEngine {
       assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
     if (!this.isCurrent(generation)) return;
-    for (const entity of entities) this.cache.cacheResource("entity", entity.entity_id, entity);
-    for (const task of tasks) this.cache.cacheResource("task", task.task_id, task);
-    for (const object of objects) this.cache.cacheResource("object", object.object_id, object);
+    if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
+    this.cache.replaceHydratedResources({ entities, tasks, objects });
+    await this.changedSince(generation, snapshotVersion);
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
@@ -486,7 +491,7 @@ export class SyncEngine {
     }
     this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
     this.advanceCursor(event, advanceCursor);
-    this.notify(event, event.resource, previous);
+    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
   }
 
   private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
@@ -504,7 +509,7 @@ export class SyncEngine {
     this.cache.pendingDeletes.delete(key);
     this.cache.locallyNotifiedDeletes.delete(key);
     this.cache.cacheResource(event.resource_type, event.id, event.resource);
-    this.notify(event, event.resource, previous);
+    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
@@ -609,6 +614,13 @@ function requireCursor(cursor: string | undefined, name: string): string {
     throw new Error(`Atlas response set ${name.replace(/^next_/, "has_more_")} without ${name}`);
   }
   return cursor;
+}
+
+function requireFullDatasetVersion(version: number): number {
+  if (!Number.isSafeInteger(version) || version < 0) {
+    throw new Error("Atlas full-dataset response version watermark must be a non-negative safe integer");
+  }
+  return version;
 }
 
 function pathWithQuery(path: string, params: Record<string, string | undefined>): string {

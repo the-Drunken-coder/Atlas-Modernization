@@ -14,6 +14,7 @@ type fullDatasetResponse struct {
 	Entities         []*serializers.EntityResponse `json:"entities"`
 	Tasks            []*serializers.TaskResponse   `json:"tasks"`
 	Objects          []*serializers.ObjectResponse `json:"objects"`
+	Version          int64                         `json:"version"`
 	HasMoreEntities  bool                          `json:"has_more_entities"`
 	HasMoreTasks     bool                          `json:"has_more_tasks"`
 	HasMoreObjects   bool                          `json:"has_more_objects"`
@@ -65,6 +66,7 @@ func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetR
 		Entities:         serializers.SerializeEntities(result.Entities),
 		Tasks:            serializers.SerializeTasks(result.Tasks),
 		Objects:          serializers.SerializeObjects(result.Objects),
+		Version:          result.Version,
 		HasMoreEntities:  result.HasMoreEntities,
 		HasMoreTasks:     result.HasMoreTasks,
 		HasMoreObjects:   result.HasMoreObjects,
