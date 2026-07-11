@@ -105,6 +105,14 @@ func TestInitializeStorageDisposableDevelopmentAllowsUnavailableStorage(t *testi
 	}
 }
 
+func TestInitializeStorageDisposableDevelopmentRejectsUnavailableConfiguredStorage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := initializeStorage(ctx, storageConfig("127.0.0.1:1", true)); err == nil {
+		t.Fatal("expected configured disposable storage outage to fail")
+	}
+}
+
 func TestNewHTTPServerRetainsOrdinaryRequestProtection(t *testing.T) {
 	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	server := newHTTPServer(":1234", handler)

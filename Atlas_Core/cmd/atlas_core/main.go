@@ -71,7 +71,7 @@ func initializeStorage(ctx context.Context, cfg *config.Config) (*storage.Client
 	}
 	if cfg.DatabaseRecreateOnStartup {
 		if err := client.EnsureBucket(ctx); err != nil {
-			return nil, nil
+			return nil, fmt.Errorf("ensure disposable storage bucket exists: %w", err)
 		}
 		if err := client.EmptyBucket(ctx); err != nil {
 			return nil, fmt.Errorf("clear disposable storage bucket: %w", err)
