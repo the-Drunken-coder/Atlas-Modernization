@@ -279,7 +279,11 @@ describe("MapConsole command flow", () => {
       reject[0](new Error("Core response failed"));
       await Promise.resolve();
     });
-    expect(await screen.findByText("Core response failed")).toBeInTheDocument();
+    expect(screen.queryByText("Core response failed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
   });
 
   it("passes hovered sidebar entities to the map as preview targets", async () => {
