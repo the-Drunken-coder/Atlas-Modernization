@@ -33,6 +33,13 @@ func TestCollectByteBoundedRowsChargesLargePromotedFields(t *testing.T) {
 	}
 }
 
+func TestJSONValueBytesOnlyChargesEncoderExpansion(t *testing.T) {
+	value := []byte(`{"ordinary":"text","html":"<&>","separator":" "}`)
+	if got, want := jsonValueBytes(value), len(value)+18; got != want {
+		t.Fatalf("jsonValueBytes = %d, want %d", got, want)
+	}
+}
+
 func TestCollectByteBoundedRowsStopsBeforeBudgetOverflow(t *testing.T) {
 	rows := &testRowIterator{remaining: 3}
 	sizes := []int{4, 4, 1}

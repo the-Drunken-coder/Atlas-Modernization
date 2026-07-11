@@ -286,13 +286,25 @@ func jsonOptionalStringBytes(value *string) int {
 }
 
 func jsonStringBytes(value string) int {
-	return jsonValueBytes([]byte(value))
+	return 6 * len(value)
 }
 
-// A source byte can expand to at most a six-byte JSON escape (for example,
-// an ASCII control character encoded as \u00XX).
+// Stored JSON is already escaped. Go's encoder only expands HTML-sensitive
+// ASCII bytes and the two Unicode line-separator runes when re-encoding it.
 func jsonValueBytes(value []byte) int {
-	return 6 * len(value)
+	size := len(value)
+	for i := 0; i < len(value); i++ {
+		switch value[i] {
+		case '<', '>', '&':
+			size += 5
+		case 0xe2:
+			if i+2 < len(value) && value[i+1] == 0x80 && (value[i+2] == 0xa8 || value[i+2] == 0xa9) {
+				size += 3
+				i += 2
+			}
+		}
+	}
+	return size
 }
 
 func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {
