@@ -64,7 +64,7 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("clean production schema install: %v", err)
 	}
-	assertCurrentMigration(t, ctx, db)
+	assertCurrentMigration(ctx, t, db)
 
 	var entityVersion int64
 	if err := db.Pool.QueryRow(ctx, `
@@ -84,7 +84,7 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("production schema restart: %v", err)
 	}
-	assertCurrentMigration(t, ctx, db)
+	assertCurrentMigration(ctx, t, db)
 
 	var restartedVersion int64
 	if err := db.Pool.QueryRow(ctx, `SELECT version FROM entities WHERE entity_id = 'durable-entity'`).Scan(&restartedVersion); err != nil {
@@ -171,7 +171,7 @@ func TestProductionSchemaAdoptsExactUnversionedBaseline(t *testing.T) {
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("adopt exact unversioned baseline: %v", err)
 	}
-	assertCurrentMigration(t, ctx, db)
+	assertCurrentMigration(ctx, t, db)
 
 	var sequenceAfter, persistedVersion int64
 	if err := db.Pool.QueryRow(ctx, `SELECT last_value FROM atlas_change_version_seq`).Scan(&sequenceAfter); err != nil {
@@ -351,7 +351,7 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	if probeColumnPresent {
 		t.Fatal("failed migration left rollback_probe column behind")
 	}
-	assertCurrentMigration(t, ctx, db)
+	assertCurrentMigration(ctx, t, db)
 	var entityCount int
 	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM entities WHERE entity_id = 'rollback-entity'`).Scan(&entityCount); err != nil || entityCount != 1 {
 		t.Fatalf("failed migration lost existing data: count=%d err=%v", entityCount, err)
@@ -396,7 +396,7 @@ func TestScratchSchemaRestartDropsResourcesButPreservesAdminRecords(t *testing.T
 	if resetVersion != 1 {
 		t.Fatalf("first change version after scratch reset = %d, want 1", resetVersion)
 	}
-	assertCurrentMigration(t, ctx, db)
+	assertCurrentMigration(ctx, t, db)
 }
 
 func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
@@ -502,7 +502,7 @@ func openMigrationTestDB(t *testing.T, dbURL string, recreate bool) *DB {
 	return db
 }
 
-func assertCurrentMigration(t *testing.T, ctx context.Context, db *DB) {
+func assertCurrentMigration(ctx context.Context, t *testing.T, db *DB) {
 	t.Helper()
 	var version int
 	var name, checksum, fingerprint string

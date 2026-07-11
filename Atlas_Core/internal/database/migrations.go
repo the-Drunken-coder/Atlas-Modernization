@@ -132,7 +132,7 @@ func migrateSchema(ctx context.Context, tx pgx.Tx, migrations []schemaMigration)
 
 	for index := len(applied); index < len(migrations); index++ {
 		migration := migrations[index]
-		if !(legacySchemaPresent && migration.version == 1) {
+		if !legacySchemaPresent || migration.version != 1 {
 			for _, statement := range migration.statements {
 				if _, err := tx.Exec(ctx, statement); err != nil {
 					return fmt.Errorf("failed to apply schema migration %d (%s): %w", migration.version, migration.name, err)
