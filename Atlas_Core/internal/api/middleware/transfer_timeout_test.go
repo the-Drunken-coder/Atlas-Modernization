@@ -116,6 +116,110 @@ func TestTransferIdleTimeoutRefreshesAfterSlowSuccessfulWrite(t *testing.T) {
 	}
 }
 
+func TestTransferIdleTimeoutAllowsContinuousProgressDuringOneLargeWrite(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	writer.writeDelays = []time.Duration{20 * time.Second, 20 * time.Second, 20 * time.Second}
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/view", nil)
+	payload := bytes.Repeat([]byte("x"), 3*transferWriteChunkSize)
+
+	var n int
+	var writeErr error
+	started := clock.Now()
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n, writeErr = w.Write(payload)
+	})).ServeHTTP(writer, req)
+
+	if writeErr != nil {
+		t.Fatalf("continuously progressing large write failed: %v", writeErr)
+	}
+	if n != len(payload) || writer.body.Len() != len(payload) {
+		t.Fatalf("bytes written = %d (%d stored), want %d", n, writer.body.Len(), len(payload))
+	}
+	if elapsed := clock.Now().Sub(started); elapsed != time.Minute {
+		t.Fatalf("elapsed = %s, want 1m", elapsed)
+	}
+}
+
+func TestTransferIdleTimeoutStopsStalledChunkDuringLargeWrite(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	writer.writeDelays = []time.Duration{20 * time.Second, 31 * time.Second}
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/view", nil)
+	payload := bytes.Repeat([]byte("x"), 2*transferWriteChunkSize)
+
+	n, err := 0, error(nil)
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n, err = w.Write(payload)
+	})).ServeHTTP(writer, req)
+
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("write error = %v, want deadline exceeded", err)
+	}
+	if n != transferWriteChunkSize {
+		t.Fatalf("bytes written = %d, want %d", n, transferWriteChunkSize)
+	}
+}
+
+func TestTransferIdleTimeoutPropagatesShortWrite(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	writer.writeLimits = []int{transferWriteChunkSize / 2}
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/view", nil)
+	payload := bytes.Repeat([]byte("x"), transferWriteChunkSize+1)
+
+	n, err := 0, error(nil)
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n, err = w.Write(payload)
+	})).ServeHTTP(writer, req)
+
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("write error = %v, want short write", err)
+	}
+	if n != transferWriteChunkSize/2 {
+		t.Fatalf("bytes written = %d, want %d", n, transferWriteChunkSize/2)
+	}
+}
+
+func TestTransferIdleTimeoutPropagatesWriteErrorAfterProgress(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	wantErr := errors.New("write failed")
+	writer.writeLimits = []int{transferWriteChunkSize, 0}
+	writer.writeErrors = []error{nil, wantErr}
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/view", nil)
+	payload := bytes.Repeat([]byte("x"), 2*transferWriteChunkSize)
+
+	n, err := 0, error(nil)
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n, err = w.Write(payload)
+	})).ServeHTTP(writer, req)
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("write error = %v, want %v", err, wantErr)
+	}
+	if n != transferWriteChunkSize {
+		t.Fatalf("bytes written = %d, want %d", n, transferWriteChunkSize)
+	}
+}
+
+func TestTransferIdleTimeoutLeavesOrdinaryWriteWhole(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/view", nil)
+	payload := bytes.Repeat([]byte("x"), transferWriteChunkSize)
+
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n, err := w.Write(payload); err != nil || n != len(payload) {
+			t.Fatalf("Write() = %d, %v, want %d, nil", n, err, len(payload))
+		}
+	})).ServeHTTP(writer, req)
+
+	if writer.writeCalls != 1 {
+		t.Fatalf("underlying write calls = %d, want 1", writer.writeCalls)
+	}
+}
+
 func TestTransferIdleTimeoutPreservesBodyLimitAndContext(t *testing.T) {
 	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
 	writer := newDeadlineTestWriter(clock)
@@ -245,6 +349,9 @@ type deadlineTestWriter struct {
 	writeDeadline      time.Time
 	writeDeadlineCalls []time.Time
 	writeDelays        []time.Duration
+	writeLimits        []int
+	writeErrors        []error
+	writeCalls         int
 	body               bytes.Buffer
 	status             int
 }
@@ -262,6 +369,7 @@ func (w *deadlineTestWriter) WriteHeader(statusCode int) {
 }
 
 func (w *deadlineTestWriter) Write(p []byte) (int, error) {
+	w.writeCalls++
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
@@ -270,7 +378,18 @@ func (w *deadlineTestWriter) Write(p []byte) (int, error) {
 		return 0, os.ErrDeadlineExceeded
 	}
 	w.clock.advance(delay)
-	return w.body.Write(p)
+	limit := len(p)
+	if len(w.writeLimits) > 0 {
+		limit = w.writeLimits[0]
+		w.writeLimits = w.writeLimits[1:]
+	}
+	n, _ := w.body.Write(p[:min(limit, len(p))])
+	if len(w.writeErrors) == 0 {
+		return n, nil
+	}
+	err := w.writeErrors[0]
+	w.writeErrors = w.writeErrors[1:]
+	return n, err
 }
 
 func (w *deadlineTestWriter) SetReadDeadline(deadline time.Time) error {

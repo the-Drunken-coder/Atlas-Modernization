@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const transferWriteChunkSize = 32 * 1024
+
 // TransferIdleTimeout replaces the server's absolute request/response deadlines
 // with sliding idle deadlines for handlers that intentionally transfer large
 // bodies. Header deadlines remain owned by http.Server.
@@ -80,12 +82,38 @@ func (w *transferResponseWriter) WriteHeader(statusCode int) {
 }
 
 func (w *transferResponseWriter) Write(p []byte) (int, error) {
-	if err := w.controller.SetWriteDeadline(w.now().Add(w.idle)); err != nil {
-		return 0, err
+	if len(p) == 0 {
+		if err := w.controller.SetWriteDeadline(w.now().Add(w.idle)); err != nil {
+			return 0, err
+		}
+		n, err := w.ResponseWriter.Write(p)
+		if err == nil {
+			err = w.controller.SetWriteDeadline(w.now().Add(w.idle))
+		}
+		return n, err
 	}
-	n, err := w.ResponseWriter.Write(p)
-	if err == nil {
-		err = w.controller.SetWriteDeadline(w.now().Add(w.idle))
+
+	written := 0
+	for len(p) > 0 {
+		chunk := p
+		if len(chunk) > transferWriteChunkSize {
+			chunk = chunk[:transferWriteChunkSize]
+		}
+		if err := w.controller.SetWriteDeadline(w.now().Add(w.idle)); err != nil {
+			return written, err
+		}
+		n, err := w.ResponseWriter.Write(chunk)
+		written += n
+		if err != nil {
+			return written, err
+		}
+		if n != len(chunk) {
+			return written, io.ErrShortWrite
+		}
+		if err := w.controller.SetWriteDeadline(w.now().Add(w.idle)); err != nil {
+			return written, err
+		}
+		p = p[n:]
 	}
-	return n, err
+	return written, nil
 }
