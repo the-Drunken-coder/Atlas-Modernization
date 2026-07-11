@@ -5,8 +5,10 @@ package middleware_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 )
 
@@ -386,34 +389,59 @@ func TestCombinedAuthProtectsRootPath(t *testing.T) {
 	}
 }
 
-func TestCombinedAuthProtectsResourcesBeforeHandler(t *testing.T) {
+func TestCombinedAuthProtectsResourcesInEveryAPIAuthMode(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("api_auth_enabled=%t", enabled), func(t *testing.T) {
+			called := false
+			handler := middleware.CombinedAuth("test-secret-key", enabled, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/resources", nil))
+			if called || rec.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated request: called = %t, status = %d; want false, 401", called, rec.Code)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+			req.Header.Set("X-API-Key", "test-secret-key")
+			rec = httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if !called || rec.Code != http.StatusOK {
+				t.Fatalf("authenticated request: called = %t, status = %d; want true, 200", called, rec.Code)
+			}
+		})
+	}
+}
+
+type stubAuthenticator struct{}
+
+func (stubAuthenticator) AuthenticateAPIKeyResult(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (stubAuthenticator) AuthenticateRequest(_ context.Context, r *http.Request) (admin.AuthenticatedSession, error) {
+	cookie, err := r.Cookie(admin.CookieName)
+	if err != nil || cookie.Value != "valid-session" {
+		return admin.AuthenticatedSession{}, admin.ErrInvalidSession
+	}
+	return admin.AuthenticatedSession{Username: "admin"}, nil
+}
+
+func TestCombinedAuthAllowsAdminSessionToAccessResourcesWhenAPIAuthDisabled(t *testing.T) {
 	called := false
-	handler := middleware.CombinedAuth("test-secret-key", true, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware.CombinedAuth("", false, stubAuthenticator{}, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	req.AddCookie(&http.Cookie{Name: admin.CookieName, Value: "valid-session"})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-
-	if called {
-		t.Fatal("expected resources handler to be blocked before collecting host metrics")
-	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", rec.Code)
-	}
-
-	authorizedReq := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	authorizedReq.Header.Set("X-API-Key", "test-secret-key")
-	authorizedRec := httptest.NewRecorder()
-	handler.ServeHTTP(authorizedRec, authorizedReq)
-
-	if !called {
-		t.Fatal("expected authenticated request to reach resources handler")
-	}
-	if authorizedRec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", authorizedRec.Code)
+	if !called || rec.Code != http.StatusOK {
+		t.Fatalf("admin session request: called = %t, status = %d; want true, 200", called, rec.Code)
 	}
 }
 

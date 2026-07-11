@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -122,6 +123,15 @@ func isAPIKeyAdminPath(path string) bool {
 	return normalized == "/admin/api-keys" || strings.HasPrefix(normalized, "/admin/api-keys/")
 }
 
+func isResourcesPath(path string) bool {
+	return strings.TrimRight(path, "/") == "/resources"
+}
+
+type requestAuthenticator interface {
+	AuthenticateAPIKeyResult(context.Context, string) (bool, error)
+	AuthenticateRequest(context.Context, *http.Request) (admin.AuthenticatedSession, error)
+}
+
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
 type responseWriter struct {
 	http.ResponseWriter
@@ -162,7 +172,7 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
 }
 
-func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, trustedOrigins []string, trustedOriginPatterns []string) func(next http.Handler) http.Handler {
+func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth requestAuthenticator, trustedOrigins []string, trustedOriginPatterns []string) func(next http.Handler) http.Handler {
 	apiKey = strings.TrimSpace(apiKey)
 	trusted := newTrustedOriginMatcher(trustedOrigins, trustedOriginPatterns)
 	return func(next http.Handler) http.Handler {
@@ -179,7 +189,7 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 				next.ServeHTTP(w, r)
 				return
 			}
-			if !isAPIKeyAdminPath(r.URL.Path) && enableAPIKey {
+			if !isAPIKeyAdminPath(r.URL.Path) && (enableAPIKey || isResourcesPath(r.URL.Path)) {
 				valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
 				if err != nil {
 					zerolog.Ctx(r.Context()).Warn().Err(err).Msg("managed API key authentication failed")
@@ -208,12 +218,12 @@ func ValidAPIKey(r *http.Request, apiKey string) bool {
 	return validAPIKeyValue(requestAPIKey(r), apiKey)
 }
 
-func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth *admin.Service) bool {
+func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth requestAuthenticator) bool {
 	valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
 	return err == nil && valid
 }
 
-func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth *admin.Service) (bool, error) {
+func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth requestAuthenticator) (bool, error) {
 	providedKey := requestAPIKey(r)
 	if validAPIKeyValue(providedKey, apiKey) {
 		return true, nil
