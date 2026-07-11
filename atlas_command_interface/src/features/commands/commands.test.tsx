@@ -131,6 +131,31 @@ describe("CommandForm", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("can dismiss a pending submission without offering a duplicate send", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(
+      <CommandForm
+        command={command}
+        targeting="map_point"
+        formParameters={params}
+        mapPoint={{ lat: 40.1, lng: -74.2 }}
+        submitting
+        onCancel={onCancel}
+        onSubmit={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Hide while sending" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Hide while command sends" })).toHaveFocus();
+
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Hide while sending" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps submit disabled when numeric parameters are outside bounds", async () => {
     const user = userEvent.setup();
     render(

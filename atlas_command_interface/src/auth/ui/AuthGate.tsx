@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "../../../../atlas_sdk/src/admin.js";
 import { Button } from "../../ui/primitives/controls.js";
 
@@ -115,9 +115,37 @@ function AuthenticatedShell({
           {loggingOut ? "Logging out..." : "Log out"}
         </Button>
       </header>
-      <div className="authenticated-shell__workspace">{children}</div>
+      <div className="authenticated-shell__workspace">
+        <WorkspaceErrorBoundary onRetry={() => window.location.reload()} onLogout={() => void logout()}>
+          {children}
+        </WorkspaceErrorBoundary>
+      </div>
     </section>
   );
+}
+
+export class WorkspaceErrorBoundary extends Component<
+  { children: ReactNode; onRetry: () => void; onLogout: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="app-error" role="alert">
+        <span>The map workspace failed to load.</span>
+        <div>
+          <Button variant="primary" onClick={this.props.onRetry}>Retry</Button>
+          <Button variant="ghost" onClick={this.props.onLogout}>Log out</Button>
+        </div>
+      </div>
+    );
+  }
 }
 
 function errorMessage(error: unknown): string {

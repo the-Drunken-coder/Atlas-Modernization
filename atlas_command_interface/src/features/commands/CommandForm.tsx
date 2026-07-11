@@ -32,7 +32,7 @@ export function CommandForm(props: CommandFormProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !submitting) {
+      if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
         onCancel();
@@ -84,7 +84,7 @@ export function CommandForm(props: CommandFormProps) {
           <span className="modal__title" id={titleId}>
             {command.name}
           </span>
-          <IconButton label="Close" autoFocus disabled={submitting} onClick={onCancel}>
+          <IconButton label={submitting ? "Hide while command sends" : "Close"} autoFocus onClick={onCancel}>
             <CloseIcon size={16} />
           </IconButton>
         </div>
@@ -105,8 +105,8 @@ export function CommandForm(props: CommandFormProps) {
           {error ? <div className="banner banner--error">{error}</div> : null}
         </div>
         <div className="modal__footer">
-          <Button variant="ghost" onClick={onCancel} disabled={submitting}>
-            Cancel
+          <Button variant="ghost" onClick={onCancel}>
+            {submitting ? "Hide while sending" : "Cancel"}
           </Button>
           <Button variant="primary" onClick={submit} disabled={!canSubmit}>
             {submitting ? "Sending…" : "Send command"}

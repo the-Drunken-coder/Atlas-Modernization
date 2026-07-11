@@ -94,7 +94,7 @@ Use these settings for the Pages project:
 
 The Core API is exposed through Cloudflare Tunnel at `https://atlascommandapi.org`, with `https://api.atlasinterface.com` as the browser-facing alias for the same tunnel service. Core must allow `https://atlasinterface.com` plus the trusted Pages preview pattern in `CORS_ORIGIN_PATTERNS`.
 
-`public/_headers` applies the static Pages security policy, including frame denial and the exact Core, WebSocket, and supported tile-provider origins. If `VITE_ATLAS_CORE_BASE_URL` points a Pages build at another origin, add that HTTPS origin and its WSS equivalent to `connect-src` in `_headers` before deploying.
+The production build emits `dist/client/_headers` with the static Pages security policy, including frame denial and the exact Core, WebSocket, and supported tile-provider origins. `VITE_ATLAS_CORE_BASE_URL` selects both the app's Core URL and the matching HTTPS/WSS `connect-src` entries; no separate header edit is required.
 
 ## Checks
 

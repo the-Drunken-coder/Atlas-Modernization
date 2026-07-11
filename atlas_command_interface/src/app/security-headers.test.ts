@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { appConfigFromEnv, type AppConfig } from "./config.js";
+import { renderSecurityHeaders } from "./security-headers.js";
 
-const headers = readFileSync(new URL("../../public/_headers", import.meta.url), "utf8");
+const headers = renderSecurityHeaders({});
 
 describe("Cloudflare Pages security headers", () => {
   it("locks down executable content and framing", () => {
@@ -47,11 +47,21 @@ describe("Cloudflare Pages security headers", () => {
     expect(connectSources).not.toContain("wss:");
     expect(imageSources).toEqual(expect.arrayContaining(["'self'", "data:", "blob:", ...providerOrigins]));
   });
+
+  it("allows the Core origin selected for a custom Pages build", () => {
+    const customHeaders = renderSecurityHeaders({ VITE_ATLAS_CORE_BASE_URL: "https://staging-core.example.test/path" });
+
+    expect(cspDirective("connect-src", customHeaders)).toEqual(
+      expect.arrayContaining(["https://staging-core.example.test", "wss://staging-core.example.test"])
+    );
+    expect(cspDirective("script-src", customHeaders)).toEqual(["'self'"]);
+    expect(cspDirective("frame-ancestors", customHeaders)).toEqual(["'none'"]);
+  });
 });
 
-function headerValue(name: string): string {
+function headerValue(name: string, source = headers): string {
   const prefix = `${name.toLowerCase()}:`;
-  const line = headers
+  const line = source
     .split(/\r?\n/)
     .map((value) => value.trim())
     .find((value) => value.toLowerCase().startsWith(prefix));
@@ -59,8 +69,8 @@ function headerValue(name: string): string {
   return line.slice(line.indexOf(":") + 1).trim();
 }
 
-function cspDirective(name: string): string[] {
-  const directive = headerValue("Content-Security-Policy")
+function cspDirective(name: string, source = headers): string[] {
+  const directive = headerValue("Content-Security-Policy", source)
     .split(";")
     .map((value) => value.trim())
     .find((value) => value === name || value.startsWith(`${name} `));

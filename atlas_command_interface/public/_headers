@@ -1,6 +1,0 @@
-/*
-  Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.googleapis.com https://tile.openstreetmap.org https://basemap.nationalmap.gov https://api.mapbox.com https://api.thunderforest.com https://api.maptiler.com https://a.basemaps.cartocdn.com https://b.basemaps.cartocdn.com https://c.basemaps.cartocdn.com https://d.basemaps.cartocdn.com; connect-src 'self' https://api.atlasinterface.com wss://api.atlasinterface.com https://tile.googleapis.com https://tile.openstreetmap.org https://basemap.nationalmap.gov https://api.mapbox.com https://api.thunderforest.com https://api.maptiler.com https://a.basemaps.cartocdn.com https://b.basemaps.cartocdn.com https://c.basemaps.cartocdn.com https://d.basemaps.cartocdn.com; worker-src 'self' blob:; child-src blob:
-  X-Content-Type-Options: nosniff
-  X-Frame-Options: DENY
-  Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: camera=(), geolocation=(), microphone=()

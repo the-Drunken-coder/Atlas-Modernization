@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthGate } from "../../../auth/ui/AuthGate.js";
+import { AuthGate, WorkspaceErrorBoundary } from "../../../auth/ui/AuthGate.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -9,6 +9,29 @@ afterEach(() => {
 });
 
 describe("AuthGate", () => {
+  it("offers retry and logout when the authenticated workspace fails", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    const onLogout = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const BrokenWorkspace = () => {
+      throw new Error("chunk rejected");
+    };
+
+    render(
+      <WorkspaceErrorBoundary onRetry={onRetry} onLogout={onLogout}>
+        <BrokenWorkspace />
+      </WorkspaceErrorBoundary>
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("failed to load");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(onLogout).toHaveBeenCalledOnce();
+    consoleError.mockRestore();
+  });
+
   it("shows login instead of the console when the session is missing", async () => {
     const fetchStub = stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
 
