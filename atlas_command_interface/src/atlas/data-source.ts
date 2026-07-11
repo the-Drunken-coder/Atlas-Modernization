@@ -26,11 +26,16 @@ export type CommandSubmission = {
 
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean };
 
+export type CatalogUpdate =
+  | { status: "pending" }
+  | { status: "loaded"; catalog: CommandCatalog }
+  | { status: "failed" }
+  | { status: "deleted" };
+
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
-  /** Catalog values and null are completed refreshes; undefined only signals that a refresh is pending. */
-  watch(onSnapshot: (snapshot: AtlasSnapshot) => void, onCatalog?: (catalog: CommandCatalog | null | undefined) => void): () => void;
+  watch(onSnapshot: (snapshot: AtlasSnapshot) => void, onCatalog?: (update: CatalogUpdate) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
@@ -78,11 +83,14 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
         if (!active || refresh !== catalogGeneration) return;
         try {
           const catalog = await fetchCommandCatalog();
-          if (active && refresh === catalogGeneration) onCatalog?.(catalog);
+          if (active && refresh === catalogGeneration) onCatalog?.({ status: "loaded", catalog });
         } catch {
           if (!active || refresh !== catalogGeneration) return;
           const delay = CATALOG_REFRESH_RETRY_DELAYS_MS[attempt];
-          if (delay === undefined) return;
+          if (delay === undefined) {
+            onCatalog?.({ status: "failed" });
+            return;
+          }
           catalogRetryTimer = setTimeout(() => {
             catalogRetryTimer = undefined;
             void refreshCatalog(refresh, attempt + 1);
@@ -95,9 +103,9 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
         const refresh = ++catalogGeneration;
         clearCatalogRetry();
-        if (event.event === "delete" || event.event === "local_delete") onCatalog(null);
+        if (event.event === "delete" || event.event === "local_delete") onCatalog({ status: "deleted" });
         else {
-          onCatalog(undefined);
+          onCatalog({ status: "pending" });
           void refreshCatalog(refresh, 0);
         }
       });

@@ -211,20 +211,22 @@ describe("sdk data source", () => {
     core.objectFailures = 1;
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Updated catalog"), true);
     await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith(undefined);
+    expect(catalogs).toHaveBeenLastCalledWith({ status: "pending" });
     expect(core.requests.filter((request) => request === `/objects/${COMMAND_CATALOG_OBJECT_ID}`)).toHaveLength(1);
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since"))).toBe(false);
 
     await vi.advanceTimersByTimeAsync(999);
     expect(catalogs).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(catalogs).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Updated catalog" })));
+    await vi.waitFor(() =>
+      expect(catalogs).toHaveBeenLastCalledWith({ status: "loaded", catalog: expect.objectContaining({ name: "Updated catalog" }) })
+    );
     expect(catalogs).toHaveBeenCalledTimes(2);
     expect(core.requests.filter((request) => request === `/objects/${COMMAND_CATALOG_OBJECT_ID}`)).toHaveLength(2);
 
     core.deleteObject(COMMAND_CATALOG_OBJECT_ID, true);
     await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith(null);
+    expect(catalogs).toHaveBeenLastCalledWith({ status: "deleted" });
     expect(catalogs).toHaveBeenCalledTimes(3);
 
     dataSource.dispose();
@@ -247,7 +249,7 @@ describe("sdk data source", () => {
     const releaseOldResponse = core.delayNextObjectResponse();
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Older event response"), true);
     await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith(undefined);
+    expect(catalogs).toHaveBeenLastCalledWith({ status: "pending" });
 
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Newest initial response"));
     await expect(dataSource.loadCommandCatalog()).resolves.toMatchObject({ name: "Newest initial response" });
@@ -280,8 +282,9 @@ describe("sdk data source", () => {
     core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Unreachable live catalog"), true);
 
     await vi.advanceTimersByTimeAsync(21_000);
-    expect(catalogs).toHaveBeenCalledTimes(1);
-    expect(catalogs).toHaveBeenLastCalledWith(undefined);
+    expect(catalogs).toHaveBeenCalledTimes(2);
+    expect(catalogs).toHaveBeenNthCalledWith(1, { status: "pending" });
+    expect(catalogs).toHaveBeenLastCalledWith({ status: "failed" });
 
     releaseStartup();
     await expect(startupCatalog).resolves.toMatchObject({ name: "Startup catalog" });

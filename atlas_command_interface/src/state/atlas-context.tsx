@@ -48,6 +48,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
   useEffect(() => {
     let cancelled = false;
     let catalogGeneration = 0;
+    let hasCatalog = false;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
     const cleanup = () => {
@@ -81,10 +82,11 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
             if (cancelled) return;
             setSnapshot(nextSnapshot);
           },
-          (nextCatalog) => {
-            if (nextCatalog === undefined) return;
+          (update) => {
+            if (update.status === "pending" || (update.status === "failed" && !hasCatalog)) return;
             catalogGeneration++;
-            if (!cancelled) setCatalog(nextCatalog ?? undefined);
+            hasCatalog = update.status === "loaded";
+            if (!cancelled) setCatalog(update.status === "loaded" ? update.catalog : undefined);
           }
         );
 
@@ -96,7 +98,10 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         const catalogRequest = ++catalogGeneration;
         const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
         if (cancelled) return;
-        if (catalogRequest === catalogGeneration) setCatalog(loadedCatalog);
+        if (catalogRequest === catalogGeneration) {
+          hasCatalog = loadedCatalog !== undefined;
+          setCatalog(loadedCatalog);
+        }
 
         setStatus("ready");
 
