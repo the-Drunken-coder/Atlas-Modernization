@@ -131,7 +131,7 @@ describe("CommandForm", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("can cancel a pending submission without offering a duplicate send", async () => {
+  it("can hide a pending submission without offering a duplicate send", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
     render(
@@ -147,11 +147,11 @@ describe("CommandForm", () => {
     );
 
     expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel request" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Cancel command request" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Hide" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Hide pending command" })).toHaveFocus();
 
     await user.tab({ shift: true });
-    expect(screen.getByRole("button", { name: "Cancel request" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Hide" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalledTimes(1);
   });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { EntityResource, JSONValue } from "../../../atlas_sdk/src/index.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
@@ -46,7 +46,6 @@ export function MapConsole() {
 
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
-  const submitAbortRef = useRef<AbortController | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -56,10 +55,6 @@ export function MapConsole() {
   const [previewEntityId, setPreviewEntityId] = useState<string>();
 
   const dismissCommandForm = useCallback(() => {
-    const controller = submitAbortRef.current;
-    submitAbortRef.current = undefined;
-    controller?.abort();
-    setSubmitting(false);
     setCommandForm(null);
     setSubmitError(undefined);
   }, []);
@@ -148,21 +143,15 @@ export function MapConsole() {
       if (!selectedEntity) return;
       setSubmitting(true);
       setSubmitError(undefined);
-      const controller = new AbortController();
-      submitAbortRef.current = controller;
       try {
-        await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters, signal: controller.signal });
+        await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
         setCommandForm(null);
       } catch (cause) {
-        if (controller.signal.aborted) return;
         const message = cause instanceof Error ? cause.message : String(cause);
         setSubmitError(message);
         setCommandForm((current) => current ?? errorFormState ?? null);
       } finally {
-        if (submitAbortRef.current === controller) {
-          submitAbortRef.current = undefined;
-          setSubmitting(false);
-        }
+        setSubmitting(false);
       }
     },
     [atlas, selectedEntity]
@@ -384,6 +373,12 @@ export function MapConsole() {
           emptyLabel="No position commands"
           onClose={() => setMapMenu(null)}
         />
+      ) : null}
+
+      {submitting && !commandForm ? (
+        <div className="banner banner--info" role="status">
+          Command submission pending…
+        </div>
       ) : null}
 
       {commandForm && selectedEntity ? (

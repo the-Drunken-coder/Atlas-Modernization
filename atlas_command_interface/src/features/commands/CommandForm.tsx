@@ -78,7 +78,7 @@ export function CommandForm(props: CommandFormProps) {
           <span className="modal__title" id={titleId}>
             Send {command.name}
           </span>
-          <IconButton label={submitting ? "Cancel command request" : "Close"} autoFocus onClick={onCancel}>
+          <IconButton label={submitting ? "Hide pending command" : "Close"} autoFocus onClick={onCancel}>
             <CloseIcon size={16} />
           </IconButton>
         </div>
@@ -109,7 +109,7 @@ export function CommandForm(props: CommandFormProps) {
         </div>
         <div className="modal__footer">
           <Button variant="ghost" onClick={onCancel}>
-            {submitting ? "Cancel request" : "Cancel"}
+            {submitting ? "Hide" : "Cancel"}
           </Button>
           <Button variant="primary" onClick={submit} disabled={!canSubmit}>
             {submitting ? "Sending…" : "Send command"}
