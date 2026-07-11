@@ -349,10 +349,11 @@ describe("sdk data source", () => {
   it("aborts a pending command request through the SDK transport", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((_input: unknown, init: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
-        })
+      vi.fn(
+        (_input: unknown, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+          })
       )
     );
     const dataSource = createSdkDataSource(config);

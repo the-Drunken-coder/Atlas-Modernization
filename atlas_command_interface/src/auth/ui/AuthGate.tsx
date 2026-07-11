@@ -84,17 +84,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
 }
 
-function AuthenticatedShell({
-  baseUrl,
-  username,
-  children,
-  onLoggedOut
-}: {
-  baseUrl: string;
-  username: string;
-  children: ReactNode;
-  onLoggedOut: () => void;
-}) {
+function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { baseUrl: string; username: string; children: ReactNode; onLoggedOut: () => void }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -135,10 +125,7 @@ function AuthenticatedShell({
   );
 }
 
-export class WorkspaceErrorBoundary extends Component<
-  { children: ReactNode; onRetry: () => void; onLogout: () => void },
-  { failed: boolean }
-> {
+export class WorkspaceErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void; onLogout: () => void }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -151,8 +138,12 @@ export class WorkspaceErrorBoundary extends Component<
       <div className="app-error" role="alert">
         <span>The map workspace failed to load.</span>
         <div>
-          <Button variant="primary" onClick={this.props.onRetry}>Retry</Button>
-          <Button variant="ghost" onClick={this.props.onLogout}>Log out</Button>
+          <Button variant="primary" onClick={this.props.onRetry}>
+            Retry
+          </Button>
+          <Button variant="ghost" onClick={this.props.onLogout}>
+            Log out
+          </Button>
         </div>
       </div>
     );

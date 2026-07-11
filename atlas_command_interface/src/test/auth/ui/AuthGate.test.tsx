@@ -130,10 +130,7 @@ describe("AuthGate", () => {
 
   it("logs out through Core and returns focus to the login form", async () => {
     const user = userEvent.setup();
-    const fetchStub = stubFetch([
-      { status: 200, body: { user: { username: "operator", role: "admin" } } },
-      { status: 204 }
-    ]);
+    const fetchStub = stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }, { status: 204 }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -212,7 +209,10 @@ function stubFetch(responses: Array<{ status: number; body?: unknown }>): { call
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push([input, init]);
     const response = responses.shift() ?? responses.at(-1) ?? { status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } };
-    return new Response(response.status === 204 ? null : JSON.stringify(response.body), { status: response.status, headers: { "Content-Type": "application/json" } });
+    return new Response(response.status === 204 ? null : JSON.stringify(response.body), {
+      status: response.status,
+      headers: { "Content-Type": "application/json" }
+    });
   });
   vi.stubGlobal("fetch", fetchMock);
   return { calls };

@@ -47,7 +47,7 @@ export function CommandForm(props: CommandFormProps) {
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
 
   const hasValidMapPoint = targeting !== "map_point" || isFiniteMapPoint(mapPoint);
-  const missingRequired = formParameters.some(([name, schema]) => schema.required && schema.type !== "boolean" && !(values[name]?.trim()));
+  const missingRequired = formParameters.some(([name, schema]) => schema.required && schema.type !== "boolean" && !values[name]?.trim());
   const invalidParameter = formParameters.some(([name, schema]) => parameterError(schema, values[name]) !== undefined);
   const canSubmit = !submitting && hasValidMapPoint && !missingRequired && !invalidParameter;
 
@@ -72,13 +72,7 @@ export function CommandForm(props: CommandFormProps) {
   };
 
   return (
-    <div
-      ref={dialogRef}
-      className="modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-    >
+    <div ref={dialogRef} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="modal">
         <div className="modal__header">
           <span className="modal__title" id={titleId}>
@@ -99,7 +93,16 @@ export function CommandForm(props: CommandFormProps) {
 
           {formParameters.map(([name, schema]) => {
             const value = values[name] ?? "";
-            return <ParameterField key={name} name={name} schema={schema} value={value} error={parameterError(schema, value)} onChange={(next) => setValue(name, next)} />;
+            return (
+              <ParameterField
+                key={name}
+                name={name}
+                schema={schema}
+                value={value}
+                error={parameterError(schema, value)}
+                onChange={(next) => setValue(name, next)}
+              />
+            );
           })}
 
           {error ? <div className="banner banner--error">{error}</div> : null}
@@ -174,7 +177,11 @@ function ParameterField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-      {error ? <span className="field__error">{error}</span> : <span className="field__hint">{[schema.description, bounds.join(", ")].filter(Boolean).join(" · ")}</span>}
+      {error ? (
+        <span className="field__error">{error}</span>
+      ) : (
+        <span className="field__hint">{[schema.description, bounds.join(", ")].filter(Boolean).join(" · ")}</span>
+      )}
     </label>
   );
 }

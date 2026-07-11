@@ -120,7 +120,9 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async submitCommand(submission) {
       const parameters = coerceParameters(submission.command, submission.parameters);
-      return client.tasks.create(buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }), { signal: submission.signal });
+      return client.tasks.create(buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }), {
+        signal: submission.signal
+      });
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {

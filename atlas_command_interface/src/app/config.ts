@@ -315,7 +315,13 @@ async function fetchGoogleMapsTileSession(apiKey: string): Promise<string | unde
 }
 
 function isStyleSpecification(value: unknown): value is StyleSpecification {
-  return typeof value === "object" && value !== null && (value as { version?: unknown }).version === 8 && typeof (value as { sources?: unknown }).sources === "object" && Array.isArray((value as { layers?: unknown }).layers);
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { version?: unknown }).version === 8 &&
+    typeof (value as { sources?: unknown }).sources === "object" &&
+    Array.isArray((value as { layers?: unknown }).layers)
+  );
 }
 
 function envValue(value: string | undefined): string | undefined {
