@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   jsonNumber,
@@ -10,6 +11,7 @@ import {
   type TargetListResponse
 } from "../shared/types.js";
 import { createAtlasClientFactory } from "./atlas.js";
+import { CleanupLedger } from "./cleanup-ledger.js";
 import { loadConfig, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
 import { streamRunEvents, type EventStream } from "./event-stream.js";
 import {
@@ -28,7 +30,16 @@ import { RunStore } from "./run-store.js";
 import { descriptorForScenario, parseStartRequest, type ParsedStart } from "./scenario.js";
 import { findScenario, scenarios } from "./scenario-registry.js";
 import { serveStatic, shouldServeSpaShell } from "./static.js";
-import { createTargetRegistry, runTarget, targetForId, targetForRequest, targetSummary, type TargetRegistry } from "./targets.js";
+import {
+  clientFactoryForTarget,
+  createTargetRegistry,
+  runTarget,
+  targetForId,
+  targetForRequest,
+  targetForRun,
+  targetSummary,
+  type TargetRegistry
+} from "./targets.js";
 
 export type SimulationServer = {
   listen(): Promise<string>;
@@ -40,7 +51,13 @@ export function createSimulationServer(options: { config?: SimulationConfig; sto
   const config = options.config ?? loadConfig();
   const targetRegistry = createTargetRegistry(config);
   const ownsStore = options.store === undefined;
-  const store = options.store ?? new RunStore(createAtlasClientFactory(targetRegistry.defaultTarget));
+  const cleanupLedgerDirectory = config.cleanupLedgerDirectory ?? path.join(config.packageRoot, ".atlas-simulations", "runs");
+  const store =
+    options.store ??
+    new RunStore(createAtlasClientFactory(targetRegistry.defaultTarget), {
+      ledger: new CleanupLedger(cleanupLedgerDirectory),
+      resolveTarget: (target) => runTarget(target, true)
+    });
   const eventStreams = new Set<EventStream>();
   const server = createServer((request, response) => {
     void handleRequest(request, response, config, targetRegistry, store, ownsStore, eventStreams).catch((error) => {
@@ -128,11 +145,6 @@ async function handleRequest(
       sendJSON(response, 404, { message: "Scenario not found" });
       return;
     }
-    const target = targetForId(body.targetId, targetRegistry, apiKeyForRequest(request));
-    if (!target) {
-      sendJSON(response, 404, { message: "Atlas target not found" });
-      return;
-    }
     let parsed: ParsedStart;
     try {
       parsed = parseStartRequest(scenario, body);
@@ -140,8 +152,17 @@ async function handleRequest(
       sendJSON(response, 400, { message: errorMessage(error) });
       return;
     }
+    const target = targetForId(parsed.targetId, targetRegistry, apiKeyForRequest(request));
+    if (!target) {
+      sendJSON(response, 404, { message: "Atlas target not found" });
+      return;
+    }
+    if (targetSummary(target).deployed && parsed.confirmDeployedMutation !== true) {
+      sendJSON(response, 400, { message: "Starting a deployed simulation requires explicit confirmation" });
+      return;
+    }
     sendJSON(response, 201, {
-      run: store.start(scenario, parsed.input, runTarget(target, ownsStore || body.targetId !== undefined))
+      run: store.start(scenario, parsed.input, runTarget(target, ownsStore || parsed.targetId !== undefined))
     } satisfies StartRunResponse);
     return;
   }
@@ -153,7 +174,7 @@ async function handleRequest(
       return;
     }
     const action = runMatch[2];
-    await handleRunRoute(request, response, store, runId, action, eventStreams);
+    await handleRunRoute(request, response, store, targetRegistry, runId, action, eventStreams);
     return;
   }
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
@@ -171,6 +192,7 @@ async function handleRunRoute(
   request: IncomingMessage,
   response: ServerResponse,
   store: RunStore,
+  targetRegistry: TargetRegistry,
   runId: string,
   action: string | undefined,
   eventStreams: Set<EventStream>
@@ -205,12 +227,24 @@ async function handleRunRoute(
   if (request.method === "POST" && action === "cleanup") {
     if (!requireTrustedMutation(request, response)) return;
     await drainRequestBody(request);
-    if (!store.get(runId)) {
+    const run = store.get(runId);
+    if (!run) {
       sendJSON(response, 404, { message: "Run not found" });
       return;
     }
+    const requestApiKey = apiKeyForRequest(request);
+    let cleanupFactory: ReturnType<typeof clientFactoryForTarget> | undefined;
     try {
-      sendJSON(response, 200, { run: await store.cleanup(runId) });
+      cleanupFactory =
+        run.target && (run.status === "abandoned" || requestApiKey)
+          ? clientFactoryForTarget(targetForRun(run.target, targetRegistry, requestApiKey))
+          : undefined;
+    } catch (error) {
+      sendJSON(response, 409, { message: errorMessage(error) });
+      return;
+    }
+    try {
+      sendJSON(response, 200, { run: await store.cleanup(runId, cleanupFactory) });
     } catch (error) {
       if (isCleanupConflict(error)) {
         sendJSON(response, 409, { message: error.message });

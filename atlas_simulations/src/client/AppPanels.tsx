@@ -13,6 +13,7 @@ export function RunDetails({ run }: { run: RunSummary | undefined }) {
       <div><dt>Finished</dt><dd>{run.finishedAt ? formatTime(run.finishedAt) : "-"}</dd></div>
       <div><dt>Created</dt><dd>{run.createdResources.length}</dd></div>
       <div><dt>Checks</dt><dd>{run.assertions.filter((assertion) => assertion.passed).length}/{run.assertions.length}</dd></div>
+      {run.lastError ? <div className="run-error"><dt>Last error</dt><dd>{run.lastError}</dd></div> : null}
     </dl>
   );
 }

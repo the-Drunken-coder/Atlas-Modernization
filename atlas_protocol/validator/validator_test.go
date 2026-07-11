@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/the-drunken-coder/atlas/atlas_protocol/conformance"
 )
 
 func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
@@ -264,6 +266,58 @@ func TestRequestExamplesValidate(t *testing.T) {
 				t.Fatalf("%s validation errors = %v", tt.path, errors)
 			}
 		})
+	}
+}
+
+func TestRequestValidationConformance(t *testing.T) {
+	cases, err := conformance.LoadRequestValidationCases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := getSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	validators := map[string]func(any) []string{
+		"EntityCreateRequest": ValidateEntityCreateRequest,
+		"EntityUpdateRequest": ValidateEntityUpdateRequest,
+		"TaskCreateRequest":   ValidateTaskCreateRequest,
+		"TaskUpdateRequest":   ValidateTaskUpdateRequest,
+		"ObjectCreateRequest": ValidateObjectCreateRequest,
+		"ObjectUpdateRequest": ValidateObjectUpdateRequest,
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.Name, func(t *testing.T) {
+			compiled, ok := schema.schemas[testCase.Definition]
+			if !ok {
+				t.Fatalf("schema definition %q is not compiled", testCase.Definition)
+			}
+			normalized, err := normalizeForJSONSchema(testCase.Value)
+			if err != nil {
+				t.Fatalf("normalize corpus value: %v", err)
+			}
+			schemaValid := compiled.Validate(normalized) == nil
+			if schemaValid != testCase.SchemaValid {
+				t.Fatalf("canonical schema valid = %t, want %t", schemaValid, testCase.SchemaValid)
+			}
+
+			validate, ok := validators[testCase.Definition]
+			if !ok {
+				t.Fatalf("no Go validator for %q", testCase.Definition)
+			}
+			runtimeErrors := validate(testCase.Value)
+			if valid := len(runtimeErrors) == 0; valid != testCase.Valid {
+				t.Fatalf("Go runtime valid = %t, want %t; errors = %v", valid, testCase.Valid, runtimeErrors)
+			}
+		})
+	}
+}
+
+func TestNormalizeForJSONSchemaAllowsSharedAcyclicValues(t *testing.T) {
+	shared := map[string]any{"value": 1}
+	if _, err := normalizeForJSONSchema(map[string]any{"first": shared, "second": shared}); err != nil {
+		t.Fatalf("shared acyclic value was rejected: %v", err)
 	}
 }
 

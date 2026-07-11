@@ -1,4 +1,4 @@
-import { Activity, Play, RefreshCw, Square, Trash2 } from "lucide-react";
+import { Activity, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor, StartRunRequest } from "../shared/types.js";
 import { cleanupRun, loadHealth, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "./api.js";
@@ -22,7 +22,9 @@ export function App() {
   const [health, setHealth] = useState<HealthResponse | undefined>();
   const [targets, setTargets] = useState<AtlasTargetSummary[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState("");
+  const [deployedMutationConfirmed, setDeployedMutationConfirmed] = useState(false);
   const [apiKeysByTargetId, setApiKeysByTargetId] = useState<Record<string, string>>({});
+  const [recoveryApiKeysByRunId, setRecoveryApiKeysByRunId] = useState<Record<string, string>>({});
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [inputs, setInputs] = useState<FieldValues>({});
@@ -46,22 +48,32 @@ export function App() {
 
   useEffect(() => {
     const { captureError, refreshHealth, refreshRuns } = effectsRef.current;
+    let cancelled = false;
     void loadTargets()
       .then((loaded) => {
+        if (cancelled) return;
         setTargets(loaded.targets);
         const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : (loaded.targets[0]?.id ?? "");
         setSelectedTargetId(targetId);
         return refreshHealth(targetId);
       })
-      .catch(captureError);
+      .catch((errorValue) => {
+        if (!cancelled) captureError(errorValue);
+      });
     void loadScenarios()
       .then((loaded) => {
+        if (cancelled) return;
         setScenarios(loaded);
         setSelectedId((current) => current || loaded[0]?.id || "");
       })
-      .catch(captureError);
-    void refreshRuns().catch(captureError);
+      .catch((errorValue) => {
+        if (!cancelled) captureError(errorValue);
+      });
+    void refreshRuns().catch((errorValue) => {
+      if (!cancelled) captureError(errorValue);
+    });
     return () => {
+      cancelled = true;
       activeRunIdRef.current = undefined;
       eventSourceRef.current?.close();
     };
@@ -114,13 +126,19 @@ export function App() {
 
   function selectTarget(targetId: string) {
     setSelectedTargetId(targetId);
+    setDeployedMutationConfirmed(false);
+    setHealth(undefined);
     setError(undefined);
     void refreshHealth(targetId).catch(captureError);
   }
 
   function setSelectedApiKey(value: string) {
     if (!selectedTargetId) return;
-    setApiKeysByTargetId((current) => ({ ...current, [selectedTargetId]: value }));
+    setApiKeyForTarget(selectedTargetId, value);
+  }
+
+  function setApiKeyForTarget(targetId: string, value: string) {
+    setApiKeysByTargetId((current) => ({ ...current, [targetId]: value }));
   }
 
   function apiKeyForTarget(targetId: string): string | undefined {
@@ -180,7 +198,8 @@ export function App() {
   }
 
   async function startSelectedRun() {
-    if (!selected || mutationPending) return;
+    if (!selected || !selectedTarget || mutationPending || (selectedTarget.deployed && !deployedMutationConfirmed)) return;
+    const deployedStart = selectedTarget.deployed;
     setError(undefined);
     setMutationPending(true);
     try {
@@ -194,11 +213,12 @@ export function App() {
       }
       const request: StartRunRequest = {
         scenarioId: selected.id,
-        ...(selectedTargetId ? { targetId: selectedTargetId } : {}),
+        targetId: selectedTarget.id,
+        ...(selectedTarget.deployed ? { confirmDeployedMutation: true } : {}),
         inputs: submissionInputs(selected, inputs),
         ...(normalizedJsonInput ? { jsonInput: normalizedJsonInput } : {})
       };
-      const apiKey = apiKeyForTarget(selectedTargetId);
+      const apiKey = apiKeyForTarget(selectedTarget.id);
       const run = apiKey ? await startRun(request, apiKey) : await startRun(request);
       upsertRun(run);
       selectRun(run);
@@ -206,6 +226,7 @@ export function App() {
     } catch (errorValue) {
       captureError(errorValue);
     } finally {
+      if (deployedStart) setDeployedMutationConfirmed(false);
       setMutationPending(false);
     }
   }
@@ -324,19 +345,29 @@ export function App() {
   async function cleanupCurrentRun() {
     if (!currentRun || mutationPending) return;
     const targetRunId = currentRun.id;
+    const recoveryApiKey = recoveryApiKeysByRunId[targetRunId]?.trim();
+    const targetApiKey =
+      currentRun.status === "abandoned" ? recoveryApiKey || undefined : currentRun.target ? apiKeyForTarget(currentRun.target.id) : undefined;
     setError(undefined);
     setMutationPending(true);
     try {
       cleanupStreamRunIdRef.current = targetRunId;
       if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId, { preserveCleanup: true });
       setCleanupRunId(targetRunId);
-      const updatedRun = await cleanupRun(targetRunId);
+      const updatedRun = targetApiKey ? await cleanupRun(targetRunId, targetApiKey) : await cleanupRun(targetRunId);
       upsertRun(updatedRun);
       if (updatedRun.cleaned && cleanupStreamRunIdRef.current === targetRunId) {
         cleanupStreamRunIdRef.current = undefined;
         if (activeRunIdRef.current === targetRunId) closeActiveEventSource();
       }
-      if (updatedRun.cleaned) setCleanupRunId(undefined);
+      if (updatedRun.cleaned) {
+        setCleanupRunId(undefined);
+        setRecoveryApiKeysByRunId((current) => {
+          const remaining = { ...current };
+          delete remaining[targetRunId];
+          return remaining;
+        });
+      }
       await refreshRunsBestEffort();
     } catch (errorValue) {
       if (cleanupStreamRunIdRef.current === targetRunId) {
@@ -408,7 +439,7 @@ export function App() {
               placeholder="Paste key"
             />
           </label>
-          <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`}>
+          <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`} role="status" aria-live="polite">
             <Activity size={18} aria-hidden="true" />
             <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
             <button
@@ -431,6 +462,23 @@ export function App() {
         <div className="error-banner" role="alert">
           {error}
         </div>
+      ) : null}
+
+      {selectedTarget?.deployed ? (
+        <section className="deployed-warning" role="alert" aria-labelledby="deployed-warning-title">
+          <CircleAlert size={24} aria-hidden="true" />
+          <div className="deployed-warning-content">
+            <strong id="deployed-warning-title">Deployed Core selected</strong>
+            <p>
+              Starting a simulation will mutate remote resources on <strong>{selectedTarget.label}</strong> at <code>{selectedTarget.baseUrl}</code>. Cleanup is
+              explicit.
+            </p>
+            <label className="deployed-confirmation">
+              <input type="checkbox" checked={deployedMutationConfirmed} onChange={(event) => setDeployedMutationConfirmed(event.target.checked)} />
+              <span>I understand this start will mutate the deployed Core.</span>
+            </label>
+          </div>
+        </section>
       ) : null}
 
       <section className="workspace">
@@ -457,9 +505,15 @@ export function App() {
           <div className="panel-head">
             <h2>{selected?.name ?? "Scenario"}</h2>
             <div className="actions">
-              <button className="primary" type="button" title="Start run" onClick={() => void startSelectedRun()} disabled={mutationPending || !selected}>
+              <button
+                className={selectedTarget?.deployed ? "danger" : "primary"}
+                type="button"
+                title={selectedTarget?.deployed ? "Start run on deployed Core" : "Start run"}
+                onClick={() => void startSelectedRun()}
+                disabled={mutationPending || !selected || !selectedTarget || (selectedTarget.deployed && !deployedMutationConfirmed)}
+              >
                 <Play size={16} aria-hidden="true" />
-                Start
+                {selectedTarget?.deployed ? "Start on deployed Core" : "Start"}
               </button>
               <button type="button" title="Stop run" onClick={() => void stopCurrentRun()} disabled={mutationPending || currentRun?.status !== "running"}>
                 <Square size={16} aria-hidden="true" />
@@ -532,6 +586,22 @@ export function App() {
             <span className={`status-pill ${displayStatus(currentRun)}`}>{displayStatus(currentRun)}</span>
           </div>
           <RunDetails run={currentRun} />
+          {currentRun?.status === "abandoned" && currentRun.target?.deployed ? (
+            <div className="recovery-key-field">
+              <label htmlFor="recovery-cleanup-api-key">Cleanup API key</label>
+              <input
+                id="recovery-cleanup-api-key"
+                type="password"
+                value={recoveryApiKeysByRunId[currentRun.id] ?? ""}
+                onChange={(event) => setRecoveryApiKeysByRunId((current) => ({ ...current, [currentRun.id]: event.target.value }))}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Paste current key if required"
+                aria-describedby="recovery-cleanup-api-key-help"
+              />
+              <small id="recovery-cleanup-api-key-help">Kept only in this browser tab and sent with explicit cleanup.</small>
+            </div>
+          ) : null}
         </section>
       </section>
 
