@@ -59,6 +59,28 @@ func runStorageDeletionReconciler(ctx context.Context, logger zerolog.Logger, ob
 	}
 }
 
+func initializeStorage(ctx context.Context, cfg *config.Config) (*storage.Client, error) {
+	client, err := storage.NewClient(cfg)
+	if err != nil {
+		if cfg.DatabaseRecreateOnStartup {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("initialize durable storage client: %w", err)
+	}
+	if err := client.EnsureBucket(ctx); err != nil {
+		if cfg.DatabaseRecreateOnStartup {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("ensure durable storage bucket exists: %w", err)
+	}
+	if cfg.DatabaseRecreateOnStartup {
+		if err := client.EmptyBucket(ctx); err != nil {
+			return nil, fmt.Errorf("clear disposable storage bucket: %w", err)
+		}
+	}
+	return client, nil
+}
+
 func main() {
 	// Load configuration
 	cfg, err := config.Load()
@@ -129,39 +151,16 @@ func main() {
 	}
 	feedHub := feed.NewHub(currentVersion, feed.Options{})
 
-	// Connect to storage (optional - may not be configured)
-	var storageClient *storage.Client
-	if cfg.MinIOSecretKey != "" {
-		storageClient, err = storage.NewClient(cfg)
-		if err != nil {
-			if !cfg.DatabaseRecreateOnStartup {
-				logger.Fatal().Err(err).Msg("Failed to initialize durable storage client")
-			}
-			logger.Warn().Err(err).Msg("Failed to initialize development storage client")
-		} else {
-			// Ensure bucket exists
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := storageClient.EnsureBucket(ctx); err != nil {
-				cancel()
-				if !cfg.DatabaseRecreateOnStartup {
-					logger.Fatal().Err(err).Msg("Failed to ensure durable storage bucket exists")
-				}
-				logger.Warn().Err(err).Msg("Failed to ensure development storage bucket exists")
-			} else {
-				cancel()
-			}
-			if cfg.DatabaseRecreateOnStartup {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				if err := storageClient.EmptyBucket(ctx); err != nil {
-					cancel()
-					logger.Fatal().Err(err).Str("bucket", storageClient.Bucket()).Msg("Failed to clear storage bucket while DATABASE_RECREATE_ON_STARTUP=true")
-				}
-				cancel()
-				logger.Info().Str("bucket", storageClient.Bucket()).Msg("Cleared storage bucket because DATABASE_RECREATE_ON_STARTUP=true")
-			}
-		}
-	} else {
-		logger.Warn().Msg("MinIO secret key not configured, storage features disabled")
+	storageCtx, storageCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	storageClient, err := initializeStorage(storageCtx, cfg)
+	storageCancel()
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to initialize storage")
+	}
+	if storageClient == nil {
+		logger.Warn().Msg("Disposable development storage unavailable; storage features disabled")
+	} else if cfg.DatabaseRecreateOnStartup {
+		logger.Info().Str("bucket", storageClient.Bucket()).Msg("Cleared storage bucket because DATABASE_RECREATE_ON_STARTUP=true")
 	}
 
 	reconcilerCtx, stopReconciler := context.WithCancel(context.Background())
