@@ -215,7 +215,7 @@ func collectByteBoundedRows[T any](
 			return nil, false, fmt.Errorf("failed to scan %s: %w", resource, err)
 		}
 		if size > maxBytes {
-			return nil, false, fmt.Errorf("stored %s JSON is %d bytes, exceeding the %d-byte query page budget", resource, size, maxBytes)
+			return nil, false, fmt.Errorf("stored %s response row is at least %d bytes, exceeding the %d-byte query page budget", resource, size, maxBytes)
 		}
 		if len(items) == limit || retainedBytes > maxBytes-size {
 			return items, true, nil
@@ -236,7 +236,7 @@ func collectByteBoundedEntities(rows pgx.Rows, limit, maxBytes int) ([]*models.E
 			&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
 			&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 		)
-		return &entity, len(entity.JSON), err
+		return &entity, entityRetainedBytes(&entity), err
 	})
 }
 
@@ -247,7 +247,7 @@ func collectByteBoundedTasks(rows pgx.Rows, limit, maxBytes int) ([]*models.Task
 			&task.TaskID, &task.Status, &task.EntityID, &task.JSON,
 			&task.CreatedAt, &task.UpdatedAt, &task.Version,
 		)
-		return &task, len(task.JSON), err
+		return &task, taskRetainedBytes(&task), err
 	})
 }
 
@@ -258,8 +258,41 @@ func collectByteBoundedObjects(rows pgx.Rows, limit, maxBytes int) ([]*models.Me
 			&object.ObjectID, &object.Path, &object.ContentType, &object.Type,
 			&object.JSON, &object.CreatedAt, &object.UpdatedAt, &object.Version,
 		)
-		return &object, len(object.JSON), err
+		return &object, objectRetainedBytes(&object), err
 	})
+}
+
+// The fixed allowance conservatively covers field names, quotes, separators,
+// timestamps, version, and the enclosing object without serializing each row.
+const serializedRowOverhead = 256
+
+func entityRetainedBytes(entity *models.Entity) int {
+	return serializedRowOverhead + jsonStringBytes(entity.EntityID) + jsonStringBytes(entity.Type) + jsonOptionalStringBytes(entity.Subtype) + jsonOptionalStringBytes(entity.Alias) + jsonValueBytes(entity.JSON)
+}
+
+func taskRetainedBytes(task *models.Task) int {
+	return serializedRowOverhead + jsonStringBytes(task.TaskID) + jsonStringBytes(task.Status) + jsonOptionalStringBytes(task.EntityID) + jsonValueBytes(task.JSON)
+}
+
+func objectRetainedBytes(object *models.MediaObject) int {
+	return serializedRowOverhead + jsonStringBytes(object.ObjectID) + jsonOptionalStringBytes(object.Path) + jsonOptionalStringBytes(object.ContentType) + jsonOptionalStringBytes(object.Type) + jsonValueBytes(object.JSON)
+}
+
+func jsonOptionalStringBytes(value *string) int {
+	if value == nil {
+		return 0
+	}
+	return jsonStringBytes(*value)
+}
+
+func jsonStringBytes(value string) int {
+	return jsonValueBytes([]byte(value))
+}
+
+// A source byte can expand to at most a six-byte JSON escape (for example,
+// an ASCII control character encoded as \u00XX).
+func jsonValueBytes(value []byte) int {
+	return 6 * len(value)
 }
 
 func collectEntities(rows pgx.Rows) ([]*models.Entity, error) {

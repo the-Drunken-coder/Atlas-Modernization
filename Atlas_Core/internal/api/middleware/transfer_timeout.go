@@ -83,5 +83,9 @@ func (w *transferResponseWriter) Write(p []byte) (int, error) {
 	if err := w.controller.SetWriteDeadline(w.now().Add(w.idle)); err != nil {
 		return 0, err
 	}
-	return w.ResponseWriter.Write(p)
+	n, err := w.ResponseWriter.Write(p)
+	if err == nil {
+		err = w.controller.SetWriteDeadline(w.now().Add(w.idle))
+	}
+	return n, err
 }

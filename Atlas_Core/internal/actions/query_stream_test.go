@@ -1,10 +1,37 @@
 package actions
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
+
+func TestCollectByteBoundedRowsChargesLargePromotedFields(t *testing.T) {
+	rows := &testRowIterator{remaining: 2}
+	entities := []*models.Entity{
+		{EntityID: "entity-1", Type: strings.Repeat("a", 100), JSON: json.RawMessage(`{}`)},
+		{EntityID: "entity-2", Type: strings.Repeat("b", 100), JSON: json.RawMessage(`{}`)},
+	}
+	scanned := 0
+
+	items, hasMore, err := collectByteBoundedRows(rows, 10, 1_200, "entity", func() (*models.Entity, int, error) {
+		entity := entities[scanned]
+		scanned++
+		return entity, entityRetainedBytes(entity), nil
+	})
+	if err != nil {
+		t.Fatalf("collectByteBoundedRows: %v", err)
+	}
+	if len(items) != 1 || !hasMore {
+		t.Fatalf("items=%d hasMore=%v, want 1 and true", len(items), hasMore)
+	}
+	if len(entities[0].JSON)+len(entities[1].JSON) >= 1_200 {
+		t.Fatal("test requires JSON alone to fit comfortably within the budget")
+	}
+}
 
 func TestCollectByteBoundedRowsStopsBeforeBudgetOverflow(t *testing.T) {
 	rows := &testRowIterator{remaining: 3}
@@ -73,8 +100,8 @@ func TestCollectByteBoundedRowsRejectsAtRestInvariantViolation(t *testing.T) {
 	_, _, err := collectByteBoundedRows(rows, 10, 8, "entity", func() (int, int, error) {
 		return 0, 9, nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "stored entity JSON") {
-		t.Fatalf("error = %v, want stored entity JSON invariant error", err)
+	if err == nil || !strings.Contains(err.Error(), "stored entity response row") {
+		t.Fatalf("error = %v, want stored entity response-row invariant error", err)
 	}
 }
 

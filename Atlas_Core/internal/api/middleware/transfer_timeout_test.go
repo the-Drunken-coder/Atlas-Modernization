@@ -91,6 +91,31 @@ func TestTransferIdleTimeoutStopsIdleClientReader(t *testing.T) {
 	}
 }
 
+func TestTransferIdleTimeoutRefreshesAfterSlowSuccessfulWrite(t *testing.T) {
+	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
+	writer := newDeadlineTestWriter(clock)
+	writer.writeDelays = []time.Duration{29 * time.Second, 2 * time.Second}
+	req := httptest.NewRequest(http.MethodGet, "/objects/object-1/download", nil)
+
+	var writeErr error
+	transferIdleTimeout(30*time.Second, clock.Now)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, writeErr = w.Write([]byte("a")); writeErr == nil {
+			_, writeErr = w.Write([]byte("b"))
+		}
+	})).ServeHTTP(writer, req)
+
+	if writeErr != nil {
+		t.Fatalf("second write after recent progress: %v", writeErr)
+	}
+	if got := writer.body.String(); got != "ab" {
+		t.Fatalf("response body = %q, want ab", got)
+	}
+	want := time.Unix(1_700_000_000, 0).Add(59 * time.Second)
+	if writer.writeDeadline.Before(want) {
+		t.Fatalf("final write deadline = %v, want at least %v", writer.writeDeadline, want)
+	}
+}
+
 func TestTransferIdleTimeoutPreservesBodyLimitAndContext(t *testing.T) {
 	clock := &deadlineTestClock{current: time.Unix(1_700_000_000, 0)}
 	writer := newDeadlineTestWriter(clock)
