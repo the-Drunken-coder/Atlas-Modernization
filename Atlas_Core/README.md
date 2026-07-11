@@ -2,13 +2,12 @@
 
 Go-based control-plane service for Atlas entities, tasks, objects, and query snapshots.
 
-Resource tables and the configured MinIO bucket are **disposable runtime
-storage** for Atlas Core. They are not systems of record, and operators should
-not expect resource rows or blobs to survive recreate-mode restarts. The default
-startup path recreates resource tables and clears the configured object bucket
-so local runtime state always matches the current code. `admin_records` is
-preserved for operator credentials, sessions, login throttles, and managed API
-key metadata.
+Production resource tables, `admin_records`, migration history, and the
+configured MinIO bucket are durable. Startup applies ordered PostgreSQL
+migrations, rejects migration/catalog drift, and preserves rows and blobs.
+Development Compose explicitly enables scratch mode, which migrates/verifies
+the schema, clears resource rows and the bucket, and preserves local
+`admin_records` plus migration history.
 
 ## Stack
 
@@ -63,8 +62,8 @@ for loopback-only local development. The production Docker target does not ship
 that settings file and refuses to start unless `ENABLE_API_AUTH=true`,
 `API_AUTH_KEY` is set to a strong, non-placeholder bootstrap secret, and
 `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` replaces the development
-admin password. Browser admins can create additional managed machine keys after
-sign-in.
+admin password, and `DATABASE_RECREATE_ON_STARTUP` is not enabled. Browser admins
+can create additional managed machine keys after sign-in.
 
 For the production-image single-host stack:
 
@@ -121,7 +120,7 @@ Key environment variables:
 - `LOG_LEVEL` (default `INFO`)
 - `DEBUG` (default `false`)
 - `DATABASE_URL` (default `postgres://atlas@localhost:5432/atlas_core`)
-- `DATABASE_RECREATE_ON_STARTUP` (default `true`; keep true for the intended disposable runtime-store workflow)
+- `DATABASE_RECREATE_ON_STARTUP` (default `false`; development Compose explicitly sets `true` for scratch resets, and the production image rejects `true`)
 - `DATABASE_POOL_SIZE` (default `5`)
 - `DATABASE_MAX_OVERFLOW` (default `10`)
 - `DATABASE_POOL_RECYCLE` (default `3600`)

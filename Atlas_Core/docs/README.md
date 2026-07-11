@@ -13,8 +13,8 @@ This directory contains operational docs for the Go-based Atlas Core service.
 | API Guide | `API_GUIDE.md` | Basic route-by-route guide for Core endpoints and the command interface browser API surface. |
 | Entity Status | `ASSET_STATUS_SYSTEM.md` | Entity types, status tracking, and telemetry updates. |
 | Pagination | `PAGINATION.md` | `limit`/`cursor` behavior and pagination headers. |
-| Database Workflow | `DATABASE_WORKFLOW.md` | Disposable runtime-store model, schema bootstrap, and developer workflow. |
-| Deployment Runbook | `DEPLOYMENT_RUNBOOK.md` | Single-host Compose deployment, production mode, tunnel mode, smoke tests, and shutdown/reset. |
+| Database Workflow | `DATABASE_WORKFLOW.md` | Durable production migrations, drift checks, v1 baseline adoption, and explicit developer scratch mode. |
+| Deployment Runbook | `DEPLOYMENT_RUNBOOK.md` | Single-host deployment, paired PostgreSQL/MinIO backup and restore, migration rollback, smoke tests, and shutdown/reset. |
 | Entities | `database-structure/entities.md` | Entity JSON blob structure and component guidance. |
 | Tasks | `database-structure/tasks.md` | Task blob schema and lifecycle endpoint notes. |
 | Objects | `database-structure/objects.md` | Object metadata schema and storage endpoint notes. |

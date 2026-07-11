@@ -19,7 +19,7 @@ Linting covers each package in full. Formatting is checked only for JavaScript/T
 
 ## What lives here
 
-- **`Atlas_Core/`** — the core backend: the Go HTTP API, disposable runtime database/object-store layer, Docker setup, and command catalog.
+- **`Atlas_Core/`** — the core backend: the Go HTTP API, durable production database/object-store layer, Docker setup, and command catalog.
 - **`atlas_protocol/`** — the buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, and protocol tooling.
 - **`atlas_sdk/`** — the TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, and Node/browser test suites.
 - **`atlas_command_interface/`** — Atlas Command interface: a Cloudflare Pages/Vite map console plus reusable command-model helpers.
@@ -48,10 +48,9 @@ Useful focused commands are `npm run build:sdk`, `npm run build:command-interfac
 
 ## Runtime storage posture
 
-Atlas Core treats resource tables and its configured MinIO bucket as scratch
-runtime state. They are useful while the service is running, but they are not
-systems of record and are not meant to be kept around. By default, startup drops
-and recreates resource tables and clears the configured object bucket so the
-running service always matches the current code. The `admin_records` table is
-the narrow durable exception for operator credentials, sessions, login throttles,
-and managed API key metadata.
+Atlas Core preserves resource tables, `admin_records`, schema migration history,
+and the configured MinIO bucket in production. Startup applies ordered
+transactional migrations and rejects ledger/catalog drift before readiness.
+Development Compose retains an explicit scratch mode that migrates/verifies the
+schema, clears resource rows and MinIO, and preserves local `admin_records` plus
+migration history.

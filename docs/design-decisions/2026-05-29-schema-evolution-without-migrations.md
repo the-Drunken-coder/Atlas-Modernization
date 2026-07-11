@@ -1,28 +1,26 @@
 # Design Decision
 
-1. **Time & Date:** 2026-05-29T05:55:00Z (updated 2026-05-30)
-2. **Name:** Disposable runtime storage — destroy-and-recreate database and bucket on startup (no migrations)
-3. **Context:** Originally, `EnsureTables` used `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`. That bootstrapped fresh databases but silently skipped existing tables when the Go models and DDL changed. A binary expecting new columns could run against an old database with no startup error until a query failed at request time.
+1. **Time & Date:** 2026-05-29T05:55:00Z (revised 2026-07-10)
+2. **Name:** Durable production storage with explicit development reset mode
+3. **Context:** The original decision made every startup drop resource tables and empty MinIO. That avoided schema drift during greenfield development, but it also made the production Compose stack destroy resource rows and blobs on an ordinary restart. `admin_records` survived only as a special exception. Production now needs the smallest durable baseline: retained rows and blobs, explicit schema history, fail-closed drift detection, and an operational backup/rollback path. Development still benefits from a direct scratch reset.
+4. **Decision:** Update the original decision in place rather than adding a second compatibility posture.
 
-   Options considered:
-   - **(A)** Migration framework — rejected: Atlas Core does not treat the database as a long-lived store of record; schema is owned by the Go models and DDL in code, not by incremental migration history.
-   - **(B)** Schema-version hash or drift detection — rejected: adds complexity without changing the product model. We do not plan to preserve resource row data across deploys or restarts.
-   - **(C)** Drop resource tables and recreate from DDL on every startup — **chosen and permanent**: zero drift by construction. No migrations, no version table, no “phase 2” resource persistence path.
-
-4. **Decision:** On startup (when `DATABASE_RECREATE_ON_STARTUP=true`, the default), `EnsureTables` runs `DROP TABLE IF EXISTS ... CASCADE` for resource tables, then `CREATE TABLE` / `CREATE INDEX` from `Atlas_Core/internal/database/db.go`. Atlas Core then initializes MinIO, ensures the configured bucket exists, and empties that bucket before serving traffic. Every restart yields resource tables that exactly match the current models and DDL and a bucket without stale blobs. **Resource row data and MinIO object data are intentionally disposable runtime state** — lost on every recreate-mode process restart. `admin_records` is the narrow durable exception for operator credentials, sessions, login throttles, and managed API key metadata. The resource tables and configured bucket are scratch storage for the running service, not systems of record. This is the long-term operational model, not a greenfield placeholder.
-
-5. **Alternatives considered:** See (A) and (B) above — both rejected as inconsistent with disposable runtime storage. `DATABASE_RECREATE_ON_STARTUP=false` only skips the drop/recreate and checks that core tables exist; it does **not** evolve schema, does **not** make PostgreSQL durable, and is not a supported production mode. Use it only for narrow local experiments where you accept manual schema management and drift risk.
-
+   - `DATABASE_RECREATE_ON_STARTUP=false` is the default and the production contract. Startup takes a PostgreSQL advisory lock, verifies `atlas_schema_migrations`, applies pending migrations in one transaction, verifies the Atlas-owned catalog fingerprint, and fails before readiness on unknown versions, gaps, changed migration checksums, or catalog drift.
+   - `atlas_schema_migrations` records `version`, `name`, immutable migration `checksum`, `fingerprint_version`, resulting `schema_fingerprint`, and `applied_at`. Fingerprint algorithms are immutable and versioned separately so a future algorithm can verify the previous row before a migration records the newer algorithm.
+   - Migration v1 is the exact schema that existed when this decision changed. A clean database installs v1. An unversioned database with that exact schema is fingerprinted and stamped v1 without dropping tables, rewriting rows, or resetting `atlas_change_version_seq`. Partial or modified unversioned schemas fail closed.
+   - Production startup requires the configured MinIO bucket to already exist and never creates or empties it. A missing or unavailable production bucket is startup-fatal so Core cannot serve durable object metadata without its paired blob store.
+   - `admin_records` is durable production data, not a special exception to a scratch system. Accounts, sessions, login throttles, managed API-key hashes/metadata, resource rows, tombstones, the deletion outbox, sequences, and migration metadata travel together in full-database backups.
+   - `DATABASE_RECREATE_ON_STARTUP=true` remains an explicit local development/test mode. It migrates and verifies the current schema, truncates disposable resource rows, resets the change sequence, preserves `admin_records` and migration history, and clears the configured bucket. Development Compose selects this mode. The production image rejects it.
+5. **Alternatives considered:** Keep destructive production startup; rejected because an ordinary restart must not be a data-loss event. Add a hidden compatibility or auto-repair mode; rejected because a partial schema must not be guessed into a valid version. Rely only on a version row; rejected because manual column/index/constraint drift would remain invisible. Add down migrations; rejected because restoring a paired pre-deploy database and bucket snapshot is safer and smaller for this single-host greenfield deployment.
 6. **Consequences:**
-   - Schema drift against the current binary is structurally impossible when recreate-on-startup is enabled.
-   - Operators must not rely on Atlas Core resource tables or the configured MinIO bucket for durable entity/task/object history; clients sync from the API or external systems if they need retention.
-   - Bucket clearing is startup-fatal in recreate mode because an empty database with stale blobs would violate the storage lifecycle.
-   - Per-object blob deletion failures are retried through `storage_deletion_outbox` during a running process; this is cleanup for the active runtime bucket, not durable data retention.
-   - Seed or fixture data belongs in `docker/postgres/init.sql` (or equivalent bootstrap), not in expecting data to survive restart.
-   - Atlas Protocol (when built) validates **shape** of JSON; it does not change this **storage lifecycle** — Core still owns when rows exist.
 
-7. **Location:** `Atlas_Core/internal/database/db.go` (`EnsureTables`), `Atlas_Core/internal/storage/storage.go` (`EmptyBucket`), `Atlas_Core/internal/actions/object_actions.go` (`storage_deletion_outbox` retries), `Atlas_Core/cmd/atlas_core/main.go` (startup order and reconciler), `Atlas_Core/docs/DATABASE_WORKFLOW.md`, `Atlas_Core/internal/config/config.go` (`DATABASE_RECREATE_ON_STARTUP`)
-
-8. **Notes:** Supersedes any prior notes that framed destroy-and-recreate as temporary, treated PostgreSQL as something Atlas Core should keep around, or pointed at a future schema-version hash when “data matters.” Disposable runtime storage is intentional for the life of this project.
+   - Every production schema change requires a new ordered migration. Migration v1 is immutable; editing its DDL or checksum is a startup failure.
+   - A failed migration rolls back its DDL and version record together. MinIO is untouched.
+   - Catalog drift is detected on startup even when the migration version still looks current.
+   - PostgreSQL and MinIO are one logical durable store for backup and restore. Operators must quiesce writes and capture/restore both under one backup-set identifier.
+   - Rolling back after a migration committed means stopping Core, restoring both members of the paired backup, and starting a compatible durable image. The release containing migration v1 is the rollback floor: never boot an older destructive image/Compose stack against retained or restored state. The inaugural cutover must fix forward on the durable runtime. Do not reverse DDL in place.
+   - Development keeps one-command scratch startup without weakening production defaults.
+7. **Location:** `Atlas_Core/internal/database/migrations.go`, `Atlas_Core/internal/database/schema_fingerprint.go`, `Atlas_Core/internal/database/db.go`, `Atlas_Core/cmd/atlas_core/main.go`, `Atlas_Core/docker/docker-compose.yml`, `Atlas_Core/docker/docker-compose.production.yml`, `Atlas_Core/docker/production-entrypoint.sh`, and `Atlas_Core/docs/DEPLOYMENT_RUNBOOK.md`.
+8. **Notes:** This revision supersedes the original “no migrations, permanent disposable storage” posture. It does not add protocol/API compatibility versioning; it only versions the durable PostgreSQL schema required by a specific Core binary.
 
 (End of file)

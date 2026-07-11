@@ -1,36 +1,22 @@
 # Atlas Core Deployment Runbook
 
-Atlas Core uses the original Atlas single-host deployment posture: Docker
-Compose runs the Core API, PostgreSQL, and MinIO on one machine, and an optional
-Cloudflare Tunnel container provides the public HTTPS edge.
+Atlas Core uses a single-host deployment: Docker Compose runs the Core API, PostgreSQL, and MinIO, and an optional Cloudflare Tunnel provides the public HTTPS edge.
 
-Atlas Core resource tables and the configured MinIO bucket are disposable
-runtime scratch storage. The default startup path drops/recreates resource
-tables and clears the bucket. `admin_records` is preserved for operator
-credentials and managed API key metadata.
+Production storage is durable. Ordinary starts, restarts, and `docker compose down` preserve PostgreSQL rows, `admin_records`, migration history, and MinIO objects. PostgreSQL and MinIO are one logical store and must be backed up and restored as a matched pair.
 
-## Local Development
+## Local development
 
 From the repository root:
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py
+python3 Atlas_Core/scripts/atlas.py --dev
 ```
 
-This uses `Atlas_Core/docker/docker-compose.yml`, builds the development image,
-bind-mounts source directories, and keeps API auth disabled for loopback-only
-development.
+Development Compose explicitly sets `DATABASE_RECREATE_ON_STARTUP=true`: each API startup migrates/verifies the schema, clears resource rows and the configured bucket, resets change versions, and preserves local `admin_records` plus migration history.
 
-Direct Compose is also supported:
+## Production configuration
 
-```bash
-cd Atlas_Core/docker
-docker compose up -d --build
-```
-
-## Production Image
-
-Set runtime credentials in the shell or in `Atlas_Core/docker/.env`:
+Set runtime credentials in the shell or `Atlas_Core/docker/.env`:
 
 ```bash
 export POSTGRES_PASSWORD='replace-with-strong-password'
@@ -40,18 +26,15 @@ export API_AUTH_KEY='replace-with-secure-api-key'
 export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 ```
 
-`atlas.py` loads `Atlas_Core/docker/.env` automatically during managed starts.
-Direct production `docker compose -f docker-compose.production.yml ...` commands
-parse the Compose file before contacting Docker, so run them from
-`Atlas_Core/docker` with `.env` present or re-export the same
-`POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`,
-and `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` values first.
+External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
-Start the production-image stack:
+Start the production stack:
 
 ```bash
 python3 Atlas_Core/scripts/atlas.py --production
 ```
+
+Production Compose sets `DATABASE_RECREATE_ON_STARTUP=false`. The production image refuses to start if destructive mode is enabled, API auth is disabled, the bootstrap API key is missing/placeholder, or neither admin password source is set.
 
 This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings
@@ -63,18 +46,11 @@ middleware; the feed handler performs its own API-key or browser-session
 authentication. The host/process `/resources` diagnostic requires a protected
 API key or admin session.
 
-## Production Tunnel
-
-Create a Cloudflare Tunnel in the Cloudflare dashboard and copy its run token.
-Hostname routing is managed in Cloudflare, not in a local credentials file.
-Use the same production credentials from the previous section, then add the
-tunnel values:
+For a public edge, add the tunnel values and start the same production stack with its tunnel profile:
 
 ```bash
 export CLOUDFLARE_TUNNEL_TOKEN='replace-with-cloudflare-token'
 export ATLAS_TUNNEL_HOSTNAME='atlascommandapi.org'
-export API_AUTH_KEY='replace-with-secure-api-key'
-export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 python3 Atlas_Core/scripts/atlas.py --production --tunnel
 ```
 
@@ -122,76 +98,190 @@ Use `/health` for process liveness and `/readiness` for traffic admission:
 
 Do not route production traffic while readiness is `503`. Inspect the API and MinIO logs, confirm `MINIO_ENDPOINT`, credentials, network reachability, and `MINIO_BUCKET`, then restore MinIO or its bucket. Readiness returns to `200` after the configured bucket check succeeds. In recreate mode, a storage failure during bucket clearing remains startup-fatal so an empty database is never served alongside stale blobs.
 
-## Smoke Tests
+## Pre-deploy backup
 
-For local production mode:
+Back up before every binary/image change that may carry a migration. Run the examples from the repository root. They assume a host-installed MinIO client (`mc`) and an operator-owned backup root outside Docker volumes.
+
+1. Create one backup-set identifier and record the application/schema versions:
 
 ```bash
-API_AUTH_KEY="$API_AUTH_KEY" \
-ATLAS_CORE_API_URL=http://localhost:8000 \
+export BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+export BACKUP_DIR="/srv/atlas-backups/${BACKUP_ID}"
+umask 077
+mkdir -p "${BACKUP_DIR}/minio"
+chmod 0700 "${BACKUP_DIR}"
+git rev-parse HEAD >"${BACKUP_DIR}/app-revision.txt"
+
+migration_table_present="$(
+  docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    psql -At -U atlas -d atlas_core \
+    -c "SELECT to_regclass('atlas_schema_migrations') IS NOT NULL"
+)" || { printf '%s\n' 'Failed to inspect schema migration state' >&2; exit 1; }
+case "${migration_table_present}" in
+  t)
+    docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+      -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+      psql -At -U atlas -d atlas_core \
+      -c "SELECT concat_ws(' ', version, name, checksum, fingerprint_version) FROM atlas_schema_migrations ORDER BY version" \
+      >"${BACKUP_DIR}/schema-migrations.txt"
+    ;;
+  f)
+    printf '%s\n' 'unversioned-v1-candidate' >"${BACKUP_DIR}/schema-migrations.txt"
+    ;;
+  *)
+    printf 'Unexpected migration-table probe result: %s\n' "${migration_table_present}" >&2
+    exit 1
+    ;;
+esac
+```
+
+2. Quiesce all writes by stopping Core. Leave PostgreSQL and MinIO running:
+
+```bash
+docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+  docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api
+```
+
+3. Create a full custom-format database dump:
+
+```bash
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
+  >"${BACKUP_DIR}/postgres.dump"
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T postgres \
+  pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
+  >"${BACKUP_DIR}/postgres.contents.txt"
+```
+
+Every full dump must contain resource tables, `deletions`, `storage_deletion_outbox`, `atlas_change_version_seq`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata). After durable v1 adoption it must also contain `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to be unversioned and is marked `unversioned-v1-candidate` instead.
+
+4. Mirror the entire configured bucket into the same backup set:
+
+```bash
+mc alias set atlas-production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+mc mirror --overwrite atlas-production/atlas-media \
+  "${BACKUP_DIR}/minio/atlas-media"
+mc ls --recursive atlas-production/atlas-media \
+  >"${BACKUP_DIR}/minio.contents.txt"
+mc alias remove atlas-production
+```
+
+5. Validate the pair before deploying:
+
+```bash
+test -s "${BACKUP_DIR}/postgres.dump"
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T postgres \
+  pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+test -d "${BACKUP_DIR}/minio/atlas-media"
+```
+
+Keep the dump, bucket mirror, manifests, and revision files under the same `BACKUP_ID`. Never mix a database snapshot with a bucket snapshot from another time; object rows may otherwise reference missing or wrong bytes.
+
+## Deploy and verify
+
+Build/pull the intended revision, then start production from the repository root. Schema migration and catalog verification complete before readiness. Add `--tunnel` when the backed-up deployment used the tunnel profile:
+
+```bash
+python3 Atlas_Core/scripts/atlas.py --production
+```
+
+Verify:
+
+```bash
+curl -fsS http://127.0.0.1:8000/readiness
+
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  psql -U atlas -d atlas_core \
+  -c 'SELECT version, name, checksum, fingerprint_version, schema_fingerprint, applied_at FROM atlas_schema_migrations ORDER BY version;'
+```
+
+Then confirm expected resource/admin counts, one browser-admin login or managed-key request, and one known object row/download pair. For the API smoke suite:
+
+```bash
+API_AUTH_KEY="${API_AUTH_KEY}" \
+ATLAS_CORE_API_URL=http://127.0.0.1:8000 \
 ./Atlas_Core/scripts/run_integration_tests.sh
 ```
 
-For tunnel mode:
+## Restore a backup set
+
+Restoring is destructive to state created after the selected backup.
+
+1. Stop Core and identify the matching application revision, database dump, and bucket directory from one `BACKUP_ID`.
+2. Restore the entire database:
 
 ```bash
-ATLAS_API_AUTH_KEY="$API_AUTH_KEY" \
-ATLAS_CORE_API_URL="https://${ATLAS_TUNNEL_HOSTNAME:-atlascommandapi.org}" \
-./Atlas_Core/scripts/run_integration_tests.sh
+docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+  docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api
+
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  dropdb -U atlas --if-exists atlas_core
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  createdb -U atlas atlas_core
+docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
+  <"${BACKUP_DIR}/postgres.dump"
 ```
 
-`API_AUTH_KEY` and `ATLAS_API_AUTH_KEY` both add `X-API-Key` to smoke requests;
-`ATLAS_API_AUTH_KEY` takes precedence.
-
-## Logs And Shutdown
-
-The production commands below assume `Atlas_Core/docker/.env` exists or the same
-credential environment variables are exported in the current shell.
-
-Development logs:
+3. Replace the configured bucket with the matching mirror:
 
 ```bash
-cd Atlas_Core/docker
-docker compose logs -f api postgres minio
+mc alias set atlas-production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+mc rm --recursive --force atlas-production/atlas-media
+mc mirror --overwrite --remove "${BACKUP_DIR}/minio/atlas-media" \
+  atlas-production/atlas-media
+mc alias remove atlas-production
 ```
+
+4. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.
+
+## Rollback
+
+- The release that introduces migration v1 is the durable rollback floor. During that inaugural cutover, never boot an older image or its old production Compose file against retained/restored state; it enables destructive startup. Restore the paired backup if needed, then fix forward with the durable v1 release or a hotfix based on it.
+- For later upgrades, if a migration fails before commit, Atlas rolls back its DDL and version record in the same transaction and never modifies MinIO. Verify the previous migration version and representative data, then restart the previous **durable** image.
+- If a later migration committed, the new binary served traffic, or state is uncertain, stop Core and restore both PostgreSQL and MinIO from the paired pre-deploy backup before starting the previous compatible durable image.
+- Do not delete migration rows, edit checksums/fingerprints, or attempt ad hoc down-migration DDL.
+
+## Logs and shutdown
+
+Core accepts an existing `X-Request-ID` and includes it as `request_id` on structured request and request-scoped error logs; otherwise it generates one. Handler error-envelope 4xx diagnostics use warning severity, while 5xx error envelopes and panic recovery use error severity. Readiness dependency warnings remain warning-level probe diagnostics even when readiness is `503`. Use `request_id` to follow one request across access and failure records; `error_id` identifies one handler error response.
 
 Production logs:
 
 ```bash
-cd Atlas_Core/docker
-docker compose -f docker-compose.production.yml logs -f api postgres minio
+docker compose -f Atlas_Core/docker/docker-compose.production.yml logs -f api postgres minio
 ```
 
 Production tunnel logs:
 
 ```bash
-cd Atlas_Core/docker
-docker compose -f docker-compose.production.yml -f docker-compose.tunnel.yml logs -f api cloudflared
+docker compose -f Atlas_Core/docker/docker-compose.production.yml \
+  -f Atlas_Core/docker/docker-compose.tunnel.yml logs -f api cloudflared
+```
+
+Stop containers without deleting volumes:
+
+```bash
+docker compose -f Atlas_Core/docker/docker-compose.production.yml down --remove-orphans
 ```
 
 Stop a production tunnel deployment and remove its dedicated ingress network:
 
 ```bash
-cd Atlas_Core/docker
-docker compose -f docker-compose.production.yml -f docker-compose.tunnel.yml down --remove-orphans
+docker compose -f Atlas_Core/docker/docker-compose.production.yml \
+  -f Atlas_Core/docker/docker-compose.tunnel.yml down --remove-orphans
 ```
 
-Core accepts an existing `X-Request-ID` and includes it as `request_id` on structured request and request-scoped error logs; otherwise it generates one. Handler error-envelope 4xx diagnostics use warning severity, while 5xx error envelopes and panic recovery use error severity. Readiness dependency warnings remain warning-level probe diagnostics even when readiness is `503`. Use `request_id` to follow one request across access and failure records; `error_id` identifies one handler error response.
-
-Stop containers without deleting volumes:
+`down` preserves named volumes. The following command destroys the production database, all `admin_records`, migration history, and the MinIO bucket volume; it is not a rollback mechanism:
 
 ```bash
-cd Atlas_Core/docker
-docker compose -f docker-compose.production.yml down --remove-orphans
+docker compose -f Atlas_Core/docker/docker-compose.production.yml down -v --remove-orphans
 ```
-
-Reset containers and volumes:
-
-```bash
-cd Atlas_Core/docker
-docker compose -f docker-compose.production.yml down -v --remove-orphans
-```
-
-The reset command removes Docker volumes, but ordinary Atlas Core startup also
-recreates resource tables and clears the configured MinIO bucket in recreate
-mode while preserving `admin_records`.

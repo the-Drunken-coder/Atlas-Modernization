@@ -82,23 +82,23 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("Expected default ServerPort to be 8000, got %s", cfg.ServerPort)
 	}
 
-	if !cfg.DatabaseRecreateOnStartup {
-		t.Error("expected DATABASE_RECREATE_ON_STARTUP default true")
+	if cfg.DatabaseRecreateOnStartup {
+		t.Error("expected DATABASE_RECREATE_ON_STARTUP default false")
 	}
 }
 
-func TestLoadDatabaseRecreateOnStartupFalse(t *testing.T) {
+func TestLoadDatabaseRecreateOnStartupTrue(t *testing.T) {
 	chdirToTemp(t)
 	isolateLoadEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://test@localhost:5432/test_db")
-	t.Setenv("DATABASE_RECREATE_ON_STARTUP", "false")
+	t.Setenv("DATABASE_RECREATE_ON_STARTUP", "true")
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	if cfg.DatabaseRecreateOnStartup {
-		t.Fatal("expected DATABASE_RECREATE_ON_STARTUP=false")
+	if !cfg.DatabaseRecreateOnStartup {
+		t.Fatal("expected DATABASE_RECREATE_ON_STARTUP=true")
 	}
 }
 

@@ -5,6 +5,16 @@ trim() {
     printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
+recreate_on_startup="$(trim "${DATABASE_RECREATE_ON_STARTUP:-false}")"
+recreate_on_startup="$(printf '%s' "$recreate_on_startup" | tr '[:upper:]' '[:lower:]')"
+
+case "$recreate_on_startup" in
+    true|1|yes|on)
+        printf '%s\n' "Refusing to start production Atlas Core image: DATABASE_RECREATE_ON_STARTUP must be false so PostgreSQL and MinIO remain durable." >&2
+        exit 1
+        ;;
+esac
+
 enable_api_auth="$(trim "${ENABLE_API_AUTH:-}")"
 enable_api_auth="$(printf '%s' "$enable_api_auth" | tr '[:upper:]' '[:lower:]')"
 

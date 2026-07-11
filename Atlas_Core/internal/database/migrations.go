@@ -1,0 +1,268 @@
+package database
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	migrationTableName        = "atlas_schema_migrations"
+	baselineMigrationName     = "baseline_current_schema"
+	baselineMigrationChecksum = "ef8c1f811a672ee5c1394f494e9b3d8b196aea564242437ed6fae55b00d72f23"
+	fingerprintVersionV1      = 1
+)
+
+var (
+	// ErrSchemaDrift means Atlas-owned PostgreSQL objects no longer match the
+	// catalog fingerprint recorded by the latest successful migration.
+	ErrSchemaDrift = errors.New("database: schema drift detected")
+	// ErrMigrationHistory means the applied version ledger is unknown, gapped,
+	// ahead of this binary, or no longer matches immutable migration code.
+	ErrMigrationHistory = errors.New("database: invalid schema migration history")
+)
+
+type schemaMigration struct {
+	version            int
+	name               string
+	checksum           string
+	fingerprintVersion int
+	statements         []string
+}
+
+type appliedMigration struct {
+	version            int
+	name               string
+	checksum           string
+	fingerprintVersion int
+	schemaFingerprint  string
+}
+
+func coreSchemaMigrations() []schemaMigration {
+	return []schemaMigration{{
+		version:            1,
+		name:               baselineMigrationName,
+		checksum:           baselineMigrationChecksum,
+		fingerprintVersion: fingerprintVersionV1,
+		statements:         baselineSchemaDDL(),
+	}}
+}
+
+func migrationChecksum(migration schemaMigration) string {
+	hash := sha256.New()
+	_, _ = fmt.Fprintf(hash, "%d\x00%s\x00%d\x00", migration.version, migration.name, migration.fingerprintVersion)
+	if migration.version == 1 {
+		_, _ = fmt.Fprintf(hash, "%s\x00", strings.TrimSpace(migrationTableDDL))
+	}
+	for _, statement := range migration.statements {
+		_, _ = fmt.Fprintf(hash, "%s\x00", strings.TrimSpace(statement))
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func validateMigrationDefinitions(migrations []schemaMigration) error {
+	if len(migrations) == 0 {
+		return fmt.Errorf("%w: no migrations are defined", ErrMigrationHistory)
+	}
+	for index, migration := range migrations {
+		expectedVersion := index + 1
+		if migration.version != expectedVersion || strings.TrimSpace(migration.name) == "" || migration.fingerprintVersion < 1 {
+			return fmt.Errorf("%w: migration %d must have version %d, a name, and a fingerprint version", ErrMigrationHistory, index, expectedVersion)
+		}
+		actualChecksum := migrationChecksum(migration)
+		if migration.checksum != actualChecksum {
+			return fmt.Errorf("%w: migration %d definition checksum is %s, want %s", ErrMigrationHistory, migration.version, actualChecksum, migration.checksum)
+		}
+	}
+	return nil
+}
+
+func migrateSchema(ctx context.Context, tx pgx.Tx, migrations []schemaMigration) error {
+	if err := validateMigrationDefinitions(migrations); err != nil {
+		return err
+	}
+
+	schema, err := currentSchema(ctx, tx)
+	if err != nil {
+		return err
+	}
+	migrationTablePresent, err := relationExists(ctx, tx, schema, migrationTableName)
+	if err != nil {
+		return err
+	}
+	legacySchemaPresent := false
+	if !migrationTablePresent {
+		legacySchemaPresent, err = legacyResourceSchemaPresent(ctx, tx, schema)
+		if err != nil {
+			return err
+		}
+		if legacySchemaPresent {
+			if err := verifyUnversionedBaseline(ctx, tx, schema, migrations[0]); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, migrationTableDDL); err != nil {
+			return fmt.Errorf("failed to create schema migration table: %w", err)
+		}
+	}
+
+	applied, err := loadAppliedMigrations(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := verifyAppliedMigrations(applied, migrations); err != nil {
+		return err
+	}
+	if migrationTablePresent && len(applied) == 0 {
+		return fmt.Errorf("%w: migration table exists without an applied baseline", ErrMigrationHistory)
+	}
+	if len(applied) > 0 {
+		fingerprint, err := schemaFingerprint(ctx, tx, schema, applied[len(applied)-1].fingerprintVersion)
+		if err != nil {
+			return err
+		}
+		if fingerprint != applied[len(applied)-1].schemaFingerprint {
+			return fmt.Errorf("%w: current fingerprint %s does not match version %d fingerprint %s", ErrSchemaDrift, fingerprint, applied[len(applied)-1].version, applied[len(applied)-1].schemaFingerprint)
+		}
+	}
+
+	for index := len(applied); index < len(migrations); index++ {
+		migration := migrations[index]
+		if !legacySchemaPresent || migration.version != 1 {
+			for _, statement := range migration.statements {
+				if _, err := tx.Exec(ctx, statement); err != nil {
+					return fmt.Errorf("failed to apply schema migration %d (%s): %w", migration.version, migration.name, err)
+				}
+			}
+		}
+
+		fingerprint, err := schemaFingerprint(ctx, tx, schema, migration.fingerprintVersion)
+		if err != nil {
+			return err
+		}
+		if migration.version == 1 {
+			expected, err := expectedBaselineFingerprint(ctx, tx, migration)
+			if err != nil {
+				return err
+			}
+			if fingerprint != expected {
+				return fmt.Errorf("%w: baseline fingerprint %s does not match expected %s", ErrSchemaDrift, fingerprint, expected)
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO atlas_schema_migrations (version, name, checksum, fingerprint_version, schema_fingerprint)
+			VALUES ($1, $2, $3, $4, $5)`, migration.version, migration.name, migration.checksum, migration.fingerprintVersion, fingerprint); err != nil {
+			return fmt.Errorf("failed to record schema migration %d: %w", migration.version, err)
+		}
+	}
+	return nil
+}
+
+const migrationTableDDL = `CREATE TABLE atlas_schema_migrations (
+	version INTEGER PRIMARY KEY CHECK (version > 0),
+	name TEXT NOT NULL UNIQUE,
+	checksum TEXT NOT NULL,
+	fingerprint_version INTEGER NOT NULL CHECK (fingerprint_version > 0),
+	schema_fingerprint TEXT NOT NULL,
+	applied_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+)`
+
+func currentSchema(ctx context.Context, tx pgx.Tx) (string, error) {
+	var schema string
+	if err := tx.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		return "", fmt.Errorf("failed to read current database schema: %w", err)
+	}
+	if schema == "" {
+		return "", fmt.Errorf("failed to read current database schema: search_path has no existing schema")
+	}
+	return schema, nil
+}
+
+func relationExists(ctx context.Context, tx pgx.Tx, schema, name string) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = $1 AND c.relname = $2
+		)`, schema, name).Scan(&exists); err != nil {
+		return false, fmt.Errorf("failed to inspect database relation %s: %w", name, err)
+	}
+	return exists, nil
+}
+
+func legacyResourceSchemaPresent(ctx context.Context, tx pgx.Tx, schema string) (bool, error) {
+	resourceNames := append([]string(nil), coreSchemaTables[:len(coreSchemaTables)-1]...)
+	resourceNames = append(resourceNames, "atlas_change_version_seq")
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = $1 AND c.relname = ANY($2::text[])
+		)`, schema, resourceNames).Scan(&exists); err != nil {
+		return false, fmt.Errorf("failed to inspect unversioned schema: %w", err)
+	}
+	return exists, nil
+}
+
+func loadAppliedMigrations(ctx context.Context, tx pgx.Tx) ([]appliedMigration, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT version, name, checksum, fingerprint_version, schema_fingerprint
+		FROM atlas_schema_migrations
+		ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read schema migration history: %w", err)
+	}
+	defer rows.Close()
+
+	var applied []appliedMigration
+	for rows.Next() {
+		var migration appliedMigration
+		if err := rows.Scan(&migration.version, &migration.name, &migration.checksum, &migration.fingerprintVersion, &migration.schemaFingerprint); err != nil {
+			return nil, fmt.Errorf("failed to scan schema migration history: %w", err)
+		}
+		applied = append(applied, migration)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read schema migration history: %w", err)
+	}
+	return applied, nil
+}
+
+func verifyAppliedMigrations(applied []appliedMigration, known []schemaMigration) error {
+	if len(applied) > len(known) {
+		return fmt.Errorf("%w: database version %d is newer than this binary's version %d", ErrMigrationHistory, applied[len(applied)-1].version, known[len(known)-1].version)
+	}
+	for index, actual := range applied {
+		expected := known[index]
+		if actual.version != expected.version || actual.name != expected.name || actual.checksum != expected.checksum || actual.fingerprintVersion != expected.fingerprintVersion {
+			return fmt.Errorf("%w: applied migration at position %d is %d/%s/%s/fingerprint-v%d, want %d/%s/%s/fingerprint-v%d", ErrMigrationHistory, index+1, actual.version, actual.name, actual.checksum, actual.fingerprintVersion, expected.version, expected.name, expected.checksum, expected.fingerprintVersion)
+		}
+		if strings.TrimSpace(actual.schemaFingerprint) == "" {
+			return fmt.Errorf("%w: migration %d has no schema fingerprint", ErrMigrationHistory, actual.version)
+		}
+	}
+	return nil
+}
+
+func verifyUnversionedBaseline(ctx context.Context, tx pgx.Tx, schema string, baseline schemaMigration) error {
+	actual, err := schemaFingerprint(ctx, tx, schema, baseline.fingerprintVersion)
+	if err != nil {
+		return err
+	}
+	expected, err := expectedUnversionedBaselineFingerprint(ctx, tx, baseline)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return fmt.Errorf("%w: unversioned schema fingerprint %s does not match the v1 baseline %s", ErrSchemaDrift, actual, expected)
+	}
+	return nil
+}

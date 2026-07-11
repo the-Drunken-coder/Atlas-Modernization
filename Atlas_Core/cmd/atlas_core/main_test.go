@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,105 @@ import (
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 )
+
+func storageConfig(endpoint string, disposable bool) *config.Config {
+	return &config.Config{
+		DatabaseRecreateOnStartup: disposable,
+		MinIOEndpoint:             endpoint,
+		MinIOAccessKey:            "atlas",
+		MinIOSecretKey:            "secret",
+		MinioBucket:               "atlas",
+	}
+}
+
+func TestInitializeStorageDurableConfiguration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/atlas/" && r.URL.Query().Has("location") {
+			_, _ = w.Write([]byte("<LocationConstraint></LocationConstraint>"))
+			return
+		}
+		if r.Method != http.MethodHead || r.URL.Path != "/atlas/" {
+			http.Error(w, "unexpected storage request", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := initializeStorage(context.Background(), storageConfig(strings.TrimPrefix(server.URL, "http://"), false))
+	if err != nil {
+		t.Fatalf("initialize complete durable storage: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected durable storage client")
+	}
+}
+
+func TestInitializeStorageDurableConfigurationRequiresEveryField(t *testing.T) {
+	tests := []struct {
+		name  string
+		clear func(*config.Config)
+	}{
+		{"endpoint", func(cfg *config.Config) { cfg.MinIOEndpoint = "" }},
+		{"access key", func(cfg *config.Config) { cfg.MinIOAccessKey = "" }},
+		{"secret key", func(cfg *config.Config) { cfg.MinIOSecretKey = "" }},
+		{"bucket", func(cfg *config.Config) { cfg.MinioBucket = "" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := storageConfig("localhost:9000", false)
+			tt.clear(cfg)
+			if _, err := initializeStorage(context.Background(), cfg); err == nil {
+				t.Fatal("expected incomplete durable storage configuration to fail")
+			}
+		})
+	}
+}
+
+func TestInitializeStorageDurableConfigurationRejectsUnavailableStorage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := initializeStorage(ctx, storageConfig("127.0.0.1:1", false)); err == nil {
+		t.Fatal("expected unavailable durable storage to fail")
+	}
+}
+
+func TestInitializeStorageDurableConfigurationRejectsMissingBucket(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isBucketProbe := r.URL.Path == "/atlas/" && (r.Method == http.MethodHead || (r.Method == http.MethodGet && r.URL.Query().Has("location")))
+		if !isBucketProbe {
+			http.Error(w, r.Method+" "+r.URL.String(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("<Error><Code>NoSuchBucket</Code></Error>"))
+	}))
+	defer server.Close()
+
+	_, err := initializeStorage(context.Background(), storageConfig(strings.TrimPrefix(server.URL, "http://"), false))
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("missing durable bucket error = %v", err)
+	}
+}
+
+func TestInitializeStorageDisposableDevelopmentAllowsUnavailableStorage(t *testing.T) {
+	client, err := initializeStorage(context.Background(), storageConfig("", true))
+	if err != nil {
+		t.Fatalf("initialize disposable development storage: %v", err)
+	}
+	if client != nil {
+		t.Fatal("expected unavailable disposable storage to remain disabled")
+	}
+}
+
+func TestInitializeStorageDisposableDevelopmentRejectsUnavailableConfiguredStorage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := initializeStorage(ctx, storageConfig("127.0.0.1:1", true)); err == nil {
+		t.Fatal("expected configured disposable storage outage to fail")
+	}
+}
 
 func TestNewHTTPServerRetainsOrdinaryRequestProtection(t *testing.T) {
 	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})

@@ -116,25 +116,26 @@ def resolve_atlas_core_dir():
     raise FileNotFoundError("Atlas_Core directory not found")
 
 
-def database_recreate_on_startup_enabled():
-    """Return whether startup will use recreate mode by default."""
-    raw = os.getenv("DATABASE_RECREATE_ON_STARTUP", "true").strip().lower()
+def database_recreate_on_startup_enabled(production=False):
+    """Return the selected Compose stack's destructive-startup setting."""
+    default = "false" if production else "true"
+    raw = os.getenv("DATABASE_RECREATE_ON_STARTUP", default).strip().lower()
     return raw not in {"false", "0", "no", "off"}
 
 
-def print_disposable_storage_notice(db_only=False):
-    """Print Atlas Core's runtime-storage posture before startup."""
+def print_storage_notice(db_only=False, production=False):
+    """Print the selected Compose stack's storage posture before startup."""
     if db_only:
         return
-    if database_recreate_on_startup_enabled():
+    if database_recreate_on_startup_enabled(production=production):
         print(
-            "[WARN] Atlas Core runtime storage is disposable: startup drops and "
-            "recreates PostgreSQL tables and clears the configured MinIO bucket."
+            "[WARN] Atlas Core development storage is disposable: startup clears "
+            "resource rows and the configured MinIO bucket."
         )
         return
     print(
-        "[INFO] DATABASE_RECREATE_ON_STARTUP=false; PostgreSQL and the configured "
-        "MinIO bucket remain scratch runtime storage, not durable systems of record."
+        "[INFO] Durable storage mode: Atlas Core applies verified PostgreSQL migrations "
+        "and preserves the configured MinIO bucket."
     )
 
 
@@ -277,13 +278,13 @@ def wait_for_api(max_retries=30, delay=2.0):
 def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-media"):
     """Ensure the MinIO bucket exists using mc client.
 
-    Note: The Go service also ensures the bucket exists on startup,
-    but this provides an early check during container initialization.
+    Production Core requires the bucket to exist before startup; the
+    minio-init container owns bucket creation for Compose deployments.
     """
     print(f"[BUILD] Ensuring MinIO bucket exists: {bucket}")
 
-    # The minio-init container in docker compose handles bucket creation,
-    # but we verify it here as a fallback
+    # The minio-init container in docker compose handles bucket creation;
+    # verify that prerequisite before Core starts.
     try:
         result = subprocess.run(
             ["docker", "exec", container_name, "mc", "stat", f"local/{bucket}"],
@@ -304,13 +305,10 @@ def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-
 
 
 def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_retries=60, delay=2.0):
-    """Wait until the Go API has run EnsureTables (schema authority: internal/database/db.go)."""
-    print("[WAIT] Waiting for database schema (EnsureTables)...")
+    """Wait until the Go API has committed a versioned schema migration."""
+    print("[WAIT] Waiting for verified database schema...")
     password = os.getenv("POSTGRES_PASSWORD", "")
-    check_sql = (
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE table_schema = 'public' AND table_name = 'entities'"
-    )
+    check_sql = "SELECT version FROM atlas_schema_migrations ORDER BY version DESC LIMIT 1"
 
     for attempt in range(max_retries):
         try:
@@ -335,8 +333,9 @@ def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_re
                 text=True,
                 timeout=10,
             )
-            if result.returncode == 0 and result.stdout.strip() == "1":
-                print("[OK] Database schema ready!")
+            version = result.stdout.strip()
+            if result.returncode == 0 and version.isdigit() and int(version) > 0:
+                print(f"[OK] Database schema version {version} ready!")
                 return True
         except subprocess.TimeoutExpired:
             pass
@@ -527,7 +526,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
         generated_compose_values.update(ensure_minio_secrets())
         generated_compose_values.update(ensure_postgres_password())
         persist_compose_env_values(docker_dir, generated_compose_values)
-        print_disposable_storage_notice(db_only=db_only)
+        print_storage_notice(db_only=db_only, production=production)
 
         if production and not db_only:
             if not ensure_api_auth("Production mode"):

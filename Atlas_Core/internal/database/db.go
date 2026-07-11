@@ -18,27 +18,12 @@ var ErrNilDB = errors.New("database: nil DB")
 // ErrNilPool is returned when Ping is called but the connection pool was never initialized.
 var ErrNilPool = errors.New("database: nil pool")
 
-// ErrSchemaNotPresent is returned when DATABASE_RECREATE_ON_STARTUP is false and the core schema is missing or stale.
-var ErrSchemaNotPresent = errors.New("database: core schema is missing or stale; set DATABASE_RECREATE_ON_STARTUP=true or initialize the database")
-
-// coreSchemaTables are required when destructive recreate is disabled.
+// coreSchemaTables are owned by Atlas Core schema migrations.
 var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "admin_records"}
 
-const coreSchemaDeletionsContextSQL = `
-	SELECT
-		c.udt_name,
-		c.is_nullable,
-		COALESCE(pg_get_expr(d.adbin, d.adrelid) = $$'{}'::jsonb$$, false)
-	FROM information_schema.columns c
-	JOIN pg_catalog.pg_namespace n ON n.nspname = c.table_schema
-	JOIN pg_catalog.pg_class cls ON cls.relnamespace = n.oid AND cls.relname = c.table_name
-	JOIN pg_catalog.pg_attribute a ON a.attrelid = cls.oid AND a.attname = c.column_name AND NOT a.attisdropped
-	LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-	WHERE c.table_schema = 'public'
-	  AND c.table_name = 'deletions'
-	  AND c.column_name = 'context'`
-
-func coreSchemaCreateDDL() []string {
+// baselineSchemaDDL is immutable migration v1. Later schema changes must be
+// appended as new migrations rather than changing these statements.
+func baselineSchemaDDL() []string {
 	return []string{
 		`CREATE SEQUENCE atlas_change_version_seq`,
 		`CREATE TABLE entities (
@@ -127,8 +112,7 @@ func coreSchemaCreateDDL() []string {
 			)`,
 		`CREATE INDEX idx_storage_deletion_outbox_next_attempt ON storage_deletion_outbox(next_attempt_at, id)`,
 
-		// admin_records stores operator credentials and sessions, so it is the
-		// narrow durable exception to the scratch resource schema.
+		// admin_records is durable in both production and explicit scratch mode.
 		`CREATE TABLE IF NOT EXISTS admin_records (
 				id TEXT PRIMARY KEY,
 				type TEXT NOT NULL,
@@ -140,14 +124,10 @@ func coreSchemaCreateDDL() []string {
 	}
 }
 
-func coreSchemaDropDDL() []string {
+func scratchDataResetDDL() []string {
 	return []string{
-		`DROP TABLE IF EXISTS storage_deletion_outbox CASCADE`,
-		`DROP TABLE IF EXISTS tasks CASCADE`,
-		`DROP TABLE IF EXISTS entities CASCADE`,
-		`DROP TABLE IF EXISTS objects CASCADE`,
-		`DROP TABLE IF EXISTS deletions CASCADE`,
-		`DROP SEQUENCE IF EXISTS atlas_change_version_seq CASCADE`,
+		`TRUNCATE TABLE storage_deletion_outbox, tasks, entities, objects, deletions RESTART IDENTITY CASCADE`,
+		`ALTER SEQUENCE atlas_change_version_seq RESTART WITH 1`,
 	}
 }
 
@@ -264,55 +244,6 @@ func New(cfg *config.Config) (*DB, error) {
 	}, nil
 }
 
-// coreSchemaTablesPresent reports whether the core application schema is current enough to run without recreate mode.
-func coreSchemaTablesPresent(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}) (bool, error) {
-	const tableSQL = `
-			SELECT COUNT(*)
-			FROM information_schema.tables
-			WHERE table_schema = 'public'
-			  AND table_type = 'BASE TABLE'
-			  AND table_name = ANY($1::text[])`
-	var tableCount int
-	if err := q.QueryRow(ctx, tableSQL, coreSchemaTables).Scan(&tableCount); err != nil {
-		return false, fmt.Errorf("failed to check core schema tables: %w", err)
-	}
-	if tableCount != len(coreSchemaTables) {
-		return false, nil
-	}
-
-	const sequenceSQL = `
-		SELECT EXISTS (
-			SELECT 1
-			FROM pg_class c
-			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE n.nspname = 'public'
-			  AND c.relname = 'atlas_change_version_seq'
-			  AND c.relkind = 'S'
-		)`
-	var sequencePresent bool
-	if err := q.QueryRow(ctx, sequenceSQL).Scan(&sequencePresent); err != nil {
-		return false, fmt.Errorf("failed to check core schema change-version sequence: %w", err)
-	}
-	if !sequencePresent {
-		return false, nil
-	}
-
-	var udtName, isNullable string
-	var defaultIsEmptyObject bool
-	if err := q.QueryRow(ctx, coreSchemaDeletionsContextSQL).Scan(&udtName, &isNullable, &defaultIsEmptyObject); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to check deletions context column: %w", err)
-	}
-	if udtName != "jsonb" || isNullable != "NO" || !defaultIsEmptyObject {
-		return false, nil
-	}
-	return true, nil
-}
-
 // Close closes the database connection pool.
 func (db *DB) Close() {
 	if db == nil {
@@ -334,40 +265,19 @@ func (db *DB) Ping(ctx context.Context) error {
 	return db.Pool.Ping(ctx)
 }
 
-// EnsureTables applies the Core schema. When recreateOnStartup is true (default),
-// it drops and recreates every table on each startup.
-//
-// Rationale (destroy-and-recreate, not IF NOT EXISTS):
-//
-//	CREATE TABLE IF NOT EXISTS bootstraps a fresh DB but silently skips tables
-//	that already exist. After a model/DDL change, restart against an old DB and
-//	new columns never appear — no startup error, only failing queries later.
-//
-//	Drop-and-recreate on startup is the permanent product model: PostgreSQL holds
-//	operational state only for the lifetime of a running process. Row data is not
-//	preserved across restarts. There is no migration framework and no planned
-//	schema-version hash or persistence path.
-//
-//	DROP TABLE IF EXISTS … CASCADE handles foreign-key dependencies without
-//	a manually maintained drop order. All DDL runs in one transaction so a
-//	mid-flight failure rolls back.
+// EnsureTables migrates and verifies the durable schema. Explicit scratch mode
+// then clears resource data and resets change versions while preserving the
+// current schema, migration ledger, and admin_records.
 func (db *DB) EnsureTables(ctx context.Context) error {
+	return db.ensureTables(ctx, coreSchemaMigrations())
+}
+
+func (db *DB) ensureTables(ctx context.Context, migrations []schemaMigration) error {
 	if db == nil {
 		return ErrNilDB
 	}
 	if db.Pool == nil {
 		return ErrNilPool
-	}
-
-	if !db.recreateOnStartup {
-		present, err := coreSchemaTablesPresent(ctx, db.Pool)
-		if err != nil {
-			return err
-		}
-		if !present {
-			return ErrSchemaNotPresent
-		}
-		return nil
 	}
 
 	tx, err := db.Pool.Begin(ctx)
@@ -376,18 +286,19 @@ func (db *DB) EnsureTables(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// CASCADE is a safety net — it severs any FK the explicit drop list misses
-	// (e.g., a future table referencing tasks or entities).
-	for _, stmt := range coreSchemaDropDDL() {
-		if _, err = tx.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to drop tables: %w", err)
-		}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('atlas_core_schema_migrations'))`); err != nil {
+		return fmt.Errorf("failed to lock schema migrations: %w", err)
 	}
 
-	createDDL := coreSchemaCreateDDL()
-	for _, stmt := range createDDL {
-		if _, err = tx.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to create schema: %w", err)
+	if err := migrateSchema(ctx, tx, migrations); err != nil {
+		return err
+	}
+
+	if db.recreateOnStartup {
+		for _, stmt := range scratchDataResetDDL() {
+			if _, err = tx.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("failed to reset scratch data: %w", err)
+			}
 		}
 	}
 

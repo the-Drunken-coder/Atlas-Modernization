@@ -69,6 +69,11 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "destructive database mode",
+			env:     []string{"DATABASE_RECREATE_ON_STARTUP=true", "ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=real-admin-secret"},
+			wantErr: true,
+		},
+		{
 			name:    "enabled auth real key and admin password",
 			env:     []string{"ENABLE_API_AUTH=TRUE", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=real-admin-secret"},
 			wantErr: false,

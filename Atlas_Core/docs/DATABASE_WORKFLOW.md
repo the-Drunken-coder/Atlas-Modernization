@@ -1,316 +1,129 @@
-# Database Workflow - ATLAS Core System
+# Database Workflow - Atlas Core
 
-## Overview
+## Storage modes
 
-The ATLAS Core System treats resource PostgreSQL tables and its configured MinIO
-bucket as **disposable runtime storage**. They are scratch state for the running
-service, not systems of record, and they are not meant to be preserved between
-restarts or deployments. `admin_records` is the narrow durable exception for
-operator credentials, sessions, login throttles, and managed API key metadata.
+Atlas Core has two explicit startup modes:
 
-Atlas Core uses a **destroy-and-recreate workflow** by default. On startup, when
-`DATABASE_RECREATE_ON_STARTUP=true` (the default), `EnsureTables()` drops
-resource tables and recreates them from the DDL defined in
-`internal/database/db.go`; after storage initialization, Atlas Core also empties
-the configured MinIO bucket. The system **never uses migration tools like Alembic or
-golang-migrate**.
+| Mode | Setting | PostgreSQL | MinIO | Intended use |
+| --- | --- | --- | --- | --- |
+| Durable | `DATABASE_RECREATE_ON_STARTUP=false` | Applies ordered migrations and verifies schema drift; preserves all rows | Ensures the bucket exists and preserves every object | Production and any environment whose data matters |
+| Scratch | `DATABASE_RECREATE_ON_STARTUP=true` | Migrates/verifies the schema, truncates resource rows, and resets change versions; preserves `admin_records` and migration history | Empties the configured bucket | Local development and disposable integration tests |
 
-**Why destroy-and-recreate instead of `CREATE TABLE IF NOT EXISTS`?** The old `IF NOT EXISTS` approach created missing tables but silently skipped existing ones. If you added a column to the Go model and DDL, restarted against an existing DB, the column simply never appeared — no error, no warning, just a runtime query failure later. Destroy-and-recreate makes that class of bug impossible. The Go models and DDL are the single source of truth; the database is always an exact reflection of them.
+Durable mode is the application default and the only mode accepted by the production image. Development Compose explicitly selects scratch mode so the normal local workflow stays simple.
 
-**Why no migrations or schema-version table?** Atlas Core does not treat PostgreSQL or its configured MinIO bucket as long-lived systems of record. Disposable runtime storage is intentional for the life of the project — not a stepping stone to Alembic, golang-migrate, or hash-gated recreate. Clients that need history must retain it outside Atlas Core runtime storage.
+PostgreSQL and the configured MinIO bucket form one logical durable store in production. Resource rows, object metadata, blobs, tombstones, deletion retries, and admin state must be backed up and restored together. See [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md).
 
-`DATABASE_RECREATE_ON_STARTUP=false` is an escape hatch for narrow local
-experiments only. It skips drops and only verifies that core tables exist; it
-does not evolve schema, does not make PostgreSQL a durable source of truth, and
-is not a production configuration.
+## Schema ownership
 
-## Database Architecture
+- PostgreSQL 15+ is accessed through pgx v5.
+- Go models live in `internal/models/models.go`.
+- The immutable v1 DDL lives in `internal/database/db.go`.
+- Ordered migrations and their checksums live in `internal/database/migrations.go`.
+- Versioned catalog fingerprint algorithms live in `internal/database/schema_fingerprint.go`.
+- `EnsureTables()` in `internal/database/db.go` owns startup migration/reset behavior.
 
-- **Database**: PostgreSQL 15+ (Docker Compose uses the official plain Postgres image)
-- **Extensions**: `docker/postgres/init.sql` enables only basic PostgreSQL extensions used for local development bootstrap. Go `EnsureTables()` owns application tables and indexes.
-- **Driver**: pgx v5 (`github.com/jackc/pgx/v5/pgxpool`)
-- **Models**: Located in `internal/models/models.go`
-- **Schema Creation**: `EnsureTables()` in `internal/database/db.go` — by default drops resource tables then recreates them while preserving `admin_records`; with `DATABASE_RECREATE_ON_STARTUP=false`, verifies existing core tables only
-- **Object Storage Lifecycle**: `storage.Client.EmptyBucket()` in `internal/storage/storage.go` — by default clears the configured MinIO bucket after the bucket is ensured; per-object delete retries are queued in `storage_deletion_outbox`
+The managed schema contains:
 
-## Database Schema
+- `entities`, `tasks`, and `objects`
+- `deletions` change-feed tombstones
+- `storage_deletion_outbox` durable blob-deletion retries
+- `admin_records` accounts, sessions, login throttles, and managed API-key metadata
+- `atlas_change_version_seq`
+- `atlas_schema_migrations`
 
-Atlas Core stores transient operational data in PostgreSQL while the service is
-running. Go structs in `internal/models/models.go` define the canonical schema;
-the DDL in `internal/database/db.go` matches them. If data must outlive an Atlas
-Core restart, it belongs in an external system or client-side sync flow, not in
-this runtime database.
+## Durable startup
 
-### Core Tables
+`EnsureTables()` performs the following work before Core serves traffic:
 
-#### `entities`
+1. Opens one PostgreSQL transaction and takes an advisory migration lock.
+2. Finds the active schema from the connection `search_path`.
+3. Handles the v1 baseline:
+   - Empty schema: installs v1.
+   - Exact unversioned pre-migration schema: verifies it against an isolated v1 catalog and stamps v1 without rewriting rows or resetting the change sequence.
+   - Partial or modified unversioned schema: fails closed.
+4. Loads `atlas_schema_migrations` and requires a contiguous, known history whose names, immutable checksums, and fingerprint algorithm versions match this binary.
+5. Recomputes the managed catalog fingerprint and compares it with the latest successfully recorded fingerprint.
+6. Applies all pending migration statements and their version records in the same transaction.
+7. Records the resulting catalog fingerprint and commits.
 
-- Primary key: `entity_id` (`VARCHAR(50)`)
-- Columns: `type` (NOT NULL, indexed), `subtype` (nullable, indexed), `alias` (nullable, indexed)
-- Cursor indexes: `(created_at DESC, entity_id DESC)`, `(updated_at DESC, entity_id DESC)`
-- Stores JSONB blob with components and metadata (telemetry, geometry, task_catalog, media_refs, etc.)
-- Represents assets, tracks, geofeatures, and other map entities
+Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-#### `tasks`
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose waits for `minio-init` to provision the bucket on a clean deployment.
 
-- Primary key: `task_id` (`VARCHAR(50)`)
-- Columns: `status` (NOT NULL, indexed, default: `pending`), `entity_id` (nullable, indexed, foreign key → `entities.entity_id` ON DELETE SET NULL)
-- Cursor indexes: `(created_at DESC, task_id DESC)`, `(updated_at DESC, task_id DESC)`, plus entity-scoped variants with leading `entity_id`
-- Stores JSONB blob with task specification, parameters, and progress
-- Status values: `pending`, `acknowledged`, `completed`, `failed`, `cancelled`
+## Baseline migration v1
 
-#### `objects`
+Migration v1 represents the exact schema that predated durable production storage. Its checksum is frozen. Do not edit v1 to make a new binary fit an old database; add the next migration instead.
 
-- Primary key: `object_id` (`VARCHAR(50)`)
-- Promoted columns: `path` (unique, indexed), `content_type` (indexed), `type` (indexed)
-- Cursor indexes: `(created_at DESC, object_id DESC)`, `(updated_at DESC, object_id DESC)`
-- Stores JSONB blob with additional metadata (bucket, size_bytes, usage_hints, referenced_by, checksum, expiry_time, etc.)
-- Catalogs binary objects (media files, models, etc.) referenced by entities and tasks via MinIO or other object storage
+The baseline adoption path exists only for the exact unversioned v1 catalog. It deliberately does not add missing columns or indexes and does not stamp a partial schema as current.
 
-#### `deletions`
-
-- Primary key: `id` (`BIGSERIAL`)
-- Columns: `resource_type` (`VARCHAR(20)`, indexed), `resource_id` (`VARCHAR(50)`), `deleted_at` (`TIMESTAMPTZ`, indexed)
-- Cursor index: `(resource_type, deleted_at DESC, resource_id DESC)`
-- Records hard-deleted entity/task/object ids so `GET /queries/changed-since` can return tombstones for client cache eviction
-- Created by `EnsureTables()` alongside the core tables
-
-#### `storage_deletion_outbox`
-
-- Primary key: `id` (`BIGSERIAL`)
-- Columns: `bucket`, `path`, optional `object_id`, retry `attempts`, `last_error`, `next_attempt_at`, `created_at`, `updated_at`
-- Unique key: `(bucket, path)`
-- Cursor index: `(next_attempt_at, id)`
-- Records object-storage blob paths that should be deleted after object metadata is removed
-- Drained by the storage deletion reconciler when the configured storage client is available
-
-### Relationships
-
-- `Task.entity_id` references `Entity.entity_id` for associating tasks with entities
-- Objects reference entities and tasks via the `referenced_by` field in the JSON blob
-
-## Current Models
-
-- **Entity** (`entities` table) — Unified entity storage for assets, tracks, geofeatures, etc.
-- **Task** (`tasks` table) — Work items dispatched to entities
-- **MediaObject** (`objects` table) — Binary objects referenced by entities and tasks
-
-## Schema Change Workflow
-
-### 1. Making Changes
-
-To modify the database schema:
+Inspect the current production version with:
 
 ```bash
-# Run from Atlas_Core/
-# 1. Stop all services (compose file lives under docker/)
-docker compose -f docker/docker-compose.yml down
-
-# 2. Edit the DDL in internal/database/db.go (EnsureTables function)
-#    and update Go structs in internal/models/models.go as needed
-
-# 3. Rebuild and restart — resource tables are dropped and recreated on startup
-go build -o atlas_core ./cmd/atlas_core
-docker compose -f docker/docker-compose.yml up -d
+cd Atlas_Core/docker
+docker compose -f docker-compose.production.yml exec -T \
+  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+  psql -U atlas -d atlas_core \
+  -c 'SELECT version, name, checksum, fingerprint_version, schema_fingerprint, applied_at FROM atlas_schema_migrations ORDER BY version;'
 ```
 
-**Note**: `EnsureTables()` drops resource tables with `DROP TABLE IF EXISTS ... CASCADE` then recreates them with fresh `CREATE TABLE` statements. Existing resource rows and configured-bucket objects are discarded on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. This is intentional. Atlas Core does not currently have a generic resource seed-data system; `docker/postgres/init.sql` is bootstrap-only for PostgreSQL extensions, grants, and timezone.
+## Making a schema change
 
-### 2. What Happens on Startup
+1. Update the corresponding Go model/query behavior.
+2. Append one focused `schemaMigration` to `coreSchemaMigrations()` in `internal/database/migrations.go`. Never rewrite an applied migration.
+3. Put only the DDL/data transformation required for that version in its ordered statement list.
+4. If the migration adds a new disposable resource table, add it to `scratchDataResetDDL()` so development scratch mode clears its rows without erasing schema history.
+5. Run the migration-definition test once; it reports the calculated checksum for a new migration. Freeze that value in code.
+6. Add a live PostgreSQL test for the upgrade and its failure/rollback boundary.
+7. Update schema/API/operator documentation in the same change.
 
-When the application starts (via `go run ./cmd/atlas_core` or as a Docker container):
-
-1. **Database Connection**: pgx pool connects to PostgreSQL
-2. **Table Drop**: `EnsureTables()` drops existing resource tables with `DROP TABLE IF EXISTS ... CASCADE`
-3. **Table Creation**: `EnsureTables()` recreates resource tables and indexes from the DDL in `db.go` and ensures `admin_records` exists
-4. **Storage Initialization**: Atlas Core initializes MinIO, ensures the configured bucket exists, then clears every object in that bucket when recreate mode is enabled
-5. **Service Ready**: Application begins serving traffic
-
-All DDL runs in a single transaction — a mid-flight failure rolls back, leaving the database in its prior state.
-Bucket clearing failures are startup-fatal in recreate mode; serving with a fresh database and stale blobs is invalid.
-
-### How Tables Are Created
-
-The `internal/database/db.go` file contains `EnsureTables()` which:
-
-1. Drops resource tables and the change version sequence in reverse-dependency order (`storage_deletion_outbox`, tasks, entities, objects, deletions, then `atlas_change_version_seq`)
-2. Recreates tables and indexes with fresh `CREATE TABLE` / `CREATE INDEX` statements
-3. Runs inside the application process via the pgx connection pool
-
-This means:
-
-- **No migration files needed** — DDL in `db.go` is the single source of truth
-- **Every startup gets clean resource tables and bucket** — no schema/blob drift possible under recreate mode
-- **Runtime resource data is disposable** — there is no generic resource seed-data path today, and durable history belongs outside Atlas Core
-
-### 3. Example: Adding a New Column
-
-1. Add the column to the `CREATE TABLE` DDL in `db.go`:
+Example shape:
 
 ```go
-// In internal/database/db.go, inside EnsureTables() createDDL:
-`CREATE TABLE entities (
-    entity_id VARCHAR(50) PRIMARY KEY,
-    type VARCHAR(50) NOT NULL,
-    subtype VARCHAR(50),
-    alias VARCHAR(255),
-    priority INTEGER,
-    json JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    version BIGINT NOT NULL DEFAULT nextval('atlas_change_version_seq'),
-    CONSTRAINT entities_version_positive CHECK (version > 0)
-)`,
+{
+    version: 2,
+    name: "add_entity_priority",
+    checksum: "<frozen sha256>",
+    fingerprintVersion: fingerprintVersionV1,
+    statements: []string{
+        `ALTER TABLE entities ADD COLUMN priority INTEGER`,
+        `CREATE INDEX idx_entities_priority ON entities(priority)`,
+    },
+},
 ```
 
-2. Update the Go struct in `internal/models/models.go`:
+Do not edit an existing fingerprint algorithm. If drift coverage itself changes, add a new algorithm version and have a new migration record that version after verifying the prior row with its original algorithm.
 
-```go
-type Entity struct {
-    // ... existing fields ...
-    Priority  *int  `json:"priority,omitempty" db:"priority"`
-}
-```
-
-3. Rebuild and restart:
+Validate from `Atlas_Core/`:
 
 ```bash
-# Run from Atlas_Core/
-go build -o atlas_core ./cmd/atlas_core && docker compose -f docker/docker-compose.yml up -d
+go test -count=1 ./internal/database
+go test ./...
 ```
 
-### 4. Example: Adding a New Table
+The database integration tests use isolated PostgreSQL schemas. With `ATLAS_CORE_REQUIRE_LIVE_TESTS=1`, missing database dependencies fail instead of skipping.
 
-```go
-// In internal/database/db.go, add to EnsureTables() createDDL:
-`CREATE TABLE audit_logs (
-    id SERIAL PRIMARY KEY,
-    entity_id VARCHAR(50) REFERENCES entities(entity_id),
-    action VARCHAR(100) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-)`,
-```
+## Development scratch workflow
 
-Then add the corresponding Go struct in `internal/models/models.go` and rebuild.
-
-## Development Guidelines
-
-### Advantages of the Destroy-and-Recreate Approach
-
-- **Simplicity**: No migration files to manage or version control
-- **Speed**: Instant schema updates just by editing DDL and models
-- **Consistency**: Go structs + DDL in `db.go` are the single source of truth
-- **No schema drift**: Database is always an exact match for the current models
-
-### Important Notes
-
-- **Resource data is disposable**: Resource rows and MinIO blobs are lost on every recreate-mode restart. `admin_records` is preserved for operator credentials and managed API key metadata. `docker/postgres/init.sql` is database bootstrap only, not a resource seed system; durable history belongs outside Atlas Core.
-- **Schema changes on restart**: Changes to DDL require an application restart to take effect
-- **Scratch-store workflow**: Not suitable for shared databases or environments where data persistence matters
-
-### Daily Workflow
+The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then gives developers empty resource tables and an empty `atlas-media` bucket while retaining local `admin_records` and the migration ledger.
 
 ```bash
-# Run from Atlas_Core/
-# Morning routine - get latest code and fresh database
-git pull
-docker compose -f docker/docker-compose.yml down
-docker compose -f docker/docker-compose.yml up -d
-
-# During development - after DDL or model changes
-go build -o atlas_core ./cmd/atlas_core
-docker compose -f docker/docker-compose.yml restart api
-
-# End of day - optional cleanup
-docker compose -f docker/docker-compose.yml down
+python3 Atlas_Core/scripts/atlas.py --dev
 ```
 
-## Limitations and Considerations
-
-### What the Auto-Creation Handles
-
-- Creating resource tables and indexes fresh on every recreate-mode startup
-- Schema is always an exact match for the current DDL
-- All operations run in a single transaction
-
-### What It Doesn't Handle
-
-- Resource data persistence — resource rows are lost on every recreate-mode restart, by design
-- Selective schema changes — the entire schema is replaced, not evolved
-
-## Troubleshooting
-
-### Windows + Docker Desktop + WSL2 Connection Issues
-
-On Windows systems running Docker Desktop with WSL2 backend, `localhost` port forwarding to Docker containers often doesn't work reliably. This manifests as connection timeouts when trying to connect to `localhost:5432` even though the PostgreSQL container is running and healthy.
-
-**Symptoms:**
-
-- `Connection to localhost:5432 refused` or `Connection timed out`
-- `docker exec` commands to the container work fine
-- Container shows as healthy in Docker Desktop
-
-**Root Cause:**
-
-Docker Desktop uses WSL2 for container networking. The port forwarding from Windows `localhost` to the WSL2 VM can be unreliable, especially when:
-- Multiple WSL distributions are running
-- The system has been sleeping/hibernating
-- Network configuration has changed
-
-**Solution - Use WSL IP Address:**
-
-Instead of `localhost`, use the WSL IP address to connect to Docker containers:
+To remove every development volume, including `admin_records`, use the explicitly destructive reset:
 
 ```bash
-# Run from Windows (PowerShell/cmd); not specific to Atlas_Core/
-# Get the WSL IP address
-wsl -d Ubuntu -- hostname -I
-# Example output: 172.26.39.116
-
-# Use this IP in your connection string
-postgresql://atlas:atlas@172.26.39.116:5432/atlas_core
+cd Atlas_Core/docker
+docker compose down -v --remove-orphans
 ```
 
-**For DBeaver/Database Tools:**
+Never use scratch mode or `down -v` for production recovery.
 
-- Host: Use the WSL IP (e.g., `172.26.39.116`) instead of `localhost`
-- Port: `5432`
-- Database: `atlas_core`
-- User: `atlas`
-- Password: `atlas` (matches Compose default `POSTGRES_PASSWORD`)
+## Failure handling
 
-### Database Connection Issues
+- `invalid schema migration history`: the ledger is gapped, unknown, ahead of this binary, or an applied migration definition changed. Stop; do not edit the ledger by hand.
+- `schema drift detected`: the Atlas-owned catalog differs from the latest recorded fingerprint. Stop; compare against the deployed migration and restore a known-good paired backup if needed.
+- `failed to apply schema migration`: the transaction rolled back. Confirm the previous version and catalog are intact before restarting a compatible durable image. Migration v1 is the rollback floor; the inaugural cutover must fix forward rather than boot the older destructive runtime.
+- durable MinIO initialization failure: restore storage availability before starting Core; do not bypass it while object metadata exists.
 
-```bash
-# Run from Atlas_Core/ (compose file path below is relative to that directory)
-# Check if database is running
-docker compose -f docker/docker-compose.yml ps
-
-# View database logs
-docker compose -f docker/docker-compose.yml logs postgres
-
-# Restart database only
-docker compose -f docker/docker-compose.yml restart postgres
-```
-
-### Schema Issues
-
-```bash
-# Run from Atlas_Core/
-# Force recreate with fresh volumes
-docker compose -f docker/docker-compose.yml down -v
-docker compose -f docker/docker-compose.yml up -d
-```
-
-## File Locations
-
-- **Models**: `internal/models/models.go`
-- **Database Pool & Schema DDL**: `internal/database/db.go`
-- **Configuration**: `internal/config/config.go`
-- **API Handlers**: `internal/api/handlers/handler_http.go`, `handler_entity.go`, `handler_task.go`, `handler_object.go`, `handler_object_transfer.go`, `handler_query.go`
-- **Application Entry Point**: `cmd/atlas_core/main.go`
-- **Docker Config**: `docker/docker-compose.yml`
-
----
-
-**Remember**: Atlas Core resource tables and the configured bucket are disposable. With recreate mode enabled (default), `EnsureTables()` drops and recreates resource tables on startup while preserving `admin_records`; set `DATABASE_RECREATE_ON_STARTUP=false` only when you intentionally want to keep the current scratch store. Edit `db.go` and the Go models, rebuild, restart — the runtime store will match. No migrations, no drift, no stale resource columns, and no expectation that resource rows survive.
+The full backup, restore, and rollback sequence is in [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md).
