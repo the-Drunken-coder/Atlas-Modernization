@@ -1,7 +1,7 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { appendMarker, entity, firePointerMove, rect, renderMapView } from "./MapView.test-harness.js";
+import { appendMarker, entity, firePointerMove, markerCoordinatesFor, rect, renderMapView } from "./MapView.test-harness.js";
 import { buildMapSources } from "./map-sources.js";
 
 describe("MapView hover target box", () => {
@@ -62,6 +62,40 @@ describe("MapView hover target box", () => {
       expect(overlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("103px");
       expect(overlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("33px");
       expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("124px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
+    });
+  });
+
+  it("keeps a hovered marker reticle aligned when a feed snapshot moves it", async () => {
+    const initial = entity({
+      entity_id: "track-1",
+      entity_type: "track",
+      components: { telemetry: { longitude: 70, latitude: 80 } }
+    });
+    const moved = {
+      ...initial,
+      components: { ...initial.components, telemetry: { ...initial.components.telemetry, longitude: 170, latitude: 60 } }
+    };
+    const { canvas, rerenderMap } = renderMapView({ sources: buildMapSources([initial], undefined) });
+    await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
+    const marker = canvas.querySelector<HTMLElement>(`.map-symbol-marker[data-entity-id="${initial.entity_id}"]`);
+    if (!marker) throw new Error("Expected generated track marker");
+    vi.spyOn(marker, "getBoundingClientRect").mockImplementation(() => {
+      const [longitude, latitude] = markerCoordinatesFor(marker) ?? [0, 0];
+      return rect(longitude, latitude + 10, 20, 20);
+    });
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+    });
+
+    rerenderMap({ sources: buildMapSources([moved], undefined) });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
     });
   });
