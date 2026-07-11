@@ -446,6 +446,65 @@ describe("AtlasClient sync", () => {
     expect(afterDelete.tasks).toEqual({ [firstTask.task_id]: firstTask });
   });
 
+  it("uses one immutable resource value for cache reads and snapshots", () => {
+    const cache = new ResourceCache();
+    const source = {
+      ...entity("asset-cache-owned"),
+      alias: "server value",
+      components: { health: { battery_percent: 87 } },
+      metadata: metadata(1)
+    };
+
+    expect(cache.cacheResource("entity", source.entity_id, source)).toBe(true);
+    const cached = cache.value("entity", source.entity_id);
+    const snapshot = cache.snapshot();
+
+    expect(cached).toBe(snapshot.entities[source.entity_id]);
+    expect(cached).not.toBe(source);
+    expect(Object.isFrozen(cached)).toBe(true);
+    expect(Object.isFrozen(cached?.components.health)).toBe(true);
+
+    Reflect.set(source, "alias", "source mutation");
+    Reflect.set(source.components.health, "battery_percent", 1);
+    if (cached) {
+      Reflect.set(cached, "alias", "read mutation");
+      if (cached.components.health) Reflect.set(cached.components.health, "battery_percent", 0);
+    }
+
+    expect(cache.value("entity", source.entity_id)?.alias).toBe("server value");
+    expect(cache.value("entity", source.entity_id)?.components.health?.battery_percent).toBe(87);
+    expect(cache.snapshot()).toBe(snapshot);
+    expect(cache.snapshot().entities[source.entity_id].alias).toBe("server value");
+  });
+
+  it("preserves snapshot references and version guards across object detail upgrades", () => {
+    const cache = new ResourceCache();
+    const cachedEntity = { ...entity("asset-detail-reference"), metadata: metadata(1) };
+    const summary = { ...object("object-detail-upgrade"), metadata: metadata(2) };
+    cache.cacheResource("entity", cachedEntity.entity_id, cachedEntity);
+    cache.cacheResource("object", summary.object_id, summary);
+    const beforeDetail = cache.snapshot();
+    const detail = { ...summary, payload: { nested: { confidence: 0.91 } } };
+
+    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
+    const afterDetail = cache.snapshot();
+
+    expect(afterDetail).not.toBe(beforeDetail);
+    expect(afterDetail.entities).toBe(beforeDetail.entities);
+    expect(afterDetail.objects).not.toBe(beforeDetail.objects);
+    expect(cache.value("object", detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
+    expect(cache.entry("object", detail.object_id)).toMatchObject({ version: 2, detail: true });
+    expect(afterDetail.objects[detail.object_id]).toMatchObject({ payload: detail.payload });
+    expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "payload").nested)).toBe(true);
+
+    const stale = { ...summary, type: "stale", metadata: metadata(1) };
+    expect(cache.cacheResource("object", stale.object_id, stale, { detail: true })).toBe(false);
+    expect(cache.cacheResource("object", summary.object_id, summary)).toBe(false);
+    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(false);
+    expect(cache.snapshot()).toBe(afterDetail);
+    expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, payload: detail.payload });
+  });
+
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {
     const core = new FakeCore();
     const localTask = core.upsertTask(task("task-snapshot-local-delete", "asset-snapshot-feed"));
@@ -504,6 +563,34 @@ describe("AtlasClient sync", () => {
     resolveWrite(Response.json(original));
     await expect(write).resolves.toEqual(original);
     expect(client.sync.snapshot().entities[original.entity_id]).toEqual(newer);
+  });
+
+  it("keeps cached previous values intact for tasks-for-entity routing", async () => {
+    const core = new FakeCore();
+    const original = core.upsertTask(task("task-owned-previous", "asset-old"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const cached = await client.tasks.get(original.task_id);
+    Reflect.set(cached, "entity_id", "asset-caller-mutation");
+    const watch = vi.fn();
+    client.watch({ filter: "tasks_for_entity", entity_id: "asset-old" }, watch);
+
+    const reassigned = core.upsertTask({ ...original, entity_id: "asset-new" });
+    core.emit(
+      { event: "update", resource_type: "task", id: reassigned.task_id, version: reassigned.metadata.version, resource: reassigned },
+      { record: false }
+    );
+
+    await vi.waitFor(() => {
+      expect(watch).toHaveBeenCalledWith(reassigned, expect.objectContaining({ event: "update", id: reassigned.task_id }));
+    });
+    expect(client.sync.snapshot().tasks[original.task_id].entity_id).toBe("asset-new");
   });
 
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
@@ -770,6 +857,35 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("isolates cache state and later watchers from watch callback mutation", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const id = "asset-mutating-watch";
+    const mutationResults: boolean[] = [];
+    client.entities.watch(id, (value) => {
+      if (value) mutationResults.push(Reflect.set(value, "alias", "watch mutation"));
+    });
+    const observer = vi.fn();
+    client.entities.watch(id, observer);
+
+    const updated = core.upsertEntity({ ...entity(id), alias: "server value" });
+    core.emit({ event: "update", resource_type: "entity", id, version: updated.metadata.version, resource: updated }, { record: false });
+
+    await vi.waitFor(() => {
+      expect(observer).toHaveBeenCalledWith(expect.objectContaining({ alias: "server value" }), expect.objectContaining({ id }));
+    });
+    expect(mutationResults).toEqual([false]);
+    expect(client.sync.snapshot().entities[id].alias).toBe("server value");
+    await expect(client.entities.get(id)).resolves.toMatchObject({ alias: "server value" });
+  });
+
   it("honors explicit tasks-for-entity subscriptions across reassignment", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -830,15 +946,23 @@ describe("AtlasClient sync", () => {
     expect(watch).toHaveBeenCalledTimes(1);
   });
 
-  it("caches object content by object version with an LRU cap", async () => {
+  it("returns isolated buffers while caching object content by version", async () => {
     const core = new FakeCore();
     core.upsertObject(object("object-1"));
     const fetchSpy = vi.fn(core.fetch);
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchSpy, sync: "all", pollIntervalMs: 0, objectContentCacheEntries: 1 });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchSpy, sync: "all", pollIntervalMs: 0, objectContentCacheEntries: 4 });
     await client.sync.start();
-    await client.objects.content("object-1");
-    await client.objects.content("object-1");
+    const first = await client.objects.content("object-1");
+    new Uint8Array(first)[0] = 99;
+    const second = await client.objects.content("object-1");
+    new Uint8Array(second)[1] = 88;
+    const third = await client.objects.content("object-1");
     const downloads = fetchSpy.mock.calls.filter(([url]) => String(url).includes("/download"));
+
+    expect([...new Uint8Array(second)]).toEqual([1, 88, 3]);
+    expect([...new Uint8Array(third)]).toEqual([1, 2, 3]);
+    expect(second).not.toBe(first);
+    expect(third).not.toBe(second);
     expect(downloads).toHaveLength(1);
   });
 

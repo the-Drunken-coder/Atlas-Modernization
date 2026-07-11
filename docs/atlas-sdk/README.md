@@ -37,7 +37,7 @@ new AtlasClient({ baseUrl, apiKey, sync: "all" }); // seed the all-resources sub
 
 Omitted `sync` and `sync: false` start with no subscription; `sync: "all"` seeds an all-resources subscription. Call `client.subscribe(filter)` and `client.unsubscribe(filter)` to manage explicit filters (the subscription primitives are defined in the [change feed doc](../atlas-change-feed/README.md)). `await client.sync.start()` still performs the existing full-dataset hydration from `GET /queries/full` before it connects the websocket feed and begins the changed-since safety-net poll, regardless of the initial subscription setting.
 
-`client.sync.snapshot()` synchronously projects the live cache into frozen records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition and omits cache tombstones and other internal bookkeeping. Snapshot references stay stable until the cache changes; each accepted change clones and freezes only that resource, replaces only its resource-type record, and preserves the other records by reference.
+`client.sync.snapshot()` synchronously projects the live cache into frozen records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition and omits cache tombstones and other internal bookkeeping. Snapshot references stay stable until the cache changes; each accepted change creates one canonical frozen resource shared by cache reads, snapshots, and watcher values, replaces only its resource-type record, and preserves the other records by reference. Mutating an API or write response cannot mutate that owned cache value.
 
 ### Unified read surface
 
@@ -87,7 +87,7 @@ The consistency mechanism is `GET /queries/changed-since` with the global versio
 An object is two things, treated differently:
 
 - **Metadata** (small JSON: `object_id`, `path`, `type`, `version`, references, and storage fields) — flows over the change feed and lives in the cache like entities and tasks.
-- **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
+- **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache owns a copy of each buffer and returns a fresh copy to each caller, so caller mutation cannot corrupt later reads. It also has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
 
 Object `referenced_by` entries are normalized to the protocol `ObjectReference` shape: only `entity_id` and `task_id` are emitted. Extra keys in stored object metadata are intentionally not part of the public API response.
 
