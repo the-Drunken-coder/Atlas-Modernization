@@ -45,7 +45,7 @@ func (h *Handler) DownloadObject(w http.ResponseWriter, r *http.Request) {
 
 	written, err := io.Copy(w, reader)
 	if err != nil {
-		h.logger.Error().
+		h.requestLogger(r).Error().
 			Err(err).
 			Str("object_id", objectID).
 			Int64("bytes_written", written).
@@ -88,7 +88,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		written, err := io.Copy(w, reader)
 		if err != nil {
-			h.logger.Error().
+			h.requestLogger(r).Error().
 				Err(err).
 				Str("object_id", objectID).
 				Str("content_type", contentType).
@@ -130,7 +130,7 @@ func (h *Handler) ViewObject(w http.ResponseWriter, r *http.Request) {
 	// nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- object bytes from storage, not HTML
 	n, err := w.Write(content)
 	if err != nil {
-		h.logger.Error().
+		h.requestLogger(r).Error().
 			Err(err).
 			Str("object_id", objectID).
 			Int("bytes_written", n).
@@ -184,7 +184,7 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			h.logger.Error().Err(err).Msg("failed to close uploaded file")
+			h.requestLogger(r).Error().Err(err).Msg("failed to close uploaded file")
 		}
 	}()
 
@@ -210,5 +210,5 @@ func (h *Handler) UploadObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, obj.Version)
-	writeJSON(w, http.StatusCreated, serializers.SerializeObject(obj))
+	writeJSON(w, r, http.StatusCreated, serializers.SerializeObject(obj))
 }
