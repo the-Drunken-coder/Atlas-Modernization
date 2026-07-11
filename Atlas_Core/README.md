@@ -136,6 +136,7 @@ Key environment variables:
 - `MINIO_REGION` (optional)
 - `CORS_ORIGINS` (empty string denies all origins; production UI default is `https://atlasinterface.com`)
 - `CORS_ORIGIN_PATTERNS` (constrained preview origins such as Cloudflare Pages branch/PR deployments, for example `https://*.atlas-je0.pages.dev`)
+- `TRUSTED_PROXY_CIDRS` (comma-separated exact reverse-proxy `/32` or `/128` peers; default empty, so forwarded client-IP headers are ignored)
 - `ENABLE_API_AUTH` (default `false` for local/dev runs; required as `true` in the production Docker image)
 - `API_AUTH_KEY` (required bootstrap key when auth enabled; required, strong, and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240`)
@@ -192,7 +193,7 @@ Key environment variables:
 - `GET /queries/full`
 - `GET /queries/changed-since?since_version=<version>`
 
-Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. `changed-since` returns a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
+Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. `full` returns one stable pre-hydration `version` across all continuation pages; after consuming them, drain `changed-since` from that baseline instead of deriving a cursor from resource metadata. `changed-since` returns a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
 
 ### Check-in query params
 
@@ -214,8 +215,10 @@ Go service.
 
 ## Logging
 
-Structured `zerolog` logs include request method/path/status/duration and error identifiers
-(`error_id`).
+Structured `zerolog` logs include `request_id` correlation plus request
+method/path/status/duration and handler error identifiers (`error_id`). Handler
+error-envelope 4xx diagnostics use warning severity; 5xx error envelopes and
+panic recovery use error severity.
 
 ## More Docs
 

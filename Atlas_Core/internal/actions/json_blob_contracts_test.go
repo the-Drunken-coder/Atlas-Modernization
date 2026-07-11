@@ -32,6 +32,32 @@ func TestMergeBlobExtraFieldsFiltersPromotedFields(t *testing.T) {
 	}
 }
 
+func TestMarshalValidatedJSONBlobRejectsOversizedFinalState(t *testing.T) {
+	_, err := marshalValidatedJSONBlob(
+		map[string]interface{}{"payload": strings.Repeat("x", maxStoredJSONBlobBytes)},
+		func(map[string]interface{}) error { return nil },
+	)
+
+	assertValidationDetailsContain(t, err, "final stored JSON")
+}
+
+func TestPatchValidatedJSONBlobRejectsOversizedMergedFinalState(t *testing.T) {
+	raw, err := json.Marshal(map[string]interface{}{
+		"existing": strings.Repeat("x", maxStoredJSONBlobBytes-100),
+	})
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+
+	_, err = patchValidatedJSONBlob(jsonBlobPatch{
+		rawMessage: raw,
+		extra:      map[string]interface{}{"added": strings.Repeat("y", 200)},
+		validate:   func(map[string]interface{}) error { return nil },
+	})
+
+	assertValidationDetailsContain(t, err, "final stored JSON")
+}
+
 func TestRemoveBlobExtraKeysKeepsPromotedFields(t *testing.T) {
 	blob := map[string]interface{}{
 		string(jsonBlobFieldComponents): map[string]interface{}{},

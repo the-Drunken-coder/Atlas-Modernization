@@ -62,7 +62,7 @@
   <p class="lead">
     Atlas Protocol is a central, foundational package that lives <strong>outside</strong> Atlas&nbsp;Core
     and above it. It owns the data structures and the rules for verifying them. The implemented slices have moved
-    those rules out of handwritten Core-only copies and into a generated source of truth that other packages can
+    those rules out of handwritten Core-only copies and into a canonical schema source that other packages can
     project from.
   </p>
 
@@ -81,13 +81,13 @@
     <p>Define entities, tasks, objects, and their components once, with their constraints, in one place.</p>
   </div>
   <div class="goal">
-    <h3>Generate code instead of us hand-writing it</h3>
-    <p>Produce Go types and validators from the definitions so Atlas Core's handwritten validation and
-       known-key tables become generated artifacts, not maintained-by-hand copies.</p>
+    <h3>Derive code or prove it matches</h3>
+    <p>Generate validators and TypeScript from the definitions, and structurally check the ergonomic Go API, so
+       Atlas Core's validation and known-key rules cannot drift into maintained-by-hand copies.</p>
   </div>
   <div class="goal">
     <h3>Give every language the same contract</h3>
-    <p>One definition &rarr; Go for the backend, TypeScript for the frontend, and (optionally) OpenAPI for the
+    <p>One definition &rarr; schema-checked Go for the backend, generated TypeScript for the frontend, and (optionally) OpenAPI for the
        HTTP surface. The frontend stops guessing.</p>
   </div>
   <div class="goal">
@@ -96,9 +96,9 @@
        checks), so integrity no longer depends on every writer going through one Go code path.</p>
   </div>
   <div class="goal">
-    <h3>Detect generated drift</h3>
-    <p>A generated revision stamp or content hash tells us whether checked-in artifacts were produced from the
-       current JSON Schema source. It is a freshness check, not backwards-compatible protocol versioning.</p>
+    <h3>Detect contract drift</h3>
+    <p>A generated revision stamp or content hash proves artifact freshness, while structural parity checks prove the
+       supported Go API matches the current JSON Schema source. Neither is backwards-compatible protocol versioning.</p>
   </div>
 
   <h2><span class="n">03</span>The boundary that keeps it clean</h2>

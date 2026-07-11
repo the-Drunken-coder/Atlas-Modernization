@@ -9,19 +9,23 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
+	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+	"github.com/the-drunken-coder/atlas/atlas_protocol/conformance"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -73,6 +77,22 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]interfa
 		t.Fatalf("failed to decode response body: %v", err)
 	}
 	return body
+}
+
+func findLogEvent(t *testing.T, logs, message string) map[string]interface{} {
+	t.Helper()
+
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("failed to decode log event: %v", err)
+		}
+		if event["message"] == message {
+			return event
+		}
+	}
+	t.Fatalf("log message %q not found in %q", message, logs)
+	return nil
 }
 
 func routeRequest(method, target, body string) *http.Request {
@@ -201,6 +221,85 @@ func TestReadinessCheckWithoutDBReturnsUnhealthy(t *testing.T) {
 	}
 	if dbCheck["status"] != "unhealthy" {
 		t.Fatalf("expected unhealthy database, got %v", dbCheck["status"])
+	}
+	storageCheck, ok := checks["storage"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected storage check, got %T", checks["storage"])
+	}
+	if storageCheck["status"] != "unconfigured" {
+		t.Fatalf("expected deliberately unconfigured storage, got %v", storageCheck["status"])
+	}
+}
+
+func TestReadinessCheckWithConfiguredStorageClientMissingReturnsUnhealthy(t *testing.T) {
+	handler := newTestHandler()
+	handler.config.MinIOSecretKey = "configured-secret"
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
+
+	handler.ReadinessCheck(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	checks := decodeBody(t, rec)["checks"].(map[string]interface{})
+	storageCheck := checks["storage"].(map[string]interface{})
+	if storageCheck["status"] != "unhealthy" {
+		t.Fatalf("expected unhealthy configured storage, got %v", storageCheck["status"])
+	}
+}
+
+func TestReadinessCheckWithUnreachableStorageReturnsUnhealthy(t *testing.T) {
+	storageClient, err := storage.NewClient(&config.Config{
+		MinIOEndpoint:  "127.0.0.1:1",
+		MinIOAccessKey: "atlas",
+		MinIOSecretKey: "configured-secret",
+		MinioBucket:    "atlas-media",
+	})
+	if err != nil {
+		t.Fatalf("create storage client: %v", err)
+	}
+	handler := newTestHandler()
+	handler.storage = storageClient
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readiness", nil).WithContext(ctx)
+
+	handler.ReadinessCheck(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	checks := decodeBody(t, rec)["checks"].(map[string]interface{})
+	storageCheck := checks["storage"].(map[string]interface{})
+	if storageCheck["status"] != "unhealthy" {
+		t.Fatalf("expected unhealthy unreachable storage, got %v", storageCheck["status"])
+	}
+}
+
+func TestReadinessOutcome(t *testing.T) {
+	tests := []struct {
+		name         string
+		database     string
+		storage      string
+		wantStatus   string
+		wantHTTPCode int
+	}{
+		{name: "all dependencies healthy", database: "healthy", storage: "healthy", wantStatus: "healthy", wantHTTPCode: http.StatusOK},
+		{name: "database unavailable", database: "unhealthy", storage: "healthy", wantStatus: "unhealthy", wantHTTPCode: http.StatusServiceUnavailable},
+		{name: "configured storage unavailable", database: "healthy", storage: "unhealthy", wantStatus: "unhealthy", wantHTTPCode: http.StatusServiceUnavailable},
+		{name: "storage deliberately unconfigured", database: "healthy", storage: "unconfigured", wantStatus: "degraded", wantHTTPCode: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, httpCode := readinessOutcome(tt.database, tt.storage)
+			if status != tt.wantStatus || httpCode != tt.wantHTTPCode {
+				t.Fatalf("readinessOutcome(%q, %q) = (%q, %d), want (%q, %d)", tt.database, tt.storage, status, httpCode, tt.wantStatus, tt.wantHTTPCode)
+			}
+		})
 	}
 }
 
@@ -639,6 +738,61 @@ func TestNullablePatchStringDistinguishesAbsentNullAndValue(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskRequestEntityIDDistinguishesAbsentNullAndValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    *string
+	}{
+		{name: "absent", payload: `{"status":"pending"}`},
+		{name: "null", payload: `{"entity_id":null}`, want: stringPointer("")},
+		{name: "value", payload: `{"entity_id":"asset-2"}`, want: stringPointer("asset-2")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request updateTaskRequest
+			if err := json.Unmarshal([]byte(tt.payload), &request); err != nil {
+				t.Fatal(err)
+			}
+			got := request.actionParams(nil).EntityID
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("EntityID = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateEntityRejectsInvalidConformanceRequests(t *testing.T) {
+	cases, err := conformance.LoadRequestValidationCases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range cases {
+		if testCase.Definition != "EntityCreateRequest" || testCase.Valid {
+			continue
+		}
+		t.Run(testCase.Name, func(t *testing.T) {
+			handler := newTestHandler()
+			handler.entityActions = actions.NewEntityActions(nil)
+			recorder := httptest.NewRecorder()
+			request := routeRequest(http.MethodPost, "/entities", string(testCase.Value))
+
+			handler.CreateEntity(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", recorder.Code)
+			}
+			if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
+				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
 func TestCreateTaskRequestDefaultsStatusToPending(t *testing.T) {
 	params := createTaskRequest{TaskID: "task-1"}.actionParams()
 	if params.Status != "pending" {
@@ -784,6 +938,26 @@ func TestEntityCheckinRejectsOffset(t *testing.T) {
 	}
 }
 
+func TestEntityCheckinRejectsMalformedTaskCursorBeforeDatabaseAccess(t *testing.T) {
+	handler := newTestHandler()
+	handler.checkinActions = actions.NewEntityCheckinActions(actions.NewEntityActions(nil), actions.NewTaskActions(nil))
+	rec := httptest.NewRecorder()
+	req := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin?task_cursor=not-base64", `{}`), "entity_id", "entity-1")
+
+	handler.EntityCheckin(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+	if body["message"] != "Invalid query cursor" {
+		t.Fatalf("expected invalid cursor message, got %v", body["message"])
+	}
+}
+
 func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -843,6 +1017,23 @@ func TestGetChangedSinceRejectsInvalidVersion(t *testing.T) {
 	errs, _ := details["errors"].([]interface{})
 	if len(errs) == 0 {
 		t.Fatalf("expected details.errors for invalid since")
+	}
+}
+
+func TestFullDatasetVersionJSONPresence(t *testing.T) {
+	response := serializeFullDatasetResult(&actions.FullDatasetResult{})
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal full dataset response: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode full dataset response: %v", err)
+	}
+	version, ok := decoded["version"]
+	if !ok || version != float64(0) {
+		t.Fatalf("full dataset response version = %#v, present %v; want required zero watermark", version, ok)
 	}
 }
 
@@ -997,6 +1188,89 @@ func TestHandleActionErrorMapsKnownErrorTypes(t *testing.T) {
 				t.Fatal("expected error_id to be populated")
 			}
 		})
+	}
+}
+
+func TestHandlerErrorLogsUseRequestIDAndStatusSeverity(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		wantLevel string
+		wantCause bool
+	}{
+		{name: "client error", status: http.StatusBadRequest, wantLevel: "warn"},
+		{name: "server error", status: http.StatusServiceUnavailable, wantLevel: "error", wantCause: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			handler := newTestHandler()
+			handler.logger = zerolog.New(&logBuf)
+			wrapped := chimiddleware.RequestID(custommiddleware.RequestLogger(handler.logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handler.writeErrorWithCause(w, r, tt.status, "logged error", protocol.ErrorCodeInternalServerError, testError("cause"))
+			})))
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set(chimiddleware.RequestIDHeader, "request-123")
+			rec := httptest.NewRecorder()
+
+			wrapped.ServeHTTP(rec, req)
+
+			event := findLogEvent(t, logBuf.String(), "logged error")
+			if event["level"] != tt.wantLevel {
+				t.Fatalf("expected %s level, got %v", tt.wantLevel, event["level"])
+			}
+			if event["request_id"] != "request-123" {
+				t.Fatalf("expected request ID, got %v", event["request_id"])
+			}
+			_, hasCause := event["error"]
+			if hasCause != tt.wantCause {
+				t.Fatalf("cause logged = %v, want %v", hasCause, tt.wantCause)
+			}
+		})
+	}
+}
+
+func TestValidationErrorLogUsesRequestIDAndWarningSeverity(t *testing.T) {
+	var logBuf bytes.Buffer
+	handler := newTestHandler()
+	handler.logger = zerolog.New(&logBuf)
+	wrapped := chimiddleware.RequestID(custommiddleware.RequestLogger(handler.logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.writeValidationError(w, r, actions.NewValidationError("bad field"))
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/entities", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "validation-123")
+	rec := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(rec, req)
+
+	event := findLogEvent(t, logBuf.String(), "bad field")
+	if event["level"] != "warn" {
+		t.Fatalf("expected warning level, got %v", event["level"])
+	}
+	if event["request_id"] != "validation-123" {
+		t.Fatalf("expected request ID, got %v", event["request_id"])
+	}
+}
+
+func TestWriteJSONEncodingErrorUsesRequestID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := zerolog.New(&logBuf)
+	wrapped := chimiddleware.RequestID(custommiddleware.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, r, http.StatusOK, make(chan int))
+	})))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set(chimiddleware.RequestIDHeader, "encoding-123")
+	rec := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(rec, req)
+
+	event := findLogEvent(t, logBuf.String(), "writeJSON: failed to encode response")
+	if event["level"] != "error" {
+		t.Fatalf("expected error level, got %v", event["level"])
+	}
+	if event["request_id"] != "encoding-123" {
+		t.Fatalf("expected request ID, got %v", event["request_id"])
 	}
 }
 

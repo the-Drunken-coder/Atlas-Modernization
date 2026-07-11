@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
-import { appConfigFromEnv, fetchAppConfig } from "./config.js";
+import { appConfigFromEnv, coreConfigFromEnv, fetchAppConfig } from "./config.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -40,6 +40,25 @@ describe("appConfigFromEnv", () => {
       protocolRevision: ATLAS_PROTOCOL_REVISION,
       defaultMapSourceId: "openstreetmap-default"
     });
+  });
+
+  it.each([
+    [{ VITE_MAPBOX_ACCESS_TOKEN: "mapbox-token" }, "mapbox-satellite"],
+    [{ VITE_THUNDERFOREST_API_KEY: "thunderforest-key" }, "thunderforest-outdoors"],
+    [{ VITE_MAPTILER_API_KEY: "maptiler-key" }, "maptiler-satellite"]
+  ])("prefers a configured provider over the production OpenStreetMap fallback", (providerEnv, expectedDefault) => {
+    expect(appConfigFromEnv({ DEV: false, MODE: "production", ...providerEnv }).defaultMapSourceId).toBe(expectedDefault);
+  });
+
+  it("uses another configured provider when the Google session is unavailable", () => {
+    expect(
+      appConfigFromEnv({
+        DEV: false,
+        MODE: "production",
+        VITE_GOOGLE_MAPS_API_KEY: "google-key",
+        VITE_MAPBOX_ACCESS_TOKEN: "mapbox-token"
+      }).defaultMapSourceId
+    ).toBe("mapbox-satellite");
   });
 
   it("adds credentialed map sources when their provider env vars are present", () => {
@@ -117,6 +136,15 @@ describe("appConfigFromEnv", () => {
 
   it("rejects invalid explicit Core URLs", () => {
     expect(() => appConfigFromEnv({ DEV: false, VITE_ATLAS_CORE_BASE_URL: "atlas" })).toThrow("Atlas interface config has invalid atlasBaseUrl");
+  });
+});
+
+describe("coreConfigFromEnv", () => {
+  it("resolves Core settings without initializing map providers", () => {
+    expect(coreConfigFromEnv({ DEV: false, MODE: "production", VITE_GOOGLE_MAPS_API_KEY: "google-key" })).toEqual({
+      atlasBaseUrl: "https://api.atlasinterface.com",
+      protocolRevision: ATLAS_PROTOCOL_REVISION
+    });
   });
 });
 

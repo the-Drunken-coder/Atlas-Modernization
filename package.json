@@ -2,7 +2,7 @@
   "name": "atlas-modernization",
   "private": true,
   "engines": {
-    "node": ">=26"
+    "node": ">=24"
   },
   "workspaces": [
     "atlas_sdk",

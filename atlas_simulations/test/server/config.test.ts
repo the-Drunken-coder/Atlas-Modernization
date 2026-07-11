@@ -3,8 +3,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/server/config.js";
+import { createTargetRegistry, targetForRun } from "../../src/server/targets.js";
 
 describe("loadConfig", () => {
+  it("offers only the local target by default", () => {
+    const packageRoot = tempPackageRoot();
+
+    const config = loadConfig({ env: {}, packageRoot });
+
+    expect(config.defaultAtlasTargetId).toBe("local");
+    expect(config.atlasTargets).toEqual([{ id: "local", label: "Local Core", baseUrl: "http://localhost:8000" }]);
+    expect(config.cleanupLedgerDirectory).toBe(path.join(packageRoot, ".atlas-simulations", "runs"));
+  });
+
   it("uses the default port when ATLAS_SIM_PORT is blank", () => {
     const packageRoot = tempPackageRoot();
     expect(loadConfig({ env: { ATLAS_SIM_PORT: " " }, packageRoot }).port).toBe(5180);
@@ -35,21 +46,30 @@ describe("loadConfig", () => {
     expect(loadConfig({ env: { ATLAS_BASE_URL: "http://[::1]:8000" }, packageRoot }).atlasBaseUrl).toBe("http://[::1]:8000");
   });
 
-  it("allows HTTPS Atlas URLs for remote disposable targets", () => {
+  it("rejects non-loopback URLs for the legacy and local targets", () => {
     const packageRoot = tempPackageRoot();
 
-    expect(loadConfig({ env: { ATLAS_BASE_URL: "https://atlascommandapi.org/" }, packageRoot }).atlasBaseUrl).toBe("https://atlascommandapi.org");
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlascommandapi.org/" }, packageRoot })).toThrow(
+      "ATLAS_BASE_URL must target loopback"
+    );
+    expect(() => loadConfig({ env: { ATLAS_LOCAL_BASE_URL: "https://atlascommandapi.org/" }, packageRoot })).toThrow(
+      "ATLAS_LOCAL_BASE_URL must target loopback"
+    );
   });
 
-  it("builds local and deployed API targets", () => {
+  it("builds a deployed target only when explicitly enabled with a URL", () => {
     const packageRoot = tempPackageRoot();
 
     const config = loadConfig({
       env: {
-        ATLAS_BASE_URL: "https://atlascommandapi.org/",
-        ATLAS_API_KEY: "legacy-deployed-key",
+        ATLAS_BASE_URL: "http://localhost:8000/",
+        ATLAS_API_KEY: "legacy-local-key",
         ATLAS_LOCAL_BASE_URL: "http://127.0.0.1:8000/",
-        ATLAS_LOCAL_API_KEY: "local-key"
+        ATLAS_LOCAL_API_KEY: "local-key",
+        ATLAS_SIM_ENABLE_DEPLOYED: "true",
+        ATLAS_DEPLOYED_BASE_URL: "https://atlascommandapi.org/",
+        ATLAS_DEPLOYED_API_KEY: "deployed-key",
+        ATLAS_SIM_TARGET: "deployed"
       },
       packageRoot
     });
@@ -57,15 +77,68 @@ describe("loadConfig", () => {
     expect(config.defaultAtlasTargetId).toBe("deployed");
     expect(config.atlasTargets).toEqual([
       { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", apiKey: "local-key" },
-      { id: "deployed", label: "Atlas Command API", baseUrl: "https://atlascommandapi.org", apiKey: "legacy-deployed-key" }
+      { id: "deployed", label: "Deployed Core", baseUrl: "https://atlascommandapi.org", apiKey: "deployed-key" }
     ]);
+  });
+
+  it("requires a deployed URL when deployed support is enabled", () => {
+    const packageRoot = tempPackageRoot();
+
+    expect(() => loadConfig({ env: { ATLAS_SIM_ENABLE_DEPLOYED: "true" }, packageRoot })).toThrow(
+      "ATLAS_DEPLOYED_BASE_URL is required when ATLAS_SIM_ENABLE_DEPLOYED=true"
+    );
+  });
+
+  it("rejects deployed configuration unless deployed support is enabled", () => {
+    const packageRoot = tempPackageRoot();
+
+    expect(() => loadConfig({ env: { ATLAS_DEPLOYED_BASE_URL: "https://atlascommandapi.org" }, packageRoot })).toThrow(
+      "Set ATLAS_SIM_ENABLE_DEPLOYED=true"
+    );
+    expect(() => loadConfig({ env: { ATLAS_SIM_TARGET: "deployed" }, packageRoot })).toThrow("Set ATLAS_SIM_ENABLE_DEPLOYED=true");
+  });
+
+  it("rejects invalid deployed enable flags", () => {
+    const packageRoot = tempPackageRoot();
+
+    expect(() => loadConfig({ env: { ATLAS_SIM_ENABLE_DEPLOYED: "yes" }, packageRoot })).toThrow(
+      "ATLAS_SIM_ENABLE_DEPLOYED must be true or false"
+    );
   });
 
   it("allows the default simulation target to be selected explicitly", () => {
     const packageRoot = tempPackageRoot();
 
-    expect(loadConfig({ env: { ATLAS_SIM_TARGET: "deployed" }, packageRoot }).defaultAtlasTargetId).toBe("deployed");
+    expect(
+      loadConfig({
+        env: {
+          ATLAS_SIM_ENABLE_DEPLOYED: "true",
+          ATLAS_DEPLOYED_BASE_URL: "https://atlascommandapi.org",
+          ATLAS_SIM_TARGET: "deployed"
+        },
+        packageRoot
+      }).defaultAtlasTargetId
+    ).toBe("deployed");
     expect(() => loadConfig({ env: { ATLAS_SIM_TARGET: "staging" }, packageRoot })).toThrow("ATLAS_SIM_TARGET must be local or deployed");
+  });
+
+  it("binds an explicit recovery key to the recorded URL instead of a changed configured target", () => {
+    const registry = createTargetRegistry({
+      atlasBaseUrl: "http://127.0.0.1:8000",
+      atlasTargets: [{ id: "deployed", label: "Current deployed Core", baseUrl: "https://new-atlas.example.test" }],
+      defaultAtlasTargetId: "deployed",
+      port: 5180,
+      packageRoot: tempPackageRoot()
+    });
+    const recorded = { id: "deployed", baseUrl: "https://recorded-atlas.example.test" };
+
+    expect(() => targetForRun(recorded, registry, undefined)).toThrow("no longer matches");
+    expect(targetForRun(recorded, registry, "recovery-key")).toEqual({
+      id: "deployed",
+      label: "Recovered deployed Core",
+      baseUrl: "https://recorded-atlas.example.test",
+      apiKey: "recovery-key"
+    });
   });
 
   it("does not let undefined env overrides erase .env values", () => {
@@ -77,11 +150,11 @@ describe("loadConfig", () => {
 
   it("treats blank env overrides as unset", () => {
     const packageRoot = tempPackageRoot();
-    writeFileSync(path.join(packageRoot, ".env"), "ATLAS_API_KEY=file-key\nATLAS_BASE_URL=https://atlascommandapi.org/api\n");
+    writeFileSync(path.join(packageRoot, ".env"), "ATLAS_API_KEY=file-key\nATLAS_BASE_URL=http://127.0.0.1:8000/api\n");
 
     const config = loadConfig({ env: { ATLAS_API_KEY: "", ATLAS_BASE_URL: " " }, packageRoot });
     expect(config.atlasApiKey).toBe("file-key");
-    expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/api");
+    expect(config.atlasBaseUrl).toBe("http://127.0.0.1:8000/api");
   });
 
   it("strips inline comments from unquoted .env values only", () => {
@@ -90,14 +163,14 @@ describe("loadConfig", () => {
       path.join(packageRoot, ".env"),
       [
         "ATLAS_SIM_PORT = 5190 # local override",
-        "ATLAS_BASE_URL=https://atlascommandapi.org/api/",
+        "ATLAS_BASE_URL=http://127.0.0.1:8000/api/",
         'ATLAS_API_KEY="abc # not a comment" # trailing comment'
       ].join("\n")
     );
 
     const config = loadConfig({ env: {}, packageRoot });
     expect(config.port).toBe(5190);
-    expect(config.atlasBaseUrl).toBe("https://atlascommandapi.org/api");
+    expect(config.atlasBaseUrl).toBe("http://127.0.0.1:8000/api");
     expect(config.atlasApiKey).toBe("abc # not a comment");
   });
 

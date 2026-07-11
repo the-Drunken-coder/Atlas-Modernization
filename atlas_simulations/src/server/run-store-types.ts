@@ -1,6 +1,5 @@
 import type { AssertionResult, AtlasTargetSummary, CreatedResource, JSONValue, RunEvent, RunStatus, RunSummary } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
-import type { Scenario } from "./scenario.js";
 
 export type EventSubscriber = (event: RunEvent) => void;
 
@@ -8,9 +7,14 @@ export type RunTarget = AtlasTargetSummary & {
   clientFactory?: AtlasClientFactory;
 };
 
+export type RunScenario = {
+  id: string;
+  name: string;
+};
+
 export type RunRecord = {
   id: string;
-  scenario: Readonly<Scenario>;
+  scenario: RunScenario;
   target?: AtlasTargetSummary;
   clientFactory: AtlasClientFactory;
   status: RunStatus;

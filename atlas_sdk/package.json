@@ -22,7 +22,7 @@
   ],
   "type": "module",
   "engines": {
-    "node": ">=26"
+    "node": ">=24"
   },
   "files": [
     "dist/"
@@ -53,16 +53,19 @@
     "prebuild": "node ./scripts/generate-package-metadata.mjs",
     "prepack": "npm run clean && npm run build",
     "test:package": "node ./test/packed-consumer-smoke.mjs",
+    "lint": "biome lint .",
+    "format:check": "biome format --changed --no-errors-on-unmatched .",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test": "npm run test:node && npm run test:browser"
   },
   "dependencies": {},
   "devDependencies": {
+    "@biomejs/biome": "2.5.3",
     "@vitest/browser": "4.1.10",
     "@vitest/browser-playwright": "4.1.10",
     "@playwright/test": "1.61.1",
-    "@types/node": "26.1.1",
+    "@types/node": "24.13.3",
     "playwright": "1.61.1",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

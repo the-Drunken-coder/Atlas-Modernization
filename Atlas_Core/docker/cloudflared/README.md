@@ -16,7 +16,7 @@ proxies public HTTPS traffic to the local ATLAS Core API.
 	   export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
 	   ```
 
-3. From the **repository root**, start the tunnel profile:
+3. From the **repository root**, start the tunnel stack:
 
    ```bash
    python3 Atlas_Core/scripts/atlas.py --tunnel
@@ -39,9 +39,8 @@ cloudflared tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 ```
 
 The tunnel service is kept in `docker-compose.tunnel.yml` so normal non-tunnel
-Compose runs do not require or expand `CLOUDFLARE_TUNNEL_TOKEN`.
-Production mode uses the tunnel profile in `docker-compose.production.yml` for
-the same reason.
+Compose runs do not require or expand `CLOUDFLARE_TUNNEL_TOKEN`. Both development
+and production tunnel starts layer that file over their base Compose file.
 
 Managed tunnel starts force `ENABLE_API_AUTH=true` for the API service and
 require `API_AUTH_KEY` plus `ATLAS_ADMIN_PASSWORD` or
@@ -55,9 +54,19 @@ clears the configured bucket intentionally; they are not durable systems of
 record for operators. `admin_records` is preserved for operator credentials,
 sessions, login throttles, and managed API key metadata.
 
-It joins the same `atlas_core_network` bridge as the API service and forwards traffic to
-`http://api:8000` inside Compose. Hostname routing is configured in the Cloudflare
-dashboard for the tunnel — not via a local credentials file.
+Core and `cloudflared` share a dedicated `172.30.0.0/29` ingress bridge inside
+Compose. Core is pinned to `172.30.0.2`, `cloudflared` is pinned to
+`172.30.0.3`, and Core trusts client-IP headers only from that exact
+`172.30.0.3/32` peer. PostgreSQL and MinIO remain on the separate backend
+network. `cloudflared` forwards to `http://api:8000`; hostname routing is
+configured in the Cloudflare dashboard, not a local credentials file.
+
+This peer check is the boundary that makes `CF-Connecting-IP` safe to use for
+browser-admin login throttling. Direct clients cannot spoof that header because
+their socket address is not trusted. Core uses `X-Forwarded-For` only when the
+Cloudflare header is absent. If a trusted request has no valid forwarded client
+address, Core keeps the username throttle but does not put the request into one
+shared proxy-IP bucket.
 
 ## Local files
 
@@ -72,7 +81,10 @@ dashboard for the tunnel — not via a local credentials file.
 
 ## Troubleshooting
 
-- Confirm the API container is healthy before starting the tunnel profile.
+- Confirm the API container is healthy before starting the tunnel stack.
+- If the dedicated `172.30.0.0/29` subnet conflicts with a host route, update
+  that subnet, both static service addresses, and Core's trusted proxy `/32`
+  together before restarting the stack.
 - For `atlas.py --tunnel`, verify the token, API key, and admin password override
   are exported in the shell or present in `Atlas_Core/docker/.env`.
 - Check tunnel logs: `cd Atlas_Core/docker && docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs cloudflared`

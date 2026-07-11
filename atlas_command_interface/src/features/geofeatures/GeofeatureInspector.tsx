@@ -144,7 +144,9 @@ function VertexEditor({
           </div>
         );
       })}
-      <p className="field__hint">{isCircle ? "Drag the center point on the map to move the circle." : "Drag vertices on the map to reshape. Click a mid-point handle to add one."}</p>
+      <p className="field__hint">
+        {isCircle ? "Drag the center point on the map to move the circle." : "Drag vertices on the map to reshape. Click a mid-point handle to add one."}
+      </p>
     </div>
   );
 }

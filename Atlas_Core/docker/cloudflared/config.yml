@@ -1,7 +1,7 @@
 # Manual/config-file runs only. Substitute before use:
 #   export CLOUDFLARED_TUNNEL='<tunnel-uuid>'
 #   envsubst '${CLOUDFLARED_TUNNEL}' < config.yml > /tmp/cloudflared-config.yml
-# Docker Compose tunnel profile uses CLOUDFLARE_TUNNEL_TOKEN instead (this file is not mounted).
+# Docker Compose tunnel overlay uses CLOUDFLARE_TUNNEL_TOKEN instead (this file is not mounted).
 tunnel: ${CLOUDFLARED_TUNNEL}
 credentials-file: /etc/cloudflared/credentials/atlas-core.json
 protocol: http2

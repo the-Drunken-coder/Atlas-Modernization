@@ -24,8 +24,9 @@ const run: RunSummary = {
 
 const target: AtlasTargetSummary = {
   id: "deployed",
-  label: "Atlas Command API",
+  label: "Deployed Core",
   baseUrl: "https://atlascommandapi.org",
+  deployed: true,
   apiKeyConfigured: true
 };
 
@@ -89,18 +90,36 @@ describe("client API", () => {
     await expect(startRun({ scenarioId: "moving-assets", inputs: { assetCount: Number.NaN } } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
       "Invalid start run request"
     );
+    await expect(
+      startRun({ scenarioId: "moving-assets", confirmDeployedMutation: false } as unknown as Parameters<typeof startRun>[0])
+    ).rejects.toThrow("Invalid start run request");
   });
 
   it("serializes valid start payloads with trusted mutation headers", async () => {
     const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(startRun({ scenarioId: scenario.id, inputs: { assetCount: jsonNumber(1) } }, "pasted-key")).resolves.toEqual(run);
+    await expect(
+      startRun(
+        {
+          scenarioId: scenario.id,
+          targetId: target.id,
+          confirmDeployedMutation: true,
+          inputs: { assetCount: jsonNumber(1) }
+        },
+        "pasted-key"
+      )
+    ).resolves.toEqual(run);
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("/api/runs");
     expect(init?.method).toBe("POST");
-    expect(JSON.parse(String(init?.body))).toEqual({ scenarioId: scenario.id, inputs: { assetCount: 1 } });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      scenarioId: scenario.id,
+      targetId: target.id,
+      confirmDeployedMutation: true,
+      inputs: { assetCount: 1 }
+    });
     const headers = new Headers(init?.headers);
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(headers.get("X-Atlas-Simulations-Request")).toBe("1");
@@ -117,6 +136,20 @@ describe("client API", () => {
     expect(url).toBe(`/api/runs/${encodeURIComponent(run.id)}/stop`);
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("X-Atlas-Simulations-Request")).toBe("1");
+  });
+
+  it("forwards a pasted API key when cleaning up a run", async () => {
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(cleanupRun(run.id, " pasted-cleanup-key ")).resolves.toEqual(run);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(`/api/runs/${encodeURIComponent(run.id)}/cleanup`);
+    expect(init?.method).toBe("POST");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("X-Atlas-Simulations-Request")).toBe("1");
+    expect(headers.get("X-Atlas-Target-Api-Key")).toBe("pasted-cleanup-key");
   });
 
   it("preserves HTTP status errors for non-JSON failures", async () => {

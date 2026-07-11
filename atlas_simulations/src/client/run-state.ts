@@ -109,7 +109,7 @@ export function parseRunEvent(value: unknown): RunEvent {
   }
   switch (value.type) {
     case "status":
-      if (value.status === "running" || value.status === "completed" || value.status === "failed" || value.status === "cancelled") return value as RunEvent;
+      if (value.status === "running" || value.status === "completed" || value.status === "failed" || value.status === "cancelled" || value.status === "abandoned") return value as RunEvent;
       break;
     case "log":
       if (value.level === undefined || isRunEventLevel(value.level)) return value as RunEvent;

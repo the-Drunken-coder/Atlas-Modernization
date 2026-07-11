@@ -152,7 +152,7 @@ async function withFakeCore(callback) {
   const seenApiKeys = [];
   const server = createServer(async (req, res) => {
     const apiKey = req.headers["x-api-key"];
-    seenApiKeys.push(Array.isArray(apiKey) ? apiKey.join(",") : apiKey ?? null);
+    seenApiKeys.push(Array.isArray(apiKey) ? apiKey.join(",") : (apiKey ?? null));
     if (req.method === "GET" && req.url === "/protocol/revision") {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ protocol_revision: protocolRevision }));
@@ -203,7 +203,9 @@ try {
   tmpdirPath = mkdtempSync(join(tmpdir(), "atlas-sdk-"));
   mkdirSync(dirname(staleDistSentinel), { recursive: true });
   writeFileSync(staleDistSentinel, "prepack must remove this file\n");
-  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () => run(npmCommand, ["pack", packageRoot, "--pack-destination", tmpdirPath, "--json", "--silent"]));
+  const packOutput = runStep(`Failed to pack SDK into ${tmpdirPath}`, () =>
+    run(npmCommand, ["pack", packageRoot, "--pack-destination", tmpdirPath, "--json", "--silent"])
+  );
   const tarball = join(tmpdirPath, packedTarballName(packOutput));
   const projectDir = join(tmpdirPath, "project");
   mkdirSync(projectDir);
@@ -244,9 +246,13 @@ try {
     throw new Error(`installed root export or generated protocol artifact is invalid: ${rootImportOutput}`);
   }
 
-  const adminImportOutput = runCombined("node", ["--input-type=module", "-e", "import('@the-drunken-coder/atlas-sdk/admin').then((m) => console.log(typeof m.AtlasAdminClient))"], {
-    cwd: projectDir
-  });
+  const adminImportOutput = runCombined(
+    "node",
+    ["--input-type=module", "-e", "import('@the-drunken-coder/atlas-sdk/admin').then((m) => console.log(typeof m.AtlasAdminClient))"],
+    {
+      cwd: projectDir
+    }
+  );
   if (!adminImportOutput.includes("function")) {
     process.stderr.write(adminImportOutput);
     throw new Error("installed package did not expose ./admin AtlasAdminClient through package exports");
@@ -268,9 +274,26 @@ void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
 `
   );
   runStep("Installed package TypeScript declarations did not compile", () =>
-    run(process.execPath, [typeScriptCLI, "--noEmit", "--strict", "--target", "ES2022", "--lib", "ES2022,DOM", "--module", "NodeNext", "--moduleResolution", "NodeNext", typeConsumer], {
-      cwd: projectDir
-    })
+    run(
+      process.execPath,
+      [
+        typeScriptCLI,
+        "--noEmit",
+        "--strict",
+        "--target",
+        "ES2022",
+        "--lib",
+        "ES2022,DOM",
+        "--module",
+        "NodeNext",
+        "--moduleResolution",
+        "NodeNext",
+        typeConsumer
+      ],
+      {
+        cwd: projectDir
+      }
+    )
   );
 
   const helpOutput = runCombined(process.execPath, [atlasCLI, "--help"], { cwd: projectDir });
@@ -283,9 +306,13 @@ void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
     const task = {
       task_id: "smoke-task"
     };
-    const output = await runCombinedAsync(process.execPath, [atlasCLI, "--base-url", baseUrl, "--api-key", "smoke-key", "tasks", "create", JSON.stringify(task)], {
-      cwd: projectDir
-    });
+    const output = await runCombinedAsync(
+      process.execPath,
+      [atlasCLI, "--base-url", baseUrl, "--api-key", "smoke-key", "tasks", "create", JSON.stringify(task)],
+      {
+        cwd: projectDir
+      }
+    );
     if (!output.includes('"task_id":"smoke-task"')) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not run tasks create successfully");

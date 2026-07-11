@@ -15,10 +15,21 @@ export type AppConfig = {
   mapSources: MapSourceConfig[];
 };
 
+export type CoreConfig = Pick<AppConfig, "atlasBaseUrl" | "protocolRevision">;
+
 const CONFIG_URL_BASE = "http://localhost";
 const URL_SCHEME = /^[a-z][a-z\d+\-.]*:/i;
 const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
 const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
+const CREDENTIALED_MAP_SOURCE_IDS = [
+  "google-satellite",
+  "mapbox-satellite",
+  "mapbox-outdoors",
+  "mapbox-dark",
+  "thunderforest-outdoors",
+  "maptiler-satellite",
+  "maptiler-osm-dark"
+] as const;
 
 type RuntimeEnv = {
   DEV?: boolean;
@@ -39,26 +50,46 @@ export async function fetchAppConfig(): Promise<AppConfig> {
   return appConfigFromEnv({ ...env, googleMapsTileSession });
 }
 
+/** Resolve the non-network Core settings needed by the public authentication shell. */
+export function coreConfigFromEnv(env: RuntimeEnv): CoreConfig {
+  return {
+    atlasBaseUrl: parseConfigUrl(envValue(env.VITE_ATLAS_CORE_BASE_URL) ?? defaultCoreBaseUrl(env), "atlasBaseUrl").replace(/\/$/, ""),
+    protocolRevision: ATLAS_PROTOCOL_REVISION
+  };
+}
+
 export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
-  const atlasBaseUrl = parseConfigUrl(envValue(env.VITE_ATLAS_CORE_BASE_URL) ?? defaultCoreBaseUrl(env), "atlasBaseUrl").replace(/\/$/, "");
+  const coreConfig = coreConfigFromEnv(env);
   const mapSources = buildMapSourceConfig(env).map(parseMapSource);
   if (mapSources.length === 0) {
     throw new Error("Atlas interface config has no mapSources");
   }
-  const defaultMapSourceId = mapSources.find((source) => source.style)?.id;
+  const defaultMapSourceId = selectDefaultMapSourceId(env, mapSources);
   if (!defaultMapSourceId || !mapSources.some((source) => source.id === defaultMapSourceId)) {
     throw new Error("Atlas interface config has an invalid defaultMapSourceId");
   }
   return {
-    atlasBaseUrl,
-    protocolRevision: ATLAS_PROTOCOL_REVISION,
+    ...coreConfig,
     defaultMapSourceId,
     mapSources
   };
 }
 
 function defaultCoreBaseUrl(env: RuntimeEnv): string {
-  return env.DEV || env.MODE === "development" ? LOCAL_CORE_BASE_URL : REMOTE_CORE_BASE_URL;
+  return isDevelopment(env) ? LOCAL_CORE_BASE_URL : REMOTE_CORE_BASE_URL;
+}
+
+function selectDefaultMapSourceId(env: RuntimeEnv, mapSources: MapSourceConfig[]): string | undefined {
+  if (!isDevelopment(env)) {
+    for (const id of CREDENTIALED_MAP_SOURCE_IDS) {
+      if (mapSources.some((source) => source.id === id && source.style)) return id;
+    }
+  }
+  return mapSources.find((source) => source.style)?.id;
+}
+
+function isDevelopment(env: RuntimeEnv): boolean {
+  return env.DEV === true || env.MODE === "development";
 }
 
 function parseMapSource(value: unknown): MapSourceConfig {
@@ -284,7 +315,13 @@ async function fetchGoogleMapsTileSession(apiKey: string): Promise<string | unde
 }
 
 function isStyleSpecification(value: unknown): value is StyleSpecification {
-  return typeof value === "object" && value !== null && (value as { version?: unknown }).version === 8 && typeof (value as { sources?: unknown }).sources === "object" && Array.isArray((value as { layers?: unknown }).layers);
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { version?: unknown }).version === 8 &&
+    typeof (value as { sources?: unknown }).sources === "object" &&
+    Array.isArray((value as { layers?: unknown }).layers)
+  );
 }
 
 function envValue(value: string | undefined): string | undefined {

@@ -2,7 +2,6 @@ package actions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -102,10 +101,7 @@ func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBy
 		jsonData["usage_hints"] = usageHints
 	}
 
-	if err := ValidateObjectBlob(jsonData); err != nil {
-		return nil, err
-	}
-	return json.Marshal(jsonData)
+	return marshalValidatedJSONBlob(jsonData, ValidateObjectBlob)
 }
 
 func upsertUploadedObjectMetadata(

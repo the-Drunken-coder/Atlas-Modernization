@@ -7,6 +7,78 @@ import (
 	"testing"
 )
 
+func TestTaskEntityIDPatchSemantics(t *testing.T) {
+	SkipIfSystemNotAvailable(t)
+
+	client := NewAPIClient()
+	ctx := context.Background()
+	prefix := TestArtifactPrefix()
+	entityA := fmt.Sprintf("%s-task-patch-a", prefix)
+	entityB := fmt.Sprintf("%s-task-patch-b", prefix)
+	for _, entityID := range []string{entityA, entityB} {
+		response, err := client.Post(ctx, "/entities", map[string]interface{}{
+			"entity_id": entityID, "entity_type": "asset",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireHTTPStatus(t, response, http.StatusCreated, "create task patch entity")
+		drainClose(response)
+	}
+
+	taskID := fmt.Sprintf("%s-task-patch", prefix)
+	response, err := client.Post(ctx, "/tasks", map[string]interface{}{
+		"task_id": taskID, "entity_id": entityA,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireHTTPStatus(t, response, http.StatusCreated, "create linked task")
+	drainClose(response)
+
+	tests := []struct {
+		name       string
+		payload    map[string]interface{}
+		wantEntity interface{}
+	}{
+		{
+			name:       "omission preserves the link",
+			payload:    map[string]interface{}{"extra": map[string]interface{}{"patch_case": "omitted"}},
+			wantEntity: entityA,
+		},
+		{
+			name:       "null unlinks the task",
+			payload:    map[string]interface{}{"entity_id": nil},
+			wantEntity: nil,
+		},
+		{
+			name:       "string assigns a new entity",
+			payload:    map[string]interface{}{"entity_id": entityB},
+			wantEntity: entityB,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response, err := client.Patch(ctx, "/tasks/"+taskID, tt.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireHTTPStatus(t, response, http.StatusOK, tt.name)
+			var task map[string]interface{}
+			if err := ParseResponse(response, &task); err != nil {
+				t.Fatal(err)
+			}
+			got, exists := task["entity_id"]
+			if !exists {
+				t.Fatal("PATCH response omitted canonical entity_id field")
+			}
+			if got != tt.wantEntity {
+				t.Fatalf("entity_id = %#v, want %#v", got, tt.wantEntity)
+			}
+		})
+	}
+}
+
 // TestTaskLifecycle tests creating, reading, updating, and keeping a task artifact
 func TestTaskLifecycle(t *testing.T) {
 	SkipIfSystemNotAvailable(t)

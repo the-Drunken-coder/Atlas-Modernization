@@ -12,9 +12,11 @@ import (
 // If any HasMore* field is true, that stream hit its cap and more rows exist in the database.
 // Pass the corresponding next_*_cursor value as entity_cursor / task_cursor / object_cursor on the next request to continue.
 type FullDatasetResult struct {
-	Entities         []*models.Entity
-	Tasks            []*models.Task
-	Objects          []*models.MediaObject
+	Entities []*models.Entity
+	Tasks    []*models.Task
+	Objects  []*models.MediaObject
+	// Version is the committed global change baseline captured by the first page and repeated by every continuation.
+	Version          int64
 	HasMoreEntities  bool
 	HasMoreTasks     bool
 	HasMoreObjects   bool
@@ -64,6 +66,11 @@ type ChangedSinceResult struct {
 // MaxFullQueryLimit is the maximum number of records per type returned by GetFullDataset.
 const MaxFullQueryLimit = 1000
 
+// A full-query page stops before retaining more than this much raw JSON for
+// any one resource stream. Per-stream budgets keep every stream independently
+// cursorable when another stream contains larger records.
+const maxQueryJSONBytesPerType = 8 * maxStoredJSONBlobBytes
+
 // MaxChangedSinceLimit is the default safety cap for changed-since queries.
 const MaxChangedSinceLimit = 5000
 
@@ -89,9 +96,10 @@ type ChangedSinceCursors struct {
 }
 
 type parsedQueryCursor struct {
-	timestamp  time.Time
-	id         string
-	upperBound time.Time
+	timestamp    time.Time
+	id           string
+	upperBound   time.Time
+	upperVersion int64
 }
 
 type parsedVersionCursor struct {
@@ -118,6 +126,22 @@ func parseQueryCursor(raw, label string) (*parsedQueryCursor, error) {
 		timestamp:  ts,
 		id:         id,
 		upperBound: upperBound,
+	}, nil
+}
+
+func parseFullDatasetCursor(raw, label string) (*parsedQueryCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	timestamp, id, upperBound, upperVersion, err := decodeFullDatasetCursor(raw)
+	if err != nil {
+		return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{fmt.Sprintf("invalid %s: %v", label, err)})
+	}
+	return &parsedQueryCursor{
+		timestamp:    timestamp,
+		id:           id,
+		upperBound:   upperBound,
+		upperVersion: upperVersion,
 	}, nil
 }
 
@@ -166,6 +190,41 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 		return currentSnapshot, true, nil
 	}
 	return clampCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
+}
+
+func fullDatasetSnapshotVersion(currentSnapshot int64, cursors ...*parsedQueryCursor) (int64, error) {
+	var sharedVersion int64
+	for _, cursor := range cursors {
+		if cursor == nil {
+			continue
+		}
+		if cursor.upperVersion <= 0 {
+			return 0, NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{"full dataset cursors must include a snapshot version"},
+			)
+		}
+		if sharedVersion == 0 {
+			sharedVersion = cursor.upperVersion
+			continue
+		}
+		if sharedVersion != cursor.upperVersion {
+			return 0, NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{"query cursors must come from the same version snapshot"},
+			)
+		}
+	}
+	if sharedVersion == 0 {
+		return currentSnapshot, nil
+	}
+	if sharedVersion > currentSnapshot {
+		return 0, NewValidationErrorWithDetails(
+			"Invalid query cursor",
+			[]string{fmt.Sprintf("query cursor snapshot version %d is newer than current version %d", sharedVersion, currentSnapshot)},
+		)
+	}
+	return sharedVersion, nil
 }
 
 func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound time.Time) time.Time {

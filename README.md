@@ -2,6 +2,21 @@
 
 This workspace is the Atlas modernization repo: Core, Protocol, SDK, Command Interface, simulations, and project docs live here as separate modules that move together.
 
+## JavaScript toolchain
+
+Active development and CI use Node 24 LTS, which is also the minimum declared runtime for every Node package. The root `.nvmrc` is the version source for local tools and GitHub Actions; the command interface mirrors it inside its Cloudflare Pages build root. Each independent package rejects installs on older runtimes through its own `.npmrc`.
+
+The Node packages remain independent. Run commands from the repository root with `npm --prefix <package> ...`; for example:
+
+```bash
+nvm use
+npm --prefix atlas_command_interface ci
+npm --prefix atlas_command_interface run lint
+npm --prefix atlas_command_interface run format:check -- --since=origin/main
+```
+
+Linting covers each package in full. Formatting is checked only for JavaScript/TypeScript files changed from the selected base so adopting the gate does not rewrite the existing codebase.
+
 ## What lives here
 
 - **`Atlas_Core/`** — the core backend: the Go HTTP API, disposable runtime database/object-store layer, Docker setup, and command catalog.

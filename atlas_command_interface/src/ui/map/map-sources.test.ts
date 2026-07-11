@@ -43,11 +43,35 @@ describe("buildMapSources", () => {
     const sources = buildMapSources(
       [
         entity({ entity_id: "geo-point", entity_type: "geofeature", components: { geometry: { type: "Point", coordinates: [1, 2] } } }),
-        entity({ entity_id: "geo-line", entity_type: "geofeature", components: { geometry: { type: "LineString", coordinates: [[1, 2], [3, 4]] } } }),
+        entity({
+          entity_id: "geo-line",
+          entity_type: "geofeature",
+          components: {
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [1, 2],
+                [3, 4]
+              ]
+            }
+          }
+        }),
         entity({
           entity_id: "geo-poly",
           entity_type: "geofeature",
-          components: { geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] } }
+          components: {
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [0, 0],
+                  [1, 0],
+                  [1, 1],
+                  [0, 0]
+                ]
+              ]
+            }
+          }
         })
       ],
       "geo-line"
@@ -78,10 +102,7 @@ describe("buildMapSources", () => {
   });
 
   it("skips entities without a usable position and non-console kinds", () => {
-    const sources = buildMapSources(
-      [entity({ entity_id: "asset-blind", components: {} }), entity({ entity_id: "sensor", entity_type: "sensor" })],
-      undefined
-    );
+    const sources = buildMapSources([entity({ entity_id: "asset-blind", components: {} }), entity({ entity_id: "sensor", entity_type: "sensor" })], undefined);
     expect(sources.assets.features).toHaveLength(0);
     expect(sources.tracks.features).toHaveLength(0);
     expect(sources.geofeatures.features).toHaveLength(0);

@@ -13,12 +13,10 @@ import (
 // Feed upgrades the request to the Atlas change-feed websocket.
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	if h.feedHub == nil {
-		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler is missing feed hub")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed hub is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
 	if h.config == nil {
-		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler is missing config")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed config is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}
@@ -30,7 +28,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	if serverConfig.EnableAPIAuth {
 		valid, err := custommiddleware.ValidAPIKeyOrManagedResult(r, serverConfig.APIKey, h.adminAuth)
 		if err != nil {
-			h.logger.Warn().Err(err).Msg("managed feed API key authentication failed")
+			h.requestLogger(r).Warn().Err(err).Msg("managed feed API key authentication failed")
 		}
 		if valid {
 			authenticated = true
@@ -51,7 +49,6 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if serverConfig.EnableAPIAuth && serverConfig.APIKey == "" && serverConfig.APIKeyValidator == nil {
-		h.logger.Error().Str("method", r.Method).Str("path", r.URL.Path).Msg("Atlas feed handler has auth enabled without an API key")
 		h.writeError(w, r, http.StatusServiceUnavailable, "feed API key is not configured", protocol.ErrorCodeFeedUnavailable)
 		return
 	}

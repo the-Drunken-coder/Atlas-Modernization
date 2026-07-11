@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { parseCommandCatalog } from "../../atlas/command-model.js";
@@ -82,6 +83,77 @@ describe("CommandForm", () => {
     await user.click(send);
 
     expect(onSubmit).toHaveBeenCalledWith({ latitude: 40.1, longitude: -74.2, altitude_m: 120 });
+  });
+
+  it("traps modal focus, closes on Escape, and restores trigger focus", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open command
+          </button>
+          {open ? (
+            <CommandForm
+              command={command}
+              targeting="map_point"
+              formParameters={params}
+              mapPoint={{ lat: 40.1, lng: -74.2 }}
+              submitting={false}
+              onCancel={() => setOpen(false)}
+              onSubmit={() => {}}
+            />
+          ) : null}
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Open command" });
+    await user.click(trigger);
+
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+
+    trigger.focus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+
+    trigger.focus();
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("can hide a pending submission without offering a duplicate send", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(
+      <CommandForm
+        command={command}
+        targeting="map_point"
+        formParameters={params}
+        mapPoint={{ lat: 40.1, lng: -74.2 }}
+        submitting
+        onCancel={onCancel}
+        onSubmit={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Hide" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Hide pending command" })).toHaveFocus();
+
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Hide" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it("keeps submit disabled when numeric parameters are outside bounds", async () => {

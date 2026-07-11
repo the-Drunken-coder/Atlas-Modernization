@@ -16,11 +16,13 @@ npm run build:simulations && npm test --workspace @the-drunken-coder/atlas-simul
 git diff --check
 ```
 
-The SDK, command interface, and simulations are npm workspaces with one root `package-lock.json`. Install from the repository root; `npm ci` builds the SDK package through the root lifecycle so direct consumer typecheck, test, and build commands can resolve its public `dist/` exports without a separate preparatory command. Do not restore per-package lockfiles, deep `atlas_sdk/src` imports, or source aliases that bypass the public exports.
+The SDK, command interface, and simulations are npm workspaces with one root `package-lock.json`. Install from the repository root with Node 24 LTS from `.nvmrc`; `npm ci` builds the SDK package through the root lifecycle so direct consumer typecheck, test, and build commands can resolve its public `dist/` exports without a separate preparatory command. Do not restore per-package lockfiles, deep `atlas_sdk/src` imports, or source aliases that bypass the public exports.
 
 For the packed CLI smoke under npm 11, assert that installation created `node_modules/.bin/atlas`, then run the installed `bin.atlas` module with Node. Alias-only `npx --no-install atlas ...` and `npm exec -- atlas ...` invocations are rejected as unsupported `npm exec` usage in this harness.
 
 The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
+
+Atlas Core production object-size settings must be passed through `Atlas_Core/docker/docker-compose.production.yml`; keep `MAX_UPLOAD_SIZE_MB` and `MAX_VIEW_SIZE_MB` aligned with `Atlas_Core/docker/.env.example`. Development Compose intentionally leaves those environment variables unset so a custom `ATLAS_CORE_SETTINGS_FILE` can own the limits.
 
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.
 
@@ -33,9 +35,9 @@ test ! -d "Atlas Protocol"
 ! rg -n '\]\([^)]*Atlas( |%20|\\ )Protocol/' .
 ```
 
-The lower-case **`atlas_protocol/`** is the buildable sibling module so Go imports and scripts have a stable path. Keep generated Go artifacts reusable through that sibling module; do not move the protocol source of truth under `Atlas_Core/internal/`.
+The lower-case **`atlas_protocol/`** is the buildable sibling module so Go imports and scripts have a stable path. Keep the reusable Go package in that sibling module; do not move the protocol source of truth under `Atlas_Core/internal/`.
 
-Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas_protocol/schema/jsonschema/atlas.schema.json`**. The protocol tools compile that bundle, validate examples, and regenerate Go/TypeScript artifacts:
+Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas_protocol/schema/jsonschema/atlas.schema.json`**. The protocol tools compile that bundle, validate examples, structurally check the authored Go API in `generated/go/atlasprotocol/types.go`, and regenerate Go validators/revision metadata plus TypeScript artifacts:
 
 ```sh
 (cd atlas_protocol && go run ./tools/generate)
@@ -60,6 +62,12 @@ When working on Atlas Core, Atlas Protocol, the SDK, or the command interface, d
 
 Some guidance here is implementation-specific and may drift as Atlas changes. If current code, tests, or docs contradict this file, verify the source of truth before coding around stale guidance, then tell the developer what was stale.
 
+`atlas_simulations` must default to loopback Core only. Do not hard-code or automatically offer a deployed Core endpoint: deployed runs require `ATLAS_SIM_ENABLE_DEPLOYED=true`, an explicit non-loopback HTTPS `ATLAS_DEPLOYED_BASE_URL`, and per-run UI/server confirmation. Its restart cleanup ledger stores target identity and run-owned resource IDs but never API keys; recovered cleanup must use current credentials and the exact recorded target URL. Core-generated `command-*` task IDs are allowed only for local runs because they cannot be ledgered before mutation.
+
 Atlas Core's resource tables and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates resource tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around. `admin_records` is the narrow exception for operator credentials, sessions, login throttles, and managed API key metadata, and must survive recreate-mode resource refreshes.
 
 The Cloudflare-hosted Atlas command interface is a static Vite app intended for Cloudflare Pages, not a Worker proxy. Local development should be able to run with only local Core plus Vite: `python3 Atlas_Core/scripts/atlas.py --dev` and `npm run dev:command-interface`. The browser reads `VITE_ATLAS_CORE_BASE_URL` at build/dev time, defaulting to `http://127.0.0.1:8000` during Vite dev and `https://api.atlasinterface.com` for production/preview builds. Keep `atlas_command_interface/wrangler.jsonc` as a Pages config with `pages_build_output_dir`, not Worker `main`/`assets` routes. Cloudflare Pages must install from the repository root and run `npm run build:command-interface` so the workspace SDK is built before Vite. If old docs mention `/api/config`, `/api/auth/me`, `/atlas/*`, or `/maps/*` Worker routes for the command interface, treat them as stale and update them rather than recreating the Worker. Cloudflare Tunnel still exposes the Proxmox-hosted Core service; Pages only hosts static UI assets.
+
+`wrangler pages dev` can otherwise select today's compatibility date even when that date is newer than its bundled `workerd` runtime. Keep the explicit supported `compatibility_date` in `atlas_command_interface/wrangler.jsonc` so local Pages and `_headers` validation starts deterministically.
+
+The three Node packages share the root npm workspace and lockfile. Keep the active development/CI version in the root `.nvmrc`; the command-interface `.nvmrc` mirrors it for tooling that inspects the package directory.

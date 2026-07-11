@@ -40,6 +40,8 @@ export type Scenario = ScenarioDescriptor & {
 
 export type ParsedStart = {
   input: ScenarioInput;
+  targetId?: string;
+  confirmDeployedMutation?: true;
 };
 
 export function descriptorForScenario(scenario: Readonly<Scenario>): ScenarioDescriptor {
@@ -63,6 +65,12 @@ export function parseStartRequest(scenario: Readonly<Scenario>, request: unknown
   if (request.scenarioId !== scenario.id) {
     throw new Error(`scenarioId must be ${scenario.id}`);
   }
+  if (request.targetId !== undefined && (typeof request.targetId !== "string" || request.targetId.trim() === "")) {
+    throw new Error("targetId must be a non-empty string");
+  }
+  if (request.confirmDeployedMutation !== undefined && request.confirmDeployedMutation !== true) {
+    throw new Error("confirmDeployedMutation must be true when provided");
+  }
   if (request.jsonInput !== undefined && typeof request.jsonInput !== "string") {
     throw new Error("jsonInput must be a string");
   }
@@ -75,6 +83,8 @@ export function parseStartRequest(scenario: Readonly<Scenario>, request: unknown
     throw new Error(`${scenario.name} does not accept JSON input`);
   }
   return {
+    ...(request.targetId === undefined ? {} : { targetId: request.targetId }),
+    ...(request.confirmDeployedMutation === true ? { confirmDeployedMutation: true as const } : {}),
     input: {
       fields: parseFields(scenario.inputFields, inputs),
       ...(scenario.acceptsJson ? parseJsonInput(request.jsonInput) : {})
@@ -83,7 +93,7 @@ export function parseStartRequest(scenario: Readonly<Scenario>, request: unknown
 }
 
 function rejectUnknownStartRequestFields(raw: Record<string, unknown>): void {
-  const allowed = new Set(["scenarioId", "targetId", "inputs", "jsonInput"]);
+  const allowed = new Set(["scenarioId", "targetId", "confirmDeployedMutation", "inputs", "jsonInput"]);
   const unknown = Object.keys(raw).find((key) => !allowed.has(key));
   if (unknown !== undefined) {
     throw new Error(`Unknown start request field: ${unknown}`);
@@ -99,6 +109,7 @@ export function createScenarioContext(args: {
   track(resource: CreatedResource): void;
   trackCleanupCandidate?(resource: CreatedResource): void;
   registerClient(client: AtlasClientLike): void;
+  allowGeneratedTaskIds?: boolean;
 }): ScenarioContext {
   const throwIfCancelled = () => {
     if (args.signal.aborted) {
@@ -125,7 +136,16 @@ export function createScenarioContext(args: {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(rawClient, track, trackCleanupCandidate, trackGeneratedCommandTask, assertRunOwned, throwIfCancelled, args.signal);
+    return trackClientCreates(
+      rawClient,
+      track,
+      trackCleanupCandidate,
+      trackGeneratedCommandTask,
+      assertRunOwned,
+      throwIfCancelled,
+      args.signal,
+      args.allowGeneratedTaskIds ?? true
+    );
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
@@ -159,7 +179,8 @@ function trackClientCreates(
   trackGeneratedCommandTask: (resource: CreatedResource) => void,
   assertRunOwned: (resource: CreatedResource) => void,
   throwIfCancelled: () => void,
-  signal: AbortSignal
+  signal: AbortSignal,
+  allowGeneratedTaskIds: boolean
 ): AtlasClientLike {
   const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
     throwIfCancelled();
@@ -234,6 +255,7 @@ function trackClientCreates(
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task) => {
         if (!("task_id" in task)) {
+          if (!allowGeneratedTaskIds) throw new Error("Deployed simulations require an explicit run-owned task ID");
           return createGeneratedCommandTask(() => client.tasks.create(task));
         }
         const resource = { type: "task", id: task.task_id } satisfies CreatedResource;

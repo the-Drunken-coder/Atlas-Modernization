@@ -24,7 +24,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 - Events are fat: each frame carries event type, resource type, global `version`, resource ID, and the full serialized resource when present.
 - Deletes are tombstones. Task delete tombstones may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
 - Object metadata flows over the feed; object content is never pushed.
-- Shapes are authored in JSON Schema and generated into Go and TypeScript.
+- Shapes are authored in JSON Schema, structurally checked against the authored Go API, and generated into TypeScript and Go validators.
 - The envelope is flat:
 
   ```json
@@ -52,6 +52,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 The feed only delivers correctness to cooperating clients. Any consumer — the SDK, the CLI's watch mode, a future Python port — must:
 
+- On initialization, consume every `GET /queries/full` continuation page while retaining the response's repeated `version` as the pre-hydration baseline. Do not advance the global cursor from hydrated resources' individual versions; drain `changed-since` from the baseline before declaring synchronization current.
 - Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Tombstones count as versioned state, so a stale resource payload can never resurrect a newer delete.
 - On a version gap in the stream: call `GET /queries/changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
 - On reconnect: one `changed-since` call from the last known version restores consistency.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
@@ -16,7 +16,7 @@ import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
 import type { MapCameraCommand } from "../ui/map/map-camera.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
-import { SelectField } from "../ui/primitives/controls.js";
+import { Button, SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
@@ -27,10 +27,10 @@ import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES: Record<ListKind, string> = {
   assets: "Assets",
-	tracks: "Tracks",
-	geofeatures: "Geo Features",
-	commands: "Commands",
-	apiKeys: "API Keys"
+  tracks: "Tracks",
+  geofeatures: "Geo Features",
+  commands: "Commands",
+  apiKeys: "API Keys"
 };
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
@@ -46,6 +46,7 @@ export function MapConsole() {
 
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
+  const commandDismissedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -53,6 +54,12 @@ export function MapConsole() {
   const [saveError, setSaveError] = useState<string>();
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
   const [previewEntityId, setPreviewEntityId] = useState<string>();
+
+  const dismissCommandForm = useCallback(() => {
+    commandDismissedRef.current = true;
+    setCommandForm(null);
+    setSubmitError(undefined);
+  }, []);
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
@@ -62,9 +69,13 @@ export function MapConsole() {
   // Drop transient command UI when the selected entity changes.
   useEffect(() => {
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
-  }, [selectedId]);
+    dismissCommandForm();
+  }, [selectedId, dismissCommandForm]);
+
+  useEffect(() => {
+    setMapMenu(null);
+    dismissCommandForm();
+  }, [catalog, dismissCommandForm]);
 
   // Drop an edit session when the selection moves to another entity.
   useEffect(() => {
@@ -79,16 +90,17 @@ export function MapConsole() {
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
     setMapMenu(null);
-    setCommandForm(null);
-    setSubmitError(undefined);
+    dismissCommandForm();
     setEdit(null);
     setSaveError(undefined);
-  }, [selectedId, selectedEntityId]);
+  }, [selectedId, selectedEntityId, dismissCommandForm]);
 
   useEffect(() => {
     const config = atlas.config;
     if (!config) return;
-    setSelectedMapSourceId((current) => (current && config.mapSources.some((source) => source.id === current && source.style) ? current : config.defaultMapSourceId));
+    setSelectedMapSourceId((current) =>
+      current && config.mapSources.some((source) => source.id === current && source.style) ? current : config.defaultMapSourceId
+    );
   }, [atlas.config]);
 
   const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
@@ -100,7 +112,10 @@ export function MapConsole() {
     },
     [atlas.config]
   );
-  const previewTarget = useMemo(() => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined), [previewEntityId, snapshot.entities]);
+  const previewTarget = useMemo(
+    () => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined),
+    [previewEntityId, snapshot.entities]
+  );
   const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
   // Camera intent is derived from the sidebar's claim, not the snapshot, so
   // its identity only changes when the user asks to go somewhere.
@@ -128,16 +143,20 @@ export function MapConsole() {
   const submit = useCallback(
     async (availability: CommandAvailability, parameters: Record<string, JSONValue>, errorFormState?: CommandFormState) => {
       if (!selectedEntity) return;
+      commandDismissedRef.current = false;
       setSubmitting(true);
       setSubmitError(undefined);
       try {
         await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
         setCommandForm(null);
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        setSubmitError(message);
-        setCommandForm((current) => current ?? errorFormState ?? null);
+        if (!commandDismissedRef.current) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          setSubmitError(message);
+          setCommandForm((current) => current ?? errorFormState ?? null);
+        }
       } finally {
+        commandDismissedRef.current = false;
         setSubmitting(false);
       }
     },
@@ -180,11 +199,10 @@ export function MapConsole() {
         setMapMenu(null);
         return;
       }
-      setCommandForm(null);
-      setSubmitError(undefined);
+      dismissCommandForm();
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
-    [selectedEntity]
+    [selectedEntity, dismissCommandForm]
   );
 
   const startEdit = useCallback(() => {
@@ -218,9 +236,12 @@ export function MapConsole() {
   }
   if (atlas.status === "error") {
     return (
-      <div className="app-error">
+      <div className="app-error" role="alert">
         <span>Could not connect to Atlas Core.</span>
         <code>{atlas.error}</code>
+        <Button variant="primary" onClick={atlas.reconnect}>
+          Retry connection
+        </Button>
       </div>
     );
   }
@@ -239,8 +260,7 @@ export function MapConsole() {
     );
   }
 
-  const activeList: ListKind | null =
-    sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
+  const activeList: ListKind | null = sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId)) ??
@@ -325,7 +345,11 @@ export function MapConsole() {
                   styleId={selectedMapSource.id}
                   style={selectedMapSource.style}
                   selectedId={selectedId}
-                  editing={edit ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) } : undefined}
+                  editing={
+                    edit
+                      ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
+                      : undefined
+                  }
                   focusTarget={focusTarget}
                   previewTarget={previewTarget}
                   cameraCommand={cameraCommand}
@@ -357,6 +381,12 @@ export function MapConsole() {
         />
       ) : null}
 
+      {submitting && !commandForm ? (
+        <div className="banner banner--info" role="status">
+          Command submission pending…
+        </div>
+      ) : null}
+
       {commandForm && selectedEntity ? (
         <CommandForm
           command={commandForm.availability.command}
@@ -365,7 +395,7 @@ export function MapConsole() {
           mapPoint={commandForm.mapPoint}
           submitting={submitting}
           error={submitError}
-          onCancel={() => setCommandForm(null)}
+          onCancel={dismissCommandForm}
           onSubmit={(parameters) => void submit(commandForm.availability, parameters, commandForm)}
         />
       ) : null}

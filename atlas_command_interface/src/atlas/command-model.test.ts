@@ -229,7 +229,7 @@ describe("command model", () => {
       commandsForEntity(catalog, {
         ...asset(),
         components: { task_catalog: { supported_tasks: "hold_position" } }
-    } as unknown as EntityResource).map((command) => command.id)
+      } as unknown as EntityResource).map((command) => command.id)
     ).toEqual([]);
     expect(commandsForEntity(catalog, asset(["", "hold_position", 42 as unknown as string])).map((command) => command.id)).toEqual(["hold_position"]);
     expect(commandsForEntity(catalog, track(["hold_position"]))).toEqual([]);

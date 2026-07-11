@@ -29,7 +29,7 @@ func (h *Handler) ListEntities(w http.ResponseWriter, r *http.Request) {
 
 	entities := serializers.SerializeEntities(page.Items)
 	setPaginationHeaders(w, page.Limit, len(entities), page.HasMore, page.NextCursor)
-	writeJSON(w, http.StatusOK, entities)
+	writeJSON(w, r, http.StatusOK, entities)
 }
 
 // CreateEntity handles POST /entities.
@@ -49,7 +49,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, entity.Version)
-	writeJSON(w, http.StatusCreated, serializers.SerializeEntity(entity))
+	writeJSON(w, r, http.StatusCreated, serializers.SerializeEntity(entity))
 }
 
 // GetEntity handles GET /entities/{entity_id}.
@@ -63,7 +63,7 @@ func (h *Handler) GetEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, entity.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // GetEntityByAlias handles GET /entities/alias/{alias}.
@@ -77,7 +77,7 @@ func (h *Handler) GetEntityByAlias(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, entity.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // UpdateEntity handles PATCH /entities/{entity_id}.
@@ -103,7 +103,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setResourceETag(w, entity.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 type nullablePatchString struct {
@@ -180,7 +180,7 @@ func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) 
 	}
 
 	setResourceETag(w, entity.Version)
-	writeJSON(w, http.StatusOK, serializers.SerializeEntity(entity))
+	writeJSON(w, r, http.StatusOK, serializers.SerializeEntity(entity))
 }
 
 // EntityCheckin handles POST /entities/{entity_id}/checkin.
@@ -263,7 +263,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		response["next_task_cursor"] = result.Tasks.NextCursor
 	}
 	setResourceETag(w, result.Entity.Version)
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, r, http.StatusOK, response)
 }
 
 func buildTelemetryComponent(latitude, longitude, altitudeM, speedMS, headingDeg *float64, lastUpdate *string) map[string]interface{} {
