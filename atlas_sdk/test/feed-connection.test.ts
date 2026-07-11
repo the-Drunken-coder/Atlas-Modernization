@@ -100,7 +100,10 @@ describe("AtlasClient feed connection", () => {
     await client.connectFeed();
 
     const first = core.upsertTask(task("task-gap", "asset-1"));
-    core.emit({ event: "update", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first }, { dropForSockets: true, record: false });
+    core.emit(
+      { event: "update", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first },
+      { dropForSockets: true, record: false }
+    );
     const second = core.upsertTask({ ...first, status: "acknowledged" });
     const event: FeedEvent = { event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second };
     core.emit(event, { record: false });
@@ -312,7 +315,10 @@ describe("AtlasClient feed connection", () => {
     core.requests = [];
 
     const dropped = core.upsertTask(task("task-explicit-dropped", "asset-1"));
-    core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+    core.emit(
+      { event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped },
+      { dropForSockets: true, record: false }
+    );
     const delivered = core.upsertTask(task("task-explicit-delivered", "asset-1"));
     core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
 
@@ -352,5 +358,4 @@ describe("AtlasClient feed connection", () => {
       errorSpy.mockRestore();
     }
   });
-
 });
