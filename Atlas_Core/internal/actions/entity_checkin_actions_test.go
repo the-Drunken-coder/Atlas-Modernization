@@ -8,6 +8,7 @@ import (
 )
 
 func TestEntityCheckinValidatesTaskPageBeforeEntityUpdate(t *testing.T) {
+	expectedVersion := int64(1)
 	tests := []struct {
 		name   string
 		params EntityCheckinParams
@@ -16,17 +17,19 @@ func TestEntityCheckinValidatesTaskPageBeforeEntityUpdate(t *testing.T) {
 		{
 			name: "malformed cursor",
 			params: EntityCheckinParams{
-				EntityID:   "entity-1",
-				TaskLimit:  10,
-				TaskCursor: "not-base64",
+				EntityID:        "entity-1",
+				ExpectedVersion: &expectedVersion,
+				TaskLimit:       10,
+				TaskCursor:      "not-base64",
 			},
 			want: "task_cursor",
 		},
 		{
 			name: "invalid limit",
 			params: EntityCheckinParams{
-				EntityID:  "entity-1",
-				TaskLimit: 21,
+				EntityID:        "entity-1",
+				ExpectedVersion: &expectedVersion,
+				TaskLimit:       21,
 			},
 			want: "limit must be between 1 and 20",
 		},

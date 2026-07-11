@@ -287,6 +287,17 @@ func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
 			"telemetry": map[string]interface{}{"latitude": 38.8977, "longitude": -77.0365, "last_update": "2026-07-10T12:01:00Z"},
 		},
 	}
+	staleVersion := created.Version - 1
+	staleParams := params
+	staleParams.ExpectedVersion = &staleVersion
+	if _, err := checkins.CheckIn(ctx, staleParams); err == nil {
+		t.Fatal("CheckIn with stale version succeeded")
+	} else {
+		var preconditionErr *PreconditionFailedError
+		if !errors.As(err, &preconditionErr) {
+			t.Fatalf("CheckIn with stale version error = %v, want PreconditionFailedError before closed task pool is read", err)
+		}
+	}
 
 	if _, err := checkins.CheckIn(ctx, params); err == nil {
 		t.Fatal("CheckIn with closed task pool succeeded, want task read failure")

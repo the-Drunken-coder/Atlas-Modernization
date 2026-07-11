@@ -43,6 +43,16 @@ type EntityCheckinResult struct {
 // CheckIn retrieves the complete task page before applying check-in components.
 // Once the entity update commits, no fallible database work remains.
 func (a *EntityCheckinActions) CheckIn(ctx context.Context, params EntityCheckinParams) (*EntityCheckinResult, error) {
+	if _, err := normalizeCheckinTaskLimit(params.TaskLimit); err != nil {
+		return nil, err
+	}
+	if _, err := parseQueryCursor(params.TaskCursor, "task_cursor"); err != nil {
+		return nil, err
+	}
+	if err := a.entityActions.checkExpectedVersion(ctx, params.EntityID, params.ExpectedVersion); err != nil {
+		return nil, err
+	}
+
 	tasks, err := a.taskActions.GetByEntityFiltered(ctx, params.EntityID, params.TaskStatuses, params.Since, params.TaskLimit, params.TaskCursor)
 	if err != nil {
 		return nil, err
