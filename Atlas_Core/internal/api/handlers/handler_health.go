@@ -3,12 +3,13 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // LivenessCheck handles GET /health — process is up and serving (no dependency checks).
 func (h *Handler) LivenessCheck(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, r, http.StatusOK, map[string]interface{}{
 		"status":  "healthy",
 		"service": "atlas-core",
 	})
@@ -24,11 +25,11 @@ func (h *Handler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	dbMessage := ""
 	if h.db == nil || h.db.Pool == nil {
 		dbStatus = "unhealthy"
-		h.logger.Warn().Msg("health check: database not configured")
+		h.requestLogger(r).Warn().Msg("health check: database not configured")
 		dbMessage = "database not configured"
 	} else if err := h.db.Ping(ctx); err != nil {
 		dbStatus = "unhealthy"
-		h.logger.Warn().Err(err).Msg("health check: database ping failed")
+		h.requestLogger(r).Warn().Err(err).Msg("health check: database ping failed")
 		dbMessage = "database error"
 	}
 
@@ -40,28 +41,24 @@ func (h *Handler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		storageBucket = h.storage.Bucket()
 		exists, err := h.storage.BucketExists(ctx)
 		if err != nil {
-			storageStatus = "degraded"
-			h.logger.Warn().Err(err).Msg("health check: storage bucket check failed")
+			storageStatus = "unhealthy"
+			h.requestLogger(r).Warn().Err(err).Msg("health check: storage bucket check failed")
 			storageMessage = "storage error"
 		} else if !exists {
 			storageStatus = "unhealthy"
-			h.logger.Warn().Str("bucket", storageBucket).Msg("health check: configured bucket missing")
+			h.requestLogger(r).Warn().Str("bucket", storageBucket).Msg("health check: configured bucket missing")
 			storageMessage = "storage error: bucket missing"
 		}
+	} else if h.config != nil && strings.TrimSpace(h.config.MinIOSecretKey) != "" {
+		storageStatus = "unhealthy"
+		storageMessage = "storage client unavailable"
+		h.requestLogger(r).Warn().Msg("health check: configured storage client unavailable")
 	} else {
 		storageStatus = "unconfigured"
 		storageMessage = "Storage client not configured"
 	}
 
-	// Determine overall status
-	overallStatus := "healthy"
-	httpStatus := http.StatusOK
-	if dbStatus == "unhealthy" || storageStatus == "unhealthy" {
-		overallStatus = "unhealthy"
-		httpStatus = http.StatusServiceUnavailable
-	} else if storageStatus == "degraded" || storageStatus == "unconfigured" {
-		overallStatus = "degraded"
-	}
+	overallStatus, httpStatus := readinessOutcome(dbStatus, storageStatus)
 
 	response := map[string]interface{}{
 		"status":  overallStatus,
@@ -79,7 +76,17 @@ func (h *Handler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	writeJSON(w, httpStatus, response)
+	writeJSON(w, r, httpStatus, response)
+}
+
+func readinessOutcome(databaseStatus, storageStatus string) (string, int) {
+	if databaseStatus == "unhealthy" || storageStatus == "unhealthy" {
+		return "unhealthy", http.StatusServiceUnavailable
+	}
+	if storageStatus == "unconfigured" {
+		return "degraded", http.StatusOK
+	}
+	return "healthy", http.StatusOK
 }
 
 // Root handles GET /.
@@ -100,5 +107,5 @@ func (h *Handler) Root(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, r, http.StatusOK, response)
 }

@@ -58,9 +58,10 @@ Dockerfile `production` target, omits development bind mounts and settings
 files, binds the API to `127.0.0.1:8000`, and requires API-key auth for API
 routes. `API_AUTH_KEY` is the required strong bootstrap machine key; browser
 admins can create additional managed machine keys after sign-in. Health,
-readiness, resource usage endpoints, and the `/feed` middleware bypass remain
-outside protected-route middleware; the feed handler performs its own API-key or
-browser-session authentication.
+readiness, and the `/feed` middleware bypass remain outside protected-route
+middleware; the feed handler performs its own API-key or browser-session
+authentication. The host/process `/resources` diagnostic requires a protected
+API key or admin session.
 
 ## Production Tunnel
 
@@ -89,6 +90,16 @@ cookie-authenticated admin/resource routes:
 CORS_ORIGINS=https://atlasinterface.com
 CORS_ORIGIN_PATTERNS=https://*.atlas-je0.pages.dev
 ```
+
+## Readiness Policy
+
+Use `/health` for process liveness and `/readiness` for traffic admission:
+
+- HTTP `200` with `healthy` means the database and configured MinIO bucket are reachable.
+- HTTP `200` with `degraded` is reserved for an intentionally storage-unconfigured local or DB-only process.
+- HTTP `503` with `unhealthy` means the database is unavailable or configured storage could not be initialized, reached, or verified. A missing configured bucket is also unhealthy because object operations cannot succeed.
+
+Do not route production traffic while readiness is `503`. Inspect the API and MinIO logs, confirm `MINIO_ENDPOINT`, credentials, network reachability, and `MINIO_BUCKET`, then restore MinIO or its bucket. Readiness returns to `200` after the configured bucket check succeeds. In recreate mode, a storage failure during bucket clearing remains startup-fatal so an empty database is never served alongside stale blobs.
 
 ## Smoke Tests
 
@@ -136,6 +147,8 @@ Production tunnel logs:
 cd Atlas_Core/docker
 docker compose -f docker-compose.production.yml --profile tunnel logs -f api cloudflared
 ```
+
+Core accepts an existing `X-Request-ID` and includes it as `request_id` on structured request and request-scoped error logs; otherwise it generates one. Handler error-envelope 4xx diagnostics use warning severity, while 5xx error envelopes and panic recovery use error severity. Readiness dependency warnings remain warning-level probe diagnostics even when readiness is `503`. Use `request_id` to follow one request across access and failure records; `error_id` identifies one handler error response.
 
 Stop containers without deleting volumes:
 

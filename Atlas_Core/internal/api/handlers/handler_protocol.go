@@ -12,5 +12,5 @@ type protocolRevisionResponse struct {
 
 // ProtocolRevision returns the generated Atlas Protocol revision used by Core.
 func (h *Handler) ProtocolRevision(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, protocolRevisionResponse{ProtocolRevision: protocol.ProtocolRevision})
+	writeJSON(w, r, http.StatusOK, protocolRevisionResponse{ProtocolRevision: protocol.ProtocolRevision})
 }

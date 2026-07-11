@@ -74,6 +74,7 @@ export function MapView({
   const mapRef = useRef<MlMap | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
+  const initialMapRef = useRef({ initialCenter, style, styleId });
   const currentStyleIdRef = useRef<string | undefined>(undefined);
   const pendingStyleIdRef = useRef<string | undefined>(undefined);
   const readyRef = useRef(false);
@@ -106,6 +107,26 @@ export function MapView({
   editingRef.current = editing;
   const zoomDragging = zoomOverlay !== null;
   const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
+  const mapActionsRef = useRef({
+    notifyUserGesture,
+    restoreReticleAtCurrentZoomPoint,
+    restoreReticleAtScreenPoint,
+    restoreReticleFromClientPoint,
+    setReticleState,
+    setZoomOverlayState,
+    suppressNextClick,
+    syncTargetReticle
+  });
+  mapActionsRef.current = {
+    notifyUserGesture,
+    restoreReticleAtCurrentZoomPoint,
+    restoreReticleAtScreenPoint,
+    restoreReticleFromClientPoint,
+    setReticleState,
+    setZoomOverlayState,
+    suppressNextClick,
+    syncTargetReticle
+  };
 
   useEffect(() => {
     reticleRef.current = reticle;
@@ -131,22 +152,23 @@ export function MapView({
     }
 
     let map: MlMap;
+    const initialMap = initialMapRef.current;
     try {
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: cloneStyle(style),
-        center: initialCenter ?? [0, 0],
-        zoom: initialCenter ? 11 : 0,
+        style: cloneStyle(initialMap.style),
+        center: initialMap.initialCenter ?? [0, 0],
+        zoom: initialMap.initialCenter ? 11 : 0,
         renderWorldCopies: false,
         dragRotate: false,
         pitchWithRotate: false,
         attributionControl: false,
         boxZoom: {
           boxZoomEnd: (zoomMap, start, end) => {
-            suppressNextClick();
-            restoreReticleAtScreenPoint(end);
-            setZoomOverlayState(null);
-            notifyUserGesture();
+            mapActionsRef.current.suppressNextClick();
+            mapActionsRef.current.restoreReticleAtScreenPoint(end);
+            mapActionsRef.current.setZoomOverlayState(null);
+            mapActionsRef.current.notifyUserGesture();
             zoomMap.fitScreenCoordinates(start, end, zoomMap.getBearing(), { linear: true });
           }
         }
@@ -157,7 +179,7 @@ export function MapView({
     }
 
     mapRef.current = map;
-    currentStyleIdRef.current = styleId;
+    currentStyleIdRef.current = initialMap.styleId;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
@@ -190,8 +212,8 @@ export function MapView({
     map.on("style.load", initializeLayers);
     if (map.isStyleLoaded()) initializeLayers();
     map.on("boxzoomcancel", () => {
-      restoreReticleAtCurrentZoomPoint();
-      setZoomOverlayState(null);
+      mapActionsRef.current.restoreReticleAtCurrentZoomPoint();
+      mapActionsRef.current.setZoomOverlayState(null);
     });
     map.on("error", (event) => {
       // Tile/style errors should not blank the operator picture. Keep overlays
@@ -230,8 +252,7 @@ export function MapView({
       map.remove();
       mapRef.current = undefined;
     };
-    // The map is created once; props are synced via the effects below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Changing props are synchronized through refs and the effects below.
   }, [mapError]);
 
   // Sync basemap style while keeping the map camera and re-adding Atlas overlays.
@@ -298,16 +319,16 @@ export function MapView({
     };
 
     const finishZoomDrag = (event: globalThis.MouseEvent) => {
-      suppressNextClick();
-      restoreReticleFromClientPoint(event);
-      setZoomOverlayState(null);
+      mapActionsRef.current.suppressNextClick();
+      mapActionsRef.current.restoreReticleFromClientPoint(event);
+      mapActionsRef.current.setZoomOverlayState(null);
     };
 
     const cancelZoomDrag = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        suppressNextClick();
-        restoreReticleAtCurrentZoomPoint();
-        setZoomOverlayState(null);
+        mapActionsRef.current.suppressNextClick();
+        mapActionsRef.current.restoreReticleAtCurrentZoomPoint();
+        mapActionsRef.current.setZoomOverlayState(null);
       }
     };
 
@@ -330,7 +351,7 @@ export function MapView({
       const rect = mapCanvas.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
         cursorHandoffRef.current = null;
-        setReticleState(null);
+        mapActionsRef.current.setReticleState(null);
       }
     };
 
@@ -345,7 +366,7 @@ export function MapView({
     const entityId = reticle?.targetEntityId;
     if (!map || !mapReady || !entityId) return;
 
-    const syncTargetBox = () => syncTargetReticle(entityId);
+    const syncTargetBox = () => mapActionsRef.current.syncTargetReticle(entityId);
 
     map.on("move", syncTargetBox);
     map.on("zoom", syncTargetBox);
@@ -529,11 +550,7 @@ export function MapView({
     handlersRef.current.onBackgroundClick?.();
   };
 
-  const visibleReticle = zoomOverlay
-    ? reticleFromTargetBox(boxFromDrag(zoomOverlay))
-    : scrollLocked
-      ? reticle
-      : (reticle ?? previewReticle ?? focusReticle);
+  const visibleReticle = zoomOverlay ? reticleFromTargetBox(boxFromDrag(zoomOverlay)) : scrollLocked ? reticle : (reticle ?? previewReticle ?? focusReticle);
 
   activeReticleRef.current = visibleReticle;
 

@@ -3,14 +3,19 @@ package middleware
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"time"
 
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/rs/zerolog"
@@ -28,7 +33,7 @@ func IsPublicUnauthenticatedPath(path string) bool {
 	}
 
 	switch normalized {
-	case "/health", "/readiness", "/resources", "/admin/auth/login":
+	case "/health", "/readiness", "/admin/auth/login":
 		return true
 	default:
 		return false
@@ -39,6 +44,12 @@ func IsPublicUnauthenticatedPath(path string) bool {
 func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestLogger := logger
+			if requestID := chimiddleware.GetReqID(r.Context()); requestID != "" {
+				requestLogger = logger.With().Str("request_id", requestID).Logger()
+			}
+			r = r.WithContext(requestLogger.WithContext(r.Context()))
+
 			if isUnloggedHealthPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
@@ -53,7 +64,7 @@ func RequestLogger(logger zerolog.Logger) func(next http.Handler) http.Handler {
 
 			duration := time.Since(start)
 
-			logger.Info().
+			requestLogger.Info().
 				Str("method", r.Method).
 				Str("path", r.URL.Path).
 				Int("status", ww.statusCode).
@@ -75,6 +86,33 @@ func isUnloggedHealthPath(path string) bool {
 	return normalized == "/health" || normalized == "/readiness"
 }
 
+// Recoverer logs panics through the request-scoped logger before returning 500.
+func Recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			if err, ok := recovered.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+				panic(recovered)
+			}
+
+			zerolog.Ctx(r.Context()).Error().
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Str("panic", fmt.Sprint(recovered)).
+				Str("stack", string(debug.Stack())).
+				Msg("HTTP handler panic")
+			if r.Header.Get("Connection") != "Upgrade" {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func isLogoutPath(path string) bool {
 	normalized := strings.TrimRight(path, "/")
 	return normalized == "/admin/auth/logout"
@@ -83,6 +121,15 @@ func isLogoutPath(path string) bool {
 func isAPIKeyAdminPath(path string) bool {
 	normalized := strings.TrimRight(path, "/")
 	return normalized == "/admin/api-keys" || strings.HasPrefix(normalized, "/admin/api-keys/")
+}
+
+func isResourcesPath(path string) bool {
+	return strings.TrimRight(path, "/") == "/resources"
+}
+
+type requestAuthenticator interface {
+	AuthenticateAPIKeyResult(context.Context, string) (bool, error)
+	AuthenticateRequest(context.Context, *http.Request) (admin.AuthenticatedSession, error)
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
@@ -125,7 +172,7 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, http.ErrNotSupported
 }
 
-func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, trustedOrigins []string, trustedOriginPatterns []string) func(next http.Handler) http.Handler {
+func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth requestAuthenticator, trustedOrigins []string, trustedOriginPatterns []string) func(next http.Handler) http.Handler {
 	apiKey = strings.TrimSpace(apiKey)
 	trusted := newTrustedOriginMatcher(trustedOrigins, trustedOriginPatterns)
 	return func(next http.Handler) http.Handler {
@@ -142,7 +189,7 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth *admin.Service, tr
 				next.ServeHTTP(w, r)
 				return
 			}
-			if !isAPIKeyAdminPath(r.URL.Path) && enableAPIKey {
+			if !isAPIKeyAdminPath(r.URL.Path) && (enableAPIKey || isResourcesPath(r.URL.Path)) {
 				valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
 				if err != nil {
 					zerolog.Ctx(r.Context()).Warn().Err(err).Msg("managed API key authentication failed")
@@ -171,12 +218,12 @@ func ValidAPIKey(r *http.Request, apiKey string) bool {
 	return validAPIKeyValue(requestAPIKey(r), apiKey)
 }
 
-func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth *admin.Service) bool {
+func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth requestAuthenticator) bool {
 	valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
 	return err == nil && valid
 }
 
-func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth *admin.Service) (bool, error) {
+func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth requestAuthenticator) (bool, error) {
 	providedKey := requestAPIKey(r)
 	if validAPIKeyValue(providedKey, apiKey) {
 		return true, nil
