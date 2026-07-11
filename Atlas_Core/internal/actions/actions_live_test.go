@@ -277,6 +277,14 @@ func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
 		NewEntityActionsWithChangeSink(pool, sink),
 		NewTaskActions(closedPool),
 	)
+	if _, err := checkins.CheckIn(ctx, EntityCheckinParams{EntityID: prefix + "missing", TaskLimit: 10}); err == nil {
+		t.Fatal("CheckIn for missing entity succeeded")
+	} else {
+		var notFoundErr *NotFoundError
+		if !errors.As(err, &notFoundErr) {
+			t.Fatalf("CheckIn for missing entity error = %v, want NotFoundError before closed task pool is read", err)
+		}
+	}
 	params := EntityCheckinParams{
 		EntityID:        entityID,
 		ExpectedVersion: &created.Version,

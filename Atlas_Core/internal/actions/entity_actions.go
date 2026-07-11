@@ -164,9 +164,6 @@ func (a *EntityActions) Get(ctx context.Context, entityID string) (*models.Entit
 }
 
 func (a *EntityActions) checkExpectedVersion(ctx context.Context, entityID string, expectedVersion *int64) error {
-	if expectedVersion == nil {
-		return nil
-	}
 	if err := ValidateEntityID(entityID); err != nil {
 		return err
 	}
