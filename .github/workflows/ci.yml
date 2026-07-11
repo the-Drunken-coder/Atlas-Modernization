@@ -173,6 +173,25 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
+  javascript-clean-workspace:
+    name: javascript-clean-workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Exercise direct consumer commands from a clean workspace
+        run: node scripts/clean-workspace-smoke.mjs
+
   atlas-command-interface:
     name: atlas-command-interface
     runs-on: ubuntu-latest

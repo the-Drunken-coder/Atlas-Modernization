@@ -16,7 +16,7 @@ npm run build:simulations && npm test --workspace @the-drunken-coder/atlas-simul
 git diff --check
 ```
 
-The SDK, command interface, and simulations are npm workspaces with one root `package-lock.json`. Install from the repository root and build the SDK before checking or running either consumer because the SDK export map points at its built `dist/` package surface. Do not restore per-package lockfiles, deep `atlas_sdk/src` imports, or source aliases that bypass the public exports.
+The SDK, command interface, and simulations are npm workspaces with one root `package-lock.json`. Install from the repository root; `npm ci` builds the SDK package through the root lifecycle so direct consumer typecheck, test, and build commands can resolve its public `dist/` exports without a separate preparatory command. Do not restore per-package lockfiles, deep `atlas_sdk/src` imports, or source aliases that bypass the public exports.
 
 For the packed CLI smoke under npm 11, assert that installation created `node_modules/.bin/atlas`, then run the installed `bin.atlas` module with Node. Alias-only `npx --no-install atlas ...` and `npm exec -- atlas ...` invocations are rejected as unsupported `npm exec` usage in this harness.
 
