@@ -472,7 +472,7 @@ Upload accepts these multipart fields:
 
 Upload does not accept `referenced_by`; create or update object references through `POST /objects` or `PATCH /objects/{object_id}`.
 
-`GET /objects/{object_id}/view` is limited to safe text-based formats and the configured `MAX_VIEW_SIZE_MB`. `text/html` and JavaScript content types are not rendered inline; they are streamed as `application/octet-stream` attachments. Other non-viewable content types return `415 CONTENT_TYPE_NOT_VIEWABLE`. Uploads over `MAX_UPLOAD_SIZE_MB` return `413`; downloads stream as attachments without a separate download size cap.
+`GET /objects/{object_id}/view` is limited to safe text-based formats and the configured `MAX_VIEW_SIZE_MB`. `text/html` and JavaScript content types are not rendered inline; they are streamed as `application/octet-stream` attachments. Other non-viewable content types return `415 CONTENT_TYPE_NOT_VIEWABLE`. Uploads over `MAX_UPLOAD_SIZE_MB` return `413`; downloads stream as attachments without a separate download size cap. Upload, download, and view I/O uses a 30-second idle deadline: an active transfer may exceed 30 seconds in total, but a read or write with no progress for 30 seconds is terminated.
 
 ## Queries
 
@@ -491,6 +491,11 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `entity_cursor` | Continue entities from `next_entity_cursor`. |
 | `task_cursor` | Continue tasks from `next_task_cursor`. |
 | `object_cursor` | Continue objects from `next_object_cursor`. |
+
+Full-query resource streams return at most 1000 rows; changed-since resource streams return at
+most 5000. Both retain at most 8 MiB of estimated serialized response data per resource type per
+page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as
+count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging.
 
 The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
 

@@ -165,7 +165,7 @@ func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*Li
 		operation:   "object list",
 		cursorName:  "object",
 		query: func(ctx context.Context, tx pgx.Tx, snapshotUpperBound time.Time, continuation bool, parsedCursor *parsedQueryCursor, limit int) ([]*models.MediaObject, bool, error) {
-			return queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit)
+			return queryObjects(ctx, tx, "created_at", time.Time{}, snapshotUpperBound, continuation, parsedCursor, limit, 0)
 		},
 		rowCursor: func(object *models.MediaObject) (time.Time, string) {
 			return object.CreatedAt, object.ObjectID

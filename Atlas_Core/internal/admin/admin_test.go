@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -156,6 +158,46 @@ func TestLoginThrottleBoundary(t *testing.T) {
 	_, _, err := service.Login(ctx, "admin", "wrong", "198.51.100.10", now.Add(time.Duration(loginMaxFails)*time.Second))
 	if !errors.Is(err, ErrTooManyAttempts) {
 		t.Fatalf("post-boundary error = %v, want ErrTooManyAttempts", err)
+	}
+}
+
+func TestLoginThrottleKeepsUsernameLimitWithoutClientIP(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	now := time.Now().UTC()
+
+	for i := 0; i < loginMaxFails; i++ {
+		if err := service.recordLoginFailure(ctx, "admin", "", now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("record username failure %d: %v", i+1, err)
+		}
+	}
+	if throttled, err := service.loginThrottled(ctx, "admin", "", now.Add(time.Duration(loginMaxFails)*time.Second)); err != nil || !throttled {
+		t.Fatalf("admin username throttle = (%v, %v), want (true, nil)", throttled, err)
+	}
+	if throttled, err := service.loginThrottled(ctx, "other-admin", "", now.Add(time.Duration(loginMaxFails)*time.Second)); err != nil || throttled {
+		t.Fatalf("other username throttle = (%v, %v), want (false, nil)", throttled, err)
+	}
+}
+
+func TestLoginThrottleSeparatesClientIPBuckets(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	now := time.Now().UTC()
+
+	for i := 0; i < loginMaxFails; i++ {
+		if err := service.recordLoginFailure(ctx, fmt.Sprintf("missing-%d", i), "198.51.100.10", now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("record IP failure %d: %v", i+1, err)
+		}
+	}
+	if throttled, err := service.loginThrottled(ctx, "another-user", "198.51.100.10", now.Add(time.Duration(loginMaxFails)*time.Second)); err != nil || !throttled {
+		t.Fatalf("failed client throttle = (%v, %v), want (true, nil)", throttled, err)
+	}
+	if throttled, err := service.loginThrottled(ctx, "another-user", "198.51.100.11", now.Add(time.Duration(loginMaxFails)*time.Second)); err != nil || throttled {
+		t.Fatalf("separate client throttle = (%v, %v), want (false, nil)", throttled, err)
 	}
 }
 
@@ -323,14 +365,96 @@ func TestAPIKeyCreateValidatesName(t *testing.T) {
 	}
 }
 
-func TestClientIPIgnoresSpoofableForwardedHeaders(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/admin/auth/login", nil)
-	req.RemoteAddr = "203.0.113.10:4242"
-	req.Header.Set("CF-Connecting-IP", "198.51.100.20")
-	req.Header.Set("X-Forwarded-For", "198.51.100.30, 198.51.100.31")
+func TestClientIPRespectsTrustedProxyBoundary(t *testing.T) {
+	trusted := []netip.Prefix{
+		netip.MustParsePrefix("172.30.0.3/32"),
+		netip.MustParsePrefix("10.0.0.0/8"),
+	}
+	tests := []struct {
+		name       string
+		remoteAddr string
+		cf         []string
+		xff        []string
+		want       string
+	}{
+		{
+			name:       "direct client ignores spoofed headers",
+			remoteAddr: "203.0.113.10:4242",
+			cf:         []string{"198.51.100.20"},
+			xff:        []string{"198.51.100.30, 198.51.100.31"},
+			want:       "203.0.113.10",
+		},
+		{
+			name:       "trusted proxy uses Cloudflare client header",
+			remoteAddr: "172.30.0.3:4242",
+			cf:         []string{"198.51.100.20"},
+			xff:        []string{"198.51.100.30"},
+			want:       "198.51.100.20",
+		},
+		{
+			name:       "IPv4-mapped proxy and client addresses use canonical IPv4 buckets",
+			remoteAddr: "[::ffff:172.30.0.3]:4242",
+			cf:         []string{"::ffff:198.51.100.20"},
+			want:       "198.51.100.20",
+		},
+		{
+			name:       "direct IPv6 client ignores spoofed headers",
+			remoteAddr: "[2001:db8::10]:4242",
+			cf:         []string{"198.51.100.20"},
+			want:       "2001:db8::10",
+		},
+		{
+			name:       "trusted proxy walks XFF from the right",
+			remoteAddr: "172.30.0.3:4242",
+			xff:        []string{"203.0.113.40, 10.0.0.8"},
+			want:       "203.0.113.40",
+		},
+		{
+			name:       "trusted proxy ignores untrusted XFF entries to the left of the client",
+			remoteAddr: "172.30.0.3:4242",
+			xff:        []string{"spoofed, 198.51.100.30"},
+			want:       "198.51.100.30",
+		},
+		{
+			name:       "malformed Cloudflare header does not become a shared proxy bucket",
+			remoteAddr: "172.30.0.3:4242",
+			cf:         []string{"not-an-ip"},
+			xff:        []string{"198.51.100.30"},
+			want:       "",
+		},
+		{
+			name:       "duplicate Cloudflare header fails closed",
+			remoteAddr: "172.30.0.3:4242",
+			cf:         []string{"198.51.100.20", "198.51.100.21"},
+			want:       "",
+		},
+		{
+			name:       "malformed XFF closest hop does not become a shared proxy bucket",
+			remoteAddr: "172.30.0.3:4242",
+			xff:        []string{"198.51.100.30, not-an-ip"},
+			want:       "",
+		},
+		{
+			name:       "trusted proxy without a client header uses username throttling only",
+			remoteAddr: "172.30.0.3:4242",
+			want:       "",
+		},
+	}
 
-	if got := ClientIP(req); got != "203.0.113.10" {
-		t.Fatalf("ClientIP() = %q, want remote address", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/admin/auth/login", nil)
+			req.RemoteAddr = tt.remoteAddr
+			for _, value := range tt.cf {
+				req.Header.Add("CF-Connecting-IP", value)
+			}
+			for _, value := range tt.xff {
+				req.Header.Add("X-Forwarded-For", value)
+			}
+			if got := ClientIP(req, trusted); got != tt.want {
+				t.Fatalf("ClientIP() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

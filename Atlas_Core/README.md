@@ -136,6 +136,7 @@ Key environment variables:
 - `MINIO_REGION` (optional)
 - `CORS_ORIGINS` (empty string denies all origins; production UI default is `https://atlasinterface.com`)
 - `CORS_ORIGIN_PATTERNS` (constrained preview origins such as Cloudflare Pages branch/PR deployments, for example `https://*.atlas-je0.pages.dev`)
+- `TRUSTED_PROXY_CIDRS` (comma-separated exact reverse-proxy `/32` or `/128` peers; default empty, so forwarded client-IP headers are ignored)
 - `ENABLE_API_AUTH` (default `false` for local/dev runs; required as `true` in the production Docker image)
 - `API_AUTH_KEY` (required bootstrap key when auth enabled; required, strong, and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240`)

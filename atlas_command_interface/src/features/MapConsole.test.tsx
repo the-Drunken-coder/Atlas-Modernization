@@ -253,6 +253,39 @@ describe("MapConsole command flow", () => {
     expect(submissions).toHaveLength(0);
   });
 
+  it("keeps a hidden command pending until Core responds", async () => {
+    const user = userEvent.setup();
+    const { fake, emitCatalog } = makeFakeDataSource();
+    const reject: Array<(reason?: unknown) => void> = [];
+    fake.submitCommand = async () => {
+      await new Promise((_, rejectSubmission) => reject.push(rejectSubmission));
+      throw new Error("unreachable");
+    };
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+
+    act(() => emitCatalog({ status: "failed" }));
+    expect(await screen.findByText("Command submission pending…")).toBeInTheDocument();
+
+    act(() => emitCatalog({ status: "loaded", catalog }));
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      reject[0](new Error("Core response failed"));
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Core response failed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
+  });
+
   it("passes hovered sidebar entities to the map as preview targets", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();

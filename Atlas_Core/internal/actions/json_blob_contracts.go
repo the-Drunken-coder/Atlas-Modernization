@@ -10,6 +10,8 @@ import (
 
 type jsonBlobField string
 
+const maxStoredJSONBlobBytes = 1 * 1024 * 1024
+
 const (
 	jsonBlobFieldComponents jsonBlobField = "components"
 	jsonBlobFieldVersion    jsonBlobField = "version"
@@ -199,6 +201,12 @@ func marshalValidatedJSONBlob(blob map[string]interface{}, validate func(map[str
 	jsonBytes, err := json.Marshal(blob)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	if len(jsonBytes) > maxStoredJSONBlobBytes {
+		return nil, NewValidationErrorWithDetails(
+			"Resource JSON exceeds the stored size limit",
+			[]string{fmt.Sprintf("final stored JSON must not exceed %d bytes", maxStoredJSONBlobBytes)},
+		)
 	}
 	return jsonBytes, nil
 }

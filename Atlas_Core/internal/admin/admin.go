@@ -11,8 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -425,12 +425,76 @@ func VerifyPassword(password string, stored PasswordHash) bool {
 	return subtle.ConstantTimeCompare(actual, expected) == 1
 }
 
-func ClientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
+// ClientIP returns the browser-login throttle identity after enforcing the
+// immediate trusted-proxy boundary. An untrusted peer can never select its
+// identity with forwarded headers.
+func ClientIP(r *http.Request, trustedProxyCIDRs []netip.Prefix) string {
+	peer, ok := parseRemoteIP(r.RemoteAddr)
+	if !ok {
+		return ""
 	}
-	return r.RemoteAddr
+	if !ipInPrefixes(peer, trustedProxyCIDRs) {
+		return peer.String()
+	}
+
+	if values := r.Header.Values("CF-Connecting-IP"); len(values) > 0 {
+		if len(values) != 1 {
+			// Do not collapse malformed trusted-proxy traffic into one proxy bucket;
+			// Login still enforces its username throttle when the IP is empty.
+			return ""
+		}
+		if ip, ok := parseForwardedIP(values[0]); ok {
+			return ip.String()
+		}
+		return ""
+	}
+
+	return clientIPFromXForwardedFor(r.Header.Values("X-Forwarded-For"), trustedProxyCIDRs)
+}
+
+func parseRemoteIP(remoteAddr string) (netip.Addr, bool) {
+	remoteAddr = strings.TrimSpace(remoteAddr)
+	if peer, err := netip.ParseAddrPort(remoteAddr); err == nil {
+		return peer.Addr().Unmap().WithZone(""), true
+	}
+	peer, err := netip.ParseAddr(remoteAddr)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return peer.Unmap().WithZone(""), true
+}
+
+func parseForwardedIP(value string) (netip.Addr, bool) {
+	ip, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || ip.Zone() != "" {
+		return netip.Addr{}, false
+	}
+	return ip.Unmap(), true
+}
+
+func clientIPFromXForwardedFor(values []string, trustedProxyCIDRs []netip.Prefix) string {
+	for valueIndex := len(values) - 1; valueIndex >= 0; valueIndex-- {
+		entries := strings.Split(values[valueIndex], ",")
+		for entryIndex := len(entries) - 1; entryIndex >= 0; entryIndex-- {
+			ip, ok := parseForwardedIP(entries[entryIndex])
+			if !ok {
+				return ""
+			}
+			if !ipInPrefixes(ip, trustedProxyCIDRs) {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
+func ipInPrefixes(ip netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func randomToken() (string, error) {

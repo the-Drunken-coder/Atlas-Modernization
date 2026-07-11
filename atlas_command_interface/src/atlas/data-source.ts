@@ -17,6 +17,7 @@ export type CommandSubmission = {
   entityId: string;
   command: CommandDefinition;
   parameters?: Record<string, JSONValue>;
+  signal?: AbortSignal;
 };
 
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean };
@@ -119,7 +120,9 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async submitCommand(submission) {
       const parameters = coerceParameters(submission.command, submission.parameters);
-      return client.tasks.create(buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }));
+      return client.tasks.create(buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }), {
+        signal: submission.signal
+      });
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {

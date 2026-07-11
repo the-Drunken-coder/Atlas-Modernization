@@ -198,10 +198,61 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		"function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue",
 		"if (seen.has(value))",
 		"seen.delete(value)",
-		`Object.entries(value["extra"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || atlasProtocolIsJSONValue(item))`,
+		"export function isJSONValue(value: unknown): value is JSONValue",
+		"return atlasProtocolIsJSONValue(value);",
+		`Object.entries(value["extra"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || isJSONValue(item))`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", "..", ".."))
+	artifacts, err := BuildArtifacts(root)
+	if err != nil {
+		t.Fatalf("BuildArtifacts: %v", err)
+	}
+
+	var source string
+	for _, artifact := range artifacts {
+		if artifact.Path == "generated/typescript/index.ts" {
+			source = string(artifact.Content)
+			break
+		}
+	}
+	if source == "" {
+		t.Fatal("BuildArtifacts did not return generated/typescript/index.ts")
+	}
+
+	for _, name := range []string{
+		"EntityResource",
+		"TaskResource",
+		"ObjectResource",
+		"FeedEvent",
+		"FeedHandshakeMessage",
+		"JSONValue",
+		"ProtocolRevision",
+		"ResourceType",
+		"RFC3339Timestamp",
+	} {
+		want := "export function is" + name + "(value: unknown): value is " + name
+		if !strings.Contains(source, want) {
+			t.Fatalf("generated TypeScript missing %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`isEntityResource(value["resource"])`,
+		`isTaskResource(value["resource"])`,
+		`isObjectResource(value["resource"])`,
+		`isProtocolRevision(value["protocol_revision"])`,
+		`isRFC3339Timestamp(value["metadata"]["created_at"])`,
+		"return atlasProtocolIsJSONValue(value);",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("generated TypeScript missing selected-root reuse %q", want)
 		}
 	}
 }
@@ -247,7 +298,7 @@ func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
 	}
 }
 
-func TestRequestValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
+func TestRuntimeValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
 		"WidgetRequest": {
 			"type":                 "object",
@@ -258,12 +309,12 @@ func TestRequestValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 			"required": []any{"widget_id"},
 		},
 	}}
-	source, err := requestValidatorSource(generator)
+	source, err := runtimeValidatorSource(generator)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(source, "export function isWidgetRequest(value: unknown): value is WidgetRequest") {
-		t.Fatalf("requestValidatorSource did not discover WidgetRequest:\n%s", source)
+		t.Fatalf("runtimeValidatorSource did not discover WidgetRequest:\n%s", source)
 	}
 }
 

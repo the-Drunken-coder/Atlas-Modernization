@@ -13,7 +13,11 @@ git worktree list
 git diff --check
 ```
 
+The local Codex shell may provide Node 25 (and the bundled workspace runtime may be older) while `atlas_sdk/package.json` requires Node 26. Local `npm` commands can therefore emit an engine warning even when they run successfully; use the Node 26 GitHub Actions SDK job as the authoritative engine-compatibility check.
+
 The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
+
+Atlas Core production object-size settings must be passed through `Atlas_Core/docker/docker-compose.production.yml`; keep `MAX_UPLOAD_SIZE_MB` and `MAX_VIEW_SIZE_MB` aligned with `Atlas_Core/docker/.env.example`. Development Compose intentionally leaves those environment variables unset so a custom `ATLAS_CORE_SETTINGS_FILE` can own the limits.
 
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.
 
@@ -58,5 +62,7 @@ Some guidance here is implementation-specific and may drift as Atlas changes. If
 Atlas Core's resource tables and configured MinIO bucket are disposable runtime state, not durable systems of record. The default startup path drops/recreates resource tables and clears the bucket; make docs, scripts, and reviews describe this as intentional scratch storage rather than something operators should keep around. `admin_records` is the narrow exception for operator credentials, sessions, login throttles, and managed API key metadata, and must survive recreate-mode resource refreshes.
 
 The Cloudflare-hosted Atlas command interface is a static Vite app intended for Cloudflare Pages, not a Worker proxy. Local development should be able to run with only local Core plus Vite: `python3 Atlas_Core/scripts/atlas.py --dev` and `npm --prefix atlas_command_interface run dev`. The browser reads `VITE_ATLAS_CORE_BASE_URL` at build/dev time, defaulting to `http://127.0.0.1:8000` during Vite dev and `https://api.atlasinterface.com` for production/preview builds. Keep `atlas_command_interface/wrangler.jsonc` as a Pages config with `pages_build_output_dir`, not Worker `main`/`assets` routes. If old docs mention `/api/config`, `/api/auth/me`, `/atlas/*`, or `/maps/*` Worker routes for the command interface, treat them as stale and update them rather than recreating the Worker. Cloudflare Tunnel still exposes the Proxmox-hosted Core service; Pages only hosts static UI assets.
+
+`wrangler pages dev` can otherwise select today's compatibility date even when that date is newer than its bundled `workerd` runtime. Keep the explicit supported `compatibility_date` in `atlas_command_interface/wrangler.jsonc` so local Pages and `_headers` validation starts deterministically.
 
 The three Node packages are independent npm projects rather than root workspaces. npm does not inherit a repository-root `.npmrc` when commands run from those package directories, so shared runtime enforcement must be repeated in each package `.npmrc` or supplied through CI environment configuration. Keep the active development/CI version in the root `.nvmrc`, and mirror it in `atlas_command_interface/.nvmrc` because that package is the Cloudflare Pages build root.

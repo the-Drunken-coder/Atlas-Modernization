@@ -1,5 +1,6 @@
-import type { ErrorResponse } from "./protocol.js";
 import type { FetchLike } from "./types.js";
+
+export type ResponseValidator<T> = (value: unknown) => value is T;
 
 export type HttpTransportOptions = {
   baseUrl: string;
@@ -48,16 +49,23 @@ export class HttpTransport {
     this.requestTimeoutMs = options.requestTimeoutMs;
   }
 
-  async json<T>(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<T> {
-    const response = await this.raw(method, path, body, ifMatchVersion);
-    if (response.status === 204) {
-      // Core uses 204 only for void responses such as DELETE.
-      return undefined as T;
+  async json<T>(method: string, path: string, validate: ResponseValidator<T>, body?: unknown, ifMatchVersion?: number, signal?: AbortSignal): Promise<T> {
+    const response = await this.raw(method, path, body, ifMatchVersion, signal);
+    const value: unknown = await response.json();
+    if (!validate(value)) {
+      throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
     }
-    return (await response.json()) as T;
+    return value;
   }
 
-  async raw(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<Response> {
+  async empty(method: string, path: string, body?: unknown, ifMatchVersion?: number): Promise<void> {
+    const response = await this.raw(method, path, body, ifMatchVersion);
+    if (response.status !== 204) {
+      throw new TypeError(`Atlas response failed validation for ${method} ${path}`);
+    }
+  }
+
+  async raw(method: string, path: string, body?: unknown, ifMatchVersion?: number, signal?: AbortSignal): Promise<Response> {
     const headers = new Headers();
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
@@ -66,7 +74,8 @@ export class HttpTransport {
       method,
       headers,
       credentials: this.credentials,
-      body: body === undefined ? undefined : JSON.stringify(body)
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal
     });
     if (!response.ok) {
       const payload = await readErrorPayload(response);
@@ -83,7 +92,7 @@ export class HttpTransport {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
-      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+      return await this.fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal });
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
@@ -104,9 +113,9 @@ async function readErrorPayload(response: Response): Promise<unknown> {
 }
 
 function errorMessage(status: number, payload: unknown): string {
-  const response = payload as Partial<ErrorResponse> | undefined;
-  const code = typeof response?.error_code === "string" ? response.error_code : undefined;
-  const message = typeof response?.message === "string" ? response.message : undefined;
+  const response = errorResponseFields(payload);
+  const code = response?.error_code;
+  const message = response?.message;
   if (code && message) {
     return `Atlas request failed: ${status} ${code}: ${message}`;
   }
@@ -117,6 +126,17 @@ function errorMessage(status: number, payload: unknown): string {
 }
 
 function errorCodeFromPayload(payload: unknown): string | undefined {
-  const response = payload as Partial<ErrorResponse> | undefined;
-  return typeof response?.error_code === "string" ? response.error_code : undefined;
+  return errorResponseFields(payload)?.error_code;
+}
+
+function errorResponseFields(payload: unknown): { error_code?: string; message?: string } | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return undefined;
+  }
+  const errorCode = "error_code" in payload && typeof payload.error_code === "string" ? payload.error_code : undefined;
+  const message = "message" in payload && typeof payload.message === "string" ? payload.message : undefined;
+  return {
+    ...(errorCode === undefined ? {} : { error_code: errorCode }),
+    ...(message === undefined ? {} : { message })
+  };
 }
