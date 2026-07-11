@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type ClientRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { RunEvent } from "../../src/shared/types.js";
 import type { AtlasClientFactory } from "../../src/server/atlas.js";
+import { CleanupLedger } from "../../src/server/cleanup-ledger.js";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
 import type { Scenario } from "../../src/server/scenario.js";
@@ -75,21 +76,26 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    const targets = await fetchJSON<{ targets: Array<{ id: string; label: string; baseUrl: string; apiKeyConfigured: boolean }>; defaultTargetId: string }>(`${baseUrl}/api/targets`);
+    const targets = await fetchJSON<{
+      targets: Array<{ id: string; label: string; baseUrl: string; deployed: boolean; apiKeyConfigured: boolean }>;
+      defaultTargetId: string;
+    }>(`${baseUrl}/api/targets`);
     expect(targets).toMatchObject({
       defaultTargetId: "local",
       targets: [
-        { id: "local", label: "Local Core", apiKeyConfigured: false },
-        { id: "deployed", label: "Atlas Command API", baseUrl: coreUrl, apiKeyConfigured: true }
+        { id: "local", label: "Local Core", deployed: false, apiKeyConfigured: false },
+        { id: "deployed", label: "Atlas Command API", baseUrl: coreUrl, deployed: false, apiKeyConfigured: true }
       ]
     });
 
-    const health = await fetchJSON<{ ok: boolean; status: number; target: { id: string; apiKeyConfigured: boolean } }>(`${baseUrl}/api/health?target=deployed`, {
-      headers: { "X-Atlas-Target-Api-Key": "pasted-key" }
-    });
+    const health = await fetchJSON<{ ok: boolean; status: number; target: { id: string; deployed: boolean; apiKeyConfigured: boolean } }>(
+      `${baseUrl}/api/health?target=deployed`,
+      { headers: { "X-Atlas-Target-Api-Key": "pasted-key" } }
+    );
     expect(health).toMatchObject({ ok: true, status: 200, target: { id: "deployed" } });
     expect(coreHealthRequests).toEqual(["/deployed/health"]);
     expect(coreHealthApiKeys).toEqual(["pasted-key"]);
+    expect(health.target.deployed).toBe(false);
     expect(health.target.apiKeyConfigured).toBe(true);
     await expectStatus(`${baseUrl}/api/health?target=missing`, 404);
   });
@@ -108,7 +114,7 @@ describe("simulation HTTP server", () => {
         port: 0,
         packageRoot: process.cwd()
       },
-      store: new RunStore(defaultCore.factory)
+      store: durableStore(defaultCore.factory)
     });
     const baseUrl = await server.listen();
 
@@ -118,6 +124,7 @@ describe("simulation HTTP server", () => {
       body: JSON.stringify({
         scenarioId: "moving-assets",
         targetId: "deployed",
+        confirmDeployedMutation: true,
         inputs: { assetCount: 1, ticks: 1, tickMs: 0, startLatitude: 38, startLongitude: -77 }
       })
     });
@@ -138,6 +145,137 @@ describe("simulation HTTP server", () => {
 
     expect(selectedCore.state.deleted).toEqual([`entity:${created!.id}`]);
     expect(defaultCore.state.deleted).toEqual([]);
+  });
+
+  it("requires confirmation for every non-loopback target regardless of its ID while local starts remain unconfirmed", async () => {
+    const localCore = createFakeAtlasCore();
+    const deployedCore = createFakeAtlasCore();
+    server = createSimulationServer({
+      config: {
+        atlasBaseUrl: "http://127.0.0.1:8000",
+        atlasTargets: [
+          { id: "loopback", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: localCore.factory },
+          { id: "local", label: "Local-looking remote", baseUrl: "https://atlas.example", clientFactory: deployedCore.factory }
+        ],
+        defaultAtlasTargetId: "loopback",
+        port: 0,
+        packageRoot: process.cwd()
+      },
+      store: durableStore(localCore.factory)
+    });
+    const baseUrl = await server.listen();
+    const inputs = { assetCount: 1, ticks: 1, tickMs: 0, startLatitude: 38, startLongitude: -77 };
+
+    const rejected = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ scenarioId: "moving-assets", targetId: "local", inputs })
+    });
+
+    expect(rejected.status).toBe(400);
+    await expect(responseJSON<{ message: string }>(rejected)).resolves.toMatchObject({ message: expect.stringMatching(/confirm/i) });
+    expect(deployedCore.state.entities.size).toBe(0);
+
+    const local = await fetchJSON<{ run: { id: string } }>(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ scenarioId: "moving-assets", targetId: "loopback", inputs })
+    });
+    await waitFor(async () => {
+      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${local.run.id}`);
+      expect(current.run.status).toBe("completed");
+    });
+    expect(localCore.state.entities.size).toBe(1);
+
+    const confirmed = await fetchJSON<{ run: { id: string; target?: { deployed: boolean } } }>(`${baseUrl}/api/runs`, {
+      method: "POST",
+      headers: mutationHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ scenarioId: "moving-assets", targetId: "local", confirmDeployedMutation: true, inputs })
+    });
+    expect(confirmed.run.target).toMatchObject({ deployed: true });
+    await waitFor(async () => {
+      const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${confirmed.run.id}`);
+      expect(current.run.status).toBe("completed");
+    });
+    expect(deployedCore.state.entities.size).toBe(1);
+    await fetchJSON(`${baseUrl}/api/runs/${confirmed.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    await fetchJSON(`${baseUrl}/api/runs/${local.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+  });
+
+  it("recovers production-owned deployed runs after restart and waits for explicit cleanup", async () => {
+    const packageRoot = tempPackageRoot();
+    const core = createFakeAtlasCore();
+    const config = {
+      atlasBaseUrl: "http://127.0.0.1:8000",
+      atlasTargets: [
+        { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: core.factory },
+        { id: "deployed", label: "Deployed Core", baseUrl: "https://atlas.example.test", clientFactory: core.factory }
+      ],
+      defaultAtlasTargetId: "local",
+      cleanupLedgerDirectory: path.join(packageRoot, "state", "runs"),
+      port: 0,
+      packageRoot
+    };
+    const inputs = { assetCount: 1, ticks: 1, tickMs: 0, startLatitude: 38, startLongitude: -77 };
+
+    try {
+      server = createSimulationServer({ config });
+      let baseUrl = await server.listen();
+      const started = await fetchJSON<{ run: { id: string } }>(`${baseUrl}/api/runs`, {
+        method: "POST",
+        headers: mutationHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          scenarioId: "moving-assets",
+          targetId: "deployed",
+          confirmDeployedMutation: true,
+          inputs
+        })
+      });
+      await waitFor(async () => {
+        const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
+        expect(current.run.status).toBe("completed");
+      });
+
+      await server.close();
+      server = undefined;
+      expect(core.state.deleted).toEqual([]);
+
+      const mismatchedConfig = {
+        ...config,
+        atlasTargets: config.atlasTargets.map((target) =>
+          target.id === "deployed" ? { ...target, baseUrl: "https://different-atlas.example.test" } : target
+        )
+      };
+      server = createSimulationServer({ config: mismatchedConfig });
+      baseUrl = await server.listen();
+      const recovered = await fetchJSON<{ runs: Array<{ id: string; status: string; cleaned: boolean }> }>(`${baseUrl}/api/runs`);
+      expect(recovered.runs).toEqual([expect.objectContaining({ id: started.run.id, status: "abandoned", cleaned: false })]);
+      expect(core.state.deleted).toEqual([]);
+      const refusedCleanup = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/cleanup`, {
+        method: "POST",
+        headers: mutationHeaders()
+      });
+      expect(refusedCleanup.status).toBe(409);
+      await expect(responseJSON<{ message: string }>(refusedCleanup)).resolves.toMatchObject({ message: expect.stringContaining("no longer matches") });
+      expect(core.state.deleted).toEqual([]);
+      await server.close();
+      server = undefined;
+
+      server = createSimulationServer({ config });
+      baseUrl = await server.listen();
+      await fetchJSON(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+      expect(core.state.deleted).toHaveLength(1);
+      await server.close();
+      server = undefined;
+
+      server = createSimulationServer({ config });
+      baseUrl = await server.listen();
+      await expect(fetchJSON<{ runs: unknown[] }>(`${baseUrl}/api/runs`)).resolves.toEqual({ runs: [] });
+    } finally {
+      await server?.close();
+      server = undefined;
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
   });
 
   it("forwards pasted target API keys to Core when starting and cleaning up protected runs", async () => {
@@ -694,6 +832,12 @@ async function rawRequest(url: string, method: string): Promise<{ status: number
 
 function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-http-"));
+}
+
+function durableStore(clientFactory: AtlasClientFactory): RunStore {
+  return new RunStore(clientFactory, {
+    ledger: new CleanupLedger(path.join(tempPackageRoot(), "state", "runs"))
+  });
 }
 
 async function readRunStream(response: Response): Promise<RunEvent[]> {

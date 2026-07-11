@@ -54,6 +54,12 @@ button.primary {
   color: #ffffff;
 }
 
+button.danger {
+  background: #a53a32;
+  border-color: #8f2f29;
+  color: #ffffff;
+}
+
 button.icon-button {
   border: 0;
   min-height: 28px;
@@ -185,6 +191,49 @@ h2 {
   padding: 10px 12px;
 }
 
+.deployed-warning {
+  align-items: flex-start;
+  background: #fff1ed;
+  border: 2px solid #b84a3f;
+  border-radius: 8px;
+  color: #67211c;
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+}
+
+.deployed-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.deployed-warning-content {
+  display: grid;
+  gap: 8px;
+}
+
+.deployed-warning-content p {
+  margin: 0;
+}
+
+.deployed-warning-content code {
+  overflow-wrap: anywhere;
+}
+
+.deployed-confirmation {
+  align-items: flex-start;
+  display: flex;
+  font-weight: 650;
+  gap: 8px;
+}
+
+.deployed-confirmation input {
+  height: 18px;
+  margin: 0;
+  width: 18px;
+}
+
 .workspace {
   display: grid;
   gap: 14px;
@@ -306,6 +355,12 @@ textarea {
   border-color: #d38d80;
 }
 
+.status-pill.abandoned,
+.status-dot.abandoned {
+  background: #fff4d6;
+  border-color: #d2a642;
+}
+
 .status-pill.completed,
 .status-pill.cleaned,
 .status-dot.completed,
@@ -333,6 +388,27 @@ dt {
 dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.run-error dd {
+  color: #9a3029;
+  font-weight: 650;
+}
+
+.recovery-key-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.recovery-key-field label {
+  color: #4f4b45;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.recovery-key-field small {
+  color: #66635d;
 }
 
 table {
