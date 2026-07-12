@@ -7,17 +7,20 @@
   "workspaces": [
     "atlas_sdk",
     "atlas_command_interface",
-    "atlas_simulations"
+    "atlas_simulations",
+    "atlas_connectors/*"
   ],
   "scripts": {
     "postinstall": "npm run build:sdk",
-    "build": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations",
+    "build": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations && npm run build --workspace @the-drunken-coder/atlas-connector-adsb",
     "build:sdk": "npm run build --workspace @the-drunken-coder/atlas-sdk",
     "build:command-interface": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-command-interface",
     "build:simulations": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-simulations",
+    "build:connector-adsb": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-connector-adsb",
     "dev:command-interface": "npm run build:sdk && npm run dev --workspace @the-drunken-coder/atlas-command-interface",
     "dev:simulations": "npm run build:sdk && npm run dev --workspace @the-drunken-coder/atlas-simulations",
     "dev:simulations-server": "npm run build:sdk && npm run dev:server --workspace @the-drunken-coder/atlas-simulations",
+    "dev:connector-adsb": "npm run build:sdk && npm run dev --workspace @the-drunken-coder/atlas-connector-adsb --",
     "deploy:command-interface": "npm run build:sdk && npm run deploy:pages --workspace @the-drunken-coder/atlas-command-interface",
     "test:clean-workspace": "node scripts/clean-workspace-smoke.mjs"
   }

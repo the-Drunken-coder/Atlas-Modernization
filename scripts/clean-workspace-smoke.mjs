@@ -9,7 +9,9 @@ const generatedPaths = [
   "atlas_command_interface/dist",
   "atlas_command_interface/node_modules",
   "atlas_simulations/dist",
-  "atlas_simulations/node_modules"
+  "atlas_simulations/node_modules",
+  "atlas_connectors/adsb/dist",
+  "atlas_connectors/adsb/node_modules"
 ];
 const commands = [
   ["ci"],
@@ -19,6 +21,9 @@ const commands = [
   ["run", "typecheck", "--workspace", "@the-drunken-coder/atlas-simulations"],
   ["test", "--workspace", "@the-drunken-coder/atlas-simulations"],
   ["run", "build", "--workspace", "@the-drunken-coder/atlas-simulations"],
+  ["run", "typecheck", "--workspace", "@the-drunken-coder/atlas-connector-adsb"],
+  ["test", "--workspace", "@the-drunken-coder/atlas-connector-adsb"],
+  ["run", "build", "--workspace", "@the-drunken-coder/atlas-connector-adsb"],
   ["run", "test:package", "--workspace", "@the-drunken-coder/atlas-sdk"]
 ];
 

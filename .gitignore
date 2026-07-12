@@ -58,6 +58,7 @@ node_modules/
 /atlas_command_interface/worker-configuration.d.ts
 /atlas_simulations/dist/
 /atlas_simulations/.atlas-simulations/
+/atlas_connectors/*/dist/
 
 # --- Python tooling (Atlas_Core/scripts/) ---
 __pycache__/

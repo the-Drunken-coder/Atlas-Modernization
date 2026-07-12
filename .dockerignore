@@ -1,7 +1,23 @@
-# Docker builds use the repository root as context so Atlas_Core can import the
-# sibling atlas_protocol module. Keep the context narrow.
+# Docker builds use the repository root as context so Core and connector images
+# can import their sibling workspace packages. Keep the context narrow.
 *
+!package.json
+!package-lock.json
+!.npmrc
+!.nvmrc
 !Atlas_Core/
 !Atlas_Core/**
 !atlas_protocol/
 !atlas_protocol/**
+!atlas_sdk/
+!atlas_sdk/**
+!atlas_command_interface/
+!atlas_command_interface/package.json
+!atlas_simulations/
+!atlas_simulations/package.json
+!atlas_connectors/
+!atlas_connectors/adsb/
+!atlas_connectors/adsb/package.json
+!atlas_connectors/adsb/tsconfig.json
+!atlas_connectors/adsb/src/
+!atlas_connectors/adsb/src/**

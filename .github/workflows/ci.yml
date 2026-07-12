@@ -285,6 +285,47 @@ jobs:
       - name: Build simulations
         run: npm run build --workspace @the-drunken-coder/atlas-simulations
 
+  atlas-connectors:
+    name: atlas-connectors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Build Atlas SDK dependency
+        run: npm run build:sdk
+
+      - name: Audit connector dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint connectors
+        run: npm run lint --workspace @the-drunken-coder/atlas-connector-adsb
+
+      - name: Check formatting of changed connector files
+        run: npm run format:check --workspace @the-drunken-coder/atlas-connector-adsb -- --since="$BIOME_SINCE"
+
+      - name: Type-check connectors
+        run: npm run typecheck --workspace @the-drunken-coder/atlas-connector-adsb
+
+      - name: Test connectors
+        run: npm test --workspace @the-drunken-coder/atlas-connector-adsb
+
+      - name: Build connectors
+        run: npm run build --workspace @the-drunken-coder/atlas-connector-adsb
+
   build:
     name: build
     runs-on: ubuntu-latest

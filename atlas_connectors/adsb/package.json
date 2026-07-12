@@ -1,0 +1,29 @@
+{
+  "name": "@the-drunken-coder/atlas-connector-adsb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Taskable local ADS-B connector prototype for Atlas.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --env-file-if-exists=.env --import tsx src/index.ts",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "lint": "biome lint .",
+    "format:check": "biome format --changed --no-errors-on-unmatched .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@the-drunken-coder/atlas-sdk": "0.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.3",
+    "@types/node": "24.13.3",
+    "tsx": "4.23.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

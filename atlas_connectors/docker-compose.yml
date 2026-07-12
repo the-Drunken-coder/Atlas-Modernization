@@ -1,0 +1,13 @@
+services:
+  adsb:
+    build:
+      context: ..
+      dockerfile: atlas_connectors/adsb/Dockerfile
+    restart: unless-stopped
+    environment:
+      ATLAS_BASE_URL: ${ATLAS_BASE_URL:-http://host.docker.internal:8000}
+      ATLAS_API_KEY: ${ATLAS_API_KEY:-}
+      ATLAS_CONNECTOR_ID: ${ATLAS_CONNECTOR_ID:-connector-adsb-demo}
+      ATLAS_CONNECTOR_INTERVAL_MS: ${ATLAS_CONNECTOR_INTERVAL_MS:-2000}
+    extra_hosts:
+      - host.docker.internal:host-gateway

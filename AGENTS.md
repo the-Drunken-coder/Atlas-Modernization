@@ -13,10 +13,11 @@ npm ci
 npm run build:sdk && npm test --workspace @the-drunken-coder/atlas-sdk
 npm run build:command-interface && npm test --workspace @the-drunken-coder/atlas-command-interface
 npm run build:simulations && npm test --workspace @the-drunken-coder/atlas-simulations
+npm run build:connector-adsb && npm test --workspace @the-drunken-coder/atlas-connector-adsb
 git diff --check
 ```
 
-The SDK, command interface, and simulations are npm workspaces with one root `package-lock.json`. Install from the repository root with Node 24 LTS from `.nvmrc`; `npm ci` builds the SDK package through the root lifecycle so direct consumer typecheck, test, and build commands can resolve its public `dist/` exports without a separate preparatory command. Do not restore per-package lockfiles, deep `atlas_sdk/src` imports, or source aliases that bypass the public exports.
+The SDK, command interface, simulations, and connectors are npm workspaces with one root `package-lock.json`. Install from the repository root with Node 24 LTS from `.nvmrc`; `npm ci` builds the SDK package through the root lifecycle so direct consumer typecheck, test, and build commands can resolve its public `dist/` exports without a separate preparatory command. Do not restore per-package lockfiles, deep `atlas_sdk/src` imports, or source aliases that bypass the public exports.
 
 For the packed CLI smoke under npm 11, assert that installation created `node_modules/.bin/atlas`, then run the installed `bin.atlas` module with Node. Alias-only `npx --no-install atlas ...` and `npm exec -- atlas ...` invocations are rejected as unsupported `npm exec` usage in this harness.
 
@@ -70,4 +71,6 @@ The Cloudflare-hosted Atlas command interface is a static Vite app intended for 
 
 `wrangler pages dev` can otherwise select today's compatibility date even when that date is newer than its bundled `workerd` runtime. Keep the explicit supported `compatibility_date` in `atlas_command_interface/wrangler.jsonc` so local Pages and `_headers` validation starts deterministically.
 
-The three Node packages share the root npm workspace and lockfile. Keep the active development/CI version in the root `.nvmrc`; the command-interface `.nvmrc` mirrors it for tooling that inspects the package directory.
+The Node packages share the root npm workspace and lockfile. Keep the active development/CI version in the root `.nvmrc`; the command-interface `.nvmrc` mirrors it for tooling that inspects the package directory.
+
+Atlas connectors live under `atlas_connectors/` as separate processes and Docker containers. They may register as taskable `asset` entities and create ordinary Atlas tracks/geofeatures, but they must use the public SDK/API and must not import or modify Atlas Core internals. The ADS-B prototype uses ordinary tasks with `components.custom_connector.action = "scan_area"` because adding a new command to the Core-owned command catalog would violate its no-Core-change boundary.
