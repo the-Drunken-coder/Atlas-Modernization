@@ -196,19 +196,26 @@ describe("MapView external reticle targets", () => {
     });
   });
 
-  it("shows refreshed focus reticles after scroll lock settles", async () => {
+  it("keeps the selected reticle aligned while scroll zoom moves its marker", async () => {
     const { canvas, map, rerenderMap } = renderMapView();
     let markerRect = rect(70, 90, 20, 20);
     appendMarker(canvas, "asset-1", () => markerRect);
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
     await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
 
-    fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+    firePointerMove(canvas, { clientX: 220, clientY: 120 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+    fireEvent.wheel(canvas, { clientX: 220, clientY: 120, deltaY: -120 });
     markerRect = rect(170, 120, 20, 20);
     act(() => map.fire("zoom"));
 
+    let overlay = document.querySelector<HTMLElement>(".map-reticle");
+    expect(overlay).toHaveClass("map-reticle--scrolling");
+    expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
+    expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");
+
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      overlay = document.querySelector<HTMLElement>(".map-reticle");
       expect(overlay).not.toHaveClass("map-reticle--scrolling");
       expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");

@@ -1,5 +1,6 @@
 import type { Map as MlMap, PointLike } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
+import { flushSync } from "react-dom";
 import type { MapSources } from "./map-sources.js";
 import {
   createMarkerBoxCache,
@@ -541,20 +542,26 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       setFocusReticle(null);
       return;
     }
-    const sync = () => {
+    const nextFocusReticle = () => {
       const current = stateRef.current;
-      if (!current.scrollLocked && !current.zoomOverlay) setFocusReticle(reticleForVisibleTarget(mapCanvasRef.current, map, sources, focusTarget));
+      return current.zoomOverlay ? current.focusReticle : reticleForVisibleTarget(mapCanvasRef.current, map, sources, focusTarget);
     };
+    const sync = () => setFocusReticle(nextFocusReticle());
     sync();
-    map.on("move", sync);
-    map.on("zoom", sync);
-    map.on("moveend", sync);
-    return () => {
-      map.off("move", sync);
-      map.off("zoom", sync);
-      map.off("moveend", sync);
+    const syncCameraFrame = () => {
+      const next = nextFocusReticle();
+      if (reticlesEqual(stateRef.current.focusReticle, next)) return;
+      flushSync(() => setFocusReticle(next));
     };
-  }, [focusTarget, mapCanvasRef, mapReady, mapRef, setFocusReticle, sources, state.scrollLocked, zooming]);
+    map.on("move", syncCameraFrame);
+    map.on("zoom", syncCameraFrame);
+    map.on("moveend", syncCameraFrame);
+    return () => {
+      map.off("move", syncCameraFrame);
+      map.off("zoom", syncCameraFrame);
+      map.off("moveend", syncCameraFrame);
+    };
+  }, [focusTarget, mapCanvasRef, mapReady, mapRef, setFocusReticle, sources, zooming]);
 
   useEffect(
     () => () => {
