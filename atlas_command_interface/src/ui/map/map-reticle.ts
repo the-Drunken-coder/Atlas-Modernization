@@ -2,6 +2,7 @@ import type { Position } from "../../atlas/geometry.js";
 
 export const RETICLE_TARGET_SIZE = 22;
 export const HOVER_TARGET_PADDING = 7;
+export const HOVER_MAGNET_RADIUS = 8;
 
 export type ScreenPoint = { x: number; y: number };
 export type TargetBox = { x: number; y: number; width: number; height: number };
@@ -65,6 +66,12 @@ export function minimumBox(box: TargetBox, minSize: number): TargetBox {
     width,
     height
   };
+}
+
+export function distanceToBox(point: ScreenPoint, box: TargetBox): number {
+  const dx = Math.max(box.x - point.x, 0, point.x - (box.x + box.width));
+  const dy = Math.max(box.y - point.y, 0, point.y - (box.y + box.height));
+  return Math.hypot(dx, dy);
 }
 
 export function boxIntersectsViewport(box: TargetBox, viewport: { width: number; height: number }): boolean {

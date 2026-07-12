@@ -3,6 +3,7 @@ import {
   boxFromDrag,
   boxFromProjectedPositions,
   boxIntersectsViewport,
+  distanceToBox,
   minimumBox,
   paddedBox,
   reticleForTarget,
@@ -30,6 +31,15 @@ describe("map reticle helpers", () => {
   it("builds stable boxes around points and drags", () => {
     expect(squareAround({ x: 50, y: 80 }, 22)).toEqual({ x: 39, y: 69, width: 22, height: 22 });
     expect(boxFromDrag({ start: { x: 120, y: 90 }, current: { x: 20, y: 140 } })).toEqual({ x: 20, y: 90, width: 100, height: 50 });
+  });
+
+  it("measures the distance from a point to a target box", () => {
+    const box = { x: 10, y: 20, width: 30, height: 10 };
+
+    expect(distanceToBox({ x: 25, y: 25 }, box)).toBe(0);
+    expect(distanceToBox({ x: 45, y: 25 }, box)).toBe(5);
+    expect(distanceToBox({ x: 25, y: 12 }, box)).toBe(8);
+    expect(distanceToBox({ x: 43, y: 34 }, box)).toBe(5);
   });
 
   it("checks whether target boxes intersect the viewport", () => {

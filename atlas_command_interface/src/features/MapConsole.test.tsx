@@ -20,7 +20,6 @@ type MockMapViewProps = {
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
-  previewTarget?: { id: string } | null;
 };
 
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
@@ -37,7 +36,6 @@ vi.mock("../ui/map/MapView.js", async () => {
           data-style-id={props.styleId}
           data-editing={props.editing ? "true" : "false"}
           data-focus-target={props.focusTarget?.id ?? ""}
-          data-preview-target={props.previewTarget?.id ?? ""}
           data-camera-seq={props.cameraCommand?.seq ?? ""}
           data-camera-target={props.cameraCommand?.target.id ?? ""}
           onClick={() => props.onBackgroundClick?.()}
@@ -286,7 +284,7 @@ describe("MapConsole command flow", () => {
     expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
   });
 
-  it("passes hovered sidebar entities to the map as preview targets", async () => {
+  it("does not change the map reticle target when sidebar rows are hovered", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();
     renderConsole(fake);
@@ -294,11 +292,11 @@ describe("MapConsole command flow", () => {
     const rover = await screen.findByRole("button", { name: /Rover/ });
     await user.hover(rover);
 
-    expect(screen.getByTestId("map")).toHaveAttribute("data-preview-target", "asset-1");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
 
     await user.unhover(rover);
 
-    expect(screen.getByTestId("map")).toHaveAttribute("data-preview-target", "");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-focus-target", "");
   });
 
   it("passes selected sidebar entities to the map as focus targets", async () => {
