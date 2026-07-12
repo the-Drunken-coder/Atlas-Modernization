@@ -170,6 +170,11 @@
   font-weight: 600;
 }
 
+.account-menu__items {
+  display: flex;
+  flex-direction: column;
+}
+
 .account-menu__item {
   display: flex;
   align-items: center;
