@@ -1,5 +1,6 @@
-import type { ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { EntityKind } from "../../atlas/entities.js";
+import { useAuthenticatedSession } from "../../auth/session-context.js";
 import type { ListKind } from "../../state/selection.js";
 import { AssetsIcon, BrandIcon, CollapseIcon, CommandsIcon, GeofeaturesIcon, KeyIcon, TracksIcon } from "../primitives/icons.js";
 import { Tooltip } from "../primitives/Tooltip.js";
@@ -31,9 +32,7 @@ type SidebarRailProps = {
 export function SidebarRail({ collapsed, activeList, counts, onSelectList, onToggleCollapsed }: SidebarRailProps) {
   return (
     <div className="rail">
-      <div className="rail__brand" aria-hidden>
-        <BrandIcon size={22} />
-      </div>
+			<AccountMenu />
 			{PRIMARY_RAIL_ITEMS.map((item) => (
 				<RailButton key={item.list} item={item} active={activeList === item.list} count={item.kind === undefined ? 0 : counts[item.kind]} onSelect={onSelectList} />
 			))}
@@ -52,6 +51,78 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
           <CollapseIcon size={20} style={collapsed ? { transform: "scaleX(-1)" } : undefined} />
         </button>
       </Tooltip>
+		</div>
+	);
+}
+
+function AccountMenu() {
+	const session = useAuthenticatedSession();
+	const [open, setOpen] = useState(false);
+	const containerRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const closeOnOutsideClick = (event: PointerEvent) => {
+			if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+		};
+		const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+			if (event.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("pointerdown", closeOnOutsideClick);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("pointerdown", closeOnOutsideClick);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, [open]);
+
+	if (!session) {
+		return (
+			<div className="rail__brand" aria-hidden>
+				<BrandIcon size={22} />
+			</div>
+		);
+	}
+
+	return (
+		<div className="account-menu" ref={containerRef}>
+			<button
+				type="button"
+				className="rail__brand rail__brand-button"
+				aria-label="Account"
+				aria-expanded={open}
+				aria-haspopup="menu"
+				title="Account"
+				onClick={() => setOpen((current) => !current)}
+			>
+				<BrandIcon size={22} />
+			</button>
+			{open ? (
+				<div className="account-menu__popover" role="menu" aria-label="Account menu">
+					<div className="account-menu__identity">
+						<span>Your account</span>
+						<strong>{session.username}</strong>
+					</div>
+					<button type="button" className="account-menu__item" role="menuitem" disabled>
+						<span>Settings</span>
+						<small>Coming soon</small>
+					</button>
+					<button
+						type="button"
+						className="account-menu__item account-menu__item--danger"
+						role="menuitem"
+						disabled={session.loggingOut}
+						onClick={() => void session.logout()}
+					>
+						{session.loggingOut ? "Logging out..." : "Log out"}
+					</button>
+					{session.error ? (
+						<span className="account-menu__error" role="alert">
+							{session.error}
+						</span>
+					) : null}
+				</div>
+			) : null}
 		</div>
 	);
 }

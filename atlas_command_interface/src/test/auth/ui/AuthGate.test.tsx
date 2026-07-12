@@ -2,6 +2,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthGate, WorkspaceErrorBoundary } from "../../../auth/ui/AuthGate.js";
+import { SidebarRail } from "../../../ui/layout/SidebarRail.js";
+
+function Workspace() {
+  return (
+    <>
+      <SidebarRail collapsed={false} activeList="assets" counts={{ asset: 0, track: 0, geofeature: 0 }} onSelectList={() => {}} onToggleCollapsed={() => {}} />
+      <div>map console</div>
+    </>
+  );
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -37,7 +47,7 @@ describe("AuthGate", () => {
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
@@ -103,7 +113,7 @@ describe("AuthGate", () => {
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
@@ -112,9 +122,14 @@ describe("AuthGate", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("map console")).toBeInTheDocument();
-    expect(screen.getByText("Signed in as")).toBeInTheDocument();
+    expect(screen.queryByText("Signed in as")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Log out" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Account" }));
+    expect(screen.getByRole("menu", { name: "Account menu" })).toBeInTheDocument();
+    expect(screen.getByText("Your account")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Settings/ })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeInTheDocument();
     expect(fetchStub.calls[1]).toMatchObject([
       "https://core.test/admin/auth/login",
       {
@@ -134,11 +149,12 @@ describe("AuthGate", () => {
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
-    await user.click(await screen.findByRole("button", { name: "Log out" }));
+    await user.click(await screen.findByRole("button", { name: "Account" }));
+    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
 
     expect(await screen.findByLabelText("Username")).toHaveFocus();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
@@ -160,15 +176,16 @@ describe("AuthGate", () => {
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
-    await user.click(await screen.findByRole("button", { name: "Log out" }));
+    await user.click(await screen.findByRole("button", { name: "Account" }));
+    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("logout unavailable");
     expect(screen.getByText("map console")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log out" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeEnabled();
   });
 
   it("returns to logged-out state when Atlas auth expires", async () => {

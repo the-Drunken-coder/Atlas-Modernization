@@ -1,6 +1,7 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Button } from "../../ui/primitives/controls.js";
+import { AuthenticatedSessionProvider } from "../session-context.js";
 
 type AuthState =
   | { status: "loading" }
@@ -101,27 +102,13 @@ function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { base
   };
 
   return (
-    <section className="authenticated-shell">
-      <header className="session-bar" aria-label="User session">
-        <div className="session-bar__identity">
-          <span>Signed in as</span>
-          <strong>{username}</strong>
-        </div>
-        {error ? (
-          <span className="session-bar__error" role="alert">
-            {error}
-          </span>
-        ) : null}
-        <Button variant="ghost" disabled={loggingOut} onClick={() => void logout()}>
-          {loggingOut ? "Logging out..." : "Log out"}
-        </Button>
-      </header>
-      <div className="authenticated-shell__workspace">
+    <AuthenticatedSessionProvider value={{ username, loggingOut, error, logout }}>
+      <section className="authenticated-shell">
         <WorkspaceErrorBoundary onRetry={() => window.location.reload()} onLogout={() => void logout()}>
           {children}
         </WorkspaceErrorBoundary>
-      </div>
-    </section>
+      </section>
+    </AuthenticatedSessionProvider>
   );
 }
 
