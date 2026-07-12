@@ -219,7 +219,6 @@ type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
-  previewTarget?: MapReticleTarget | null;
   selectedId?: string;
   sources?: MapSources;
   styleId?: string;
@@ -238,7 +237,6 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       style={renderProps.style}
       selectedId={renderProps.selectedId}
       focusTarget={renderProps.focusTarget}
-      previewTarget={renderProps.previewTarget}
       cameraCommand={renderProps.cameraCommand}
       onBackgroundClick={onBackgroundClick}
       onMapContextMenu={onMapContextMenu}
@@ -258,7 +256,6 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         style={renderProps.style}
         selectedId={renderProps.selectedId}
         focusTarget={renderProps.focusTarget}
-        previewTarget={renderProps.previewTarget}
         cameraCommand={renderProps.cameraCommand}
         onBackgroundClick={onBackgroundClick}
         onMapContextMenu={onMapContextMenu}

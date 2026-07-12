@@ -5,38 +5,6 @@ import { appendMarker, entity, firePointerMove, markerCoordinatesFor, rect, rend
 import { buildMapSources } from "./map-sources.js";
 
 describe("MapView external reticle targets", () => {
-  it("previews visible entity targets without moving the camera", async () => {
-    const { canvas, map, rerenderMap } = renderMapView();
-    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
-    map.easeTo.mockClear();
-    map.fitBounds.mockClear();
-
-    rerenderMap({ previewTarget: { type: "entity", id: "asset-1" } });
-
-    await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(overlay).toHaveClass("map-reticle--targeted");
-      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
-      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
-    });
-    expect(map.easeTo).not.toHaveBeenCalled();
-    expect(map.flyTo).not.toHaveBeenCalled();
-    expect(map.fitBounds).not.toHaveBeenCalled();
-  });
-
-  it("ignores offscreen preview targets", async () => {
-    const { map, rerenderMap } = renderMapView();
-    map.easeTo.mockClear();
-    map.fitBounds.mockClear();
-
-    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [500, 500] } });
-
-    await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
-    expect(map.easeTo).not.toHaveBeenCalled();
-    expect(map.flyTo).not.toHaveBeenCalled();
-    expect(map.fitBounds).not.toHaveBeenCalled();
-  });
-
   it("shows the focus reticle without moving the camera", async () => {
     const { map, rerenderMap } = renderMapView();
     map.easeTo.mockClear();
@@ -70,7 +38,7 @@ describe("MapView external reticle targets", () => {
     expect(document.querySelector(".map-reticle")).toBeInTheDocument();
   });
 
-  it("keeps the selected entity boxed while the pointer reticle moves elsewhere", async () => {
+  it("keeps the selected entity as the only reticle while the pointer moves elsewhere", async () => {
     const { canvas, rerenderMap } = renderMapView();
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
@@ -79,12 +47,10 @@ describe("MapView external reticle targets", () => {
     firePointerMove(canvas, { clientX: 220, clientY: 140 });
 
     await waitFor(() => {
-      const selection = document.querySelector<HTMLElement>(".map-reticle--selection");
-      const cursor = document.querySelector<HTMLElement>(".map-reticle:not(.map-reticle--selection)");
-      expect(selection?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
-      expect(selection?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
-      expect(cursor?.style.getPropertyValue("--map-reticle-x")).toBe("210px");
-      expect(cursor?.style.getPropertyValue("--map-reticle-y")).toBe("120px");
+      const reticles = document.querySelectorAll<HTMLElement>(".map-reticle");
+      expect(reticles).toHaveLength(1);
+      expect(reticles[0]?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(reticles[0]?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
   });
 
@@ -97,7 +63,6 @@ describe("MapView external reticle targets", () => {
     firePointerMove(marker, { clientX: 80, clientY: 100 });
 
     await waitFor(() => expect(document.querySelectorAll(".map-reticle")).toHaveLength(1));
-    expect(document.querySelector(".map-reticle--selection")).not.toBeInTheDocument();
     expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted");
   });
 
@@ -137,37 +102,56 @@ describe("MapView external reticle targets", () => {
     });
   });
 
-  it("previews generic point targets for future search results", async () => {
-    const { rerenderMap } = renderMapView();
+  it("clears selection and its reticle when Escape is pressed", async () => {
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
 
-    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80], label: "Dunkin" } });
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onBackgroundClick).toHaveBeenCalledTimes(1);
+    rerenderMap({ focusTarget: null, selectedId: undefined });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
+  });
+
+  it("drops the reticle to the pointer when Escape clears selection over the map", async () => {
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    firePointerMove(canvas, { clientX: 220, clientY: 140 });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onBackgroundClick).toHaveBeenCalledTimes(1);
+    rerenderMap({ focusTarget: null, selectedId: undefined });
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(overlay).toHaveClass("map-reticle--targeted");
-      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
-      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
-      expect(overlay?.style.getPropertyValue("--map-reticle-target-width")).toBe("22px");
-      expect(overlay?.style.getPropertyValue("--map-reticle-target-height")).toBe("22px");
+      const reticle = document.querySelector<HTMLElement>(".map-reticle");
+      expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("210px");
+      expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("120px");
     });
   });
 
-  it("shows live map hover reticles ahead of external previews", async () => {
-    const { canvas, onSelectEntity, rerenderMap } = renderMapView();
-    const marker = appendMarker(canvas, "asset-1", rect(170, 120, 20, 20));
-    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
+  it("temporarily replaces selection with box zoom and restores it afterward", async () => {
+    const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
     await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
 
-    firePointerMove(marker, { clientX: 180, clientY: 130 });
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 180 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--zoom"));
 
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onBackgroundClick).not.toHaveBeenCalled();
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(overlay).toHaveClass("map-reticle--targeted");
-      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
-      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");
+      const reticle = document.querySelector<HTMLElement>(".map-reticle");
+      expect(reticle).not.toHaveClass("map-reticle--zoom");
+      expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
-    fireEvent.click(canvas);
-    expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
   });
 
   it("shows refreshed focus reticles after scroll lock settles", async () => {
@@ -186,27 +170,6 @@ describe("MapView external reticle targets", () => {
       expect(overlay).not.toHaveClass("map-reticle--scrolling");
       expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("110px");
-    });
-  });
-
-  it("keeps scroll-locked reticle state ahead of external previews", async () => {
-    const { canvas, rerenderMap } = renderMapView();
-    rerenderMap({ previewTarget: { type: "point", id: "search-1", coordinates: [70, 80] } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
-
-    fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
-    rerenderMap({ previewTarget: { type: "point", id: "search-2", coordinates: [160, 100] } });
-
-    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--scrolling"));
-    const overlay = document.querySelector<HTMLElement>(".map-reticle");
-    expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
-    expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
-
-    await waitFor(() => {
-      const settledOverlay = document.querySelector<HTMLElement>(".map-reticle");
-      expect(settledOverlay).not.toHaveClass("map-reticle--scrolling");
-      expect(settledOverlay?.style.getPropertyValue("--map-reticle-x")).toBe("160px");
-      expect(settledOverlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
     });
   });
 

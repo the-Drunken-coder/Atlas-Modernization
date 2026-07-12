@@ -53,7 +53,6 @@ export function MapConsole() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
-  const [previewEntityId, setPreviewEntityId] = useState<string>();
 
   const dismissCommandForm = useCallback(() => {
     commandDismissedRef.current = true;
@@ -112,10 +111,6 @@ export function MapConsole() {
     },
     [atlas.config]
   );
-  const previewTarget = useMemo(
-    () => entityReticleTarget(previewEntityId ? snapshot.entities[previewEntityId] : undefined),
-    [previewEntityId, snapshot.entities]
-  );
   const focusTarget = useMemo(() => entityReticleTarget(selectedEntity), [selectedEntity]);
   // Camera intent is derived from the sidebar's claim, not the snapshot, so
   // its identity only changes when the user asks to go somewhere.
@@ -124,17 +119,12 @@ export function MapConsole() {
     [sidebar.focusRequest]
   );
 
-  useEffect(() => {
-    if (previewEntityId && !snapshot.entities[previewEntityId]) setPreviewEntityId(undefined);
-  }, [previewEntityId, snapshot.entities]);
-
   const selectEntityById = useCallback(
     (id: string) => {
       const entity = snapshot.entities[id];
       if (!entity) return;
       const kind = entityKind(entity);
       if (kind === "other") return;
-      setPreviewEntityId(undefined);
       dispatch({ type: "selectEntity", kind, id, origin: "map" });
     },
     [snapshot.entities]
@@ -315,15 +305,7 @@ export function MapConsole() {
               onSelectEntity={(entity) => {
                 const kind = entityKind(entity);
                 if (kind === "other") return;
-                setPreviewEntityId(undefined);
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
-              }}
-              onPreviewEntity={(entity) => {
-                if (!entity || entityKind(entity) === "other") {
-                  setPreviewEntityId(undefined);
-                  return;
-                }
-                setPreviewEntityId(entity.entity_id);
               }}
               onPickCommand={pickSidebarCommand}
               onStartEdit={startEdit}
@@ -351,13 +333,11 @@ export function MapConsole() {
                       : undefined
                   }
                   focusTarget={focusTarget}
-                  previewTarget={previewTarget}
                   cameraCommand={cameraCommand}
                   onSelectEntity={selectEntityById}
                   onMapContextMenu={onMapContextMenu}
                   onBackgroundClick={() => {
                     setMapMenu(null);
-                    setPreviewEntityId(undefined);
                     dispatch({ type: "clearSelection" });
                   }}
                   onStyleSwitchError={handleMapStyleSwitchError}
@@ -438,7 +418,6 @@ type PanelBodyProps = {
   saving: boolean;
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
-  onPreviewEntity: (entity: EntityResource | null) => void;
   onPickCommand: (availability: CommandAvailability) => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
@@ -482,7 +461,7 @@ function PanelBody(props: PanelBodyProps) {
   return <div className="panel__empty">Unsupported entity type.</div>;
 }
 
-function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPreviewEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
+function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
   if (list === "commands") {
     if (selectedEntity && entityKind(selectedEntity) === "asset") {
       return (
@@ -507,7 +486,6 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
-      onPreview={onPreviewEntity}
       onSelect={onSelectEntity}
     />
   );

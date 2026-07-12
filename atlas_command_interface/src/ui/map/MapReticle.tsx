@@ -3,12 +3,11 @@ import type { ReticleState } from "./map-reticle.js";
 
 type MapReticleProps = {
   reticle: ReticleState;
-  selection?: boolean;
   scrolling?: boolean;
   zooming?: boolean;
 };
 
-export function MapReticle({ reticle, selection = false, scrolling = false, zooming = false }: MapReticleProps) {
+export function MapReticle({ reticle, scrolling = false, zooming = false }: MapReticleProps) {
   const style = {
     "--map-reticle-x": `${reticle.x}px`,
     "--map-reticle-y": `${reticle.y}px`,
@@ -19,7 +18,6 @@ export function MapReticle({ reticle, selection = false, scrolling = false, zoom
   } as CSSProperties;
   const className = [
     "map-reticle",
-    selection ? "map-reticle--selection" : "",
     scrolling ? "map-reticle--scrolling" : "",
     zooming ? "map-reticle--zoom" : "",
     !zooming && reticle.targeted ? "map-reticle--targeted" : ""

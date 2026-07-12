@@ -32,7 +32,6 @@ type MapViewProps = {
   selectedId?: string;
   editing?: MapEditing;
   initialCenter?: [number, number];
-  previewTarget?: MapReticleTarget | null;
   focusTarget?: MapReticleTarget | null;
   cameraCommand?: MapCameraCommand | null;
   onSelectEntity: (id: string) => void;
@@ -54,7 +53,6 @@ export function MapView({
   selectedId,
   editing,
   initialCenter,
-  previewTarget,
   focusTarget,
   cameraCommand,
   onSelectEntity,
@@ -90,7 +88,6 @@ export function MapView({
     mapReady,
     sources,
     selectedEntityId: selectedId,
-    previewTarget,
     focusTarget,
     notifyUserGesture,
     onSelectEntity,
@@ -300,7 +297,6 @@ export function MapView({
       {...reticleInteraction.canvasHandlers}
     >
       <div className="maplibre-host" ref={containerRef} />
-      {reticleInteraction.selectionReticle ? <MapReticle reticle={reticleInteraction.selectionReticle} selection /> : null}
       {reticleInteraction.visibleReticle ? (
         <MapReticle reticle={reticleInteraction.visibleReticle} scrolling={reticleInteraction.scrolling} zooming={reticleInteraction.zooming} />
       ) : null}

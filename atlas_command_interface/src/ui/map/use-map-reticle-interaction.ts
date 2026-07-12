@@ -30,7 +30,6 @@ const SUPPRESSED_CLICK_FALLBACK_MS = 750;
 
 type InteractionState = {
   reticle: ReticleState | null;
-  previewReticle: ReticleState | null;
   focusReticle: ReticleState | null;
   scrollLocked: boolean;
   zoomOverlay: ZoomOverlayState | null;
@@ -51,7 +50,6 @@ type UseMapReticleInteractionOptions = {
   mapReady: boolean;
   sources: MapSources;
   selectedEntityId?: string;
-  previewTarget?: MapReticleTarget | null;
   focusTarget?: MapReticleTarget | null;
   notifyUserGesture: () => void;
   onSelectEntity: (id: string) => void;
@@ -60,14 +58,13 @@ type UseMapReticleInteractionOptions = {
 
 const initialState: InteractionState = {
   reticle: null,
-  previewReticle: null,
   focusReticle: null,
   scrollLocked: false,
   zoomOverlay: null
 };
 
 export function useMapReticleInteraction(options: UseMapReticleInteractionOptions) {
-  const { mapCanvasRef, mapRef, mapReady, sources, previewTarget, focusTarget } = options;
+  const { mapCanvasRef, mapRef, mapReady, sources, focusTarget, selectedEntityId } = options;
   const optionsRef = useRef(options);
   const stateRef = useRef(initialState);
   const [state, setRenderedState] = useState(initialState);
@@ -94,13 +91,6 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   const setReticle = useCallback(
     (next: ReticleState | null) => {
       updateState((current) => (reticlesEqual(current.reticle, next) ? current : { ...current, reticle: next }));
-    },
-    [updateState]
-  );
-
-  const setPreviewReticle = useCallback(
-    (next: ReticleState | null) => {
-      updateState((current) => (reticlesEqual(current.previewReticle, next) ? current : { ...current, previewReticle: next }));
     },
     [updateState]
   );
@@ -422,14 +412,17 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   const reticleVisible = state.reticle !== null;
 
   useEffect(() => {
-    if (!reticleVisible) return;
+    if (!reticleVisible && !selectedEntityId) return;
     const releaseOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || stateRef.current.zoomOverlay) return;
-      clearReticle();
+      event.preventDefault();
+      event.stopPropagation();
+      if (optionsRef.current.selectedEntityId) optionsRef.current.onBackgroundClick?.();
+      else clearReticle();
     };
-    window.addEventListener("keydown", releaseOnEscape);
-    return () => window.removeEventListener("keydown", releaseOnEscape);
-  }, [clearReticle, reticleVisible]);
+    window.addEventListener("keydown", releaseOnEscape, true);
+    return () => window.removeEventListener("keydown", releaseOnEscape, true);
+  }, [clearReticle, reticleVisible, selectedEntityId]);
 
   useEffect(() => {
     const clearWhenOutsideMap = (event: globalThis.PointerEvent) => {
@@ -489,25 +482,6 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || !previewTarget) {
-      setPreviewReticle(null);
-      return;
-    }
-    const sync = () => {
-      const current = stateRef.current;
-      if (!current.scrollLocked && !current.zoomOverlay) setPreviewReticle(reticleForVisibleTarget(mapCanvasRef.current, map, sources, previewTarget));
-    };
-    sync();
-    map.on("move", sync);
-    map.on("zoom", sync);
-    return () => {
-      map.off("move", sync);
-      map.off("zoom", sync);
-    };
-  }, [mapCanvasRef, mapReady, mapRef, previewTarget, setPreviewReticle, sources, state.scrollLocked, zooming]);
-
-  useEffect(() => {
-    const map = mapRef.current;
     if (!map || !mapReady || !focusTarget) {
       setFocusReticle(null);
       return;
@@ -538,17 +512,11 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     [cancelPendingPointer]
   );
 
-  const visibleReticle = state.zoomOverlay
-    ? reticleFromTargetBox(boxFromDrag(state.zoomOverlay))
-    : state.scrollLocked
-      ? state.reticle
-      : (state.reticle ?? state.previewReticle ?? state.focusReticle);
-  const selectionReticle = state.focusReticle?.targetEntityId === visibleReticle?.targetEntityId ? null : state.focusReticle;
+  const visibleReticle = state.zoomOverlay ? reticleFromTargetBox(boxFromDrag(state.zoomOverlay)) : focusTarget ? state.focusReticle : state.reticle;
   activeReticleRef.current = visibleReticle;
 
   return {
     visibleReticle,
-    selectionReticle,
     scrolling: state.scrollLocked,
     zooming,
     customCursorVisible: Boolean(state.reticle || state.zoomOverlay),

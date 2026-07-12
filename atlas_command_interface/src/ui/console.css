@@ -969,23 +969,6 @@
     height 90ms ease-out;
 }
 
-.map-reticle--selection {
-  z-index: 19;
-  --map-reticle-line-width: 2px;
-  --map-reticle-line-color: var(--accent-strong);
-  --map-reticle-line-shadow: 0 0 0 1px color-mix(in srgb, black 68%, transparent);
-}
-
-.map-reticle--selection .map-reticle__line {
-  display: none;
-}
-
-.map-reticle--selection .map-reticle__target {
-  box-shadow:
-    var(--map-reticle-line-shadow),
-    0 0 10px var(--selected-ring);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .map-reticle--targeted .map-reticle__line,
   .map-reticle--targeted .map-reticle__target {

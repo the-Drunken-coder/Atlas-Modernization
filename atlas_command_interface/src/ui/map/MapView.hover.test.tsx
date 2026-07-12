@@ -445,7 +445,7 @@ describe("MapView hover target box", () => {
     expect(onSelectEntity).not.toHaveBeenCalledWith("geo-visual");
   });
 
-  it("keeps focused entity reticles behind live map background movement", async () => {
+  it("keeps the focused entity reticle ahead of live map background movement", async () => {
     const { canvas, rerenderMap } = renderMapView();
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
 
@@ -455,10 +455,10 @@ describe("MapView hover target box", () => {
     firePointerMove(canvas, { clientX: 220, clientY: 120 });
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-reticle:not(.map-reticle--selection)");
-      expect(overlay).not.toHaveClass("map-reticle--targeted");
-      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("210px");
-      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
     });
   });
 
