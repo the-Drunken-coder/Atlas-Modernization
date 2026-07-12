@@ -455,7 +455,7 @@ describe("MapView hover target box", () => {
     firePointerMove(canvas, { clientX: 220, clientY: 120 });
 
     await waitFor(() => {
-      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      const overlay = document.querySelector<HTMLElement>(".map-reticle:not(.map-reticle--selection)");
       expect(overlay).not.toHaveClass("map-reticle--targeted");
       expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("210px");
       expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("100px");

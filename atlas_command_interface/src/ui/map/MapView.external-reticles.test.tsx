@@ -70,6 +70,37 @@ describe("MapView external reticle targets", () => {
     expect(document.querySelector(".map-reticle")).toBeInTheDocument();
   });
 
+  it("keeps the selected entity boxed while the pointer reticle moves elsewhere", async () => {
+    const { canvas, rerenderMap } = renderMapView();
+    appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    firePointerMove(canvas, { clientX: 220, clientY: 140 });
+
+    await waitFor(() => {
+      const selection = document.querySelector<HTMLElement>(".map-reticle--selection");
+      const cursor = document.querySelector<HTMLElement>(".map-reticle:not(.map-reticle--selection)");
+      expect(selection?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
+      expect(selection?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+      expect(cursor?.style.getPropertyValue("--map-reticle-x")).toBe("210px");
+      expect(cursor?.style.getPropertyValue("--map-reticle-y")).toBe("120px");
+    });
+  });
+
+  it("does not duplicate the selected box when the pointer targets that entity", async () => {
+    const { canvas, rerenderMap } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+
+    await waitFor(() => expect(document.querySelectorAll(".map-reticle")).toHaveLength(1));
+    expect(document.querySelector(".map-reticle--selection")).not.toBeInTheDocument();
+    expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted");
+  });
+
   it("keeps a focused marker reticle aligned when a feed snapshot moves it", async () => {
     const initial = entity({
       entity_id: "track-1",

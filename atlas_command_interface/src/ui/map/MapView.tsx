@@ -300,6 +300,7 @@ export function MapView({
       {...reticleInteraction.canvasHandlers}
     >
       <div className="maplibre-host" ref={containerRef} />
+      {reticleInteraction.selectionReticle ? <MapReticle reticle={reticleInteraction.selectionReticle} selection /> : null}
       {reticleInteraction.visibleReticle ? (
         <MapReticle reticle={reticleInteraction.visibleReticle} scrolling={reticleInteraction.scrolling} zooming={reticleInteraction.zooming} />
       ) : null}

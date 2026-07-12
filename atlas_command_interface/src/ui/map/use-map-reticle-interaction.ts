@@ -538,10 +538,12 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     : state.scrollLocked
       ? state.reticle
       : (state.reticle ?? state.previewReticle ?? state.focusReticle);
+  const selectionReticle = state.focusReticle?.targetEntityId === visibleReticle?.targetEntityId ? null : state.focusReticle;
   activeReticleRef.current = visibleReticle;
 
   return {
     visibleReticle,
+    selectionReticle,
     scrolling: state.scrollLocked,
     zooming,
     customCursorVisible: Boolean(state.reticle || state.zoomOverlay),
