@@ -54,6 +54,45 @@ describe("MapView external reticle targets", () => {
     });
   });
 
+  it("shows a raw-pointer X, clipped tether, coordinates, and range while selection owns the reticle", async () => {
+    const { canvas, rerenderMap } = renderMapView({ selectedId: "asset-1" });
+    appendMarker(canvas, "asset-1", rect(20, 30, 20, 20));
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
+
+    await waitFor(() => {
+      const locator = document.querySelector<SVGElement>(".map-cursor-locator");
+      const tether = document.querySelector<SVGLineElement>(".map-cursor-locator__tether");
+      const readout = document.querySelector<HTMLElement>("[data-testid='map-cursor-readout']");
+      expect(locator).toBeInTheDocument();
+      expect(tether).toBeInTheDocument();
+      expect(Number(tether?.getAttribute("x1"))).toBeLessThan(Number(tether?.getAttribute("x2")));
+      expect(readout).toHaveTextContent("CURSOR 80.00000, 70.00000");
+      expect(readout).toHaveTextContent(/RANGE\s+[\d,.]+ mi/);
+    });
+
+    fireEvent.pointerLeave(canvas);
+    await waitFor(() => {
+      expect(document.querySelector(".map-cursor-locator")).not.toBeInTheDocument();
+      expect(document.querySelector("[data-testid='map-cursor-readout']")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows coordinates without a locator or range when nothing is selected", async () => {
+    const { canvas } = renderMapView();
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
+
+    await waitFor(() => {
+      const readout = document.querySelector<HTMLElement>("[data-testid='map-cursor-readout']");
+      expect(readout).toHaveTextContent("CURSOR 80.00000, 70.00000");
+      expect(readout).not.toHaveTextContent("RANGE");
+    });
+    expect(document.querySelector(".map-cursor-locator")).not.toBeInTheDocument();
+
+    fireEvent.pointerLeave(canvas);
+    await waitFor(() => expect(document.querySelector("[data-testid='map-cursor-readout']")).not.toBeInTheDocument());
+  });
+
   it("does not duplicate the selected box when the pointer targets that entity", async () => {
     const { canvas, rerenderMap } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
@@ -142,6 +181,8 @@ describe("MapView external reticle targets", () => {
     fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
     fireEvent.mouseMove(window, { clientX: 150, clientY: 180 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--zoom"));
+    expect(document.querySelector(".map-cursor-locator")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-testid='map-cursor-readout']")).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
 
@@ -151,6 +192,7 @@ describe("MapView external reticle targets", () => {
       expect(reticle).not.toHaveClass("map-reticle--zoom");
       expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("70px");
       expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("80px");
+      expect(document.querySelector(".map-cursor-locator")).toBeInTheDocument();
     });
   });
 

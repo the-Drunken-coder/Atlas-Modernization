@@ -2,6 +2,7 @@ import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent, type StyleSp
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MapReticle } from "./MapReticle.js";
+import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { CAMERA_EVENT_TAG, type MapCameraCommand } from "./map-camera.js";
 import { createEditingMarkers, type MapEditing } from "./map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "./map-layers.js";
@@ -297,6 +298,7 @@ export function MapView({
       {...reticleInteraction.canvasHandlers}
     >
       <div className="maplibre-host" ref={containerRef} />
+      {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
       {reticleInteraction.visibleReticle ? (
         <MapReticle reticle={reticleInteraction.visibleReticle} scrolling={reticleInteraction.scrolling} zooming={reticleInteraction.zooming} />
       ) : null}

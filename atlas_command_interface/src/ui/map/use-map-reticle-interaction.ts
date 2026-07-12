@@ -23,6 +23,7 @@ import {
   type ScreenPoint,
   type ZoomOverlayState
 } from "./map-reticle.js";
+import { geographicDistanceMeters, type CursorOverlayState } from "./map-cursor-overlay.js";
 import { clientPointInsideRect, cursorPointsFromEvent, reticlesEqual, zoomDeltaFromWheel, type CursorHandoffState } from "./map-view-utils.js";
 
 const SCROLL_LOCK_SETTLE_MS = 180;
@@ -31,6 +32,7 @@ const SUPPRESSED_CLICK_FALLBACK_MS = 750;
 type InteractionState = {
   reticle: ReticleState | null;
   focusReticle: ReticleState | null;
+  pointerPoint: ScreenPoint | null;
   scrollLocked: boolean;
   zoomOverlay: ZoomOverlayState | null;
 };
@@ -59,6 +61,7 @@ type UseMapReticleInteractionOptions = {
 const initialState: InteractionState = {
   reticle: null,
   focusReticle: null,
+  pointerPoint: null,
   scrollLocked: false,
   zoomOverlay: null
 };
@@ -102,6 +105,13 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     [updateState]
   );
 
+  const setPointerPoint = useCallback(
+    (next: ScreenPoint | null) => {
+      updateState((current) => (current.pointerPoint?.x === next?.x && current.pointerPoint?.y === next?.y ? current : { ...current, pointerPoint: next }));
+    },
+    [updateState]
+  );
+
   const setScrollLocked = useCallback(
     (next: boolean) => {
       updateState((current) => (current.scrollLocked === next ? current : { ...current, scrollLocked: next }));
@@ -126,18 +136,19 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     pointerFrameRef.current = undefined;
   }, []);
 
-  const clearReticle = useCallback(() => {
+  const clearPointer = useCallback(() => {
     cancelPendingPointer();
     cursorHandoffRef.current = null;
-    setReticle(null);
-  }, [cancelPendingPointer, setReticle]);
+    updateState((current) => (current.reticle === null && current.pointerPoint === null ? current : { ...current, reticle: null, pointerPoint: null }));
+  }, [cancelPendingPointer, updateState]);
 
   const restoreReticleAtScreenPoint = useCallback(
     (point: ScreenPoint) => {
       cursorHandoffRef.current = null;
+      setPointerPoint(point);
       setReticle({ x: point.x, y: point.y, target: squareAround(point, RETICLE_TARGET_SIZE) });
     },
-    [setReticle]
+    [setPointerPoint, setReticle]
   );
 
   const restoreReticleFromClientPoint = useCallback(
@@ -146,12 +157,12 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       if (!mapCanvas) return;
       const rect = mapCanvas.getBoundingClientRect();
       if (!clientPointInsideRect(event, rect)) {
-        setReticle(null);
+        clearPointer();
         return;
       }
       restoreReticleAtScreenPoint(pointFromClient(event, rect));
     },
-    [restoreReticleAtScreenPoint, setReticle]
+    [clearPointer, restoreReticleAtScreenPoint]
   );
 
   const restoreReticleAtCurrentZoomPoint = useCallback(() => {
@@ -160,8 +171,8 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       restoreReticleAtScreenPoint(point);
       return;
     }
-    setReticle(null);
-  }, [restoreReticleAtScreenPoint, setReticle]);
+    clearPointer();
+  }, [clearPointer, restoreReticleAtScreenPoint]);
 
   const suppressNextClick = useCallback(() => {
     suppressNextClickRef.current = true;
@@ -239,15 +250,16 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     const target = hoverSelectionTarget(pointer, rect, visualPoint, optionsRef.current.mapRef.current, markerBoxCacheRef.current);
     const next = target ? reticleForTarget(target) : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
     if (handoff) cursorHandoffRef.current = { nativePoint: rawPoint, visualPoint: { x: next.x, y: next.y } };
+    setPointerPoint(rawPoint);
     setReticle(next);
-  }, [setReticle]);
+  }, [setPointerPoint, setReticle]);
 
   const onPointerMove = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const current = stateRef.current;
       if (current.scrollLocked || current.zoomOverlay) return;
       if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) {
-        clearReticle();
+        clearPointer();
         return;
       }
       pendingPointerRef.current = {
@@ -258,26 +270,28 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       };
       if (pointerFrameRef.current === undefined) pointerFrameRef.current = requestAnimationFrame(flushPointer);
     },
-    [clearReticle, flushPointer]
+    [clearPointer, flushPointer]
   );
 
   const onPointerLeave = useCallback(() => {
     const current = stateRef.current;
-    if (!current.scrollLocked && !current.zoomOverlay) clearReticle();
-  }, [clearReticle]);
+    if (current.scrollLocked || current.zoomOverlay) setPointerPoint(null);
+    else clearPointer();
+  }, [clearPointer, setPointerPoint]);
 
   const onMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
       if (!event.shiftKey || event.button !== 0) return;
       if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
       const point = pointFromClient(event, event.currentTarget.getBoundingClientRect(), true);
+      setPointerPoint(point);
       setZoomOverlay({ start: point, current: point });
       zoomPointerInsideMapRef.current = true;
       cursorHandoffRef.current = null;
       setReticle(null);
       optionsRef.current.notifyUserGesture();
     },
-    [setReticle, setZoomOverlay]
+    [setPointerPoint, setReticle, setZoomOverlay]
   );
 
   const onWheelCapture = useCallback(
@@ -287,6 +301,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       if (event.target instanceof HTMLElement && event.target.closest(".maplibregl-control-container")) return;
       const map = optionsRef.current.mapRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
+      setPointerPoint(pointFromClient(event, rect));
       const hoverReticle = current.reticle;
       const activeReticle = hoverReticle ?? activeReticleRef.current;
       scrollLockedExternalReticleRef.current = Boolean(activeReticle && !hoverReticle);
@@ -310,7 +325,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
         }
       }, SCROLL_LOCK_SETTLE_MS);
     },
-    [setReticle, setScrollLocked, syncTargetReticle, zoomAroundReticleTarget]
+    [setPointerPoint, setReticle, setScrollLocked, syncTargetReticle, zoomAroundReticleTarget]
   );
 
   const onClick = useCallback(
@@ -354,10 +369,10 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       if (!mapCanvas || !map) return;
       const nextEntityId = nextVisibleEntityInDirection(mapCanvas, map, sources, selectedEntityId, direction);
       if (!nextEntityId) return;
-      clearReticle();
+      setReticle(null);
       onSelectEntity(nextEntityId);
     },
-    [clearReticle]
+    [setReticle]
   );
 
   const completeBoxZoom = useCallback(
@@ -418,21 +433,23 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       event.preventDefault();
       event.stopPropagation();
       if (optionsRef.current.selectedEntityId) optionsRef.current.onBackgroundClick?.();
-      else clearReticle();
+      else clearPointer();
     };
     window.addEventListener("keydown", releaseOnEscape, true);
     return () => window.removeEventListener("keydown", releaseOnEscape, true);
-  }, [clearReticle, reticleVisible, selectedEntityId]);
+  }, [clearPointer, reticleVisible, selectedEntityId]);
 
   useEffect(() => {
     const clearWhenOutsideMap = (event: globalThis.PointerEvent) => {
-      if (!stateRef.current.reticle || stateRef.current.scrollLocked || stateRef.current.zoomOverlay) return;
+      if (!stateRef.current.pointerPoint || stateRef.current.zoomOverlay) return;
       const mapCanvas = optionsRef.current.mapCanvasRef.current;
-      if (mapCanvas && !clientPointInsideRect(event, mapCanvas.getBoundingClientRect())) clearReticle();
+      if (!mapCanvas || clientPointInsideRect(event, mapCanvas.getBoundingClientRect())) return;
+      if (stateRef.current.scrollLocked) setPointerPoint(null);
+      else clearPointer();
     };
     window.addEventListener("pointermove", clearWhenOutsideMap);
     return () => window.removeEventListener("pointermove", clearWhenOutsideMap);
-  }, [clearReticle]);
+  }, [clearPointer, setPointerPoint]);
 
   useEffect(() => {
     if (!zooming) return;
@@ -513,13 +530,15 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   );
 
   const visibleReticle = state.zoomOverlay ? reticleFromTargetBox(boxFromDrag(state.zoomOverlay)) : focusTarget ? state.focusReticle : state.reticle;
+  const cursorOverlay = zooming ? undefined : cursorOverlayState(mapRef.current, state.pointerPoint, focusTarget ? state.focusReticle : null);
   activeReticleRef.current = visibleReticle;
 
   return {
     visibleReticle,
+    cursorOverlay,
     scrolling: state.scrollLocked,
     zooming,
-    customCursorVisible: Boolean(state.reticle || state.zoomOverlay),
+    customCursorVisible: Boolean(state.zoomOverlay || (state.pointerPoint && visibleReticle)),
     canvasHandlers: { onClick, onMouseDown, onPointerLeave, onPointerMove, onWheelCapture },
     mapActions: { cancelBoxZoom, completeBoxZoom }
   };
@@ -531,4 +550,20 @@ function directionFromKey(key: string): MapNavigationDirection | null {
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
+}
+
+function cursorOverlayState(map: MlMap | undefined, point: ScreenPoint | null, selection: ReticleState | null): CursorOverlayState | undefined {
+  if (!map || !point) return undefined;
+  const pointerCoordinates = map.unproject([point.x, point.y]);
+  if (!selection) return { point, coordinates: { lng: pointerCoordinates.lng, lat: pointerCoordinates.lat } };
+  const selectionCoordinates = map.unproject([selection.x, selection.y]);
+  return {
+    point,
+    coordinates: { lng: pointerCoordinates.lng, lat: pointerCoordinates.lat },
+    selection,
+    distanceMeters: geographicDistanceMeters(
+      { lng: selectionCoordinates.lng, lat: selectionCoordinates.lat },
+      { lng: pointerCoordinates.lng, lat: pointerCoordinates.lat }
+    )
+  };
 }
