@@ -1,5 +1,5 @@
 import type { Map as MlMap, PointLike } from "maplibre-gl";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
 import type { MapSources } from "./map-sources.js";
 import {
   createMarkerBoxCache,
@@ -351,10 +351,10 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     [consumeSuppressedClick]
   );
 
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>) => {
+  const navigateWithArrow = useCallback(
+    (event: globalThis.KeyboardEvent) => {
       const direction = directionFromKey(event.key);
-      if (!direction || isEditableKeyboardTarget(event.target) || (event.target instanceof Element && event.target.closest(".maplibregl-ctrl"))) return;
+      if (!direction || isEditableKeyboardTarget(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       if (stateRef.current.zoomOverlay) return;
@@ -395,6 +395,11 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     mapCanvas.addEventListener("wheel", preventPageScroll, { capture: true, passive: false });
     return () => mapCanvas.removeEventListener("wheel", preventPageScroll, { capture: true });
   }, [mapCanvasRef]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", navigateWithArrow, true);
+    return () => window.removeEventListener("keydown", navigateWithArrow, true);
+  }, [navigateWithArrow]);
 
   // Marker screen boxes only change with the camera or an entity snapshot, so
   // hover hit-testing reuses them between invalidations instead of measuring
@@ -547,7 +552,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     scrolling: state.scrollLocked,
     zooming,
     customCursorVisible: Boolean(state.reticle || state.zoomOverlay),
-    canvasHandlers: { onClick, onKeyDown, onMouseDown, onPointerLeave, onPointerMove, onWheelCapture },
+    canvasHandlers: { onClick, onMouseDown, onPointerLeave, onPointerMove, onWheelCapture },
     mapActions: { cancelBoxZoom, completeBoxZoom }
   };
 }

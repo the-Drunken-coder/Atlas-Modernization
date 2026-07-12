@@ -64,6 +64,30 @@ describe("MapView keyboard selection", () => {
     expect(onSelectEntity).not.toHaveBeenCalled();
   });
 
+  it("routes arrow keys from sidebar controls to map selection", () => {
+    const { onSelectEntity } = renderDirectionalMap("center");
+    const sidebarButton = document.createElement("button");
+    document.body.appendChild(sidebarButton);
+
+    const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+    fireEvent(sidebarButton, event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onSelectEntity).toHaveBeenCalledWith("down");
+    sidebarButton.remove();
+  });
+
+  it("removes global arrow navigation when the map unmounts", () => {
+    const { onSelectEntity, unmount } = renderDirectionalMap("center");
+    unmount();
+
+    const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+    fireEvent(window, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onSelectEntity).not.toHaveBeenCalled();
+  });
+
   it("clears the pointer reticle when keyboard navigation takes over", async () => {
     const { canvas, onSelectEntity } = renderDirectionalMap("center");
     firePointerMove(canvas, { clientX: 210, clientY: 120 });
