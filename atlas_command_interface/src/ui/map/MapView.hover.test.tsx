@@ -223,6 +223,35 @@ describe("MapView hover target box", () => {
     expect(document.querySelector(".map-reticle")).not.toBeInTheDocument();
   });
 
+  it("uses the click position instead of a targeted reticle from a pending pointer frame", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const frameId = ++nextFrameId;
+      frames.set(frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frameId: number) => frames.delete(frameId));
+
+    const { canvas, onBackgroundClick, onSelectEntity } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+    act(() => {
+      for (const [frameId, callback] of frames) {
+        frames.delete(frameId);
+        callback(0);
+      }
+    });
+    expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted");
+
+    firePointerMove(canvas, { clientX: 300, clientY: 100 });
+    fireEvent.click(canvas, { clientX: 300, clientY: 100 });
+
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    expect(onBackgroundClick).toHaveBeenCalledOnce();
+  });
+
   it("cancels a pending reticle frame when the map unmounts", () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrameId = 0;

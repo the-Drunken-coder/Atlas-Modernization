@@ -357,11 +357,6 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
         onSelectEntity(clickTargets[(selectedIndex + 1) % clickTargets.length].entityId);
         return;
       }
-      const entityId = stateRef.current.reticle?.targetEntityId;
-      if (entityId) {
-        onSelectEntity(entityId);
-        return;
-      }
       onBackgroundClick?.();
     },
     [consumeSuppressedClick]
