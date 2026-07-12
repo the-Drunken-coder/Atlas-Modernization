@@ -84,6 +84,8 @@
   --space-5: 24px;
 
   --rail-width: 52px;
+  --rail-padding: var(--space-2);
+  --rail-brand-size: 30px;
   --panel-width: 332px;
 
   --font-sans: system-ui, -apple-system, "Segoe UI", roboto, sans-serif;

@@ -2,6 +2,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthGate, WorkspaceErrorBoundary } from "../../../auth/ui/AuthGate.js";
+import { SidebarRail } from "../../../ui/layout/SidebarRail.js";
+
+function Workspace() {
+  return (
+    <>
+      <SidebarRail collapsed={false} activeList="assets" counts={{ asset: 0, track: 0, geofeature: 0 }} onSelectList={() => {}} onToggleCollapsed={() => {}} />
+      <div>map console</div>
+    </>
+  );
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -19,7 +29,7 @@ describe("AuthGate", () => {
     };
 
     render(
-      <WorkspaceErrorBoundary onRetry={onRetry} onLogout={onLogout}>
+      <WorkspaceErrorBoundary loggingOut={false} onRetry={onRetry} onLogout={onLogout}>
         <BrokenWorkspace />
       </WorkspaceErrorBoundary>
     );
@@ -32,12 +42,29 @@ describe("AuthGate", () => {
     consoleError.mockRestore();
   });
 
+  it("shows logout progress and errors when the workspace fails", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const BrokenWorkspace = () => {
+      throw new Error("chunk rejected");
+    };
+
+    render(
+      <WorkspaceErrorBoundary loggingOut logoutError="logout unavailable" onRetry={() => {}} onLogout={() => {}}>
+        <BrokenWorkspace />
+      </WorkspaceErrorBoundary>
+    );
+
+    expect(screen.getByRole("button", { name: "Logging out..." })).toBeDisabled();
+    expect(screen.getByText("logout unavailable")).toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
   it("shows login instead of the console when the session is missing", async () => {
     const fetchStub = stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
@@ -103,7 +130,7 @@ describe("AuthGate", () => {
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
@@ -112,8 +139,13 @@ describe("AuthGate", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("map console")).toBeInTheDocument();
-    expect(screen.getByText("Signed in as")).toBeInTheDocument();
+    expect(screen.queryByText("Signed in as")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Log out" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Account" }));
+    expect(screen.getByRole("group", { name: "Account menu" })).toBeInTheDocument();
+    expect(screen.getByText("Your account")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Settings/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
     expect(fetchStub.calls[1]).toMatchObject([
       "https://core.test/admin/auth/login",
@@ -128,9 +160,22 @@ describe("AuthGate", () => {
     });
   });
 
-  it("logs out through Core and returns focus to the login form", async () => {
+  it("keeps account controls available without a sidebar child", async () => {
+    stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>configuration unavailable</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByText("configuration unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Account" })).toBeInTheDocument();
+  });
+
+  it("dismisses the account menu with Escape or an outside click", async () => {
     const user = userEvent.setup();
-    const fetchStub = stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }, { status: 204 }]);
+    stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -138,7 +183,51 @@ describe("AuthGate", () => {
       </AuthGate>
     );
 
-    await user.click(await screen.findByRole("button", { name: "Log out" }));
+    const account = await screen.findByRole("button", { name: "Account" });
+    await user.click(account);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
+    expect(account).toHaveFocus();
+
+    await user.click(account);
+    await user.click(screen.getByText("map console"));
+    expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the menu open and disables logout while the request is pending", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200 }))
+      .mockImplementationOnce(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Account" }));
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(await screen.findByRole("button", { name: "Logging out..." })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("group", { name: "Account menu" })).toBeInTheDocument();
+  });
+
+  it("logs out through Core and returns focus to the login form", async () => {
+    const user = userEvent.setup();
+    const fetchStub = stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }, { status: 204 }]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <Workspace />
+      </AuthGate>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Account" }));
+    await user.click(screen.getByRole("button", { name: "Log out" }));
 
     expect(await screen.findByLabelText("Username")).toHaveFocus();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
@@ -160,11 +249,12 @@ describe("AuthGate", () => {
 
     render(
       <AuthGate baseUrl="https://core.test">
-        <div>map console</div>
+        <Workspace />
       </AuthGate>
     );
 
-    await user.click(await screen.findByRole("button", { name: "Log out" }));
+    await user.click(await screen.findByRole("button", { name: "Account" }));
+    await user.click(screen.getByRole("button", { name: "Log out" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("logout unavailable");
     expect(screen.getByText("map console")).toBeInTheDocument();

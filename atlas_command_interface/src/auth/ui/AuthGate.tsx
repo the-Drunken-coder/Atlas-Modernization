@@ -1,6 +1,7 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Button } from "../../ui/primitives/controls.js";
+import { AccountMenu } from "./AccountMenu.js";
 
 type AuthState =
   | { status: "loading" }
@@ -102,30 +103,18 @@ function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { base
 
   return (
     <section className="authenticated-shell">
-      <header className="session-bar" aria-label="User session">
-        <div className="session-bar__identity">
-          <span>Signed in as</span>
-          <strong>{username}</strong>
-        </div>
-        {error ? (
-          <span className="session-bar__error" role="alert">
-            {error}
-          </span>
-        ) : null}
-        <Button variant="ghost" disabled={loggingOut} onClick={() => void logout()}>
-          {loggingOut ? "Logging out..." : "Log out"}
-        </Button>
-      </header>
-      <div className="authenticated-shell__workspace">
-        <WorkspaceErrorBoundary onRetry={() => window.location.reload()} onLogout={() => void logout()}>
-          {children}
-        </WorkspaceErrorBoundary>
-      </div>
+      <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
+      <WorkspaceErrorBoundary loggingOut={loggingOut} logoutError={error} onRetry={() => window.location.reload()} onLogout={() => void logout()}>
+        {children}
+      </WorkspaceErrorBoundary>
     </section>
   );
 }
 
-export class WorkspaceErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void; onLogout: () => void }, { failed: boolean }> {
+export class WorkspaceErrorBoundary extends Component<
+  { children: ReactNode; loggingOut: boolean; logoutError?: string; onRetry: () => void; onLogout: () => void },
+  { failed: boolean }
+> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -141,10 +130,11 @@ export class WorkspaceErrorBoundary extends Component<{ children: ReactNode; onR
           <Button variant="primary" onClick={this.props.onRetry}>
             Retry
           </Button>
-          <Button variant="ghost" onClick={this.props.onLogout}>
-            Log out
+          <Button variant="ghost" disabled={this.props.loggingOut} onClick={this.props.onLogout}>
+            {this.props.loggingOut ? "Logging out..." : "Log out"}
           </Button>
         </div>
+        {this.props.logoutError ? <span className="app-error__detail">{this.props.logoutError}</span> : null}
       </div>
     );
   }
