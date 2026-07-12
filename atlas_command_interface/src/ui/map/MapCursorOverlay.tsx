@@ -1,7 +1,7 @@
 import { formatCoordinate } from "../../atlas/geometry.js";
 import { formatImperialDistance, tetherSegment, type CursorOverlayState } from "./map-cursor-overlay.js";
 
-export function MapCursorOverlay({ point, coordinates, selection, distanceMeters }: CursorOverlayState) {
+export function MapCursorOverlay({ point, coordinates, selection, distanceMeters, bearingDegrees }: CursorOverlayState) {
   const tether = selection ? tetherSegment(selection.target, point) : null;
   return (
     <>
@@ -17,6 +17,7 @@ export function MapCursorOverlay({ point, coordinates, selection, distanceMeters
       <div className="map-cursor-readout" data-testid="map-cursor-readout">
         <span>CURSOR&nbsp; {formatCoordinate([coordinates.lng, coordinates.lat])}</span>
         {distanceMeters !== undefined ? <span>RANGE&nbsp; {formatImperialDistance(distanceMeters)}</span> : null}
+        {bearingDegrees !== undefined ? <span>BEARING&nbsp; {Math.round(bearingDegrees) % 360}°</span> : null}
       </div>
     </>
   );

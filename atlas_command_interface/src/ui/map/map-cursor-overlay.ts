@@ -11,6 +11,7 @@ export type CursorOverlayState = {
   coordinates: CursorCoordinates;
   selection?: ReticleState;
   distanceMeters?: number;
+  bearingDegrees?: number;
 };
 
 export function tetherSegment(selection: TargetBox, pointer: ScreenPoint): { start: ScreenPoint; end: ScreenPoint } | null {
@@ -39,6 +40,14 @@ export function geographicDistanceMeters(a: CursorCoordinates, b: CursorCoordina
   const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
   const clampedValue = Math.min(1, Math.max(0, value));
   return EARTH_RADIUS_METERS * 2 * Math.atan2(Math.sqrt(clampedValue), Math.sqrt(1 - clampedValue));
+}
+
+export function geographicBearingDegrees(a: CursorCoordinates, b: CursorCoordinates): number {
+  const lat1 = degreesToRadians(a.lat);
+  const lat2 = degreesToRadians(b.lat);
+  const deltaLng = degreesToRadians(b.lng - a.lng);
+  const bearing = Math.atan2(Math.sin(deltaLng) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng));
+  return ((bearing * 180) / Math.PI + 360) % 360;
 }
 
 export function formatImperialDistance(distanceMeters: number): string {

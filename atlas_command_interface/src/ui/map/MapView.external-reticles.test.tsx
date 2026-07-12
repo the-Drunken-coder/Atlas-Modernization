@@ -69,6 +69,7 @@ describe("MapView external reticle targets", () => {
       expect(Number(tether?.getAttribute("x1"))).toBeLessThan(Number(tether?.getAttribute("x2")));
       expect(readout).toHaveTextContent("CURSOR 80.00000, 70.00000");
       expect(readout).toHaveTextContent(/RANGE\s+[\d,.]+ mi/);
+      expect(readout).toHaveTextContent(/BEARING\s+\d+°/);
     });
 
     fireEvent.pointerLeave(canvas);
@@ -88,6 +89,7 @@ describe("MapView external reticle targets", () => {
       expect(readout).not.toHaveTextContent("RANGE");
     });
     expect(document.querySelector(".map-cursor-locator")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-testid='map-cursor-readout']")).not.toHaveTextContent("BEARING");
 
     fireEvent.pointerLeave(canvas);
     await waitFor(() => expect(document.querySelector("[data-testid='map-cursor-readout']")).not.toBeInTheDocument());
