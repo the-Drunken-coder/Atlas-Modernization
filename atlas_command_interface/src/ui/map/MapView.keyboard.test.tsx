@@ -77,6 +77,20 @@ describe("MapView keyboard selection", () => {
     sidebarButton.remove();
   });
 
+  it("does not intercept arrow keys from the sidebar resize handle", () => {
+    const { onSelectEntity } = renderDirectionalMap("center");
+    const separator = document.createElement("div");
+    separator.setAttribute("role", "separator");
+    document.body.appendChild(separator);
+
+    const event = new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true });
+    fireEvent(separator, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    separator.remove();
+  });
+
   it("removes global arrow navigation when the map unmounts", () => {
     const { onSelectEntity, unmount } = renderDirectionalMap("center");
     unmount();

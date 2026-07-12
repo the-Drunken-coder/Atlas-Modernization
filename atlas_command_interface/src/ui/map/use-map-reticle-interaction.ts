@@ -350,7 +350,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       const { mapRef, onSelectEntity, onBackgroundClick, selectedEntityId } = optionsRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
       const point = cursorPointsFromEvent(event, rect, cursorHandoffRef.current).visualPoint;
-      const clickTargets = hoverSelectionTargets(event, rect, point, mapRef.current, markerBoxCacheRef.current);
+      const clickTargets = hoverSelectionTargets(event, rect, point, mapRef.current, markerBoxCacheRef.current, event.detail === 0);
       if (clickTargets.length > 0) {
         // Re-clicking the already-selected entity cycles through overlapping targets.
         const selectedIndex = clickTargets.findIndex((target) => target.entityId === selectedEntityId);
@@ -427,10 +427,12 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     const invalidate = () => invalidateMarkerBoxCache(markerBoxCacheRef.current);
     map.on("move", invalidate);
     map.on("zoom", invalidate);
+    map.on("resize", invalidate);
     map.on("moveend", invalidate);
     return () => {
       map.off("move", invalidate);
       map.off("zoom", invalidate);
+      map.off("resize", invalidate);
       map.off("moveend", invalidate);
     };
   }, [mapReady, mapRef, sources]);
@@ -594,7 +596,7 @@ function directionFromKey(key: string): MapNavigationDirection | null {
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
+  return target instanceof HTMLElement && (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable);
 }
 
 function cursorOverlayState(map: MlMap | undefined, point: ScreenPoint | null, selection: ReticleState | null): CursorOverlayState | undefined {

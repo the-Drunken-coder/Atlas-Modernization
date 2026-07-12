@@ -49,7 +49,8 @@ export function hoverSelectionTargets(
   mapRect: DOMRect,
   point: ScreenPoint,
   map: MlMap | undefined,
-  cache: MarkerBoxCache
+  cache: MarkerBoxCache,
+  trustDirectHit = false
 ): HoverTarget[] {
   const candidates: HoverTarget[] = [];
   const seen = new Set<string>();
@@ -63,7 +64,8 @@ export function hoverSelectionTargets(
     const element = event.target.closest<HTMLElement>(".map-symbol-marker");
     const entityId = element?.dataset.entityId;
     if (element && entityId && event.currentTarget.contains(element)) {
-      push({ entityId, box: boxFromElement(element, mapRect) });
+      const box = boxFromElement(element, mapRect);
+      if (trustDirectHit || distanceToBox(point, box) <= HOVER_MAGNET_RADIUS) push({ entityId, box });
     }
   }
 

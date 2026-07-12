@@ -83,7 +83,7 @@ describe("MapView hover target box", () => {
     });
   });
 
-  it("reuses cached marker boxes across pointer frames until the camera moves", async () => {
+  it("reuses cached marker boxes until the camera moves or viewport resizes", async () => {
     const { canvas, map } = renderMapView();
     const measure = vi.fn(() => rect(70, 90, 20, 20));
     appendMarker(canvas, "asset-1", measure);
@@ -100,6 +100,32 @@ describe("MapView hover target box", () => {
     await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("220px"));
 
     expect(measure).toHaveBeenCalledTimes(2);
+
+    act(() => map.fire("resize"));
+    firePointerMove(canvas, { clientX: 240, clientY: 180 });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("230px"));
+
+    expect(measure).toHaveBeenCalledTimes(3);
+  });
+
+  it("ignores a native marker hit that is far from the handed-off visual cursor", async () => {
+    const { canvas, onBackgroundClick, onSelectEntity, rerenderMap } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+    rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [200, 150] } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("200px"));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+      act(() => vi.advanceTimersByTime(180));
+      firePointerMove(marker, { clientX: 80, clientY: 100 });
+      fireEvent.click(marker, { clientX: 80, clientY: 100, detail: 1 });
+
+      expect(onSelectEntity).not.toHaveBeenCalled();
+      expect(onBackgroundClick).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the default cursor target square when no marker is hovered", async () => {

@@ -39,7 +39,7 @@ describe("MapView external reticle targets", () => {
   });
 
   it("keeps the selected entity as the only reticle while the pointer moves elsewhere", async () => {
-    const { canvas, rerenderMap } = renderMapView();
+    const { canvas, rerenderMap } = renderMapView({ selectedId: "asset-1" });
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
     await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
@@ -96,7 +96,7 @@ describe("MapView external reticle targets", () => {
   });
 
   it("does not duplicate the selected box when the pointer targets that entity", async () => {
-    const { canvas, rerenderMap } = renderMapView();
+    const { canvas, rerenderMap } = renderMapView({ selectedId: "asset-1" });
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
