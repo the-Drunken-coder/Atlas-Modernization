@@ -18,16 +18,17 @@ import { INTERACTIVE_LAYERS } from "./map-layers.js";
 
 export type MapReticleTarget = MapTarget;
 export type HoverTarget = ReticleTarget & { entityId: string };
-export type MarkerBoxCache = { entries: HoverTarget[] | null };
+export type MarkerBoxCache = { entries: HoverTarget[] | null; mapRect: TargetBox | null };
 export type MapNavigationDirection = "up" | "down" | "left" | "right";
 type MapPointerTargetEvent = { currentTarget: HTMLDivElement; target: EventTarget | null };
 
 export function createMarkerBoxCache(): MarkerBoxCache {
-  return { entries: null };
+  return { entries: null, mapRect: null };
 }
 
 export function invalidateMarkerBoxCache(cache: MarkerBoxCache): void {
   cache.entries = null;
+  cache.mapRect = null;
 }
 
 export function hoverSelectionTarget(
@@ -134,14 +135,20 @@ export function nextVisibleEntityInDirection(
 }
 
 function cachedMarkerBoxes(cache: MarkerBoxCache, mapCanvas: HTMLElement, mapRect: DOMRect): HoverTarget[] {
-  if (cache.entries) return cache.entries;
+  const currentMapRect = { x: mapRect.left, y: mapRect.top, width: mapRect.width, height: mapRect.height };
+  if (cache.entries && boxesEqual(cache.mapRect, currentMapRect)) return cache.entries;
   const entries: HoverTarget[] = [];
   for (const element of mapCanvas.querySelectorAll<HTMLElement>(".map-symbol-marker")) {
     const entityId = element.dataset.entityId;
     if (entityId) entries.push({ entityId, box: boxFromElement(element, mapRect) });
   }
   cache.entries = entries;
+  cache.mapRect = currentMapRect;
   return entries;
+}
+
+function boxesEqual(a: TargetBox | null, b: TargetBox): boolean {
+  return a?.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
 function boxForMapReticleTarget(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, target: MapReticleTarget): TargetBox | null {

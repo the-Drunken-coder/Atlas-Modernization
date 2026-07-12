@@ -108,6 +108,23 @@ describe("MapView hover target box", () => {
     expect(measure).toHaveBeenCalledTimes(3);
   });
 
+  it("remeasures cached marker boxes when the canvas shifts without resizing", async () => {
+    const { canvas } = renderMapView();
+    const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
+
+    firePointerMove(marker, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
+
+    vi.mocked(canvas.getBoundingClientRect).mockReturnValue(rect(30, 20, 400, 200));
+    firePointerMove(canvas, { clientX: 72, clientY: 100 });
+
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toHaveClass("map-reticle--targeted");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("50px");
+    });
+  });
+
   it("ignores a native marker hit that is far from the handed-off visual cursor", async () => {
     const { canvas, onBackgroundClick, onSelectEntity, rerenderMap } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
