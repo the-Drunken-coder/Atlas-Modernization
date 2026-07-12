@@ -215,6 +215,38 @@ describe("MapView external reticle targets", () => {
     });
   });
 
+  it("keeps a focused marker reticle locked to the marker throughout camera zoom", async () => {
+    const { canvas, map, rerenderMap } = renderMapView();
+    let markerRect = rect(70, 90, 20, 20);
+    appendMarker(canvas, "asset-1", () => markerRect);
+    rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
+    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+
+    act(() => map.fire("movestart"));
+    markerRect = rect(120, 70, 20, 20);
+    act(() => map.fire("zoom"));
+
+    let reticle = document.querySelector<HTMLElement>(".map-reticle");
+    expect(reticle).toHaveClass("map-reticle--scrolling");
+    expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("120px");
+    expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("60px");
+
+    markerRect = rect(170, 50, 20, 20);
+    act(() => map.fire("zoom"));
+    reticle = document.querySelector<HTMLElement>(".map-reticle");
+    expect(reticle).toHaveClass("map-reticle--scrolling");
+    expect(reticle?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
+    expect(reticle?.style.getPropertyValue("--map-reticle-y")).toBe("40px");
+
+    act(() => map.fire("moveend"));
+    await waitFor(() => {
+      const settledReticle = document.querySelector<HTMLElement>(".map-reticle");
+      expect(settledReticle).not.toHaveClass("map-reticle--scrolling");
+      expect(settledReticle?.style.getPropertyValue("--map-reticle-x")).toBe("170px");
+      expect(settledReticle?.style.getPropertyValue("--map-reticle-y")).toBe("40px");
+    });
+  });
+
   it("does not convert focused external reticles into clickable hover targets during scroll", async () => {
     const { canvas, onBackgroundClick, onSelectEntity, rerenderMap } = renderMapView();
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));

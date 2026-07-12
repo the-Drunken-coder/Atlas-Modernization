@@ -33,6 +33,7 @@ type InteractionState = {
   reticle: ReticleState | null;
   focusReticle: ReticleState | null;
   pointerPoint: ScreenPoint | null;
+  cameraMoving: boolean;
   scrollLocked: boolean;
   zoomOverlay: ZoomOverlayState | null;
 };
@@ -62,6 +63,7 @@ const initialState: InteractionState = {
   reticle: null,
   focusReticle: null,
   pointerPoint: null,
+  cameraMoving: false,
   scrollLocked: false,
   zoomOverlay: null
 };
@@ -76,6 +78,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   const activeReticleRef = useRef<ReticleState | null>(null);
   const pendingPointerRef = useRef<PendingPointer | null>(null);
   const pointerFrameRef = useRef<number | undefined>(undefined);
+  const cameraSettleFrameRef = useRef<number | undefined>(undefined);
   const scrollLockTimeoutRef = useRef<number | undefined>(undefined);
   const suppressClickTimeoutRef = useRef<number | undefined>(undefined);
   const scrollZoomRestoreRef = useRef<ScrollZoomRestore | undefined>(undefined);
@@ -108,6 +111,13 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   const setPointerPoint = useCallback(
     (next: ScreenPoint | null) => {
       updateState((current) => (current.pointerPoint?.x === next?.x && current.pointerPoint?.y === next?.y ? current : { ...current, pointerPoint: next }));
+    },
+    [updateState]
+  );
+
+  const setCameraMoving = useCallback(
+    (next: boolean) => {
+      updateState((current) => (current.cameraMoving === next ? current : { ...current, cameraMoving: next }));
     },
     [updateState]
   );
@@ -424,6 +434,34 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     };
   }, [mapReady, mapRef, sources]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) {
+      setCameraMoving(false);
+      return;
+    }
+    const start = () => {
+      if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
+      cameraSettleFrameRef.current = undefined;
+      setCameraMoving(true);
+    };
+    const end = () => {
+      if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
+      cameraSettleFrameRef.current = requestAnimationFrame(() => {
+        cameraSettleFrameRef.current = undefined;
+        setCameraMoving(false);
+      });
+    };
+    map.on("movestart", start);
+    map.on("moveend", end);
+    return () => {
+      map.off("movestart", start);
+      map.off("moveend", end);
+      if (cameraSettleFrameRef.current !== undefined) cancelAnimationFrame(cameraSettleFrameRef.current);
+      cameraSettleFrameRef.current = undefined;
+    };
+  }, [mapReady, mapRef, setCameraMoving]);
+
   const reticleVisible = state.reticle !== null;
 
   useEffect(() => {
@@ -536,7 +574,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   return {
     visibleReticle,
     cursorOverlay,
-    scrolling: state.scrollLocked,
+    scrolling: state.scrollLocked || state.cameraMoving,
     zooming,
     customCursorVisible: Boolean(state.zoomOverlay || (state.pointerPoint && visibleReticle)),
     canvasHandlers: { onClick, onMouseDown, onPointerLeave, onPointerMove, onWheelCapture },
