@@ -43,7 +43,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         className="rail__brand rail__brand-button"
         aria-label="Account"
         aria-expanded={open}
-        aria-haspopup="menu"
+        aria-controls="account-menu-popover"
         title="Account"
         onClick={() => {
           if (!loggingOut) setOpen((current) => !current);
@@ -52,17 +52,17 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
         <BrandIcon size={22} />
       </button>
       {open ? (
-        <div className="account-menu__popover">
+        <div id="account-menu-popover" className="account-menu__popover" role="group" aria-label="Account menu">
           <div className="account-menu__identity">
             <span>Your account</span>
             <strong>{username}</strong>
           </div>
-          <div className="account-menu__items" role="menu" aria-label="Account menu">
-            <button type="button" className="account-menu__item" role="menuitem" disabled>
+          <div className="account-menu__items">
+            <button type="button" className="account-menu__item" disabled>
               <span>Settings</span>
               <small>Coming soon</small>
             </button>
-            <button type="button" className="account-menu__item account-menu__item--danger" role="menuitem" disabled={loggingOut} onClick={onLogout}>
+            <button type="button" className="account-menu__item account-menu__item--danger" disabled={loggingOut} onClick={onLogout}>
               {loggingOut ? "Logging out..." : "Log out"}
             </button>
           </div>
