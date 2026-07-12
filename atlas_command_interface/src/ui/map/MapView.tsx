@@ -117,6 +117,7 @@ export function MapView({
         center: initialMap.initialCenter ?? [0, 0],
         zoom: initialMap.initialCenter ? 11 : 0,
         renderWorldCopies: false,
+        keyboard: false,
         dragRotate: false,
         pitchWithRotate: false,
         attributionControl: false,

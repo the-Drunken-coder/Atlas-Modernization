@@ -1,13 +1,15 @@
 import type { Map as MlMap, PointLike } from "maplibre-gl";
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
 import type { MapSources } from "./map-sources.js";
 import {
   createMarkerBoxCache,
   hoverSelectionTarget,
   hoverSelectionTargets,
   invalidateMarkerBoxCache,
+  nextVisibleEntityInDirection,
   reticleForVisibleTarget,
   targetBoxForEntityId,
+  type MapNavigationDirection,
   type MapReticleTarget
 } from "./map-targets.js";
 import {
@@ -349,6 +351,25 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     [consumeSuppressedClick]
   );
 
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      const direction = directionFromKey(event.key);
+      if (!direction || isEditableKeyboardTarget(event.target) || (event.target instanceof Element && event.target.closest(".maplibregl-ctrl"))) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (stateRef.current.zoomOverlay) return;
+      const { mapCanvasRef, mapRef, sources, selectedEntityId, onSelectEntity } = optionsRef.current;
+      const mapCanvas = mapCanvasRef.current;
+      const map = mapRef.current;
+      if (!mapCanvas || !map) return;
+      const nextEntityId = nextVisibleEntityInDirection(mapCanvas, map, sources, selectedEntityId, direction);
+      if (!nextEntityId) return;
+      clearReticle();
+      onSelectEntity(nextEntityId);
+    },
+    [clearReticle]
+  );
+
   const completeBoxZoom = useCallback(
     (map: MlMap, start: PointLike, end: PointLike) => {
       suppressNextClick();
@@ -524,7 +545,15 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     scrolling: state.scrollLocked,
     zooming,
     customCursorVisible: Boolean(state.reticle || state.zoomOverlay),
-    canvasHandlers: { onClick, onMouseDown, onPointerLeave, onPointerMove, onWheelCapture },
+    canvasHandlers: { onClick, onKeyDown, onMouseDown, onPointerLeave, onPointerMove, onWheelCapture },
     mapActions: { cancelBoxZoom, completeBoxZoom }
   };
+}
+
+function directionFromKey(key: string): MapNavigationDirection | null {
+  return key === "ArrowUp" ? "up" : key === "ArrowDown" ? "down" : key === "ArrowLeft" ? "left" : key === "ArrowRight" ? "right" : null;
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.matches("input, textarea, select") || target.isContentEditable);
 }
