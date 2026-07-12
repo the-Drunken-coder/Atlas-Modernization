@@ -26,7 +26,13 @@
   text-align: center;
 }
 
+.app-error__detail {
+  color: var(--error);
+  font-size: 12px;
+}
+
 .authenticated-shell {
+  position: relative;
   height: 100%;
 }
 
@@ -102,6 +108,12 @@
   margin-bottom: var(--space-2);
 }
 
+.rail__brand-placeholder {
+  width: 30px;
+  height: 30px;
+  margin-bottom: var(--space-2);
+}
+
 .rail__brand-button {
   padding: 0;
   border: 1px solid transparent;
@@ -117,9 +129,11 @@
 }
 
 .account-menu {
-  position: relative;
+  position: absolute;
+  z-index: 60;
+  top: var(--space-2);
+  left: 11px;
   height: 30px;
-  margin-bottom: var(--space-2);
 }
 
 .account-menu .rail__brand {
@@ -128,7 +142,6 @@
 
 .account-menu__popover {
   position: absolute;
-  z-index: 20;
   top: 0;
   left: calc(100% + var(--space-2));
   display: flex;

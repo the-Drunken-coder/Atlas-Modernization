@@ -1,7 +1,7 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Button } from "../../ui/primitives/controls.js";
-import { AuthenticatedSessionProvider } from "../session-context.js";
+import { AccountMenu } from "./AccountMenu.js";
 
 type AuthState =
   | { status: "loading" }
@@ -102,17 +102,19 @@ function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { base
   };
 
   return (
-    <AuthenticatedSessionProvider value={{ username, loggingOut, error, logout }}>
-      <section className="authenticated-shell">
-        <WorkspaceErrorBoundary onRetry={() => window.location.reload()} onLogout={() => void logout()}>
-          {children}
-        </WorkspaceErrorBoundary>
-      </section>
-    </AuthenticatedSessionProvider>
+    <section className="authenticated-shell">
+      <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
+      <WorkspaceErrorBoundary loggingOut={loggingOut} logoutError={error} onRetry={() => window.location.reload()} onLogout={() => void logout()}>
+        {children}
+      </WorkspaceErrorBoundary>
+    </section>
   );
 }
 
-export class WorkspaceErrorBoundary extends Component<{ children: ReactNode; onRetry: () => void; onLogout: () => void }, { failed: boolean }> {
+export class WorkspaceErrorBoundary extends Component<
+  { children: ReactNode; loggingOut: boolean; logoutError?: string; onRetry: () => void; onLogout: () => void },
+  { failed: boolean }
+> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -128,10 +130,11 @@ export class WorkspaceErrorBoundary extends Component<{ children: ReactNode; onR
           <Button variant="primary" onClick={this.props.onRetry}>
             Retry
           </Button>
-          <Button variant="ghost" onClick={this.props.onLogout}>
-            Log out
+          <Button variant="ghost" disabled={this.props.loggingOut} onClick={this.props.onLogout}>
+            {this.props.loggingOut ? "Logging out..." : "Log out"}
           </Button>
         </div>
+        {this.props.logoutError ? <span className="app-error__detail">{this.props.logoutError}</span> : null}
       </div>
     );
   }
