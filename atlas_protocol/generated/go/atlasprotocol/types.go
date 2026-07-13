@@ -163,6 +163,19 @@ type ObjectResource struct {
 	Metadata     MetadataBlock     `json:"metadata"`
 }
 
+type ObjectDetailResource struct {
+	ObjectID     string               `json:"object_id"`
+	Path         *string              `json:"path"`
+	ContentType  *string              `json:"content_type"`
+	Type         *string              `json:"type"`
+	SizeBytes    *int64               `json:"size_bytes"`
+	UsageHints   []string             `json:"usage_hints"`
+	ReferencedBy []ObjectReference    `json:"referenced_by,omitempty"`
+	Bucket       *string              `json:"bucket"`
+	Metadata     MetadataBlock        `json:"metadata"`
+	Extra        map[string]JSONValue `json:"extra,omitempty"`
+}
+
 type FeedEvent struct {
 	Event            FeedEventName `json:"event"`
 	ResourceType     ResourceType  `json:"resource_type"`

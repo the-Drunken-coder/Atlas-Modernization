@@ -131,15 +131,15 @@ function isTaskResource(value: unknown): value is TaskResource {
   return typeof value.metadata.version === "number";
 }
 
-function isObjectResource(value: unknown): value is ObjectResource & { payload?: unknown } {
+function isObjectResource(value: unknown): value is ObjectResource & { extra?: unknown } {
   if (!isRecord(value) || typeof value.object_id !== "string" || !isRecord(value.metadata)) {
     return false;
   }
   return typeof value.metadata.version === "number";
 }
 
-function objectResource(value: ObjectResource & { payload?: unknown }): ObjectResource {
-  const { payload: _payload, ...resource } = value;
+function objectResource(value: ObjectResource & { extra?: unknown }): ObjectResource {
+  const { extra: _extra, ...resource } = value;
   return resource;
 }
 

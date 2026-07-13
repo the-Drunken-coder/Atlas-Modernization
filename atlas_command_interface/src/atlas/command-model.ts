@@ -1,4 +1,4 @@
-import type { EntityResource, JSONValue, ObjectResponse } from "@the-drunken-coder/atlas-sdk";
+import type { EntityResource, JSONValue, ObjectDetailResource } from "@the-drunken-coder/atlas-sdk";
 
 export const COMMAND_CATALOG_OBJECT_ID = "command_catalog";
 
@@ -49,15 +49,12 @@ export class CommandModelError extends Error {
   }
 }
 
-export function catalogFromObject(object: ObjectResponse): CommandCatalog {
-  if (object.payload !== undefined) {
-    const payload = requireRecord(object.payload, "$.payload");
-    return parseCommandCatalog({
-      ...payload,
-      type: typeof payload.type === "string" && payload.type.trim() !== "" ? payload.type : object.type
-    });
-  }
-  return parseCommandCatalog(object);
+export function catalogFromObject(object: ObjectDetailResource): CommandCatalog {
+  const extra = requireRecord(object.extra, "$.extra");
+  return parseCommandCatalog({
+    ...extra,
+    type: typeof extra.type === "string" && extra.type.trim() !== "" ? extra.type : object.type
+  });
 }
 
 export function parseCommandCatalog(value: unknown): CommandCatalog {

@@ -11,16 +11,16 @@ import (
 )
 
 type fullDatasetResponse struct {
-	Entities         []*serializers.EntityResponse `json:"entities"`
-	Tasks            []*serializers.TaskResponse   `json:"tasks"`
-	Objects          []*serializers.ObjectResponse `json:"objects"`
-	Version          int64                         `json:"version"`
-	HasMoreEntities  bool                          `json:"has_more_entities"`
-	HasMoreTasks     bool                          `json:"has_more_tasks"`
-	HasMoreObjects   bool                          `json:"has_more_objects"`
-	NextEntityCursor string                        `json:"next_entity_cursor,omitempty"`
-	NextTaskCursor   string                        `json:"next_task_cursor,omitempty"`
-	NextObjectCursor string                        `json:"next_object_cursor,omitempty"`
+	Entities         []*serializers.EntityResponse    `json:"entities"`
+	Tasks            []*serializers.TaskResponse      `json:"tasks"`
+	Objects          []*protocol.ObjectDetailResource `json:"objects"`
+	Version          int64                            `json:"version"`
+	HasMoreEntities  bool                             `json:"has_more_entities"`
+	HasMoreTasks     bool                             `json:"has_more_tasks"`
+	HasMoreObjects   bool                             `json:"has_more_objects"`
+	NextEntityCursor string                           `json:"next_entity_cursor,omitempty"`
+	NextTaskCursor   string                           `json:"next_task_cursor,omitempty"`
+	NextObjectCursor string                           `json:"next_object_cursor,omitempty"`
 }
 
 type deletedResourceResponse struct {
@@ -36,26 +36,26 @@ type deletedTaskResourceResponse struct {
 }
 
 type changedSinceResponse struct {
-	Entities                []*serializers.EntityResponse `json:"entities"`
-	Tasks                   []*serializers.TaskResponse   `json:"tasks"`
-	Objects                 []*serializers.ObjectResponse `json:"objects"`
-	DeletedEntities         []deletedResourceResponse     `json:"deleted_entities,omitempty"`
-	DeletedTasks            []deletedTaskResourceResponse `json:"deleted_tasks,omitempty"`
-	DeletedObjects          []deletedResourceResponse     `json:"deleted_objects,omitempty"`
-	HasMoreEntities         bool                          `json:"has_more_entities"`
-	HasMoreTasks            bool                          `json:"has_more_tasks"`
-	HasMoreObjects          bool                          `json:"has_more_objects"`
-	HasMoreDeletedEntities  bool                          `json:"has_more_deleted_entities"`
-	HasMoreDeletedTasks     bool                          `json:"has_more_deleted_tasks"`
-	HasMoreDeletedObjects   bool                          `json:"has_more_deleted_objects"`
-	NextEntityCursor        string                        `json:"next_entity_cursor,omitempty"`
-	NextTaskCursor          string                        `json:"next_task_cursor,omitempty"`
-	NextObjectCursor        string                        `json:"next_object_cursor,omitempty"`
-	NextDeletedEntityCursor string                        `json:"next_deleted_entity_cursor,omitempty"`
-	NextDeletedTaskCursor   string                        `json:"next_deleted_task_cursor,omitempty"`
-	NextDeletedObjectCursor string                        `json:"next_deleted_object_cursor,omitempty"`
-	Version                 int64                         `json:"version"`
-	Timestamp               string                        `json:"timestamp"`
+	Entities                []*serializers.EntityResponse    `json:"entities"`
+	Tasks                   []*serializers.TaskResponse      `json:"tasks"`
+	Objects                 []*protocol.ObjectDetailResource `json:"objects"`
+	DeletedEntities         []deletedResourceResponse        `json:"deleted_entities,omitempty"`
+	DeletedTasks            []deletedTaskResourceResponse    `json:"deleted_tasks,omitempty"`
+	DeletedObjects          []deletedResourceResponse        `json:"deleted_objects,omitempty"`
+	HasMoreEntities         bool                             `json:"has_more_entities"`
+	HasMoreTasks            bool                             `json:"has_more_tasks"`
+	HasMoreObjects          bool                             `json:"has_more_objects"`
+	HasMoreDeletedEntities  bool                             `json:"has_more_deleted_entities"`
+	HasMoreDeletedTasks     bool                             `json:"has_more_deleted_tasks"`
+	HasMoreDeletedObjects   bool                             `json:"has_more_deleted_objects"`
+	NextEntityCursor        string                           `json:"next_entity_cursor,omitempty"`
+	NextTaskCursor          string                           `json:"next_task_cursor,omitempty"`
+	NextObjectCursor        string                           `json:"next_object_cursor,omitempty"`
+	NextDeletedEntityCursor string                           `json:"next_deleted_entity_cursor,omitempty"`
+	NextDeletedTaskCursor   string                           `json:"next_deleted_task_cursor,omitempty"`
+	NextDeletedObjectCursor string                           `json:"next_deleted_object_cursor,omitempty"`
+	Version                 int64                            `json:"version"`
+	Timestamp               string                           `json:"timestamp"`
 }
 
 func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetResponse {

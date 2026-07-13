@@ -32,7 +32,7 @@ This directory contains operational docs for the Go-based Atlas Core service.
 - Link object-to-entity via object metadata `referenced_by` (`POST /objects` or `PATCH /objects/{object_id}`).
 - Link entity-to-object via `components.media_refs` with role `"heatmap_data"`.
 
-Current implementation note: heatmap object fields (`type`, `usage_hints`, `content_type`) are convention-based. On entities, `media_refs[].role` **is** validated and must be one of `camera_feed`, `thumbnail`, or `heatmap_data` when present. The server does not enforce one-active-heatmap-per-role or reject geometry-like keys in object payloads.
+Current implementation note: heatmap object fields (`type`, `usage_hints`, `content_type`) are convention-based. On entities, `media_refs[].role` **is** validated and must be one of `camera_feed`, `thumbnail`, or `heatmap_data` when present. The server does not enforce one-active-heatmap-per-role or reject geometry-like keys in object extension data.
 
 ## Maintenance Process
 

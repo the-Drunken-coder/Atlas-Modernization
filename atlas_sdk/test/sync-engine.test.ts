@@ -640,7 +640,7 @@ describe("AtlasClient sync", () => {
     cache.cacheResource("entity", cachedEntity.entity_id, cachedEntity);
     cache.cacheResource("object", summary.object_id, summary);
     const beforeDetail = cache.snapshot();
-    const detail = { ...summary, payload: { nested: { confidence: 0.91 } } };
+    const detail = { ...summary, extra: { nested: { confidence: 0.91 } } };
 
     expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
     const afterDetail = cache.snapshot();
@@ -650,15 +650,15 @@ describe("AtlasClient sync", () => {
     expect(afterDetail.objects).not.toBe(beforeDetail.objects);
     expect(cache.value("object", detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
     expect(cache.entry("object", detail.object_id)).toMatchObject({ version: 2, detail: true });
-    expect(afterDetail.objects[detail.object_id]).toMatchObject({ payload: detail.payload });
-    expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "payload").nested)).toBe(true);
+    expect(afterDetail.objects[detail.object_id]).toMatchObject({ extra: detail.extra });
+    expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "extra").nested)).toBe(true);
 
     const stale = { ...summary, type: "stale", metadata: metadata(1) };
     expect(cache.cacheResource("object", stale.object_id, stale, { detail: true })).toBe(false);
     expect(cache.cacheResource("object", summary.object_id, summary)).toBe(false);
     expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(false);
     expect(cache.snapshot()).toBe(afterDetail);
-    expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, payload: detail.payload });
+    expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, extra: detail.extra });
   });
 
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {

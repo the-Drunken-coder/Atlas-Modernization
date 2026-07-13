@@ -7,7 +7,7 @@ import {
   type FeedEvent,
   type JSONValue,
   type ObjectCreateRequest,
-  type ObjectResponse,
+  type ObjectDetailResource,
   type ObjectResource,
   type ObjectUpdateRequest,
   type TaskCreateRequest,
@@ -28,7 +28,7 @@ export class FakeCore {
   entities = new Map<string, EntityResource>();
   tasks = new Map<string, TaskResource>();
   objects = new Map<string, ObjectResource>();
-  objectPayloads = new Map<string, Record<string, unknown>>();
+  objectExtras = new Map<string, Record<string, unknown>>();
   deletions: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
@@ -407,7 +407,7 @@ export class FakeCore {
     return value;
   }
 
-  createObject(request: ObjectCreateRequest): ObjectResponse {
+  createObject(request: ObjectCreateRequest): ObjectDetailResource {
     const version = this.nextVersion();
     const value: ObjectResource = {
       object_id: request.object_id,
@@ -426,7 +426,7 @@ export class FakeCore {
     return this.objectResponse(value.object_id)!;
   }
 
-  updateObject(id: string, patch: ObjectUpdateRequest): ObjectResponse {
+  updateObject(id: string, patch: ObjectUpdateRequest): ObjectDetailResource {
     const current = this.objects.get(id);
     if (!current) {
       throw new Error(`fake core object ${id} missing during update`);
@@ -474,7 +474,7 @@ export class FakeCore {
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "object", id, version };
     this.objects.delete(id);
-    this.objectPayloads.delete(id);
+    this.objectExtras.delete(id);
     this.record(event);
     return event;
   }
@@ -520,37 +520,37 @@ export class FakeCore {
     return value;
   }
 
-  private objectResponse(id: string): ObjectResponse | undefined {
+  private objectResponse(id: string): ObjectDetailResource | undefined {
     const object = this.objects.get(id);
     if (!object) {
       return undefined;
     }
-    const payload = this.objectPayloads.get(id);
-    if (!payload || Object.keys(payload).length === 0) {
+    const extra = this.objectExtras.get(id);
+    if (!extra || Object.keys(extra).length === 0) {
       return object;
     }
-    return { ...object, payload: { ...payload } };
+    return { ...object, extra: { ...extra } };
   }
 
-  private applyObjectExtra(id: string, extra: ObjectCreateRequest["extra"] | ObjectUpdateRequest["extra"]): void {
-    if (extra === undefined) {
+  private applyObjectExtra(id: string, incoming: ObjectCreateRequest["extra"] | ObjectUpdateRequest["extra"]): void {
+    if (incoming === undefined) {
       return;
     }
-    const payload = { ...(this.objectPayloads.get(id) ?? {}) };
-    for (const [key, value] of Object.entries(extra)) {
-      if (!promotedObjectPayloadKeys.has(key)) {
-        payload[key] = value;
+    const extra = { ...(this.objectExtras.get(id) ?? {}) };
+    for (const [key, value] of Object.entries(incoming)) {
+      if (!promotedObjectExtraKeys.has(key)) {
+        extra[key] = value;
       }
     }
-    if (Object.keys(payload).length > 0) {
-      this.objectPayloads.set(id, payload);
+    if (Object.keys(extra).length > 0) {
+      this.objectExtras.set(id, extra);
     } else {
-      this.objectPayloads.delete(id);
+      this.objectExtras.delete(id);
     }
   }
 }
 
-const promotedObjectPayloadKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
+const promotedObjectExtraKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
 
 async function readRecord(init: RequestInit | undefined): Promise<Record<string, unknown> | Response> {
   let value: unknown;

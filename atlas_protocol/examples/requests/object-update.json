@@ -5,5 +5,8 @@
     {
       "entity_id": "asset-001"
     }
-  ]
+  ],
+  "extra": {
+    "reviewed": true
+  }
 }

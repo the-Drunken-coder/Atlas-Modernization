@@ -230,6 +230,7 @@ func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testi
 		"EntityResource",
 		"TaskResource",
 		"ObjectResource",
+		"ObjectDetailResource",
 		"FeedEvent",
 		"FeedHandshakeMessage",
 		"JSONValue",

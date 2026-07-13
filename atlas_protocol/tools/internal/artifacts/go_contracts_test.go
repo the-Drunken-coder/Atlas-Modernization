@@ -15,6 +15,25 @@ func TestValidateGoContractsMatchesCanonicalSchema(t *testing.T) {
 	}
 }
 
+func TestObjectDetailResourceOnlyExtendsObjectResourceWithExtra(t *testing.T) {
+	_, bundle := canonicalGoContractFixture(t)
+	detail := schemaDefinition(t, bundle, "ObjectDetailResource")
+	resource := schemaDefinition(t, bundle, "ObjectResource")
+	detailProperties := cloneJSONValue(schemaProperties(t, bundle, "ObjectDetailResource")).(map[string]any)
+	if _, ok := detailProperties["extra"]; !ok {
+		t.Fatal("ObjectDetailResource is missing extra")
+	}
+	delete(detailProperties, "extra")
+	if !reflect.DeepEqual(detailProperties, schemaProperties(t, bundle, "ObjectResource")) {
+		t.Fatal("ObjectDetailResource metadata fields drifted from ObjectResource")
+	}
+	for _, key := range []string{"additionalProperties", "required", "type"} {
+		if !reflect.DeepEqual(detail[key], resource[key]) {
+			t.Fatalf("ObjectDetailResource %s drifted from ObjectResource", key)
+		}
+	}
+}
+
 func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 	root, canonical := canonicalGoContractFixture(t)
 	tests := []struct {

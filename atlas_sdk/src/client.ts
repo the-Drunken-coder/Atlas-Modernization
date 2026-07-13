@@ -13,7 +13,7 @@ import { ObjectContentCache, ResourceCache } from "./cache.js";
 import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport } from "./http.js";
 import { SyncEngine } from "./sync-engine.js";
-import { changedSinceResponseValidator, isEntityResource, isFullDatasetResponse, isObjectResponse, isTaskResource } from "./validation.js";
+import { changedSinceResponseValidator, isEntityResource, isFullDatasetResponse, isObjectDetailResource, isTaskResource } from "./validation.js";
 import type {
   AtlasSubscription,
   ChangedSinceQueryOptions,
@@ -144,9 +144,9 @@ export class AtlasClient {
 
   readonly objects = {
     get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
-    create: (object: ObjectCreateRequest) => this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectResponse),
+    create: (object: ObjectCreateRequest) => this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectDetailResource),
     update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", id, isObjectResponse, options?.ifMatchVersion),
+      this.engine.writeResource("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", id, isObjectDetailResource, options?.ifMatchVersion),
     delete: (id: string) => this.engine.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
     content: (id: string) => this.objectContent(id),
     watch: (id: string, callback: WatchCallback<ObjectResource>) => this.engine.watch({ filter: "id", resource_type: "object", id }, callback)

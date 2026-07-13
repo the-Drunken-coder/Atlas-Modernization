@@ -6,7 +6,7 @@ import {
   type FeedEvent,
   type JSONValue,
   type ObjectResource,
-  type ObjectResponse,
+  type ObjectDetailResource,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import { createSdkDataSource } from "./data-source.js";
@@ -420,7 +420,7 @@ class TestCore {
   requests: string[] = [];
   readonly sockets = new Set<TestWebSocket>();
   private readonly entities = new Map<string, EntityResource>();
-  private readonly objects = new Map<string, ObjectResponse>();
+  private readonly objects = new Map<string, ObjectDetailResource>();
   private readonly events: FeedEvent[] = [];
   private nextObjectDelay: Promise<void> | undefined;
 
@@ -498,7 +498,7 @@ class TestCore {
     return updated;
   }
 
-  upsertObject(id: string, type: string, payload: Record<string, JSONValue> = {}, live = false): ObjectResponse {
+  upsertObject(id: string, type: string, extra: Record<string, JSONValue> = {}, live = false): ObjectDetailResource {
     const version = ++this.version;
     const resource: ObjectResource = {
       object_id: id,
@@ -510,7 +510,7 @@ class TestCore {
       bucket: null,
       metadata: { ...metadata, version }
     };
-    const response = Object.keys(payload).length > 0 ? { ...resource, payload } : resource;
+    const response = Object.keys(extra).length > 0 ? { ...resource, extra } : resource;
     this.objects.set(id, response);
     const event: FeedEvent = { event: "update", resource_type: "object", id, version, resource };
     this.events.push(event);
@@ -614,8 +614,8 @@ class BlockedWebSocket {
   }
 }
 
-function objectResource(object: ObjectResponse): ObjectResource {
-  const { payload: _payload, ...resource } = object;
+function objectResource(object: ObjectDetailResource): ObjectResource {
+  const { extra: _extra, ...resource } = object;
   return resource;
 }
 

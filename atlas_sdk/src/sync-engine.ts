@@ -1,4 +1,4 @@
-import type { EntityResource, FeedEvent, ObjectResource, ObjectResponse, ResourceType, TaskResource } from "./protocol.js";
+import type { EntityResource, FeedEvent, ObjectDetailResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
 import { ResourceCache, type CacheResourceOptions } from "./cache.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport, ResponseValidator } from "./http.js";
@@ -35,7 +35,7 @@ import {
   entityCheckInResponseValidator,
   isEntityResource,
   isFullDatasetResponse,
-  isObjectResponse,
+  isObjectDetailResource,
   isProtocolRevisionResponse,
   isTaskResource
 } from "./validation.js";
@@ -250,12 +250,12 @@ export class SyncEngine {
     return task;
   }
 
-  async readObject(id: string, options?: ReadOptions): Promise<ObjectResponse> {
+  async readObject(id: string, options?: ReadOptions): Promise<ObjectDetailResource> {
     const cached = this.cache.entry("object", id);
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached?.value && !cached.deleted && cached.detail) {
       return cached.value;
     }
-    const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectResponse);
+    const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectDetailResource);
     assertExpectedResourceID("object", id, object);
     this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false });
     return object;

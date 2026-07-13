@@ -289,8 +289,8 @@ func (o *MediaObject) GetBucket() *string {
 	return nil
 }
 
-// GetPayload returns the remaining fields from the JSON blob (excluding promoted fields).
-func (o *MediaObject) GetPayload() map[string]interface{} {
+// GetExtra returns extra fields from the JSON blob (excluding promoted fields).
+func (o *MediaObject) GetExtra() map[string]interface{} {
 	return jsonFieldsExcept(o.decodedJSON(),
 		"path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by",
 		"object_id", "created_at", "updated_at", "version",
