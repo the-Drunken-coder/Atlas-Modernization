@@ -45,11 +45,17 @@ See `docker/.env.example` for a copy-paste template. For anonymous download on t
 ### Docker
 
 ```bash
-cd Atlas_Core/scripts
-python3 atlas.py
+python3 Atlas_Core/scripts/atlas.py --dev
 ```
 
-or:
+The development launcher enables API-key authentication, generates or reuses a
+strong local machine key and admin password, and persists both with owner-only
+permissions in `Atlas_Core/docker/.env`. Local server-side tools such as Atlas
+Simulations use that file as the single source of local credentials. The
+launcher never prints either secret. Browser sessions continue to use the
+`admin` account; its password is the `ATLAS_ADMIN_PASSWORD` stored in that file.
+
+For manual Compose configuration:
 
 ```bash
 cd Atlas_Core/docker
@@ -57,9 +63,10 @@ docker compose up -d
 ```
 
 The Compose stack builds the development image and bind-mounts
-`atlas_core.settings.json.example`, which intentionally keeps API auth disabled
-for loopback-only local development. The production Docker target does not ship
-that settings file and refuses to start unless `ENABLE_API_AUTH=true`,
+`atlas_core.settings.json.example`. Raw Compose uses the values in
+`Atlas_Core/docker/.env`; copy `.env.example` and set `ENABLE_API_AUTH=true`
+plus a strong `API_AUTH_KEY` when machine clients need access. The production
+Docker target does not ship that settings file and refuses to start unless `ENABLE_API_AUTH=true`,
 `API_AUTH_KEY` is set to a strong, non-placeholder bootstrap secret, and
 `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` replaces the development
 admin password, and `DATABASE_RECREATE_ON_STARTUP` is not enabled. Browser admins
@@ -136,7 +143,7 @@ Key environment variables:
 - `CORS_ORIGINS` (empty string denies all origins; production UI default is `https://atlasinterface.com`)
 - `CORS_ORIGIN_PATTERNS` (constrained preview origins such as Cloudflare Pages branch/PR deployments, for example `https://*.atlas-je0.pages.dev`)
 - `TRUSTED_PROXY_CIDRS` (comma-separated exact reverse-proxy `/32` or `/128` peers; default empty, so forwarded client-IP headers are ignored)
-- `ENABLE_API_AUTH` (default `false` for local/dev runs; required as `true` in the production Docker image)
+- `ENABLE_API_AUTH` (Core default `false`; `atlas.py --dev` sets `true`; required as `true` in the production Docker image)
 - `API_AUTH_KEY` (required bootstrap key when auth enabled; required, strong, and non-placeholder in the production Docker image)
 - `MAX_UPLOAD_SIZE_MB` (default `100`, must be `1..10240`)
 - `MAX_VIEW_SIZE_MB` (default `10`, must be `1..100`)

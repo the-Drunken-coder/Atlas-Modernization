@@ -16,7 +16,7 @@ Atlas Core preserves resource tables, `admin_records`, schema migration history,
 
 ### Authentication
 
-Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session; machine clients should set `ENABLE_API_AUTH=true` and send either the required bootstrap `API_AUTH_KEY` or an active managed API key with one of:
+Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session. The default `atlas.py --dev` launcher enables API-key auth and stores its generated machine key in the owner-only `Atlas_Core/docker/.env`; local server-side clients can use that bootstrap key. Manually configured machine clients should set `ENABLE_API_AUTH=true` and send either the bootstrap `API_AUTH_KEY` or an active managed API key with one of:
 
 ```text
 X-API-Key: <api-key>
@@ -554,13 +554,14 @@ Response includes changed resources, tombstones, per-stream `has_more_*` boolean
 
 Atlas Core owns browser authentication. Admin routes live under `/admin/*` and are separate from the Atlas resource plane (`entities`, `tasks`, `objects`, `queries`, sync, and feed). Admin records are stored in `admin_records`; they are not returned by full dataset or changed-since queries and do not produce resource feed events.
 
-Core seeds a development admin account on startup:
+Core seeds a development admin account on startup. Raw startup without an
+override uses:
 
 - username: `admin`
 - password: `password`
 - role: `admin`
 
-This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
+This credential is development-only scratch state. The default `atlas.py --dev` launcher instead generates `ATLAS_ADMIN_PASSWORD` in the owner-only `Atlas_Core/docker/.env`. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
@@ -601,11 +602,14 @@ Smoke browser auth and command task creation against Core:
 ```bash
 CORE_URL=http://localhost:8000
 COOKIE_JAR=/tmp/atlas-core-admin.cookies
+set -a
+. Atlas_Core/docker/.env
+set +a
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H 'Origin: http://localhost:5173' \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"password"}'
+  -d "{\"username\":\"admin\",\"password\":\"$ATLAS_ADMIN_PASSWORD\"}"
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
 
@@ -649,11 +653,14 @@ Create an entity:
 CORE_URL=http://localhost:8000
 COOKIE_JAR=/tmp/atlas-core-admin.cookies
 UI_ORIGIN=http://localhost:5173
+set -a
+. Atlas_Core/docker/.env
+set +a
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"password"}'
+  -d "{\"username\":\"admin\",\"password\":\"$ATLAS_ADMIN_PASSWORD\"}"
 
 curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
   -H "Origin: $UI_ORIGIN" \

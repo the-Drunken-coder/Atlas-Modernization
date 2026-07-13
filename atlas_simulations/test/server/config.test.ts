@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +14,31 @@ describe("loadConfig", () => {
     expect(config.defaultAtlasTargetId).toBe("local");
     expect(config.atlasTargets).toEqual([{ id: "local", label: "Local Core", baseUrl: "http://localhost:8000" }]);
     expect(config.cleanupLedgerDirectory).toBe(path.join(packageRoot, ".atlas-simulations", "runs"));
+  });
+
+  it("uses the launcher-generated Core key for the loopback target only", () => {
+    const packageRoot = tempWorkspacePackageRoot("ENABLE_API_AUTH=true\nAPI_AUTH_KEY=launcher-local-key\n");
+
+    const config = loadConfig({
+      env: {
+        ATLAS_SIM_ENABLE_DEPLOYED: "true",
+        ATLAS_DEPLOYED_BASE_URL: "https://atlas.example.test"
+      },
+      packageRoot
+    });
+
+    expect(config.atlasApiKey).toBe("launcher-local-key");
+    expect(config.atlasTargets).toEqual([
+      { id: "local", label: "Local Core", baseUrl: "http://localhost:8000", apiKey: "launcher-local-key" },
+      { id: "deployed", label: "Deployed Core", baseUrl: "https://atlas.example.test" }
+    ]);
+  });
+
+  it("prefers an explicit simulation key and ignores disabled Core auth", () => {
+    const packageRoot = tempWorkspacePackageRoot("ENABLE_API_AUTH=false\nAPI_AUTH_KEY=stale-core-key\n");
+
+    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBeUndefined();
+    expect(loadConfig({ env: { ATLAS_LOCAL_API_KEY: "explicit-key" }, packageRoot }).atlasApiKey).toBe("explicit-key");
   });
 
   it("uses the default port when ATLAS_SIM_PORT is blank", () => {
@@ -212,4 +237,14 @@ describe("loadConfig", () => {
 
 function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-config-"));
+}
+
+function tempWorkspacePackageRoot(coreEnv: string): string {
+  const workspaceRoot = mkdtempSync(path.join(tmpdir(), "atlas-simulations-workspace-"));
+  const packageRoot = path.join(workspaceRoot, "atlas_simulations");
+  const coreDockerRoot = path.join(workspaceRoot, "Atlas_Core", "docker");
+  mkdirSync(packageRoot);
+  mkdirSync(coreDockerRoot, { recursive: true });
+  writeFileSync(path.join(coreDockerRoot, ".env"), coreEnv);
+  return packageRoot;
 }
