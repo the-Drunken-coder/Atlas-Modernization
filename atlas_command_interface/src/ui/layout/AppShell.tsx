@@ -93,7 +93,9 @@ export function AppShell({ collapsed, rail, panel, map }: AppShellProps) {
           />
         )}
       </div>
-      <div className="map-region">{map}</div>
+      <main className="map-region" aria-label="Map workspace">
+        {map}
+      </main>
     </div>
   );
 }
