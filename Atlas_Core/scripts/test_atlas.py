@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -14,6 +17,7 @@ from atlas import (
     database_recreate_on_startup_enabled,
     print_storage_notice,
     public_base_url_from_hostname,
+    wait_for_api,
     start_containers,
     verify_tunnel_connection,
 )
@@ -34,6 +38,73 @@ class FakeHTTPResponse:
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
+    def test_wait_for_api_diagnoses_stale_development_volume_password(self) -> None:
+        fixture_credential = "do-not-print-this"
+        fixture_stderr_credential = "stderr-do-not-print-this"
+        leaked_secret = f"postgres://atlas:{fixture_credential}@postgres/atlas_core"
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="exited\n", stderr=""),
+            CompletedProcess(
+                [],
+                0,
+                stdout=(
+                    'password authentication failed for user "atlas"\n'
+                    f"DATABASE_URL={leaked_secret}\n"
+                ),
+                stderr=f"diagnostic context: {fixture_stderr_credential}\n",
+            ),
+        ]
+        output = StringIO()
+
+        with patch("atlas.subprocess.run", side_effect=responses), redirect_stdout(output):
+            with self.assertRaisesRegex(RuntimeError, "does not match the existing development volume") as error:
+                wait_for_api(max_retries=3, delay=0)
+
+        message = str(error.exception)
+        self.assertIn("--dev --reset-volumes", message)
+        self.assertIn("deletes all local development volumes", message)
+        self.assertNotIn(leaked_secret, message)
+        self.assertNotIn(fixture_credential, message)
+        self.assertNotIn(fixture_stderr_credential, message)
+        self.assertNotIn(leaked_secret, output.getvalue())
+        self.assertNotIn(fixture_credential, output.getvalue())
+        self.assertNotIn(fixture_stderr_credential, output.getvalue())
+
+    def test_wait_for_api_reports_generic_exited_core_without_stale_password_advice(self) -> None:
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="exited\n", stderr=""),
+            CompletedProcess([], 0, stdout="migration failed", stderr=""),
+        ]
+
+        with patch("atlas.subprocess.run", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "exited during startup") as error:
+                wait_for_api(max_retries=3, delay=0)
+
+        self.assertNotIn("reset-volumes", str(error.exception))
+
+    def test_wait_for_api_keeps_retrying_while_core_is_running(self) -> None:
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="running\n", stderr=""),
+            CompletedProcess([], 0),
+        ]
+
+        with patch("atlas.subprocess.run", side_effect=responses) as run, patch("atlas.time.sleep") as sleep:
+            self.assertTrue(wait_for_api(max_retries=2, delay=0.25))
+
+        self.assertEqual(run.call_count, 3)
+        sleep.assert_called_once_with(0.25)
+
+    def test_wait_for_api_preserves_production_readiness_retries(self) -> None:
+        responses = [CompletedProcess([], 1), CompletedProcess([], 0)]
+
+        with patch("atlas.subprocess.run", side_effect=responses) as run, patch("atlas.time.sleep"):
+            self.assertTrue(wait_for_api(max_retries=2, delay=0, production=True))
+
+        self.assertEqual(run.call_count, 2)
+
     def test_storage_mode_defaults_match_compose_stacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertTrue(database_recreate_on_startup_enabled(production=False))
