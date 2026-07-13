@@ -1,15 +1,16 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, request as httpRequest, type ClientRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { type ClientRequest, createServer, type Server as HttpServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it } from "vitest";
-import type { RunEvent } from "../../src/shared/types.js";
 import type { AtlasClientFactory } from "../../src/server/atlas.js";
 import { CleanupLedger } from "../../src/server/cleanup-ledger.js";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
 import type { Scenario } from "../../src/server/scenario.js";
+import type { RunEvent } from "../../src/shared/types.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 let server: SimulationServer | undefined;
@@ -134,7 +135,9 @@ describe("simulation HTTP server", () => {
       const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
       expect(current.run.status).toBe("completed");
     });
-    const current = await fetchJSON<{ run: { cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(`${baseUrl}/api/runs/${started.run.id}`);
+    const current = await fetchJSON<{ run: { cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
+      `${baseUrl}/api/runs/${started.run.id}`
+    );
     const created = current.run.createdResources[0];
     expect(created).toMatchObject({ type: "entity" });
 
@@ -242,9 +245,7 @@ describe("simulation HTTP server", () => {
 
       const mismatchedConfig = {
         ...config,
-        atlasTargets: config.atlasTargets.map((target) =>
-          target.id === "deployed" ? { ...target, baseUrl: "https://different-atlas.example.test" } : target
-        )
+        atlasTargets: config.atlasTargets.map((target) => (target.id === "deployed" ? { ...target, baseUrl: "https://different-atlas.example.test" } : target))
       };
       server = createSimulationServer({ config: mismatchedConfig });
       baseUrl = await server.listen();
@@ -311,10 +312,12 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders({ "X-Atlas-Target-Api-Key": "pasted-key" })
     });
 
-    expect(coreResourceRequests.filter((request) => request.method === "POST" && request.path === "/entities").map((request) => request.apiKey)).toEqual(["pasted-key"]);
-    expect(coreResourceRequests.filter((request) => request.method === "DELETE" && request.path.startsWith("/entities/")).map((request) => request.apiKey)).toEqual([
+    expect(coreResourceRequests.filter((request) => request.method === "POST" && request.path === "/entities").map((request) => request.apiKey)).toEqual([
       "pasted-key"
     ]);
+    expect(
+      coreResourceRequests.filter((request) => request.method === "DELETE" && request.path.startsWith("/entities/")).map((request) => request.apiKey)
+    ).toEqual(["pasted-key"]);
     expect(new Set(coreResourceRequests.map((request) => request.apiKey))).toEqual(new Set(["pasted-key"]));
   });
 
@@ -481,7 +484,10 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    const cleanup = fetchJSON<{ run: { status: string; cleaned: boolean } }>(`${baseUrl}/api/runs/${started.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    const cleanup = fetchJSON<{ run: { status: string; cleaned: boolean } }>(`${baseUrl}/api/runs/${started.id}/cleanup`, {
+      method: "POST",
+      headers: mutationHeaders()
+    });
     release();
     await expect(cleanup).resolves.toMatchObject({ run: { status: "cancelled", cleaned: true } });
   });
@@ -627,6 +633,10 @@ async function startCoreResourceServer(): Promise<string> {
     });
     const entityMatch = /^\/entities\/([^/]+)$/.exec(url.pathname);
     const checkInMatch = /^\/entities\/([^/]+)\/checkin$/.exec(url.pathname);
+    if (request.method === "GET" && url.pathname === "/protocol/revision") {
+      sendCoreJSON(response, 200, { protocol_revision: ATLAS_PROTOCOL_REVISION });
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/entities") {
       const body = await readIncomingJSON<Record<string, unknown>>(request);
       const entity = {
@@ -665,7 +675,7 @@ async function startCoreResourceServer(): Promise<string> {
                   last_update: new Date().toISOString()
                 }
               }
-            : {}),
+            : {})
         },
         metadata: metadata(++version, (current.metadata as { created_at?: string } | undefined)?.created_at)
       };

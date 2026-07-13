@@ -184,6 +184,50 @@ jobs:
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
 
+  atlas-asset-runtime:
+    name: atlas-asset-runtime
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript workspace dependencies
+        run: npm ci
+
+      - name: Build Atlas SDK dependency
+        run: npm run build:sdk
+
+      - name: Audit asset runtime dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint asset runtime
+        run: npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
+
+      - name: Check formatting of changed asset runtime files
+        run: npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime -- --since="$BIOME_SINCE"
+
+      - name: Type-check asset runtime
+        run: npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
+
+      - name: Test asset runtime
+        run: npm test --workspace @the-drunken-coder/atlas-asset-runtime
+
+      - name: Build asset runtime
+        run: npm run build --workspace @the-drunken-coder/atlas-asset-runtime
+
+      - name: Smoke test packed asset runtime consumer
+        run: npm run test:package --workspace @the-drunken-coder/atlas-asset-runtime
+
   javascript-clean-workspace:
     name: javascript-clean-workspace
     runs-on: ubuntu-latest
@@ -264,8 +308,8 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Build Atlas SDK dependency
-        run: npm run build:sdk
+      - name: Build Atlas asset runtime dependency
+        run: npm run build:asset-runtime
 
       - name: Audit simulations dependencies
         run: npm audit --audit-level=high
