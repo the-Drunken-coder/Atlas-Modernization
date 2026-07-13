@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const sdkRoot = fileURLToPath(new URL("../../atlas_sdk/", import.meta.url));
-const temporary = mkdtempSync(join(tmpdir(), "atlas-asset-runtime-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const require = createRequire(import.meta.url);
 const tsc = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
@@ -18,6 +17,7 @@ function run(command, args, cwd = root) {
   return result.stdout.trim();
 }
 
+const temporary = mkdtempSync(join(tmpdir(), "atlas-asset-runtime-"));
 try {
   const sdkPack = JSON.parse(run(npm, ["pack", sdkRoot, "--pack-destination", temporary, "--json", "--silent"]));
   const sdkTarball = join(temporary, sdkPack[0].filename);
