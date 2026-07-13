@@ -7,7 +7,8 @@ configured MinIO bucket are durable. Startup applies ordered PostgreSQL
 migrations, rejects migration/catalog drift, and preserves rows and blobs.
 Development Compose explicitly enables scratch mode, which migrates/verifies
 the schema, clears resource rows and the bucket, and preserves local
-`admin_records` plus migration history.
+`admin_records` plus migration history. Core republishes its embedded command
+catalog before serving HTTP, including after an API-container-only restart.
 
 ## Stack
 

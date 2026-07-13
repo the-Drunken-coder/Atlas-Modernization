@@ -52,21 +52,8 @@ jobs:
       - name: Start Atlas Core stack
         run: docker compose -f docker/docker-compose.yml up -d --build
 
-      - name: Wait for readiness
-        run: |
-          for i in $(seq 1 60); do
-            if curl -fsS "$ATLAS_CORE_API_URL/readiness" >/dev/null; then
-              exit 0
-            fi
-            echo "Waiting for Atlas Core stack (${i}/60)..."
-            sleep 2
-          done
-          docker compose -f docker/docker-compose.yml ps
-          docker compose -f docker/docker-compose.yml logs --no-color
-          exit 1
-
-      - name: Seed command catalog
-        run: python scripts/seed_command_catalog.py --api-url "$ATLAS_CORE_API_URL"
+      - name: Verify command catalog on fresh startup and API-only restart
+        run: ./scripts/test_development_restart.sh
 
       - name: Run shell API integration tests
         run: ./scripts/run_integration_tests.sh

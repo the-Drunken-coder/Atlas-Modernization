@@ -12,7 +12,7 @@ From the repository root:
 python3 Atlas_Core/scripts/atlas.py --dev
 ```
 
-Development Compose explicitly sets `DATABASE_RECREATE_ON_STARTUP=true`: each API startup migrates/verifies the schema, clears resource rows and the configured bucket, resets change versions, and preserves local `admin_records` plus migration history.
+Development Compose explicitly sets `DATABASE_RECREATE_ON_STARTUP=true`: each API startup migrates/verifies the schema, clears disposable resource rows and the configured bucket, resets change versions, preserves local `admin_records` plus migration history, and republishes Core's embedded `command_catalog` before serving HTTP.
 
 ## Production configuration
 

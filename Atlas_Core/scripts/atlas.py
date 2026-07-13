@@ -23,10 +23,8 @@ import time
 
 try:
     from .compose_env import load_compose_dotenv, persist_compose_env_values
-    from .seed_command_catalog import publish_command_catalog
 except ImportError:
     from compose_env import load_compose_dotenv, persist_compose_env_values
-    from seed_command_catalog import publish_command_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -625,10 +623,6 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
                 print(f"  Status:     [WARN] {tunnel_status}")
 
         print("=" * 60)
-        if not db_only and not publish_command_catalog():
-            print("[ERROR] Failed to publish command catalog")
-            sys.exit(1)
-
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Failed to start containers: {e}")
         sys.exit(1)

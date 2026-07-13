@@ -41,9 +41,16 @@ var (
 	defaultOnce    sync.Once
 )
 
+const ObjectID = "command_catalog"
+
+// JSON returns the command catalog embedded in the Core binary.
+func JSON() ([]byte, error) {
+	return catalogFS.ReadFile("command_catalog.json")
+}
+
 func Default() (Catalog, error) {
 	defaultOnce.Do(func() {
-		data, err := catalogFS.ReadFile("command_catalog.json")
+		data, err := JSON()
 		if err != nil {
 			defaultErr = err
 			return
