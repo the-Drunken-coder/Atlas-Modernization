@@ -1,11 +1,13 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { representativePoint, toUiGeometry, type Position, type UiGeometry } from "./geometry.js";
+import { type Position, representativePoint, toUiGeometry, type UiGeometry } from "./geometry.js";
 
 export type EntityKind = "asset" | "track" | "geofeature";
 export type LinkState = "connected" | "disconnected" | "degraded" | "unknown";
 export type Classification = "friendly" | "hostile" | "neutral" | "unknown" | "civilian";
 
 export type HeartbeatLevel = "fresh" | "stale" | "offline";
+export type ConnectionFreshness = HeartbeatLevel | "missing";
+export type EntityConnectionStatus = { reported: LinkState; freshness: ConnectionFreshness };
 
 // Heartbeat freshness thresholds (seconds). Beyond OFFLINE the asset is treated
 // as offline; between the two it is stale.
@@ -78,6 +80,10 @@ export function entityLastSeen(entity: EntityResource): string | undefined {
   return entity.components.heartbeat?.last_seen ?? entity.components.telemetry?.last_update ?? entity.components.status?.last_update;
 }
 
+export function entityHeartbeatLastSeen(entity: EntityResource): string | undefined {
+  return entity.components.heartbeat?.last_seen;
+}
+
 export function entityCurrentTaskId(entity: EntityResource): string | undefined {
   return entity.components.task_queue?.current_task_id ?? undefined;
 }
@@ -95,6 +101,11 @@ export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.
   if (seconds >= HEARTBEAT_OFFLINE_SECONDS) return "offline";
   if (seconds >= HEARTBEAT_STALE_SECONDS) return "stale";
   return "fresh";
+}
+
+export function entityConnectionStatus(entity: EntityResource, now: number = Date.now()): EntityConnectionStatus | undefined {
+  const reported = entityLinkState(entity);
+  return reported ? { reported, freshness: heartbeatLevel(entityHeartbeatLastSeen(entity), now) ?? "missing" } : undefined;
 }
 
 function numberOrUndefined(value: number | undefined): number | undefined {

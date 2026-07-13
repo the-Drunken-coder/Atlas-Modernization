@@ -2,14 +2,15 @@ import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import {
   entityBattery,
   entityClassification,
+  entityConnectionStatus,
   entityDisplayName,
   entityGeometry,
   entityKind,
   entityLastSeen,
-  entityLinkState,
   heartbeatLevel
 } from "../atlas/entities.js";
 import { formatPercent, formatRelativeTime } from "../atlas/format.js";
+import { connectionStatusColor, connectionStatusLabel } from "../ui/primitives/StatusPill.js";
 
 type EntityListProps = {
   entities: EntityResource[];
@@ -55,8 +56,8 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
 export function entityDotColor(entity: EntityResource): string {
   const kind = entityKind(entity);
   if (kind === "asset") {
-    const link = entityLinkState(entity);
-    if (link) return `var(--link-${link})`;
+    const connection = entityConnectionStatus(entity);
+    if (connection) return connectionStatusColor(connection);
     const level = heartbeatLevel(entityLastSeen(entity));
     return level ? `var(--heartbeat-${level})` : "var(--map-asset)";
   }
@@ -70,9 +71,13 @@ export function entityDotColor(entity: EntityResource): string {
 function entityMeta(entity: EntityResource): string {
   const kind = entityKind(entity);
   if (kind === "asset") {
-    const link = entityLinkState(entity);
+    const connection = entityConnectionStatus(entity);
     const battery = entityBattery(entity);
-    const parts = [link ? link : undefined, battery !== undefined ? formatPercent(battery) : undefined, formatRelativeTime(entityLastSeen(entity))];
+    const parts = [
+      connection ? connectionStatusLabel(connection) : undefined,
+      battery !== undefined ? formatPercent(battery) : undefined,
+      formatRelativeTime(entityLastSeen(entity))
+    ];
     return parts.filter(Boolean).join(" · ");
   }
   if (kind === "track") {
