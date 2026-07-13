@@ -147,7 +147,7 @@ func TestReadSnapshotVersionIgnoresUncommittedSequenceAllocations(t *testing.T) 
 		t.Fatalf("snapshot version = %d, want at least committed entity version %d", snapshotVersion, committedVersion)
 	}
 
-	writer, err := beginChangeTx(ctx, pool, "snapshot version regression")
+	writer, err := beginChangeTx(ctx, pool, "snapshot version regression", nil)
 	if err != nil {
 		t.Fatalf("begin writer transaction: %v", err)
 	}

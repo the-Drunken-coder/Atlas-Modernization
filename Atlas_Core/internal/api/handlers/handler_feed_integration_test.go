@@ -30,7 +30,7 @@ import (
 
 const feedIntegrationAPIKey = "feed-integration-key"
 
-func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
+func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
 	pool := openFeedIntegrationPool(t)
 	ctx := context.Background()
 	currentVersion, err := actions.CurrentChangeVersion(ctx, pool)
@@ -38,7 +38,9 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 		t.Fatalf("read current change version: %v", err)
 	}
 
-	hub := feed.NewHub(currentVersion, feed.Options{MissingVersionTimeout: 20 * time.Millisecond})
+	// A one-hour fallback makes the test depend on explicit rejected-write gap
+	// reporting rather than eventually passing through the timeout path.
+	hub := feed.NewHub(currentVersion, feed.Options{MissingVersionTimeout: time.Hour})
 	defer hub.Close()
 	handler := NewHandlerWithFeed(
 		&atlasdb.DB{Pool: pool},
@@ -52,6 +54,7 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	router := chi.NewRouter()
 	router.Get("/feed", handler.Feed)
 	router.Post("/entities", handler.CreateEntity)
+	router.Post("/tasks", handler.CreateTask)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
@@ -64,20 +67,16 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	prefix := fmt.Sprintf("feed-e2e-%d", time.Now().UTC().UnixNano())
 	firstID := prefix + "-first"
 	secondID := prefix + "-second"
-	firstSubscription := feed.Subscription{Filter: feed.FilterID, ResourceType: protocol.ResourceTypeEntity, ID: firstID}
-	secondSubscription := feed.Subscription{Filter: feed.FilterID, ResourceType: protocol.ResourceTypeEntity, ID: secondID}
-	if err := conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"action":"subscribe","filter":"id","resource_type":"entity","id":%q}`, firstID))); err != nil {
-		t.Fatalf("subscribe first entity feed: %v", err)
+	thirdID := prefix + "-third"
+	missingEntityID := prefix + "-missing"
+	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe to all feed events: %v", err)
 	}
-	if err := conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf(`{"action":"subscribe","filter":"id","resource_type":"entity","id":%q}`, secondID))); err != nil {
-		t.Fatalf("subscribe second entity feed: %v", err)
-	}
-	waitForFeedSubscription(t, hub, firstSubscription)
-	waitForFeedSubscription(t, hub, secondSubscription)
+	waitForFeedSubscription(t, hub, feed.Subscription{Filter: feed.FilterAll})
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID}); err != nil {
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, thirdID}); err != nil {
 			t.Errorf("cleanup feed integration entities: %v", err)
 		}
 	})
@@ -87,13 +86,33 @@ func TestFeedReceivesHTTPWritesAfterBurnedVersion(t *testing.T) {
 	assertEntityCreateFeedEventIntegration(t, firstEvent, firstID, first)
 
 	_ = postEntityIntegration(t, server.URL, firstID, http.StatusConflict)
+	duplicateVersion, err := actions.CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("read version after duplicate create: %v", err)
+	}
+	if duplicateVersion != first.Metadata.Version+1 {
+		t.Fatalf("duplicate create sequence version = %d, want %d", duplicateVersion, first.Metadata.Version+1)
+	}
+
+	postTaskIntegration(t, server.URL, prefix+"-missing-entity-task", missingEntityID, http.StatusNotFound)
+	missingTaskVersion, err := actions.CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("read version after missing-entity task: %v", err)
+	}
+	if missingTaskVersion != duplicateVersion+1 {
+		t.Fatalf("missing-entity task sequence version = %d, want %d", missingTaskVersion, duplicateVersion+1)
+	}
+
 	second := postEntityIntegration(t, server.URL, secondID, http.StatusCreated)
-	if second.Metadata.Version <= first.Metadata.Version+1 {
-		t.Fatalf("duplicate create did not burn a version: first=%d second=%d", first.Metadata.Version, second.Metadata.Version)
+	third := postEntityIntegration(t, server.URL, thirdID, http.StatusCreated)
+	if second.Metadata.Version != missingTaskVersion+1 || third.Metadata.Version != second.Metadata.Version+1 {
+		t.Fatalf("successful versions after rejected writes = %d, %d; want %d, %d", second.Metadata.Version, third.Metadata.Version, missingTaskVersion+1, missingTaskVersion+2)
 	}
 
 	secondEvent := readFeedEventIntegration(t, conn)
 	assertEntityCreateFeedEventIntegration(t, secondEvent, secondID, second)
+	thirdEvent := readFeedEventIntegration(t, conn)
+	assertEntityCreateFeedEventIntegration(t, thirdEvent, thirdID, third)
 }
 
 func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
@@ -314,6 +333,32 @@ func postEntityIntegration(t *testing.T, serverURL, entityID string, wantStatus 
 		t.Fatalf("decode entity response: %v", err)
 	}
 	return entity
+}
+
+func postTaskIntegration(t *testing.T, serverURL, taskID, entityID string, wantStatus int) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"task_id":    taskID,
+		"entity_id":  entityID,
+		"components": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal task payload: %v", err)
+	}
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Post(serverURL+"/tasks", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post task %s: %v", taskID, err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, response.Body)
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close task response body: %v", err)
+		}
+	}()
+	if response.StatusCode != wantStatus {
+		data, _ := io.ReadAll(response.Body)
+		t.Fatalf("POST /tasks %s status = %d, want %d, body=%s", taskID, response.StatusCode, wantStatus, data)
+	}
 }
 
 func dialFeedIntegration(t *testing.T, serverURL string) *websocket.Conn {

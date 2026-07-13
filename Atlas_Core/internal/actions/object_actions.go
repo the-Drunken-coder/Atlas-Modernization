@@ -73,7 +73,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, err
 	}
 
-	tx, err := beginChangeTx(ctx, a.pool, "object create")
+	tx, err := beginChangeTx(ctx, a.pool, "object create", a.changeSink)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	// Begin transaction for atomic read-modify-write.
-	tx, err := beginChangeTx(ctx, a.pool, "object update")
+	tx, err := beginChangeTx(ctx, a.pool, "object update", a.changeSink)
 	if err != nil {
 		return nil, err
 	}
