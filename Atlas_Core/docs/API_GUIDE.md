@@ -600,7 +600,7 @@ Smoke browser auth and command task creation against Core:
 
 ```bash
 CORE_URL=http://localhost:8000
-COOKIE_JAR=/tmp/atlas-core-admin.cookies
+COOKIE_JAR=$(umask 077 && mktemp "${TMPDIR:-/tmp}/atlas-core-admin.cookies.XXXXXX")
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H 'Origin: http://localhost:5173' \
@@ -641,14 +641,22 @@ Response:
 }
 ```
 
+Log out and remove the cookie jar:
+
+```bash
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
+  -H 'Origin: http://localhost:5173'
+rm -f "$COOKIE_JAR"
+```
+
 ## Minimal Curl Flow
 
 Create an entity:
 
 ```bash
 CORE_URL=http://localhost:8000
-COOKIE_JAR=/tmp/atlas-core-admin.cookies
 UI_ORIGIN=http://localhost:5173
+COOKIE_JAR=$(umask 077 && mktemp "${TMPDIR:-/tmp}/atlas-core-admin.cookies.XXXXXX")
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H "Origin: $UI_ORIGIN" \
@@ -692,4 +700,12 @@ Poll changes since version zero:
 
 ```bash
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/queries/changed-since?since_version=0"
+```
+
+Log out and remove the cookie jar:
+
+```bash
+curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
+  -H "Origin: $UI_ORIGIN"
+rm -f "$COOKIE_JAR"
 ```
