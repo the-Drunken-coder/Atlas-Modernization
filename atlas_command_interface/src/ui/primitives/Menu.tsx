@@ -21,15 +21,40 @@ type ContextMenuProps = {
 /** A docked, position-fixed context menu. Closes on outside click or Escape. */
 export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const [position, setPosition] = useState({ x, y });
+  const firstEnabledIndex = items.findIndex((item) => !item.disabled);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (!menuRef.current?.contains(event.target as Node)) return;
+      const actions = Array.from(menuRef.current.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)'));
+      if (actions.length === 0) return;
+      const current = actions.indexOf(document.activeElement as HTMLButtonElement);
+      let next: HTMLButtonElement | undefined;
+      if (event.key === "ArrowDown") next = actions[(current + 1) % actions.length];
+      else if (event.key === "ArrowUp") next = actions[(current - 1 + actions.length) % actions.length];
+      else if (event.key === "Home") next = actions[0];
+      else if (event.key === "End") next = actions[actions.length - 1];
+      if (!next) return;
+      event.preventDefault();
+      next.focus();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(
+    () => () => {
+      if (document.activeElement === document.body && returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+    },
+    []
+  );
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -50,14 +75,19 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
       <div style={{ position: "fixed", inset: 0, zIndex: 55 }} onClick={onClose} onContextMenu={(event) => event.preventDefault()} />
       <div ref={menuRef} className="context-menu" style={{ left: position.x, top: position.y }} role="menu">
         {header ? <div className="context-menu__header">{header}</div> : null}
-        {items.length === 0 ? <div className="menu-item" aria-disabled>{emptyLabel ?? "No actions"}</div> : null}
-        {items.map((item) => (
+        {items.length === 0 ? (
+          <div className="menu-item" aria-disabled>
+            {emptyLabel ?? "No actions"}
+          </div>
+        ) : null}
+        {items.map((item, index) => (
           <button
             key={item.key}
             type="button"
             role="menuitem"
             className="menu-item"
             disabled={item.disabled}
+            autoFocus={index === firstEnabledIndex}
             title={item.disabled ? item.disabledReason : undefined}
             onClick={() => {
               if (item.disabled) return;

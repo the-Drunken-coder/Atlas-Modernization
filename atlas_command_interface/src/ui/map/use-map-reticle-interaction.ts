@@ -55,9 +55,12 @@ type UseMapReticleInteractionOptions = {
   sources: MapSources;
   selectedEntityId?: string;
   focusTarget?: MapReticleTarget | null;
+  positionPicking?: boolean;
   notifyUserGesture: () => void;
   onSelectEntity: (id: string) => void;
   onBackgroundClick?: () => void;
+  onPickPosition?: (info: { lng: number; lat: number; x: number; y: number }) => void;
+  onCancelPositionPicking?: () => void;
 };
 
 const initialState: InteractionState = {
@@ -347,9 +350,14 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
         event.stopPropagation();
         return;
       }
-      const { mapRef, onSelectEntity, onBackgroundClick, selectedEntityId } = optionsRef.current;
+      const { mapRef, onSelectEntity, onBackgroundClick, onPickPosition, positionPicking, selectedEntityId } = optionsRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
       const point = cursorPointsFromEvent(event, rect, cursorHandoffRef.current).visualPoint;
+      if (positionPicking && mapRef.current && onPickPosition) {
+        const coordinates = mapRef.current.unproject([point.x, point.y]);
+        onPickPosition({ lng: coordinates.lng, lat: coordinates.lat, x: event.clientX, y: event.clientY });
+        return;
+      }
       const clickTargets = hoverSelectionTargets(event, rect, point, mapRef.current, markerBoxCacheRef.current, event.detail === 0);
       if (clickTargets.length > 0) {
         // Re-clicking the already-selected entity cycles through overlapping targets.
@@ -365,7 +373,12 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   const navigateWithArrow = useCallback(
     (event: globalThis.KeyboardEvent) => {
       const direction = directionFromKey(event.key);
-      if (!direction || isEditableKeyboardTarget(event.target)) return;
+      if (!direction || isMapKeyboardShortcutExcludedTarget(event.target)) return;
+      if (optionsRef.current.positionPicking) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       if (stateRef.current.zoomOverlay) return;
@@ -380,6 +393,27 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     },
     [setReticle]
   );
+
+  const choosePositionWithKeyboard = useCallback((event: globalThis.KeyboardEvent) => {
+    const { mapCanvasRef, mapRef, onCancelPositionPicking, onPickPosition, positionPicking } = optionsRef.current;
+    if (!positionPicking || isMapKeyboardShortcutExcludedTarget(event.target)) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onCancelPositionPicking?.();
+      return;
+    }
+    if (event.key !== "Enter") return;
+    const canvas = mapCanvasRef.current;
+    const map = mapRef.current;
+    if (!canvas || !map || !onPickPosition) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const rect = canvas.getBoundingClientRect();
+    const point = { x: rect.width / 2, y: rect.height / 2 };
+    const coordinates = map.unproject([point.x, point.y]);
+    onPickPosition({ lng: coordinates.lng, lat: coordinates.lat, x: rect.left + point.x, y: rect.top + point.y });
+  }, []);
 
   const completeBoxZoom = useCallback(
     (map: MlMap, start: PointLike, end: PointLike) => {
@@ -411,6 +445,11 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     window.addEventListener("keydown", navigateWithArrow, true);
     return () => window.removeEventListener("keydown", navigateWithArrow, true);
   }, [navigateWithArrow]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", choosePositionWithKeyboard, true);
+    return () => window.removeEventListener("keydown", choosePositionWithKeyboard, true);
+  }, [choosePositionWithKeyboard]);
 
   // Marker screen boxes only change with the camera or an entity snapshot, so
   // hover hit-testing reuses them between invalidations instead of measuring
@@ -465,7 +504,8 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   useEffect(() => {
     if (!reticleVisible && !selectedEntityId) return;
     const releaseOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || stateRef.current.zoomOverlay) return;
+      if (event.key !== "Escape" || stateRef.current.zoomOverlay || optionsRef.current.positionPicking) return;
+      if (event.target instanceof HTMLElement && event.target.closest("[role='menu'], [role='dialog']")) return;
       event.preventDefault();
       event.stopPropagation();
       if (optionsRef.current.selectedEntityId) optionsRef.current.onBackgroundClick?.();
@@ -590,8 +630,11 @@ function directionFromKey(key: string): MapNavigationDirection | null {
   return key === "ArrowUp" ? "up" : key === "ArrowDown" ? "down" : key === "ArrowLeft" ? "left" : key === "ArrowRight" ? "right" : null;
 }
 
-function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable);
+function isMapKeyboardShortcutExcludedTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable || Boolean(target.closest("[role='menu'], [role='dialog']")))
+  );
 }
 
 function cursorOverlayState(map: MlMap | undefined, point: ScreenPoint | null, selection: ReticleState | null): CursorOverlayState | undefined {

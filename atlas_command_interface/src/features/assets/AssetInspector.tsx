@@ -1,6 +1,6 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../../atlas/command-model.js";
-import { commandsForTargeting, type CommandAvailability } from "../../atlas/command-targeting.js";
+import type { CommandAvailability } from "../../atlas/command-targeting.js";
 import {
   entityAltitude,
   entityBattery,
@@ -18,7 +18,7 @@ import { currentTask, queuedTasks, tasksForEntity } from "../../atlas/selectors.
 import type { AtlasSnapshot } from "../../atlas/store.js";
 import { heartbeatColor, LinkStatePill, StatusPill } from "../../ui/primitives/StatusPill.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
-import { CommandList } from "../commands/CommandList.js";
+import { CommandActions } from "../commands/CommandActions.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 import { TaskHistoryItem, TaskRow } from "../shared/TaskRow.js";
 
@@ -28,10 +28,12 @@ type AssetInspectorProps = {
   entity: EntityResource;
   snapshot: AtlasSnapshot;
   catalog?: CommandCatalog;
+  positionPicking: boolean;
   onPickCommand: (availability: CommandAvailability) => void;
+  onTogglePositionPicking: () => void;
 };
 
-export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: AssetInspectorProps) {
+export function AssetInspector({ entity, snapshot, catalog, positionPicking, onPickCommand, onTogglePositionPicking }: AssetInspectorProps) {
   const position = entityPosition(entity);
   const link = entityLinkState(entity);
   const battery = entityBattery(entity);
@@ -40,7 +42,6 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
   const active = currentTask(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
   const history = tasksForEntity(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
-  const sidebarCommands = catalog ? commandsForTargeting(catalog, entity, "none") : [];
 
   return (
     <div className="inspector">
@@ -75,10 +76,13 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       </Section>
 
       <Section title="Commands">
-        <CommandList availabilities={sidebarCommands} onPick={onPickCommand} emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"} />
-        <p className="field__hint" style={{ marginTop: 8 }}>
-          Right-click the map to send position commands to this asset.
-        </p>
+        <CommandActions
+          entity={entity}
+          catalog={catalog}
+          positionPicking={positionPicking}
+          onPickCommand={onPickCommand}
+          onTogglePositionPicking={onTogglePositionPicking}
+        />
       </Section>
 
       <Section title="Task History">

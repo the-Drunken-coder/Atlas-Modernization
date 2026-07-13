@@ -218,6 +218,7 @@ afterEach(() => {
 type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
   focusTarget?: MapReticleTarget | null;
+  positionPicking?: boolean;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
   sources?: MapSources;
@@ -227,7 +228,9 @@ type RenderMapViewProps = {
 
 export function renderMapView(props: RenderMapViewProps = {}) {
   const onBackgroundClick = vi.fn();
+  const onCancelPositionPicking = vi.fn();
   const onMapContextMenu = vi.fn();
+  const onPickPosition = vi.fn();
   const onSelectEntity = vi.fn();
   const renderProps = { sources: buildMapSources([], undefined), styleId: "test-style", style: style("test-style"), ...props };
   const result = render(
@@ -238,8 +241,11 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       selectedId={renderProps.selectedId}
       focusTarget={renderProps.focusTarget}
       cameraCommand={renderProps.cameraCommand}
+      positionPicking={renderProps.positionPicking}
       onBackgroundClick={onBackgroundClick}
+      onCancelPositionPicking={onCancelPositionPicking}
       onMapContextMenu={onMapContextMenu}
+      onPickPosition={onPickPosition}
       onSelectEntity={onSelectEntity}
       onStyleSwitchError={renderProps.onStyleSwitchError}
     />
@@ -257,14 +263,27 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         selectedId={renderProps.selectedId}
         focusTarget={renderProps.focusTarget}
         cameraCommand={renderProps.cameraCommand}
+        positionPicking={renderProps.positionPicking}
         onBackgroundClick={onBackgroundClick}
+        onCancelPositionPicking={onCancelPositionPicking}
         onMapContextMenu={onMapContextMenu}
+        onPickPosition={onPickPosition}
         onSelectEntity={onSelectEntity}
         onStyleSwitchError={renderProps.onStyleSwitchError}
       />
     );
   };
-  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap, unmount: result.unmount };
+  return {
+    canvas,
+    map: maplibreMock.FakeMap.instances[0],
+    onBackgroundClick,
+    onCancelPositionPicking,
+    onMapContextMenu,
+    onPickPosition,
+    onSelectEntity,
+    rerenderMap,
+    unmount: result.unmount
+  };
 }
 
 export function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {

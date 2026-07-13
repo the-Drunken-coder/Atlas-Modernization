@@ -19,8 +19,8 @@ import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
+import { CommandActions } from "./commands/CommandActions.js";
 import { CommandForm } from "./commands/CommandForm.js";
-import { CommandList } from "./commands/CommandList.js";
 import { EntityList } from "./EntityList.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
@@ -45,6 +45,7 @@ export function MapConsole() {
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
 
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
+  const [positionPicking, setPositionPicking] = useState(false);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
   const commandDismissedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
@@ -68,11 +69,13 @@ export function MapConsole() {
   // Drop transient command UI when the selected entity changes.
   useEffect(() => {
     setMapMenu(null);
+    setPositionPicking(false);
     dismissCommandForm();
   }, [selectedId, dismissCommandForm]);
 
   useEffect(() => {
     setMapMenu(null);
+    setPositionPicking(false);
     dismissCommandForm();
   }, [catalog, dismissCommandForm]);
 
@@ -89,6 +92,7 @@ export function MapConsole() {
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
     setMapMenu(null);
+    setPositionPicking(false);
     dismissCommandForm();
     setEdit(null);
     setSaveError(undefined);
@@ -189,10 +193,30 @@ export function MapConsole() {
         setMapMenu(null);
         return;
       }
+      setPositionPicking(false);
       dismissCommandForm();
       setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
     },
     [selectedEntity, dismissCommandForm]
+  );
+
+  const togglePositionPicking = useCallback(() => {
+    if (positionPicking) {
+      setPositionPicking(false);
+      return;
+    }
+    setMapMenu(null);
+    dismissCommandForm();
+    setPositionPicking(true);
+  }, [dismissCommandForm, positionPicking]);
+
+  const pickMapPosition = useCallback(
+    (info: MapContextMenuInfo) => {
+      if (!selectedEntity || entityKind(selectedEntity) !== "asset") return;
+      setPositionPicking(false);
+      setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
+    },
+    [selectedEntity]
   );
 
   const startEdit = useCallback(() => {
@@ -308,6 +332,8 @@ export function MapConsole() {
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
               onPickCommand={pickSidebarCommand}
+              positionPicking={positionPicking}
+              onTogglePositionPicking={togglePositionPicking}
               onStartEdit={startEdit}
               onChangeDraft={(geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current))}
               onSaveEdit={() => void saveEdit()}
@@ -336,6 +362,9 @@ export function MapConsole() {
                   cameraCommand={cameraCommand}
                   onSelectEntity={selectEntityById}
                   onMapContextMenu={onMapContextMenu}
+                  positionPicking={positionPicking}
+                  onPickPosition={pickMapPosition}
+                  onCancelPositionPicking={() => setPositionPicking(false)}
                   onBackgroundClick={() => {
                     setMapMenu(null);
                     dispatch({ type: "clearSelection" });
@@ -344,6 +373,11 @@ export function MapConsole() {
                 />
                 <ConnectionBadge health={atlas.health} />
                 <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
+                {positionPicking ? (
+                  <div className="map-hint" role="status" aria-live="polite">
+                    Click or tap a position, or press Enter to use the map center. Escape cancels.
+                  </div>
+                ) : null}
               </div>
             </div>
           </>
@@ -414,11 +448,13 @@ type PanelBodyProps = {
   sidebar: SidebarState;
   selectedEntity?: EntityResource;
   catalog?: CommandCatalog;
+  positionPicking: boolean;
   edit: EditState | null;
   saving: boolean;
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
   onPickCommand: (availability: CommandAvailability) => void;
+  onTogglePositionPicking: () => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
   onSaveEdit: () => void;
@@ -438,7 +474,16 @@ function PanelBody(props: PanelBodyProps) {
 
   const kind = entityKind(selectedEntity);
   if (kind === "asset") {
-    return <AssetInspector entity={selectedEntity} snapshot={snapshot} catalog={catalog} onPickCommand={props.onPickCommand} />;
+    return (
+      <AssetInspector
+        entity={selectedEntity}
+        snapshot={snapshot}
+        catalog={catalog}
+        positionPicking={props.positionPicking}
+        onPickCommand={props.onPickCommand}
+        onTogglePositionPicking={props.onTogglePositionPicking}
+      />
+    );
   }
   if (kind === "track") {
     return <TrackInspector entity={selectedEntity} />;
@@ -461,15 +506,26 @@ function PanelBody(props: PanelBodyProps) {
   return <div className="panel__empty">Unsupported entity type.</div>;
 }
 
-function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
+function ListBody({
+  list,
+  snapshot,
+  selectedEntity,
+  catalog,
+  positionPicking,
+  onSelectEntity,
+  onPickCommand,
+  onTogglePositionPicking
+}: { list: ListKind } & PanelBodyProps) {
   if (list === "commands") {
     if (selectedEntity && entityKind(selectedEntity) === "asset") {
       return (
         <div style={{ padding: 12 }}>
-          <CommandList
-            availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
-            onPick={onPickCommand}
-            emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"}
+          <CommandActions
+            entity={selectedEntity}
+            catalog={catalog}
+            positionPicking={positionPicking}
+            onPickCommand={onPickCommand}
+            onTogglePositionPicking={onTogglePositionPicking}
           />
         </div>
       );

@@ -35,8 +35,11 @@ type MapViewProps = {
   initialCenter?: [number, number];
   focusTarget?: MapReticleTarget | null;
   cameraCommand?: MapCameraCommand | null;
+  positionPicking?: boolean;
   onSelectEntity: (id: string) => void;
   onMapContextMenu: (info: MapContextMenuInfo) => void;
+  onPickPosition?: (info: MapContextMenuInfo) => void;
+  onCancelPositionPicking?: () => void;
   onBackgroundClick?: () => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
 };
@@ -56,8 +59,11 @@ export function MapView({
   initialCenter,
   focusTarget,
   cameraCommand,
+  positionPicking = false,
   onSelectEntity,
   onMapContextMenu,
+  onPickPosition,
+  onCancelPositionPicking,
   onBackgroundClick,
   onStyleSwitchError
 }: MapViewProps) {
@@ -90,12 +96,19 @@ export function MapView({
     sources,
     selectedEntityId: selectedId,
     focusTarget,
+    positionPicking,
     notifyUserGesture,
     onSelectEntity,
-    onBackgroundClick
+    onBackgroundClick,
+    onPickPosition,
+    onCancelPositionPicking
   });
   const mapActionsRef = useRef(reticleInteraction.mapActions);
   mapActionsRef.current = reticleInteraction.mapActions;
+
+  useEffect(() => {
+    if (positionPicking) mapCanvasRef.current?.focus();
+  }, [positionPicking]);
 
   // Create the map once.
   useEffect(() => {
@@ -295,6 +308,9 @@ export function MapView({
       ref={mapCanvasRef}
       style={{ position: "absolute", inset: 0 }}
       data-testid="map-canvas"
+      tabIndex={positionPicking ? 0 : -1}
+      role={positionPicking ? "group" : undefined}
+      aria-label={positionPicking ? "Map position picker" : undefined}
       {...reticleInteraction.canvasHandlers}
     >
       <div className="maplibre-host" ref={containerRef} />

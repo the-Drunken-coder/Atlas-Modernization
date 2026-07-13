@@ -16,7 +16,10 @@ type MockMapViewProps = {
   editing?: unknown;
   focusTarget?: { id: string } | null;
   cameraCommand?: { seq: number; target: { id: string } } | null;
+  positionPicking?: boolean;
   onMapContextMenu?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+  onPickPosition?: (info: { lat: number; lng: number; x: number; y: number }) => void;
+  onCancelPositionPicking?: () => void;
   onBackgroundClick?: () => void;
   onSelectEntity?: (id: string) => void;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
@@ -38,7 +41,8 @@ vi.mock("../ui/map/MapView.js", async () => {
           data-focus-target={props.focusTarget?.id ?? ""}
           data-camera-seq={props.cameraCommand?.seq ?? ""}
           data-camera-target={props.cameraCommand?.target.id ?? ""}
-          onClick={() => props.onBackgroundClick?.()}
+          data-position-picking={props.positionPicking ? "true" : "false"}
+          onClick={() => (props.positionPicking ? props.onPickPosition?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 }) : props.onBackgroundClick?.())}
           onContextMenu={(event) => {
             event.preventDefault();
             props.onMapContextMenu?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 });
@@ -223,10 +227,10 @@ describe("MapConsole command flow", () => {
     const row = await screen.findByText("Rover");
     await user.click(row);
 
-    // The asset inspector lists the supported command and greys out the rest.
+    // The asset inspector keeps the supported command prominent and collapses unsupported details.
     const hold = await screen.findByRole("button", { name: /Hold Position/ });
-    expect(screen.getByRole("button", { name: /Return To Home/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute("title", "This asset does not support this command");
+    expect(screen.queryByRole("button", { name: /Return To Home/ })).not.toBeInTheDocument();
+    expect(screen.getByText("1 unavailable command")).toBeInTheDocument();
 
     await user.click(hold);
     await waitFor(() => expect(submissions).toHaveLength(1));
@@ -439,6 +443,46 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
+  });
+
+  it("opens position commands from the visible touch-friendly map picker", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    const trigger = screen.getByRole("button", { name: "Choose map position" });
+    expect(trigger).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(trigger);
+    expect(screen.getByTestId("map")).toHaveAttribute("data-position-picking", "true");
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Click or tap a position");
+
+    await user.click(screen.getByTestId("map"));
+    await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
+  });
+
+  it("opens and chooses a position command without pointer-only controls", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    const trigger = screen.getByRole("button", { name: "Choose map position" });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-position-picking", "true");
+
+    act(() => mapViewMock.lastProps?.onPickPosition?.({ lat: 47.61, lng: -122.33, x: 10, y: 20 }));
+    const goto = await screen.findByRole("menuitem", { name: /Goto/ });
+    expect(goto).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" } });
   });
 
   it("switches between configured map sources", async () => {

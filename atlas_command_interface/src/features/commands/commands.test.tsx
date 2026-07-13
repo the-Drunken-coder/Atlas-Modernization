@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { parseCommandCatalog } from "../../atlas/command-model.js";
 import { commandsForTargeting, formParameters } from "../../atlas/command-targeting.js";
+import { CommandActions } from "./CommandActions.js";
 import { CommandForm } from "./CommandForm.js";
 import { CommandList } from "./CommandList.js";
 
@@ -35,24 +36,52 @@ function asset(supported: string[]): EntityResource {
 }
 
 describe("CommandList", () => {
-  it("lists valid non-position commands first and greys out unsupported ones", async () => {
+  it("keeps supported commands prominent and reveals unsupported reasons on demand", async () => {
     const user = userEvent.setup();
     const onPick = vi.fn();
     const availabilities = commandsForTargeting(catalog, asset(["hold_position"]), "none");
     render(<CommandList availabilities={availabilities} onPick={onPick} />);
 
-    const buttons = screen.getAllByRole("button");
-    expect(buttons[0]).toHaveTextContent("Hold Position");
-    expect(buttons[1]).toHaveTextContent("Return To Home");
-    expect(buttons[1]).toBeDisabled();
-    expect(buttons[1]).toHaveAttribute("title", "This asset does not support this command");
+    const hold = screen.getByRole("button", { name: /Hold Position/ });
+    expect(screen.queryByRole("button", { name: /Return To Home/ })).not.toBeInTheDocument();
+    const unavailable = screen.getByText("1 unavailable command").closest("details");
+    expect(unavailable).not.toHaveAttribute("open");
 
-    await user.click(buttons[0]);
+    await user.click(hold);
     expect(onPick).toHaveBeenCalledTimes(1);
     expect(onPick.mock.calls[0][0].command.id).toBe("hold_position");
 
-    await user.click(buttons[1]);
+    await user.click(screen.getByText("1 unavailable command"));
+    expect(unavailable).toHaveAttribute("open");
+    expect(screen.getByText("Return To Home")).toBeInTheDocument();
+    expect(screen.getByText("This asset does not support this command")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Return To Home"));
     expect(onPick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CommandActions", () => {
+  it("does not claim there are no commands when only a supported position command exists", () => {
+    const positionOnlyCatalog = parseCommandCatalog({
+      type: "command_catalog",
+      name: "Position catalog",
+      description: "Test",
+      commands: [catalog.commands.find((command) => command.id === "move_to_location")!]
+    });
+
+    render(
+      <CommandActions
+        entity={asset(["move_to_location"])}
+        catalog={positionOnlyCatalog}
+        positionPicking={false}
+        onPickCommand={() => {}}
+        onTogglePositionPicking={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Choose map position" })).toBeInTheDocument();
+    expect(screen.queryByText("No commands available")).not.toBeInTheDocument();
   });
 });
 

@@ -1,9 +1,71 @@
 import { fireEvent, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildMapSources } from "./map-sources.js";
 import { entity, firePointerMove, renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView keyboard selection", () => {
+  it("focuses position-picking mode and chooses the map center with Enter", () => {
+    const { canvas, onPickPosition } = renderMapView({ positionPicking: true });
+
+    expect(canvas).toHaveFocus();
+    expect(canvas).toHaveAccessibleName("Map position picker");
+    fireEvent.keyDown(canvas, { key: "Enter" });
+
+    expect(onPickPosition).toHaveBeenCalledWith({ lng: 200, lat: 100, x: 210, y: 120 });
+  });
+
+  it("cancels position-picking mode with Escape without clearing selection", () => {
+    const { canvas, onBackgroundClick, onCancelPositionPicking } = renderMapView({ positionPicking: true, selectedId: "asset-1" });
+    const laterEscapeHandler = vi.fn();
+    window.addEventListener("keydown", laterEscapeHandler);
+
+    fireEvent.keyDown(canvas, { key: "Escape" });
+
+    expect(onCancelPositionPicking).toHaveBeenCalledTimes(1);
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+    expect(laterEscapeHandler).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", laterEscapeHandler);
+  });
+
+  it("leaves Escape handling to an open menu without clearing selection", () => {
+    const { onBackgroundClick } = renderMapView({ selectedId: "asset-1" });
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    const menuItem = document.createElement("button");
+    menuItem.setAttribute("role", "menuitem");
+    menu.appendChild(menuItem);
+    document.body.appendChild(menu);
+
+    fireEvent.keyDown(menuItem, { key: "Escape" });
+
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+    menu.remove();
+  });
+
+  it("does not route menu arrow keys to map selection", () => {
+    const { onSelectEntity } = renderDirectionalMap("center");
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    const menuItem = document.createElement("button");
+    menuItem.setAttribute("role", "menuitem");
+    menu.appendChild(menuItem);
+    document.body.appendChild(menu);
+
+    fireEvent.keyDown(menuItem, { key: "ArrowDown" });
+
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    menu.remove();
+  });
+
+  it("uses a pointer activation as a position while picking", () => {
+    const { canvas, onPickPosition, onSelectEntity } = renderMapView({ positionPicking: true });
+
+    fireEvent.click(canvas, { clientX: 110, clientY: 70 });
+
+    expect(onPickPosition).toHaveBeenCalledWith({ lng: 100, lat: 50, x: 110, y: 70 });
+    expect(onSelectEntity).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["ArrowUp", "up"],
     ["ArrowDown", "down"],
