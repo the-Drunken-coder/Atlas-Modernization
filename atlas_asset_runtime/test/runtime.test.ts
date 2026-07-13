@@ -35,6 +35,19 @@ describe("AtlasAssetRuntime", () => {
     });
   });
 
+  it("does not mutate command tasks in telemetry-only mode", async () => {
+    const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page([command("task-1", "move")], true, "next")));
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await runtime.checkIn();
+
+    expect(client.entities.checkIn).toHaveBeenCalledTimes(1);
+    expect(client.tasks.acknowledge).not.toHaveBeenCalled();
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    expect(client.tasks.setStatus).not.toHaveBeenCalled();
+  });
+
   it("acknowledges, reports progress, and completes commands sequentially", async () => {
     const tasks = [command("task-1", "move"), command("task-2", "move")];
     const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page(tasks)));
@@ -113,7 +126,8 @@ describe("AtlasAssetRuntime", () => {
 
   it("rejects pagination that cannot advance", async () => {
     const client = fakeClient(vi.fn<CheckIn>().mockResolvedValue(page([], true)));
-    await expect(new AtlasAssetRuntime(client, { entityId: "asset-1" }).checkIn()).rejects.toThrow("pagination did not advance");
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", handlers: { move: async () => undefined } });
+    await expect(runtime.checkIn()).rejects.toThrow("pagination did not advance");
   });
 
   it("serializes concurrent manual cycles", async () => {

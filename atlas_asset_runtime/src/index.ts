@@ -212,6 +212,7 @@ export class AtlasAssetRuntime {
         ...(taskCursor ? { taskCursor } : {})
       });
       signal?.throwIfAborted();
+      if (this.handlers.size === 0) return;
       for (const task of response.tasks) {
         if (handled.has(task.task_id)) continue;
         handled.add(task.task_id);

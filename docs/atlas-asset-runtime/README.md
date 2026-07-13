@@ -54,9 +54,9 @@ Cycles do not overlap, and task handlers do not run concurrently. The runtime fo
 
 ## Task handling
 
-A recognized command task is acknowledged before its handler runs. The handler receives the minimal task, an abort signal, and a function for reporting progress. Returning a JSON object completes the task with that object as its result; returning nothing completes it without a result. Throwing fails the task.
+A runtime with no registered handlers is telemetry-only: it performs one check-in request per cycle and does not mutate returned tasks. Once at least one handler is registered, a recognized command task is acknowledged before its handler runs. The handler receives the minimal task, an abort signal, and a function for reporting progress. Returning a JSON object completes the task with that object as its result; returning nothing completes it without a result. Throwing fails the task.
 
-Tasks without a command are ignored. A command that has no registered handler is failed so it does not remain silently pending.
+For runtimes with handlers, tasks without a command are ignored. A command that has no registered handler is failed so it does not remain silently pending.
 
 Stopping or aborting the runtime does not report an active task as failed merely because local shutdown interrupted it. Atlas may therefore retain an acknowledged task for later operator or asset recovery.
 

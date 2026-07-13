@@ -24,6 +24,8 @@ await runtime.start();
 
 `start()` resolves after the protocol handshake and first complete check-in cycle. Later cycles run in the background. `checkIn()` can run a full cycle manually. `stop()` prevents future background cycles, signals an active background handler, and waits for all in-flight work to settle; it cannot interrupt an SDK request already in progress.
 
+When no handlers are registered, the runtime is telemetry-only and does not mutate tasks returned by check-in.
+
 The runtime deliberately does not provide plugins, deployment tooling, durable offline writes, or exact-once execution. A process failure after task acknowledgement can leave that task acknowledged without completing it; callers must design physical commands with that boundary in mind.
 
 The package is configured for public npm access but is not published automatically. Publish its pinned `@the-drunken-coder/atlas-sdk@0.1.0` dependency before publishing runtime version `0.1.0`.
