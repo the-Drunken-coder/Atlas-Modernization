@@ -2,7 +2,7 @@
 
 The Atlas SDK is the typed TypeScript/JavaScript client for Atlas Core. It includes the resource client, sync engine, generated Atlas Protocol types and revision checks, browser admin client, and the `atlas` command-line tool.
 
-Node.js 26 or newer is required.
+Node.js 24 or newer is required.
 
 ## Install
 

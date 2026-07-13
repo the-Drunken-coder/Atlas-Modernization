@@ -1,3 +1,4 @@
+import { AtlasAssetRuntime } from "@the-drunken-coder/atlas-asset-runtime";
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
 import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point, requireBeforeDeadline } from "./helpers.js";
@@ -13,8 +14,24 @@ const movingAssets: Scenario = {
     { key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(4), min: jsonNumber(1), max: jsonNumber(25), step: jsonNumber(1) },
     { key: "ticks", label: "Ticks", type: "number", defaultValue: jsonNumber(5), min: jsonNumber(1), max: jsonNumber(100), step: jsonNumber(1) },
     { key: "tickMs", label: "Tick ms", type: "number", defaultValue: jsonNumber(250), min: jsonNumber(0), max: jsonNumber(10000), step: jsonNumber(50) },
-    { key: "startLatitude", label: "Start latitude", type: "number", defaultValue: jsonNumber(38.8895), min: jsonNumber(-90), max: jsonNumber(89.926), step: jsonNumber(0.0001) },
-    { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: jsonNumber(-77.0353), min: jsonNumber(-180), max: jsonNumber(179.872), step: jsonNumber(0.0001) }
+    {
+      key: "startLatitude",
+      label: "Start latitude",
+      type: "number",
+      defaultValue: jsonNumber(38.8895),
+      min: jsonNumber(-90),
+      max: jsonNumber(89.926),
+      step: jsonNumber(0.0001)
+    },
+    {
+      key: "startLongitude",
+      label: "Start longitude",
+      type: "number",
+      defaultValue: jsonNumber(-77.0353),
+      min: jsonNumber(-180),
+      max: jsonNumber(179.872),
+      step: jsonNumber(0.0001)
+    }
   ],
   async run(ctx, input) {
     const assetCount = boundedPositiveIntegerInput(input, "assetCount", 25);
@@ -23,12 +40,11 @@ const movingAssets: Scenario = {
     const startLatitude = boundedNumberInput(input, "startLatitude", -90, 89.926);
     const startLongitude = boundedNumberInput(input, "startLongitude", -180, 179.872);
     const extra = jsonObject(input);
-    const assetIds: string[] = [];
+    const assets: Array<{ id: string; runtime: AtlasAssetRuntime }> = [];
 
     for (let index = 0; index < assetCount; index++) {
       if (ctx.signal.aborted) throw new Error("Simulation cancelled");
       const id = ctx.id(`asset-${index + 1}`);
-      assetIds.push(id);
       await ctx.createEntity({
         entity_id: id,
         entity_type: "asset",
@@ -52,17 +68,18 @@ const movingAssets: Scenario = {
           custom_simulation: { ...extra, run_id: ctx.runId }
         }
       });
+      assets.push({ id, runtime: new AtlasAssetRuntime(ctx.client, { entityId: id }) });
       if (ctx.signal.aborted) throw new Error("Simulation cancelled");
     }
-    ctx.log(`Created ${assetIds.length} assets`);
+    ctx.log(`Created ${assets.length} assets`);
 
     for (let tick = 0; tick < ticks; tick++) {
       const step = tick + 1;
-      for (const [index, id] of assetIds.entries()) {
+      for (const [index, asset] of assets.entries()) {
         if (ctx.signal.aborted) throw new Error("Simulation cancelled");
         const latitude = Number((startLatitude + index * 0.001 + step * 0.0005).toFixed(6));
         const longitude = Number((startLongitude + index * 0.002 + step * 0.0008).toFixed(6));
-        await ctx.client.entities.checkIn(id, {
+        await asset.runtime.checkIn({
           status: "moving",
           telemetry: {
             latitude,
@@ -86,7 +103,7 @@ const movingAssets: Scenario = {
     const verifier = ctx.newClient({ sync: false });
     const readDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
     const persistedAssetResults = await Promise.allSettled(
-      assetIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `asset ${id}`))
+      assets.map(({ id }) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `asset ${id}`))
     );
     const persistedAssets = fulfilledValues(persistedAssetResults);
     const rejectedAssetRead = persistedAssetResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -98,7 +115,8 @@ const movingAssets: Scenario = {
     );
     ctx.assert(
       "Telemetry persisted",
-      persistedAssets.length === assetCount && persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
+      persistedAssets.length === assetCount &&
+        persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
       `expected final speed ${finalSpeed}`
     );
   }

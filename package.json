@@ -6,18 +6,20 @@
   },
   "workspaces": [
     "atlas_sdk",
+    "atlas_asset_runtime",
     "atlas_command_interface",
     "atlas_simulations"
   ],
   "scripts": {
-    "postinstall": "npm run build:sdk",
-    "build": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations",
+    "postinstall": "npm run build:asset-runtime",
+    "build": "npm run build:asset-runtime && npm run build --workspace @the-drunken-coder/atlas-command-interface && npm run build --workspace @the-drunken-coder/atlas-simulations",
     "build:sdk": "npm run build --workspace @the-drunken-coder/atlas-sdk",
+    "build:asset-runtime": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-asset-runtime",
     "build:command-interface": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-command-interface",
-    "build:simulations": "npm run build:sdk && npm run build --workspace @the-drunken-coder/atlas-simulations",
+    "build:simulations": "npm run build:asset-runtime && npm run build --workspace @the-drunken-coder/atlas-simulations",
     "dev:command-interface": "npm run build:sdk && npm run dev --workspace @the-drunken-coder/atlas-command-interface",
-    "dev:simulations": "npm run build:sdk && npm run dev --workspace @the-drunken-coder/atlas-simulations",
-    "dev:simulations-server": "npm run build:sdk && npm run dev:server --workspace @the-drunken-coder/atlas-simulations",
+    "dev:simulations": "npm run build:asset-runtime && npm run dev --workspace @the-drunken-coder/atlas-simulations",
+    "dev:simulations-server": "npm run build:asset-runtime && npm run dev:server --workspace @the-drunken-coder/atlas-simulations",
     "deploy:command-interface": "npm run build:sdk && npm run deploy:pages --workspace @the-drunken-coder/atlas-command-interface",
     "test:clean-workspace": "node scripts/clean-workspace-smoke.mjs"
   }

@@ -6,6 +6,8 @@ const generatedPaths = [
   "node_modules",
   "atlas_sdk/dist",
   "atlas_sdk/node_modules",
+  "atlas_asset_runtime/dist",
+  "atlas_asset_runtime/node_modules",
   "atlas_command_interface/dist",
   "atlas_command_interface/node_modules",
   "atlas_simulations/dist",
@@ -13,6 +15,10 @@ const generatedPaths = [
 ];
 const commands = [
   ["ci"],
+  ["run", "typecheck", "--workspace", "@the-drunken-coder/atlas-asset-runtime"],
+  ["test", "--workspace", "@the-drunken-coder/atlas-asset-runtime"],
+  ["run", "build", "--workspace", "@the-drunken-coder/atlas-asset-runtime"],
+  ["run", "test:package", "--workspace", "@the-drunken-coder/atlas-asset-runtime"],
   ["run", "typecheck", "--workspace", "@the-drunken-coder/atlas-command-interface"],
   ["test", "--workspace", "@the-drunken-coder/atlas-command-interface"],
   ["run", "build", "--workspace", "@the-drunken-coder/atlas-command-interface"],
