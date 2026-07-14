@@ -59,9 +59,7 @@ function writerFetch(core: FakeCore): FetchLike {
   };
 }
 
-type WriteRoute =
-  | { kind: "upsert"; event: "create" | "update"; resource_type: ResourceType }
-  | { kind: "delete"; resource_type: ResourceType; id: string };
+type WriteRoute = { kind: "upsert"; event: "create" | "update"; resource_type: ResourceType } | { kind: "delete"; resource_type: ResourceType; id: string };
 
 function writeRoute(url: RequestInfo | URL, init?: RequestInit): WriteRoute | undefined {
   const parsed = new URL(String(url));

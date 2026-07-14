@@ -1,4 +1,4 @@
-import type { EntityResource, FeedEvent, ObjectDetailResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
+import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
 import { ResourceCache, type CacheResourceOptions } from "./cache.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport, ResponseValidator } from "./http.js";
@@ -354,7 +354,7 @@ export class SyncEngine {
     const seenCursors = new Map<string, Set<string>>();
     const entities: EntityResource[] = [];
     const tasks: TaskResource[] = [];
-    const objects: ObjectResource[] = [];
+    const objects: ObjectDetailResource[] = [];
     do {
       if (!this.isCurrent(generation)) return;
       const response = await this.transport.json("GET", fullDatasetPath(cursors), isFullDatasetResponse);
@@ -493,7 +493,7 @@ export class SyncEngine {
     }
     this.cache.pendingDeletes.delete(key);
     this.cache.locallyNotifiedDeletes.delete(key);
-    this.cache.cacheResource(event.resource_type, event.id, event.resource);
+    this.cache.cacheResource(event.resource_type, event.id, event.resource, event.resource_type === "object" ? { detail: true } : undefined);
     this.notify(event, this.cache.value(event.resource_type, event.id), previous);
   }
 

@@ -547,13 +547,23 @@ describe("AtlasClient HTTP", () => {
     });
     await client.sync.start();
 
-    await expect(
-      client.objects.create({
-        object_id: "object-feed-cache",
-        type: "image",
-        extra: { label: "thermal" }
-      })
-    ).resolves.toMatchObject({ extra: { label: "thermal" } });
+    const created = await client.objects.create({
+      object_id: "object-feed-cache",
+      type: "image",
+      extra: { label: "thermal" }
+    });
+    expect(created).toMatchObject({ extra: { label: "thermal" } });
+    core.emit(
+      {
+        event: "create",
+        resource_type: "object",
+        id: created.object_id,
+        version: created.metadata.version,
+        resource: core.objects.get(created.object_id)!
+      },
+      { record: false }
+    );
+    await vi.waitFor(() => expect(client.sync.status().lastVersion).toBe(created.metadata.version));
 
     const feedObject = core.upsertObject({ ...object("object-feed-cache"), type: "log" });
     core.emit(

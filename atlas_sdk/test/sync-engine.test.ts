@@ -54,6 +54,43 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().healthy).toBe(true);
   });
 
+  it("serves object details from the full-dataset cache", async () => {
+    const core = new FakeCore();
+    const hydrated = core.createObject({ object_id: "object-hydrated-detail", extra: { label: "hydrated" } });
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.sync.start();
+    core.requests = [];
+
+    await expect(client.objects.get(hydrated.object_id)).resolves.toEqual(hydrated);
+    expect(core.requests).toEqual([]);
+  });
+
+  it("serves recovered object details from the changed-since cache", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const recovered = core.createObject({ object_id: "object-recovered-detail", extra: { label: "recovered" } });
+    await client.changedSince();
+    core.requests = [];
+
+    await expect(client.objects.get(recovered.object_id)).resolves.toEqual(recovered);
+    expect(core.requests).toEqual([]);
+  });
+
   it("emits recovered events for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
