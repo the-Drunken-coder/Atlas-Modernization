@@ -11,7 +11,7 @@ python3 Atlas_Core/scripts/atlas.py --dev
 ```
 
 The launcher enables API-key authentication, generates or reuses one local
-machine key, and stores it in the owner-only `Atlas_Core/docker/.env`. The
+machine key, and stores it in the owner-only `Atlas_Core/docker/.env.local`. The
 simulations server reads that same key directly for its loopback target. The
 key is never sent to the browser or copied into a cleanup ledger.
 

@@ -16,8 +16,8 @@ describe("loadConfig", () => {
     expect(config.cleanupLedgerDirectory).toBe(path.join(packageRoot, ".atlas-simulations", "runs"));
   });
 
-  it("uses the launcher-generated Core key for the loopback target only", () => {
-    const packageRoot = tempWorkspacePackageRoot("ENABLE_API_AUTH=true\nAPI_AUTH_KEY=launcher-local-key\n");
+  it.each(["true", "1", "yes", "on"])("uses the launcher-generated Core key for truthy auth value %s", (enabled) => {
+    const packageRoot = tempWorkspacePackageRoot(`ENABLE_API_AUTH=${enabled}\nAPI_AUTH_KEY=launcher-local-key\n`);
 
     const config = loadConfig({
       env: {
@@ -41,6 +41,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ env: { ATLAS_LOCAL_API_KEY: "explicit-key" }, packageRoot }).atlasApiKey).toBe("explicit-key");
   });
 
+  it("does not load public-mode credentials from the Compose env file", () => {
+    const packageRoot = tempWorkspacePackageRoot("ENABLE_API_AUTH=true\nAPI_AUTH_KEY=public-mode-key\n", ".env");
+
+    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBeUndefined();
+  });
+
   it("uses the default port when ATLAS_SIM_PORT is blank", () => {
     const packageRoot = tempPackageRoot();
     expect(loadConfig({ env: { ATLAS_SIM_PORT: " " }, packageRoot }).port).toBe(5180);
@@ -57,9 +63,15 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "localhost:8000" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "ftp://atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must be a valid HTTP(S) URL");
     expect(() => loadConfig({ env: { ATLAS_BASE_URL: "http://atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must use HTTPS unless it targets loopback");
-    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://user:pass@atlas.test" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include embedded credentials");
-    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test?bad=true" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include a query string or fragment");
-    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test/#bad" }, packageRoot })).toThrow("ATLAS_BASE_URL must not include a query string or fragment");
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://user:pass@atlas.test" }, packageRoot })).toThrow(
+      "ATLAS_BASE_URL must not include embedded credentials"
+    );
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test?bad=true" }, packageRoot })).toThrow(
+      "ATLAS_BASE_URL must not include a query string or fragment"
+    );
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlas.test/#bad" }, packageRoot })).toThrow(
+      "ATLAS_BASE_URL must not include a query string or fragment"
+    );
   });
 
   it("allows HTTP Atlas URLs only for loopback development targets", () => {
@@ -74,9 +86,7 @@ describe("loadConfig", () => {
   it("rejects non-loopback URLs for the legacy and local targets", () => {
     const packageRoot = tempPackageRoot();
 
-    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlascommandapi.org/" }, packageRoot })).toThrow(
-      "ATLAS_BASE_URL must target loopback"
-    );
+    expect(() => loadConfig({ env: { ATLAS_BASE_URL: "https://atlascommandapi.org/" }, packageRoot })).toThrow("ATLAS_BASE_URL must target loopback");
     expect(() => loadConfig({ env: { ATLAS_LOCAL_BASE_URL: "https://atlascommandapi.org/" }, packageRoot })).toThrow(
       "ATLAS_LOCAL_BASE_URL must target loopback"
     );
@@ -117,18 +127,14 @@ describe("loadConfig", () => {
   it("rejects deployed configuration unless deployed support is enabled", () => {
     const packageRoot = tempPackageRoot();
 
-    expect(() => loadConfig({ env: { ATLAS_DEPLOYED_BASE_URL: "https://atlascommandapi.org" }, packageRoot })).toThrow(
-      "Set ATLAS_SIM_ENABLE_DEPLOYED=true"
-    );
+    expect(() => loadConfig({ env: { ATLAS_DEPLOYED_BASE_URL: "https://atlascommandapi.org" }, packageRoot })).toThrow("Set ATLAS_SIM_ENABLE_DEPLOYED=true");
     expect(() => loadConfig({ env: { ATLAS_SIM_TARGET: "deployed" }, packageRoot })).toThrow("Set ATLAS_SIM_ENABLE_DEPLOYED=true");
   });
 
   it("rejects invalid deployed enable flags", () => {
     const packageRoot = tempPackageRoot();
 
-    expect(() => loadConfig({ env: { ATLAS_SIM_ENABLE_DEPLOYED: "yes" }, packageRoot })).toThrow(
-      "ATLAS_SIM_ENABLE_DEPLOYED must be true or false"
-    );
+    expect(() => loadConfig({ env: { ATLAS_SIM_ENABLE_DEPLOYED: "yes" }, packageRoot })).toThrow("ATLAS_SIM_ENABLE_DEPLOYED must be true or false");
   });
 
   it("allows the default simulation target to be selected explicitly", () => {
@@ -186,11 +192,9 @@ describe("loadConfig", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(
       path.join(packageRoot, ".env"),
-      [
-        "ATLAS_SIM_PORT = 5190 # local override",
-        "ATLAS_BASE_URL=http://127.0.0.1:8000/api/",
-        'ATLAS_API_KEY="abc # not a comment" # trailing comment'
-      ].join("\n")
+      ["ATLAS_SIM_PORT = 5190 # local override", "ATLAS_BASE_URL=http://127.0.0.1:8000/api/", 'ATLAS_API_KEY="abc # not a comment" # trailing comment'].join(
+        "\n"
+      )
     );
 
     const config = loadConfig({ env: {}, packageRoot });
@@ -217,7 +221,7 @@ describe("loadConfig", () => {
     const packageRoot = tempPackageRoot();
     writeFileSync(path.join(packageRoot, ".env"), String.raw`ATLAS_API_KEY="abc \"quoted\" \\ key\nnext"`);
 
-    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBe("abc \"quoted\" \\ key\nnext");
+    expect(loadConfig({ env: {}, packageRoot }).atlasApiKey).toBe('abc "quoted" \\ key\nnext');
   });
 
   it("closes quoted .env values after even-length backslash runs", () => {
@@ -239,12 +243,12 @@ function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-config-"));
 }
 
-function tempWorkspacePackageRoot(coreEnv: string): string {
+function tempWorkspacePackageRoot(coreEnv: string, envFilename = ".env.local"): string {
   const workspaceRoot = mkdtempSync(path.join(tmpdir(), "atlas-simulations-workspace-"));
   const packageRoot = path.join(workspaceRoot, "atlas_simulations");
   const coreDockerRoot = path.join(workspaceRoot, "Atlas_Core", "docker");
   mkdirSync(packageRoot);
   mkdirSync(coreDockerRoot, { recursive: true });
-  writeFileSync(path.join(coreDockerRoot, ".env"), coreEnv);
+  writeFileSync(path.join(coreDockerRoot, envFilename), coreEnv);
   return packageRoot;
 }

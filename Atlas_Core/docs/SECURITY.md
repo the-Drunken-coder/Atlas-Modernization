@@ -107,7 +107,7 @@ Raw development startup seeds a development-only default admin credential:
 - password: `password`
 - role: `admin`
 
-This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `Atlas_Core/docker/.env` so it can safely enable machine auth. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
+This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `Atlas_Core/docker/.env.local` so it can safely enable machine auth. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 
 Optional API key auth is controlled by:
 
@@ -116,9 +116,9 @@ Optional API key auth is controlled by:
 
 `python3 Atlas_Core/scripts/atlas.py --dev` enables API-key auth for the local
 stack and generates or reuses the bootstrap key and admin password in the
-owner-only `Atlas_Core/docker/.env`. This gives local clients one shared
+owner-only `Atlas_Core/docker/.env.local`. This gives local clients one shared
 credential source without exposing the machine key to browser-delivered
-configuration.
+configuration or making local secrets available to production and tunnel startup.
 
 If enabled, middleware accepts the bootstrap API key or an active managed API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes. Managed API keys are full-access machine credentials in v1; Core stores only `sha256(secret)` plus metadata and returns the full key only from the create response. Managed keys are inactive while API-key auth is disabled, and Core rejects new managed-key creation until `ENABLE_API_AUTH=true`.
 

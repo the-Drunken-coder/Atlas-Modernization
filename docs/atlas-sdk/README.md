@@ -108,7 +108,7 @@ Install JavaScript dependencies once from the repository root with `npm ci`. Foc
 
 ## Auth
 
-Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`). The default `atlas.py --dev` launcher enables it and stores a generated local bootstrap key in `Atlas_Core/docker/.env`; raw Core startup follows its explicit settings. The SDK `apiKey` option sends `X-API-Key` on HTTP requests and an `auth` frame on the websocket feed connection; it does not send Bearer headers. Keys can be the local or production bootstrap key, or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
+Atlas Core has optional API-key auth (`X-API-Key` or `Authorization: Bearer`). The default `atlas.py --dev` launcher enables it and stores a generated local bootstrap key in `Atlas_Core/docker/.env.local`; raw Core startup follows its explicit settings and does not load that local credential file. The SDK `apiKey` option sends `X-API-Key` on HTTP requests and an `auth` frame on the websocket feed connection; it does not send Bearer headers. Keys can be the local or production bootstrap key, or managed keys created through Core admin auth. Per-client identity, scoped keys, audit, and token refresh stay out of scope until Core has a richer auth model.
 
 ## Composite functions
 

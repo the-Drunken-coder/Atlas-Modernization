@@ -12,6 +12,7 @@ from atlas import (
     ADMIN_PASSWORD_PLACEHOLDER,
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
+    LOCAL_AUTH_ENV_FILE,
     compose_down_command,
     compose_up_command,
     database_recreate_on_startup_enabled,
@@ -46,7 +47,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             patch("atlas.secrets.token_urlsafe", side_effect=[generated_key, generated_password]),
             patch("builtins.print") as output,
         ):
-            values = ensure_local_auth()
+            values = ensure_local_auth("/tmp/docker")
 
             self.assertEqual(
                 values,
@@ -76,17 +77,17 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 },
                 clear=True,
             ),
+            patch("atlas.parse_compose_env_file", return_value={}),
             patch("atlas.secrets.token_urlsafe") as generate,
         ):
             self.assertEqual(
-                ensure_local_auth(),
+                ensure_local_auth("/tmp/docker"),
                 {
                     "ENABLE_API_AUTH": "true",
                     "API_AUTH_KEY": configured_key,
                     "ATLAS_ADMIN_PASSWORD": configured_password,
                 },
             )
-            self.assertEqual(os.environ["ENABLE_API_AUTH"], "true")
             generate.assert_not_called()
 
         with (
@@ -98,16 +99,41 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 },
                 clear=True,
             ),
+            patch("atlas.parse_compose_env_file", return_value={}),
             patch("atlas.secrets.token_urlsafe", side_effect=["replacement-key", "replacement-password"]),
         ):
             self.assertEqual(
-                ensure_local_auth(),
+                ensure_local_auth("/tmp/docker"),
                 {
                     "ENABLE_API_AUTH": "true",
                     "API_AUTH_KEY": "replacement-key",
                     "ATLAS_ADMIN_PASSWORD": "replacement-password",
                 },
             )
+
+    def test_local_auth_reuses_owner_only_local_file(self) -> None:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "atlas.parse_compose_env_file",
+                return_value={
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": "persisted-local-key",
+                    "ATLAS_ADMIN_PASSWORD": "persisted-local-password",
+                },
+            ),
+            patch("atlas.secrets.token_urlsafe") as generate,
+        ):
+            self.assertEqual(
+                ensure_local_auth("/tmp/docker"),
+                {
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": "persisted-local-key",
+                    "ATLAS_ADMIN_PASSWORD": "persisted-local-password",
+                },
+            )
+            generate.assert_not_called()
+            self.assertEqual(os.environ["ENABLE_API_AUTH"], "true")
 
     def test_storage_mode_defaults_match_compose_stacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
@@ -316,8 +342,23 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         ):
             start_containers()
 
-        ensure_local.assert_called_once_with()
-        persist.assert_called_once_with("/tmp/Atlas_Core/docker", local_auth)
+        ensure_local.assert_called_once_with("/tmp/Atlas_Core/docker")
+        persist.assert_any_call("/tmp/Atlas_Core/docker", local_auth, env_filename=LOCAL_AUTH_ENV_FILE)
+
+    def test_public_start_does_not_load_local_auth(self) -> None:
+        for start_options in ({"production": True}, {"tunnel": True}):
+            with (
+                self.subTest(start_options=start_options),
+                patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+                patch("atlas.ensure_local_auth") as ensure_local,
+                patch("atlas.load_compose_dotenv"),
+                patch("atlas.ensure_minio_secrets", side_effect=RuntimeError("stop after auth selection")),
+                patch("builtins.print"),
+                self.assertRaises(SystemExit),
+            ):
+                start_containers(**start_options)
+
+            ensure_local.assert_not_called()
 
 
 if __name__ == "__main__":

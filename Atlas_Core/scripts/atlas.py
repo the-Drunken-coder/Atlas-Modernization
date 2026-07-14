@@ -22,10 +22,10 @@ import sys
 import time
 
 try:
-    from .compose_env import load_compose_dotenv, persist_compose_env_values
+    from .compose_env import load_compose_dotenv, parse_compose_env_file, persist_compose_env_values
     from .seed_command_catalog import publish_command_catalog
 except ImportError:
-    from compose_env import load_compose_dotenv, persist_compose_env_values
+    from compose_env import load_compose_dotenv, parse_compose_env_file, persist_compose_env_values
     from seed_command_catalog import publish_command_catalog
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 DEV_COMPOSE_FILE = "docker-compose.yml"
 TUNNEL_COMPOSE_FILE = "docker-compose.tunnel.yml"
 PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
+LOCAL_AUTH_ENV_FILE = ".env.local"
 
 
 def print_banner():
@@ -101,16 +102,17 @@ def ensure_postgres_password():
     return {}
 
 
-def ensure_local_auth():
+def ensure_local_auth(docker_dir):
     """Generate or reuse the credentials required by the local authenticated stack."""
-    api_auth_key = os.getenv("API_AUTH_KEY", "").strip()
+    local_auth = parse_compose_env_file(os.path.join(docker_dir, LOCAL_AUTH_ENV_FILE))
+    api_auth_key = os.getenv("API_AUTH_KEY", "").strip() or local_auth.get("API_AUTH_KEY", "").strip()
     if not api_auth_key or api_auth_key in API_AUTH_KEY_PLACEHOLDERS:
         api_auth_key = secrets.token_urlsafe(32)
         print("[INFO] Generated local API_AUTH_KEY (redacted)")
     else:
         print("[INFO] Reusing local API_AUTH_KEY (redacted)")
 
-    admin_password = os.getenv("ATLAS_ADMIN_PASSWORD", "").strip()
+    admin_password = os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or local_auth.get("ATLAS_ADMIN_PASSWORD", "").strip()
     if not admin_password or admin_password == ADMIN_PASSWORD_PLACEHOLDER:
         admin_password = secrets.token_urlsafe(32)
         print("[INFO] Generated local ATLAS_ADMIN_PASSWORD (redacted)")
@@ -549,13 +551,14 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
     try:
         atlas_core_dir = resolve_atlas_core_dir()
         docker_dir = os.path.join(atlas_core_dir, "docker")
+        local_auth_values = ensure_local_auth(docker_dir) if not db_only and not production and not tunnel else {}
         load_compose_dotenv(docker_dir)
         generated_compose_values = {}
         generated_compose_values.update(ensure_minio_secrets())
         generated_compose_values.update(ensure_postgres_password())
-        if not db_only and not production and not tunnel:
-            generated_compose_values.update(ensure_local_auth())
         persist_compose_env_values(docker_dir, generated_compose_values)
+        if local_auth_values:
+            persist_compose_env_values(docker_dir, local_auth_values, env_filename=LOCAL_AUTH_ENV_FILE)
         print_storage_notice(db_only=db_only, production=production)
 
         if production and not db_only:
@@ -624,7 +627,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             print("  Health:    http://localhost:8000/health")
             print("  Readiness: http://localhost:8000/readiness")
             if not production and not tunnel:
-                print("  Admin:     admin (password stored in Atlas_Core/docker/.env)")
+                print("  Admin:     admin (password stored in Atlas_Core/docker/.env.local)")
             if production:
                 print("  Auth:      X-API-Key required for API routes")
 

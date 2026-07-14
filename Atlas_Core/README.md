@@ -50,10 +50,12 @@ python3 Atlas_Core/scripts/atlas.py --dev
 
 The development launcher enables API-key authentication, generates or reuses a
 strong local machine key and admin password, and persists both with owner-only
-permissions in `Atlas_Core/docker/.env`. Local server-side tools such as Atlas
+permissions in `Atlas_Core/docker/.env.local`. Local server-side tools such as Atlas
 Simulations use that file as the single source of local credentials. The
 launcher never prints either secret. Browser sessions continue to use the
 `admin` account; its password is the `ATLAS_ADMIN_PASSWORD` stored in that file.
+Production and tunnel startup never load `.env.local`; their credentials must
+still be supplied explicitly through the environment or `docker/.env`.
 
 For manual Compose configuration:
 

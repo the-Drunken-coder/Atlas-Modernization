@@ -156,6 +156,20 @@ class ComposeEnvTest(unittest.TestCase):
             self.assertEqual(len(messages), 1)
             self.assertIn("POSTGRES_PASSWORD", messages[0])
 
+    def test_local_auth_file_is_not_loaded_as_compose_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            persist_compose_env_values(
+                temp_dir,
+                {"ENABLE_API_AUTH": "true", "API_AUTH_KEY": "local-only-key"},
+                announce=None,
+                env_filename=".env.local",
+            )
+            environ: dict[str, str] = {}
+
+            self.assertEqual(load_compose_dotenv(temp_dir, environ=environ, announce=None), [])
+            self.assertNotIn("API_AUTH_KEY", environ)
+            self.assertEqual((Path(temp_dir) / ".env.local").stat().st_mode & 0o777, 0o600)
+
 
 if __name__ == "__main__":
     unittest.main()
