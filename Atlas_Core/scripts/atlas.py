@@ -260,7 +260,10 @@ def raise_for_exited_development_core(container_name="atlas_core_api"):
         check=False,
     )
     output = f"{logs.stdout or ''}\n{logs.stderr or ''}"
-    if 'password authentication failed for user "atlas"' in output:
+    if (
+        'password authentication failed for user "atlas"' in output
+        or r'password authentication failed for user \"atlas\"' in output
+    ):
         raise RuntimeError(
             "Atlas Core exited because its PostgreSQL password does not match the existing "
             "development volume. Restore the POSTGRES_PASSWORD that initialized the volume, "

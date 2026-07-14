@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -70,6 +71,24 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         self.assertNotIn(leaked_secret, output.getvalue())
         self.assertNotIn(fixture_credential, output.getvalue())
         self.assertNotIn(fixture_stderr_credential, output.getvalue())
+
+    def test_wait_for_api_diagnoses_json_escaped_stale_password(self) -> None:
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="exited\n", stderr=""),
+            CompletedProcess(
+                [],
+                0,
+                stdout=json.dumps(
+                    {"error": 'password authentication failed for user "atlas"'}
+                ),
+                stderr="",
+            ),
+        ]
+
+        with patch("atlas.subprocess.run", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "does not match the existing development volume"):
+                wait_for_api(max_retries=3, delay=0)
 
     def test_wait_for_api_reports_generic_exited_core_without_stale_password_advice(self) -> None:
         responses = [
