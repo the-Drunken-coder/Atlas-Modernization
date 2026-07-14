@@ -30,12 +30,13 @@ export function ConnectionStatusPill({ status }: { status: EntityConnectionStatu
 export function connectionStatusLabel({ reported, freshness }: EntityConnectionStatus): string {
   if (freshness === "fresh") return titleCase(reported);
   if (freshness === "missing") return `Reported ${reported} — never checked in`;
+  if (freshness === "clock-error") return `Reported ${reported} — clock error`;
   return `Reported ${reported} — ${freshness === "stale" ? "stale heartbeat" : "offline"}`;
 }
 
 export function connectionStatusColor({ reported, freshness }: EntityConnectionStatus): string {
   if (freshness === "fresh") return `var(--link-${reported})`;
-  if (freshness === "missing") return "var(--text-3)";
+  if (freshness === "missing" || freshness === "clock-error") return "var(--text-3)";
   return heartbeatColor(freshness);
 }
 

@@ -62,6 +62,7 @@ export function entityDotColor(entity: EntityResource, now: number = Date.now())
     const connection = entityConnectionStatus(entity, now);
     if (connection) return connectionStatusColor(connection);
     const level = heartbeatLevel(entityHeartbeatLastSeen(entity), now);
+    if (level === "clock-error") return "var(--text-3)";
     return level ? `var(--heartbeat-${level})` : "var(--map-asset)";
   }
   if (kind === "track") {

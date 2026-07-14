@@ -53,7 +53,17 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
           rows={[
             ["State", entityStatusValue(entity) ?? "—"],
             ["Link", connection ? <ConnectionStatusPill status={connection} /> : "—"],
-            ["Heartbeat", level ? <StatusPill label={formatRelativeTime(lastSeen)} color={heartbeatColor(level)} /> : "—"],
+            [
+              "Heartbeat",
+              level ? (
+                <StatusPill
+                  label={level === "clock-error" ? "Clock error" : formatRelativeTime(lastSeen)}
+                  color={level === "clock-error" ? "var(--text-3)" : heartbeatColor(level)}
+                />
+              ) : (
+                "—"
+              )
+            ],
             ["Battery", battery !== undefined ? formatPercent(battery) : "—"]
           ]}
         />

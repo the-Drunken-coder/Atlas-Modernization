@@ -6,7 +6,8 @@ export type LinkState = "connected" | "disconnected" | "degraded" | "unknown";
 export type Classification = "friendly" | "hostile" | "neutral" | "unknown" | "civilian";
 
 export type HeartbeatLevel = "fresh" | "stale" | "offline";
-export type ConnectionFreshness = HeartbeatLevel | "missing";
+export type HeartbeatStatus = HeartbeatLevel | "clock-error";
+export type ConnectionFreshness = HeartbeatStatus | "missing";
 export type EntityConnectionStatus = { reported: LinkState; freshness: ConnectionFreshness };
 
 // Heartbeat freshness thresholds (seconds). Beyond OFFLINE the asset is treated
@@ -92,11 +93,12 @@ export function entityQueuedTaskIds(entity: EntityResource): string[] {
   return entity.components.task_queue?.queued_task_ids ?? [];
 }
 
-export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.now()): HeartbeatLevel | undefined {
+export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.now()): HeartbeatStatus | undefined {
   if (!lastSeen) return undefined;
   const timestamp = Date.parse(lastSeen);
   if (!Number.isFinite(timestamp)) return undefined;
   const seconds = (now - timestamp) / 1000;
+  if (seconds < -HEARTBEAT_STALE_SECONDS) return "clock-error";
   if (seconds >= HEARTBEAT_OFFLINE_SECONDS) return "offline";
   if (seconds >= HEARTBEAT_STALE_SECONDS) return "stale";
   return "fresh";
