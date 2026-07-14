@@ -79,6 +79,20 @@ describe("MapView keyboard selection", () => {
     expect(onSelectEntity).not.toHaveBeenCalled();
   });
 
+  it("preserves position-picking selection when the map is unavailable", () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
+    const { canvas, onBackgroundClick, onPickPosition, onSelectEntity } = renderMapView({
+      positionPicking: true,
+      selectedId: "asset-1"
+    });
+
+    fireEvent.click(canvas, { clientX: 110, clientY: 70 });
+
+    expect(onPickPosition).not.toHaveBeenCalled();
+    expect(onSelectEntity).not.toHaveBeenCalled();
+    expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["ArrowUp", "up"],
     ["ArrowDown", "down"],

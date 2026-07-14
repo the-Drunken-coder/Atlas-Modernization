@@ -353,9 +353,12 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       const { mapRef, onSelectEntity, onBackgroundClick, onPickPosition, positionPicking, selectedEntityId } = optionsRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
       const point = cursorPointsFromEvent(event, rect, cursorHandoffRef.current).visualPoint;
-      if (positionPicking && mapRef.current && onPickPosition) {
-        const coordinates = mapRef.current.unproject([point.x, point.y]);
-        onPickPosition({ lng: coordinates.lng, lat: coordinates.lat, x: event.clientX, y: event.clientY });
+      if (positionPicking) {
+        const map = mapRef.current;
+        if (map && onPickPosition) {
+          const coordinates = map.unproject([point.x, point.y]);
+          onPickPosition({ lng: coordinates.lng, lat: coordinates.lat, x: event.clientX, y: event.clientY });
+        }
         return;
       }
       const clickTargets = hoverSelectionTargets(event, rect, point, mapRef.current, markerBoxCacheRef.current, event.detail === 0);
