@@ -602,14 +602,22 @@ Smoke browser auth and command task creation against Core:
 ```bash
 CORE_URL=http://localhost:8000
 COOKIE_JAR=/tmp/atlas-core-admin.cookies
-set -a
-. Atlas_Core/docker/.env.local
-set +a
+LOGIN_JSON="$(
+  python3 - <<'PY'
+import json
+from Atlas_Core.scripts.compose_env import parse_compose_env_file
+
+password = parse_compose_env_file("Atlas_Core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
+if not password:
+    raise SystemExit("Atlas_Core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
+print(json.dumps({"username": "admin", "password": password}))
+PY
+)" || exit 1
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H 'Origin: http://localhost:5173' \
   -H 'Content-Type: application/json' \
-  -d "{\"username\":\"admin\",\"password\":\"$ATLAS_ADMIN_PASSWORD\"}"
+  --data-binary "$LOGIN_JSON"
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
 
@@ -653,14 +661,22 @@ Create an entity:
 CORE_URL=http://localhost:8000
 COOKIE_JAR=/tmp/atlas-core-admin.cookies
 UI_ORIGIN=http://localhost:5173
-set -a
-. Atlas_Core/docker/.env.local
-set +a
+LOGIN_JSON="$(
+  python3 - <<'PY'
+import json
+from Atlas_Core.scripts.compose_env import parse_compose_env_file
+
+password = parse_compose_env_file("Atlas_Core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
+if not password:
+    raise SystemExit("Atlas_Core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
+print(json.dumps({"username": "admin", "password": password}))
+PY
+)" || exit 1
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d "{\"username\":\"admin\",\"password\":\"$ATLAS_ADMIN_PASSWORD\"}"
+  --data-binary "$LOGIN_JSON"
 
 curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
   -H "Origin: $UI_ORIGIN" \

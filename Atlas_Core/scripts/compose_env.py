@@ -90,7 +90,8 @@ def normalize_compose_env_value(value: str) -> str:
         if closing_quote != -1:
             trailing = value[closing_quote + 1 :].strip()
             if not trailing or trailing.startswith("#"):
-                return value[1:closing_quote]
+                quoted_value = value[1:closing_quote]
+                return re.sub(r'\\(["\\])', r"\1", quoted_value) if quote == '"' else quoted_value
 
     comment_index = value.find(" #")
     if comment_index != -1:
