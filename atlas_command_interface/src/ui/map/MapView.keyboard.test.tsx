@@ -14,6 +14,19 @@ describe("MapView keyboard selection", () => {
     expect(onPickPosition).toHaveBeenCalledWith({ lng: 200, lat: 100, x: 210, y: 120 });
   });
 
+  it("leaves Enter available to ordinary controls while position-picking is active", () => {
+    const { onPickPosition } = renderMapView({ positionPicking: true });
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+
+    fireEvent(button, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(onPickPosition).not.toHaveBeenCalled();
+    button.remove();
+  });
+
   it("cancels position-picking mode with Escape without clearing selection", () => {
     const { canvas, onBackgroundClick, onCancelPositionPicking } = renderMapView({ positionPicking: true, selectedId: "asset-1" });
     const laterEscapeHandler = vi.fn();

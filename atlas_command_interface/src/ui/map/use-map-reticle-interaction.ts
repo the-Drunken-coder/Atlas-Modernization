@@ -406,7 +406,7 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     if (event.key !== "Enter") return;
     const canvas = mapCanvasRef.current;
     const map = mapRef.current;
-    if (!canvas || !map || !onPickPosition) return;
+    if (!canvas || event.target !== canvas || !map || !onPickPosition) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     const rect = canvas.getBoundingClientRect();
