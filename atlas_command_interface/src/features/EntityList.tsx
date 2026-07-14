@@ -11,6 +11,7 @@ import {
 } from "../atlas/entities.js";
 import { formatPercent, formatRelativeTime } from "../atlas/format.js";
 import { connectionStatusColor, connectionStatusLabel } from "../ui/primitives/StatusPill.js";
+import { useHeartbeatClock } from "./useHeartbeatClock.js";
 
 type EntityListProps = {
   entities: EntityResource[];
@@ -21,6 +22,7 @@ type EntityListProps = {
 };
 
 export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPreview }: EntityListProps) {
+  const now = useHeartbeatClock();
   if (entities.length === 0) {
     return <div className="panel__empty">{emptyLabel}</div>;
   }
@@ -41,10 +43,10 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
             onPointerEnter={() => onPreview?.(entity)}
             onPointerLeave={() => onPreview?.(null)}
           >
-            <span className="entity-row__dot" style={{ background: entityDotColor(entity) }} />
+            <span className="entity-row__dot" style={{ background: entityDotColor(entity, now) }} />
             <span className="entity-row__main">
               <span className="entity-row__name">{entityDisplayName(entity)}</span>
-              <span className="entity-row__meta">{entityMeta(entity)}</span>
+              <span className="entity-row__meta">{entityMeta(entity, now)}</span>
             </span>
           </button>
         </li>
@@ -53,12 +55,12 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
   );
 }
 
-export function entityDotColor(entity: EntityResource): string {
+export function entityDotColor(entity: EntityResource, now: number = Date.now()): string {
   const kind = entityKind(entity);
   if (kind === "asset") {
-    const connection = entityConnectionStatus(entity);
+    const connection = entityConnectionStatus(entity, now);
     if (connection) return connectionStatusColor(connection);
-    const level = heartbeatLevel(entityLastSeen(entity));
+    const level = heartbeatLevel(entityLastSeen(entity), now);
     return level ? `var(--heartbeat-${level})` : "var(--map-asset)";
   }
   if (kind === "track") {
@@ -68,10 +70,10 @@ export function entityDotColor(entity: EntityResource): string {
   return "var(--map-geofeature)";
 }
 
-function entityMeta(entity: EntityResource): string {
+function entityMeta(entity: EntityResource, now: number): string {
   const kind = entityKind(entity);
   if (kind === "asset") {
-    const connection = entityConnectionStatus(entity);
+    const connection = entityConnectionStatus(entity, now);
     const battery = entityBattery(entity);
     const parts = [
       connection ? connectionStatusLabel(connection) : undefined,

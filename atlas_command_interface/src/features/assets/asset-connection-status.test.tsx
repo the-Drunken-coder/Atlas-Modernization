@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptySnapshot } from "../../atlas/store.js";
@@ -43,5 +43,25 @@ describe("asset connection status", () => {
 
     render(<AssetInspector entity={entity} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
     expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it("updates the entity list when a fresh heartbeat becomes stale without a snapshot change", () => {
+    render(<EntityList entities={[asset("2026-06-20T00:09:50Z")]} emptyLabel="none" onSelect={() => {}} />);
+    expect(screen.getByText(/Connected/)).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(21_000));
+
+    expect(screen.getByText(/Reported connected — stale heartbeat/)).toBeInTheDocument();
+  });
+
+  it("updates the inspector through stale and offline thresholds without a snapshot change", () => {
+    render(<AssetInspector entity={asset("2026-06-20T00:09:50Z")} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(21_000));
+    expect(screen.getByText("Reported connected — stale heartbeat")).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(90_000));
+    expect(screen.getByText("Reported connected — offline")).toBeInTheDocument();
   });
 });

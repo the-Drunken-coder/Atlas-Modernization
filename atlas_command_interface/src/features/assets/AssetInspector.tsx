@@ -21,6 +21,7 @@ import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primi
 import { CommandList } from "../commands/CommandList.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 import { TaskHistoryItem, TaskRow } from "../shared/TaskRow.js";
+import { useHeartbeatClock } from "../useHeartbeatClock.js";
 
 const MAX_HISTORY = 25;
 
@@ -32,11 +33,12 @@ type AssetInspectorProps = {
 };
 
 export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: AssetInspectorProps) {
+  const now = useHeartbeatClock();
   const position = entityPosition(entity);
-  const connection = entityConnectionStatus(entity);
+  const connection = entityConnectionStatus(entity, now);
   const battery = entityBattery(entity);
   const lastSeen = entityHeartbeatLastSeen(entity);
-  const level = heartbeatLevel(lastSeen);
+  const level = heartbeatLevel(lastSeen, now);
   const active = currentTask(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
   const history = tasksForEntity(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
