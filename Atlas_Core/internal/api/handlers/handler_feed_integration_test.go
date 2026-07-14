@@ -17,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
@@ -31,7 +32,7 @@ import (
 const feedIntegrationAPIKey = "feed-integration-key"
 
 func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
-	pool := openFeedIntegrationPool(t)
+	pool := openIsolatedFeedIntegrationPool(t)
 	ctx := context.Background()
 	currentVersion, err := actions.CurrentChangeVersion(ctx, pool)
 	if err != nil {
@@ -113,6 +114,72 @@ func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
 	assertEntityCreateFeedEventIntegration(t, secondEvent, secondID, second)
 	thirdEvent := readFeedEventIntegration(t, conn)
 	assertEntityCreateFeedEventIntegration(t, thirdEvent, thirdID, third)
+}
+
+func openIsolatedFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dbURL, explicitDBURL := feedIntegrationDatabaseURL()
+	if dbURL == "" {
+		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	adminConn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect feed integration database: %v", err)
+		}
+		testenv.SkipOrFatal(t, "feed integration database unavailable: %v", err)
+	}
+
+	schema := fmt.Sprintf("atlas_feed_test_%d", time.Now().UTC().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := adminConn.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		_ = adminConn.Close(context.Background())
+		if explicitDBURL {
+			t.Fatalf("create isolated feed integration schema: %v", err)
+		}
+		testenv.SkipOrFatal(t, "feed integration database unavailable: %v", err)
+	}
+	var db *atlasdb.DB
+	t.Cleanup(func() {
+		if db != nil {
+			db.Close()
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := adminConn.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop isolated feed integration schema %s: %v", schema, err)
+		}
+		if err := adminConn.Close(cleanupCtx); err != nil {
+			t.Errorf("close feed integration database connection: %v", err)
+		}
+	})
+
+	parsed, err := url.Parse(dbURL)
+	if err != nil {
+		t.Fatalf("parse feed integration database URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	db, err = atlasdb.New(&config.Config{
+		DatabaseURL:             parsed.String(),
+		DatabasePoolSize:        1,
+		DatabaseMaxOverflow:     1,
+		DatabasePoolRecycle:     3600,
+		DatabasePoolTimeout:     10,
+		DatabasePoolIdleTimeout: 30,
+		DatabasePoolPrePing:     false,
+	})
+	if err != nil {
+		t.Fatalf("open isolated feed integration database: %v", err)
+	}
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("initialize isolated feed integration schema: %v", err)
+	}
+	return db.Pool
 }
 
 func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
