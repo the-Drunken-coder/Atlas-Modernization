@@ -53,7 +53,7 @@ jobs:
         run: docker compose -f docker/docker-compose.yml up -d --build
 
       - name: Verify command catalog on fresh startup and API-only restart
-        run: ./scripts/test_development_restart.sh
+        run: ATLAS_API_AUTH_KEY= API_AUTH_KEY= ./scripts/test_development_restart.sh
 
       - name: Run shell API integration tests
         run: ./scripts/run_integration_tests.sh
