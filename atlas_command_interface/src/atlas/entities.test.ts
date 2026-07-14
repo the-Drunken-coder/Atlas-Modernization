@@ -52,12 +52,13 @@ describe("entity accessors", () => {
     expect(heartbeatLevel("2026-06-20T00:09:50Z", now)).toBe("fresh");
     expect(heartbeatLevel("2026-06-20T00:09:00Z", now)).toBe("stale");
     expect(heartbeatLevel("2026-06-20T00:00:00Z", now)).toBe("offline");
-    expect(heartbeatLevel("2026-06-20T00:10:01Z", now)).toBeUndefined();
+    expect(heartbeatLevel("2026-06-20T00:10:01Z", now)).toBe("fresh");
     expect(heartbeatLevel(undefined, now)).toBeUndefined();
   });
 
   it.each([
     ["2026-06-20T00:09:50Z", "fresh"],
+    ["2026-06-20T00:10:01Z", "fresh"],
     ["2026-06-20T00:09:00Z", "stale"],
     ["2026-06-20T00:00:00Z", "offline"],
     [undefined, "missing"]
