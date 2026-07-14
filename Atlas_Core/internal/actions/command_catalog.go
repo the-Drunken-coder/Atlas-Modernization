@@ -34,7 +34,7 @@ func (a *ObjectActions) PublishCommandCatalog(ctx context.Context) error {
 	}
 
 	usageHint := commandcatalog.ObjectID
-	object, err := a.Upload(
+	_, err = a.Upload(
 		ctx,
 		commandcatalog.ObjectID,
 		bytes.NewReader(catalogJSON),
@@ -47,10 +47,7 @@ func (a *ObjectActions) PublishCommandCatalog(ctx context.Context) error {
 		return fmt.Errorf("upload embedded command catalog: %w", err)
 	}
 
-	if _, err := a.Update(ctx, commandcatalog.ObjectID, UpdateObjectParams{
-		Extra:           catalogData,
-		ExpectedVersion: &object.Version,
-	}); err != nil {
+	if _, err := a.Update(ctx, commandcatalog.ObjectID, UpdateObjectParams{Extra: catalogData}); err != nil {
 		return fmt.Errorf("publish embedded command catalog metadata: %w", err)
 	}
 	return nil
@@ -74,12 +71,15 @@ func commandCatalogObjectMatches(object *models.MediaObject, catalogData map[str
 	}
 
 	expectedPayload := make(map[string]interface{}, len(catalogData)-1)
+	actualPayload := object.GetPayload()
+	actualCatalogPayload := make(map[string]interface{}, len(catalogData)-1)
 	for key, value := range catalogData {
 		if key != "type" {
 			expectedPayload[key] = value
+			actualCatalogPayload[key] = actualPayload[key]
 		}
 	}
 	expectedJSON, expectedErr := json.Marshal(expectedPayload)
-	actualJSON, actualErr := json.Marshal(object.GetPayload())
+	actualJSON, actualErr := json.Marshal(actualCatalogPayload)
 	return expectedErr == nil && actualErr == nil && bytes.Equal(actualJSON, expectedJSON)
 }

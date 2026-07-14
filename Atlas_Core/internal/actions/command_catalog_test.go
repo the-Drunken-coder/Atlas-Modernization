@@ -19,12 +19,13 @@ func TestCommandCatalogObjectMatchesPublishedCatalog(t *testing.T) {
 		"commands":    []interface{}{map[string]interface{}{"id": "goto"}},
 	}
 	storedJSON, err := json.Marshal(map[string]interface{}{
-		"bucket":      "atlas-media",
-		"size_bytes":  100,
-		"usage_hints": []string{commandcatalog.ObjectID},
-		"name":        catalogData["name"],
-		"description": catalogData["description"],
-		"commands":    catalogData["commands"],
+		"bucket":        "atlas-media",
+		"size_bytes":    100,
+		"usage_hints":   []string{commandcatalog.ObjectID},
+		"name":          catalogData["name"],
+		"description":   catalogData["description"],
+		"commands":      catalogData["commands"],
+		"operator_note": "preserve this annotation",
 	})
 	if err != nil {
 		t.Fatal(err)
