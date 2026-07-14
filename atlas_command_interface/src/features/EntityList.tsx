@@ -5,6 +5,7 @@ import {
   entityConnectionStatus,
   entityDisplayName,
   entityGeometry,
+  entityHeartbeatLastSeen,
   entityKind,
   entityLastSeen,
   heartbeatLevel
@@ -60,7 +61,7 @@ export function entityDotColor(entity: EntityResource, now: number = Date.now())
   if (kind === "asset") {
     const connection = entityConnectionStatus(entity, now);
     if (connection) return connectionStatusColor(connection);
-    const level = heartbeatLevel(entityLastSeen(entity), now);
+    const level = heartbeatLevel(entityHeartbeatLastSeen(entity), now);
     return level ? `var(--heartbeat-${level})` : "var(--map-asset)";
   }
   if (kind === "track") {

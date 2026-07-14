@@ -64,4 +64,13 @@ describe("asset connection status", () => {
     act(() => vi.advanceTimersByTime(90_000));
     expect(screen.getByText("Reported connected — offline")).toBeInTheDocument();
   });
+
+  it("does not color a no-link asset from telemetry-only recency", () => {
+    const entity = asset();
+    entity.components = { telemetry: { last_update: "2026-06-20T00:09:50Z" } };
+
+    render(<EntityList entities={[entity]} emptyLabel="none" onSelect={() => {}} />);
+
+    expect(document.querySelector<HTMLElement>(".entity-row__dot")).toHaveStyle({ background: "var(--map-asset)" });
+  });
 });
