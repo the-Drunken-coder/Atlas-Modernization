@@ -154,6 +154,32 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("bracket-api-key-secret");
   });
 
+  it("redacts complete cookie header values", () => {
+    const headers = ["Cookie: foo=bar; atlas_session=cookie-session-secret; theme=dark", "Set-Cookie: atlas_session=set-cookie-secret; Path=/; HttpOnly"];
+
+    for (const header of headers) {
+      const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${header}`));
+
+      expect(sanitized).toContain("[redacted]");
+      expect(sanitized).not.toContain("foo=bar");
+      expect(sanitized).not.toContain("cookie-session-secret");
+      expect(sanitized).not.toContain("theme=dark");
+      expect(sanitized).not.toContain("set-cookie-secret");
+      expect(sanitized).not.toContain("Path=/");
+      expect(sanitized).not.toContain("HttpOnly");
+    }
+  });
+
+  it("redacts sensitive components in nested structured keys", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: headers[authorization]=Basic nested-basic-secret, auth[api_key]=nested-api-key-secret")
+    );
+
+    expect(sanitized).not.toContain("Basic nested-basic-secret");
+    expect(sanitized).not.toContain("nested-api-key-secret");
+    expect(sanitized).toContain("[redacted]");
+  });
+
   it("redacts URL userinfo with an empty username", () => {
     const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://:empty-user-password@core.example"));
 
