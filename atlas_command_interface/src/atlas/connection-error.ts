@@ -1,7 +1,7 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 const SENSITIVE_PARAMETER = /([?&;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|[^&#;\s]*)/gi;
 const SENSITIVE_NAME_PATTERN =
-  "(?:aws[_-]?(?:access[_-]?key|secret[_-]?access[_-]?key)|access[_-]?key(?:[_-]?id)?|secret[_-]?access[_-]?key(?:[_-]?id)?|private[_-]?key|access[_-]?token|api[_-]?key|authorization|auth[_-]?token|bearer[_-]?token|client[_-]?(?:secret|token)|cookie|credential(?:s)?|csrf[_-]?token|db[_-]?password|id[_-]?token|key|password|refresh[_-]?token|secret|session[_-]?token|signature|token|x[_-]?amz[_-]?signature)";
+  "(?:aws[_-]?(?:access[_-]?key|secret[_-]?access[_-]?key)|access[_-]?key(?:[_-]?id)?|secret[_-]?access[_-]?key(?:[_-]?id)?|private[_-]?key|access[_-]?token|api[_-]?key|authorization|auth[_-]?token|bearer[_-]?token|client[_-]?(?:secret|token)|cookie|credential(?:s)?|csrf[_-]?token|db[_-]?password|id[_-]?token|key|password|refresh[_-]?token|secret|session(?:[_-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[_-]?amz[_-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
 const BRACKETED_COLLECTION = String.raw`\[(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\]\n\r])*\]`;
 const AMBIGUOUS_OBJECT_VALUE = String.raw`\{[^\n\r]*`;

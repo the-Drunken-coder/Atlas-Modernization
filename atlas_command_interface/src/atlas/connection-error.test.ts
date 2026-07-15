@@ -132,6 +132,28 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("redacts session-shaped query credentials without matching ordinary words", () => {
+    const secrets = ["session-secret", "session-id-secret", "atlas-session-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: https://core.test?session=${secrets[0]}&session_id=${secrets[1]}&atlas_session=${secrets[2]}&sessional=ordinary-value`)
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("sessional=ordinary-value");
+  });
+
+  it("redacts session-shaped structured fields without matching ordinary words", () => {
+    const secrets = {
+      session: "structured-session-secret",
+      session_id: "structured-session-id-secret",
+      atlas_session: "structured-atlas-session-secret"
+    };
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${JSON.stringify({ ...secrets, sessional: "ordinary-value" })}`));
+
+    for (const secret of Object.values(secrets)) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("ordinary-value");
+  });
+
   it("redacts authorization-shaped structured fields", () => {
     const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"authorization":"Basic dXNlcjpwYXNz","bearer_token":"structured-secret"}'));
 

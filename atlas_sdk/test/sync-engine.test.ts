@@ -349,6 +349,72 @@ describe("AtlasClient sync", () => {
     await client.connectFeed();
 
     expect(client.sync.status()).not.toHaveProperty("error");
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+  });
+
+  it("stays degraded until post-connect recovery succeeds", async () => {
+    const core = new FakeCore();
+    let holdNextRecovery = false;
+    let releaseRecovery: ((response: Response) => void) | undefined;
+    let heldResponse: Promise<Response> | undefined;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since" && holdNextRecovery) {
+        holdNextRecovery = false;
+        heldResponse = core.fetch(String(url), init);
+        return new Promise<Response>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      Array.from(core.sockets)[0]?.close();
+      await vi.waitFor(() => expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection closed"));
+
+      holdNextRecovery = true;
+      const failedRecovery = client.connectAndRecoverFeed();
+      await vi.waitFor(() => expect(releaseRecovery).toBeTypeOf("function"));
+      expect(client.sync.status()).toMatchObject({
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core feed connection closed"
+      });
+
+      releaseRecovery?.(new Response("recovery unavailable", { status: 503 }));
+      await expect(failedRecovery).rejects.toThrow();
+      expect(client.sync.status()).toMatchObject({
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core recovery request failed"
+      });
+
+      releaseRecovery = undefined;
+      heldResponse = undefined;
+      holdNextRecovery = true;
+      const successfulRecovery = client.connectAndRecoverFeed();
+      await vi.waitFor(() => expect(releaseRecovery).toBeTypeOf("function"));
+      expect(client.sync.status()).toMatchObject({
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core recovery request failed"
+      });
+
+      releaseRecovery?.(await heldResponse!);
+      await successfulRecovery;
+      expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
+      expect(client.sync.status()).not.toHaveProperty("error");
+    } finally {
+      client.sync.stop();
+    }
   });
 
   it("ignores an in-flight recovery from a previous lifecycle after restart", async () => {

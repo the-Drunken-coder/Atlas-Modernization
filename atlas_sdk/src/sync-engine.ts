@@ -171,6 +171,13 @@ export class SyncEngine {
 
   async connectFeed(): Promise<void> {
     const generation = this.lifecycleGeneration;
+    await this.connectFeedForGeneration(generation);
+    if (this.isCurrent(generation) && this.lastError === "Atlas Core feed connection failed") {
+      this.lastError = undefined;
+    }
+  }
+
+  private async connectFeedForGeneration(generation: number): Promise<void> {
     try {
       await this.feed.connect({
         subscriptions: this.subscriptions,
@@ -208,9 +215,6 @@ export class SyncEngine {
       }
       throw error;
     }
-    if (!this.isCurrent(generation)) return;
-    this.markSynchronized();
-    this.lastError = undefined;
   }
 
   changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
@@ -454,7 +458,7 @@ export class SyncEngine {
     this.reconnectAfterRecovery = false;
     this.clearReconnectTimer();
     try {
-      await this.connectFeed();
+      await this.connectFeedForGeneration(generation);
       if (!this.isCurrent(generation)) return;
       await this.changedSince(generation);
     } finally {
