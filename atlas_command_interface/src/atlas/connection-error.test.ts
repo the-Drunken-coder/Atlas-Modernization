@@ -30,6 +30,17 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("Bearer [redacted]");
   });
 
+  it("fails closed when an error message cannot be read", () => {
+    const error = new Error();
+    Object.defineProperty(error, "message", {
+      get() {
+        throw new Error("message getter failed");
+      }
+    });
+
+    expect(sanitizeConnectionError(error)).toBe("Atlas Core returned an unsafe error message.");
+  });
+
   it("redacts generic URL userinfo and encoded query parameter names", () => {
     const message =
       "postgres://db-user:db-password@example.test //url-user:url-password@example.test?api%5Fkey=encoded-secret&access%2Dtoken=encoded-token&client%5Fsecret=client-secret&client%2Dsecret=hyphen-secret&id%5Ftoken=id-token&session%2Dtoken=session-token&safe=value";
@@ -177,6 +188,10 @@ describe("sanitizeConnectionError", () => {
       {
         message: String.raw`Atlas request failed: 500: {"api\u005cu005fkey":"nested-unicode-secret","message":"safe context"}`,
         secret: "nested-unicode-secret"
+      },
+      {
+        message: String.raw`Atlas request failed: 500: {"api\x5fkey":"hex-escaped-secret","message":"safe context"}`,
+        secret: "hex-escaped-secret"
       }
     ];
 

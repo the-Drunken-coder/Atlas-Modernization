@@ -23,6 +23,11 @@ function StatusProbe() {
           {atlas.health.error.source}: {atlas.health.error.message}
         </code>
       ) : null}
+      {atlas.connectionError ? (
+        <code data-testid="connection-error">
+          {atlas.connectionError.source}: {atlas.connectionError.message}
+        </code>
+      ) : null}
       {atlas.error ? <code>{atlas.error}</code> : null}
       {atlas.error ? (
         <button type="button" onClick={atlas.reconnect}>
@@ -207,6 +212,7 @@ describe("AtlasProvider", () => {
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByText("start failed")).toBeInTheDocument();
     expect(screen.getByTestId("health-error")).toHaveTextContent("startup: start failed");
+    expect(screen.getByTestId("connection-error")).toHaveTextContent("startup: start failed");
     expect(screen.getByRole("button", { name: "Retry connection" })).toBeInTheDocument();
     await waitFor(() => {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -219,6 +225,7 @@ describe("AtlasProvider", () => {
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByTestId("entity-names")).toHaveTextContent("Recovered");
     expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
     expect(screen.queryByText("start failed", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry connection" })).not.toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);

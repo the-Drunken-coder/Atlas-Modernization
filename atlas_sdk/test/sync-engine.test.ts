@@ -552,6 +552,7 @@ describe("AtlasClient sync", () => {
 
     expect(client.sync.snapshot().entities).toHaveProperty("asset-new-lifecycle");
     expect(client.sync.snapshot().entities).not.toHaveProperty("asset-old-lifecycle");
+    expect(client.sync.status().lastVersion).toBe(1);
   });
 
   it("does not apply a gapped feed event after its recovery is superseded by a failed recovery", async () => {
@@ -710,7 +711,12 @@ describe("AtlasClient sync", () => {
       socket.close();
       releaseRecovery(await core.fetch("http://atlas.test/queries/changed-since?since_version=0"));
       await expect(recovery).resolves.toBeUndefined();
-      expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection closed");
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core feed connection closed"
+      });
     } finally {
       client.sync.stop();
     }

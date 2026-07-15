@@ -36,7 +36,12 @@ function redactConnectionMessage(message: string): string {
 }
 
 export function sanitizeConnectionError(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  let message = "";
+  try {
+    message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  } catch {
+    return SAFE_FALLBACK;
+  }
   const firstLine = message.split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0]?.trim() ?? "";
   if (!firstLine || firstLine.length > 2_000 || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
 
@@ -62,7 +67,9 @@ export function sanitizeConnectionError(cause: unknown): string {
   let unescaped = decoded;
   let unicodeSettled = false;
   for (let pass = 0; pass < 2; pass++) {
-    const next = unescaped.replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
+    const next = unescaped
+      .replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+      .replace(/\\+x([0-9a-f]{2})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
     if (next === unescaped) {
       unicodeSettled = true;
       break;
