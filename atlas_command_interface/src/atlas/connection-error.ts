@@ -4,10 +4,10 @@ const SENSITIVE_NAME_PATTERN =
   "(?:access[_-]?token|api[_-]?key|authorization|auth[_-]?token|bearer[_-]?token|client[_-]?(?:secret|token)|cookie|credential(?:s)?|csrf[_-]?token|db[_-]?password|id[_-]?token|key|password|refresh[_-]?token|secret|session[_-]?token|signature|token|x[_-]?amz[_-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
 const SENSITIVE_FIELD = new RegExp(
-  String.raw`((?:\\?["']?\b${SENSITIVE_NAME_PATTERN}\b\\?["']?)\s*[:=]\s*)(?:\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+)`,
+  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9-]+[._-])*${SENSITIVE_NAME_PATTERN}\b\\?["']?)\s*[:=]\s*)(?:\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+)`,
   "gi"
 );
-const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|\\\/\\\/))[^/\s:@]+(?::[^@\s]*)?@/gi;
+const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|\\\/\\\/))[^/\s:@]*(?::[^@\s]*)?@/gi;
 const BEARER_TOKEN = /\bBearer\s+[^\s,;]+/gi;
 const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 

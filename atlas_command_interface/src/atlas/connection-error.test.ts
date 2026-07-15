@@ -136,6 +136,21 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("query-credential-secret");
   });
 
+  it("redacts prefixed structured credential fields", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"oauth_token":"oauth-token-secret","x_amz_credential":"amz-credential-secret"}')
+    );
+
+    expect(sanitized).not.toContain("oauth-token-secret");
+    expect(sanitized).not.toContain("amz-credential-secret");
+  });
+
+  it("redacts URL userinfo with an empty username", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://:empty-user-password@core.example"));
+
+    expect(sanitized).not.toContain("empty-user-password");
+  });
+
   it("redacts nested encoded credential query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key")
