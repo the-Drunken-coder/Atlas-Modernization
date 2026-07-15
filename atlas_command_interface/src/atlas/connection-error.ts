@@ -17,12 +17,8 @@ const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|\\\/\\\/))[^/\s:@]*(?::[^/
 const BEARER_TOKEN = /\bBearer\s+[^\s,;]+/gi;
 const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 
-export function sanitizeConnectionError(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
-  const firstLine = message.split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0]?.trim() ?? "";
-  if (!firstLine || firstLine.length > 2_000 || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
-
-  const sanitized = firstLine
+function redactConnectionMessage(message: string): string {
+  return message
     .replace(URL_USERINFO, "$1[redacted]@")
     .replace(SENSITIVE_PARAMETER, (match, prefix: string, name: string) => {
       let decodedName: string;
@@ -37,5 +33,25 @@ export function sanitizeConnectionError(cause: unknown): string {
     .replace(SENSITIVE_FIELD, "$1[redacted]")
     .replace(BEARER_TOKEN, "Bearer [redacted]")
     .replace(KNOWN_SECRET, "[redacted]");
+}
+
+export function sanitizeConnectionError(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  const firstLine = message.split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0]?.trim() ?? "";
+  if (!firstLine || firstLine.length > 2_000 || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
+
+  const sanitized = redactConnectionMessage(firstLine);
+  let decoded = sanitized;
+  for (let pass = 0; pass < 2; pass++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      break;
+    }
+    if (next === decoded) break;
+    decoded = next;
+    if (redactConnectionMessage(decoded) !== decoded) return SAFE_FALLBACK;
+  }
   return sanitized.length > 240 ? `${sanitized.slice(0, 239)}…` : sanitized;
 }

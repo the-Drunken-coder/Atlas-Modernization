@@ -46,6 +46,26 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=value");
   });
 
+  it("fails closed on encoded and double-encoded URL credentials", () => {
+    const cases = [
+      {
+        message: "Atlas request failed: https%3A%2F%2Fuser%3Aencoded-userinfo-secret%40example.test",
+        secret: "encoded-userinfo-secret"
+      },
+      {
+        message: "Atlas request failed: https%253A%252F%252Fcore.test%253Fapi_key%253Ddouble-encoded-secret",
+        secret: "double-encoded-secret"
+      }
+    ];
+
+    for (const { message, secret } of cases) {
+      const sanitized = sanitizeConnectionError(new Error(message));
+
+      expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
+      expect(sanitized).not.toContain(secret);
+    }
+  });
+
   it("redacts credential parameters in URL fragments", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://app.test/callback#access%5Ftoken=fragment-access-secret&id_token=fragment-id-secret&state=visible")

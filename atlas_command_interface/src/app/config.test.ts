@@ -46,7 +46,10 @@ describe("appConfigFromEnv", () => {
     const config = appConfigFromEnv({ DEV: false, MODE: "production", VITE_MAPTILER_API_KEY: "maptiler-key" });
 
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
-    expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({ label: "MapTiler OSM Dark" });
+    const source = config.mapSources.find((source) => source.id === "maptiler-osm-dark");
+    expect(source).toMatchObject({ label: "MapTiler OSM Dark" });
+    expect(source?.style).toBeDefined();
+    expect(source?.unavailableReason).toBeUndefined();
   });
 
   it("keeps MapTiler OSM Dark as the configured default when it is unavailable", () => {

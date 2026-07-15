@@ -127,12 +127,15 @@ describe("sdk data source", () => {
   it("reports and clears startup errors across retry and dispose", async () => {
     vi.stubGlobal("WebSocket", undefined);
     const core = new TestCore();
+    const secret = "startup-userinfo-secret";
     let failRevision = true;
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         if (failRevision && new URL(String(input)).pathname === "/protocol/revision") {
-          return Promise.resolve(Response.json({ error_code: "CORE_UNAVAILABLE", message: "Core unavailable" }, { status: 503 }));
+          return Promise.resolve(
+            Response.json({ error_code: "CORE_UNAVAILABLE", message: `Core unavailable: https://user:${secret}@core.test` }, { status: 503 })
+          );
         }
         return core.fetch(String(input), init);
       })
@@ -140,7 +143,11 @@ describe("sdk data source", () => {
 
     const dataSource = createSdkDataSource(config);
     await expect(dataSource.start()).rejects.toThrow();
-    expect(dataSource.health?.()).toMatchObject({ error: { source: "startup", message: "Atlas request failed: 503 CORE_UNAVAILABLE: Core unavailable" } });
+    const health = dataSource.health?.();
+    expect(health).toMatchObject({ error: { source: "startup" } });
+    expect(health?.error?.message).toContain("Core unavailable");
+    expect(health?.error?.message).toContain("[redacted]");
+    expect(health?.error?.message).not.toContain(secret);
 
     dataSource.dispose();
     expect(dataSource.health?.()).not.toHaveProperty("error");

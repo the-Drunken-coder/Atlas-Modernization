@@ -219,6 +219,8 @@ describe("AtlasProvider", () => {
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByTestId("entity-names")).toHaveTextContent("Recovered");
     expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
+    expect(screen.queryByText("start failed", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry connection" })).not.toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);
