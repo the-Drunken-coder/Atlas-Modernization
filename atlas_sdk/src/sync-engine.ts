@@ -186,7 +186,7 @@ export class SyncEngine {
         subscriptions: this.subscriptions,
         onEvent: (event) => {
           if (!isCurrentAttempt()) return;
-          return this.consumeFeedEvent(event);
+          return this.consumeFeedEvent(event, generation, attempt);
         },
         onEventError: () => {
           if (!isCurrentAttempt()) return;
@@ -449,14 +449,15 @@ export class SyncEngine {
     if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
   }
 
-  private async consumeFeedEvent(event: FeedEvent): Promise<void> {
-    const generation = this.lifecycleGeneration;
+  private async consumeFeedEvent(event: FeedEvent, generation: number, attempt: number): Promise<void> {
+    if (!this.isCurrentFeedConnection(generation, attempt)) return;
     if (event.version > this.cache.lastVersion + 1) {
       this.degraded = true;
       this.healthy = false;
       const recovered = await this.changedSince(generation);
-      if (!recovered || !this.isCurrent(generation)) return;
+      if (!recovered || !this.isCurrentFeedConnection(generation, attempt)) return;
     }
+    if (!this.isCurrentFeedConnection(generation, attempt)) return;
     this.applyEvent(event);
   }
 

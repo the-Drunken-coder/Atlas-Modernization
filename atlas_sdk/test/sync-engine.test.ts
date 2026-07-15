@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type ResourceType, type TaskResource } from "../src";
+import { AtlasClient, type FeedEvent, type ResourceType, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
@@ -446,6 +446,56 @@ describe("AtlasClient sync", () => {
 
     expect(client.sync.snapshot().entities).toHaveProperty(recovered.entity_id);
     expect(client.sync.status().lastVersion).toBe(recovered.metadata.version);
+  });
+
+  it("does not apply an older feed event after its recovery outlives the connection", async () => {
+    type FeedConnectOptions = { onEvent: (event: FeedEvent) => void | Promise<void> };
+    const feedOptions: FeedConnectOptions[] = [];
+    let releaseRecovery!: (response: Response) => void;
+    const pendingRecovery = new Promise<Response>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const fetchImpl = vi.fn<typeof fetch>((url) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") return pendingRecovery;
+      throw new Error(`unexpected request: ${String(url)}`);
+    });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
+      feedOptions.push(options);
+    });
+
+    await client.connectFeed();
+    const olderEvent = feedOptions[0].onEvent({
+      event: "update",
+      resource_type: "entity",
+      id: "asset-from-older-feed",
+      version: 2,
+      resource: { ...entity("asset-from-older-feed"), metadata: metadata(2) }
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled);
+    await client.connectFeed();
+    releaseRecovery(
+      Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 1
+      })
+    );
+    await olderEvent;
+
+    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-from-older-feed");
+    expect(client.sync.status().lastVersion).toBe(1);
   });
 
   it("keeps a stopped engine out of degraded state after a manual feed event error", async () => {

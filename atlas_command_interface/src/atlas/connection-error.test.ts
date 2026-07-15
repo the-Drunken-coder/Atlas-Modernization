@@ -240,6 +240,25 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=visible");
   });
 
+  it("redacts complete unquoted credential values containing spaces", () => {
+    const secrets = ["spaced-prefix-secret", "spaced-suffix-secret"];
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key=${secrets[0]} ${secrets[1]}&safe=visible`));
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("[redacted]");
+    expect(sanitized).toContain("safe=visible");
+  });
+
+  it("redacts userinfo in repeatedly escaped URLs", () => {
+    const secret = "repeatedly-escaped-password-secret";
+    const sanitized = sanitizeConnectionError(new Error(String.raw`Atlas request failed: https:\\/\\/escaped-user:${secret}@example.test/path`));
+
+    expect(sanitized).not.toContain("escaped-user");
+    expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("[redacted]@");
+    expect(sanitized).toContain("example.test/path");
+  });
+
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 
