@@ -180,7 +180,7 @@ describe("AuthGate", () => {
         .mockRejectedValueOnce(new Error(`Atlas login failed: https://core.test?api_key=${secret}`))
     );
 
-    render(
+    const { container } = render(
       <AuthGate baseUrl="https://core.test">
         <Workspace />
       </AuthGate>
@@ -191,7 +191,7 @@ describe("AuthGate", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText(/Atlas login failed/)).toBeInTheDocument();
-    expect(screen.queryByText(new RegExp(secret))).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent(secret);
   });
 
   it("keeps account controls available without a sidebar child", async () => {

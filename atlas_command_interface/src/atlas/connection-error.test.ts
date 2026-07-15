@@ -111,6 +111,8 @@ describe("sanitizeConnectionError", () => {
 
     expect(sanitized).not.toContain("pa@ss");
     expect(sanitized).not.toContain("top secret");
+    expect(sanitized).toContain("[redacted]");
+    expect(sanitized).toContain("Atlas request failed");
   });
 
   it("redacts AWS-style query credentials", () => {
@@ -120,6 +122,8 @@ describe("sanitizeConnectionError", () => {
 
     expect(sanitized).not.toContain("aws-access-key-secret");
     expect(sanitized).not.toContain("aws-secret-access-key-secret");
+    expect(sanitized).toContain("[redacted]");
+    expect(sanitized).toContain("Atlas request failed");
   });
 
   it("redacts AWS-style structured credential fields", () => {
@@ -192,6 +196,19 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("redacts structured camel-case credential fields", () => {
+    const secrets = ["database-password-secret", "client-secret-value", "user-access-token-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: {"databasePassword":"${secrets[0]}","clientSecretValue":"${secrets[1]}","userAccessToken":"${secrets[2]}","message":"safe context"}`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("[redacted]");
+    expect(sanitized).toContain("safe context");
+  });
+
   it("redacts credentials nested inside safe query values", () => {
     const secrets = ["nested-api-key-secret", "quoted-client-secret"];
     const sanitized = sanitizeConnectionError(
@@ -210,6 +227,16 @@ describe("sanitizeConnectionError", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key="${secrets[0]}?${secrets[1]}"&safe=visible`));
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("[redacted]");
+    expect(sanitized).toContain("safe=visible");
+  });
+
+  it("redacts complete unquoted credential values containing question marks", () => {
+    const secrets = ["unquoted-prefix-secret", "unquoted-suffix-secret"];
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key=${secrets[0]}?${secrets[1]}&safe=visible`));
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("[redacted]");
     expect(sanitized).toContain("safe=visible");
   });
 

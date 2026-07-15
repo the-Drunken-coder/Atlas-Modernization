@@ -1,8 +1,9 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 const QUOTED_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4))/gi;
 const SENSITIVE_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\?])*\4)|[^?&#;\s]*)/gi;
+const FULL_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|[^&#;\s]*)/gi;
 const SENSITIVE_NAME_PATTERN =
-  "(?:atlas[ _-]?session|oauth[ _-]?token|x[ _-]?amz[ _-]?credential|aws[ _-]?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?)|access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?|private[ _-]?key|access[ _-]?token|api[ _-]?key|authorization|auth[ _-]?token|bearer[ _-]?token|client[ _-]?(?:secret|token)|cookie|credential(?:s)?|csrf[ _-]?token|db[ _-]?password|id[ _-]?token|j[ _-]?session[ _-]?id(?![A-Za-z0-9])|key|password|refresh[ _-]?token|secret|session(?:[ _-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[ _-]?api[ _-]?key(?![A-Za-z0-9])|x[ _-]?amz[ _-]?signature)";
+  "(?:atlas[ _-]?session|oauth[ _-]?token|x[ _-]?amz[ _-]?credential|database[ _-]?password|user[ _-]?access[ _-]?token|aws[ _-]?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?)|access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?|private[ _-]?key|access[ _-]?token|api[ _-]?key|authorization|auth[ _-]?token|bearer[ _-]?token|client[ _-]?(?:secret(?:[ _-]?value)?|token)|cookie|credential(?:s)?|csrf[ _-]?token|db[ _-]?password|id[ _-]?token|j[ _-]?session[ _-]?id(?![A-Za-z0-9])|key|password|refresh[ _-]?token|secret|session(?:[ _-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[ _-]?api[ _-]?key(?![A-Za-z0-9])|x[ _-]?amz[ _-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
 const BRACKETED_COLLECTION = String.raw`\[(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\\\]"'\n\r])*\]`;
 const AMBIGUOUS_OBJECT_VALUE = String.raw`\{[^\n\r]*`;
@@ -33,6 +34,7 @@ function redactConnectionMessage(message: string): string {
     .replace(URL_USERINFO, "$1[redacted]@")
     .replace(QUOTED_PARAMETER, redactParameter)
     .replace(SENSITIVE_PARAMETER, redactParameter)
+    .replace(FULL_PARAMETER, redactParameter)
     .replace(COOKIE_FIELD, "$1[redacted]")
     .replace(SENSITIVE_FIELD, "$1[redacted]")
     .replace(BEARER_TOKEN, "Bearer [redacted]")
