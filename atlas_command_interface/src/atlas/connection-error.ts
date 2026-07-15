@@ -42,6 +42,7 @@ export function sanitizeConnectionError(cause: unknown): string {
 
   const sanitized = redactConnectionMessage(firstLine);
   let decoded = sanitized;
+  let percentSettled = false;
   for (let pass = 0; pass < 2; pass++) {
     let next: string;
     try {
@@ -49,11 +50,26 @@ export function sanitizeConnectionError(cause: unknown): string {
     } catch {
       return SAFE_FALLBACK;
     }
-    if (next === decoded) break;
+    if (next === decoded) {
+      percentSettled = true;
+      break;
+    }
     decoded = next;
     if (redactConnectionMessage(decoded) !== decoded) return SAFE_FALLBACK;
   }
-  const unescaped = decoded.replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
-  if (unescaped !== decoded && redactConnectionMessage(unescaped) !== unescaped) return SAFE_FALLBACK;
+  if (!percentSettled) return SAFE_FALLBACK;
+
+  let unescaped = decoded;
+  let unicodeSettled = false;
+  for (let pass = 0; pass < 2; pass++) {
+    const next = unescaped.replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
+    if (next === unescaped) {
+      unicodeSettled = true;
+      break;
+    }
+    unescaped = next;
+    if (redactConnectionMessage(unescaped) !== unescaped) return SAFE_FALLBACK;
+  }
+  if (!unicodeSettled) return SAFE_FALLBACK;
   return sanitized.length > 240 ? `${sanitized.slice(0, 239)}…` : sanitized;
 }

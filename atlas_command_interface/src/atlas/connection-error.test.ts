@@ -55,6 +55,10 @@ describe("sanitizeConnectionError", () => {
       {
         message: "Atlas request failed: https%253A%252F%252Fcore.test%253Fapi_key%253Ddouble-encoded-secret",
         secret: "double-encoded-secret"
+      },
+      {
+        message: `Atlas request failed: ${encodeURIComponent(encodeURIComponent(encodeURIComponent("https://user:triple-encoded-secret@example.test")))}`,
+        secret: "triple-encoded-secret"
       }
     ];
 
@@ -165,11 +169,23 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("fails closed on escaped structured credential keys", () => {
-    const secret = "escaped-structured-secret";
-    const sanitized = sanitizeConnectionError(new Error(String.raw`Atlas request failed: 500: {"api\u005fkey":"${secret}","message":"safe context"}`));
+    const cases = [
+      {
+        message: String.raw`Atlas request failed: 500: {"api\u005fkey":"escaped-structured-secret","message":"safe context"}`,
+        secret: "escaped-structured-secret"
+      },
+      {
+        message: String.raw`Atlas request failed: 500: {"api\u005cu005fkey":"nested-unicode-secret","message":"safe context"}`,
+        secret: "nested-unicode-secret"
+      }
+    ];
 
-    expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
-    expect(sanitized).not.toContain(secret);
+    for (const { message, secret } of cases) {
+      const sanitized = sanitizeConnectionError(new Error(message));
+
+      expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
+      expect(sanitized).not.toContain(secret);
+    }
   });
 
   it("redacts underscored token fields in prefixed structured error bodies", () => {
