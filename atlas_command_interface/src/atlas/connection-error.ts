@@ -45,9 +45,9 @@ export function sanitizeConnectionError(cause: unknown): string {
   for (let pass = 0; pass < 2; pass++) {
     let next: string;
     try {
-      next = decodeURIComponent(decoded);
+      next = decodeURIComponent(decoded.replace(/%(?![0-9a-f]{2})/gi, "%25"));
     } catch {
-      break;
+      return SAFE_FALLBACK;
     }
     if (next === decoded) break;
     decoded = next;

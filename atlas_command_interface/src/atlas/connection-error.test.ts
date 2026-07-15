@@ -66,6 +66,14 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("detects encoded URL credentials after malformed percent text", () => {
+    const secret = "malformed-prefix-userinfo-secret";
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: bad%ZZ https%3A%2F%2Fuser%3A${secret}%40example.test`));
+
+    expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
+    expect(sanitized).not.toContain(secret);
+  });
+
   it("redacts credential parameters in URL fragments", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://app.test/callback#access%5Ftoken=fragment-access-secret&id_token=fragment-id-secret&state=visible")

@@ -352,6 +352,26 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
   });
 
+  it("keeps a stopped engine out of degraded state after a manual feed event error", async () => {
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
+    type FeedConnectOptions = { onEventError: () => void };
+    let feedOptions!: FeedConnectOptions;
+    const engine = (client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
+      feedOptions = options;
+    });
+
+    await client.connectFeed();
+    feedOptions.onEventError();
+
+    expect(client.sync.status()).toMatchObject({
+      running: false,
+      healthy: false,
+      degraded: false,
+      error: "Atlas Core feed event failed"
+    });
+  });
+
   it("keeps a closed-feed error after a socket-only reconnect", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
