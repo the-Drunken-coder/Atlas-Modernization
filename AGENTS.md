@@ -31,6 +31,8 @@ Atlas Core production object-size settings must be passed through `Atlas_Core/do
 
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.
 
+Run the launcher Python tests with the three commands in `.github/workflows/ci.yml` rather than broad `unittest discover`: `Atlas_Core/scripts/test_api_manual.py` is an operator script whose filename matches discovery but imports the optional `requests` package and is not part of the unit-test suite.
+
 Codex-created worktrees may not be checked out on the PR branch even when they are inside this repository. If the local tree looks unexpectedly small or detached, run `git worktree list` and inspect the branch checkout before deciding the PR contents are missing.
 
 Atlas Protocol planning/reference docs live under **`docs/atlas-protocol/`**. The old root-level `Atlas Protocol/` folder was intentionally moved there so the repository root has only one protocol-looking folder. Do not recreate `Atlas Protocol/`; update stale links to `docs/atlas-protocol/` instead. Before docs or layout edits, check for stale protocol paths:

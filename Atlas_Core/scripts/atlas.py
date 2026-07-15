@@ -240,7 +240,43 @@ def cleanup_init_containers():
             logger.debug("Error during container cleanup: %s", exc)
 
 
-def wait_for_api(max_retries=30, delay=2.0):
+def raise_for_exited_development_core(container_name="atlas_core_api"):
+    """Fail fast when the development Core container has stopped during startup."""
+    state = subprocess.run(
+        ["docker", "inspect", "--format={{.State.Status}}", container_name],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if state.returncode != 0 or state.stdout.strip() not in {"dead", "exited"}:
+        return
+
+    logs = subprocess.run(
+        ["docker", "logs", "--tail", "200", container_name],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    output = f"{logs.stdout or ''}\n{logs.stderr or ''}"
+    if (
+        'password authentication failed for user "atlas"' in output
+        or r'password authentication failed for user \"atlas\"' in output
+    ):
+        raise RuntimeError(
+            "Atlas Core exited because its PostgreSQL password does not match the existing "
+            "development volume. Restore the POSTGRES_PASSWORD that initialized the volume, "
+            "or, if its data is disposable, rerun with: python3 Atlas_Core/scripts/atlas.py "
+            "--dev --reset-volumes (deletes all local development volumes)."
+        )
+    raise RuntimeError(
+        f"Atlas Core container {container_name} exited during startup. "
+        f"Run 'docker logs {container_name}' to inspect the failure."
+    )
+
+
+def wait_for_api(max_retries=30, delay=2.0, production=False):
     """Wait for the API to be ready."""
     print("[WAIT] Waiting for API to be ready...")
 
@@ -267,6 +303,12 @@ def wait_for_api(max_retries=30, delay=2.0):
                 return True
         except subprocess.TimeoutExpired:
             pass  # Treat timeout as a failed attempt, continue retrying
+
+        if not production:
+            try:
+                raise_for_exited_development_core()
+            except subprocess.TimeoutExpired:
+                pass  # Docker state/log inspection was transiently unavailable
 
         if attempt < max_retries - 1:
             print(f"[WAIT] API not ready (attempt {attempt + 1}/{max_retries}), retrying...")
@@ -577,7 +619,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             wait_for_minio()
             ensure_minio_bucket_docker()
             cleanup_init_containers()
-            wait_for_api()
+            wait_for_api(production=production)
             wait_for_database_schema_docker()
         else:
             print(
