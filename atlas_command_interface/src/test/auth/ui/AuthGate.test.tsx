@@ -130,6 +130,25 @@ describe("AuthGate", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("returns focus to the connection error after a failed pre-auth retry", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("Core is unavailable")).mockRejectedValueOnce(new Error("Core is still unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+    await user.click(screen.getByRole("button", { name: "Retry connection" }));
+
+    const retryBadge = await screen.findByRole("button", { name: "Atlas connection error" });
+    expect(retryBadge).toHaveFocus();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("renders children after successful login", async () => {
     const user = userEvent.setup();
     const fetchStub = stubFetch([

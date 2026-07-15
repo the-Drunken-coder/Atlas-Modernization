@@ -1,4 +1,4 @@
-import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
@@ -16,6 +16,7 @@ type SessionResponse = { authenticated: false } | { authenticated: true; user: {
 export function AuthGate({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  const focusErrorAfterRetryRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +68,9 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         <ConnectionBadge
           health={{ running: false, healthy: false, degraded: false }}
           error={{ source: "startup", message: state.error }}
+          focusOnMount={focusErrorAfterRetryRef.current}
           onRetry={() => {
+            focusErrorAfterRetryRef.current = true;
             setState({ status: "loading" });
             setSessionAttempt((attempt) => attempt + 1);
           }}

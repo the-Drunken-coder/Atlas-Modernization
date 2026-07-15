@@ -3,7 +3,17 @@ import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
 import { Button } from "./primitives/controls.js";
 
-export function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth; error?: ConnectionError; onRetry: () => void }) {
+export function ConnectionBadge({
+  health,
+  error,
+  focusOnMount = false,
+  onRetry
+}: {
+  health: ConnectionHealth;
+  error?: ConnectionError;
+  focusOnMount?: boolean;
+  onRetry: () => void;
+}) {
   const unsafeConnectionError = error ?? health.error;
   const connectionError = unsafeConnectionError ? { ...unsafeConnectionError, message: sanitizeConnectionError(unsafeConnectionError.message) } : undefined;
   const state = connectionBadgeState(health, connectionError);
@@ -30,6 +40,10 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
+
+  useEffect(() => {
+    if (focusOnMount && connectionError) triggerRef.current?.focus();
+  }, [connectionError, focusOnMount]);
 
   useEffect(() => {
     if (connectionError || (retryFocusPendingRef.current && !(health.healthy && !health.degraded)) || (!open && !ownsFocusRef.current)) return;
