@@ -520,7 +520,7 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
   useEffect(() => {
     if (connectionError || !open) return;
     setOpen(false);
-    (triggerRef.current ?? focusAnchorRef.current)?.focus();
+    focusAnchorRef.current?.focus();
   }, [connectionError, open]);
 
   const badgeContent = (
@@ -580,6 +580,7 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
                   variant="primary"
                   onClick={() => {
                     setOpen(false);
+                    focusAnchorRef.current?.focus();
                     onRetry();
                   }}
                 >

@@ -402,6 +402,7 @@ describe("MapConsole command flow", () => {
     await user.click(screen.getByRole("button", { name: "Retry connection" }));
 
     const retryBadge = await screen.findByRole("button", { name: "Atlas connection error" });
+    expect(document.activeElement).toBe(retryBadge.parentElement);
     await user.click(retryBadge);
     expect(screen.getByText("Core retry failed")).toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);

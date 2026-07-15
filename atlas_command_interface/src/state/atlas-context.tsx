@@ -66,7 +66,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       dataSourceRef.current = undefined;
     };
 
-    setStatus("loading");
+    setStatus((current) => (current === "ready" ? "ready" : "loading"));
     setError(undefined);
     setConnectionError(undefined);
     setSnapshot(emptySnapshot());
@@ -148,7 +148,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
   }, [providedConfig, loadConfig, createDataSource, connectionAttempt]);
 
   const reconnect = useCallback(() => {
-    setStatus("loading");
+    setStatus((current) => (current === "ready" ? "ready" : "loading"));
     setError(undefined);
     setConnectionError(undefined);
     setConnectionAttempt((attempt) => attempt + 1);

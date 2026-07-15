@@ -219,6 +219,65 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("does not let a stale recovery invalidate a recovery after stop and restart", async () => {
+    const core = new FakeCore();
+    let secondStart = false;
+    let secondStartRecoveryStarted = false;
+    let releaseSecondStartRecovery!: (response: Response) => void;
+    const secondStartRecovery = new Promise<Response>((resolve) => {
+      releaseSecondStartRecovery = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (secondStart && path === "/queries/full") {
+        return Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          version: 0,
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        });
+      }
+      if (secondStart && path === "/queries/changed-since") {
+        secondStartRecoveryStarted = true;
+        return secondStartRecovery;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+    client.sync.stop();
+    secondStart = true;
+    const restart = client.sync.start();
+    await vi.waitFor(() => expect(secondStartRecoveryStarted).toBe(true));
+
+    const engine = (client as unknown as { engine: { changedSince: (generation: number) => Promise<void> } }).engine;
+    await engine.changedSince(1);
+    releaseSecondStartRecovery(
+      Response.json({
+        entities: [{ ...entity("asset-after-restart"), metadata: metadata(1) }],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 1
+      })
+    );
+    await restart;
+
+    expect(client.sync.snapshot().entities).toHaveProperty("asset-after-restart");
+  });
+
   it("does not let an older recovery failure overwrite a newer retry", async () => {
     const core = new FakeCore();
     let releaseOlder!: (reason?: unknown) => void;
@@ -271,21 +330,23 @@ describe("AtlasClient sync", () => {
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
     await expect(client.changedSince()).rejects.toThrow("503");
-    releaseOlder(Response.json({
-      entities: [],
-      tasks: [],
-      objects: [],
-      deleted_entities: [],
-      deleted_tasks: [],
-      deleted_objects: [],
-      has_more_entities: false,
-      has_more_tasks: false,
-      has_more_objects: false,
-      has_more_deleted_entities: false,
-      has_more_deleted_tasks: false,
-      has_more_deleted_objects: false,
-      version: 0
-    }));
+    releaseOlder(
+      Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 0
+      })
+    );
     await older;
 
     expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed");

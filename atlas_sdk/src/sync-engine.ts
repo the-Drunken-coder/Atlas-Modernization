@@ -194,6 +194,7 @@ export class SyncEngine {
   }
 
   async changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<void> {
+    if (!this.isCurrent(generation)) return;
     const operation = ++this.recoveryOperation;
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
