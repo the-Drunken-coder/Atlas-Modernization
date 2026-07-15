@@ -180,6 +180,18 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("redacts bounded camel-case credential aliases", () => {
+    const secrets = ["oauth-token-secret", "atlas-session-secret", "amz-credential-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: https://core.test?oauthToken=${secrets[0]}&atlasSession=${secrets[1]}; {"xAmzCredential":"${secrets[2]}","message":"safe context"}`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe context");
+  });
+
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 

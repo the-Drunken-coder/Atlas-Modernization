@@ -1492,9 +1492,12 @@ describe("AtlasClient sync", () => {
       releaseRecovery = resolve;
     });
     const fetchImpl: typeof fetch = (url, init) => {
-      if (holdRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
         pollRequests++;
-        return pendingRecovery;
+        if (holdRecovery) {
+          holdRecovery = false;
+          return pendingRecovery;
+        }
       }
       return core.fetch(url, init);
     };

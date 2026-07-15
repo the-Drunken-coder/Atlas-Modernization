@@ -417,6 +417,7 @@ describe("MapConsole command flow", () => {
     expect(dialog).toHaveTextContent("Atlas request failed");
     expect(dialog).not.toHaveTextContent("user:password");
     expect(dialog).not.toHaveTextContent("api_key=secret");
+    expect(dialog).not.toHaveTextContent("secret");
     expect(dialog).not.toHaveTextContent("Bearer token");
   });
 
@@ -436,6 +437,7 @@ describe("MapConsole command flow", () => {
     expect(dialog).toHaveTextContent("Atlas request failed");
     expect(dialog).not.toHaveTextContent("user:password");
     expect(dialog).not.toHaveTextContent("api_key=secret");
+    expect(dialog).not.toHaveTextContent("secret");
     expect(dialog).not.toHaveTextContent("Bearer token");
   });
 
@@ -475,7 +477,7 @@ describe("MapConsole command flow", () => {
     await user.click(screen.getByRole("button", { name: "Retry connection" }));
 
     const retryBadge = await screen.findByRole("button", { name: "Atlas connection error" });
-    expect(document.activeElement).toBe(retryBadge.parentElement);
+    expect(retryBadge).toHaveFocus();
     await user.click(retryBadge);
     expect(screen.getByText("Core retry failed")).toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);
@@ -485,6 +487,7 @@ describe("MapConsole command flow", () => {
 
     expect(await screen.findByText("Rover")).toBeInTheDocument();
     expect(await screen.findByRole("status", { name: "Atlas connection Online" })).toHaveTextContent("Online");
+    expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
     expect(createDataSource).toHaveBeenCalledTimes(3);
     expect(failedDispose).toHaveBeenCalledTimes(1);
   });
@@ -534,14 +537,13 @@ describe("MapConsole command flow", () => {
         await Promise.resolve();
       });
       const badge = screen.getByRole("button", { name: "Atlas connection error" });
-      const focusAnchor = badge.parentElement;
       fireEvent.click(badge);
       setHealth(healthyConnection);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3_000);
       });
       expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
-      expect(document.activeElement).toBe(focusAnchor);
+      expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
     } finally {
       vi.useRealTimers();
     }

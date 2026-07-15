@@ -9,9 +9,11 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
   const state = connectionBadgeState(health, connectionError);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const focusAnchorRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
+  const retryFocusPendingRef = useRef(false);
   const detailId = `connection-error-${useId()}`;
 
   useEffect(() => {
@@ -33,9 +35,20 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
     setOpen(false);
     const activeElement = document.activeElement;
     if (activeElement === document.body || detailRef.current?.contains(activeElement) || focusAnchorRef.current?.contains(activeElement)) {
-      focusAnchorRef.current?.focus();
+      statusRef.current?.focus();
     }
   }, [connectionError, open]);
+
+  useEffect(() => {
+    if (!retryFocusPendingRef.current) return;
+    if (connectionError) {
+      retryFocusPendingRef.current = false;
+      triggerRef.current?.focus();
+    } else if (health.healthy && !health.degraded) {
+      retryFocusPendingRef.current = false;
+      statusRef.current?.focus();
+    }
+  }, [connectionError, health.degraded, health.healthy]);
 
   const badgeContent = (
     <>
@@ -50,7 +63,7 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
         {state.label}
       </span>
       {!connectionError ? (
-        <div className="connection-badge" data-state={state.state}>
+        <div ref={statusRef} className="connection-badge" data-state={state.state} tabIndex={-1}>
           {badgeContent}
         </div>
       ) : (
@@ -102,6 +115,7 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
                 <Button
                   variant="primary"
                   onClick={() => {
+                    retryFocusPendingRef.current = true;
                     setOpen(false);
                     focusAnchorRef.current?.focus();
                     onRetry();

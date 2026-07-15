@@ -908,7 +908,7 @@ button.connection-badge:hover:not([disabled]) {
   background: color-mix(in srgb, var(--surface-hover) 88%, transparent);
 }
 
-button.connection-badge:focus-visible {
+.connection-badge:focus-visible {
   outline: 2px solid var(--selected-ring);
   outline-offset: 2px;
 }
