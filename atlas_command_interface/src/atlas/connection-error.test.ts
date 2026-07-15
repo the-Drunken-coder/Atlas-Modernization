@@ -49,6 +49,20 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("redacts underscored token fields in prefixed structured error bodies", () => {
+    const secrets = {
+      id_token: "id-token-secret",
+      session_token: "session-token-secret",
+      client_token: "client-token-secret"
+    };
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: 500: ${JSON.stringify(secrets)}`));
+
+    expect(sanitized).toContain("[redacted]");
+    for (const secret of Object.values(secrets)) {
+      expect(sanitized).not.toContain(secret);
+    }
+  });
+
   it("redacts escaped structured fields", () => {
     const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {\\"api_key\\":\\"escaped-secret\\"}'));
 

@@ -22,15 +22,6 @@ const URL_SCHEME = /^[a-z][a-z\d+\-.]*:/i;
 const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
 const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
 const DEFAULT_MAP_SOURCE_ID = "maptiler-osm-dark";
-const CREDENTIALED_MAP_SOURCE_IDS = [
-  "google-satellite",
-  "mapbox-satellite",
-  "mapbox-outdoors",
-  "mapbox-dark",
-  "thunderforest-outdoors",
-  "maptiler-satellite",
-  "maptiler-osm-dark"
-] as const;
 
 type RuntimeEnv = {
   DEV?: boolean;
@@ -65,7 +56,7 @@ export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
   if (mapSources.length === 0) {
     throw new Error("Atlas interface config has no mapSources");
   }
-  const defaultMapSourceId = selectDefaultMapSourceId(env, mapSources);
+  const defaultMapSourceId = selectDefaultMapSourceId(mapSources);
   if (!defaultMapSourceId || !mapSources.some((source) => source.id === defaultMapSourceId)) {
     throw new Error("Atlas interface config has an invalid defaultMapSourceId");
   }
@@ -80,14 +71,8 @@ function defaultCoreBaseUrl(env: RuntimeEnv): string {
   return isDevelopment(env) ? LOCAL_CORE_BASE_URL : REMOTE_CORE_BASE_URL;
 }
 
-function selectDefaultMapSourceId(env: RuntimeEnv, mapSources: MapSourceConfig[]): string | undefined {
-  if (mapSources.some((source) => source.id === DEFAULT_MAP_SOURCE_ID)) return DEFAULT_MAP_SOURCE_ID;
-  if (!isDevelopment(env)) {
-    for (const id of CREDENTIALED_MAP_SOURCE_IDS) {
-      if (mapSources.some((source) => source.id === id && source.style)) return id;
-    }
-  }
-  return mapSources.find((source) => source.style)?.id;
+function selectDefaultMapSourceId(mapSources: MapSourceConfig[]): string | undefined {
+  return mapSources.some((source) => source.id === DEFAULT_MAP_SOURCE_ID) ? DEFAULT_MAP_SOURCE_ID : undefined;
 }
 
 function isDevelopment(env: RuntimeEnv): boolean {
