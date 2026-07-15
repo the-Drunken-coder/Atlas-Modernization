@@ -200,20 +200,20 @@ export class SyncEngine {
     this.degraded = false;
   }
 
-  async changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<void> {
-    if (!this.isCurrent(generation)) return;
+  async changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+    if (!this.isCurrent(generation)) return false;
     const operation = ++this.recoveryOperation;
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
-      if (!isCurrentOperation()) return;
+      if (!isCurrentOperation()) return false;
       let snapshotVersion: number | undefined;
       let cursors: ChangedSinceCursors = {};
       const recoveredEvents: AtlasWatchEvent[] = [];
       const seenCursors = new Map<string, Set<string>>();
       do {
-        if (!isCurrentOperation()) return;
+        if (!isCurrentOperation()) return false;
         const response = await this.transport.json("GET", changedSincePath(sinceVersion, cursors), changedSinceResponseValidator(sinceVersion));
-        if (!isCurrentOperation()) return;
+        if (!isCurrentOperation()) return false;
         if (snapshotVersion !== undefined && response.version !== snapshotVersion) {
           throw new TypeError("Atlas changed-since pagination changed response version");
         }
@@ -223,17 +223,18 @@ export class SyncEngine {
         assertPaginationProgress("changed-since", cursors, seenCursors);
       } while (hasMoreChangedSince(cursors));
       for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
-        if (!isCurrentOperation()) return;
+        if (!isCurrentOperation()) return false;
         if (event.event === "recovered") {
           this.applyRecoveredEvent(event);
         } else if (event.event !== "local_delete") {
           this.applyEvent(event);
         }
       }
-      if (!isCurrentOperation()) return;
+      if (!isCurrentOperation()) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, snapshotVersion ?? sinceVersion);
       this.markSynchronized();
       this.lastError = undefined;
+      return true;
     } catch (error) {
       if (isCurrentOperation()) {
         this.lastError = "Atlas Core recovery request failed";
@@ -406,8 +407,8 @@ export class SyncEngine {
     const generation = this.lifecycleGeneration;
     if (event.version > this.cache.lastVersion + 1) {
       this.degraded = true;
-      await this.changedSince(generation);
-      if (!this.isCurrent(generation)) return;
+      const recovered = await this.changedSince(generation);
+      if (!recovered || !this.isCurrent(generation)) return;
     }
     this.applyEvent(event);
   }

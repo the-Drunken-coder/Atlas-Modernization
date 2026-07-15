@@ -392,6 +392,69 @@ describe("AtlasClient sync", () => {
     expect(client.sync.snapshot().entities).not.toHaveProperty("asset-old-lifecycle");
   });
 
+  it("does not apply a gapped feed event after its recovery is superseded by a failed recovery", async () => {
+    const core = new FakeCore();
+    let gapRecovery = false;
+    let gapRecoveryStarted = false;
+    let releaseGapRecovery!: (response: Response) => void;
+    const gapResponse = new Promise<Response>((resolve) => {
+      releaseGapRecovery = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (gapRecovery && path === "/queries/changed-since") {
+        if (!gapRecoveryStarted) {
+          gapRecoveryStarted = true;
+          return gapResponse;
+        }
+        return new Response(JSON.stringify({ error_code: "CORE_UNAVAILABLE", message: "retry failed" }), { status: 503 });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.sync.start();
+    gapRecovery = true;
+    const socket = [...core.sockets][0];
+    if (!socket) throw new Error("expected a connected fake websocket");
+    socket.receive({
+      event: "update",
+      resource_type: "entity",
+      id: "asset-gapped-feed",
+      version: 2,
+      resource: { ...entity("asset-gapped-feed"), metadata: metadata(2) }
+    });
+    await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
+    await expect(client.changedSince()).rejects.toThrow("503");
+    releaseGapRecovery(
+      Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 0
+      })
+    );
+    await vi.waitFor(() => expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed"));
+
+    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-gapped-feed");
+    expect(client.sync.status().lastVersion).toBe(0);
+  });
+
   it("does not let an older recovery failure overwrite a newer retry", async () => {
     const core = new FakeCore();
     let releaseOlder!: (reason?: unknown) => void;
