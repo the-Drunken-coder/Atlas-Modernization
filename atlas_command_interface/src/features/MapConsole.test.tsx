@@ -390,6 +390,16 @@ describe("MapConsole command flow", () => {
     expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
   });
 
+  it("announces a connection error without opening its details", async () => {
+    renderStaticConsole({
+      connectionError: { source: "live-sync", message: "feed connection failed" },
+      health: { running: true, healthy: false, degraded: true }
+    });
+
+    expect(await screen.findByRole("status", { name: "Atlas connection Connection error" })).toHaveTextContent("Connection error");
+    expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+  });
+
   it("sanitizes a fallback health error before rendering details", async () => {
     const user = userEvent.setup();
     renderStaticConsole({

@@ -129,10 +129,26 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("redacts space-separated structured credential labels", () => {
+    const secrets = ["access-key-label-secret", "session-label-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: {"Access Key ID":"${secrets[0]}","Session ID":"${secrets[1]}","message":"safe context"}`)
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe context");
+  });
+
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 
     expect(sanitized).toHaveLength(240);
+  }, 1_000);
+
+  it("handles unterminated quote-heavy sensitive collections", () => {
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: api_key: [${'"'.repeat(1_900)}`));
+
+    expect(sanitized).toContain("api_key: [redacted]");
   }, 1_000);
 
   it("fails closed before truncating long credential-bearing errors", () => {

@@ -114,6 +114,23 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it("does not classify configuration loading failures as connection errors", async () => {
+    render(
+      <AtlasProvider
+        loadConfig={async () => {
+          throw new Error("configuration failed");
+        }}
+      >
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("error")).toBeInTheDocument();
+    expect(screen.getByText("configuration failed")).toBeInTheDocument();
+    expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
+  });
+
   it("registers the watch before sync and reads the authoritative post-start snapshot", async () => {
     const calls: string[] = [];
     let current: AtlasSnapshot = { entities: { "asset-1": entity("Older", 1) }, tasks: {} };

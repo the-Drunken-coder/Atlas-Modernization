@@ -538,8 +538,11 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
 
   return (
     <div ref={focusAnchorRef} tabIndex={-1}>
+      <span className="connection-badge__status" role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
+        {state.label}
+      </span>
       {!connectionError ? (
-        <div className="connection-badge" data-state={state.state} role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
+        <div className="connection-badge" data-state={state.state}>
           {badgeContent}
         </div>
       ) : (
