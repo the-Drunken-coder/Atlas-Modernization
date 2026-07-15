@@ -96,6 +96,21 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("redacts authorization-shaped structured fields", () => {
+    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"authorization":"Basic dXNlcjpwYXNz","bearer_token":"structured-secret"}'));
+
+    expect(sanitized).not.toContain("Basic dXNlcjpwYXNz");
+    expect(sanitized).not.toContain("structured-secret");
+    expect(sanitized).toContain("[redacted]");
+  });
+
+  it("redacts authorization-shaped query parameters", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?safe=value&bearer_token=query-secret"));
+
+    expect(sanitized).not.toContain("query-secret");
+    expect(sanitized).toContain("safe=value");
+  });
+
   it("redacts compound credential names in fields and query parameters", () => {
     const secrets = {
       csrf_field: "csrf-field-secret",

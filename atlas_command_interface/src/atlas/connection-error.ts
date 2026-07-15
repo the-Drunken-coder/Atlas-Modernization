@@ -1,7 +1,7 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 const SENSITIVE_PARAMETER = /([?&])([^=&#\s]+)=([^&#\s]*)/gi;
 const SENSITIVE_NAME_PATTERN =
-  "(?:access[_-]?token|api[_-]?key|auth[_-]?token|client[_-]?(?:secret|token)|cookie|csrf[_-]?token|db[_-]?password|id[_-]?token|key|password|refresh[_-]?token|secret|session[_-]?token|signature|token|x[_-]?amz[_-]?signature)";
+  "(?:access[_-]?token|api[_-]?key|authorization|auth[_-]?token|bearer[_-]?token|client[_-]?(?:secret|token)|cookie|csrf[_-]?token|db[_-]?password|id[_-]?token|key|password|refresh[_-]?token|secret|session[_-]?token|signature|token|x[_-]?amz[_-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`^${SENSITIVE_NAME_PATTERN}`, "i");
 const SENSITIVE_FIELD = new RegExp(
   String.raw`((?:\\?["']?\b${SENSITIVE_NAME_PATTERN}\b\\?["']?)\s*[:=]\s*)(?:\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+)`,
