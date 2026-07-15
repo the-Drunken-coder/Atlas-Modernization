@@ -501,6 +501,7 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const focusAnchorRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
   const detailId = `connection-error-${useId()}`;
 
   useEffect(() => {
@@ -521,7 +522,7 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
     if (connectionError || !open) return;
     setOpen(false);
     const activeElement = document.activeElement;
-    if (activeElement === document.body || focusAnchorRef.current?.contains(activeElement)) {
+    if (activeElement === document.body || detailRef.current?.contains(activeElement) || focusAnchorRef.current?.contains(activeElement)) {
       focusAnchorRef.current?.focus();
     }
   }, [connectionError, open]);
@@ -554,7 +555,14 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
             {badgeContent}
           </Button>
           {open ? (
-            <div className="connection-detail" id={detailId} role="dialog" aria-labelledby={`${detailId}-title`} aria-describedby={`${detailId}-description`}>
+            <div
+              ref={detailRef}
+              className="connection-detail"
+              id={detailId}
+              role="dialog"
+              aria-labelledby={`${detailId}-title`}
+              aria-describedby={`${detailId}-description`}
+            >
               <div className="connection-detail__header">
                 <strong id={`${detailId}-title`}>Atlas Core connection error</strong>
                 <Button

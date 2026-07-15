@@ -6,6 +6,20 @@ import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } f
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync", () => {
+  it("reports initial synchronization failures in status", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: vi.fn(async () => {
+        throw new Error("initial request failed");
+      }),
+      sync: false,
+      pollIntervalMs: 0
+    });
+
+    await expect(client.sync.start()).rejects.toThrow("initial request failed");
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core initial synchronization failed");
+  });
+
   it("configures sync presets without starting hydration or feed side effects", () => {
     const core = new FakeCore();
     const client = new AtlasClient({
@@ -1175,11 +1189,10 @@ describe("AtlasClient sync", () => {
       await client.sync.start();
       core.requests = [];
 
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(150);
 
       const pollRequests = core.requests.filter((request) => request.startsWith("/queries/changed-since")).length;
-      expect(pollRequests).toBeGreaterThanOrEqual(1);
-      expect(pollRequests).toBeLessThanOrEqual(2);
+      expect(pollRequests).toBe(1);
     } finally {
       client.sync.stop();
       vi.useRealTimers();

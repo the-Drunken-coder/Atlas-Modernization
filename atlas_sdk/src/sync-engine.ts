@@ -96,6 +96,11 @@ export class SyncEngine {
     this.startSyncPromise = promise;
     try {
       await promise;
+    } catch (error) {
+      if (this.isCurrent(generation) && !this.lastError) {
+        this.lastError = "Atlas Core initial synchronization failed";
+      }
+      throw error;
     } finally {
       if (this.startSyncPromise === promise) {
         this.startSyncPromise = undefined;

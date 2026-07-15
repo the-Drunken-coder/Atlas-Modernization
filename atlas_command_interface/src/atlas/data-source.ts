@@ -51,6 +51,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     return { entities, tasks };
   };
   let catalogGeneration = 0;
+  let startupGeneration = 0;
   let startupError: ConnectionError | undefined;
   const fetchCommandCatalog = async (): Promise<CommandCatalog> => {
     const object = await client.objects.get(COMMAND_CATALOG_OBJECT_ID, { fresh: true });
@@ -113,11 +114,14 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async start() {
+      const generation = ++startupGeneration;
       startupError = undefined;
       try {
         await client.sync.start();
       } catch (cause) {
-        startupError = { source: "startup", message: sanitizeConnectionError(cause) };
+        if (generation === startupGeneration) {
+          startupError = { source: "startup", message: sanitizeConnectionError(cause) };
+        }
         throw cause;
       }
     },
@@ -140,6 +144,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     dispose() {
+      startupGeneration++;
       client.sync.stop();
       startupError = undefined;
     }

@@ -457,7 +457,6 @@ describe("MapConsole command flow", () => {
     const badge = await screen.findByRole("button", { name: "Atlas connection error" });
     const focusAnchor = badge.parentElement;
     await user.click(badge);
-    focusAnchor?.focus();
     setHealth(healthyConnection);
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument(), { timeout: 4_000 });

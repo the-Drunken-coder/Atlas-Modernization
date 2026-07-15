@@ -180,6 +180,12 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("stops at every JavaScript line separator", () => {
+    for (const separator of ["\r", "\u2028", "\u2029"]) {
+      expect(sanitizeConnectionError(new Error(`Atlas Core failed${separator}second line secret`))).toBe("Atlas Core failed");
+    }
+  });
+
   it("redacts URL userinfo with an empty username", () => {
     const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://:empty-user-password@core.example"));
 

@@ -153,6 +153,30 @@ describe("sdk data source", () => {
     expect(dataSource.health?.()).not.toHaveProperty("error");
   });
 
+  it("does not restore a stale startup error after dispose", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new TestCore();
+    let rejectRevision!: (cause: unknown) => void;
+    const pendingRevision = new Promise<Response>((_resolve, reject) => {
+      rejectRevision = reject;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === "/protocol/revision") return pendingRevision;
+      return core.fetch(String(input), init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const dataSource = createSdkDataSource(config);
+    const start = dataSource.start();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    dataSource.dispose();
+    rejectRevision(new Error("late startup failure"));
+
+    await expect(start).rejects.toThrow("late startup failure");
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+  });
+
   it("keeps snapshots current through the slow changed-since poll when WebSocket connections are blocked", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", BlockedWebSocket);
