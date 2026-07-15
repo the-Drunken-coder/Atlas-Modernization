@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../atlas/command-model.js";
+import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
 import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
 import { entityGeometry, entityKind, type EntityKind } from "../atlas/entities.js";
@@ -495,7 +496,7 @@ function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarg
 }
 
 function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth; error?: ConnectionError; onRetry: () => void }) {
-  const connectionError = error ?? health.error;
+  const connectionError = error ?? (health.error ? { ...health.error, message: sanitizeConnectionError(health.error.message) } : undefined);
   const state = connectionBadgeState(health, connectionError);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);

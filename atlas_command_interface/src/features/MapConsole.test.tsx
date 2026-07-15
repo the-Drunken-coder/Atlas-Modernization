@@ -8,7 +8,7 @@ import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealt
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import type { AppConfig } from "../app/config.js";
-import { AtlasProvider } from "../state/atlas-context.js";
+import { AtlasProvider, AtlasStaticProvider, type AtlasContextValue } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {
@@ -217,6 +217,30 @@ function renderConsole(fake: AtlasDataSource, config: AppConfig = appConfig()) {
   );
 }
 
+function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
+  const snapshot = makeFakeDataSource().fake.snapshot();
+  const value: AtlasContextValue = {
+    status: "ready",
+    config: appConfig(),
+    snapshot,
+    catalog,
+    health: healthyConnection,
+    reconnect: vi.fn(),
+    submitCommand: async () => {
+      throw new Error("not used");
+    },
+    updateGeometry: async () => {
+      throw new Error("not used");
+    },
+    ...overrides
+  };
+  return render(
+    <AtlasStaticProvider value={value}>
+      <MapConsole />
+    </AtlasStaticProvider>
+  );
+}
+
 describe("MapConsole command flow", () => {
   it("selects an asset, lists its commands, and submits a pending task", async () => {
     const user = userEvent.setup();
@@ -364,6 +388,25 @@ describe("MapConsole command flow", () => {
     renderConsole(fake);
 
     expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
+  });
+
+  it("sanitizes a fallback health error before rendering details", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole({
+      health: {
+        running: true,
+        healthy: false,
+        degraded: true,
+        error: { source: "live-sync", message: "Atlas request failed: https://user:password@example.test?api_key=secret Bearer token" }
+      }
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).not.toHaveTextContent("user:password");
+    expect(dialog).not.toHaveTextContent("api_key=secret");
+    expect(dialog).not.toHaveTextContent("Bearer token");
   });
 
   it("shows repeated startup failures and returns to Online after recovery", async () => {
