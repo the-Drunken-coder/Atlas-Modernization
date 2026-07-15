@@ -1,7 +1,7 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
-import { ConnectionBadge } from "../../features/ConnectionBadge.js";
+import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
 import { Button } from "../../ui/primitives/controls.js";
 import { AccountMenu } from "./AccountMenu.js";
 

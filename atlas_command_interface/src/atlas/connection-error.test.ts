@@ -205,6 +205,14 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=visible");
   });
 
+  it("redacts complete quoted credential values containing question marks", () => {
+    const secrets = ["quoted-prefix-secret", "quoted-suffix-secret"];
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key="${secrets[0]}?${secrets[1]}"&safe=visible`));
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe=visible");
+  });
+
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 

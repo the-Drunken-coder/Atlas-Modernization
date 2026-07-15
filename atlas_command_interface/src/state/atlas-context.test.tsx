@@ -3,7 +3,7 @@ import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { AppConfig } from "../app/config.js";
-import type { AtlasDataSource, CatalogUpdate } from "../atlas/data-source.js";
+import type { AtlasDataSource, CatalogUpdate, ConnectionHealth } from "../atlas/data-source.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { AtlasProvider, useAtlas } from "./atlas-context.js";
@@ -129,6 +129,63 @@ describe("AtlasProvider", () => {
     expect(screen.getByText("configuration failed")).toBeInTheDocument();
     expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
     expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
+  });
+
+  it("keeps the public connection error until health fully recovers", async () => {
+    vi.useFakeTimers();
+    let health: ConnectionHealth = {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed failed" }
+    };
+    const dataSource: AtlasDataSource = {
+      snapshot: () => ({ entities: {}, tasks: {} }),
+      watch: () => () => {},
+      async start() {},
+      async loadCommandCatalog() {
+        return catalog("Commands");
+      },
+      async submitCommand() {
+        throw new Error("not used");
+      },
+      async updateGeometry() {
+        throw new Error("not used");
+      },
+      health: () => health,
+      dispose() {}
+    };
+
+    try {
+      render(
+        <AtlasProvider config={config} createDataSource={() => dataSource}>
+          <StatusProbe />
+        </AtlasProvider>
+      );
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId("health-error")).toHaveTextContent("feed failed");
+      expect(screen.getByTestId("connection-error")).toHaveTextContent("feed failed");
+
+      health = { running: true, healthy: false, degraded: false };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
+      expect(screen.getByTestId("connection-error")).toHaveTextContent("feed failed");
+
+      health = { running: true, healthy: true, degraded: false };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("registers the watch before sync and reads the authoritative post-start snapshot", async () => {

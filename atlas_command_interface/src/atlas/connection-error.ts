@@ -1,4 +1,5 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
+const QUOTED_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4))/gi;
 const SENSITIVE_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\?])*\4)|[^?&#;\s]*)/gi;
 const SENSITIVE_NAME_PATTERN =
   "(?:atlas[ _-]?session|oauth[ _-]?token|x[ _-]?amz[ _-]?credential|aws[ _-]?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?)|access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?|private[ _-]?key|access[ _-]?token|api[ _-]?key|authorization|auth[ _-]?token|bearer[ _-]?token|client[ _-]?(?:secret|token)|cookie|credential(?:s)?|csrf[ _-]?token|db[ _-]?password|id[ _-]?token|j[ _-]?session[ _-]?id(?![A-Za-z0-9])|key|password|refresh[ _-]?token|secret|session(?:[ _-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[ _-]?api[ _-]?key(?![A-Za-z0-9])|x[ _-]?amz[ _-]?signature)";
@@ -17,18 +18,21 @@ const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|\\\/\\\/))[^/\s:@]*(?::[^/
 const BEARER_TOKEN = /\bBearer\s+[^\s,;]+/gi;
 const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 
+function redactParameter(match: string, prefix: string, name: string): string {
+  let decodedName: string;
+  try {
+    decodedName = decodeURIComponent(name.replace(/\+/g, " "));
+  } catch {
+    return `${prefix}${name}=[redacted]`;
+  }
+  return SENSITIVE_PARAMETER_NAME.test(decodedName) ? `${prefix}${name}=[redacted]` : match;
+}
+
 function redactConnectionMessage(message: string): string {
   return message
     .replace(URL_USERINFO, "$1[redacted]@")
-    .replace(SENSITIVE_PARAMETER, (match, prefix: string, name: string) => {
-      let decodedName: string;
-      try {
-        decodedName = decodeURIComponent(name.replace(/\+/g, " "));
-      } catch {
-        return `${prefix}${name}=[redacted]`;
-      }
-      return SENSITIVE_PARAMETER_NAME.test(decodedName) ? `${prefix}${name}=[redacted]` : match;
-    })
+    .replace(QUOTED_PARAMETER, redactParameter)
+    .replace(SENSITIVE_PARAMETER, redactParameter)
     .replace(COOKIE_FIELD, "$1[redacted]")
     .replace(SENSITIVE_FIELD, "$1[redacted]")
     .replace(BEARER_TOKEN, "Bearer [redacted]")

@@ -10,6 +10,7 @@ import { initialSidebarState, listForKind, sidebarReducer, type ListKind, type S
 import { useAtlas } from "../state/atlas-context.js";
 import type { MapSourceConfig } from "../app/config.js";
 import { AppShell } from "../ui/layout/AppShell.js";
+import { ConnectionBadge } from "../ui/ConnectionBadge.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
@@ -17,7 +18,6 @@ import type { MapCameraCommand } from "../ui/map/map-camera.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
-import { ConnectionBadge } from "./ConnectionBadge.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
 import { CommandList } from "./commands/CommandList.js";

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
-import { Button } from "../ui/primitives/controls.js";
+import { Button } from "./primitives/controls.js";
 
 export function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth; error?: ConnectionError; onRetry: () => void }) {
   const unsafeConnectionError = error ?? health.error;
@@ -14,6 +14,7 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
   const focusAnchorRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
   const retryFocusPendingRef = useRef(false);
+  const ownsFocusRef = useRef(false);
   const detailId = `connection-error-${useId()}`;
 
   useEffect(() => {
@@ -31,13 +32,13 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
   }, [open]);
 
   useEffect(() => {
-    if (connectionError || !open) return;
+    if (connectionError || (retryFocusPendingRef.current && !(health.healthy && !health.degraded)) || (!open && !ownsFocusRef.current)) return;
     setOpen(false);
     const activeElement = document.activeElement;
     if (activeElement === document.body || detailRef.current?.contains(activeElement) || focusAnchorRef.current?.contains(activeElement)) {
       statusRef.current?.focus();
     }
-  }, [connectionError, open]);
+  }, [connectionError, health.degraded, health.healthy, open]);
 
   useEffect(() => {
     if (!retryFocusPendingRef.current) return;
@@ -58,7 +59,16 @@ export function ConnectionBadge({ health, error, onRetry }: { health: Connection
   );
 
   return (
-    <div ref={focusAnchorRef} tabIndex={-1}>
+    <div
+      ref={focusAnchorRef}
+      tabIndex={-1}
+      onFocusCapture={() => {
+        ownsFocusRef.current = true;
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) ownsFocusRef.current = false;
+      }}
+    >
       <span className="connection-badge__status" role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
         {state.label}
       </span>

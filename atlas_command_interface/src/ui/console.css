@@ -941,6 +941,8 @@ button.connection-badge:hover:not([disabled]) {
   position: absolute;
   top: calc(var(--space-3) + 29px);
   left: var(--space-3);
+  max-height: calc(100% - var(--space-3) - var(--space-3) - 29px);
+  overflow-y: auto;
   z-index: 31;
   display: flex;
   flex-direction: column;

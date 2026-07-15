@@ -297,6 +297,7 @@ describe("AtlasClient sync", () => {
     await restart;
 
     expect(client.sync.snapshot().entities).toHaveProperty("asset-after-restart");
+    expect(client.sync.status().lastVersion).toBe(1);
   });
 
   it("ignores a stale feed completion after stop", async () => {
@@ -408,6 +409,43 @@ describe("AtlasClient sync", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(engine.activeRecoveryPromise).toBeUndefined();
     expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
+  });
+
+  it("keeps changed-since recovery active during a connect-only attempt", async () => {
+    const core = new FakeCore();
+    const recovered = core.upsertEntity(entity("asset-recovered-during-connect"));
+    let releaseRecovery!: (response: Response) => void;
+    const pendingRecovery = new Promise<Response>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const fetchImpl: typeof fetch = (url, init) => (new URL(String(url)).pathname === "/queries/changed-since" ? pendingRecovery : core.fetch(url, init));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockResolvedValue(undefined);
+
+    const recovery = client.changedSince();
+    await client.connectFeed();
+    releaseRecovery(
+      Response.json({
+        entities: [recovered],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: recovered.metadata.version
+      })
+    );
+    await recovery;
+
+    expect(client.sync.snapshot().entities).toHaveProperty(recovered.entity_id);
+    expect(client.sync.status().lastVersion).toBe(recovered.metadata.version);
   });
 
   it("keeps a stopped engine out of degraded state after a manual feed event error", async () => {

@@ -549,6 +549,34 @@ describe("MapConsole command flow", () => {
     }
   });
 
+  it("moves focus from a closed error badge to the recovered status", async () => {
+    vi.useFakeTimers();
+    const failingHealth: ConnectionHealth = {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed to open" }
+    };
+    const { fake, setHealth } = makeFakeDataSource(area, failingHealth);
+    try {
+      renderConsole(fake);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      screen.getByRole("button", { name: "Atlas connection error" }).focus();
+      setHealth(healthyConnection);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+
+      expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("saves geometry edits with the version captured when editing started", async () => {
     const user = userEvent.setup();
     const { fake, geometryUpdates, emit } = makeFakeDataSource();

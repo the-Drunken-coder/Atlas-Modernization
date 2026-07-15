@@ -413,7 +413,6 @@ export class SyncEngine {
   }
 
   private beginFeedConnectionAttempt(): number {
-    this.recoveryOperation++;
     return ++this.feedConnectionAttempt;
   }
 
