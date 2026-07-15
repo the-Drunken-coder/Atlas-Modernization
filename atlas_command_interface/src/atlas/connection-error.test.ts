@@ -111,6 +111,15 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=value");
   });
 
+  it("redacts nested encoded credential query parameters", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key")
+    );
+
+    expect(sanitized).not.toContain("nested-password");
+    expect(sanitized).not.toContain("nested-api-key");
+  });
+
   it("redacts compound credential names in fields and query parameters", () => {
     const secrets = {
       csrf_field: "csrf-field-secret",

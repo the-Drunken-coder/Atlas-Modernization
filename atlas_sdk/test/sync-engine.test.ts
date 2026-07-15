@@ -1170,7 +1170,60 @@ describe("AtlasClient sync", () => {
 
       await vi.advanceTimersByTimeAsync(250);
 
-      expect(core.requests.filter((request) => request.startsWith("/queries/changed-since")).length).toBe(2);
+      const pollRequests = core.requests.filter((request) => request.startsWith("/queries/changed-since")).length;
+      expect(pollRequests).toBeGreaterThanOrEqual(1);
+      expect(pollRequests).toBeLessThanOrEqual(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("coalesces polling while changed-since recovery is in flight", async () => {
+    vi.useFakeTimers();
+    const core = new FakeCore();
+    let holdRecovery = false;
+    let pollRequests = 0;
+    let releaseRecovery!: (response: Response) => void;
+    const pendingRecovery = new Promise<Response>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (holdRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        pollRequests++;
+        return pendingRecovery;
+      }
+      return core.fetch(url, init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 100 });
+
+    try {
+      await client.sync.start();
+      holdRecovery = true;
+      pollRequests = 0;
+      core.requests = [];
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(pollRequests).toBe(1);
+      releaseRecovery(
+        Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          deleted_entities: [],
+          deleted_tasks: [],
+          deleted_objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false,
+          has_more_deleted_entities: false,
+          has_more_deleted_tasks: false,
+          has_more_deleted_objects: false,
+          version: core.version
+        })
+      );
+      await vi.advanceTimersByTimeAsync(0);
     } finally {
       client.sync.stop();
       vi.useRealTimers();

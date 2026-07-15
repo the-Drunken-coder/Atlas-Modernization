@@ -58,6 +58,7 @@ export class SyncEngine {
   private reconnectAfterRecovery = false;
   private lastError: string | undefined;
   private recoveryOperation = 0;
+  private activeRecoveryPromise: Promise<boolean> | undefined;
   private startSyncPromise: Promise<void> | undefined;
   private lifecycleGeneration = 0;
 
@@ -195,12 +196,23 @@ export class SyncEngine {
       throw error;
     }
     if (!this.isCurrent(generation)) return;
-    this.lastError = undefined;
-    this.healthy = true;
-    this.degraded = false;
   }
 
-  async changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+  changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+    const recovery = this.recoverSince(generation, sinceVersion);
+    this.activeRecoveryPromise = recovery;
+    void recovery.then(
+      () => {
+        if (this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
+      },
+      () => {
+        if (this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
+      }
+    );
+    return recovery;
+  }
+
+  private async recoverSince(generation: number, sinceVersion: number): Promise<boolean> {
     if (!this.isCurrent(generation)) return false;
     const operation = ++this.recoveryOperation;
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
@@ -347,7 +359,7 @@ export class SyncEngine {
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         const pollGeneration = generation;
-        void this.changedSince(pollGeneration).catch(() => {
+        void (this.activeRecoveryPromise ?? this.changedSince(pollGeneration)).catch(() => {
           if (!this.isCurrent(pollGeneration)) return;
           this.degraded = true;
           this.healthy = false;
@@ -366,6 +378,7 @@ export class SyncEngine {
     this.reconnectAfterRecovery = false;
     this.syncRunning = false;
     this.recoveryOperation++;
+    this.activeRecoveryPromise = undefined;
     this.lastError = undefined;
     this.feed.close();
     this.healthy = false;
