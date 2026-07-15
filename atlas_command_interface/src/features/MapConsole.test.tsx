@@ -409,6 +409,24 @@ describe("MapConsole command flow", () => {
     expect(dialog).not.toHaveTextContent("Bearer token");
   });
 
+  it("sanitizes an explicit connection error before rendering details", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole({
+      connectionError: {
+        source: "startup",
+        message: "Atlas request failed: https://user:password@example.test?api_key=secret Bearer token"
+      },
+      health: { running: false, healthy: false, degraded: false }
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).not.toHaveTextContent("user:password");
+    expect(dialog).not.toHaveTextContent("api_key=secret");
+    expect(dialog).not.toHaveTextContent("Bearer token");
+  });
+
   it("shows repeated startup failures and returns to Online after recovery", async () => {
     const user = userEvent.setup();
     const failedDispose = vi.fn();

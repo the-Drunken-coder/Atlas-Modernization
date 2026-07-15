@@ -496,7 +496,8 @@ function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarg
 }
 
 function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth; error?: ConnectionError; onRetry: () => void }) {
-  const connectionError = error ?? (health.error ? { ...health.error, message: sanitizeConnectionError(health.error.message) } : undefined);
+  const unsafeConnectionError = error ?? health.error;
+  const connectionError = unsafeConnectionError ? { ...unsafeConnectionError, message: sanitizeConnectionError(unsafeConnectionError.message) } : undefined;
   const state = connectionBadgeState(health, connectionError);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);

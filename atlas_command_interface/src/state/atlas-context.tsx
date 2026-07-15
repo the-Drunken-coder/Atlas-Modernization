@@ -154,6 +154,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
     setStatus((current) => (current === "ready" ? "ready" : "loading"));
     setError(undefined);
     setConnectionError(undefined);
+    setHealth(DEFAULT_HEALTH);
     setConnectionAttempt((attempt) => attempt + 1);
   }, []);
 
