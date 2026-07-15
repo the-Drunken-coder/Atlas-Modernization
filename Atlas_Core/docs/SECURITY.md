@@ -101,18 +101,24 @@ Atlas Core supports two protected-route auth modes:
 
 Browser sessions use an `atlas_session` cookie with `HttpOnly; Secure`. The default SameSite mode is `None` so the Cloudflare-hosted UI can call a separately hosted Core with `credentials: "include"`. Set `ATLAS_ADMIN_COOKIE_SAMESITE=lax` only when the UI and Core are same-site.
 
-The development startup path seeds a development-only default admin credential:
+Raw development startup seeds a development-only default admin credential:
 
 - username: `admin`
 - password: `password`
 - role: `admin`
 
-This credential is for local development only; its `admin_records` row still survives scratch data resets. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
+This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `Atlas_Core/docker/.env.local` so it can safely enable machine auth. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 
 Optional API key auth is controlled by:
 
 - `ENABLE_API_AUTH` and `API_AUTH_KEY` environment variables (take precedence)
 - `enable_api_auth` and `api_auth_key` in `atlas_core.settings.json`
+
+`python3 Atlas_Core/scripts/atlas.py --dev` enables API-key auth for the local
+stack and generates or reuses the bootstrap key and admin password in the
+owner-only `Atlas_Core/docker/.env.local`. This gives local clients one shared
+credential source without exposing the machine key to browser-delivered
+configuration or making local secrets available to production and tunnel startup.
 
 If enabled, middleware accepts the bootstrap API key or an active managed API key (`X-API-Key` or `Authorization: Bearer ...`) before serving protected routes. Browser session cookies are also accepted on protected resource routes. Managed API keys are full-access machine credentials in v1; Core stores only `sha256(secret)` plus metadata and returns the full key only from the create response. Managed keys are inactive while API-key auth is disabled, and Core rejects new managed-key creation until `ENABLE_API_AUTH=true`.
 
@@ -130,9 +136,9 @@ The production Docker target does not copy `atlas_core.settings.json.example`
 into the image. Its entrypoint refuses to start unless `ENABLE_API_AUTH=true`
 and `API_AUTH_KEY` is set to a strong value that is non-empty, non-placeholder,
 not common, not too short, not low-entropy, and not sequential. This bootstrap
-key remains required even when managed API keys exist. The auth-disabled example
-settings file is kept only for the development image / loopback-only Compose
-workflow.
+key remains required even when managed API keys exist. The example settings
+file keeps the Core-level default disabled; the development launcher overrides
+it with its generated local credentials, while raw Compose follows its `.env`.
 
 ### Startup fail-fast
 

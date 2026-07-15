@@ -38,15 +38,14 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   if (!isLoopbackUrl(legacyBaseUrl)) {
     throw new Error("ATLAS_BASE_URL must target loopback; configure deployed Core with ATLAS_SIM_ENABLE_DEPLOYED and ATLAS_DEPLOYED_BASE_URL");
   }
-  const atlasApiKey = stringValue(runtimeEnv.ATLAS_API_KEY) ?? stringValue(fileEnv.ATLAS_API_KEY);
+  const configuredApiKey = stringValue(runtimeEnv.ATLAS_API_KEY) ?? stringValue(fileEnv.ATLAS_API_KEY);
   const localBaseUrl = atlasBaseUrlValue(
-    stringValue(runtimeEnv.ATLAS_LOCAL_BASE_URL) ??
-      stringValue(fileEnv.ATLAS_LOCAL_BASE_URL) ??
-      legacyBaseUrl,
+    stringValue(runtimeEnv.ATLAS_LOCAL_BASE_URL) ?? stringValue(fileEnv.ATLAS_LOCAL_BASE_URL) ?? legacyBaseUrl,
     "ATLAS_LOCAL_BASE_URL"
   );
   if (!isLoopbackUrl(localBaseUrl)) throw new Error("ATLAS_LOCAL_BASE_URL must target loopback");
-  const localApiKey = stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY) ?? stringValue(fileEnv.ATLAS_LOCAL_API_KEY) ?? atlasApiKey;
+  const localApiKey =
+    stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY) ?? stringValue(fileEnv.ATLAS_LOCAL_API_KEY) ?? configuredApiKey ?? localCoreAPIKey(packageRoot);
   const enableDeployed = booleanValue(
     stringValue(runtimeEnv.ATLAS_SIM_ENABLE_DEPLOYED) ?? stringValue(fileEnv.ATLAS_SIM_ENABLE_DEPLOYED),
     "ATLAS_SIM_ENABLE_DEPLOYED"
@@ -65,7 +64,7 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const port = portValue(stringValue(runtimeEnv.ATLAS_SIM_PORT) ?? stringValue(fileEnv.ATLAS_SIM_PORT));
   return {
     atlasBaseUrl: localBaseUrl,
-    ...(atlasApiKey ? { atlasApiKey } : {}),
+    ...(localApiKey ? { atlasApiKey: localApiKey } : {}),
     atlasTargets: [
       {
         id: LOCAL_TARGET_ID,
@@ -82,6 +81,15 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
     port,
     packageRoot
   };
+}
+
+function localCoreAPIKey(packageRoot: string): string | undefined {
+  const coreEnv = readEnvFile(path.resolve(packageRoot, "../Atlas_Core/docker/.env.local"));
+  return coreAPIAuthEnabled(coreEnv.ENABLE_API_AUTH) ? stringValue(coreEnv.API_AUTH_KEY) : undefined;
+}
+
+function coreAPIAuthEnabled(value: string | undefined): boolean {
+  return ["true", "1", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
 }
 
 function readEnvFile(filePath: string): Record<string, string> {

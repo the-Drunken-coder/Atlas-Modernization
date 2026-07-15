@@ -56,7 +56,7 @@ Use Node 24 LTS from the repository root `.nvmrc`.
    python3 Atlas_Core/scripts/atlas.py --dev
    ```
 
-   `atlas.py` starts Docker Compose, waits for PostgreSQL, MinIO, and the API, then publishes the embedded command catalog through the object API for browser/reference use. Startup seeds the development admin account `admin` / `password`.
+   `atlas.py` starts Docker Compose, waits for PostgreSQL, MinIO, and the API, then publishes the embedded command catalog through the object API for browser/reference use. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `Atlas_Core/docker/.env.local`.
    If an old local Postgres volume has stale credentials, run `python3 Atlas_Core/scripts/atlas.py --dev --reset-volumes`.
 
 3. Build the local SDK package and run the Vite app:
@@ -65,7 +65,7 @@ Use Node 24 LTS from the repository root `.nvmrc`.
    npm run dev:command-interface
    ```
 
-Open http://127.0.0.1:5173/map and sign in with `admin` / `password`.
+Open http://127.0.0.1:5173/map and sign in as `admin` with the `ATLAS_ADMIN_PASSWORD` from `Atlas_Core/docker/.env.local`.
 
 If you need a different Core URL:
 
@@ -75,7 +75,7 @@ VITE_ATLAS_CORE_BASE_URL=https://api.example.test npm run dev:command-interface
 
 For local map-provider testing, copy `atlas_command_interface/.env.example` to `atlas_command_interface/.env.local` and fill only the provider keys you want to enable. `.env.local` is ignored by git.
 
-The default admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development.
+The generated local admin password is development-only. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development.
 
 ## Map Sources
 

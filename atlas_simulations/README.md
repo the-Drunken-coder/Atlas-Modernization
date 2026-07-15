@@ -4,16 +4,21 @@ Local workbench for running trusted Atlas simulation scenarios against Atlas Cor
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set the Core connection values:
+Start the default local Core from the repository root:
 
-```text
-ATLAS_BASE_URL=http://localhost:8000
-ATLAS_API_KEY=replace-with-local-core-key
-ATLAS_LOCAL_BASE_URL=http://localhost:8000
-ATLAS_LOCAL_API_KEY=replace-with-local-core-key
-ATLAS_SIM_TARGET=local
-ATLAS_SIM_PORT=5180
+```bash
+python3 Atlas_Core/scripts/atlas.py --dev
 ```
+
+The launcher enables API-key authentication, generates or reuses one local
+machine key, and stores it in the owner-only `Atlas_Core/docker/.env.local`. The
+simulations server reads that same key directly for its loopback target. The
+key is never sent to the browser or copied into a cleanup ledger.
+
+No simulations `.env` is required for the default loopback workbench. Copy
+`.env.example` to `.env` only to override the local URL, port, or target. Set
+`ATLAS_LOCAL_API_KEY` only when using a custom loopback Core that was not
+started by `atlas.py --dev`.
 
 The workbench exposes only the loopback target by default. To make a deployed Core available, explicitly add all of the following to `.env`:
 
@@ -31,7 +36,7 @@ Keep normal simulation work pointed at a local Atlas Core (`ATLAS_LOCAL_BASE_URL
 
 Deployed scenarios must provide explicit run-owned task IDs. Core-generated `command-*` task IDs remain available to local scenarios only because their IDs are not known early enough to record safely before a remote mutation.
 
-Configured API keys are read only by the local Node server. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
+Configured API keys, including the launcher-generated local key, are read only by the local Node server. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
 
 ## Development
 

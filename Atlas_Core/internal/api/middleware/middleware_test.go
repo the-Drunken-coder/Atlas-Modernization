@@ -429,25 +429,29 @@ func (stubAuthenticator) AuthenticateRequest(_ context.Context, r *http.Request)
 	return admin.AuthenticatedSession{Username: "admin"}, nil
 }
 
-func TestCombinedAuthAllowsAdminSessionToAccessResourcesWhenAPIAuthDisabled(t *testing.T) {
-	called := false
-	handler := middleware.CombinedAuth("", false, stubAuthenticator{}, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	}))
+func TestCombinedAuthAllowsAdminSessionToAccessResourcesInEveryAPIAuthMode(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("api_auth_enabled=%t", enabled), func(t *testing.T) {
+			called := false
+			handler := middleware.CombinedAuth("test-secret-key", enabled, stubAuthenticator{}, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
 
-	req := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	req.AddCookie(&http.Cookie{
-		Name:     admin.CookieName,
-		Value:    "valid-session",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if !called || rec.Code != http.StatusOK {
-		t.Fatalf("admin session request: called = %t, status = %d; want true, 200", called, rec.Code)
+			req := httptest.NewRequest(http.MethodGet, "/resources", nil)
+			req.AddCookie(&http.Cookie{
+				Name:     admin.CookieName,
+				Value:    "valid-session",
+				HttpOnly: true,
+				Secure:   true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if !called || rec.Code != http.StatusOK {
+				t.Fatalf("admin session request: called = %t, status = %d; want true, 200", called, rec.Code)
+			}
+		})
 	}
 }
 
