@@ -75,10 +75,12 @@ describe("AuthGate", () => {
   });
 
   it("shows session check failures without presenting the login form", async () => {
+    const user = userEvent.setup();
+    const secret = "pre-auth-api-key-secret";
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
-        throw new Error("Core is unavailable");
+        throw new Error(`Core is unavailable: https://core.test?api_key=${secret}`);
       })
     );
 
@@ -88,7 +90,14 @@ describe("AuthGate", () => {
       </AuthGate>
     );
 
-    expect(await screen.findByText("Core is unavailable")).toBeInTheDocument();
+    const badge = await screen.findByRole("button", { name: "Atlas connection error" });
+    badge.focus();
+    await user.keyboard("{Enter}");
+
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Core is unavailable");
+    expect(dialog).not.toHaveTextContent(secret);
+    expect(screen.getByRole("button", { name: "Close connection details" })).toHaveFocus();
     expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
@@ -112,7 +121,7 @@ describe("AuthGate", () => {
       </AuthGate>
     );
 
-    expect(await screen.findByText("Core is unavailable")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Retry connection" }));

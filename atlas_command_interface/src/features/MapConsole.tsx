@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../atlas/command-model.js";
-import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
-import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
 import { entityGeometry, entityKind, type EntityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
@@ -19,6 +17,7 @@ import type { MapCameraCommand } from "../ui/map/map-camera.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
+import { ConnectionBadge } from "./ConnectionBadge.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
 import { CommandList } from "./commands/CommandList.js";
@@ -493,128 +492,6 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
 
 function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
   return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
-}
-
-function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth; error?: ConnectionError; onRetry: () => void }) {
-  const unsafeConnectionError = error ?? health.error;
-  const connectionError = unsafeConnectionError ? { ...unsafeConnectionError, message: sanitizeConnectionError(unsafeConnectionError.message) } : undefined;
-  const state = connectionBadgeState(health, connectionError);
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const focusAnchorRef = useRef<HTMLDivElement>(null);
-  const detailRef = useRef<HTMLDivElement>(null);
-  const detailId = `connection-error-${useId()}`;
-
-  useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  useEffect(() => {
-    if (connectionError || !open) return;
-    setOpen(false);
-    const activeElement = document.activeElement;
-    if (activeElement === document.body || detailRef.current?.contains(activeElement) || focusAnchorRef.current?.contains(activeElement)) {
-      focusAnchorRef.current?.focus();
-    }
-  }, [connectionError, open]);
-
-  const badgeContent = (
-    <>
-      <span className="connection-badge__dot" aria-hidden="true" />
-      <span>{state.label}</span>
-    </>
-  );
-
-  return (
-    <div ref={focusAnchorRef} tabIndex={-1}>
-      <span className="connection-badge__status" role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
-        {state.label}
-      </span>
-      {!connectionError ? (
-        <div className="connection-badge" data-state={state.state}>
-          {badgeContent}
-        </div>
-      ) : (
-        <>
-          <Button
-            ref={triggerRef}
-            variant="ghost"
-            className="connection-badge"
-            data-state={state.state}
-            aria-label="Atlas connection error"
-            aria-expanded={open}
-            aria-controls={detailId}
-            onClick={() => setOpen((current) => !current)}
-          >
-            {badgeContent}
-          </Button>
-          {open ? (
-            <div
-              ref={detailRef}
-              className="connection-detail"
-              id={detailId}
-              role="dialog"
-              aria-labelledby={`${detailId}-title`}
-              aria-describedby={`${detailId}-description`}
-            >
-              <div className="connection-detail__header">
-                <strong id={`${detailId}-title`}>Atlas Core connection error</strong>
-                <Button
-                  ref={closeRef}
-                  variant="ghost"
-                  className="connection-detail__close"
-                  aria-label="Close connection details"
-                  onClick={() => {
-                    setOpen(false);
-                    (triggerRef.current ?? focusAnchorRef.current)?.focus();
-                  }}
-                >
-                  ×
-                </Button>
-              </div>
-              <p id={`${detailId}-description`}>
-                {connectionError.source === "startup" ? "The initial connection to Atlas Core failed." : "The live connection to Atlas Core failed."}
-              </p>
-              <p className="connection-detail__message">{connectionError.message}</p>
-              <p className="connection-detail__status" role="status">
-                {health.running ? "Retrying automatically…" : "Retry is available."}
-              </p>
-              <div className="connection-detail__actions">
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    setOpen(false);
-                    focusAnchorRef.current?.focus();
-                    onRetry();
-                  }}
-                >
-                  Retry connection
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </>
-      )}
-    </div>
-  );
-}
-
-function connectionBadgeState(health: ConnectionHealth, error?: ConnectionError): { label: string; state: "live" | "reconnecting" | "connecting" | "error" } {
-  if (error) return { label: "Connection error", state: "error" };
-  if (health.running && health.healthy && !health.degraded) return { label: "Online", state: "live" };
-  if (health.running) return { label: "Reconnecting", state: "reconnecting" };
-  return { label: "Connecting", state: "connecting" };
 }
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {

@@ -1,5 +1,7 @@
 import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
+import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { ConnectionBadge } from "../../features/ConnectionBadge.js";
 import { Button } from "../../ui/primitives/controls.js";
 import { AccountMenu } from "./AccountMenu.js";
 
@@ -62,21 +64,20 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   if (state.status === "error") {
     return (
       <main className="login-shell">
+        <ConnectionBadge
+          health={{ running: false, healthy: false, degraded: false }}
+          error={{ source: "startup", message: state.error }}
+          onRetry={() => {
+            setState({ status: "loading" });
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
         <div className="login-panel" role="alert">
           <div className="login-panel__header">
             <span className="login-panel__eyebrow">Atlas</span>
             <h1>Core unavailable</h1>
           </div>
-          <div className="banner banner--error">{state.error}</div>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setState({ status: "loading" });
-              setSessionAttempt((attempt) => attempt + 1);
-            }}
-          >
-            Retry connection
-          </Button>
+          <p>Open the connection error for details and retry.</p>
         </div>
       </main>
     );
@@ -141,7 +142,7 @@ export class WorkspaceErrorBoundary extends Component<
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return sanitizeConnectionError(error);
 }
 
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
