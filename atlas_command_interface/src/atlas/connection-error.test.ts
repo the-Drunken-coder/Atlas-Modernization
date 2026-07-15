@@ -145,6 +145,15 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("amz-credential-secret");
   });
 
+  it("redacts bracketed structured credential fields", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: credentials[password]=bracket-password-secret, credentials[api_key]: bracket-api-key-secret")
+    );
+
+    expect(sanitized).not.toContain("bracket-password-secret");
+    expect(sanitized).not.toContain("bracket-api-key-secret");
+  });
+
   it("redacts URL userinfo with an empty username", () => {
     const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://:empty-user-password@core.example"));
 
