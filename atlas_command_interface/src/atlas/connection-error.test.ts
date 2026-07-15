@@ -57,6 +57,20 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=value");
   });
 
+  it("redacts common and malformed credential query names", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        "Atlas request failed: https://core.test?safe=value&auth_token=auth-secret&key=key-secret&token%ZZ=malformed-secret&api%ZZkey=malformed-api-secret"
+      )
+    );
+
+    expect(sanitized).toContain("safe=value");
+    expect(sanitized).not.toContain("auth-secret");
+    expect(sanitized).not.toContain("key-secret");
+    expect(sanitized).not.toContain("malformed-secret");
+    expect(sanitized).not.toContain("malformed-api-secret");
+  });
+
   it("redacts quoted fields in prefixed structured error bodies", () => {
     const sanitized = sanitizeConnectionError(
       new Error('Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value","message":"internal details"}')
