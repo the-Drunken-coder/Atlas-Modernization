@@ -555,6 +555,43 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(1);
   });
 
+  it("does not finish startup when post-hydration recovery is superseded", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new FakeCore();
+    let changedSinceRequests = 0;
+    let releaseStartupRecovery!: (response: Response) => void;
+    let startupRecoveryUrl = "";
+    let startupRecoveryInit: RequestInit | undefined;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (changedSinceRequests === 1) {
+          startupRecoveryUrl = String(url);
+          startupRecoveryInit = init;
+          return new Promise<Response>((resolve) => {
+            releaseStartupRecovery = resolve;
+          });
+        }
+        return Promise.resolve(new Response(JSON.stringify({ error_code: "CORE_UNAVAILABLE", message: "newer recovery failed" }), { status: 503 }));
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    try {
+      const startup = client.sync.start();
+      await vi.waitFor(() => expect(releaseStartupRecovery).toBeTypeOf("function"));
+      await expect(client.changedSince()).rejects.toThrow("503");
+      releaseStartupRecovery(await core.fetch(startupRecoveryUrl, startupRecoveryInit));
+
+      await expect(startup).rejects.toThrow("initial recovery was superseded");
+      expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    } finally {
+      client.sync.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not apply a gapped feed event after its recovery is superseded by a failed recovery", async () => {
     const core = new FakeCore();
     let gapRecovery = false;

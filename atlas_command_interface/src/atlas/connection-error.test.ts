@@ -168,6 +168,19 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("malformed-api-secret");
   });
 
+  it("redacts JSESSIONID and camel-case API-key query aliases", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        "Atlas request failed: https://core.test?JSESSIONID=query-session-secret&xApiKey=camel-api-secret&xApiKeyboard=ordinary-value;jsessionid=path-session-secret"
+      )
+    );
+
+    expect(sanitized).not.toContain("query-session-secret");
+    expect(sanitized).not.toContain("camel-api-secret");
+    expect(sanitized).not.toContain("path-session-secret");
+    expect(sanitized).toContain("xApiKeyboard=ordinary-value");
+  });
+
   it("redacts quoted fields in prefixed structured error bodies", () => {
     const sanitized = sanitizeConnectionError(
       new Error('Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value","message":"internal details"}')
@@ -177,6 +190,14 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("token-value");
     expect(sanitized).toContain("internal details");
     expect(sanitized).toContain("[redacted]");
+  });
+
+  it("redacts structured fields without an escape prefix", () => {
+    const secrets = ["json-password-secret", "plain-password-secret"];
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: {"password":"${secrets[0]}"}, password: ${secrets[1]}, requestId: request-123`));
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("request-123");
   });
 
   it("fails closed on escaped structured credential keys", () => {

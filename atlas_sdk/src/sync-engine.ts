@@ -434,7 +434,8 @@ export class SyncEngine {
     if (!this.isCurrent(generation)) return;
     if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
     this.cache.replaceHydratedResources({ entities, tasks, objects });
-    await this.changedSince(generation, snapshotVersion);
+    const recovered = await this.changedSince(generation, snapshotVersion);
+    if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
   }
 
   private async consumeFeedEvent(event: FeedEvent): Promise<void> {
