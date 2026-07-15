@@ -130,6 +130,7 @@ const healthyConnection: ConnectionHealth = { running: true, healthy: true, degr
 
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
   let current: AtlasSnapshot = { entities: { [rover.entity_id]: rover, [geofeature.entity_id]: geofeature }, tasks: {} };
+  let currentHealth = health;
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
   let notifyCatalog: ((update: CatalogUpdate) => void) | undefined;
   const submissions: CommandSubmission[] = [];
@@ -151,7 +152,7 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     },
     async start() {},
     health() {
-      return health;
+      return currentHealth;
     },
     async submitCommand(submission) {
       submissions.push(submission);
@@ -183,7 +184,10 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       current = snapshot;
       notify?.(snapshot);
     },
-    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update)
+    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update),
+    setHealth: (next: ConnectionHealth) => {
+      currentHealth = next;
+    }
   };
 }
 
@@ -432,6 +436,24 @@ describe("MapConsole command flow", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(badge);
+  });
+
+  it("closes details and preserves a focus target when recovery clears the error", async () => {
+    const user = userEvent.setup();
+    const failingHealth: ConnectionHealth = {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed to open" }
+    };
+    const { fake, setHealth } = makeFakeDataSource(area, failingHealth);
+    renderConsole(fake);
+
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+    setHealth(healthyConnection);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument(), { timeout: 4_000 });
+    expect(document.activeElement).toHaveAttribute("tabindex", "-1");
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {

@@ -13,8 +13,20 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("redacts client secrets, URL userinfo, and bare bearer tokens", () => {
+    const message = "client_secret=client-secret https://user:password@example.com Bearer bearer-secret";
+    const sanitized = sanitizeConnectionError(new Error(message));
+
+    expect(sanitized).not.toContain("client-secret");
+    expect(sanitized).not.toContain("user:password");
+    expect(sanitized).not.toContain("bearer-secret");
+    expect(sanitized).toContain("[redacted]");
+  });
+
   it("does not display structured server bodies", () => {
-    expect(sanitizeConnectionError(new Error('{"message":"internal details","api_key":"atlas_ak_secret"}'))).toBe("Atlas Core returned an unsafe error message.");
+    expect(sanitizeConnectionError(new Error('{"message":"internal details","api_key":"atlas_ak_secret"}'))).toBe(
+      "Atlas Core returned an unsafe error message."
+    );
   });
 
   it("bounds long messages", () => {

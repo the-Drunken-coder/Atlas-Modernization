@@ -57,6 +57,7 @@ export class SyncEngine {
   private reconnecting = false;
   private reconnectAfterRecovery = false;
   private lastError: string | undefined;
+  private recoveryOperation = 0;
   private startSyncPromise: Promise<void> | undefined;
   private lifecycleGeneration = 0;
 
@@ -89,6 +90,7 @@ export class SyncEngine {
       return this.startSyncPromise;
     }
     const generation = ++this.lifecycleGeneration;
+    this.lastError = undefined;
     const promise = this.startSyncFromStopped(generation);
     this.startSyncPromise = promise;
     try {
@@ -178,7 +180,7 @@ export class SyncEngine {
         }
       });
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : "Atlas Core feed connection failed";
+      this.lastError = "Atlas Core feed connection failed";
       if (this.syncRunning) {
         this.healthy = false;
         this.degraded = true;
@@ -192,16 +194,18 @@ export class SyncEngine {
   }
 
   async changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<void> {
+    const operation = ++this.recoveryOperation;
+    const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
-      if (!this.isCurrent(generation)) return;
+      if (!isCurrentOperation()) return;
       let snapshotVersion: number | undefined;
       let cursors: ChangedSinceCursors = {};
       const recoveredEvents: AtlasWatchEvent[] = [];
       const seenCursors = new Map<string, Set<string>>();
       do {
-        if (!this.isCurrent(generation)) return;
+        if (!isCurrentOperation()) return;
         const response = await this.transport.json("GET", changedSincePath(sinceVersion, cursors), changedSinceResponseValidator(sinceVersion));
-        if (!this.isCurrent(generation)) return;
+        if (!isCurrentOperation()) return;
         if (snapshotVersion !== undefined && response.version !== snapshotVersion) {
           throw new TypeError("Atlas changed-since pagination changed response version");
         }
@@ -211,20 +215,22 @@ export class SyncEngine {
         assertPaginationProgress("changed-since", cursors, seenCursors);
       } while (hasMoreChangedSince(cursors));
       for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
-        if (!this.isCurrent(generation)) return;
+        if (!isCurrentOperation()) return;
         if (event.event === "recovered") {
           this.applyRecoveredEvent(event);
         } else if (event.event !== "local_delete") {
           this.applyEvent(event);
         }
       }
-      if (!this.isCurrent(generation)) return;
+      if (!isCurrentOperation()) return;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, snapshotVersion ?? sinceVersion);
       this.markSynchronized();
       this.lastError = undefined;
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : "Atlas Core recovery request failed";
-      if (this.isCurrent(generation) && this.syncRunning) {
+      if (isCurrentOperation()) {
+        this.lastError = "Atlas Core recovery request failed";
+      }
+      if (isCurrentOperation() && this.syncRunning) {
         this.degraded = true;
         this.healthy = false;
       }
@@ -347,6 +353,8 @@ export class SyncEngine {
     }
     this.clearReconnectTimer();
     this.syncRunning = false;
+    this.recoveryOperation++;
+    this.lastError = undefined;
     this.feed.close();
     this.healthy = false;
     this.degraded = false;

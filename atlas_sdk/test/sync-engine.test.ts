@@ -219,6 +219,78 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("does not let an older recovery failure overwrite a newer retry", async () => {
+    const core = new FakeCore();
+    let releaseOlder!: (reason?: unknown) => void;
+    let changedSinceRequests = 0;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (changedSinceRequests === 1) return Promise.reject(new Error("initial recovery failed"));
+        if (changedSinceRequests === 2) {
+          return new Promise<Response>((_resolve, reject) => {
+            releaseOlder = reject;
+          });
+        }
+        return core.fetch(String(url), init);
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+
+    await expect(client.changedSince()).rejects.toThrow("initial recovery failed");
+    const older = client.changedSince();
+    await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
+    await client.changedSince();
+    releaseOlder(new Error("stale recovery failed"));
+    await expect(older).rejects.toThrow("stale recovery failed");
+
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
+  it("does not let an older recovery success clear a newer retry error", async () => {
+    const core = new FakeCore();
+    let releaseOlder!: (response: Response) => void;
+    let changedSinceRequests = 0;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (changedSinceRequests === 1) return core.fetch(String(url), init);
+        if (changedSinceRequests === 2) {
+          return new Promise<Response>((resolve) => {
+            releaseOlder = resolve;
+          });
+        }
+        return Promise.resolve(new Response(JSON.stringify({ error_code: "CORE_UNAVAILABLE", message: "retry failed" }), { status: 503 }));
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+
+    await client.changedSince();
+    const older = client.changedSince();
+    await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
+    await expect(client.changedSince()).rejects.toThrow("503");
+    releaseOlder(Response.json({
+      entities: [],
+      tasks: [],
+      objects: [],
+      deleted_entities: [],
+      deleted_tasks: [],
+      deleted_objects: [],
+      has_more_entities: false,
+      has_more_tasks: false,
+      has_more_objects: false,
+      has_more_deleted_entities: false,
+      has_more_deleted_tasks: false,
+      has_more_deleted_objects: false,
+      version: 0
+    }));
+    await older;
+
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed");
+  });
+
   it("does not advance the global change cursor from point reads", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-read"));

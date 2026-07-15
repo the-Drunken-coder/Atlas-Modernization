@@ -501,6 +501,7 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const focusAnchorRef = useRef<HTMLDivElement>(null);
   const detailId = `connection-error-${useId()}`;
 
   useEffect(() => {
@@ -520,7 +521,7 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
   useEffect(() => {
     if (connectionError || !open) return;
     setOpen(false);
-    triggerRef.current?.focus();
+    (triggerRef.current ?? focusAnchorRef.current)?.focus();
   }, [connectionError, open]);
 
   const badgeContent = (
@@ -530,54 +531,67 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
     </>
   );
 
-  if (!connectionError) {
-    return (
-      <div className="connection-badge" data-state={state.state} role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
-        {badgeContent}
-      </div>
-    );
-  }
-
   return (
-    <>
-      <Button
-        ref={triggerRef}
-        variant="ghost"
-        className="connection-badge"
-        data-state={state.state}
-        aria-label="Atlas connection error"
-        aria-expanded={open}
-        aria-controls={detailId}
-        aria-live="polite"
-        onClick={() => setOpen((current) => !current)}
-      >
-        {badgeContent}
-      </Button>
-      {open ? (
-        <div className="connection-detail" id={detailId} role="dialog" aria-labelledby={`${detailId}-title`} aria-describedby={`${detailId}-description`}>
-          <div className="connection-detail__header">
-            <strong id={`${detailId}-title`}>Atlas Core connection error</strong>
-            <Button ref={closeRef} variant="ghost" className="connection-detail__close" aria-label="Close connection details" onClick={() => {
-              setOpen(false);
-              triggerRef.current?.focus();
-            }}>
-              ×
-            </Button>
-          </div>
-          <p id={`${detailId}-description`}>{connectionError.source === "startup" ? "The initial connection to Atlas Core failed." : "The live connection to Atlas Core failed."}</p>
-          <p className="connection-detail__message">{connectionError.message}</p>
-          <p className="connection-detail__status" role="status">{health.running ? "Retrying automatically…" : "Retry is available."}</p>
-          <div className="connection-detail__actions">
-            <Button variant="primary" onClick={() => {
-              setOpen(false);
-              onRetry();
-            }}>
-              Retry connection
-            </Button>
-          </div>
+    <div ref={focusAnchorRef} tabIndex={-1}>
+      {!connectionError ? (
+        <div className="connection-badge" data-state={state.state} role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
+          {badgeContent}
         </div>
-      ) : null}
-    </>
+      ) : (
+        <>
+          <Button
+            ref={triggerRef}
+            variant="ghost"
+            className="connection-badge"
+            data-state={state.state}
+            aria-label="Atlas connection error"
+            aria-expanded={open}
+            aria-controls={detailId}
+            aria-live="polite"
+            onClick={() => setOpen((current) => !current)}
+          >
+            {badgeContent}
+          </Button>
+          {open ? (
+            <div className="connection-detail" id={detailId} role="dialog" aria-labelledby={`${detailId}-title`} aria-describedby={`${detailId}-description`}>
+              <div className="connection-detail__header">
+                <strong id={`${detailId}-title`}>Atlas Core connection error</strong>
+                <Button
+                  ref={closeRef}
+                  variant="ghost"
+                  className="connection-detail__close"
+                  aria-label="Close connection details"
+                  onClick={() => {
+                    setOpen(false);
+                    (triggerRef.current ?? focusAnchorRef.current)?.focus();
+                  }}
+                >
+                  ×
+                </Button>
+              </div>
+              <p id={`${detailId}-description`}>
+                {connectionError.source === "startup" ? "The initial connection to Atlas Core failed." : "The live connection to Atlas Core failed."}
+              </p>
+              <p className="connection-detail__message">{connectionError.message}</p>
+              <p className="connection-detail__status" role="status">
+                {health.running ? "Retrying automatically…" : "Retry is available."}
+              </p>
+              <div className="connection-detail__actions">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setOpen(false);
+                    onRetry();
+                  }}
+                >
+                  Retry connection
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }
 
