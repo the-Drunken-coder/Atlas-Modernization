@@ -46,37 +46,24 @@ export function sanitizeConnectionError(cause: unknown): string {
   if (!firstLine || firstLine.length > 2_000 || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
 
   const sanitized = redactConnectionMessage(firstLine);
-  let decoded = sanitized;
-  let percentSettled = false;
+  let normalized = sanitized;
+  let settled = false;
   for (let pass = 0; pass < 2; pass++) {
     let next: string;
     try {
-      next = decodeURIComponent(decoded.replace(/%(?![0-9a-f]{2})/gi, "%25"));
+      next = decodeURIComponent(normalized.replace(/%(?![0-9a-f]{2})/gi, "%25"))
+        .replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+        .replace(/\\+x([0-9a-f]{2})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
     } catch {
       return SAFE_FALLBACK;
     }
-    if (next === decoded) {
-      percentSettled = true;
+    if (next === normalized) {
+      settled = true;
       break;
     }
-    decoded = next;
-    if (redactConnectionMessage(decoded) !== decoded) return SAFE_FALLBACK;
+    normalized = next;
+    if (redactConnectionMessage(normalized) !== normalized) return SAFE_FALLBACK;
   }
-  if (!percentSettled) return SAFE_FALLBACK;
-
-  let unescaped = decoded;
-  let unicodeSettled = false;
-  for (let pass = 0; pass < 2; pass++) {
-    const next = unescaped
-      .replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
-      .replace(/\\+x([0-9a-f]{2})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
-    if (next === unescaped) {
-      unicodeSettled = true;
-      break;
-    }
-    unescaped = next;
-    if (redactConnectionMessage(unescaped) !== unescaped) return SAFE_FALLBACK;
-  }
-  if (!unicodeSettled) return SAFE_FALLBACK;
+  if (!settled) return SAFE_FALLBACK;
   return sanitized.length > 240 ? `${sanitized.slice(0, 239)}…` : sanitized;
 }

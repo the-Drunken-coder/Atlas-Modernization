@@ -130,9 +130,9 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("handles long non-matching hyphen runs", () => {
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(5_000)}`));
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 
-    expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
+    expect(sanitized).toHaveLength(240);
   }, 1_000);
 
   it("fails closed before truncating long credential-bearing errors", () => {
@@ -192,6 +192,10 @@ describe("sanitizeConnectionError", () => {
       {
         message: String.raw`Atlas request failed: 500: {"api\x5fkey":"hex-escaped-secret","message":"safe context"}`,
         secret: "hex-escaped-secret"
+      },
+      {
+        message: String.raw`Atlas request failed: 500: {"api\u0025\u0035\u0066key":"mixed-encoding-secret","message":"safe context"}`,
+        secret: "mixed-encoding-secret"
       }
     ];
 
