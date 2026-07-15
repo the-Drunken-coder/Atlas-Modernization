@@ -1,13 +1,13 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 const SENSITIVE_PARAMETER = /([?&])([^=&#\s]+)=([^&#\s]*)/gi;
 const SENSITIVE_NAME_PATTERN =
-  "(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|client[_-]?(?:secret|token)|cookie|csrf[_-]?token|db[_-]?password|id[_-]?token|password|secret|session[_-]?token|token)";
+  "(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|client[_-]?(?:secret|token)|cookie|csrf[_-]?token|db[_-]?password|id[_-]?token|password|secret|session[_-]?token|signature|token|x[_-]?amz[_-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`^${SENSITIVE_NAME_PATTERN}`, "i");
 const SENSITIVE_FIELD = new RegExp(
   String.raw`((?:\\?["']?\b${SENSITIVE_NAME_PATTERN}\b\\?["']?)\s*[:=]\s*)(?:\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+)`,
   "gi"
 );
-const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?\/\/)[^/\s:@]+(?::[^@\s]*)?@/gi;
+const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|\\\/\\\/))[^/\s:@]+(?::[^@\s]*)?@/gi;
 const BEARER_TOKEN = /\bBearer\s+[^\s,;]+/gi;
 const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 

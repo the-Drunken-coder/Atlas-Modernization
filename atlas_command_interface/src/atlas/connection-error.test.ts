@@ -23,6 +23,13 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("redacts a bare bearer token independently", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: Bearer bearer-secret"));
+
+    expect(sanitized).not.toContain("bearer-secret");
+    expect(sanitized).toContain("Bearer [redacted]");
+  });
+
   it("redacts generic URL userinfo and encoded query parameter names", () => {
     const message =
       "postgres://db-user:db-password@example.test //url-user:url-password@example.test?api%5Fkey=encoded-secret&access%2Dtoken=encoded-token&client%5Fsecret=client-secret&client%2Dsecret=hyphen-secret&id%5Ftoken=id-token&session%2Dtoken=session-token&safe=value";
@@ -36,6 +43,17 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("hyphen-secret");
     expect(sanitized).not.toContain("id-token");
     expect(sanitized).not.toContain("session-token");
+    expect(sanitized).toContain("safe=value");
+  });
+
+  it("redacts escaped URL userinfo and signature query parameters", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error(String.raw`Atlas request failed: https:\/\/url-user:url-password@example.test?safe=value&api-key=api-key-secret&signature=signature-secret`)
+    );
+
+    expect(sanitized).not.toContain("url-user:url-password");
+    expect(sanitized).not.toContain("api-key-secret");
+    expect(sanitized).not.toContain("signature-secret");
     expect(sanitized).toContain("safe=value");
   });
 

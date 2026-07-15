@@ -549,7 +549,6 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
             aria-label="Atlas connection error"
             aria-expanded={open}
             aria-controls={detailId}
-            aria-live="polite"
             onClick={() => setOpen((current) => !current)}
           >
             {badgeContent}

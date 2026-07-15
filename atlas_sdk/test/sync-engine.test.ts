@@ -419,54 +419,59 @@ describe("AtlasClient sync", () => {
       pollIntervalMs: 0
     });
 
-    await client.sync.start();
-    gapRecovery = true;
-    const socket = [...core.sockets][0];
-    if (!socket) throw new Error("expected a connected fake websocket");
-    socket.receive({
-      event: "update",
-      resource_type: "entity",
-      id: "asset-gapped-feed",
-      version: 2,
-      resource: { ...entity("asset-gapped-feed"), metadata: metadata(2) }
-    });
-    await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
-    await expect(client.changedSince()).rejects.toThrow("503");
-    let resolveFollowUp!: () => void;
-    const followUp = new Promise<void>((resolve) => {
-      resolveFollowUp = resolve;
-    });
-    const unsubscribe = client.entities.watch("asset-after-gap", () => resolveFollowUp());
-    releaseGapRecovery(
-      Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
-        version: 0
-      })
-    );
-    socket.receive({
-      event: "update",
-      resource_type: "entity",
-      id: "asset-after-gap",
-      version: 1,
-      resource: { ...entity("asset-after-gap"), metadata: metadata(1) }
-    });
-    await followUp;
-    unsubscribe();
+    let unsubscribe: (() => void) | undefined;
+    try {
+      await client.sync.start();
+      gapRecovery = true;
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.receive({
+        event: "update",
+        resource_type: "entity",
+        id: "asset-gapped-feed",
+        version: 2,
+        resource: { ...entity("asset-gapped-feed"), metadata: metadata(2) }
+      });
+      await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
+      await expect(client.changedSince()).rejects.toThrow("503");
+      let resolveFollowUp!: () => void;
+      const followUp = new Promise<void>((resolve) => {
+        resolveFollowUp = resolve;
+      });
+      unsubscribe = client.entities.watch("asset-after-gap", () => resolveFollowUp());
+      releaseGapRecovery(
+        Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          deleted_entities: [],
+          deleted_tasks: [],
+          deleted_objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false,
+          has_more_deleted_entities: false,
+          has_more_deleted_tasks: false,
+          has_more_deleted_objects: false,
+          version: 0
+        })
+      );
+      socket.receive({
+        event: "update",
+        resource_type: "entity",
+        id: "asset-after-gap",
+        version: 1,
+        resource: { ...entity("asset-after-gap"), metadata: metadata(1) }
+      });
+      await followUp;
 
-    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-gapped-feed");
-    expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed");
-    expect(client.sync.status().lastVersion).toBe(1);
+      expect(client.sync.snapshot().entities).not.toHaveProperty("asset-gapped-feed");
+      expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed");
+      expect(client.sync.status().lastVersion).toBe(1);
+    } finally {
+      unsubscribe?.();
+      client.sync.stop();
+    }
   });
 
   it("retries a failed recovery while the sync engine remains running", async () => {
