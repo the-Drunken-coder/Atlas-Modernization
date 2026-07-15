@@ -89,7 +89,7 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 		entityID = &trimmed
 	}
 
-	tx, err := beginChangeTx(ctx, a.pool, "task create")
+	tx, err := beginChangeTx(ctx, a.pool, "task create", a.changeSink)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +361,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	}
 
 	// Begin transaction for atomic read-modify-write.
-	tx, err := beginChangeTx(ctx, a.pool, "task update")
+	tx, err := beginChangeTx(ctx, a.pool, "task update", a.changeSink)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +490,7 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 	}
 	taskID = SanitizeID(taskID)
 
-	tx, err := beginChangeTx(ctx, a.pool, "task delete")
+	tx, err := beginChangeTx(ctx, a.pool, "task delete", a.changeSink)
 	if err != nil {
 		return err
 	}

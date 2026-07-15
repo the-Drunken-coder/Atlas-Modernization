@@ -98,7 +98,7 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		alias = &trimmed
 	}
 
-	tx, err := beginChangeTx(ctx, a.pool, "entity create")
+	tx, err := beginChangeTx(ctx, a.pool, "entity create", a.changeSink)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +254,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	}
 
 	// Begin transaction for atomic read-modify-write.
-	tx, err := beginChangeTx(ctx, a.pool, "entity update")
+	tx, err := beginChangeTx(ctx, a.pool, "entity update", a.changeSink)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +378,7 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 	}
 	entityID = SanitizeID(entityID)
 
-	tx, err := beginChangeTx(ctx, a.pool, "entity delete")
+	tx, err := beginChangeTx(ctx, a.pool, "entity delete", a.changeSink)
 	if err != nil {
 		return err
 	}

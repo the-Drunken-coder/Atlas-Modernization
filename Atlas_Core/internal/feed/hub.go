@@ -46,6 +46,7 @@ type Hub struct {
 
 type AsyncChangeSink interface {
 	actions.ChangeSink
+	SkipVersion(version int64, reason string)
 	Close()
 }
 
@@ -103,6 +104,15 @@ func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
 			Str("id", change.ID).
 			Int64("version", change.Version).
 			Msg("Dropping Atlas feed change because async sink queue is full")
+	}
+}
+
+func (s *asyncChangeSink) SkipVersion(version int64, reason string) {
+	if s.isClosed() {
+		return
+	}
+	if skipper, ok := s.sink.(versionSkipper); ok {
+		skipper.SkipVersion(version, reason)
 	}
 }
 
