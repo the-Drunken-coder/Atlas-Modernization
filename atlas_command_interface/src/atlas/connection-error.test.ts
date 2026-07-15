@@ -164,6 +164,14 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("fails closed on escaped structured credential keys", () => {
+    const secret = "escaped-structured-secret";
+    const sanitized = sanitizeConnectionError(new Error(String.raw`Atlas request failed: 500: {"api\u005fkey":"${secret}","message":"safe context"}`));
+
+    expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
+    expect(sanitized).not.toContain(secret);
+  });
+
   it("redacts underscored token fields in prefixed structured error bodies", () => {
     const secrets = {
       id_token: "id-token-secret",
