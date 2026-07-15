@@ -23,6 +23,14 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("redacts quoted fields in prefixed structured error bodies", () => {
+    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value"}'));
+
+    expect(sanitized).not.toContain("secret-value");
+    expect(sanitized).not.toContain("token-value");
+    expect(sanitized).toContain("[redacted]");
+  });
+
   it("does not display structured server bodies", () => {
     expect(sanitizeConnectionError(new Error('{"message":"internal details","api_key":"atlas_ak_secret"}'))).toBe(
       "Atlas Core returned an unsafe error message."
