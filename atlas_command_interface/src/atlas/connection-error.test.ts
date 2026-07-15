@@ -23,11 +23,31 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("redacts generic URL userinfo and encoded query parameter names", () => {
+    const message = "postgres://db-user:db-password@example.test?api%5Fkey=encoded-secret&access%2Dtoken=encoded-token&safe=value";
+    const sanitized = sanitizeConnectionError(new Error(message));
+
+    expect(sanitized).not.toContain("db-user:db-password");
+    expect(sanitized).not.toContain("encoded-secret");
+    expect(sanitized).not.toContain("encoded-token");
+    expect(sanitized).toContain("safe=value");
+  });
+
   it("redacts quoted fields in prefixed structured error bodies", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value","message":"internal details"}')
+    );
 
     expect(sanitized).not.toContain("secret-value");
     expect(sanitized).not.toContain("token-value");
+    expect(sanitized).toContain("internal details");
+    expect(sanitized).toContain("[redacted]");
+  });
+
+  it("redacts escaped structured fields", () => {
+    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {\\"api_key\\":\\"escaped-secret\\"}'));
+
+    expect(sanitized).not.toContain("escaped-secret");
     expect(sanitized).toContain("[redacted]");
   });
 

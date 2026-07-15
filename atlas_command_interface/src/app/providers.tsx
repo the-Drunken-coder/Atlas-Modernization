@@ -20,7 +20,7 @@ export function Providers({ children, coreConfig: providedCoreConfig, loadConfig
   } catch (cause) {
     return (
       <div className="app-error">
-        <span>{cause instanceof Error ? cause.message : String(cause)}</span>
+        <span>{sanitizeConnectionError(cause)}</span>
       </div>
     );
   }
