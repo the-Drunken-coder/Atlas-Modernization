@@ -127,6 +127,15 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("semicolon-secret");
   });
 
+  it("redacts credential-shaped fields and query parameters", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"credentials":"structured-credential-secret"} https://core.test?X-Amz-Credential=query-credential-secret')
+    );
+
+    expect(sanitized).not.toContain("structured-credential-secret");
+    expect(sanitized).not.toContain("query-credential-secret");
+  });
+
   it("redacts nested encoded credential query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key")
