@@ -325,12 +325,13 @@ func normalizeCheckinTaskLimit(limit int) (int, error) {
 
 // UpdateTaskParams holds parameters for updating a task.
 type UpdateTaskParams struct {
-	Status          *string
-	EntityID        *string
-	Components      map[string]interface{}
-	Extra           map[string]interface{}
-	RemoveExtraKeys []string
-	ExpectedVersion *int64
+	Status           *string
+	EntityID         *string
+	Components       map[string]interface{}
+	Extra            map[string]interface{}
+	RemoveExtraKeys  []string
+	ExpectedVersion  *int64
+	idempotentStatus bool
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -403,6 +404,12 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		}
 		if err := validateTaskStatusTransition(task.Status, normalized); err != nil {
 			return nil, err
+		}
+		if params.idempotentStatus && task.Status == normalized {
+			if err := tx.Commit(ctx); err != nil {
+				return nil, fmt.Errorf("failed to commit idempotent task update: %w", err)
+			}
+			return &task, nil
 		}
 		newStatus = normalized
 	}
@@ -550,7 +557,7 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 // Acknowledge marks a task as acknowledged.
 func (a *TaskActions) Acknowledge(ctx context.Context, taskID string, expectedVersion *int64) (*models.Task, error) {
 	status := "acknowledged"
-	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: expectedVersion})
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: expectedVersion, idempotentStatus: true})
 }
 
 // Complete marks a task as completed with optional result.
