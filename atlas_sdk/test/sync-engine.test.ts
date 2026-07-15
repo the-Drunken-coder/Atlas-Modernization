@@ -254,8 +254,15 @@ describe("AtlasClient sync", () => {
     const restart = client.sync.start();
     await vi.waitFor(() => expect(secondStartRecoveryStarted).toBe(true));
 
-    const engine = (client as unknown as { engine: { changedSince: (generation: number) => Promise<void> } }).engine;
+    const engine = (
+      client as unknown as {
+        engine: { activeRecoveryPromise?: Promise<boolean>; changedSince: (generation: number) => Promise<boolean> };
+      }
+    ).engine;
+    const currentRecovery = engine.activeRecoveryPromise;
+    expect(currentRecovery).toBeDefined();
     await engine.changedSince(1);
+    expect(engine.activeRecoveryPromise).toBe(currentRecovery);
     releaseSecondStartRecovery(
       Response.json({
         entities: [{ ...entity("asset-after-restart"), metadata: metadata(1) }],

@@ -199,6 +199,7 @@ export class SyncEngine {
   }
 
   changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+    if (!this.isCurrent(generation)) return Promise.resolve(false);
     const recovery = this.recoverSince(generation, sinceVersion);
     this.activeRecoveryPromise = recovery;
     void recovery.then(
