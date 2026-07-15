@@ -139,6 +139,18 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("redacts form-encoded and AWS credential names", () => {
+    const secrets = ["plus-api-key-secret", "encoded-client-secret", "aws-access-key-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: https://core.test?api+key=${secrets[0]}&client%20secret=${secrets[1]}; {"AWSAccessKeyId":"${secrets[2]}","message":"safe context"}`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe context");
+  });
+
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 

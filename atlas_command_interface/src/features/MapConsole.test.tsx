@@ -414,6 +414,7 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
 
     const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Atlas request failed");
     expect(dialog).not.toHaveTextContent("user:password");
     expect(dialog).not.toHaveTextContent("api_key=secret");
     expect(dialog).not.toHaveTextContent("Bearer token");
@@ -432,6 +433,7 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
 
     const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Atlas request failed");
     expect(dialog).not.toHaveTextContent("user:password");
     expect(dialog).not.toHaveTextContent("api_key=secret");
     expect(dialog).not.toHaveTextContent("Bearer token");

@@ -1468,6 +1468,9 @@ describe("AtlasClient sync", () => {
         })
       );
       await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(pollRequests).toBe(2);
     } finally {
       client.sync.stop();
       vi.useRealTimers();
