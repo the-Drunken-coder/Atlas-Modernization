@@ -455,6 +455,44 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("retries a failed recovery while the sync engine remains running", async () => {
+    const core = new FakeCore();
+    let failNextRecovery = false;
+    let recoveryRequests = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        recoveryRequests++;
+        if (failNextRecovery) {
+          failNextRecovery = false;
+          return new Response(JSON.stringify({ error_code: "CORE_UNAVAILABLE", message: "recovery failed" }), { status: 503 });
+        }
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.sync.start();
+    failNextRecovery = true;
+    await expect(client.changedSince()).rejects.toThrow("503");
+    const requestsBeforeRetry = recoveryRequests;
+
+    await vi.waitFor(
+      () => {
+        expect(recoveryRequests).toBeGreaterThan(requestsBeforeRetry);
+        expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
+      },
+      { timeout: 2_500 }
+    );
+
+    client.sync.stop();
+  });
+
   it("does not let an older recovery failure overwrite a newer retry", async () => {
     const core = new FakeCore();
     let releaseOlder!: (reason?: unknown) => void;

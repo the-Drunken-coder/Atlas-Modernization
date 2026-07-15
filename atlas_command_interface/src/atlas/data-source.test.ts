@@ -142,6 +142,9 @@ describe("sdk data source", () => {
     await expect(dataSource.start()).rejects.toThrow();
     expect(dataSource.health?.()).toMatchObject({ error: { source: "startup" } });
 
+    dataSource.dispose();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+
     failRevision = false;
     await dataSource.start();
     expect(dataSource.health?.()).not.toHaveProperty("error");

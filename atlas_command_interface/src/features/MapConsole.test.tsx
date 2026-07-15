@@ -569,6 +569,7 @@ describe("MapConsole command flow", () => {
     );
 
     expect(await screen.findByText("The configured default map source is unavailable.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
     expect(screen.queryByTestId("map")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Atlas connection error" })).toBeInTheDocument();
   });

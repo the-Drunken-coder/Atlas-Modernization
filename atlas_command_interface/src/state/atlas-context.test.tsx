@@ -18,6 +18,11 @@ function StatusProbe() {
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
       <span data-testid="catalog-name">{atlas.catalog?.name}</span>
+      {atlas.health.error ? (
+        <code data-testid="health-error">
+          {atlas.health.error.source}: {atlas.health.error.message}
+        </code>
+      ) : null}
       {atlas.error ? <code>{atlas.error}</code> : null}
       {atlas.error ? (
         <button type="button" onClick={atlas.reconnect}>
@@ -201,6 +206,7 @@ describe("AtlasProvider", () => {
 
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByText("start failed")).toBeInTheDocument();
+    expect(screen.getByTestId("health-error")).toHaveTextContent("startup: start failed");
     expect(screen.getByRole("button", { name: "Retry connection" })).toBeInTheDocument();
     await waitFor(() => {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -212,6 +218,7 @@ describe("AtlasProvider", () => {
 
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByTestId("entity-names")).toHaveTextContent("Recovered");
+    expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledTimes(1);

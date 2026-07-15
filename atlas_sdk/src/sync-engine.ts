@@ -238,10 +238,11 @@ export class SyncEngine {
     } catch (error) {
       if (isCurrentOperation()) {
         this.lastError = "Atlas Core recovery request failed";
-      }
-      if (isCurrentOperation() && this.syncRunning) {
-        this.degraded = true;
-        this.healthy = false;
+        if (this.syncRunning) {
+          this.degraded = true;
+          this.healthy = false;
+          this.scheduleReconnect();
+        }
       }
       throw error;
     }

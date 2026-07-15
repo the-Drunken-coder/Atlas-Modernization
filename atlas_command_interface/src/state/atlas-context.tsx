@@ -138,6 +138,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         const connectionError = { source: "startup" as const, message: sanitizeConnectionError(cause) };
         setConnectionError(connectionError);
         setError(connectionError.message);
+        setHealth((current) => ({ ...current, error: connectionError }));
         setStatus(hasResolvedConfig ? "ready" : "error");
       }
     })();
