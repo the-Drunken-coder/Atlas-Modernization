@@ -105,10 +105,19 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts authorization-shaped query parameters", () => {
-    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?safe=value&bearer_token=query-secret"));
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://core.test?safe=value&authorization=basic-secret&bearer_token=query-secret")
+    );
 
+    expect(sanitized).not.toContain("basic-secret");
     expect(sanitized).not.toContain("query-secret");
     expect(sanitized).toContain("safe=value");
+  });
+
+  it("redacts prefixed key query parameters", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?x-api-key=prefixed-api-key-secret"));
+
+    expect(sanitized).not.toContain("prefixed-api-key-secret");
   });
 
   it("redacts nested encoded credential query parameters", () => {
