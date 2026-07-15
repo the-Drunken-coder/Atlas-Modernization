@@ -74,6 +74,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
     setHealth(DEFAULT_HEALTH);
 
     const publishHealth = (next: ConnectionHealth) => {
+      if (cancelled) return;
       setHealth(next);
       if (next.error) {
         setConnectionError(next.error);

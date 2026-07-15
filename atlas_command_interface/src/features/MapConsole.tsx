@@ -254,13 +254,7 @@ export function MapConsole() {
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
-  if (!selectedMapSource) {
-    return (
-      <div className="app-error">
-        <span>No usable map sources are configured.</span>
-      </div>
-    );
-  }
+  const mapSourcePickerValue = selectedMapSource?.id ?? selectedMapSourceId ?? atlas.config.defaultMapSourceId;
 
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
@@ -321,28 +315,34 @@ export function MapConsole() {
           <>
             <div className="map-world-frame">
               <div className="map-stage">
-                <MapView
-                  sources={sources}
-                  styleId={selectedMapSource.id}
-                  style={selectedMapSource.style}
-                  selectedId={selectedId}
-                  editing={
-                    edit
-                      ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
-                      : undefined
-                  }
-                  focusTarget={focusTarget}
-                  cameraCommand={cameraCommand}
-                  onSelectEntity={selectEntityById}
-                  onMapContextMenu={onMapContextMenu}
-                  onBackgroundClick={() => {
-                    setMapMenu(null);
-                    dispatch({ type: "clearSelection" });
-                  }}
-                  onStyleSwitchError={handleMapStyleSwitchError}
-                />
+                {selectedMapSource ? (
+                  <MapView
+                    sources={sources}
+                    styleId={selectedMapSource.id}
+                    style={selectedMapSource.style}
+                    selectedId={selectedId}
+                    editing={
+                      edit
+                        ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
+                        : undefined
+                    }
+                    focusTarget={focusTarget}
+                    cameraCommand={cameraCommand}
+                    onSelectEntity={selectEntityById}
+                    onMapContextMenu={onMapContextMenu}
+                    onBackgroundClick={() => {
+                      setMapMenu(null);
+                      dispatch({ type: "clearSelection" });
+                    }}
+                    onStyleSwitchError={handleMapStyleSwitchError}
+                  />
+                ) : (
+                  <div className="app-error" role="alert">
+                    <span>No usable map sources are configured.</span>
+                  </div>
+                )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
-                <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
+                <MapSourcePicker sources={atlas.config.mapSources} value={mapSourcePickerValue} onChange={setSelectedMapSourceId} />
               </div>
             </div>
           </>
@@ -520,7 +520,10 @@ function ConnectionBadge({ health, error, onRetry }: { health: ConnectionHealth;
   useEffect(() => {
     if (connectionError || !open) return;
     setOpen(false);
-    focusAnchorRef.current?.focus();
+    const activeElement = document.activeElement;
+    if (activeElement === document.body || focusAnchorRef.current?.contains(activeElement)) {
+      focusAnchorRef.current?.focus();
+    }
   }, [connectionError, open]);
 
   const badgeContent = (

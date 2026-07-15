@@ -278,6 +278,120 @@ describe("AtlasClient sync", () => {
     expect(client.sync.snapshot().entities).toHaveProperty("asset-after-restart");
   });
 
+  it("ignores a stale feed completion after stop", async () => {
+    let releaseFeedConnect!: () => void;
+    const feedConnect = new Promise<void>((resolve) => {
+      releaseFeedConnect = resolve;
+    });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
+    type FeedConnectOptions = {
+      subscriptions: unknown[];
+      onEvent: (event: unknown) => void | Promise<void>;
+      onEventError: () => void;
+      onClose: () => void;
+    };
+    const engine = (client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockImplementation(async () => feedConnect);
+
+    const connection = client.connectFeed();
+    await vi.waitFor(() => expect(engine.feed.connect).toHaveBeenCalledOnce());
+    client.sync.stop();
+    releaseFeedConnect();
+    await connection;
+
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+  });
+
+  it("ignores an in-flight recovery from a previous lifecycle after restart", async () => {
+    const core = new FakeCore();
+    let stage: "normal" | "old" | "old-in-flight" | "new" = "normal";
+    let oldRecoveryStarted = false;
+    let newRecoveryStarted = false;
+    let releaseOldRecovery!: (response: Response) => void;
+    let releaseNewRecovery!: (response: Response) => void;
+    const oldRecovery = new Promise<Response>((resolve) => {
+      releaseOldRecovery = resolve;
+    });
+    const newRecovery = new Promise<Response>((resolve) => {
+      releaseNewRecovery = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (stage === "new" && path === "/queries/full") {
+        return Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          version: 0,
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        });
+      }
+      if (path === "/queries/changed-since") {
+        if (stage === "old") {
+          stage = "old-in-flight";
+          oldRecoveryStarted = true;
+          return oldRecovery;
+        }
+        if (stage === "new") {
+          newRecoveryStarted = true;
+          return newRecovery;
+        }
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    await client.sync.start();
+    stage = "old";
+    const old = client.changedSince();
+    await vi.waitFor(() => expect(oldRecoveryStarted).toBe(true));
+    client.sync.stop();
+    stage = "new";
+    const restart = client.sync.start();
+    await vi.waitFor(() => expect(newRecoveryStarted).toBe(true));
+    releaseNewRecovery(
+      Response.json({
+        entities: [{ ...entity("asset-new-lifecycle"), metadata: metadata(1) }],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 1
+      })
+    );
+    await restart;
+    releaseOldRecovery(
+      Response.json({
+        entities: [{ ...entity("asset-old-lifecycle"), metadata: metadata(2) }],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 2
+      })
+    );
+    await old;
+
+    expect(client.sync.snapshot().entities).toHaveProperty("asset-new-lifecycle");
+    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-old-lifecycle");
+  });
+
   it("does not let an older recovery failure overwrite a newer retry", async () => {
     const core = new FakeCore();
     let releaseOlder!: (reason?: unknown) => void;

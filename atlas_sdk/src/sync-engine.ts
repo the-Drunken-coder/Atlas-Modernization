@@ -159,18 +159,23 @@ export class SyncEngine {
   }
 
   async connectFeed(): Promise<void> {
+    const generation = this.lifecycleGeneration;
     try {
       await this.feed.connect({
         subscriptions: this.subscriptions,
-        onEvent: (event) => this.consumeFeedEvent(event),
+        onEvent: (event) => {
+          if (!this.isCurrent(generation)) return;
+          return this.consumeFeedEvent(event);
+        },
         onEventError: () => {
+          if (!this.isCurrent(generation)) return;
           this.lastError = "Atlas Core feed event failed";
           this.degraded = true;
           this.healthy = false;
           this.scheduleReconnect();
         },
         onClose: () => {
-          if (!this.syncRunning) {
+          if (!this.isCurrent(generation) || !this.syncRunning) {
             return;
           }
           this.lastError = "Atlas Core feed connection closed";
@@ -180,6 +185,7 @@ export class SyncEngine {
         }
       });
     } catch (error) {
+      if (!this.isCurrent(generation)) throw error;
       this.lastError = "Atlas Core feed connection failed";
       if (this.syncRunning) {
         this.healthy = false;
@@ -188,6 +194,7 @@ export class SyncEngine {
       }
       throw error;
     }
+    if (!this.isCurrent(generation)) return;
     this.lastError = undefined;
     this.healthy = true;
     this.degraded = false;

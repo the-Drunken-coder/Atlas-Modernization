@@ -201,6 +201,7 @@ describe("AtlasProvider", () => {
 
     expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByText("start failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry connection" })).toBeInTheDocument();
     await waitFor(() => {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
       expect(dispose).toHaveBeenCalledTimes(1);

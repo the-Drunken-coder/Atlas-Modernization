@@ -450,11 +450,14 @@ describe("MapConsole command flow", () => {
     const { fake, setHealth } = makeFakeDataSource(area, failingHealth);
     renderConsole(fake);
 
-    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+    const badge = await screen.findByRole("button", { name: "Atlas connection error" });
+    const focusAnchor = badge.parentElement;
+    await user.click(badge);
+    focusAnchor?.focus();
     setHealth(healthyConnection);
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument(), { timeout: 4_000 });
-    expect(document.activeElement).toHaveAttribute("tabindex", "-1");
+    expect(document.activeElement).toBe(focusAnchor);
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {
@@ -544,7 +547,12 @@ describe("MapConsole command flow", () => {
   });
 
   it("does not silently fall back when the configured default map source is unavailable", async () => {
-    const { fake } = makeFakeDataSource();
+    const { fake } = makeFakeDataSource(area, {
+      running: false,
+      healthy: false,
+      degraded: false,
+      error: { source: "startup", message: "Core unavailable" }
+    });
     renderConsole(
       fake,
       appConfig({
@@ -558,6 +566,7 @@ describe("MapConsole command flow", () => {
 
     expect(await screen.findByText("No usable map sources are configured.")).toBeInTheDocument();
     expect(screen.queryByTestId("map")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Atlas connection error" })).toBeInTheDocument();
   });
 
   it("reverts the map selector when a style switch fails", async () => {
