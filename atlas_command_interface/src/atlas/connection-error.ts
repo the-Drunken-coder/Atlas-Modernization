@@ -19,12 +19,8 @@ const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 
 export function sanitizeConnectionError(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
-  const firstLine =
-    message
-      .split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0]
-      ?.trim()
-      .slice(0, 2_000) ?? "";
-  if (!firstLine || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
+  const firstLine = message.split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0]?.trim() ?? "";
+  if (!firstLine || firstLine.length > 2_000 || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
 
   const sanitized = firstLine
     .replace(URL_USERINFO, "$1[redacted]@")

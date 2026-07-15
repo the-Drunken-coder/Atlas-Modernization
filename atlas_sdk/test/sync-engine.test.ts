@@ -352,6 +352,33 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
   });
 
+  it("keeps a closed-feed error after a socket-only reconnect", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      Array.from(core.sockets)[0]?.close();
+      await vi.waitFor(() => expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection closed"));
+
+      await client.connectFeed();
+
+      expect(client.sync.status()).toMatchObject({
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core feed connection closed"
+      });
+    } finally {
+      client.sync.stop();
+    }
+  });
+
   it("stays degraded until post-connect recovery succeeds", async () => {
     const core = new FakeCore();
     let holdNextRecovery = false;

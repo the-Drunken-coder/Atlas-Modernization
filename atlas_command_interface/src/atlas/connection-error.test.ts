@@ -89,8 +89,16 @@ describe("sanitizeConnectionError", () => {
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(5_000)}`));
 
-    expect(sanitized).toHaveLength(240);
+    expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
   }, 1_000);
+
+  it("fails closed before truncating long credential-bearing errors", () => {
+    const secret = "long-userinfo-secret";
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: https://user:${secret}${"a".repeat(2_100)}@example.test`));
+
+    expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
+    expect(sanitized).not.toContain(secret);
+  });
 
   it("redacts escaped URL userinfo and signature query parameters", () => {
     const sanitized = sanitizeConnectionError(
