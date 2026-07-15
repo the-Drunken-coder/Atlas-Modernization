@@ -517,22 +517,62 @@ describe("AtlasClient sync", () => {
       pollIntervalMs: 0
     });
 
-    await client.sync.start();
-    failNextRecovery = true;
-    await expect(client.changedSince()).rejects.toThrow("503");
-    const requestsBeforeRetry = recoveryRequests;
+    try {
+      await client.sync.start();
+      failNextRecovery = true;
+      await expect(client.changedSince()).rejects.toThrow("503");
+      const requestsBeforeRetry = recoveryRequests;
 
-    await vi.waitFor(
-      () => {
-        expect(recoveryRequests).toBeGreaterThan(requestsBeforeRetry);
-        const status = client.sync.status();
-        expect(status).toMatchObject({ running: true, healthy: true, degraded: false });
-        expect(status).not.toHaveProperty("error");
-      },
-      { timeout: 2_500 }
-    );
+      await vi.waitFor(
+        () => {
+          expect(recoveryRequests).toBeGreaterThan(requestsBeforeRetry);
+          const status = client.sync.status();
+          expect(status).toMatchObject({ running: true, healthy: true, degraded: false });
+          expect(status).not.toHaveProperty("error");
+        },
+        { timeout: 2_500 }
+      );
+    } finally {
+      client.sync.stop();
+    }
+  });
 
-    client.sync.stop();
+  it("does not let a feed close clear a newer feed failure", async () => {
+    const core = new FakeCore();
+    let delayNextRecovery = false;
+    let releaseRecovery!: (response: Response) => void;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (delayNextRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        delayNextRecovery = false;
+        return new Promise<Response>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      delayNextRecovery = true;
+      const recovery = client.changedSince();
+      await vi.waitFor(() => expect(releaseRecovery).toBeTypeOf("function"));
+
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.close();
+      releaseRecovery(await core.fetch("http://atlas.test/queries/changed-since?since_version=0"));
+      await expect(recovery).resolves.toBeUndefined();
+      expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection closed");
+    } finally {
+      client.sync.stop();
+    }
   });
 
   it("does not let an older recovery failure overwrite a newer retry", async () => {

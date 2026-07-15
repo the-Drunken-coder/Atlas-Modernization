@@ -444,7 +444,7 @@ describe("MapConsole command flow", () => {
   });
 
   it("closes details and preserves a focus target when recovery clears the error", async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers();
     const failingHealth: ConnectionHealth = {
       running: true,
       healthy: false,
@@ -452,15 +452,26 @@ describe("MapConsole command flow", () => {
       error: { source: "live-sync", message: "feed websocket failed to open" }
     };
     const { fake, setHealth } = makeFakeDataSource(area, failingHealth);
-    renderConsole(fake);
-
-    const badge = await screen.findByRole("button", { name: "Atlas connection error" });
-    const focusAnchor = badge.parentElement;
-    await user.click(badge);
-    setHealth(healthyConnection);
-
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument(), { timeout: 4_000 });
-    expect(document.activeElement).toBe(focusAnchor);
+    try {
+      renderConsole(fake);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const badge = screen.getByRole("button", { name: "Atlas connection error" });
+      const focusAnchor = badge.parentElement;
+      fireEvent.click(badge);
+      setHealth(healthyConnection);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+      expect(document.activeElement).toBe(focusAnchor);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {

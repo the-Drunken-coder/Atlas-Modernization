@@ -175,6 +175,7 @@ export class SyncEngine {
         },
         onEventError: () => {
           if (!this.isCurrent(generation)) return;
+          this.recoveryOperation++;
           this.lastError = "Atlas Core feed event failed";
           this.degraded = true;
           this.healthy = false;
@@ -184,6 +185,7 @@ export class SyncEngine {
           if (!this.isCurrent(generation) || !this.syncRunning) {
             return;
           }
+          this.recoveryOperation++;
           this.lastError = "Atlas Core feed connection closed";
           this.healthy = false;
           this.degraded = true;
@@ -192,6 +194,7 @@ export class SyncEngine {
       });
     } catch (error) {
       if (!this.isCurrent(generation)) throw error;
+      this.recoveryOperation++;
       this.lastError = "Atlas Core feed connection failed";
       if (this.syncRunning) {
         this.healthy = false;
@@ -209,10 +212,10 @@ export class SyncEngine {
     this.activeRecoveryPromise = recovery;
     void recovery.then(
       () => {
-        if (this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
+        if (this.isCurrent(generation) && this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
       },
       () => {
-        if (this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
+        if (this.isCurrent(generation) && this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
       }
     );
     return recovery;

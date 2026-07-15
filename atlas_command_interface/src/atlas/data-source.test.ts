@@ -140,7 +140,7 @@ describe("sdk data source", () => {
 
     const dataSource = createSdkDataSource(config);
     await expect(dataSource.start()).rejects.toThrow();
-    expect(dataSource.health?.()).toMatchObject({ error: { source: "startup" } });
+    expect(dataSource.health?.()).toMatchObject({ error: { source: "startup", message: "Atlas request failed: 503 CORE_UNAVAILABLE: Core unavailable" } });
 
     dataSource.dispose();
     expect(dataSource.health?.()).not.toHaveProperty("error");

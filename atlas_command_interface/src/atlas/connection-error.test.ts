@@ -46,6 +46,13 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=value");
   });
 
+  it("redacts quoted query values and URL passwords containing at-signs", () => {
+    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: https://user:pa@ss@example.test?api%5Fkey="top secret"'));
+
+    expect(sanitized).not.toContain("pa@ss");
+    expect(sanitized).not.toContain("top secret");
+  });
+
   it("redacts escaped URL userinfo and signature query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error(String.raw`Atlas request failed: https:\/\/url-user:url-password@example.test?safe=value&api-key=api-key-secret&signature=signature-secret`)
