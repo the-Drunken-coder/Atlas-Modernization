@@ -169,6 +169,31 @@ describe("AuthGate", () => {
     });
   });
 
+  it("sanitizes login failures before displaying them", async () => {
+    const user = userEvent.setup();
+    const secret = "login-api-key-secret";
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }), { status: 401 }))
+        .mockRejectedValueOnce(new Error(`Atlas login failed: https://core.test?api_key=${secret}`))
+    );
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <Workspace />
+      </AuthGate>
+    );
+
+    await user.type(await screen.findByLabelText("Username"), "operator");
+    await user.type(screen.getByLabelText("Password"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByText(/Atlas login failed/)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(secret))).not.toBeInTheDocument();
+  });
+
   it("keeps account controls available without a sidebar child", async () => {
     stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
 

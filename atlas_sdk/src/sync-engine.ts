@@ -454,6 +454,7 @@ export class SyncEngine {
     const generation = this.lifecycleGeneration;
     if (event.version > this.cache.lastVersion + 1) {
       this.degraded = true;
+      this.healthy = false;
       const recovered = await this.changedSince(generation);
       if (!recovered || !this.isCurrent(generation)) return;
     }

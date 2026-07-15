@@ -174,7 +174,7 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
       const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.login({ username, password });
       onAuthenticated(data.user.username);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setSubmitting(false);
     }

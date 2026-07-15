@@ -691,6 +691,7 @@ describe("AtlasClient sync", () => {
         resource: { ...entity("asset-gapped-feed"), metadata: metadata(2) }
       });
       await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
       await expect(client.changedSince()).rejects.toThrow("503");
       let resolveFollowUp!: () => void;
       const followUp = new Promise<void>((resolve) => {

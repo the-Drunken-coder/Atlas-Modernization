@@ -146,6 +146,16 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("redacts structured credential names with suffixes", () => {
+    const secrets = ["password-hash-secret", "client-secret-value"];
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: {"password_hash":"${secrets[0]}","client_secret_value":"${secrets[1]}","message":"safe context"}`)
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe context");
+  });
+
   it("redacts form-encoded and AWS credential names", () => {
     const secrets = ["plus-api-key-secret", "encoded-client-secret", "aws-access-key-secret"];
     const sanitized = sanitizeConnectionError(
