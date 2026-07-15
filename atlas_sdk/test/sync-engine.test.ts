@@ -473,7 +473,7 @@ describe("AtlasClient sync", () => {
       version: 2,
       resource: { ...entity("asset-from-older-feed"), metadata: metadata(2) }
     });
-    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
     await client.connectFeed();
     releaseRecovery(
       Response.json({
@@ -701,7 +701,7 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().lastVersion).toBe(1);
   });
 
-  it("does not finish startup when post-hydration recovery is superseded", async () => {
+  it("shares startup recovery with a concurrent changed-since request", async () => {
     vi.stubGlobal("WebSocket", undefined);
     const core = new FakeCore();
     let changedSinceRequests = 0;
@@ -718,7 +718,7 @@ describe("AtlasClient sync", () => {
             releaseStartupRecovery = resolve;
           });
         }
-        return Promise.resolve(new Response(JSON.stringify({ error_code: "CORE_UNAVAILABLE", message: "newer recovery failed" }), { status: 503 }));
+        throw new Error("started a duplicate recovery request");
       }
       return core.fetch(String(url), init);
     };
@@ -727,11 +727,13 @@ describe("AtlasClient sync", () => {
     try {
       const startup = client.sync.start();
       await vi.waitFor(() => expect(releaseStartupRecovery).toBeTypeOf("function"));
-      await expect(client.changedSince()).rejects.toThrow("503");
+      const concurrentRecovery = client.changedSince();
+      expect(changedSinceRequests).toBe(1);
       releaseStartupRecovery(await core.fetch(startupRecoveryUrl, startupRecoveryInit));
 
-      await expect(startup).rejects.toThrow("initial recovery was superseded");
-      expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+      await Promise.all([startup, concurrentRecovery]);
+      expect(changedSinceRequests).toBe(1);
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
     } finally {
       client.sync.stop();
       vi.unstubAllGlobals();

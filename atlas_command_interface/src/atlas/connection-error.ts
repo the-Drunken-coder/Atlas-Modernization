@@ -5,14 +5,16 @@ const FULL_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|[
 const SENSITIVE_NAME_PATTERN =
   "(?:atlas[ _-]?session|oauth[ _-]?token|x[ _-]?amz[ _-]?credential|database[ _-]?password|user[ _-]?access[ _-]?token|aws[ _-]?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?)|access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?|private[ _-]?key|access[ _-]?token|api[ _-]?key|authorization|auth[ _-]?token|bearer[ _-]?token|client[ _-]?(?:secret(?:[ _-]?value)?|token)|cookie|credential(?:s)?|csrf[ _-]?token|db[ _-]?password|id[ _-]?token|j[ _-]?session[ _-]?id(?![A-Za-z0-9])|key|password|refresh[ _-]?token|secret|session(?:[ _-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[ _-]?api[ _-]?key(?![A-Za-z0-9])|x[ _-]?amz[ _-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
-const BRACKETED_COLLECTION = String.raw`\[(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\\\]"'\n\r])*\]`;
+const BRACKETED_COLLECTION_CONTENT = String.raw`(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\\\[\]"'\n\r])*`;
+const AMBIGUOUS_NESTED_COLLECTION = String.raw`\[(?=${BRACKETED_COLLECTION_CONTENT}\[)[^\n\r]*`;
+const BRACKETED_COLLECTION = String.raw`\[${BRACKETED_COLLECTION_CONTENT}\]`;
 const AMBIGUOUS_OBJECT_VALUE = String.raw`\{[^\n\r]*`;
 const SENSITIVE_FIELD = new RegExp(
-  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+(?:[._-]|\[))*${SENSITIVE_NAME_PATTERN}(?:[._-][A-Za-z0-9]+)*\b(?:\[[^\]]*\])*\]?\\?["']?)\s*[:=]\s*)(?:${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`,
+  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+(?:[._-]|\[))*${SENSITIVE_NAME_PATTERN}(?:[._-][A-Za-z0-9]+)*\b(?:\[[^\]]*\])*\]?\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`,
   "gi"
 );
 const COOKIE_FIELD = new RegExp(
-  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
+  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
   "gi"
 );
 const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|(?:\\+\/){2}))[^/\s:@]*(?::[^/\s]*)?@(?=[^/\s]+(?:[/?#\s]|$))/gi;
