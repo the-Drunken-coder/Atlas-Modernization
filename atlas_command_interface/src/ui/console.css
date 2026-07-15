@@ -45,6 +45,11 @@
   background: var(--bg-app);
 }
 
+.login-shell > .connection-badge__anchor,
+.login-shell > .login-panel {
+  grid-area: 1 / 1;
+}
+
 .login-panel {
   display: flex;
   flex-direction: column;

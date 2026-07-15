@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { ConnectionError, ConnectionHealth } from "../atlas/data-source.js";
 import { Button } from "./primitives/controls.js";
@@ -15,7 +15,12 @@ export function ConnectionBadge({
   onRetry: () => void;
 }) {
   const unsafeConnectionError = error ?? health.error;
-  const connectionError = unsafeConnectionError ? { ...unsafeConnectionError, message: sanitizeConnectionError(unsafeConnectionError.message) } : undefined;
+  const errorMessage = unsafeConnectionError?.message;
+  const errorSource = unsafeConnectionError?.source;
+  const connectionError = useMemo(
+    () => (errorMessage === undefined || errorSource === undefined ? undefined : { message: sanitizeConnectionError(errorMessage), source: errorSource }),
+    [errorMessage, errorSource]
+  );
   const state = connectionBadgeState(health, connectionError);
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -75,6 +80,7 @@ export function ConnectionBadge({
   return (
     <div
       ref={focusAnchorRef}
+      className="connection-badge__anchor"
       tabIndex={-1}
       onFocusCapture={() => {
         ownsFocusRef.current = true;

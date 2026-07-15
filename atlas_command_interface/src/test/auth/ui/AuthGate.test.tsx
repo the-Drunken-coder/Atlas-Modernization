@@ -147,6 +147,9 @@ describe("AuthGate", () => {
     const retryBadge = await screen.findByRole("button", { name: "Atlas connection error" });
     expect(retryBadge).toHaveFocus();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await user.click(retryBadge);
+    expect(screen.getByRole("button", { name: "Close connection details" })).toHaveFocus();
   });
 
   it("renders children after successful login", async () => {
