@@ -136,6 +136,7 @@ export type SyncStatus = {
   running: boolean;
   healthy: boolean;
   degraded: boolean;
+  error?: string;
   lastVersion: number;
   subscriptions: AtlasSubscription[];
 };

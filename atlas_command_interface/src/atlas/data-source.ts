@@ -10,6 +10,7 @@ import {
 } from "./command-model.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
+import { sanitizeConnectionError } from "./connection-error.js";
 
 const CATALOG_REFRESH_RETRY_DELAYS_MS = [1_000, 5_000, 15_000] as const;
 
@@ -20,7 +21,8 @@ export type CommandSubmission = {
   signal?: AbortSignal;
 };
 
-export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean };
+export type ConnectionError = { source: "startup" | "live-sync"; message: string };
+export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean; error?: ConnectionError };
 
 export type CatalogUpdate = { status: "pending" } | { status: "loaded"; catalog: CommandCatalog } | { status: "failed" } | { status: "deleted" };
 
@@ -49,6 +51,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     return { entities, tasks };
   };
   let catalogGeneration = 0;
+  let startupError: ConnectionError | undefined;
   const fetchCommandCatalog = async (): Promise<CommandCatalog> => {
     const object = await client.objects.get(COMMAND_CATALOG_OBJECT_ID, { fresh: true });
     return catalogFromObject(object);
@@ -110,12 +113,19 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     },
 
     async start() {
-      await client.sync.start();
+      startupError = undefined;
+      try {
+        await client.sync.start();
+      } catch (cause) {
+        startupError = { source: "startup", message: sanitizeConnectionError(cause) };
+        throw cause;
+      }
     },
 
     health() {
       const status = client.sync.status();
-      return { running: status.running, healthy: status.healthy, degraded: status.degraded };
+      const error = startupError ?? (status.error ? { source: "live-sync" as const, message: sanitizeConnectionError(status.error) } : undefined);
+      return { running: status.running, healthy: status.healthy, degraded: status.degraded, ...(error ? { error } : {}) };
     },
 
     async submitCommand(submission) {
@@ -131,6 +141,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     dispose() {
       client.sync.stop();
+      startupError = undefined;
     }
   };
 }

@@ -56,6 +56,7 @@ export class SyncEngine {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnecting = false;
   private reconnectAfterRecovery = false;
+  private lastError: string | undefined;
   private startSyncPromise: Promise<void> | undefined;
   private lifecycleGeneration = 0;
 
@@ -110,6 +111,7 @@ export class SyncEngine {
       running: this.syncRunning,
       healthy: this.healthy,
       degraded: this.degraded,
+      ...(this.lastError ? { error: this.lastError } : {}),
       lastVersion: this.cache.lastVersion,
       subscriptions: [...this.subscriptions]
     };
@@ -160,6 +162,7 @@ export class SyncEngine {
         subscriptions: this.subscriptions,
         onEvent: (event) => this.consumeFeedEvent(event),
         onEventError: () => {
+          this.lastError = "Atlas Core feed event failed";
           this.degraded = true;
           this.healthy = false;
           this.scheduleReconnect();
@@ -168,12 +171,14 @@ export class SyncEngine {
           if (!this.syncRunning) {
             return;
           }
+          this.lastError = "Atlas Core feed connection closed";
           this.healthy = false;
           this.degraded = true;
           this.scheduleReconnect();
         }
       });
     } catch (error) {
+      this.lastError = error instanceof Error ? error.message : "Atlas Core feed connection failed";
       if (this.syncRunning) {
         this.healthy = false;
         this.degraded = true;
@@ -181,6 +186,7 @@ export class SyncEngine {
       }
       throw error;
     }
+    this.lastError = undefined;
     this.healthy = true;
     this.degraded = false;
   }
@@ -215,7 +221,9 @@ export class SyncEngine {
       if (!this.isCurrent(generation)) return;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, snapshotVersion ?? sinceVersion);
       this.markSynchronized();
+      this.lastError = undefined;
     } catch (error) {
+      this.lastError = error instanceof Error ? error.message : "Atlas Core recovery request failed";
       if (this.isCurrent(generation) && this.syncRunning) {
         this.degraded = true;
         this.healthy = false;

@@ -362,9 +362,10 @@ describe("MapConsole command flow", () => {
     expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
   });
 
-  it("offers a one-shot connection retry after initial SDK startup fails", async () => {
+  it("shows repeated startup failures and returns to Online after recovery", async () => {
     const user = userEvent.setup();
     const failedDispose = vi.fn();
+    const retryFailedDispose = vi.fn();
     const failing: AtlasDataSource = {
       ...makeFakeDataSource().fake,
       async start() {
@@ -372,8 +373,15 @@ describe("MapConsole command flow", () => {
       },
       dispose: failedDispose
     };
+    const retryFailed: AtlasDataSource = {
+      ...makeFakeDataSource().fake,
+      async start() {
+        throw new Error("Core retry failed");
+      },
+      dispose: retryFailedDispose
+    };
     const recovered = makeFakeDataSource().fake;
-    const createDataSource = vi.fn().mockReturnValueOnce(failing).mockReturnValueOnce(recovered);
+    const createDataSource = vi.fn().mockReturnValueOnce(failing).mockReturnValueOnce(retryFailed).mockReturnValueOnce(recovered);
 
     render(
       <AtlasProvider loadConfig={async () => appConfig()} createDataSource={createDataSource}>
@@ -381,15 +389,49 @@ describe("MapConsole command flow", () => {
       </AtlasProvider>
     );
 
-    expect(await screen.findByText("Core startup failed")).toBeInTheDocument();
+    const initialBadge = await screen.findByRole("button", { name: "Atlas connection error" });
+    await user.click(initialBadge);
+    expect(screen.getByText("Core startup failed")).toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(1);
     expect(failedDispose).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Retry connection" }));
 
-    expect(await screen.findByText("Rover")).toBeInTheDocument();
+    const retryBadge = await screen.findByRole("button", { name: "Atlas connection error" });
+    await user.click(retryBadge);
+    expect(screen.getByText("Core retry failed")).toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);
+    expect(retryFailedDispose).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry connection" }));
+
+    expect(await screen.findByText("Rover")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "Atlas connection Online" })).toHaveTextContent("Online");
+    expect(createDataSource).toHaveBeenCalledTimes(3);
     expect(failedDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens error details by keyboard and restores focus safely on close", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource(area, {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed to open" }
+    });
+    renderConsole(fake);
+
+    const badge = await screen.findByRole("button", { name: "Atlas connection error" });
+    badge.focus();
+    await user.keyboard("{Enter}");
+
+    const close = await screen.findByRole("button", { name: "Close connection details" });
+    expect(document.activeElement).toBe(close);
+    expect(screen.getByRole("dialog", { name: "Atlas Core connection error" })).toHaveTextContent("Retrying automatically…");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(badge);
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {

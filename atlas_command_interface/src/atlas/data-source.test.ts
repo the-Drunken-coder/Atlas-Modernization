@@ -149,7 +149,11 @@ describe("sdk data source", () => {
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} }));
     expect(core.requests.filter((request) => request.startsWith("/queries/changed-since"))).toHaveLength(1);
-    expect(dataSource.health?.()).toMatchObject({ running: true, degraded: true });
+    expect(dataSource.health?.()).toMatchObject({
+      running: true,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed to open" }
+    });
 
     dataSource.dispose();
     core.requests = [];

@@ -1,13 +1,13 @@
-import { useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "primary" | "ghost";
 };
 
-export function Button({ variant = "default", className, ...props }: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ variant = "default", className, ...props }, ref) {
   const variantClass = variant === "primary" ? " btn--primary" : variant === "ghost" ? " btn--ghost" : "";
-  return <button type="button" className={`btn${variantClass}${className ? ` ${className}` : ""}`} {...props} />;
-}
+  return <button ref={ref} type="button" className={`btn${variantClass}${className ? ` ${className}` : ""}`} {...props} />;
+});
 
 type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   label: string;

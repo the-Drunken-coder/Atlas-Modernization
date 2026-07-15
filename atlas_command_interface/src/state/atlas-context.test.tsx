@@ -19,7 +19,7 @@ function StatusProbe() {
       <span data-testid="entity-names">{entityNames}</span>
       <span data-testid="catalog-name">{atlas.catalog?.name}</span>
       {atlas.error ? <code>{atlas.error}</code> : null}
-      {atlas.status === "error" ? (
+      {atlas.error ? (
         <button type="button" onClick={atlas.reconnect}>
           Retry connection
         </button>
@@ -199,7 +199,7 @@ describe("AtlasProvider", () => {
       </AtlasProvider>
     );
 
-    expect(await screen.findByText("error")).toBeInTheDocument();
+    expect(await screen.findByText("ready")).toBeInTheDocument();
     expect(screen.getByText("start failed")).toBeInTheDocument();
     await waitFor(() => {
       expect(unsubscribe).toHaveBeenCalledTimes(1);

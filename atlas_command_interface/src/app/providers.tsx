@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AuthGate } from "../auth/ui/AuthGate.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
+import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { Button } from "../ui/primitives/controls.js";
 import { coreConfigFromEnv, fetchAppConfig, type AppConfig, type CoreConfig } from "./config.js";
@@ -51,7 +52,7 @@ function AtlasBootstrap({
         if (!cancelled) setConfig(next);
       })
       .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!cancelled) setError(sanitizeConnectionError(cause));
       });
     return () => {
       cancelled = true;
