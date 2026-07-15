@@ -61,6 +61,7 @@ export class SyncEngine {
   private activeRecoveryPromise: Promise<boolean> | undefined;
   private startSyncPromise: Promise<void> | undefined;
   private lifecycleGeneration = 0;
+  private feedConnectionAttempt = 0;
 
   constructor(options: {
     transport: HttpTransport;
@@ -171,22 +172,24 @@ export class SyncEngine {
 
   async connectFeed(): Promise<void> {
     const generation = this.lifecycleGeneration;
-    await this.connectFeedForGeneration(generation);
-    if (this.isCurrent(generation) && this.lastError === "Atlas Core feed connection failed") {
+    const attempt = this.beginFeedConnectionAttempt();
+    await this.connectFeedForGeneration(generation, attempt);
+    if (this.isCurrentFeedConnection(generation, attempt) && this.lastError === "Atlas Core feed connection failed") {
       this.lastError = undefined;
     }
   }
 
-  private async connectFeedForGeneration(generation: number): Promise<void> {
+  private async connectFeedForGeneration(generation: number, attempt: number): Promise<void> {
+    const isCurrentAttempt = () => this.isCurrentFeedConnection(generation, attempt);
     try {
       await this.feed.connect({
         subscriptions: this.subscriptions,
         onEvent: (event) => {
-          if (!this.isCurrent(generation)) return;
+          if (!isCurrentAttempt()) return;
           return this.consumeFeedEvent(event);
         },
         onEventError: () => {
-          if (!this.isCurrent(generation)) return;
+          if (!isCurrentAttempt()) return;
           this.lastError = "Atlas Core feed event failed";
           if (!this.syncRunning) return;
           this.recoveryOperation++;
@@ -195,7 +198,7 @@ export class SyncEngine {
           this.scheduleReconnect();
         },
         onClose: () => {
-          if (!this.isCurrent(generation) || !this.syncRunning) {
+          if (!isCurrentAttempt() || !this.syncRunning) {
             return;
           }
           this.recoveryOperation++;
@@ -206,7 +209,7 @@ export class SyncEngine {
         }
       });
     } catch (error) {
-      if (!this.isCurrent(generation)) throw error;
+      if (!isCurrentAttempt()) throw error;
       this.recoveryOperation++;
       this.lastError = "Atlas Core feed connection failed";
       if (this.syncRunning) {
@@ -409,6 +412,15 @@ export class SyncEngine {
     return this.lifecycleGeneration === generation;
   }
 
+  private beginFeedConnectionAttempt(): number {
+    this.recoveryOperation++;
+    return ++this.feedConnectionAttempt;
+  }
+
+  private isCurrentFeedConnection(generation: number, attempt: number): boolean {
+    return this.isCurrent(generation) && this.feedConnectionAttempt === attempt;
+  }
+
   private async hydrate(generation: number): Promise<void> {
     let cursors: FullDatasetCursors = {};
     let snapshotVersion: number | undefined;
@@ -459,9 +471,15 @@ export class SyncEngine {
     this.reconnecting = true;
     this.reconnectAfterRecovery = false;
     this.clearReconnectTimer();
+    const attempt = this.beginFeedConnectionAttempt();
     try {
-      await this.connectFeedForGeneration(generation);
-      if (!this.isCurrent(generation)) return;
+      try {
+        await this.connectFeedForGeneration(generation, attempt);
+      } catch (error) {
+        if (!this.isCurrentFeedConnection(generation, attempt)) return;
+        throw error;
+      }
+      if (!this.isCurrentFeedConnection(generation, attempt)) return;
       await this.changedSince(generation);
     } finally {
       if (!this.isCurrent(generation)) return;

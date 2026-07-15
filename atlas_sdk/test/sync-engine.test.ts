@@ -352,6 +352,64 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
   });
 
+  it("does not let an older feed success clear a newer failure", async () => {
+    let releaseOlder!: () => void;
+    const olderConnect = new Promise<void>((resolve) => {
+      releaseOlder = resolve;
+    });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockReturnValueOnce(olderConnect).mockRejectedValueOnce(new Error("newer feed failure"));
+
+    const older = client.connectFeed();
+    await expect(client.connectFeed()).rejects.toThrow("newer feed failure");
+    releaseOlder();
+    await older;
+
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
+  });
+
+  it("does not let an older feed rejection overwrite a newer success", async () => {
+    let rejectOlder!: (reason: unknown) => void;
+    const olderConnect = new Promise<void>((_resolve, reject) => {
+      rejectOlder = reject;
+    });
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockReturnValueOnce(olderConnect).mockResolvedValueOnce(undefined);
+
+    const older = client.connectFeed();
+    await client.connectFeed();
+    rejectOlder(new Error("older feed failure"));
+    await expect(older).rejects.toThrow("older feed failure");
+
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
+  it("does not recover an older feed after a newer attempt fails", async () => {
+    let releaseOlder!: () => void;
+    const olderConnect = new Promise<void>((resolve) => {
+      releaseOlder = resolve;
+    });
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (
+      client as unknown as {
+        engine: { activeRecoveryPromise?: Promise<boolean>; feed: { connect: () => Promise<void> } };
+      }
+    ).engine;
+    vi.spyOn(engine.feed, "connect").mockReturnValueOnce(olderConnect).mockRejectedValueOnce(new Error("newer feed failure"));
+
+    const older = client.connectAndRecoverFeed();
+    await expect(client.connectFeed()).rejects.toThrow("newer feed failure");
+    releaseOlder();
+    await older;
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(engine.activeRecoveryPromise).toBeUndefined();
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
+  });
+
   it("keeps a stopped engine out of degraded state after a manual feed event error", async () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
     type FeedConnectOptions = { onEventError: () => void };

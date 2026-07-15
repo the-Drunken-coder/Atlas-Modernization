@@ -36,12 +36,13 @@ function redactConnectionMessage(message: string): string {
 }
 
 export function sanitizeConnectionError(cause: unknown): string {
-  let message = "";
+  let message: unknown = "";
   try {
     message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   } catch {
     return SAFE_FALLBACK;
   }
+  if (typeof message !== "string") return SAFE_FALLBACK;
   const firstLine = message.split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0]?.trim() ?? "";
   if (!firstLine || firstLine.length > 2_000 || /^[\[{<]/u.test(firstLine)) return SAFE_FALLBACK;
 
