@@ -120,6 +120,13 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("prefixed-api-key-secret");
   });
 
+  it("redacts semicolon-delimited credential query parameters", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?safe=value;api_key=semicolon-secret"));
+
+    expect(sanitized).toContain("safe=value");
+    expect(sanitized).not.toContain("semicolon-secret");
+  });
+
   it("redacts nested encoded credential query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key")

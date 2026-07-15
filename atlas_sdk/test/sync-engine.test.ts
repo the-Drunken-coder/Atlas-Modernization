@@ -538,7 +538,7 @@ describe("AtlasClient sync", () => {
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
     await client.changedSince();
     releaseOlder(new Error("stale recovery failed"));
-    await expect(older).rejects.toThrow("stale recovery failed");
+    await expect(older).resolves.toBeUndefined();
 
     expect(client.sync.status()).not.toHaveProperty("error");
   });
