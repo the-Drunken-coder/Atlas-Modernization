@@ -159,11 +159,11 @@ Object detail responses:
     "updated_at": "2026-06-21T12:00:00.000000Z",
     "version": 1
   },
-  "payload": {}
+  "extra": {}
 }
 ```
 
-`GET /objects` and relationship object lists omit `payload` and `referenced_by`.
+`GET /objects` and relationship object lists omit `extra` and `referenced_by`. Full object detail and query responses include extension data under `extra`.
 
 ## System, Protocol, And Feed
 
@@ -412,7 +412,7 @@ Status transition body:
 | `GET` | `/objects` | `200` | List object metadata with standard pagination. |
 | `POST` | `/objects` | `201` | Create an object metadata record. |
 | `POST` | `/objects/upload` | `201` | Upload object content with multipart form data. |
-| `GET` | `/objects/{object_id}` | `200` | Fetch object metadata and payload. |
+| `GET` | `/objects/{object_id}` | `200` | Fetch full object metadata and extension data. |
 | `PATCH` | `/objects/{object_id}` | `200` | Update object metadata. |
 | `DELETE` | `/objects/{object_id}` | `204` | Delete object metadata and queue/delete stored content. |
 | `GET` | `/objects/{object_id}/download` | `200` | Stream stored content as an attachment. |

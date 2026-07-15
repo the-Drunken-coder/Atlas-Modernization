@@ -96,12 +96,12 @@ func TestObjectLifecycle(t *testing.T) {
 	if err := ParseResponse(respVerify, &after); err != nil {
 		t.Fatalf("Failed to parse object: %v", err)
 	}
-	payload, ok := after["payload"].(map[string]interface{})
+	extra, ok := after["extra"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected payload map, got %T", after["payload"])
+		t.Fatalf("expected extra map, got %T", after["extra"])
 	}
-	if payload["description"] != "Updated by integration test" {
-		t.Fatalf("expected payload.description persisted, got %v", payload["description"])
+	if extra["description"] != "Updated by integration test" {
+		t.Fatalf("expected extra.description persisted, got %v", extra["description"])
 	}
 
 	t.Logf("Object %s updated and left as artifact in system", objectID)

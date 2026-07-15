@@ -28,6 +28,10 @@ func ValidateObjectResource(value any) []string {
 	return validator.ValidateObjectResource(value)
 }
 
+func ValidateObjectDetailResource(value any) []string {
+	return validator.ValidateObjectDetailResource(value)
+}
+
 func ValidateErrorResponse(value any) []string {
 	return validator.ValidateErrorResponse(value)
 }

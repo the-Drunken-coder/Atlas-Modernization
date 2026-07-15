@@ -70,16 +70,16 @@ func commandCatalogObjectMatches(object *models.MediaObject, catalogData map[str
 		return false
 	}
 
-	expectedPayload := make(map[string]interface{}, len(catalogData)-1)
-	actualPayload := object.GetPayload()
-	actualCatalogPayload := make(map[string]interface{}, len(catalogData)-1)
+	expectedExtra := make(map[string]interface{}, len(catalogData)-1)
+	actualExtra := object.GetExtra()
+	actualCatalogExtra := make(map[string]interface{}, len(catalogData)-1)
 	for key, value := range catalogData {
 		if key != "type" {
-			expectedPayload[key] = value
-			actualCatalogPayload[key] = actualPayload[key]
+			expectedExtra[key] = value
+			actualCatalogExtra[key] = actualExtra[key]
 		}
 	}
-	expectedJSON, expectedErr := json.Marshal(expectedPayload)
-	actualJSON, actualErr := json.Marshal(actualCatalogPayload)
+	expectedJSON, expectedErr := json.Marshal(expectedExtra)
+	actualJSON, actualErr := json.Marshal(actualCatalogExtra)
 	return expectedErr == nil && actualErr == nil && bytes.Equal(actualJSON, expectedJSON)
 }

@@ -3,6 +3,7 @@ import {
   isFeedEvent as isGeneratedFeedEvent,
   isFeedHandshakeMessage,
   isJSONValue,
+  isObjectDetailResource as isGeneratedObjectDetailResource,
   isObjectResource as isGeneratedObjectResource,
   isProtocolRevision,
   isResourceType,
@@ -11,7 +12,7 @@ import {
   type EntityResource,
   type FeedEvent,
   type FeedHandshakeMessage,
-  type ObjectResponse,
+  type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
   type TaskResource
@@ -51,18 +52,14 @@ export const isTaskResource: ResponseValidator<TaskResource> = (value): value is
 export const isObjectResource: ResponseValidator<ObjectResource> = (value): value is ObjectResource =>
   isGeneratedObjectResource(value) && isFeedVersion(value.metadata.version);
 
-export const isObjectResponse: ResponseValidator<ObjectResponse> = (value): value is ObjectResponse => {
-  if (isObjectResource(value)) return true;
-  if (!isRecord(value) || !hasOwn(value, "payload") || !isRecord(value.payload) || !isJSONValue(value.payload)) return false;
-  const { payload, ...resource } = value;
-  return isObjectResource(resource);
-};
+export const isObjectDetailResource: ResponseValidator<ObjectDetailResource> = (value): value is ObjectDetailResource =>
+  isGeneratedObjectDetailResource(value) && isFeedVersion(value.metadata.version);
 
 export const isFullDatasetResponse: ResponseValidator<FullDatasetResponse> = (value): value is FullDatasetResponse =>
   isRecord(value) &&
   isArrayOf(value.entities, isEntityResource) &&
   isArrayOf(value.tasks, isTaskResource) &&
-  isArrayOf(value.objects, isObjectResponse) &&
+  isArrayOf(value.objects, isObjectDetailResource) &&
   isSafeNonNegativeInteger(value.version) &&
   hasValidPagination(value, fullPaginationFields);
 
@@ -73,7 +70,7 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
       !isRecord(value) ||
       !isArrayOf(value.entities, isEntityResource) ||
       !isArrayOf(value.tasks, isTaskResource) ||
-      !isArrayOf(value.objects, isObjectResponse) ||
+      !isArrayOf(value.objects, isObjectDetailResource) ||
       !isOptionalArrayOf(value.deleted_entities, (item) => isDeletedResource(item, "entity")) ||
       !isOptionalArrayOf(value.deleted_tasks, (item) => isDeletedResource(item, "task")) ||
       !isOptionalArrayOf(value.deleted_objects, (item) => isDeletedResource(item, "object")) ||

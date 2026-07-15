@@ -30,6 +30,7 @@ var exampleSets = []exampleSet{
 	{pattern: "entities/*.json", definition: "EntityBlob", semanticValidation: protocolvalidator.ValidateEntityBlob},
 	{pattern: "tasks/*.json", definition: "TaskBlob", semanticValidation: protocolvalidator.ValidateTaskBlob},
 	{pattern: "objects/*.json", definition: "ObjectBlob", semanticValidation: protocolvalidator.ValidateObjectBlob},
+	{pattern: "responses/object-detail.json", definition: "ObjectDetailResource", semanticValidation: protocolvalidator.ValidateObjectDetailResource},
 	{pattern: "errors/*.json", definition: "ErrorResponse", semanticValidation: protocolvalidator.ValidateErrorResponse},
 	{pattern: "feed/events/*.json", definition: "FeedEvent", semanticValidation: protocolvalidator.ValidateFeedEvent},
 	{pattern: "feed/messages/*.json", definition: "FeedClientMessage", semanticValidation: protocolvalidator.ValidateFeedClientMessage},

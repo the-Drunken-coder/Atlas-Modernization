@@ -656,6 +656,23 @@ func TestCreateObjectRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestCreateObjectRejectsPayloadField(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := routeRequest(http.MethodPost, "/objects", `{"object_id":"object-1","payload":{"legacy":true}}`)
+
+	handler.CreateObject(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	body := decodeBody(t, rec)
+	if body["error_code"] != "INVALID_JSON" {
+		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
+	}
+}
+
 func TestCreateObjectRejectsBucketInput(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()

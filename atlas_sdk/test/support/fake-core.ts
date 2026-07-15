@@ -7,7 +7,7 @@ import {
   type FeedEvent,
   type JSONValue,
   type ObjectCreateRequest,
-  type ObjectResponse,
+  type ObjectDetailResource,
   type ObjectResource,
   type ObjectUpdateRequest,
   type TaskCreateRequest,
@@ -28,7 +28,7 @@ export class FakeCore {
   entities = new Map<string, EntityResource>();
   tasks = new Map<string, TaskResource>();
   objects = new Map<string, ObjectResource>();
-  objectPayloads = new Map<string, Record<string, unknown>>();
+  objectExtras = new Map<string, Record<string, unknown>>();
   deletions: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
@@ -59,7 +59,11 @@ export class FakeCore {
       try {
         const entityPage = pageValues([...this.entities.values()], this.fullLimitPerType, parsed.searchParams.get("entity_cursor"));
         const taskPage = pageValues([...this.tasks.values()], this.fullLimitPerType, parsed.searchParams.get("task_cursor"));
-        const objectPage = pageValues([...this.objects.values()], this.fullLimitPerType, parsed.searchParams.get("object_cursor"));
+        const objectPage = pageValues(
+          [...this.objects.values()].map((object) => this.objectDetail(object)),
+          this.fullLimitPerType,
+          parsed.searchParams.get("object_cursor")
+        );
         return json({
           entities: entityPage.items,
           tasks: taskPage.items,
@@ -90,12 +94,36 @@ export class FakeCore {
       }
       const changed = this.events.filter((event) => event.version > since);
       try {
-        const entityPage = pageValues(changed.filter(isEntityUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("entity_cursor"));
-        const taskPage = pageValues(changed.filter(isTaskUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("task_cursor"));
-        const objectPage = pageValues(changed.filter(isObjectUpsert).map((event) => event.resource), this.changedSinceLimitPerType, parsed.searchParams.get("object_cursor"));
-        const deletedEntityPage = pageValues(changed.filter(isDelete("entity")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_entity_cursor"));
-        const deletedTaskPage = pageValues(changed.filter(isDelete("task")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_task_cursor"));
-        const deletedObjectPage = pageValues(changed.filter(isDelete("object")).map(deleted), this.changedSinceLimitPerType, parsed.searchParams.get("deleted_object_cursor"));
+        const entityPage = pageValues(
+          changed.filter(isEntityUpsert).map((event) => event.resource),
+          this.changedSinceLimitPerType,
+          parsed.searchParams.get("entity_cursor")
+        );
+        const taskPage = pageValues(
+          changed.filter(isTaskUpsert).map((event) => event.resource),
+          this.changedSinceLimitPerType,
+          parsed.searchParams.get("task_cursor")
+        );
+        const objectPage = pageValues(
+          changed.filter(isObjectUpsert).map((event) => this.objectDetail(event.resource)),
+          this.changedSinceLimitPerType,
+          parsed.searchParams.get("object_cursor")
+        );
+        const deletedEntityPage = pageValues(
+          changed.filter(isDelete("entity")).map(deleted),
+          this.changedSinceLimitPerType,
+          parsed.searchParams.get("deleted_entity_cursor")
+        );
+        const deletedTaskPage = pageValues(
+          changed.filter(isDelete("task")).map(deleted),
+          this.changedSinceLimitPerType,
+          parsed.searchParams.get("deleted_task_cursor")
+        );
+        const deletedObjectPage = pageValues(
+          changed.filter(isDelete("object")).map(deleted),
+          this.changedSinceLimitPerType,
+          parsed.searchParams.get("deleted_object_cursor")
+        );
         return json({
           entities: entityPage.items,
           tasks: taskPage.items,
@@ -320,7 +348,9 @@ export class FakeCore {
       if (body.result !== undefined && !isRecord(body.result)) {
         return protocolError("Invalid JSON body", "INVALID_JSON", 400);
       }
-      return json(this.updateTask(id, { status: "completed", ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } }) }));
+      return json(
+        this.updateTask(id, { status: "completed", ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } }) })
+      );
     }
     if (action === "fail") {
       const body = await readRecord(init);
@@ -328,18 +358,30 @@ export class FakeCore {
       if (body.error !== undefined && !isRecord(body.error)) {
         return protocolError("Invalid JSON body", "INVALID_JSON", 400);
       }
-      return json(this.updateTask(id, { status: "failed", ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } }) }));
+      return json(
+        this.updateTask(id, { status: "failed", ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } }) })
+      );
     }
     if (action === "status") {
       const body = await readRecord(init);
       if (body instanceof Response) return body;
-      if (!isNonEmptyString(body.status) || (body.progress !== undefined && !isFiniteNumber(body.progress)) || (body.message !== undefined && typeof body.message !== "string")) {
+      if (
+        !isNonEmptyString(body.status) ||
+        (body.progress !== undefined && !isFiniteNumber(body.progress)) ||
+        (body.message !== undefined && typeof body.message !== "string")
+      ) {
         return protocolError("Invalid JSON body", "INVALID_JSON", 400);
       }
       const components: TaskUpdateRequest["components"] = {};
       if (body.progress !== undefined) components.progress = { percent: clampPercent(body.progress) };
       if (body.message !== undefined) components.status_message = body.message;
-      return json(this.updateTask(id, { status: body.status, ...(Object.keys(components).length === 0 ? {} : { components }), remove_extra_keys: ["progress", "status_message", "message"] }));
+      return json(
+        this.updateTask(id, {
+          status: body.status,
+          ...(Object.keys(components).length === 0 ? {} : { components }),
+          remove_extra_keys: ["progress", "status_message", "message"]
+        })
+      );
     }
     return protocolError("not found", "VALIDATION_ERROR", 404);
   }
@@ -386,7 +428,9 @@ export class FakeCore {
     if (sinceMs !== undefined && Number.isNaN(sinceMs)) {
       return protocolError("Invalid since timestamp format (use RFC3339)", "VALIDATION_ERROR", 400);
     }
-    const filteredTasks = [...this.tasks.values()].filter((value) => value.entity_id === id && statusFilter.includes(value.status) && (sinceMs === undefined || Date.parse(value.metadata.updated_at) >= sinceMs));
+    const filteredTasks = [...this.tasks.values()].filter(
+      (value) => value.entity_id === id && statusFilter.includes(value.status) && (sinceMs === undefined || Date.parse(value.metadata.updated_at) >= sinceMs)
+    );
     const taskPage = pageValues(filteredTasks, limit, parsed.searchParams.get("task_cursor"));
     const tasks = parsed.searchParams.get("fields") === "minimal" ? taskPage.items.map(minimalTask) : taskPage.items;
     return json({
@@ -407,7 +451,7 @@ export class FakeCore {
     return value;
   }
 
-  createObject(request: ObjectCreateRequest): ObjectResponse {
+  createObject(request: ObjectCreateRequest): ObjectDetailResource {
     const version = this.nextVersion();
     const value: ObjectResource = {
       object_id: request.object_id,
@@ -426,7 +470,7 @@ export class FakeCore {
     return this.objectResponse(value.object_id)!;
   }
 
-  updateObject(id: string, patch: ObjectUpdateRequest): ObjectResponse {
+  updateObject(id: string, patch: ObjectUpdateRequest): ObjectDetailResource {
     const current = this.objects.get(id);
     if (!current) {
       throw new Error(`fake core object ${id} missing during update`);
@@ -474,7 +518,7 @@ export class FakeCore {
     const version = this.nextVersion();
     const event: FeedEvent = { event: "delete", resource_type: "object", id, version };
     this.objects.delete(id);
-    this.objectPayloads.delete(id);
+    this.objectExtras.delete(id);
     this.record(event);
     return event;
   }
@@ -520,37 +564,38 @@ export class FakeCore {
     return value;
   }
 
-  private objectResponse(id: string): ObjectResponse | undefined {
+  private objectResponse(id: string): ObjectDetailResource | undefined {
     const object = this.objects.get(id);
-    if (!object) {
-      return undefined;
-    }
-    const payload = this.objectPayloads.get(id);
-    if (!payload || Object.keys(payload).length === 0) {
-      return object;
-    }
-    return { ...object, payload: { ...payload } };
+    return object && this.objectDetail(object);
   }
 
-  private applyObjectExtra(id: string, extra: ObjectCreateRequest["extra"] | ObjectUpdateRequest["extra"]): void {
-    if (extra === undefined) {
+  private objectDetail(object: ObjectResource): ObjectDetailResource {
+    const extra = this.objectExtras.get(object.object_id);
+    if (!extra || Object.keys(extra).length === 0) {
+      return object;
+    }
+    return { ...object, extra: { ...extra } };
+  }
+
+  private applyObjectExtra(id: string, incoming: ObjectCreateRequest["extra"] | ObjectUpdateRequest["extra"]): void {
+    if (incoming === undefined) {
       return;
     }
-    const payload = { ...(this.objectPayloads.get(id) ?? {}) };
-    for (const [key, value] of Object.entries(extra)) {
-      if (!promotedObjectPayloadKeys.has(key)) {
-        payload[key] = value;
+    const extra = { ...(this.objectExtras.get(id) ?? {}) };
+    for (const [key, value] of Object.entries(incoming)) {
+      if (!promotedObjectExtraKeys.has(key)) {
+        extra[key] = value;
       }
     }
-    if (Object.keys(payload).length > 0) {
-      this.objectPayloads.set(id, payload);
+    if (Object.keys(extra).length > 0) {
+      this.objectExtras.set(id, extra);
     } else {
-      this.objectPayloads.delete(id);
+      this.objectExtras.delete(id);
     }
   }
 }
 
-const promotedObjectPayloadKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
+const promotedObjectExtraKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
 
 async function readRecord(init: RequestInit | undefined): Promise<Record<string, unknown> | Response> {
   let value: unknown;
@@ -575,14 +620,16 @@ function isCheckInBody(value: Record<string, unknown>): value is {
   components?: EntityComponents;
 } {
   const allowed = new Set(["status", "latitude", "longitude", "altitude_m", "speed_m_s", "heading_deg", "components"]);
-  return Object.keys(value).every((key) => allowed.has(key)) &&
+  return (
+    Object.keys(value).every((key) => allowed.has(key)) &&
     (value.status === undefined || isNonEmptyString(value.status)) &&
     (value.latitude === undefined || isFiniteNumber(value.latitude)) &&
     (value.longitude === undefined || isFiniteNumber(value.longitude)) &&
     (value.altitude_m === undefined || isFiniteNumber(value.altitude_m)) &&
     (value.speed_m_s === undefined || isFiniteNumber(value.speed_m_s)) &&
     (value.heading_deg === undefined || isFiniteNumber(value.heading_deg)) &&
-    (value.components === undefined || isRecord(value.components));
+    (value.components === undefined || isRecord(value.components))
+  );
 }
 
 function minimalTask(value: TaskResource): Record<string, unknown> {

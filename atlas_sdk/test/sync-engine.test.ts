@@ -54,6 +54,43 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status().healthy).toBe(true);
   });
 
+  it("serves object details from the full-dataset cache", async () => {
+    const core = new FakeCore();
+    const hydrated = core.createObject({ object_id: "object-hydrated-detail", extra: { label: "hydrated" } });
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    await client.sync.start();
+    core.requests = [];
+
+    await expect(client.objects.get(hydrated.object_id)).resolves.toEqual(hydrated);
+    expect(core.requests).toEqual([]);
+  });
+
+  it("serves recovered object details from the changed-since cache", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const recovered = core.createObject({ object_id: "object-recovered-detail", extra: { label: "recovered" } });
+    await client.changedSince();
+    core.requests = [];
+
+    await expect(client.objects.get(recovered.object_id)).resolves.toEqual(recovered);
+    expect(core.requests).toEqual([]);
+  });
+
   it("emits recovered events for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
@@ -640,7 +677,7 @@ describe("AtlasClient sync", () => {
     cache.cacheResource("entity", cachedEntity.entity_id, cachedEntity);
     cache.cacheResource("object", summary.object_id, summary);
     const beforeDetail = cache.snapshot();
-    const detail = { ...summary, payload: { nested: { confidence: 0.91 } } };
+    const detail = { ...summary, extra: { nested: { confidence: 0.91 } } };
 
     expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
     const afterDetail = cache.snapshot();
@@ -650,15 +687,15 @@ describe("AtlasClient sync", () => {
     expect(afterDetail.objects).not.toBe(beforeDetail.objects);
     expect(cache.value("object", detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
     expect(cache.entry("object", detail.object_id)).toMatchObject({ version: 2, detail: true });
-    expect(afterDetail.objects[detail.object_id]).toMatchObject({ payload: detail.payload });
-    expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "payload").nested)).toBe(true);
+    expect(afterDetail.objects[detail.object_id]).toMatchObject({ extra: detail.extra });
+    expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "extra").nested)).toBe(true);
 
     const stale = { ...summary, type: "stale", metadata: metadata(1) };
     expect(cache.cacheResource("object", stale.object_id, stale, { detail: true })).toBe(false);
     expect(cache.cacheResource("object", summary.object_id, summary)).toBe(false);
     expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(false);
     expect(cache.snapshot()).toBe(afterDetail);
-    expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, payload: detail.payload });
+    expect(cache.value("object", detail.object_id)).toMatchObject({ type: summary.type, extra: detail.extra });
   });
 
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {

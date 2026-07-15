@@ -516,24 +516,24 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
-  it("exposes object payload on object detail and write responses", async () => {
+  it("round-trips object extra on detail and write responses", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     const created = await client.objects.create({
-      object_id: "object-with-payload",
+      object_id: "object-with-extra",
       type: "image",
       extra: { label: "thermal", nested: { confidence: 0.91 } }
     });
-    expect(created.payload).toEqual({ label: "thermal", nested: { confidence: 0.91 } });
+    expect(created.extra).toEqual({ label: "thermal", nested: { confidence: 0.91 } });
 
-    const fetched = await client.objects.get("object-with-payload", { fresh: true });
-    expect(fetched.payload).toEqual(created.payload);
+    const fetched = await client.objects.get("object-with-extra", { fresh: true });
+    expect(fetched.extra).toEqual(created.extra);
 
-    const updated = await client.objects.update("object-with-payload", {
+    const updated = await client.objects.update("object-with-extra", {
       extra: { reviewed: true, label: "visual" }
     });
-    expect(updated.payload).toEqual({ label: "visual", nested: { confidence: 0.91 }, reviewed: true });
+    expect(updated.extra).toEqual({ label: "visual", nested: { confidence: 0.91 }, reviewed: true });
   });
 
   it("refetches object detail when the sync cache only has a feed object", async () => {
@@ -547,13 +547,23 @@ describe("AtlasClient HTTP", () => {
     });
     await client.sync.start();
 
-    await expect(
-      client.objects.create({
-        object_id: "object-feed-cache",
-        type: "image",
-        extra: { label: "thermal" }
-      })
-    ).resolves.toMatchObject({ payload: { label: "thermal" } });
+    const created = await client.objects.create({
+      object_id: "object-feed-cache",
+      type: "image",
+      extra: { label: "thermal" }
+    });
+    expect(created).toMatchObject({ extra: { label: "thermal" } });
+    core.emit(
+      {
+        event: "create",
+        resource_type: "object",
+        id: created.object_id,
+        version: created.metadata.version,
+        resource: core.objects.get(created.object_id)!
+      },
+      { record: false }
+    );
+    await vi.waitFor(() => expect(client.sync.status().lastVersion).toBe(created.metadata.version));
 
     const feedObject = core.upsertObject({ ...object("object-feed-cache"), type: "log" });
     core.emit(
@@ -571,7 +581,7 @@ describe("AtlasClient HTTP", () => {
     expect(fetched).toMatchObject({
       object_id: "object-feed-cache",
       type: "log",
-      payload: { label: "thermal" }
+      extra: { label: "thermal" }
     });
     expect(core.requests.filter((request) => request === "/objects/object-feed-cache")).toHaveLength(detailRequestsBeforeRead + 1);
   });

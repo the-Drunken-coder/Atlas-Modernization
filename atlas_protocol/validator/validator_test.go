@@ -230,6 +230,36 @@ func TestObjectBlobRejectsOversizedJSONNumberSizeBytes(t *testing.T) {
 	assertAnyContains(t, errors, "size_bytes")
 }
 
+func TestObjectDetailResourceUsesExtraWithoutWideningFeedResources(t *testing.T) {
+	detail := map[string]any{
+		"object_id":    "object-1",
+		"path":         nil,
+		"content_type": nil,
+		"type":         nil,
+		"size_bytes":   nil,
+		"usage_hints":  []any{},
+		"bucket":       nil,
+		"metadata": map[string]any{
+			"created_at": "2026-07-13T12:00:00Z",
+			"updated_at": "2026-07-13T12:01:00Z",
+			"version":    1,
+		},
+		"extra": map[string]any{"source": "local import"},
+	}
+	if errors := ValidateObjectDetailResource(detail); len(errors) > 0 {
+		t.Fatalf("ValidateObjectDetailResource(extra) errors = %v", errors)
+	}
+	if errors := ValidateObjectResource(detail); len(errors) == 0 {
+		t.Fatal("ValidateObjectResource accepted full-detail extra")
+	}
+
+	detail["payload"] = detail["extra"]
+	delete(detail, "extra")
+	if errors := ValidateObjectDetailResource(detail); len(errors) == 0 {
+		t.Fatal("ValidateObjectDetailResource accepted legacy payload field")
+	}
+}
+
 func TestRawJSONUsesJSONNumberNormalization(t *testing.T) {
 	raw := json.RawMessage(`{"bucket":"atlas-media","size_bytes":7966}`)
 	if errors := ValidateObjectBlob(raw); len(errors) > 0 {

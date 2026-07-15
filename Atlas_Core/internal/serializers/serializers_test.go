@@ -221,14 +221,21 @@ func TestSerializeObject(t *testing.T) {
 	if result.ReferencedBy[1].TaskID == nil || *result.ReferencedBy[1].TaskID != "task-1" {
 		t.Errorf("Expected second referenced_by task_id task-1, got %#v", result.ReferencedBy[1])
 	}
-	if result.Payload == nil || result.Payload["custom"] != "value" {
-		t.Errorf("Expected Payload custom value, got %#v", result.Payload)
+	if result.Extra == nil || result.Extra["custom"] != "value" {
+		t.Errorf("Expected Extra custom value, got %#v", result.Extra)
 	}
-	if result.Payload["version"] != nil {
-		t.Error("Expected blob version to be excluded from Payload")
+	if result.Extra["version"] != nil {
+		t.Error("Expected blob version to be excluded from Extra")
 	}
 	if result.Metadata.Version != 99 {
 		t.Errorf("Expected metadata version 99, got %d", result.Metadata.Version)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal object detail: %v", err)
+	}
+	if bytes.Contains(encoded, []byte(`"payload"`)) || !bytes.Contains(encoded, []byte(`"extra"`)) {
+		t.Fatalf("object detail contract = %s, want extra without payload", encoded)
 	}
 }
 

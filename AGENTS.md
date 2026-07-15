@@ -53,6 +53,8 @@ Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas
 
 Do not recreate `atlas_protocol/generated/jsonschema/`; schema details belong in the canonical bundle. The Atlas Protocol runtime validator uses `github.com/santhosh-tekuri/jsonschema/v6` against compiled schema definitions and preserves a few narrow semantic checks, such as GeoJSON polygon ring closure and total polygon position limits.
 
+Protocol generation updates the revision artifacts but does not rewrite `atlas_protocol/examples/feed/server/handshake.json`. After a schema revision change, align that example's `protocol_revision` with `atlas_protocol/generated/revision.txt` before running the protocol tests.
+
 This project is super greenfield. It has no users and no real data yet. Prefer the simplest correct long-term design over dirty compatibility shims, duplicated paths, or preserving old architecture just because it already exists. If replacing a subsystem leads to a simpler result, take the rebuild even when the process is more involved; if the quick simple fix is also the clean long-term answer, take that instead. Keep changes scoped to the request, and do not use greenfield status as permission for unrelated refactors.
 
 Apply YAGNI aggressively: do not add extension points, configuration knobs, compatibility shims, generalized helpers, or data models for hypothetical future requirements. Build only what the current request and known architecture actually need.

@@ -11,6 +11,7 @@ var runtimeValidatorTypeNames = []string{
 	"EntityCreateRequest",
 	"EntityUpdateRequest",
 	"ObjectCreateRequest",
+	"ObjectDetailResource",
 	"ObjectUpdateRequest",
 	"TaskCreateRequest",
 	"TaskUpdateRequest",

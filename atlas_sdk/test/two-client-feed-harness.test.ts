@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AtlasClient, AtlasWatchEvent, EntityResource, ObjectResponse, ObjectResource, ResourceType, TaskResource } from "../src";
+import type { AtlasClient, AtlasWatchEvent, EntityResource, ObjectDetailResource, ObjectResource, ResourceType, TaskResource } from "../src";
 import { createTwoClientFeedHarness, type TwoClientFeedHarness } from "./support/two-client-feed-harness.js";
 
 type ResourceValue = EntityResource | TaskResource | ObjectResource;
@@ -126,7 +126,7 @@ describe("two-client feed harness", () => {
   });
 });
 
-function upsertCases(): Array<UpsertCase<EntityResource> | UpsertCase<TaskResource> | UpsertCase<ObjectResponse>> {
+function upsertCases(): Array<UpsertCase<EntityResource> | UpsertCase<TaskResource> | UpsertCase<ObjectDetailResource>> {
   return [
     {
       name: "entity",
@@ -196,7 +196,7 @@ async function deleteResource(writer: AtlasClient, type: ResourceType, id: strin
   }
 }
 
-function objectFeedResource(value: ObjectResponse): ObjectResource {
-  const { payload: _payload, ...resource } = value;
+function objectFeedResource(value: ObjectDetailResource): ObjectResource {
+  const { extra: _extra, ...resource } = value;
   return resource;
 }
