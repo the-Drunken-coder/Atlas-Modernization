@@ -200,6 +200,21 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("redacts nested object values in sensitive structured fields", () => {
+    const messages = [
+      'Atlas request failed: {"api_key":[{"safe":1},{"value":"nested-array-secret"}]}',
+      'Atlas request failed: password: {"safe":1,"value":"nested-object-secret"}'
+    ];
+
+    for (const message of messages) {
+      const sanitized = sanitizeConnectionError(new Error(message));
+
+      expect(sanitized).not.toContain("nested-array-secret");
+      expect(sanitized).not.toContain("nested-object-secret");
+      expect(sanitized).toContain("[redacted]");
+    }
+  });
+
   it("redacts complete cookie header values", () => {
     const headers = ["Cookie: foo=bar; atlas_session=cookie-session-secret; theme=dark", "Set-Cookie: atlas_session=set-cookie-secret; Path=/; HttpOnly"];
 
