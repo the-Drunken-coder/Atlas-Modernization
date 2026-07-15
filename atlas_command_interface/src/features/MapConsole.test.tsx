@@ -524,6 +524,41 @@ describe("MapConsole command flow", () => {
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
   });
 
+  it("starts with the configured MapTiler OSM Dark default", async () => {
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "maptiler-osm-dark",
+        mapSources: [
+          { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", style: style("maptiler-osm-dark") },
+          { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }
+        ]
+      })
+    );
+
+    await screen.findByText("Rover");
+    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
+  });
+
+  it("does not silently fall back when the configured default map source is unavailable", async () => {
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "maptiler-osm-dark",
+        mapSources: [
+          { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", unavailableReason: "missing key" },
+          { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }
+        ]
+      })
+    );
+
+    expect(await screen.findByText("No usable map sources are configured.")).toBeInTheDocument();
+    expect(screen.queryByTestId("map")).not.toBeInTheDocument();
+  });
+
   it("reverts the map selector when a style switch fails", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();

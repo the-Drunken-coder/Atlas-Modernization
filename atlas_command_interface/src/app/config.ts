@@ -21,6 +21,7 @@ const CONFIG_URL_BASE = "http://localhost";
 const URL_SCHEME = /^[a-z][a-z\d+\-.]*:/i;
 const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
 const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
+const DEFAULT_MAP_SOURCE_ID = "maptiler-osm-dark";
 const CREDENTIALED_MAP_SOURCE_IDS = [
   "google-satellite",
   "mapbox-satellite",
@@ -80,6 +81,7 @@ function defaultCoreBaseUrl(env: RuntimeEnv): string {
 }
 
 function selectDefaultMapSourceId(env: RuntimeEnv, mapSources: MapSourceConfig[]): string | undefined {
+  if (mapSources.some((source) => source.id === DEFAULT_MAP_SOURCE_ID)) return DEFAULT_MAP_SOURCE_ID;
   if (!isDevelopment(env)) {
     for (const id of CREDENTIALED_MAP_SOURCE_IDS) {
       if (mapSources.some((source) => source.id === id && source.style)) return id;

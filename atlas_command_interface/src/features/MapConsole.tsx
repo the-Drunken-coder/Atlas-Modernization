@@ -253,8 +253,7 @@ export function MapConsole() {
   const activeList: ListKind | null = sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
-    availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId)) ??
-    atlas.config.mapSources.find((source): source is AvailableMapSourceConfig => Boolean(source.style));
+    availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
   if (!selectedMapSource) {
     return (
       <div className="app-error">
