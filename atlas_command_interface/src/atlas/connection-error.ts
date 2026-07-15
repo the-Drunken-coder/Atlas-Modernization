@@ -7,7 +7,7 @@ const SENSITIVE_FIELD = new RegExp(
   String.raw`((?:\\?["']?\b${SENSITIVE_NAME_PATTERN}\b\\?["']?)\s*[:=]\s*)(?:\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^;\n\r}]+)`,
   "gi"
 );
-const URL_USERINFO = /(([a-z][a-z\d+\-.]*):\/\/)[^/\s:@]+(?::[^@\s]*)?@/gi;
+const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?\/\/)[^/\s:@]+(?::[^@\s]*)?@/gi;
 const BEARER_TOKEN = /\bBearer\s+[^\s,;]+/gi;
 const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 

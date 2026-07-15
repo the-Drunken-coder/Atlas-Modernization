@@ -338,7 +338,7 @@ export function MapConsole() {
                   />
                 ) : (
                   <div className="app-error" role="alert">
-                    <span>No usable map sources are configured.</span>
+                    <span>The configured default map source is unavailable.</span>
                   </div>
                 )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />

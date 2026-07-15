@@ -199,7 +199,11 @@ describe("fetchAppConfig", () => {
 
     expect(fetch).toHaveBeenCalledWith("https://tile.googleapis.com/v1/createSession?key=google-key", expect.objectContaining({ method: "POST" }));
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
-    expect(config.mapSources[0]).toMatchObject({ id: "google-satellite", style: undefined, unavailableReason: "session unavailable" });
+    expect(config.mapSources.find((source) => source.id === "google-satellite")).toMatchObject({
+      id: "google-satellite",
+      style: undefined,
+      unavailableReason: "session unavailable"
+    });
     expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({ unavailableReason: "missing key" });
     expect(warn).toHaveBeenCalled();
   });

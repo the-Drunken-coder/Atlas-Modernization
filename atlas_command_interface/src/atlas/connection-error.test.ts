@@ -25,10 +25,11 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts generic URL userinfo and encoded query parameter names", () => {
     const message =
-      "postgres://db-user:db-password@example.test?api%5Fkey=encoded-secret&access%2Dtoken=encoded-token&client%5Fsecret=client-secret&client%2Dsecret=hyphen-secret&id%5Ftoken=id-token&session%2Dtoken=session-token&safe=value";
+      "postgres://db-user:db-password@example.test //url-user:url-password@example.test?api%5Fkey=encoded-secret&access%2Dtoken=encoded-token&client%5Fsecret=client-secret&client%2Dsecret=hyphen-secret&id%5Ftoken=id-token&session%2Dtoken=session-token&safe=value";
     const sanitized = sanitizeConnectionError(new Error(message));
 
     expect(sanitized).not.toContain("db-user:db-password");
+    expect(sanitized).not.toContain("url-user:url-password");
     expect(sanitized).not.toContain("encoded-secret");
     expect(sanitized).not.toContain("encoded-token");
     expect(sanitized).not.toContain("client-secret");
