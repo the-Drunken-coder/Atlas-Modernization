@@ -360,6 +360,8 @@ export class SyncEngine {
       this.pollTimer = undefined;
     }
     this.clearReconnectTimer();
+    this.reconnecting = false;
+    this.reconnectAfterRecovery = false;
     this.syncRunning = false;
     this.recoveryOperation++;
     this.lastError = undefined;
@@ -426,8 +428,9 @@ export class SyncEngine {
       if (!this.isCurrent(generation)) return;
       await this.changedSince(generation);
     } finally {
+      if (!this.isCurrent(generation)) return;
       this.reconnecting = false;
-      if (this.reconnectAfterRecovery && this.isCurrent(generation)) {
+      if (this.reconnectAfterRecovery) {
         this.reconnectAfterRecovery = false;
         this.scheduleReconnect();
       }

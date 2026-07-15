@@ -422,7 +422,7 @@ describe("MapConsole command flow", () => {
       running: true,
       healthy: false,
       degraded: true,
-      error: { source: "live-sync", message: "feed websocket failed to open" }
+      error: { source: "live-sync", message: "feed websocket failed at https://user:password@example.test?api_key=secret Bearer token" }
     });
     renderConsole(fake);
 
@@ -432,7 +432,11 @@ describe("MapConsole command flow", () => {
 
     const close = await screen.findByRole("button", { name: "Close connection details" });
     expect(document.activeElement).toBe(close);
-    expect(screen.getByRole("dialog", { name: "Atlas Core connection error" })).toHaveTextContent("Retrying automatically…");
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Retrying automatically…");
+    expect(dialog).not.toHaveTextContent("user:password");
+    expect(dialog).not.toHaveTextContent("secret");
+    expect(dialog).not.toHaveTextContent("Bearer token");
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();

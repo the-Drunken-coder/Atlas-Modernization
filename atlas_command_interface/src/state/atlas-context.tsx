@@ -75,10 +75,11 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
 
     const publishHealth = (next: ConnectionHealth) => {
       if (cancelled) return;
-      setHealth(next);
-      if (next.error) {
-        setConnectionError(next.error);
-        setError(next.error.message);
+      const error = next.error ? { ...next.error, message: sanitizeConnectionError(next.error.message) } : undefined;
+      setHealth(error ? { ...next, error } : next);
+      if (error) {
+        setConnectionError(error);
+        setError(error.message);
       } else if (next.healthy && !next.degraded) {
         setConnectionError(undefined);
         setError(undefined);
