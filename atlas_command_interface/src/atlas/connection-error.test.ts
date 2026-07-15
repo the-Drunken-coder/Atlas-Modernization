@@ -208,6 +208,12 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("empty-user-password");
   });
 
+  it("redacts URL userinfo before hosts with ports", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://user:port-password@example.test:8443/path"));
+
+    expect(sanitized).not.toContain("user:port-password");
+  });
+
   it("redacts nested encoded credential query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key")
