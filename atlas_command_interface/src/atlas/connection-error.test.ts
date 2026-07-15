@@ -46,6 +46,16 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=value");
   });
 
+  it("redacts credential parameters in URL fragments", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://app.test/callback#access%5Ftoken=fragment-access-secret&id_token=fragment-id-secret&state=visible")
+    );
+
+    expect(sanitized).not.toContain("fragment-access-secret");
+    expect(sanitized).not.toContain("fragment-id-secret");
+    expect(sanitized).toContain("state=visible");
+  });
+
   it("redacts quoted query values and URL passwords containing at-signs", () => {
     const sanitized = sanitizeConnectionError(new Error('Atlas request failed: https://user:pa@ss@example.test?api%5Fkey="top secret"'));
 
