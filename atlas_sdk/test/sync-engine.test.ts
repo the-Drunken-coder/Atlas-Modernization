@@ -301,6 +301,7 @@ describe("AtlasClient sync", () => {
 
   it("ignores a stale feed completion after stop", async () => {
     let releaseFeedConnect!: () => void;
+    let feedOptions!: FeedConnectOptions;
     const feedConnect = new Promise<void>((resolve) => {
       releaseFeedConnect = resolve;
     });
@@ -312,15 +313,29 @@ describe("AtlasClient sync", () => {
       onClose: () => void;
     };
     const engine = (client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }).engine;
-    vi.spyOn(engine.feed, "connect").mockImplementation(async () => feedConnect);
+    vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
+      feedOptions = options;
+      await feedConnect;
+    });
 
     const connection = client.connectFeed();
     await vi.waitFor(() => expect(engine.feed.connect).toHaveBeenCalledOnce());
     client.sync.stop();
+    await feedOptions.onEvent({
+      event: "update",
+      resource_type: "entity",
+      id: "stale-asset",
+      version: 1,
+      resource: { ...entity("stale-asset"), metadata: metadata(1) }
+    });
+    feedOptions.onEventError();
+    feedOptions.onClose();
     releaseFeedConnect();
     await connection;
 
     expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    expect(client.sync.status()).not.toHaveProperty("error");
+    expect(client.sync.snapshot().entities).not.toHaveProperty("stale-asset");
   });
 
   it("ignores an in-flight recovery from a previous lifecycle after restart", async () => {

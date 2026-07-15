@@ -91,6 +91,11 @@ export class SyncEngine {
       return this.startSyncPromise;
     }
     const generation = ++this.lifecycleGeneration;
+    this.recoveryOperation++;
+    this.activeRecoveryPromise = undefined;
+    this.clearReconnectTimer();
+    this.reconnecting = false;
+    this.reconnectAfterRecovery = false;
     this.lastError = undefined;
     const promise = this.startSyncFromStopped(generation);
     this.startSyncPromise = promise;
