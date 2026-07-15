@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from seed_command_catalog import _api_auth_headers, _validate_command_catalog_data
+from seed_command_catalog import (
+    _api_auth_headers,
+    _load_command_catalog_data,
+    _validate_command_catalog_data,
+)
 
 
 def valid_catalog_with_parameter_type(parameter_type: Any) -> dict[str, object]:
@@ -40,6 +44,9 @@ def valid_catalog_without_parameter_type() -> dict[str, object]:
 
 
 class SeedCommandCatalogValidationTest(unittest.TestCase):
+    def test_committed_catalog_is_valid(self) -> None:
+        self.assertIsNotNone(_load_command_catalog_data())
+
     def test_api_auth_headers_use_atlas_specific_key_first(self) -> None:
         with patch.dict(
             "os.environ",
