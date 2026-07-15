@@ -192,6 +192,19 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("redacts credentials nested inside safe query values", () => {
+    const secrets = ["nested-api-key-secret", "quoted-client-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: ?redirect=https://other.test/cb?api_key=${secrets[0]}&safe=visible&next="https://other.test/cb?client_secret=${secrets[1]}"`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("redirect=https://other.test/cb");
+    expect(sanitized).toContain("safe=visible");
+  });
+
   it("handles long non-matching hyphen runs", () => {
     const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(1_900)}`));
 
