@@ -6,7 +6,7 @@ For UI work, ask the developer targeted behavior questions when interaction stat
 
 Connection-error details may receive arbitrary client or server error text. Sanitization must cover structured fields, URL userinfo, query credentials, and bare bearer tokens before any message reaches the UI.
 
-The SDK sync engine can receive delayed recovery callbacks from an earlier lifecycle generation; guard that generation before mutating shared recovery-operation state across stop/start.
+The SDK sync engine can receive delayed recovery, feed event, error, or close callbacks from an earlier lifecycle generation; guard that generation before mutating shared recovery-operation, status, or snapshot state across stop/start.
 
 The Go service module lives under **`Atlas_Core/`** (run `go test ./...` and `go run ./cmd/atlas_core` from that directory). The repo is multi-module, so choose the narrowest validation stack that matches the task:
 
