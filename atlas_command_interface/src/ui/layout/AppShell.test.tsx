@@ -39,4 +39,14 @@ describe("AppShell", () => {
     renderShell(true);
     expect(screen.queryByRole("separator", { name: "Resize assets panel" })).not.toBeInTheDocument();
   });
+
+  it("keeps the map workspace mounted and accessible when the sidebar collapses", () => {
+    const { rerender } = renderShell();
+    const map = screen.getByRole("main", { name: "Map workspace" });
+
+    rerender(<AppShell collapsed rail={<div>rail</div>} panel={<div>panel</div>} map={<div>map</div>} />);
+
+    expect(screen.getByRole("main", { name: "Map workspace" })).toBe(map);
+    expect(map).toHaveTextContent("map");
+  });
 });

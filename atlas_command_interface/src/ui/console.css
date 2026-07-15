@@ -850,20 +850,15 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  container-type: size;
   overflow: hidden;
 }
 
 .map-stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 2 / 1;
+  height: 100%;
   min-width: 0;
-  max-width: min(100%, calc(100cqh * 2));
-  max-height: 100%;
+  min-height: 0;
   overflow: hidden;
   background: #05070a;
 }
@@ -924,13 +919,6 @@
 
 .map-source-control .field {
   margin-bottom: 0;
-}
-
-@supports not (width: 1cqw) {
-  .map-stage {
-    width: 100%;
-    max-width: 100%;
-  }
 }
 
 .map-canvas {
