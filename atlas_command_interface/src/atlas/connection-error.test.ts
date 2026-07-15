@@ -178,6 +178,28 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("requestId");
   });
 
+  it("redacts bracketed collections containing embedded brackets and escapes", () => {
+    const cases = [
+      {
+        message: 'Atlas request failed: {"api_key":["abc]def","second"]}',
+        secrets: ["abc]def", "second"]
+      },
+      {
+        message: String.raw`Atlas request failed: {"api_key":["escaped\"]bracket]secret","backslash\\]secret"]}`,
+        secrets: ['escaped\\"]bracket]secret', "backslash\\\\]secret"]
+      }
+    ];
+
+    for (const { message, secrets } of cases) {
+      const sanitized = sanitizeConnectionError(new Error(message));
+
+      for (const secret of secrets) {
+        expect(sanitized).not.toContain(secret);
+      }
+      expect(sanitized).toContain("[redacted]");
+    }
+  });
+
   it("redacts complete cookie header values", () => {
     const headers = ["Cookie: foo=bar; atlas_session=cookie-session-secret; theme=dark", "Set-Cookie: atlas_session=set-cookie-secret; Path=/; HttpOnly"];
 
@@ -198,6 +220,7 @@ describe("sanitizeConnectionError", () => {
     const headers = [
       'Cookie: ["foo=bar","atlas_session=cookie-array-secret"]',
       'Set-Cookie: ["session=set-cookie-array-secret","theme=dark"]',
+      'Cookie: ["foo=bar]suffix","atlas_session=cookie-bracket-secret"]',
       "Cookie: foo=bar, atlas_session=cookie-coalesced-secret",
       "Set-Cookie: session=set-cookie-coalesced-secret, theme=dark"
     ];
@@ -208,6 +231,7 @@ describe("sanitizeConnectionError", () => {
       expect(sanitized).toContain("[redacted]");
       expect(sanitized).not.toContain("cookie-array-secret");
       expect(sanitized).not.toContain("set-cookie-array-secret");
+      expect(sanitized).not.toContain("cookie-bracket-secret");
       expect(sanitized).not.toContain("cookie-coalesced-secret");
       expect(sanitized).not.toContain("set-cookie-coalesced-secret");
     }
