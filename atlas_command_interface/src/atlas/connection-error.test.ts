@@ -62,6 +62,20 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("aws-secret-access-key-secret");
   });
 
+  it("redacts AWS-style structured credential fields", () => {
+    const secrets = {
+      accessKeyId: "structured-access-key-secret",
+      secretAccessKey: "structured-secret-access-key-secret",
+      privateKey: "structured-private-key-secret"
+    };
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${JSON.stringify(secrets)}`));
+
+    expect(sanitized).toContain("[redacted]");
+    for (const secret of Object.values(secrets)) {
+      expect(sanitized).not.toContain(secret);
+    }
+  });
+
   it("redacts escaped URL userinfo and signature query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error(String.raw`Atlas request failed: https:\/\/url-user:url-password@example.test?safe=value&api-key=api-key-secret&signature=signature-secret`)

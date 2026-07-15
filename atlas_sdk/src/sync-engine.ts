@@ -209,6 +209,8 @@ export class SyncEngine {
       throw error;
     }
     if (!this.isCurrent(generation)) return;
+    this.markSynchronized();
+    this.lastError = undefined;
   }
 
   changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {

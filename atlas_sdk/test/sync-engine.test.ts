@@ -338,6 +338,19 @@ describe("AtlasClient sync", () => {
     expect(client.sync.snapshot().entities).not.toHaveProperty("stale-asset");
   });
 
+  it("clears a failed manual feed connection after a later successful retry", async () => {
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    vi.spyOn(engine.feed, "connect").mockRejectedValueOnce(new Error("first feed failure")).mockResolvedValueOnce(undefined);
+
+    await expect(client.connectFeed()).rejects.toThrow("first feed failure");
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
+
+    await client.connectFeed();
+
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
   it("ignores an in-flight recovery from a previous lifecycle after restart", async () => {
     const core = new FakeCore();
     let stage: "normal" | "old" | "old-in-flight" | "new" = "normal";
