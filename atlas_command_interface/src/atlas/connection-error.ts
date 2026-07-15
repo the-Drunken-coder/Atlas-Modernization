@@ -6,11 +6,11 @@ const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PAT
 const BRACKETED_COLLECTION = String.raw`\[(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\]\n\r])*\]`;
 const AMBIGUOUS_OBJECT_VALUE = String.raw`\{[^\n\r]*`;
 const SENSITIVE_FIELD = new RegExp(
-  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9-]+(?:[._-]|\[))*${SENSITIVE_NAME_PATTERN}\b(?:\[[^\]]*\])*\]?\\?["']?)\s*[:=]\s*)(?:${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`,
+  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+(?:[._-]|\[))*${SENSITIVE_NAME_PATTERN}\b(?:\[[^\]]*\])*\]?\\?["']?)\s*[:=]\s*)(?:${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`,
   "gi"
 );
 const COOKIE_FIELD = new RegExp(
-  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9-]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
+  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
   "gi"
 );
 const URL_USERINFO = /((?:[a-z][a-z\d+\-.]*:)?(?:\/\/|\\\/\\\/))[^/\s:@]*(?::[^/\s]*)?@(?=[^/\s]+(?:[/?#\s]|$))/gi;

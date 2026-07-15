@@ -76,6 +76,12 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("handles long non-matching hyphen runs", () => {
+    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${"-".repeat(5_000)}`));
+
+    expect(sanitized).toHaveLength(240);
+  }, 1_000);
+
   it("redacts escaped URL userinfo and signature query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error(String.raw`Atlas request failed: https:\/\/url-user:url-password@example.test?safe=value&api-key=api-key-secret&signature=signature-secret`)
