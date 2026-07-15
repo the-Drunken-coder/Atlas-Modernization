@@ -170,6 +170,14 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("bracket-api-key-secret");
   });
 
+  it("redacts every element of sensitive structured collections", () => {
+    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"api_key":["key-one","key-two"],"requestId":"request-123"}'));
+
+    expect(sanitized).not.toContain("key-one");
+    expect(sanitized).not.toContain("key-two");
+    expect(sanitized).toContain("requestId");
+  });
+
   it("redacts complete cookie header values", () => {
     const headers = ["Cookie: foo=bar; atlas_session=cookie-session-secret; theme=dark", "Set-Cookie: atlas_session=set-cookie-secret; Path=/; HttpOnly"];
 
@@ -183,6 +191,25 @@ describe("sanitizeConnectionError", () => {
       expect(sanitized).not.toContain("set-cookie-secret");
       expect(sanitized).not.toContain("Path=/");
       expect(sanitized).not.toContain("HttpOnly");
+    }
+  });
+
+  it("redacts coalesced and array cookie header values", () => {
+    const headers = [
+      'Cookie: ["foo=bar","atlas_session=cookie-array-secret"]',
+      'Set-Cookie: ["session=set-cookie-array-secret","theme=dark"]',
+      "Cookie: foo=bar, atlas_session=cookie-coalesced-secret",
+      "Set-Cookie: session=set-cookie-coalesced-secret, theme=dark"
+    ];
+
+    for (const header of headers) {
+      const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${header}`));
+
+      expect(sanitized).toContain("[redacted]");
+      expect(sanitized).not.toContain("cookie-array-secret");
+      expect(sanitized).not.toContain("set-cookie-array-secret");
+      expect(sanitized).not.toContain("cookie-coalesced-secret");
+      expect(sanitized).not.toContain("set-cookie-coalesced-secret");
     }
   });
 
