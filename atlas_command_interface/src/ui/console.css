@@ -880,7 +880,7 @@
   font-weight: 650;
   letter-spacing: 0.04em;
   line-height: 1;
-  pointer-events: auto;
+  pointer-events: none;
   text-transform: uppercase;
 }
 
@@ -888,6 +888,7 @@ button.connection-badge {
   margin: 0;
   border-color: color-mix(in srgb, var(--connection-color) 58%, var(--border-strong));
   cursor: pointer;
+  pointer-events: auto;
 }
 
 button.connection-badge:hover:not([disabled]) {
