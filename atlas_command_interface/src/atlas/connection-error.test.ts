@@ -64,6 +64,32 @@ describe("sanitizeConnectionError", () => {
     }
   });
 
+  it("redacts compound credential names in fields and query parameters", () => {
+    const secrets = {
+      csrf_field: "csrf-field-secret",
+      db_password: "db-password-secret",
+      csrf_query: "csrf-query-secret",
+      db_query: "db-query-secret"
+    };
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: {"csrf_token":"${secrets.csrf_field}","db_password":"${secrets.db_password}"} https://core.test?safe=value&csrf_token=${secrets.csrf_query}&db_password=${secrets.db_query}`
+      )
+    );
+
+    expect(sanitized).toContain("safe=value");
+    for (const secret of Object.values(secrets)) {
+      expect(sanitized).not.toContain(secret);
+    }
+  });
+
+  it("preserves comma-delimited text after unquoted sensitive fields", () => {
+    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: token: token-value, requestId=request-123"));
+
+    expect(sanitized).not.toContain("token-value");
+    expect(sanitized).toContain("requestId=request-123");
+  });
+
   it("redacts escaped structured fields", () => {
     const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {\\"api_key\\":\\"escaped-secret\\"}'));
 

@@ -432,6 +432,11 @@ describe("AtlasClient sync", () => {
     });
     await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
     await expect(client.changedSince()).rejects.toThrow("503");
+    let resolveFollowUp!: () => void;
+    const followUp = new Promise<void>((resolve) => {
+      resolveFollowUp = resolve;
+    });
+    const unsubscribe = client.entities.watch("asset-after-gap", () => resolveFollowUp());
     releaseGapRecovery(
       Response.json({
         entities: [],
@@ -449,10 +454,19 @@ describe("AtlasClient sync", () => {
         version: 0
       })
     );
-    await vi.waitFor(() => expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed"));
+    socket.receive({
+      event: "update",
+      resource_type: "entity",
+      id: "asset-after-gap",
+      version: 1,
+      resource: { ...entity("asset-after-gap"), metadata: metadata(1) }
+    });
+    await followUp;
+    unsubscribe();
 
     expect(client.sync.snapshot().entities).not.toHaveProperty("asset-gapped-feed");
-    expect(client.sync.status().lastVersion).toBe(0);
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed");
+    expect(client.sync.status().lastVersion).toBe(1);
   });
 
   it("retries a failed recovery while the sync engine remains running", async () => {
@@ -485,7 +499,9 @@ describe("AtlasClient sync", () => {
     await vi.waitFor(
       () => {
         expect(recoveryRequests).toBeGreaterThan(requestsBeforeRetry);
-        expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false });
+        const status = client.sync.status();
+        expect(status).toMatchObject({ running: true, healthy: true, degraded: false });
+        expect(status).not.toHaveProperty("error");
       },
       { timeout: 2_500 }
     );
