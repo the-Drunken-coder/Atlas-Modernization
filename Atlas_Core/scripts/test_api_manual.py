@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -66,8 +66,8 @@ def create_entity(
     entity_id: str,
     entity_type: str,
     subtype: str,
-    alias: Optional[str] = None,
-    components: Optional[dict[str, Any]] = None,
+    alias: str | None = None,
+    components: dict[str, Any] | None = None,
 ):
     """Create a new entity."""
     payload = {
@@ -98,9 +98,9 @@ def create_entity(
 
 def create_task(
     task_id: str,
-    entity_id: Optional[str] = None,
+    entity_id: str | None = None,
     status: str = "pending",
-    components: Optional[dict[str, Any]] = None,
+    components: dict[str, Any] | None = None,
 ):
     """Create a new task."""
     payload = {
@@ -130,12 +130,12 @@ def create_task(
 
 def create_object(
     object_id: str,
-    path: Optional[str] = None,
-    content_type: Optional[str] = None,
-    object_type: Optional[str] = None,
-    size_bytes: Optional[int] = None,
-    usage_hints: Optional[list[Any]] = None,
-    referenced_by: Optional[list[Any]] = None,
+    path: str | None = None,
+    content_type: str | None = None,
+    object_type: str | None = None,
+    size_bytes: int | None = None,
+    usage_hints: list[Any] | None = None,
+    referenced_by: list[Any] | None = None,
 ):
     """Create a new object."""
     payload = {
@@ -222,8 +222,8 @@ def list_objects():
 
 def update_task(
     task_id: str,
-    status: Optional[str] = None,
-    components: Optional[dict[str, Any]] = None,
+    status: str | None = None,
+    components: dict[str, Any] | None = None,
 ):
     """Update a task using PATCH endpoint."""
     payload = {}
@@ -232,9 +232,7 @@ def update_task(
     if components:
         payload["components"] = components
     try:
-        response = requests.patch(
-            f"{API_BASE_URL}/tasks/{task_id}", json=payload, timeout=10
-        )
+        response = requests.patch(f"{API_BASE_URL}/tasks/{task_id}", json=payload, timeout=10)
         response.raise_for_status()
         data = response.json()
         print(f"[OK] Updated task: {task_id}")
@@ -391,10 +389,7 @@ def main():
     # Prompt for API URL
     default_url = API_BASE_URL.rstrip("/")
     remote_api_url = configured_remote_api_url()
-    remote_enabled = (
-        "--remote" in sys.argv
-        or os.environ.get("ATLAS_API_REMOTE", "").lower() == "true"
-    )
+    remote_enabled = "--remote" in sys.argv or os.environ.get("ATLAS_API_REMOTE", "").lower() == "true"
     if remote_enabled:
         default_url = remote_api_url
         print("Remote API mode is enabled. Writes will target the shared deployment.")
@@ -574,21 +569,9 @@ def main():
     print(f"Created {len(created_objects)} objects")
 
     # Collect IDs for verification
-    entity_ids = [
-        e.get("_requested_entity_id")
-        for e in created_entities
-        if e.get("_requested_entity_id")
-    ]
-    task_ids = [
-        t.get("_requested_task_id")
-        for t in created_tasks
-        if t.get("_requested_task_id")
-    ]
-    object_ids = [
-        o.get("_requested_object_id")
-        for o in created_objects
-        if o.get("_requested_object_id")
-    ]
+    entity_ids = [e.get("_requested_entity_id") for e in created_entities if e.get("_requested_entity_id")]
+    task_ids = [t.get("_requested_task_id") for t in created_tasks if t.get("_requested_task_id")]
+    object_ids = [o.get("_requested_object_id") for o in created_objects if o.get("_requested_object_id")]
 
     # Verify all created items exist
     verified, failed = verify_created_items(entity_ids, task_ids, object_ids)
@@ -621,15 +604,15 @@ def main():
     print("Final Summary")
     print("=" * 60)
     total_verified = verified["entities"] + verified["tasks"] + verified["objects"]
-    total_failed = (
-        len(failed["entities"]) + len(failed["tasks"]) + len(failed["objects"])
-    )
+    total_failed = len(failed["entities"]) + len(failed["tasks"]) + len(failed["objects"])
     print(
-        f"Verified ({total_verified} total): {verified['entities']} entities, {verified['tasks']} tasks, {verified['objects']} objects"
+        f"Verified ({total_verified} total): {verified['entities']} entities, "
+        f"{verified['tasks']} tasks, {verified['objects']} objects"
     )
     if total_failed > 0:
         print(
-            f"Failed to verify: {len(failed['entities'])} entities, {len(failed['tasks'])} tasks, {len(failed['objects'])} objects"
+            f"Failed to verify: {len(failed['entities'])} entities, "
+            f"{len(failed['tasks'])} tasks, {len(failed['objects'])} objects"
         )
     else:
         print("All items verified successfully!")

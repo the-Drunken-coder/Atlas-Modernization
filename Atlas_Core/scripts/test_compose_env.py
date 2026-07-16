@@ -78,7 +78,7 @@ class ComposeEnvTest(unittest.TestCase):
 
     def test_local_admin_login_payload_treats_compose_env_as_data(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
-        payload_script = r'''
+        payload_script = r"""
 LOGIN_JSON="$(
   "$2" - "$1" <<'PY'
 import json
@@ -92,7 +92,7 @@ print(json.dumps({"username": "admin", "password": password}))
 PY
 )" || exit 1
 printf '%s' "$LOGIN_JSON"
-'''
+"""
 
         with tempfile.TemporaryDirectory() as temp_dir:
             command_marker = Path(temp_dir) / "command-executed"

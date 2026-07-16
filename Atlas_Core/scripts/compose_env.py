@@ -52,9 +52,7 @@ def compose_env_key(line: str) -> str | None:
     if stripped.startswith("export "):
         stripped = stripped[len("export ") :].strip()
 
-    separator_indexes = [
-        index for index in (stripped.find("="), stripped.find(":")) if index != -1
-    ]
+    separator_indexes = [index for index in (stripped.find("="), stripped.find(":")) if index != -1]
     if not separator_indexes:
         return None
     separator_index = min(separator_indexes)

@@ -292,7 +292,7 @@ def raise_for_exited_development_core(container_name="atlas_core_api"):
     output = f"{logs.stdout or ''}\n{logs.stderr or ''}"
     if (
         'password authentication failed for user "atlas"' in output
-        or r'password authentication failed for user \"atlas\"' in output
+        or r"password authentication failed for user \"atlas\"" in output
     ):
         raise RuntimeError(
             "Atlas Core exited because its PostgreSQL password does not match the existing "
@@ -413,9 +413,7 @@ def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_re
             pass
 
         if attempt < max_retries - 1:
-            print(
-                f"[WAIT] Schema not ready (attempt {attempt + 1}/{max_retries}), retrying..."
-            )
+            print(f"[WAIT] Schema not ready (attempt {attempt + 1}/{max_retries}), retrying...")
             time.sleep(delay)
 
     raise Exception(f"Database schema not ready after {max_retries} attempts")
@@ -498,7 +496,10 @@ def ensure_api_auth(mode):
         print(f"[ERROR] {mode} requires a real API_AUTH_KEY, not the example placeholder.")
         return False
     if not (os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or os.getenv("ATLAS_ADMIN_PASSWORD_FILE", "").strip()):
-        print(f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE to replace the development admin/password seed.")
+        print(
+            f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE "
+            "to replace the development admin/password seed."
+        )
         return False
 
     os.environ["ENABLE_API_AUTH"] = "true"
@@ -533,14 +534,12 @@ def tunnel_readiness_url():
     return f"{tunnel_public_base_url()}/readiness"
 
 
-def verify_tunnel_connection(
-    public_url=None, max_retries=10, delay=2.0
-):
+def verify_tunnel_connection(public_url=None, max_retries=10, delay=2.0):
     """Verify the Cloudflare tunnel is working by checking the public readiness endpoint."""
-    import urllib.request
+    import json
     import urllib.error
     import urllib.parse
-    import json
+    import urllib.request
 
     if public_url is None:
         public_url = tunnel_readiness_url()
@@ -655,9 +654,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             wait_for_api(production=production)
             wait_for_database_schema_docker()
         else:
-            print(
-                "[INFO] --db-only: schema is created when the API starts (EnsureTables in db.go)"
-            )
+            print("[INFO] --db-only: schema is created when the API starts (EnsureTables in db.go)")
 
         print("\n" + "=" * 60)
         print("ATLAS Core System - Connection Information")
