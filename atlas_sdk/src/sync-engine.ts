@@ -59,6 +59,8 @@ export class SyncEngine {
   private lastError: string | undefined;
   private recoveryOperation = 0;
   private activeRecoveryPromise: Promise<boolean> | undefined;
+  private activeRecoveryGeneration: number | undefined;
+  private activeRecoverySinceVersion: number | undefined;
   private startSyncPromise: Promise<void> | undefined;
   private lifecycleGeneration = 0;
   private feedConnectionAttempt = 0;
@@ -94,6 +96,8 @@ export class SyncEngine {
     const generation = ++this.lifecycleGeneration;
     this.recoveryOperation++;
     this.activeRecoveryPromise = undefined;
+    this.activeRecoveryGeneration = undefined;
+    this.activeRecoverySinceVersion = undefined;
     this.clearReconnectTimer();
     this.reconnecting = false;
     this.reconnectAfterRecovery = false;
@@ -223,17 +227,25 @@ export class SyncEngine {
 
   changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
     if (!this.isCurrent(generation)) return Promise.resolve(false);
-    if (this.startSyncPromise && this.activeRecoveryPromise) return this.activeRecoveryPromise;
+    if (
+      this.startSyncPromise &&
+      this.activeRecoveryPromise &&
+      this.activeRecoveryGeneration === generation &&
+      this.activeRecoverySinceVersion === sinceVersion
+    ) {
+      return this.activeRecoveryPromise;
+    }
     const recovery = this.recoverSince(generation, sinceVersion);
     this.activeRecoveryPromise = recovery;
-    void recovery.then(
-      () => {
-        if (this.isCurrent(generation) && this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
-      },
-      () => {
-        if (this.isCurrent(generation) && this.activeRecoveryPromise === recovery) this.activeRecoveryPromise = undefined;
-      }
-    );
+    this.activeRecoveryGeneration = generation;
+    this.activeRecoverySinceVersion = sinceVersion;
+    const clearActiveRecovery = () => {
+      if (!this.isCurrent(generation) || this.activeRecoveryPromise !== recovery) return;
+      this.activeRecoveryPromise = undefined;
+      this.activeRecoveryGeneration = undefined;
+      this.activeRecoverySinceVersion = undefined;
+    };
+    void recovery.then(clearActiveRecovery, clearActiveRecovery);
     return recovery;
   }
 
@@ -403,6 +415,8 @@ export class SyncEngine {
     this.syncRunning = false;
     this.recoveryOperation++;
     this.activeRecoveryPromise = undefined;
+    this.activeRecoveryGeneration = undefined;
+    this.activeRecoverySinceVersion = undefined;
     this.lastError = undefined;
     this.feed.close();
     this.healthy = false;

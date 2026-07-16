@@ -740,6 +740,92 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("runs post-hydration catch-up when an earlier recovery uses a different cursor", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new FakeCore();
+    let fullRequested = false;
+    let releaseFull!: (response: Response) => void;
+    let releaseEarlyRecovery!: (response: Response) => void;
+    const pendingFull = new Promise<Response>((resolve) => {
+      releaseFull = resolve;
+    });
+    const pendingEarlyRecovery = new Promise<Response>((resolve) => {
+      releaseEarlyRecovery = resolve;
+    });
+    const changedSinceVersions: string[] = [];
+    const fetchImpl: typeof fetch = (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/queries/full") {
+        fullRequested = true;
+        return pendingFull;
+      }
+      if (parsed.pathname === "/queries/changed-since") {
+        const sinceVersion = parsed.searchParams.get("since_version") ?? "";
+        changedSinceVersions.push(sinceVersion);
+        if (sinceVersion === "0") return pendingEarlyRecovery;
+        return Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          deleted_entities: [],
+          deleted_tasks: [],
+          deleted_objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false,
+          has_more_deleted_entities: false,
+          has_more_deleted_tasks: false,
+          has_more_deleted_objects: false,
+          version: 5
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    try {
+      const startup = client.sync.start();
+      await vi.waitFor(() => expect(fullRequested).toBe(true));
+      const earlyRecovery = client.changedSince();
+      await vi.waitFor(() => expect(changedSinceVersions).toContain("0"));
+      releaseFull(
+        Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          version: 5,
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        })
+      );
+      await vi.waitFor(() => expect(changedSinceVersions).toContain("5"));
+      releaseEarlyRecovery(
+        Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          deleted_entities: [],
+          deleted_tasks: [],
+          deleted_objects: [],
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false,
+          has_more_deleted_entities: false,
+          has_more_deleted_tasks: false,
+          has_more_deleted_objects: false,
+          version: 0
+        })
+      );
+
+      await Promise.all([startup, earlyRecovery]);
+      expect(changedSinceVersions).toEqual(["0", "5"]);
+    } finally {
+      client.sync.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not apply a gapped feed event after its recovery is superseded by a failed recovery", async () => {
     const core = new FakeCore();
     let gapRecovery = false;

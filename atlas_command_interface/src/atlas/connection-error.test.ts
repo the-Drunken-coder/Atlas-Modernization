@@ -440,6 +440,13 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).not.toContain("query-credential-secret");
   });
 
+  it("redacts structured password hashes", () => {
+    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"passwordHash":"password-hash-secret","requestId":"request-123"}'));
+
+    expect(sanitized).not.toContain("password-hash-secret");
+    expect(sanitized).toContain("requestId");
+  });
+
   it("redacts prefixed structured credential fields", () => {
     const sanitized = sanitizeConnectionError(
       new Error('Atlas request failed: {"oauth_token":"oauth-token-secret","x_amz_credential":"amz-credential-secret"}')
