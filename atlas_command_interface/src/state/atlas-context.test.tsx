@@ -145,6 +145,7 @@ describe("AtlasProvider", () => {
 
     expect(await screen.findByText("error")).toBeInTheDocument();
     expect(screen.getByText("data source construction failed")).toBeInTheDocument();
+    expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
     expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
   });
 
@@ -164,6 +165,7 @@ describe("AtlasProvider", () => {
 
     expect(await screen.findByText("error")).toBeInTheDocument();
     expect(screen.getByText("data source watch failed")).toBeInTheDocument();
+    expect(screen.queryByTestId("health-error")).not.toBeInTheDocument();
     expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
   });
 
