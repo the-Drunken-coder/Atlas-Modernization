@@ -191,6 +191,7 @@ export class SyncEngine {
         },
         onEventError: () => {
           if (!isCurrentAttempt()) return;
+          this.feedConnectionAttempt++;
           if (this.lastError !== "Atlas Core recovery request failed") this.lastError = "Atlas Core feed event failed";
           if (!this.syncRunning) return;
           this.invalidateRecovery();
@@ -223,7 +224,11 @@ export class SyncEngine {
     }
   }
 
-  changedSince(generation = this.lifecycleGeneration, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+  changedSince(): Promise<boolean> {
+    return this.changedSinceForGeneration(this.lifecycleGeneration, this.cache.lastVersion);
+  }
+
+  private changedSinceForGeneration(generation: number, sinceVersion = this.cache.lastVersion): Promise<boolean> {
     if (!this.isCurrent(generation)) return Promise.resolve(false);
     if (this.activeRecoveryPromise && this.activeRecoveryGeneration === generation && this.activeRecoverySinceVersion === sinceVersion) {
       return this.activeRecoveryPromise;
@@ -388,7 +393,7 @@ export class SyncEngine {
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         const pollGeneration = generation;
-        void (this.activeRecoveryPromise ?? this.changedSince(pollGeneration)).catch(() => {
+        void (this.activeRecoveryPromise ?? this.changedSinceForGeneration(pollGeneration)).catch(() => {
           if (!this.isCurrent(pollGeneration)) return;
           this.degraded = true;
           this.healthy = false;
@@ -458,7 +463,7 @@ export class SyncEngine {
     if (!this.isCurrent(generation)) return;
     if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
     this.cache.replaceHydratedResources({ entities, tasks, objects });
-    const recovered = await this.changedSince(generation, snapshotVersion);
+    const recovered = await this.changedSinceForGeneration(generation, snapshotVersion);
     if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
   }
 
@@ -467,7 +472,7 @@ export class SyncEngine {
     if (event.version > this.cache.lastVersion + 1) {
       this.degraded = true;
       this.healthy = false;
-      const recovered = await this.changedSince(generation);
+      const recovered = await this.changedSinceForGeneration(generation);
       if (!recovered || !this.isCurrentFeedConnection(generation, attempt)) return;
     }
     if (!this.isCurrentFeedConnection(generation, attempt)) return;
@@ -494,7 +499,7 @@ export class SyncEngine {
         throw error;
       }
       if (!this.isCurrentFeedConnection(generation, attempt)) return;
-      await this.changedSince(generation);
+      await this.changedSinceForGeneration(generation);
     } finally {
       if (!this.isCurrent(generation)) return;
       this.reconnecting = false;

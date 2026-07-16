@@ -269,12 +269,12 @@ describe("AtlasClient sync", () => {
 
     const engine = (
       client as unknown as {
-        engine: { activeRecoveryPromise?: Promise<boolean>; changedSince: (generation: number) => Promise<boolean> };
+        engine: { activeRecoveryPromise?: Promise<boolean>; changedSinceForGeneration: (generation: number) => Promise<boolean> };
       }
     ).engine;
     const currentRecovery = engine.activeRecoveryPromise;
     expect(currentRecovery).toBeDefined();
-    await engine.changedSince(1);
+    await engine.changedSinceForGeneration(1);
     expect(engine.activeRecoveryPromise).toBe(currentRecovery);
     releaseSecondStartRecovery(
       Response.json({
@@ -542,6 +542,34 @@ describe("AtlasClient sync", () => {
     });
 
     expect(client.sync.snapshot().entities).not.toHaveProperty("asset-after-close");
+    client.sync.stop();
+  });
+
+  it("ignores queued events from a feed after an event error", async () => {
+    type FeedConnectOptions = { onEvent: (event: FeedEvent) => void | Promise<void>; onEventError: () => void };
+    let feedOptions!: FeedConnectOptions;
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
+    const engine = (
+      client as unknown as {
+        engine: { syncRunning: boolean; feed: { connect: (options: FeedConnectOptions) => Promise<void> } };
+      }
+    ).engine;
+    vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
+      feedOptions = options;
+    });
+
+    await client.connectFeed();
+    engine.syncRunning = true;
+    feedOptions.onEventError();
+    await feedOptions.onEvent({
+      event: "update",
+      resource_type: "entity",
+      id: "asset-after-event-error",
+      version: 1,
+      resource: { ...entity("asset-after-event-error"), metadata: metadata(1) }
+    });
+
+    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-after-event-error");
     client.sync.stop();
   });
 
@@ -957,7 +985,9 @@ describe("AtlasClient sync", () => {
       pollIntervalMs: 0
     });
     const engine = (
-      client as unknown as { engine: { lifecycleGeneration: number; changedSince: (generation: number, sinceVersion: number) => Promise<boolean> } }
+      client as unknown as {
+        engine: { lifecycleGeneration: number; changedSinceForGeneration: (generation: number, sinceVersion: number) => Promise<boolean> };
+      }
     ).engine;
 
     let unsubscribe: (() => void) | undefined;
@@ -975,7 +1005,7 @@ describe("AtlasClient sync", () => {
       });
       await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
       expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
-      await expect(engine.changedSince(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
+      await expect(engine.changedSinceForGeneration(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
       let resolveFollowUp!: () => void;
       const followUp = new Promise<void>((resolve) => {
         resolveFollowUp = resolve;
@@ -1166,13 +1196,15 @@ describe("AtlasClient sync", () => {
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
     const engine = (
-      client as unknown as { engine: { lifecycleGeneration: number; changedSince: (generation: number, sinceVersion: number) => Promise<boolean> } }
+      client as unknown as {
+        engine: { lifecycleGeneration: number; changedSinceForGeneration: (generation: number, sinceVersion: number) => Promise<boolean> };
+      }
     ).engine;
 
     await expect(client.changedSince()).rejects.toThrow("initial recovery failed");
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
-    await engine.changedSince(engine.lifecycleGeneration, 1);
+    await engine.changedSinceForGeneration(engine.lifecycleGeneration, 1);
     releaseOlder(new Error("stale recovery failed"));
     await expect(older).resolves.toBeUndefined();
 
@@ -1198,13 +1230,15 @@ describe("AtlasClient sync", () => {
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
     const engine = (
-      client as unknown as { engine: { lifecycleGeneration: number; changedSince: (generation: number, sinceVersion: number) => Promise<boolean> } }
+      client as unknown as {
+        engine: { lifecycleGeneration: number; changedSinceForGeneration: (generation: number, sinceVersion: number) => Promise<boolean> };
+      }
     ).engine;
 
     await client.changedSince();
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
-    await expect(engine.changedSince(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
+    await expect(engine.changedSinceForGeneration(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
     releaseOlder(
       Response.json({
         entities: [],

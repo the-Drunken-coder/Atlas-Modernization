@@ -512,6 +512,19 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe-query");
   });
 
+  it("redacts end-bounded delimiter-free credential aliases", () => {
+    const secrets = ["lower-structured-secret", "upper-structured-secret", "lower-query-secret", "upper-query-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: {"stripeapikey":"${secrets[0]}","STRIPEAPIKEY":"${secrets[1]}","stripeapikeyboard":"safe-field"} https://core.test?stripeapikey=${secrets[2]}&STRIPEAPIKEY=${secrets[3]}&stripeapikeyboard=safe-query`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe-field");
+    expect(sanitized).toContain("safe-query");
+  });
+
   it("redacts prefixed structured credential fields", () => {
     const sanitized = sanitizeConnectionError(
       new Error('Atlas request failed: {"oauth_token":"oauth-token-secret","x_amz_credential":"amz-credential-secret"}')
