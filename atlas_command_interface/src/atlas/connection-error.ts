@@ -7,7 +7,7 @@ const SENSITIVE_NAME_PATTERN =
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
 const CAMEL_SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}(?:\\]|$)`, "i");
 const SENSITIVE_WIRE_PARAMETER_NAME = /^(?:code|samlresponse)$/i;
-const PREFIXED_COMPOUND_SENSITIVE_NAME = /(?:api[ _-]?key|access[ _-]?token|authorization)(?:\]|$)/i;
+const PREFIXED_COMPOUND_SENSITIVE_NAME = /(?:api[ _-]?key|access[ _-]?token|authorization|password(?:[ _-]?hash)?|secret|token)(?:\]|$)/i;
 const BRACKETED_COLLECTION_CONTENT = String.raw`(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\\\[\]"'\n\r])*`;
 const AMBIGUOUS_NESTED_COLLECTION = String.raw`\[(?=${BRACKETED_COLLECTION_CONTENT}\[)[^\n\r]*`;
 const BRACKETED_COLLECTION = String.raw`\[${BRACKETED_COLLECTION_CONTENT}\]`;

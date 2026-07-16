@@ -541,11 +541,16 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe-query");
   });
 
-  it("redacts end-bounded delimiter-free credential aliases", () => {
-    const secrets = ["lower-structured-secret", "upper-structured-secret", "lower-query-secret", "upper-query-secret"];
+  it.each([
+    ["stripeapikey", "STRIPEAPIKEY", "stripeapikeyboard"],
+    ["stripepassword", "STRIPEPASSWORD", "stripepasswordhint"],
+    ["vaultsecret", "VAULTSECRET", "vaultsecretary"],
+    ["githubtoken", "GITHUBTOKEN", "githubtokenizer"]
+  ])("redacts end-bounded delimiter-free credential alias %s", (lowerName, upperName, ordinaryName) => {
+    const secrets = ["field-lower-secret", "field-upper-secret", "query-lower-secret", "query-upper-secret"];
     const sanitized = sanitizeConnectionError(
       new Error(
-        `Atlas request failed: {"stripeapikey":"${secrets[0]}","STRIPEAPIKEY":"${secrets[1]}","stripeapikeyboard":"safe-field"} https://core.test?stripeapikey=${secrets[2]}&STRIPEAPIKEY=${secrets[3]}&stripeapikeyboard=safe-query`
+        `Atlas failed: {"${lowerName}":"${secrets[0]}","${upperName}":"${secrets[1]}","${ordinaryName}":"safe-field"} ?${lowerName}=${secrets[2]}&${upperName}=${secrets[3]}&${ordinaryName}=safe-query`
       )
     );
 
