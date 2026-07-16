@@ -449,6 +449,17 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("[redacted]");
   });
 
+  it("redacts complete comma-delimited Digest authorization values", () => {
+    const secrets = ["digest-user-secret", "digest-response-secret"];
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: {"authorization": Digest username="${secrets[0]}", response="${secrets[1]}", algorithm=MD5} requestId=request-123`)
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain('"authorization": [redacted]}');
+    expect(sanitized).toContain("requestId=request-123");
+  });
+
   it("redacts authorization-shaped query parameters", () => {
     const sanitized = sanitizeConnectionError(
       new Error("Atlas request failed: https://core.test?safe=value&authorization=basic-secret&bearer_token=query-secret")

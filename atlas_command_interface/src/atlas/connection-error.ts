@@ -21,6 +21,8 @@ const STRUCTURED_FIELD_PREFIX = /(?:\\?["']?)([A-Za-z0-9_.%+\[\]-]+)\\?["']?\s*[
 const STRUCTURED_VALUE = new RegExp(
   String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|${AMBIGUOUS_SEMICOLON_VALUE}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`
 );
+const COMPLETE_HEADER_VALUE = new RegExp(String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^\n\r}]+)`);
+const AUTHORIZATION_NAME = /authorization(?:\]|$)/i;
 const COOKIE_FIELD = new RegExp(
   String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
   "gi"
@@ -54,13 +56,22 @@ function redactStructuredFields(message: string): string {
   for (let field = STRUCTURED_FIELD_PREFIX.exec(message); field; field = STRUCTURED_FIELD_PREFIX.exec(message)) {
     if (!isSensitiveName(field[1])) continue;
     const valueStart = STRUCTURED_FIELD_PREFIX.lastIndex;
-    const value = STRUCTURED_VALUE.exec(message.slice(valueStart))?.[0];
+    const value = (isAuthorizationName(field[1]) ? COMPLETE_HEADER_VALUE : STRUCTURED_VALUE).exec(message.slice(valueStart))?.[0];
     if (!value) continue;
     sanitized += `${message.slice(cursor, valueStart)}[redacted]`;
     cursor = valueStart + value.length;
     STRUCTURED_FIELD_PREFIX.lastIndex = cursor;
   }
   return `${sanitized}${message.slice(cursor)}`;
+}
+
+function isAuthorizationName(name: string): boolean {
+  try {
+    const decoded = decodeURIComponent(name.replace(/\+/g, " "));
+    return AUTHORIZATION_NAME.test(decoded.replace(/([a-z0-9])([A-Z])/g, "$1_$2"));
+  } catch {
+    return true;
+  }
 }
 
 function redactConnectionMessage(message: string): string {
