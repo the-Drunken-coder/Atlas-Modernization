@@ -71,7 +71,7 @@ func TestSerializeEntity(t *testing.T) {
 	if result.Extra == nil {
 		t.Error("Expected Extra to be set")
 	}
-	if result.Extra["version"] != nil {
+	if _, ok := result.Extra["version"]; ok {
 		t.Error("Expected blob version to be excluded from Extra")
 	}
 	if result.Metadata.CreatedAt == "" {
@@ -654,6 +654,9 @@ func TestSerializeObjectWithNilJSON(t *testing.T) {
 	if result.ContentType != nil {
 		t.Error("Expected ContentType to be nil")
 	}
+	if result.Extra == nil {
+		t.Error("Expected Extra to be an empty object")
+	}
 }
 
 func TestSerializeObjectWithEmptyJSON(t *testing.T) {
@@ -672,6 +675,9 @@ func TestSerializeObjectWithEmptyJSON(t *testing.T) {
 	}
 	if result.Metadata.CreatedAt == "" || result.Metadata.UpdatedAt == "" {
 		t.Errorf("Expected metadata timestamps set, got created=%q updated=%q", result.Metadata.CreatedAt, result.Metadata.UpdatedAt)
+	}
+	if result.Extra == nil {
+		t.Error("Expected Extra to be an empty object")
 	}
 }
 

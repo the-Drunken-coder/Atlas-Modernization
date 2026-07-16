@@ -80,13 +80,13 @@ function entityMeta(entity: EntityResource, now: number): string {
     const parts = [
       connection ? connectionStatusLabel(connection) : undefined,
       battery !== undefined ? formatPercent(battery) : undefined,
-      formatRelativeTime(entityLastSeen(entity))
+      formatRelativeTime(entityLastSeen(entity), now)
     ];
     return parts.filter(Boolean).join(" · ");
   }
   if (kind === "track") {
     const classification = entityClassification(entity);
-    return [classification, formatRelativeTime(entityLastSeen(entity))].filter(Boolean).join(" · ");
+    return [classification, formatRelativeTime(entityLastSeen(entity), now)].filter(Boolean).join(" · ");
   }
   const geometry = entityGeometry(entity);
   return geometry ? geometry.type : "No geometry";

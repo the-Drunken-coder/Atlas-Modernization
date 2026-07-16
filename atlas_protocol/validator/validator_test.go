@@ -253,6 +253,16 @@ func TestObjectDetailResourceUsesExtraWithoutWideningFeedResources(t *testing.T)
 		t.Fatal("ValidateObjectResource accepted full-detail extra")
 	}
 
+	missingExtra := make(map[string]any, len(detail)-1)
+	for key, value := range detail {
+		if key != "extra" {
+			missingExtra[key] = value
+		}
+	}
+	if errors := ValidateObjectDetailResource(missingExtra); len(errors) == 0 {
+		t.Fatal("ValidateObjectDetailResource accepted missing required extra")
+	}
+
 	detail["payload"] = detail["extra"]
 	delete(detail, "extra")
 	if errors := ValidateObjectDetailResource(detail); len(errors) == 0 {

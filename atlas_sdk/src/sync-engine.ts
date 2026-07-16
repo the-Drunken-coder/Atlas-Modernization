@@ -319,9 +319,9 @@ export class SyncEngine {
   }
 
   async readObject(id: string, options?: ReadOptions): Promise<ObjectDetailResource> {
-    const cached = this.cache.entry("object", id);
-    if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached?.value && !cached.deleted && cached.detail) {
-      return cached.value;
+    const cached = this.cache.objectDetail(id);
+    if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
+      return cached;
     }
     const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectDetailResource);
     assertExpectedResourceID("object", id, object);

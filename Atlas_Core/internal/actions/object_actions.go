@@ -182,6 +182,7 @@ type UpdateObjectParams struct {
 	UsageHints      []string
 	ReferencedBy    []map[string]interface{}
 	Extra           map[string]interface{}
+	RemoveExtraKeys []string
 	ExpectedVersion *int64
 }
 
@@ -193,7 +194,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	objectID = SanitizeID(objectID)
 
 	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
-		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 {
+		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
 		if params.ExpectedVersion != nil {
 			return a.lockObjectAndCheckExpectedVersion(ctx, objectID, params.ExpectedVersion)
 		}

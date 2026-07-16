@@ -47,7 +47,13 @@ func (a *ObjectActions) PublishCommandCatalog(ctx context.Context) error {
 		return fmt.Errorf("upload embedded command catalog: %w", err)
 	}
 
-	if _, err := a.Update(ctx, commandcatalog.ObjectID, UpdateObjectParams{Extra: catalogData}); err != nil {
+	var removeExtraKeys []string
+	if existing != nil {
+		for key := range existing.GetExtra() {
+			removeExtraKeys = append(removeExtraKeys, key)
+		}
+	}
+	if _, err := a.Update(ctx, commandcatalog.ObjectID, UpdateObjectParams{Extra: catalogData, RemoveExtraKeys: removeExtraKeys}); err != nil {
 		return fmt.Errorf("publish embedded command catalog metadata: %w", err)
 	}
 	return nil
@@ -71,15 +77,12 @@ func commandCatalogObjectMatches(object *models.MediaObject, catalogData map[str
 	}
 
 	expectedExtra := make(map[string]interface{}, len(catalogData)-1)
-	actualExtra := object.GetExtra()
-	actualCatalogExtra := make(map[string]interface{}, len(catalogData)-1)
 	for key, value := range catalogData {
 		if key != "type" {
 			expectedExtra[key] = value
-			actualCatalogExtra[key] = actualExtra[key]
 		}
 	}
 	expectedJSON, expectedErr := json.Marshal(expectedExtra)
-	actualJSON, actualErr := json.Marshal(actualCatalogExtra)
+	actualJSON, actualErr := json.Marshal(object.GetExtra())
 	return expectedErr == nil && actualErr == nil && bytes.Equal(actualJSON, expectedJSON)
 }

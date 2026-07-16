@@ -19,13 +19,12 @@ func TestCommandCatalogObjectMatchesPublishedCatalog(t *testing.T) {
 		"commands":    []interface{}{map[string]interface{}{"id": "goto"}},
 	}
 	storedJSON, err := json.Marshal(map[string]interface{}{
-		"bucket":        "atlas-media",
-		"size_bytes":    100,
-		"usage_hints":   []string{commandcatalog.ObjectID},
-		"name":          catalogData["name"],
-		"description":   catalogData["description"],
-		"commands":      catalogData["commands"],
-		"operator_note": "preserve this annotation",
+		"bucket":      "atlas-media",
+		"size_bytes":  100,
+		"usage_hints": []string{commandcatalog.ObjectID},
+		"name":        catalogData["name"],
+		"description": catalogData["description"],
+		"commands":    catalogData["commands"],
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +42,23 @@ func TestCommandCatalogObjectMatchesPublishedCatalog(t *testing.T) {
 	if commandCatalogObjectMatches(object, catalogData, 101, "atlas-media") {
 		t.Fatal("catalog with stale blob size matched")
 	}
+	staleJSON, err := json.Marshal(map[string]interface{}{
+		"bucket":        "atlas-media",
+		"size_bytes":    100,
+		"usage_hints":   []string{commandcatalog.ObjectID},
+		"name":          catalogData["name"],
+		"description":   catalogData["description"],
+		"commands":      catalogData["commands"],
+		"operator_note": "stale annotation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.JSON = staleJSON
+	if commandCatalogObjectMatches(object, catalogData, 100, "atlas-media") {
+		t.Fatal("catalog with unexpected extra metadata matched")
+	}
+	object.JSON = storedJSON
 	catalogData["description"] = "Changed commands"
 	if commandCatalogObjectMatches(object, catalogData, 100, "atlas-media") {
 		t.Fatal("catalog with stale discovery metadata matched")

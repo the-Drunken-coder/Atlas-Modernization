@@ -36,7 +36,7 @@ Keep normal simulation work pointed at a local Atlas Core (`ATLAS_LOCAL_BASE_URL
 
 Deployed scenarios must provide explicit run-owned task IDs. Core-generated `command-*` task IDs remain available to local scenarios only because their IDs are not known early enough to record safely before a remote mutation.
 
-Configured API keys, including the launcher-generated local key, are read only by the local Node server. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
+Configured API keys, including the launcher-generated local key, are read-only server configuration that only the local Node server reads. Browser code calls same-origin simulation routes and never receives configured keys; a key pasted into the UI necessarily remains in that browser tab's memory.
 
 ## Development
 

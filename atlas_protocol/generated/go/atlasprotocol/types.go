@@ -173,7 +173,7 @@ type ObjectDetailResource struct {
 	ReferencedBy []ObjectReference    `json:"referenced_by,omitempty"`
 	Bucket       *string              `json:"bucket"`
 	Metadata     MetadataBlock        `json:"metadata"`
-	Extra        map[string]JSONValue `json:"extra,omitempty"`
+	Extra        map[string]JSONValue `json:"extra"`
 }
 
 type FeedEvent struct {

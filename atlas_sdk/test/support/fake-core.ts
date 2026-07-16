@@ -570,11 +570,7 @@ export class FakeCore {
   }
 
   private objectDetail(object: ObjectResource): ObjectDetailResource {
-    const extra = this.objectExtras.get(object.object_id);
-    if (!extra || Object.keys(extra).length === 0) {
-      return object;
-    }
-    return { ...object, extra: { ...extra } };
+    return { ...object, extra: { ...(this.objectExtras.get(object.object_id) ?? {}) } };
   }
 
   private applyObjectExtra(id: string, incoming: ObjectCreateRequest["extra"] | ObjectUpdateRequest["extra"]): void {

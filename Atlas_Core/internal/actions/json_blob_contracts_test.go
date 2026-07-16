@@ -98,6 +98,28 @@ func TestRemoveBlobExtraKeysKeepsPromotedFields(t *testing.T) {
 	}
 }
 
+func TestObjectJSONPatchReplacesSelectedExtraFields(t *testing.T) {
+	patched, err := patchValidatedJSONBlob(objectJSONPatch(
+		json.RawMessage(`{"name":"old","stale":"remove"}`),
+		UpdateObjectParams{
+			Extra:           map[string]interface{}{"name": "new"},
+			RemoveExtraKeys: []string{"name", "stale", "size_bytes"},
+		},
+		nil,
+	))
+	if err != nil {
+		t.Fatalf("patch object JSON: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(patched, &got); err != nil {
+		t.Fatalf("decode patched object JSON: %v", err)
+	}
+	if want := map[string]interface{}{"name": "new"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("patched object JSON = %#v, want %#v", got, want)
+	}
+}
+
 func TestMergeEntityComponentsUsesSharedStoredTypeGuard(t *testing.T) {
 	blob := map[string]interface{}{
 		string(jsonBlobFieldComponents): "corrupt",

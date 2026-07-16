@@ -115,6 +115,10 @@ func SerializeObject(o *models.MediaObject) *protocol.ObjectDetailResource {
 	if usageHints == nil {
 		usageHints = []string{}
 	}
+	extra := o.GetExtra()
+	if extra == nil {
+		extra = map[string]interface{}{}
+	}
 	return &protocol.ObjectDetailResource{
 		ObjectID:     o.ObjectID,
 		Path:         o.Path,
@@ -129,7 +133,7 @@ func SerializeObject(o *models.MediaObject) *protocol.ObjectDetailResource {
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 			Version:   o.Version,
 		},
-		Extra: o.GetExtra(),
+		Extra: extra,
 	}
 }
 

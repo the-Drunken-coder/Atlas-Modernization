@@ -21,6 +21,13 @@ function asset(lastSeen?: string): EntityResource {
   };
 }
 
+function fieldValue(label: string): HTMLElement {
+  const term = screen.getByText(label, { selector: "dt" });
+  const value = term.nextElementSibling;
+  if (!(value instanceof HTMLElement)) throw new TypeError(`${label} field is missing its value`);
+  return value;
+}
+
 describe("asset connection status", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -29,12 +36,12 @@ describe("asset connection status", () => {
   afterEach(() => vi.useRealTimers());
 
   it.each([
-    ["fresh", "2026-06-20T00:09:50Z", "Connected", "var(--link-connected)"],
-    ["stale", "2026-06-20T00:09:00Z", "Reported connected — stale heartbeat", "var(--heartbeat-stale)"],
-    ["offline", "2026-06-20T00:00:00Z", "Reported connected — offline", "var(--heartbeat-offline)"],
-    ["clock error", "2026-06-20T00:10:31Z", "Reported connected — clock error", "var(--text-3)"],
-    ["missing", undefined, "Reported connected — never checked in", "var(--text-3)"]
-  ] as const)("shows %s heartbeat qualification consistently", (_case, lastSeen, label, color) => {
+    ["fresh", "2026-06-20T00:09:50Z", "Connected", "var(--link-connected)", "10s ago", "var(--heartbeat-fresh)"],
+    ["stale", "2026-06-20T00:09:00Z", "Reported connected — stale heartbeat", "var(--heartbeat-stale)", "1m ago", "var(--heartbeat-stale)"],
+    ["offline", "2026-06-20T00:00:00Z", "Reported connected — offline", "var(--heartbeat-offline)", "10m ago", "var(--heartbeat-offline)"],
+    ["clock error", "2026-06-20T00:10:31Z", "Reported connected — clock error", "var(--text-3)", "Clock error", "var(--text-3)"],
+    ["missing", undefined, "Reported connected — never checked in", "var(--text-3)", undefined, undefined]
+  ] as const)("shows %s heartbeat qualification consistently", (_case, lastSeen, label, color, heartbeatLabel, heartbeatColor) => {
     const entity = asset(lastSeen);
     const { unmount } = render(<EntityList entities={[entity]} emptyLabel="none" onSelect={() => {}} />);
 
@@ -44,6 +51,14 @@ describe("asset connection status", () => {
 
     render(<AssetInspector entity={entity} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
     expect(screen.getByText(label)).toBeInTheDocument();
+    const heartbeat = fieldValue("Heartbeat");
+    if (heartbeatLabel && heartbeatColor) {
+      expect(heartbeat).toHaveTextContent(heartbeatLabel);
+      expect(heartbeat.querySelector(".pill")).toHaveStyle({ "--pill-color": heartbeatColor });
+    } else {
+      expect(heartbeat).toHaveTextContent("—");
+      expect(heartbeat.querySelector(".pill")).toBeNull();
+    }
   });
 
   it("updates the entity list when a fresh heartbeat becomes stale without a snapshot change", () => {

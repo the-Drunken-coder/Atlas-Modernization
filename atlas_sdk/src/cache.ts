@@ -1,4 +1,4 @@
-import type { EntityResource, ObjectDetailResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
+import { isObjectDetailResource, type EntityResource, type ObjectDetailResource, type ObjectResource, type ResourceType, type TaskResource } from "./protocol.js";
 import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 
@@ -96,6 +96,11 @@ export class ResourceCache {
   value<TType extends ResourceType>(type: TType, id: string): ResourceOf<TType> | undefined {
     const entry = this.entry(type, id);
     return entry && !entry.deleted ? entry.value : undefined;
+  }
+
+  objectDetail(id: string): ObjectDetailResource | undefined {
+    const entry = this.entries.object.get(id);
+    return entry?.detail && entry.value && !entry.deleted && isObjectDetailResource(entry.value) ? entry.value : undefined;
   }
 
   snapshot(): SyncSnapshot {

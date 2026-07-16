@@ -1710,7 +1710,7 @@ describe("AtlasClient sync", () => {
     expect(first).toEqual({
       entities: { [firstEntity.entity_id]: firstEntity, [secondEntity.entity_id]: secondEntity },
       tasks: { [firstTask.task_id]: firstTask, [deletedTask.task_id]: deletedTask },
-      objects: { [cachedObject.object_id]: cachedObject }
+      objects: { [cachedObject.object_id]: { ...cachedObject, extra: {} } }
     });
     expect(second).toEqual(first);
     expect(second).toBe(first);
@@ -1777,6 +1777,8 @@ describe("AtlasClient sync", () => {
     const beforeDetail = cache.snapshot();
     const detail = { ...summary, extra: { nested: { confidence: 0.91 } } };
 
+    expect(cache.objectDetail(summary.object_id)).toBeUndefined();
+
     expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
     const afterDetail = cache.snapshot();
 
@@ -1785,6 +1787,7 @@ describe("AtlasClient sync", () => {
     expect(afterDetail.objects).not.toBe(beforeDetail.objects);
     expect(cache.value("object", detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
     expect(cache.entry("object", detail.object_id)).toMatchObject({ version: 2, detail: true });
+    expect(cache.objectDetail(detail.object_id)).toBe(afterDetail.objects[detail.object_id]);
     expect(afterDetail.objects[detail.object_id]).toMatchObject({ extra: detail.extra });
     expect(Object.isFrozen(Reflect.get(afterDetail.objects[detail.object_id], "extra").nested)).toBe(true);
 

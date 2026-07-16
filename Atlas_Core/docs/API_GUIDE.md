@@ -602,6 +602,7 @@ Smoke browser auth and command task creation against Core:
 ```bash
 CORE_URL=http://localhost:8000
 COOKIE_JAR=$(umask 077 && mktemp "${TMPDIR:-/tmp}/atlas-core-admin.cookies.XXXXXX") || exit 1
+trap 'rm -f "$COOKIE_JAR"' EXIT
 LOGIN_JSON="$(
   python3 - <<'PY'
 import json
@@ -617,7 +618,7 @@ PY
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H 'Origin: http://localhost:5173' \
   -H 'Content-Type: application/json' \
-  --data-binary "$LOGIN_JSON"
+  --data-binary @- <<<"$LOGIN_JSON"
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
 
@@ -653,12 +654,11 @@ Response:
 }
 ```
 
-Log out and remove the cookie jar:
+Log out; the `EXIT` trap removes the cookie jar even if logout fails:
 
 ```bash
 curl -fsS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
-  -H 'Origin: http://localhost:5173' &&
-  rm -f "$COOKIE_JAR"
+  -H 'Origin: http://localhost:5173'
 ```
 
 ## Minimal Curl Flow
@@ -669,6 +669,7 @@ Create an entity:
 CORE_URL=http://localhost:8000
 UI_ORIGIN=http://localhost:5173
 COOKIE_JAR=$(umask 077 && mktemp "${TMPDIR:-/tmp}/atlas-core-admin.cookies.XXXXXX") || exit 1
+trap 'rm -f "$COOKIE_JAR"' EXIT
 LOGIN_JSON="$(
   python3 - <<'PY'
 import json
@@ -684,7 +685,7 @@ PY
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  --data-binary "$LOGIN_JSON"
+  --data-binary @- <<<"$LOGIN_JSON"
 
 curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
   -H "Origin: $UI_ORIGIN" \
@@ -725,10 +726,9 @@ Poll changes since version zero:
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/queries/changed-since?since_version=0"
 ```
 
-Log out and remove the cookie jar:
+Log out; the `EXIT` trap removes the cookie jar even if logout fails:
 
 ```bash
 curl -fsS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
-  -H "Origin: $UI_ORIGIN" &&
-  rm -f "$COOKIE_JAR"
+  -H "Origin: $UI_ORIGIN"
 ```

@@ -117,6 +117,8 @@ def ensure_local_auth(docker_dir):
     else:
         print("[INFO] Reusing local ATLAS_ADMIN_PASSWORD (redacted)")
 
+    if os.getenv("ENABLE_API_AUTH", "").strip().lower() == "false":
+        print("[INFO] Local authenticated-stack setup is overriding ENABLE_API_AUTH=false")
     os.environ["ENABLE_API_AUTH"] = "true"
     os.environ["API_AUTH_KEY"] = api_auth_key
     os.environ["ATLAS_ADMIN_PASSWORD"] = admin_password

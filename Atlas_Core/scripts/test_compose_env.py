@@ -142,7 +142,7 @@ printf '%s' "$LOGIN_JSON"
 
         self.assertNotIn(". Atlas_Core/docker/.env.local", guide)
         self.assertEqual(guide.count('parse_compose_env_file("Atlas_Core/docker/.env.local")'), 2)
-        self.assertEqual(guide.count('--data-binary "$LOGIN_JSON"'), 2)
+        self.assertEqual(guide.count('--data-binary @- <<<"$LOGIN_JSON"'), 2)
         self.assertEqual(guide.count(')" || exit 1'), 2)
 
     def test_format_compose_env_value_rejects_control_characters(self) -> None:

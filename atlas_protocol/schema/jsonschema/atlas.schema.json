@@ -981,6 +981,7 @@
       "required": [
         "bucket",
         "content_type",
+        "extra",
         "metadata",
         "object_id",
         "path",

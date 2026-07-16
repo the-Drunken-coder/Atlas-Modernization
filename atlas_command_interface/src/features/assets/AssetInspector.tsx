@@ -57,7 +57,7 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
               "Heartbeat",
               level ? (
                 <StatusPill
-                  label={level === "clock-error" ? "Clock error" : formatRelativeTime(lastSeen)}
+                  label={level === "clock-error" ? "Clock error" : formatRelativeTime(lastSeen, now)}
                   color={level === "clock-error" ? "var(--text-3)" : heartbeatColor(level)}
                 />
               ) : (

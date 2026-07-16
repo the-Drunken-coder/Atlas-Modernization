@@ -498,7 +498,7 @@ class TestCore {
         version: this.version,
         entities: [...this.entities.values()],
         tasks: [],
-        objects: [...this.objects.values()].map(objectResource),
+        objects: [...this.objects.values()],
         has_more_entities: false,
         has_more_tasks: false,
         has_more_objects: false
@@ -510,7 +510,10 @@ class TestCore {
       return Response.json({
         entities: changed.filter(isEntityUpsert).map((event) => event.resource),
         tasks: [],
-        objects: changed.filter(isObjectUpsert).map((event) => event.resource),
+        objects: changed.filter(isObjectUpsert).flatMap((event) => {
+          const object = this.objects.get(event.id);
+          return object ? [object] : [];
+        }),
         deleted_entities: [],
         deleted_tasks: [],
         deleted_objects: changed.filter(isObjectDelete).map((event) => ({ id: event.id, type: "object", version: event.version })),
@@ -574,7 +577,7 @@ class TestCore {
       bucket: null,
       metadata: { ...metadata, version }
     };
-    const response = Object.keys(extra).length > 0 ? { ...resource, extra } : resource;
+    const response: ObjectDetailResource = { ...resource, extra };
     this.objects.set(id, response);
     const event: FeedEvent = { event: "update", resource_type: "object", id, version, resource };
     this.events.push(event);
@@ -676,11 +679,6 @@ class BlockedWebSocket {
   private dispatch(type: string, event: { data?: unknown }): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
-}
-
-function objectResource(object: ObjectDetailResource): ObjectResource {
-  const { extra: _extra, ...resource } = object;
-  return resource;
 }
 
 function isEntityUpsert(event: FeedEvent): event is Extract<FeedEvent, { resource_type: "entity"; event: "create" | "update" }> {

@@ -322,10 +322,10 @@ func TestMediaObjectGetExtra(t *testing.T) {
 		t.Errorf("Expected custom='value', got %v", extra["custom"])
 	}
 	// Promoted fields should be excluded
-	if extra["size_bytes"] != nil {
+	if _, ok := extra["size_bytes"]; ok {
 		t.Error("size_bytes should be excluded from extra")
 	}
-	if extra["version"] != nil {
+	if _, ok := extra["version"]; ok {
 		t.Error("version should be excluded from extra")
 	}
 }

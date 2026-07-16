@@ -169,6 +169,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ),
             patch("atlas.parse_compose_env_file", return_value={}),
             patch("atlas.secrets.token_urlsafe") as generate,
+            patch("builtins.print") as output,
         ):
             self.assertEqual(
                 ensure_local_auth("/tmp/docker"),
@@ -179,6 +180,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 },
             )
             generate.assert_not_called()
+            self.assertIn("overriding ENABLE_API_AUTH=false", " ".join(str(call) for call in output.call_args_list))
 
         with (
             patch.dict(

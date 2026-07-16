@@ -45,7 +45,7 @@ def valid_catalog_without_parameter_type() -> dict[str, object]:
 
 class SeedCommandCatalogValidationTest(unittest.TestCase):
     def test_committed_catalog_is_valid(self) -> None:
-        self.assertIsNotNone(_load_command_catalog_data())
+        _validate_command_catalog_data(_load_command_catalog_data())
 
     def test_api_auth_headers_use_atlas_specific_key_first(self) -> None:
         with patch.dict(
