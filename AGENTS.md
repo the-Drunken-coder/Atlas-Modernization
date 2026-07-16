@@ -4,6 +4,12 @@ If you ever encounter something in the project that surprises you, please alert 
 
 For UI work, ask the developer targeted behavior questions when interaction states or precedence are ambiguous. Confirm the exact user-visible behavior instead of guessing, especially when selection, focus, hover, keyboard, and pointer states can conflict; these questions help the developer describe the intended experience.
 
+Connection-error details may receive arbitrary client or server error text. Sanitization must cover structured fields, URL userinfo, query credentials, and bare bearer tokens before any message reaches the UI.
+
+In `AtlasProvider`, only a failure from `dataSource.start()` is a recoverable Atlas Core connection error. Data-source construction, watch registration, and post-start snapshot failures are fatal interface initialization errors.
+
+The SDK sync engine can receive delayed recovery, feed event, error, or close callbacks from an earlier lifecycle generation; guard that generation before mutating shared recovery-operation, status, or snapshot state across stop/start.
+
 The Go service module lives under **`Atlas_Core/`** (run `go test ./...` and `go run ./cmd/atlas_core` from that directory). The repo is multi-module, so choose the narrowest validation stack that matches the task:
 
 ```sh

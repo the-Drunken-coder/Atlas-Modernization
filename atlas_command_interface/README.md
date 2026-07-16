@@ -79,7 +79,7 @@ The generated local admin password is development-only. Set `ATLAS_ADMIN_PASSWOR
 
 ## Map Sources
 
-The authenticated workspace builds MapLibre raster styles from provider tile URL templates. Public sources are selectable by default; credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time. Google Satellite also requires a successful tile-session request; with a key but no session it remains visible as unavailable.
+The authenticated workspace builds MapLibre raster styles from provider tile URL templates. `maptiler-osm-dark` (`MapTiler OSM Dark`) is the initial default when no explicit operator selection exists. Credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time. Google Satellite also requires a successful tile-session request; with a key but no session it remains visible as unavailable. If the configured default is unavailable, the interface uses its existing map-source error state instead of silently selecting another deployed source.
 
 Always available:
 
@@ -96,7 +96,7 @@ Credentialed sources:
 
 Microsoft imagery via Bing or Azure Maps is intentionally deferred for the static app because it needs supported tile metadata, required attribution handling, and safer token/key handling.
 
-Production selects the first available credentialed source in the provider order above. `openstreetmap-default` remains the documented no-key fallback and a selectable source, but deployments with a configured provider do not use `tile.openstreetmap.org` as their operational default.
+The configured `maptiler-osm-dark` source remains the default whether or not its key is available. A valid explicit operator selection takes precedence; `openstreetmap-default` remains selectable but is not an automatic fallback when the configured default is unavailable.
 
 ## Cloudflare Pages
 

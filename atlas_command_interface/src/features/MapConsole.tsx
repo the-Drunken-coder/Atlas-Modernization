@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { commandsForTargeting, type CommandAvailability } from "../atlas/command-targeting.js";
-import type { ConnectionHealth } from "../atlas/data-source.js";
 import { entityGeometry, entityKind, type EntityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
@@ -11,6 +10,7 @@ import { initialSidebarState, listForKind, sidebarReducer, type ListKind, type S
 import { useAtlas } from "../state/atlas-context.js";
 import type { MapSourceConfig } from "../app/config.js";
 import { AppShell } from "../ui/layout/AppShell.js";
+import { ConnectionBadge } from "../ui/ConnectionBadge.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import { MapView, buildMapSources, type MapContextMenuInfo, type MapReticleTarget } from "../ui/map/MapView.js";
@@ -253,15 +253,8 @@ export function MapConsole() {
   const activeList: ListKind | null = sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
-    availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId)) ??
-    atlas.config.mapSources.find((source): source is AvailableMapSourceConfig => Boolean(source.style));
-  if (!selectedMapSource) {
-    return (
-      <div className="app-error">
-        <span>No usable map sources are configured.</span>
-      </div>
-    );
-  }
+    availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
+  const mapSourcePickerValue = selectedMapSource?.id ?? selectedMapSourceId ?? atlas.config.defaultMapSourceId;
 
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
@@ -322,28 +315,34 @@ export function MapConsole() {
           <>
             <div className="map-world-frame">
               <div className="map-stage">
-                <MapView
-                  sources={sources}
-                  styleId={selectedMapSource.id}
-                  style={selectedMapSource.style}
-                  selectedId={selectedId}
-                  editing={
-                    edit
-                      ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
-                      : undefined
-                  }
-                  focusTarget={focusTarget}
-                  cameraCommand={cameraCommand}
-                  onSelectEntity={selectEntityById}
-                  onMapContextMenu={onMapContextMenu}
-                  onBackgroundClick={() => {
-                    setMapMenu(null);
-                    dispatch({ type: "clearSelection" });
-                  }}
-                  onStyleSwitchError={handleMapStyleSwitchError}
-                />
-                <ConnectionBadge health={atlas.health} />
-                <MapSourcePicker sources={atlas.config.mapSources} value={selectedMapSource.id} onChange={setSelectedMapSourceId} />
+                {selectedMapSource ? (
+                  <MapView
+                    sources={sources}
+                    styleId={selectedMapSource.id}
+                    style={selectedMapSource.style}
+                    selectedId={selectedId}
+                    editing={
+                      edit
+                        ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
+                        : undefined
+                    }
+                    focusTarget={focusTarget}
+                    cameraCommand={cameraCommand}
+                    onSelectEntity={selectEntityById}
+                    onMapContextMenu={onMapContextMenu}
+                    onBackgroundClick={() => {
+                      setMapMenu(null);
+                      dispatch({ type: "clearSelection" });
+                    }}
+                    onStyleSwitchError={handleMapStyleSwitchError}
+                  />
+                ) : (
+                  <div className="app-error" role="alert">
+                    <span>The configured default map source is unavailable.</span>
+                  </div>
+                )}
+                <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
+                <MapSourcePicker sources={atlas.config.mapSources} value={mapSourcePickerValue} onChange={setSelectedMapSourceId} />
               </div>
             </div>
           </>
@@ -493,22 +492,6 @@ function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onP
 
 function entityReticleTarget(entity: EntityResource | undefined): MapReticleTarget | null {
   return entity && entityKind(entity) !== "other" ? { type: "entity", id: entity.entity_id } : null;
-}
-
-function ConnectionBadge({ health }: { health: ConnectionHealth }) {
-  const state = connectionBadgeState(health);
-  return (
-    <div className="connection-badge" data-state={state.state} role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
-      <span className="connection-badge__dot" aria-hidden="true" />
-      <span>{state.label}</span>
-    </div>
-  );
-}
-
-function connectionBadgeState(health: ConnectionHealth): { label: string; state: "live" | "reconnecting" | "connecting" } {
-  if (health.running && health.healthy && !health.degraded) return { label: "Live", state: "live" };
-  if (health.running) return { label: "Reconnecting", state: "reconnecting" };
-  return { label: "Connecting", state: "connecting" };
 }
 
 function panelTitle(sidebar: SidebarState, selectionKind?: EntityKind): string {

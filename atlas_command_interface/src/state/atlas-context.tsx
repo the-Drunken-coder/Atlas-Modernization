@@ -2,7 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { fetchAppConfig, type AppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
-import { createSdkDataSource, type AtlasDataSource, type CommandSubmission, type ConnectionHealth } from "../atlas/data-source.js";
+import { createSdkDataSource, type AtlasDataSource, type CommandSubmission, type ConnectionError, type ConnectionHealth } from "../atlas/data-source.js";
+import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { emptySnapshot, type AtlasSnapshot } from "../atlas/store.js";
 
@@ -11,6 +12,7 @@ export type AtlasStatus = "loading" | "ready" | "error";
 export type AtlasContextValue = {
   status: AtlasStatus;
   error?: string;
+  connectionError?: ConnectionError;
   config?: AppConfig;
   snapshot: AtlasSnapshot;
   catalog?: CommandCatalog;
@@ -38,6 +40,7 @@ export function AtlasStaticProvider({ children, value }: { children: ReactNode; 
 export function AtlasProvider({ children, config: providedConfig, loadConfig = fetchAppConfig, createDataSource = createSdkDataSource }: AtlasProviderProps) {
   const [status, setStatus] = useState<AtlasStatus>("loading");
   const [error, setError] = useState<string>();
+  const [connectionError, setConnectionError] = useState<ConnectionError>();
   const [config, setConfig] = useState<AppConfig>();
   const [catalog, setCatalog] = useState<CommandCatalog>();
   const [snapshot, setSnapshot] = useState<AtlasSnapshot>(emptySnapshot);
@@ -62,11 +65,25 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       dataSourceRef.current = undefined;
     };
 
-    setStatus("loading");
+    setStatus((current) => (current === "ready" ? "ready" : "loading"));
     setError(undefined);
+    setConnectionError(undefined);
     setSnapshot(emptySnapshot());
     setCatalog(undefined);
     setHealth(DEFAULT_HEALTH);
+
+    const publishHealth = (next: ConnectionHealth) => {
+      if (cancelled) return;
+      const error = next.error ? { ...next.error, message: sanitizeConnectionError(next.error.message) } : undefined;
+      setHealth(error ? { ...next, error } : next);
+      if (error) {
+        setConnectionError(error);
+        setError(error.message);
+      } else if (next.healthy && !next.degraded) {
+        setConnectionError(undefined);
+        setError(undefined);
+      }
+    };
 
     (async () => {
       try {
@@ -90,7 +107,19 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
           }
         );
 
-        await dataSource.start();
+        try {
+          await dataSource.start();
+        } catch (cause) {
+          if (cancelled) return;
+          cleanup();
+          const message = sanitizeConnectionError(cause);
+          const connectionError = { source: "startup" as const, message };
+          setError(message);
+          setConnectionError(connectionError);
+          setHealth((current) => ({ ...current, error: connectionError }));
+          setStatus("ready");
+          return;
+        }
         if (cancelled) return;
 
         setSnapshot(dataSource.snapshot());
@@ -108,7 +137,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         if (dataSource.health) {
           const poll = () => {
             const next = dataSource.health?.();
-            if (next) setHealth(next);
+            if (next) publishHealth(next);
           };
           poll();
           healthTimer = setInterval(poll, 3000);
@@ -116,7 +145,8 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       } catch (cause) {
         if (cancelled) return;
         cleanup();
-        setError(cause instanceof Error ? cause.message : String(cause));
+        const message = sanitizeConnectionError(cause);
+        setError(message);
         setStatus("error");
       }
     })();
@@ -129,8 +159,10 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
   }, [providedConfig, loadConfig, createDataSource, connectionAttempt]);
 
   const reconnect = useCallback(() => {
-    setStatus("loading");
+    setStatus((current) => (current === "ready" ? "ready" : "loading"));
     setError(undefined);
+    setConnectionError(undefined);
+    setHealth(DEFAULT_HEALTH);
     setConnectionAttempt((attempt) => attempt + 1);
   }, []);
 
@@ -138,6 +170,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
     () => ({
       status,
       error,
+      connectionError,
       config,
       snapshot,
       catalog,
@@ -154,7 +187,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         return dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
       }
     }),
-    [status, error, config, snapshot, catalog, health, reconnect]
+    [status, error, connectionError, config, snapshot, catalog, health, reconnect]
   );
 
   return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;

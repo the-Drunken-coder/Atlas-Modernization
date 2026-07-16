@@ -124,6 +124,66 @@ describe("sdk data source", () => {
     expect(dataSource.health?.()).toEqual({ running: false, healthy: false, degraded: false });
   });
 
+  it("reports and clears startup errors across retry and dispose", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new TestCore();
+    const secret = "startup-userinfo-secret";
+    let failRevision = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (failRevision && new URL(String(input)).pathname === "/protocol/revision") {
+          return Promise.resolve(
+            Response.json({ error_code: "CORE_UNAVAILABLE", message: `Core unavailable: https://user:${secret}@core.test` }, { status: 503 })
+          );
+        }
+        return core.fetch(String(input), init);
+      })
+    );
+
+    const dataSource = createSdkDataSource(config);
+    await expect(dataSource.start()).rejects.toThrow();
+    const health = dataSource.health?.();
+    expect(health).toMatchObject({ error: { source: "startup" } });
+    expect(health?.error?.message).toContain("Core unavailable");
+    expect(health?.error?.message).toContain("[redacted]");
+    expect(health?.error?.message).not.toContain(secret);
+
+    dataSource.dispose();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+
+    failRevision = false;
+    await dataSource.start();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+
+    dataSource.dispose();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+  });
+
+  it("does not restore a stale startup error after dispose", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new TestCore();
+    let rejectRevision!: (cause: unknown) => void;
+    const pendingRevision = new Promise<Response>((_resolve, reject) => {
+      rejectRevision = reject;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === "/protocol/revision") return pendingRevision;
+      return core.fetch(String(input), init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const dataSource = createSdkDataSource(config);
+    const start = dataSource.start();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    dataSource.dispose();
+    rejectRevision(new Error("late startup failure"));
+
+    await expect(start).rejects.toThrow("late startup failure");
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+  });
+
   it("keeps snapshots current through the slow changed-since poll when WebSocket connections are blocked", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", BlockedWebSocket);
@@ -149,7 +209,11 @@ describe("sdk data source", () => {
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} }));
     expect(core.requests.filter((request) => request.startsWith("/queries/changed-since"))).toHaveLength(1);
-    expect(dataSource.health?.()).toMatchObject({ running: true, degraded: true });
+    expect(dataSource.health?.()).toMatchObject({
+      running: true,
+      degraded: true,
+      error: { source: "live-sync", message: "Atlas Core feed connection failed" }
+    });
 
     dataSource.dispose();
     core.requests = [];
