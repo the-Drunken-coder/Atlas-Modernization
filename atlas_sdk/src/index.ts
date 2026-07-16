@@ -1,15 +1,14 @@
 export {
-  AtlasClient,
   AtlasAPIError,
-  ConflictError,
-  ProtocolMismatchError,
+  AtlasClient,
+  type AtlasClientOptions,
   type AtlasLocalDeleteWatchEvent,
   type AtlasRecoveredWatchEvent,
-  type AtlasWatchEvent,
-  type AtlasClientOptions,
   type AtlasSubscription,
+  type AtlasWatchEvent,
   type ChangedSinceQueryOptions,
   type ChangedSinceResponse,
+  ConflictError,
   type EntityCheckInFields,
   type EntityCheckInMethod,
   type EntityCheckInMinimalTask,
@@ -18,6 +17,7 @@ export {
   type EntityCheckInTelemetry,
   type FullDatasetQueryOptions,
   type FullDatasetResponse,
+  ProtocolMismatchError,
   type ReadOptions,
   type SyncSnapshot,
   type SyncStatus,
@@ -27,18 +27,9 @@ export {
   type TaskStatus,
   type TaskStatusOptions
 } from "./client.js";
-export {
-  ATLAS_PROTOCOL_REVISION,
-  isEntityCreateRequest,
-  isEntityUpdateRequest,
-  isObjectCreateRequest,
-  isObjectUpdateRequest,
-  isTaskCreateRequest,
-  isTaskUpdateRequest
-} from "./protocol.js";
 export type {
-  EntityCreateRequest,
   EntityComponents,
+  EntityCreateRequest,
   EntityResource,
   EntityUpdateRequest,
   ErrorCode,
@@ -51,6 +42,15 @@ export type {
   ObjectUpdateRequest,
   ResourceType,
   TaskCreateRequest,
-  TaskUpdateRequest,
-  TaskResource
+  TaskResource,
+  TaskUpdateRequest
+} from "./protocol.js";
+export {
+  ATLAS_PROTOCOL_REVISION,
+  isEntityCreateRequest,
+  isEntityUpdateRequest,
+  isObjectCreateRequest,
+  isObjectUpdateRequest,
+  isTaskCreateRequest,
+  isTaskUpdateRequest
 } from "./protocol.js";

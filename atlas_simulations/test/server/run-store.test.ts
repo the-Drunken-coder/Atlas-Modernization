@@ -35,7 +35,10 @@ describe("RunStore", () => {
 
       await store.cleanup(started.id);
       expect(store.get(started.id)).toMatchObject({ status: "completed", cleaned: true });
-      expect(core.state.deleted).toEqual([`task:${resources.find((resource) => resource.type === "task")?.id}`, `entity:${resources.find((resource) => resource.type === "entity")?.id}`]);
+      expect(core.state.deleted).toEqual([
+        `task:${resources.find((resource) => resource.type === "task")?.id}`,
+        `entity:${resources.find((resource) => resource.type === "entity")?.id}`
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -176,7 +179,15 @@ describe("RunStore", () => {
     const core = createFakeAtlasCore();
     const store = new RunStore((options) => {
       const client = core.factory(options);
-      return { ...client, sync: { ...client.sync, stop: () => { throw new Error("stop failed"); } } };
+      return {
+        ...client,
+        sync: {
+          ...client.sync,
+          stop: () => {
+            throw new Error("stop failed");
+          }
+        }
+      };
     });
     const scenario: Scenario = {
       id: "teardown-failure",
@@ -624,7 +635,9 @@ describe("RunStore", () => {
     expect((await client.entities.get("asset-1")).alias).toBe("Updated alias");
     await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).rejects.toMatchObject({ status: 409 });
     await client.entities.delete("asset-1");
-    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).resolves.toMatchObject({ entity_id: "asset-2" });
+    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).resolves.toMatchObject({
+      entity_id: "asset-2"
+    });
   });
 
   it("evicts cleaned runs before refusing new runs at capacity", async () => {
@@ -782,7 +795,10 @@ describe("RunStore", () => {
       acceptsJson: false,
       inputFields: [],
       async run(ctx) {
-        ctx.log("too wide", Array.from({ length: 10_001 }, () => null));
+        ctx.log(
+          "too wide",
+          Array.from({ length: 10_001 }, () => null)
+        );
       }
     };
 
@@ -887,9 +903,7 @@ describe("RunStore", () => {
         createdResources: [resource],
         lastError: expect.stringContaining("restarted before explicit cleanup")
       });
-      expect(recovered.events(started.id)).toEqual([
-        expect.objectContaining({ type: "status", status: "abandoned", level: "warn" })
-      ]);
+      expect(recovered.events(started.id)).toEqual([expect.objectContaining({ type: "status", status: "abandoned", level: "warn" })]);
 
       const failingCleanupFactory: AtlasClientFactory = (options) => {
         const client = core.factory(options);

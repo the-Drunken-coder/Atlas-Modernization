@@ -1,7 +1,7 @@
-import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
-import { ResourceCache, type CacheResourceOptions } from "./cache.js";
+import { type CacheResourceOptions, ResourceCache } from "./cache.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport, ResponseValidator } from "./http.js";
+import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
 import {
   covers,
   localDeleteEvent,

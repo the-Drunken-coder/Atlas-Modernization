@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type MenuItemDef = {
   key: string;
@@ -50,7 +50,11 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
       <div style={{ position: "fixed", inset: 0, zIndex: 55 }} onClick={onClose} onContextMenu={(event) => event.preventDefault()} />
       <div ref={menuRef} className="context-menu" style={{ left: position.x, top: position.y }} role="menu">
         {header ? <div className="context-menu__header">{header}</div> : null}
-        {items.length === 0 ? <div className="menu-item" aria-disabled>{emptyLabel ?? "No actions"}</div> : null}
+        {items.length === 0 ? (
+          <div className="menu-item" aria-disabled>
+            {emptyLabel ?? "No actions"}
+          </div>
+        ) : null}
         {items.map((item) => (
           <button
             key={item.key}

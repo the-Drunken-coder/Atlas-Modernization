@@ -2,10 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
 import { App } from "../../src/client/App.js";
-import { jsonNumber } from "../../src/shared/types.js";
+import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
 import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
+import { jsonNumber } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -146,7 +146,11 @@ describe("App", () => {
     const activeLoad = deferred<{ targets: AtlasTargetSummary[]; defaultTargetId: string }>();
     vi.mocked(loadTargets).mockReturnValueOnce(cancelledLoad.promise).mockReturnValueOnce(activeLoad.promise);
 
-    render(<StrictMode><App /></StrictMode>);
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    );
     await act(async () => {
       activeLoad.resolve({ targets: [localTarget, deployedTarget], defaultTargetId: localTarget.id });
       await activeLoad.promise;
@@ -283,9 +287,7 @@ describe("App", () => {
     const user = userEvent.setup();
     const deployedHealth = deferred<HealthResponse>();
     vi.mocked(loadHealth).mockImplementation((targetId) =>
-      targetId === deployedTarget.id
-        ? deployedHealth.promise
-        : Promise.resolve({ ok: true, status: jsonNumber(200), message: "local ok", target: localTarget })
+      targetId === deployedTarget.id ? deployedHealth.promise : Promise.resolve({ ok: true, status: jsonNumber(200), message: "local ok", target: localTarget })
     );
     render(<App />);
 

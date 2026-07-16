@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { emptySnapshot, type AtlasSnapshot } from "./store.js";
+import { describe, expect, it } from "vitest";
 import { listEntities, tasksForEntity } from "./selectors.js";
+import { type AtlasSnapshot, emptySnapshot } from "./store.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 

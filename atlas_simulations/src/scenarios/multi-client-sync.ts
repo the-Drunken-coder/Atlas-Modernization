@@ -14,7 +14,15 @@ const multiClientSync: Scenario = {
   inputFields: [
     { key: "clientCount", label: "Client count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(8), step: jsonNumber(1) },
     { key: "writes", label: "Writes", type: "number", defaultValue: jsonNumber(3), min: jsonNumber(1), max: jsonNumber(20), step: jsonNumber(1) },
-    { key: "settleMs", label: "Settle ms", type: "number", defaultValue: jsonNumber(MIN_SETTLE_MS), min: jsonNumber(MIN_SETTLE_MS), max: jsonNumber(10000), step: jsonNumber(50) }
+    {
+      key: "settleMs",
+      label: "Settle ms",
+      type: "number",
+      defaultValue: jsonNumber(MIN_SETTLE_MS),
+      min: jsonNumber(MIN_SETTLE_MS),
+      max: jsonNumber(10000),
+      step: jsonNumber(50)
+    }
   ],
   async run(ctx, input) {
     const clientCount = boundedPositiveIntegerInput(input, "clientCount", 8);
@@ -73,20 +81,22 @@ const multiClientSync: Scenario = {
 
       const writerSnapshot = await snapshotVersions(ctx.client, ids);
       const writerMaxVersion = maxVersion(writerSnapshot);
-      const verificationResults = await Promise.allSettled(readers.map(async ({ client, seenVersions }, readerIndex) => {
-        const settleDeadline = Date.now() + settleMs;
-        const sync = await waitForSyncedResources(ctx, client, seenVersions, ids, writerMaxVersion, settleDeadline);
-        const readerSnapshot = snapshotSeenVersions(seenVersions, ids);
-        ctx.assert(`Client ${readerIndex + 1} saw writer resources`, sync.seen === ids.length, `${sync.seen}/${ids.length} resources visible via sync`);
-        ctx.assert(
-          `Client ${readerIndex + 1} matched writer versions`,
-          snapshotsMatch(readerSnapshot, writerSnapshot),
-          `${readerSnapshot.length}/${writerSnapshot.length} versions matched`
-        );
-        const status = client.sync.status();
-        ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
-        ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
-      }));
+      const verificationResults = await Promise.allSettled(
+        readers.map(async ({ client, seenVersions }, readerIndex) => {
+          const settleDeadline = Date.now() + settleMs;
+          const sync = await waitForSyncedResources(ctx, client, seenVersions, ids, writerMaxVersion, settleDeadline);
+          const readerSnapshot = snapshotSeenVersions(seenVersions, ids);
+          ctx.assert(`Client ${readerIndex + 1} saw writer resources`, sync.seen === ids.length, `${sync.seen}/${ids.length} resources visible via sync`);
+          ctx.assert(
+            `Client ${readerIndex + 1} matched writer versions`,
+            snapshotsMatch(readerSnapshot, writerSnapshot),
+            `${readerSnapshot.length}/${writerSnapshot.length} versions matched`
+          );
+          const status = client.sync.status();
+          ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
+          ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
+        })
+      );
       const rejectedVerification = verificationResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (rejectedVerification) throw rejectedVerification.reason;
     } finally {

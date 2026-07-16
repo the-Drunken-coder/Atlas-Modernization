@@ -1,9 +1,4 @@
-import type {
-  FeedEvent,
-  FeedSubscribeMessage,
-  FeedUnsubscribeMessage,
-  ResourceType
-} from "./protocol.js";
+import type { FeedEvent, FeedSubscribeMessage, FeedUnsubscribeMessage, ResourceType } from "./protocol.js";
 import type { AtlasLocalDeleteWatchEvent, AtlasSubscription, AtlasWatchEvent, ResourceOf, ResourceValue } from "./types.js";
 
 const RESOURCE_TYPES = new Set<string>(["entity", "task", "object"]);

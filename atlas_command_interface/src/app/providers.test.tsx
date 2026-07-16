@@ -2,10 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig, CoreConfig } from "./config.js";
-import { Providers } from "./providers.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
 import { useAtlas } from "../state/atlas-context.js";
+import type { AppConfig, CoreConfig } from "./config.js";
+import { Providers } from "./providers.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();

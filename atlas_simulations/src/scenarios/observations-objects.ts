@@ -13,8 +13,24 @@ const observationsObjects: Scenario = {
     { key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(10), step: jsonNumber(1) },
     { key: "observations", label: "Observations", type: "number", defaultValue: jsonNumber(4), min: jsonNumber(1), max: jsonNumber(50), step: jsonNumber(1) },
     { key: "tickMs", label: "Tick ms", type: "number", defaultValue: jsonNumber(200), min: jsonNumber(0), max: jsonNumber(10000), step: jsonNumber(50) },
-    { key: "startLatitude", label: "Start latitude", type: "number", defaultValue: jsonNumber(38.88), min: jsonNumber(-90), max: jsonNumber(89.9557), step: jsonNumber(0.0001) },
-    { key: "startLongitude", label: "Start longitude", type: "number", defaultValue: jsonNumber(-77.04), min: jsonNumber(-180), max: jsonNumber(179.9459), step: jsonNumber(0.0001) }
+    {
+      key: "startLatitude",
+      label: "Start latitude",
+      type: "number",
+      defaultValue: jsonNumber(38.88),
+      min: jsonNumber(-90),
+      max: jsonNumber(89.9557),
+      step: jsonNumber(0.0001)
+    },
+    {
+      key: "startLongitude",
+      label: "Start longitude",
+      type: "number",
+      defaultValue: jsonNumber(-77.04),
+      min: jsonNumber(-180),
+      max: jsonNumber(179.9459),
+      step: jsonNumber(0.0001)
+    }
   ],
   async run(ctx, input) {
     const assetCount = boundedPositiveIntegerInput(input, "assetCount", 10);

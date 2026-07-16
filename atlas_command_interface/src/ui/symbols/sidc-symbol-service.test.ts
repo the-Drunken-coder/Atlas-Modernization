@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_SYMBOL_CATALOG,
-  DEFAULT_SYMBOL_FALLBACK,
-  DEFAULT_SYMBOL_TYPE_MAPPING,
-  type SymbolConfig
-} from "./catalog.js";
+import { DEFAULT_SYMBOL_CATALOG, DEFAULT_SYMBOL_FALLBACK, DEFAULT_SYMBOL_TYPE_MAPPING, type SymbolConfig } from "./catalog.js";
 import { __internals, createSidcIconService, renderSymbolToSvg } from "./sidc-symbol-service.js";
 
 describe("SIDC symbol service", () => {
@@ -45,12 +40,8 @@ describe("SIDC symbol service", () => {
 
   it("does not match partial substrings inside larger words", () => {
     const mapping = __internals.buildLookup(DEFAULT_SYMBOL_TYPE_MAPPING);
-    expect(__internals.resolveConfigKey({ subtype: "cargo" }, mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(
-      DEFAULT_SYMBOL_TYPE_MAPPING.default
-    );
-    expect(__internals.mapTrackTypeToConfigKey("command", mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(
-      DEFAULT_SYMBOL_TYPE_MAPPING.default
-    );
+    expect(__internals.resolveConfigKey({ subtype: "cargo" }, mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(DEFAULT_SYMBOL_TYPE_MAPPING.default);
+    expect(__internals.mapTrackTypeToConfigKey("command", mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(DEFAULT_SYMBOL_TYPE_MAPPING.default);
   });
 
   it("returns detached copies for configs and cached renders", () => {

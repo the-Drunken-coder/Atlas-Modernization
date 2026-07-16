@@ -1,6 +1,6 @@
 import { fireEvent, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { describe, expect, it, vi } from "vitest";
 import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { entity, markerOperationCounts, renderMapView, resetMarkerOperationCounts } from "./MapView.test-harness.js";
 import { buildMapSources } from "./map-sources.js";

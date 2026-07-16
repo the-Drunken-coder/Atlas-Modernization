@@ -1,26 +1,6 @@
-export {
-  ATLAS_PROTOCOL_REVISION,
-  isEntityResource,
-  isEntityCreateRequest,
-  isEntityUpdateRequest,
-  isFeedEvent,
-  isFeedHandshakeMessage,
-  isJSONValue,
-  isObjectDetailResource,
-  isObjectResource,
-  isObjectCreateRequest,
-  isObjectUpdateRequest,
-  isProtocolRevision,
-  isResourceType,
-  isRFC3339Timestamp,
-  isTaskResource,
-  isTaskCreateRequest,
-  isTaskUpdateRequest
-} from "../../atlas_protocol/generated/typescript/index.js";
-
 export type {
-  EntityCreateRequest,
   EntityComponents,
+  EntityCreateRequest,
   EntityResource,
   EntityUpdateRequest,
   ErrorCode,
@@ -35,8 +15,27 @@ export type {
   ObjectResource,
   ObjectUpdateRequest,
   ResourceType,
-  TaskDeleteEvent,
   TaskCreateRequest,
-  TaskUpdateRequest,
-  TaskResource
+  TaskDeleteEvent,
+  TaskResource,
+  TaskUpdateRequest
+} from "../../atlas_protocol/generated/typescript/index.js";
+export {
+  ATLAS_PROTOCOL_REVISION,
+  isEntityCreateRequest,
+  isEntityResource,
+  isEntityUpdateRequest,
+  isFeedEvent,
+  isFeedHandshakeMessage,
+  isJSONValue,
+  isObjectCreateRequest,
+  isObjectDetailResource,
+  isObjectResource,
+  isObjectUpdateRequest,
+  isProtocolRevision,
+  isResourceType,
+  isRFC3339Timestamp,
+  isTaskCreateRequest,
+  isTaskResource,
+  isTaskUpdateRequest
 } from "../../atlas_protocol/generated/typescript/index.js";

@@ -6,7 +6,10 @@ const TARGET_API_KEY_HEADER = "x-atlas-target-api-key";
 const MAX_REQUEST_API_KEY_BYTES = 16_384;
 
 export class RequestBodyError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
     super(message);
   }
 }

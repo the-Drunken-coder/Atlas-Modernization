@@ -40,14 +40,16 @@ export function isTerminalStatus(status: RunSummary["status"]): boolean {
 }
 
 export function displayStatus(run: RunSummary | undefined): string {
-  return run?.cleaned ? "cleaned" : run?.status ?? "idle";
+  return run?.cleaned ? "cleaned" : (run?.status ?? "idle");
 }
 
 export function mergeRunLists(current: RunSummary[], incoming: RunSummary[], runIdsAtRequestStart: Set<string>): RunSummary[] {
   const byId = new Map(current.map((run) => [run.id, run]));
   const incomingIds = new Set(incoming.map((run) => run.id));
   const retained = current.filter((run) => !incomingIds.has(run.id) && !runIdsAtRequestStart.has(run.id));
-  return [...incoming.map((run) => mergeRunSummary(byId.get(run.id), run)), ...retained].sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+  return [...incoming.map((run) => mergeRunSummary(byId.get(run.id), run)), ...retained].sort(
+    (left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt)
+  );
 }
 
 export function mergeRunSummary(existing: RunSummary | undefined, incoming: RunSummary): RunSummary {
@@ -58,7 +60,7 @@ export function mergeRunSummary(existing: RunSummary | undefined, incoming: RunS
     id: incoming.id,
     scenarioId: incoming.scenarioId,
     scenarioName: incoming.scenarioName,
-    ...(incoming.target ?? existing.target ? { target: incoming.target ?? existing.target } : {}),
+    ...((incoming.target ?? existing.target) ? { target: incoming.target ?? existing.target } : {}),
     status: fresher.status,
     startedAt: incoming.startedAt,
     ...(fresher.finishedAt ? { finishedAt: fresher.finishedAt } : {}),
@@ -109,7 +111,14 @@ export function parseRunEvent(value: unknown): RunEvent {
   }
   switch (value.type) {
     case "status":
-      if (value.status === "running" || value.status === "completed" || value.status === "failed" || value.status === "cancelled" || value.status === "abandoned") return value as RunEvent;
+      if (
+        value.status === "running" ||
+        value.status === "completed" ||
+        value.status === "failed" ||
+        value.status === "cancelled" ||
+        value.status === "abandoned"
+      )
+        return value as RunEvent;
       break;
     case "log":
       if (value.level === undefined || isRunEventLevel(value.level)) return value as RunEvent;
@@ -122,7 +131,8 @@ export function parseRunEvent(value: unknown): RunEvent {
         typeof value.assertion.passed === "boolean" &&
         typeof value.assertion.timestamp === "string" &&
         (value.assertion.message === undefined || typeof value.assertion.message === "string")
-      ) return value as RunEvent;
+      )
+        return value as RunEvent;
       break;
     case "resource":
       if (isCreatedResource(value.resource)) return value as RunEvent;

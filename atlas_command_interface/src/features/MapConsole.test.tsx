@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { AppConfig } from "../app/config.js";
 import { parseCommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
-import type { AppConfig } from "../app/config.js";
-import { AtlasProvider, AtlasStaticProvider, type AtlasContextValue } from "../state/atlas-context.js";
+import { type AtlasContextValue, AtlasProvider, AtlasStaticProvider } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {

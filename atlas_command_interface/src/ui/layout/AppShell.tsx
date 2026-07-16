@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { type CSSProperties, type KeyboardEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 
 type AppShellProps = {
   collapsed: boolean;

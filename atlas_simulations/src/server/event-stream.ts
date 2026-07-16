@@ -1,7 +1,7 @@
 import type { ServerResponse } from "node:http";
 import type { RunEvent } from "../shared/types.js";
-import type { RunStore } from "./run-store.js";
 import { errorMessage } from "./http-utils.js";
+import type { RunStore } from "./run-store.js";
 
 export type EventStream = {
   response: ServerResponse;

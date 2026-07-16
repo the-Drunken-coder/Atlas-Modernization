@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RESOURCE_TYPE_VALUES, isResourceType, parseFilter, runCLI, type CLIIO } from "../src/cli.js";
+import { type CLIIO, isResourceType, parseFilter, RESOURCE_TYPE_VALUES, runCLI } from "../src/cli.js";
 import { FakeCore, task } from "./support/fake-core.js";
 
 describe("Atlas CLI", () => {
@@ -32,7 +32,16 @@ describe("Atlas CLI", () => {
 
     const invalidTask = captureIO();
     invalidTask.io.fetch = fetchSpy;
-    await expect(runCLI(["tasks", "create", '{"task_id":"","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":0}}'], invalidTask.io)).resolves.toBe(2);
+    await expect(
+      runCLI(
+        [
+          "tasks",
+          "create",
+          '{"task_id":"","status":"pending","entity_id":null,"components":{},"metadata":{"created_at":"2026-06-12T12:00:00Z","updated_at":"2026-06-12T12:00:00Z","version":0}}'
+        ],
+        invalidTask.io
+      )
+    ).resolves.toBe(2);
     expect(invalidTask.stderr()).toContain("invalid task JSON");
 
     const badFilter = captureIO();
@@ -143,7 +152,10 @@ describe("Atlas CLI", () => {
     captured.io.WebSocket = core.attachWebSocketGlobal();
     captured.io.waitForExitSignal = async () => {
       const dropped = core.upsertTask(task("task-cli-dropped", "asset-1"));
-      core.emit({ event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped }, { dropForSockets: true, record: false });
+      core.emit(
+        { event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped },
+        { dropForSockets: true, record: false }
+      );
       const delivered = core.upsertTask(task("task-cli-delivered", "asset-1"));
       core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
 

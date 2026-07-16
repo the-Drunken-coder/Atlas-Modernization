@@ -54,7 +54,7 @@
     "prepack": "npm run clean && npm run build",
     "test:package": "node ./test/packed-consumer-smoke.mjs",
     "lint": "biome lint .",
-    "format:check": "biome format --changed --no-errors-on-unmatched .",
+    "format:check": "biome check --linter-enabled=false .",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "test": "npm run test:node && npm run test:browser"

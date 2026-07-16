@@ -1,11 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { fetchAppConfig, type AppConfig } from "../app/config.js";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { type AppConfig, fetchAppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
-import { createSdkDataSource, type AtlasDataSource, type CommandSubmission, type ConnectionError, type ConnectionHealth } from "../atlas/data-source.js";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
+import { type AtlasDataSource, type CommandSubmission, type ConnectionError, type ConnectionHealth, createSdkDataSource } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
-import { emptySnapshot, type AtlasSnapshot } from "../atlas/store.js";
+import { type AtlasSnapshot, emptySnapshot } from "../atlas/store.js";
 
 export type AtlasStatus = "loading" | "ready" | "error";
 

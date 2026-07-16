@@ -1,5 +1,5 @@
 import { formatCoordinate } from "../../atlas/geometry.js";
-import { formatImperialDistance, tetherSegment, type CursorOverlayState } from "./map-cursor-overlay.js";
+import { type CursorOverlayState, formatImperialDistance, tetherSegment } from "./map-cursor-overlay.js";
 
 export function MapCursorOverlay({ point, coordinates, selection, distanceMeters, bearingDegrees }: CursorOverlayState) {
   const tether = selection ? tetherSegment(selection.target, point) : null;

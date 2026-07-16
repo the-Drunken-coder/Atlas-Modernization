@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { AtlasClient, isTaskCreateRequest, type AtlasClientOptions, type AtlasSubscription, type ResourceType, type TaskCreateRequest } from "./index.js";
+import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, isTaskCreateRequest, type ResourceType, type TaskCreateRequest } from "./index.js";
 import { PACKAGE_BIN, PACKAGE_NAME } from "./package-metadata.js";
 
 export { PACKAGE_BIN, PACKAGE_NAME };

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { BackIcon, CollapseIcon } from "../primitives/icons.js";
 import { IconButton } from "../primitives/controls.js";
+import { BackIcon, CollapseIcon } from "../primitives/icons.js";
 
 type SidebarPanelProps = {
   title: string;

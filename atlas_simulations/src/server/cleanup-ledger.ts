@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import {
   chmodSync,
   closeSync,
@@ -9,15 +10,14 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import type { Stats } from "node:fs";
 import path from "node:path";
-import { isCreatedResource, type CreatedResource } from "../shared/types.js";
+import { type CreatedResource, isCreatedResource } from "../shared/types.js";
 import { isDeployedAtlasUrl } from "./config.js";
 import { MAX_CREATED_RESOURCES_PER_RUN } from "./run-store-limits.js";
 
@@ -67,17 +67,10 @@ export class CleanupLedger implements CleanupLedgerStore {
     if (existing) assertRegularFile(filePath, existing);
     const data = `${JSON.stringify({ version: LEDGER_VERSION, run: validated } satisfies CleanupLedgerFile)}\n`;
     if (Buffer.byteLength(data, "utf8") > MAX_LEDGER_BYTES) throw new Error("Cleanup ledger record is too large");
-    const temporaryPath = path.join(
-      directory,
-      `.${validated.runId}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-    );
+    const temporaryPath = path.join(directory, `.${validated.runId}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
     let descriptor: number | undefined;
     try {
-      descriptor = openSync(
-        temporaryPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-        0o600
-      );
+      descriptor = openSync(temporaryPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
       fchmodSync(descriptor, 0o600);
       writeFileSync(descriptor, data, "utf8");
       fsyncSync(descriptor);
@@ -197,14 +190,7 @@ function validTarget(value: unknown): value is CleanupLedgerTarget {
   if (!nonEmptyString(value.id) || !nonEmptyString(value.label) || !nonEmptyString(value.baseUrl)) return false;
   try {
     const parsed = new URL(value.baseUrl);
-    return (
-      parsed.protocol === "https:" &&
-      isDeployedAtlasUrl(value.baseUrl) &&
-      !parsed.username &&
-      !parsed.password &&
-      !parsed.search &&
-      !parsed.hash
-    );
+    return parsed.protocol === "https:" && isDeployedAtlasUrl(value.baseUrl) && !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
   } catch {
     return false;
   }
@@ -263,7 +249,13 @@ function entryStat(filePath: string): Stats | undefined {
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
   const keys = Object.keys(value).sort();
-  return keys.length === expected.length && expected.slice().sort().every((key, index) => keys[index] === key);
+  return (
+    keys.length === expected.length &&
+    expected
+      .slice()
+      .sort()
+      .every((key, index) => keys[index] === key)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

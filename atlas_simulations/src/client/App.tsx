@@ -1,19 +1,19 @@
 import { Activity, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor, StartRunRequest } from "../shared/types.js";
-import { cleanupRun, loadHealth, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "./api.js";
 import { AssertionTable, LogList, ResourceTable, RunDetails, RunTable } from "./AppPanels.js";
+import { cleanupRun, loadHealth, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "./api.js";
 import {
   appendRunEvent,
   applyRunEvent,
   displayStatus,
   errorMessage,
+  type FieldValues,
   isTerminalStatus,
   mergeRunLists,
   mergeRunSummary,
   parseRunEvent,
-  submissionInputs,
-  type FieldValues
+  submissionInputs
 } from "./run-state.js";
 
 const ACTIVE_RUN_REFRESH_MS = 2_000;

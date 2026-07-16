@@ -33,7 +33,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "biome lint .",
-    "format:check": "biome format --changed --no-errors-on-unmatched ."
+    "format:check": "biome check --linter-enabled=false ."
   },
   "dependencies": { "@the-drunken-coder/atlas-sdk": "0.1.0" },
   "devDependencies": {

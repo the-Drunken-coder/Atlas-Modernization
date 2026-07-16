@@ -1,18 +1,18 @@
 import type { Map as MlMap } from "maplibre-gl";
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { type RefObject, useCallback, useEffect, useRef } from "react";
 import {
   CAMERA_EVENT_TAG,
-  FOLLOW_EASE_MS,
   coordsChanged,
+  FOLLOW_EASE_MS,
+  type FollowEvent,
+  type FollowState,
   featureForEntityId,
   followIdle,
   followReducer,
   geometryForTarget,
   isLngLatPosition,
-  planFocusMove,
-  type FollowEvent,
-  type FollowState,
-  type MapCameraCommand
+  type MapCameraCommand,
+  planFocusMove
 } from "./map-camera.js";
 import type { MapSources } from "./map-sources.js";
 
@@ -123,8 +123,7 @@ export function useMapCamera(args: {
 
     lastAppliedSeqRef.current = command.seq;
     if (move.kind === "fly-to") {
-      const eventData =
-        command.target.type === "entity" ? { [CAMERA_EVENT_TAG]: true, [FLY_SEQ_TAG]: command.seq } : { [CAMERA_EVENT_TAG]: true };
+      const eventData = command.target.type === "entity" ? { [CAMERA_EVENT_TAG]: true, [FLY_SEQ_TAG]: command.seq } : { [CAMERA_EVENT_TAG]: true };
       if (command.target.type === "entity") {
         lastFollowedCoordsRef.current = move.center;
         dispatch({ type: "command-point", seq: command.seq, entityId: command.target.id });
@@ -135,11 +134,7 @@ export function useMapCamera(args: {
       return;
     }
     dispatch({ type: "command-geometry", seq: command.seq });
-    map.fitBounds(
-      move.bounds,
-      { duration: move.durationMs, maxZoom: move.maxZoom, padding: move.padding },
-      { [CAMERA_EVENT_TAG]: true }
-    );
+    map.fitBounds(move.bounds, { duration: move.durationMs, maxZoom: move.maxZoom, padding: move.padding }, { [CAMERA_EVENT_TAG]: true });
   }, [command, sources, mapReady, mapRef, dispatch]);
 
   // Soft follow: chase the followed entity when telemetry moves it.

@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
 import type { JSONValue } from "@the-drunken-coder/atlas-sdk";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CommandDefinition, CommandParameterSchema } from "../../atlas/command-model.js";
 import type { CommandTargeting } from "../../atlas/command-targeting.js";
 import { Button, IconButton } from "../../ui/primitives/controls.js";

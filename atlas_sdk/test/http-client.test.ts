@@ -3,13 +3,13 @@ import {
   AtlasAPIError,
   AtlasClient,
   ConflictError,
-  ProtocolMismatchError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isTaskCreateRequest,
-  isTaskUpdateRequest
+  isTaskUpdateRequest,
+  ProtocolMismatchError
 } from "../src";
 import { AtlasAdminClient } from "../src/admin.js";
 import { entity, FakeCore, object, task } from "./support/fake-core.js";

@@ -1,31 +1,31 @@
 import type { Map as MlMap, PointLike } from "maplibre-gl";
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
+import { type MouseEvent, type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
 import { flushSync } from "react-dom";
+import { type CursorOverlayState, geographicBearingDegrees, geographicDistanceMeters } from "./map-cursor-overlay.js";
+import {
+  boxFromDrag,
+  pointFromClient,
+  RETICLE_TARGET_SIZE,
+  type ReticleState,
+  reticleForTarget,
+  reticleFromTargetBox,
+  type ScreenPoint,
+  squareAround,
+  type ZoomOverlayState
+} from "./map-reticle.js";
 import type { MapSources } from "./map-sources.js";
 import {
   createMarkerBoxCache,
   hoverSelectionTarget,
   hoverSelectionTargets,
   invalidateMarkerBoxCache,
+  type MapNavigationDirection,
+  type MapReticleTarget,
   nextVisibleEntityInDirection,
   reticleForVisibleTarget,
-  targetBoxForEntityId,
-  type MapNavigationDirection,
-  type MapReticleTarget
+  targetBoxForEntityId
 } from "./map-targets.js";
-import {
-  RETICLE_TARGET_SIZE,
-  boxFromDrag,
-  pointFromClient,
-  reticleForTarget,
-  reticleFromTargetBox,
-  squareAround,
-  type ReticleState,
-  type ScreenPoint,
-  type ZoomOverlayState
-} from "./map-reticle.js";
-import { geographicBearingDegrees, geographicDistanceMeters, type CursorOverlayState } from "./map-cursor-overlay.js";
-import { clientPointInsideRect, cursorPointsFromEvent, reticlesEqual, zoomDeltaFromWheel, type CursorHandoffState } from "./map-view-utils.js";
+import { type CursorHandoffState, clientPointInsideRect, cursorPointsFromEvent, reticlesEqual, zoomDeltaFromWheel } from "./map-view-utils.js";
 
 const SCROLL_LOCK_SETTLE_MS = 180;
 const SUPPRESSED_CLICK_FALLBACK_MS = 750;

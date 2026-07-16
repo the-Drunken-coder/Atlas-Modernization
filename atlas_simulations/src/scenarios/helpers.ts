@@ -1,5 +1,5 @@
-import type { JSONValue } from "../shared/types.js";
 import type { ScenarioInput } from "../server/scenario.js";
+import type { JSONValue } from "../shared/types.js";
 
 const DEADLINE_EXCEEDED = Symbol("deadlineExceeded");
 

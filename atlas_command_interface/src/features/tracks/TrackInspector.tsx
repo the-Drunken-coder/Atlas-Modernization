@@ -1,8 +1,8 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { entityAltitude, entityClassification, entityDisplayName, entityHeading, entityLastSeen, entityPosition, entitySpeed } from "../../atlas/entities.js";
 import { formatNumber, formatRelativeTime } from "../../atlas/format.js";
-import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
+import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 
 export function TrackInspector({ entity }: { entity: EntityResource }) {
