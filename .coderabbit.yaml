@@ -89,27 +89,31 @@ reviews:
         local/development posture.
     - path: "Atlas_Core/internal/database/**"
       instructions: |
-        Treat PostgreSQL as disposable runtime scratch storage. Review schema
-        changes for boot-time recreate behavior, indexes that match query order,
-        deletion tombstones, monotonic versioning, and whether docs/tests reflect
-        intentional destructive startup behavior.
+        Production PostgreSQL storage is durable and uses ordered migrations plus
+        migration-ledger and schema-fingerprint verification. Development may opt
+        into explicit scratch mode with DATABASE_RECREATE_ON_STARTUP=true. Review
+        migrations, startup-mode separation, indexes that match query order,
+        deletion tombstones, monotonic versioning, backup/restore coverage, and
+        preservation of admin_records and migration history.
     - path: "Atlas_Core/internal/storage/**"
       instructions: |
-        Treat MinIO as disposable runtime scratch storage. Review bucket clearing,
-        object path generation, stale blob cleanup, upload/download streaming,
-        error translation, secret handling, and any wording that implies MinIO is
-        a durable system of record.
+        Production MinIO storage is durable: startup requires the configured bucket
+        to exist and must preserve it. Development scratch mode may clear the bucket
+        explicitly. Review bucket provisioning and startup-mode separation, object
+        path generation, stale blob cleanup, upload/download streaming, error
+        translation, secret handling, and backup/restore coverage.
     - path: "Atlas_Core/docker/**"
       instructions: |
         Review Docker and Compose changes for build-context correctness across
         Atlas_Core/ and atlas_protocol/, required environment variables, .env
         precedence, loopback binding, health checks, production auth posture,
-        pinned images, secret exposure, and scratch-storage messaging.
+        pinned images, secret exposure, and explicit separation between development
+        scratch storage and durable production storage.
     - path: "Atlas_Core/docs/**"
       instructions: |
-        Check docs against live code. Flag stale endpoint behavior, durable-storage
-        language for disposable runtime scratch storage, wrong module roots,
-        outdated environment variables, and missing verification commands.
+        Check docs against live code. Flag stale endpoint behavior, incorrect
+        development-scratch or production-durable storage claims, wrong module
+        roots, outdated environment variables, and missing verification commands.
     - path: "atlas_protocol/schema/**"
       instructions: |
         Treat draft 2020-12 JSON Schema in
@@ -145,7 +149,12 @@ reviews:
       instructions: |
         Treat these as durable project intent. Flag code or docs that contradict
         recorded decisions, especially around greenfield breaking changes,
-        disposable storage, object references, and protocol ownership.
+        storage lifecycle, object references, and protocol ownership.
+    - path: "**/package.json"
+      instructions: |
+        The four npm workspaces deliberately run Biome formatting and import-order
+        checks across each entire workspace. Do not suggest restoring changed-file
+        scoping; linting remains a separate full-workspace check.
     - path: ".github/workflows/**"
       instructions: |
         Review for CI correctness, least-privilege permissions, action pinning,
@@ -240,11 +249,12 @@ reviews:
           sibling protocol module. Flag commands, imports, Docker contexts, or docs
           that blur those boundaries or move protocol source into Atlas_Core/internal.
       - mode: "error"
-        name: "Scratch storage posture"
+        name: "Storage lifecycle posture"
         instructions: |
-          PostgreSQL and MinIO are disposable runtime scratch storage in this repo.
-          Flag docs, logs, startup behavior, or review text that implies they are
-          durable systems of record.
+          Production PostgreSQL and MinIO storage are durable, while development
+          uses explicit scratch mode. Flag code, Compose settings, docs, logs, or
+          review text that blurs those modes, makes production startup destructive,
+          or claims development scratch state is durable.
       - mode: "error"
         name: "Greenfield cleanup"
         instructions: |
