@@ -498,7 +498,8 @@ export class SyncEngine {
         throw error;
       }
       if (!this.isCurrentFeedConnection(generation, attempt)) return;
-      await this.changedSinceForGeneration(generation);
+      const recovered = await this.changedSinceForGeneration(generation);
+      if (recovered && this.isCurrentFeedConnection(generation, attempt) && this.lastError?.startsWith("Atlas Core feed ")) this.lastError = undefined;
     } finally {
       if (!this.isCurrent(generation)) return;
       this.reconnecting = false;
