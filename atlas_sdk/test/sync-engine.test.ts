@@ -501,6 +501,7 @@ describe("AtlasClient sync", () => {
 
     expect(client.sync.snapshot().entities).toHaveProperty(recovered.entity_id);
     expect(client.sync.status().lastVersion).toBe(recovered.metadata.version);
+    expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
   });
 
   it("does not apply an older feed event after its recovery outlives the connection", async () => {

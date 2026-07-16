@@ -278,7 +278,7 @@ export class SyncEngine {
       if (!isCurrentOperation()) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, snapshotVersion ?? sinceVersion);
       this.markSynchronized();
-      this.lastError = undefined;
+      if (this.lastError === "Atlas Core recovery request failed") this.lastError = undefined;
       return true;
     } catch (error) {
       if (!isCurrentOperation()) return false;
