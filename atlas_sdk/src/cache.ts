@@ -1,4 +1,11 @@
-import { isObjectDetailResource, type EntityResource, type ObjectDetailResource, type ObjectResource, type ResourceType, type TaskResource } from "./protocol.js";
+import {
+  isObjectDetailResource,
+  type EntityResource,
+  type ObjectDetailResource,
+  type ObjectResource,
+  type ResourceType,
+  type TaskResource
+} from "./protocol.js";
 import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 

@@ -7,6 +7,7 @@ import {
   type EntityCreateRequest,
   type EntityResource,
   type ObjectCreateRequest,
+  type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
   type TaskCreateRequest,
@@ -18,7 +19,7 @@ type FakeCoreState = {
   version: number;
   entities: ResourceHistory<EntityResource>;
   tasks: ResourceHistory<TaskResource>;
-  objects: ResourceHistory<ObjectResource>;
+  objects: ResourceHistory<ObjectDetailResource>;
   tombstones: Map<string, number[]>;
   deleted: string[];
   clients: FakeClientState[];
@@ -218,7 +219,7 @@ function minimalTask(task: TaskResource): EntityCheckInMinimalTask {
   };
 }
 
-function objectFromCreate(request: ObjectCreateRequest, version: number): ObjectResource {
+function objectFromCreate(request: ObjectCreateRequest, version: number): ObjectDetailResource {
   return {
     object_id: request.object_id,
     type: request.type ?? null,
@@ -228,7 +229,8 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
     size_bytes: request.size_bytes ?? null,
     usage_hints: request.usage_hints ?? [],
     referenced_by: request.referenced_by ?? [],
-    metadata: metadata(version)
+    metadata: metadata(version),
+    extra: { ...(request.extra ?? {}) }
   };
 }
 

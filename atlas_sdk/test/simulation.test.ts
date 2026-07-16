@@ -57,7 +57,6 @@ describe("AtlasClient simulation", () => {
       client.sync.stop();
     }
   });
-
 });
 
 async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): Promise<void> {

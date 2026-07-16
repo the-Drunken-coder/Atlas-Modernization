@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { EntityResource, JSONValue, ObjectDetailResource } from "@the-drunken-coder/atlas-sdk";
 import {
   assertEntitySupportsCommand,
   buildCommandTaskRequest,
@@ -110,7 +110,7 @@ describe("command model", () => {
         usage_hints: ["command_catalog"],
         bucket: "atlas-media",
         metadata
-      })
+      } as unknown as ObjectDetailResource)
     ).toThrow("$.extra must be an object");
   });
 
