@@ -92,6 +92,7 @@ export function sanitizeConnectionError(cause: unknown): string {
     let next: string;
     try {
       next = decodeURIComponent(normalized.replace(/%(?![0-9a-f]{2})/gi, "%25"))
+        .replace(/\\+u\{([0-9a-f]{1,6})\}/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
         .replace(/\\+u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
         .replace(/\\+x([0-9a-f]{2})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
     } catch {

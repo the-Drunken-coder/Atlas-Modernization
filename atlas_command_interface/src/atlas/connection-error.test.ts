@@ -368,6 +368,10 @@ describe("sanitizeConnectionError", () => {
         secret: "escaped-structured-secret"
       },
       {
+        message: String.raw`Atlas request failed: 500: {"auth\u{6f}rization":"braced-unicode-secret","message":"safe context"}`,
+        secret: "braced-unicode-secret"
+      },
+      {
         message: String.raw`Atlas request failed: 500: {"api\u005cu005fkey":"nested-unicode-secret","message":"safe context"}`,
         secret: "nested-unicode-secret"
       },
