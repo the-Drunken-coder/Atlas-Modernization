@@ -200,10 +200,9 @@ export class SyncEngine {
           this.scheduleReconnect();
         },
         onClose: () => {
-          if (!isCurrentAttempt() || !this.syncRunning) {
-            return;
-          }
+          if (!isCurrentAttempt()) return;
           this.feedConnectionAttempt++;
+          if (!this.syncRunning) return;
           this.invalidateRecovery();
           this.lastError = "Atlas Core feed connection closed";
           this.healthy = false;

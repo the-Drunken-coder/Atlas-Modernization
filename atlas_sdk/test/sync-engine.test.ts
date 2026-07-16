@@ -523,7 +523,7 @@ describe("AtlasClient sync", () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
     const engine = (
       client as unknown as {
-        engine: { syncRunning: boolean; feed: { connect: (options: FeedConnectOptions) => Promise<void> } };
+        engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } };
       }
     ).engine;
     vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
@@ -531,7 +531,6 @@ describe("AtlasClient sync", () => {
     });
 
     await client.connectFeed();
-    engine.syncRunning = true;
     feedOptions.onClose();
     await feedOptions.onEvent({
       event: "update",
