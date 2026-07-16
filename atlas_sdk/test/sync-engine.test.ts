@@ -15,7 +15,6 @@ describe("AtlasClient sync", () => {
       sync: false,
       pollIntervalMs: 0
     });
-
     await expect(client.sync.start()).rejects.toThrow("initial request failed");
     expect(client.sync.status()).toHaveProperty("error", "Atlas Core initial synchronization failed");
   });
@@ -826,6 +825,38 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("shares matching in-flight changed-since recovery outside startup", async () => {
+    let releaseRecovery!: (response: Response) => void;
+    const pendingRecovery = new Promise<Response>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    const fetchImpl = vi.fn<typeof fetch>(() => pendingRecovery.then((response) => response.clone()));
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+
+    const first = client.changedSince();
+    const second = client.changedSince();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    releaseRecovery(
+      Response.json({
+        entities: [],
+        tasks: [],
+        objects: [],
+        deleted_entities: [],
+        deleted_tasks: [],
+        deleted_objects: [],
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false,
+        has_more_deleted_entities: false,
+        has_more_deleted_tasks: false,
+        has_more_deleted_objects: false,
+        version: 0
+      })
+    );
+
+    await Promise.all([first, second]);
+  });
+
   it("does not apply a gapped feed event after its recovery is superseded by a failed recovery", async () => {
     const core = new FakeCore();
     let gapRecovery = false;
@@ -852,6 +883,9 @@ describe("AtlasClient sync", () => {
       sync: "all",
       pollIntervalMs: 0
     });
+    const engine = (
+      client as unknown as { engine: { lifecycleGeneration: number; changedSince: (generation: number, sinceVersion: number) => Promise<boolean> } }
+    ).engine;
 
     let unsubscribe: (() => void) | undefined;
     try {
@@ -868,7 +902,7 @@ describe("AtlasClient sync", () => {
       });
       await vi.waitFor(() => expect(gapRecoveryStarted).toBe(true));
       expect(client.sync.status()).toMatchObject({ running: true, healthy: false, degraded: true });
-      await expect(client.changedSince()).rejects.toThrow("503");
+      await expect(engine.changedSince(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
       let resolveFollowUp!: () => void;
       const followUp = new Promise<void>((resolve) => {
         resolveFollowUp = resolve;
@@ -996,6 +1030,7 @@ describe("AtlasClient sync", () => {
 
   it("does not let an older recovery failure overwrite a newer retry", async () => {
     const core = new FakeCore();
+    core.upsertEntity(entity("asset-newer-recovery"));
     let releaseOlder!: (reason?: unknown) => void;
     let changedSinceRequests = 0;
     const fetchImpl: typeof fetch = (url, init) => {
@@ -1012,11 +1047,14 @@ describe("AtlasClient sync", () => {
       return core.fetch(String(url), init);
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (
+      client as unknown as { engine: { lifecycleGeneration: number; changedSince: (generation: number, sinceVersion: number) => Promise<boolean> } }
+    ).engine;
 
     await expect(client.changedSince()).rejects.toThrow("initial recovery failed");
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
-    await client.changedSince();
+    await engine.changedSince(engine.lifecycleGeneration, 1);
     releaseOlder(new Error("stale recovery failed"));
     await expect(older).resolves.toBeUndefined();
 
@@ -1041,11 +1079,14 @@ describe("AtlasClient sync", () => {
       return core.fetch(String(url), init);
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (
+      client as unknown as { engine: { lifecycleGeneration: number; changedSince: (generation: number, sinceVersion: number) => Promise<boolean> } }
+    ).engine;
 
     await client.changedSince();
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
-    await expect(client.changedSince()).rejects.toThrow("503");
+    await expect(engine.changedSince(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
     releaseOlder(
       Response.json({
         entities: [],

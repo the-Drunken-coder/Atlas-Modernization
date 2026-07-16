@@ -447,6 +447,26 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("requestId");
   });
 
+  it("redacts prefixed camel-case credential names without matching ordinary fields", () => {
+    const secrets = [
+      "structured-api-secret",
+      "structured-access-secret",
+      "structured-auth-secret",
+      "query-api-secret",
+      "query-access-secret",
+      "query-auth-secret"
+    ];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: {"stripeApiKeyboard":"safe-field","stripeApiKey":"${secrets[0]}","githubAccessToken":"${secrets[1]}","proxyAuthorization":"Basic ${secrets[2]}"} https://core.test?stripeApiKeyboard=safe-query&stripeApiKey=${secrets[3]}&githubAccessToken=${secrets[4]}&proxyAuthorization=${secrets[5]}`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("safe-field");
+    expect(sanitized).toContain("safe-query");
+  });
+
   it("redacts prefixed structured credential fields", () => {
     const sanitized = sanitizeConnectionError(
       new Error('Atlas request failed: {"oauth_token":"oauth-token-secret","x_amz_credential":"amz-credential-secret"}')
