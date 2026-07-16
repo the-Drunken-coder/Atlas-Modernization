@@ -221,6 +221,18 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=visible");
   });
 
+  it("redacts OAuth and SAML wire parameters without hiding ordinary code fields", () => {
+    const secrets = ["oauth-code-secret", "saml-response-secret"];
+
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: {"code":"safe-context"} https://core.test?code=${secrets[0]}&SAMLResponse=${secrets[1]}&safe=visible`)
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain('"code":"safe-context"');
+    expect(sanitized).toContain("safe=visible");
+  });
+
   it("redacts structured camel-case credential fields", () => {
     const secrets = ["database-password-secret", "client-secret-value", "user-access-token-secret"];
     const sanitized = sanitizeConnectionError(

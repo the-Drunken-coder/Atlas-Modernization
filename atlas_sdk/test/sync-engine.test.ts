@@ -145,14 +145,32 @@ describe("AtlasClient sync", () => {
   it("drains paginated changed-since responses before advancing the high-water mark", async () => {
     const core = new FakeCore();
     core.changedSinceLimitPerType = 1;
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    let releaseSecondPage!: () => void;
+    let secondPageStarted = false;
+    const secondPage = new Promise<void>((resolve) => {
+      releaseSecondPage = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const requestUrl = new URL(String(url));
+      if (requestUrl.pathname === "/queries/changed-since" && requestUrl.searchParams.has("task_cursor")) {
+        secondPageStarted = true;
+        await secondPage;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
+    const initialVersion = client.sync.status().lastVersion;
     const watch = vi.fn();
     client.watch({ filter: "type", resource_type: "task" }, watch);
 
     const first = core.upsertTask(task("task-page-1", "asset-1"));
     const second = core.upsertTask(task("task-page-2", "asset-1"));
-    await client.changedSince();
+    const recovery = client.changedSince();
+    await vi.waitFor(() => expect(secondPageStarted).toBe(true));
+    expect(client.sync.status().lastVersion).toBe(initialVersion);
+    releaseSecondPage();
+    await recovery;
 
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?") && request.includes("task_cursor="))).toBe(true);
     expect(watch).toHaveBeenCalledWith(first, expect.objectContaining({ id: "task-page-1", version: first.metadata.version }));
@@ -230,6 +248,7 @@ describe("AtlasClient sync", () => {
     await recovery;
 
     expect(client.sync.status().lastVersion).toBe(0);
+    expect(client.sync.snapshot().entities).not.toHaveProperty("asset-after-stop");
   });
 
   it("does not let a stale recovery invalidate a recovery after stop and restart", async () => {
