@@ -208,6 +208,19 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("redacts OAuth codes and SAML assertions", () => {
+    const secrets = ["structured-oauth-code", "structured-saml-assertion", "query-oauth-code", "query-saml-assertion"];
+    const sanitized = sanitizeConnectionError(
+      new Error(
+        `Atlas request failed: {"oauthCode":"${secrets[0]}","saml_assertion":"${secrets[1]}","requestId":"request-123"} https://core.test?oauth_code=${secrets[2]}&samlAssertion=${secrets[3]}&safe=visible`
+      )
+    );
+
+    for (const secret of secrets) expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("request-123");
+    expect(sanitized).toContain("safe=visible");
+  });
+
   it("redacts structured camel-case credential fields", () => {
     const secrets = ["database-password-secret", "client-secret-value", "user-access-token-secret"];
     const sanitized = sanitizeConnectionError(

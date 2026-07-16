@@ -920,6 +920,7 @@ describe("AtlasClient sync", () => {
 
       await Promise.all([startup, earlyRecovery]);
       expect(changedSinceVersions).toEqual(["0", "5"]);
+      expect(client.sync.status().lastVersion).toBe(5);
     } finally {
       client.sync.stop();
       vi.unstubAllGlobals();
