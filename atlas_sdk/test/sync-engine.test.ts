@@ -943,6 +943,51 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("keeps a gapped feed recovery failure as the public error", async () => {
+    const core = new FakeCore();
+    let failRecovery = false;
+    let recoveryRequests = 0;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (failRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        recoveryRequests++;
+        return Promise.resolve(new Response("recovery unavailable", { status: 503 }));
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+
+    try {
+      await client.sync.start();
+      failRecovery = true;
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.receive({
+        event: "update",
+        resource_type: "entity",
+        id: "asset-gap-recovery-failure",
+        version: 2,
+        resource: { ...entity("asset-gap-recovery-failure"), metadata: metadata(2) }
+      });
+      await vi.waitFor(() => expect(recoveryRequests).toBe(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core recovery request failed"
+      });
+    } finally {
+      client.sync.stop();
+    }
+  });
+
   it("retries a failed recovery while the sync engine remains running", async () => {
     const core = new FakeCore();
     let failNextRecovery = false;

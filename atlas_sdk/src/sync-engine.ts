@@ -194,7 +194,7 @@ export class SyncEngine {
         },
         onEventError: () => {
           if (!isCurrentAttempt()) return;
-          this.lastError = "Atlas Core feed event failed";
+          if (this.lastError !== "Atlas Core recovery request failed") this.lastError = "Atlas Core feed event failed";
           if (!this.syncRunning) return;
           this.recoveryOperation++;
           this.degraded = true;

@@ -418,6 +418,16 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe=value");
   });
 
+  it("redacts bare bearer fields and query parameters", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"bearer":"structured-bearer-secret"} https://core.test?safe=value&bearer=query-bearer-secret')
+    );
+
+    expect(sanitized).not.toContain("structured-bearer-secret");
+    expect(sanitized).not.toContain("query-bearer-secret");
+    expect(sanitized).toContain("safe=value");
+  });
+
   it("redacts prefixed key query parameters", () => {
     const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?x-api-key=prefixed-api-key-secret"));
 
