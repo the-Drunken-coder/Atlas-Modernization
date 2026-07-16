@@ -212,7 +212,6 @@ export class SyncEngine {
       });
     } catch (error) {
       if (!isCurrentAttempt()) throw error;
-      this.invalidateRecovery();
       this.lastError = "Atlas Core feed connection failed";
       if (this.syncRunning) {
         this.healthy = false;
@@ -495,6 +494,7 @@ export class SyncEngine {
         await this.connectFeedForGeneration(generation, attempt);
       } catch (error) {
         if (!this.isCurrentFeedConnection(generation, attempt)) return;
+        this.invalidateRecovery();
         throw error;
       }
       if (!this.isCurrentFeedConnection(generation, attempt)) return;
