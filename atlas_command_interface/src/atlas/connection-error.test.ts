@@ -150,6 +150,18 @@ describe("sanitizeConnectionError", () => {
     expect(sanitized).toContain("safe context");
   });
 
+  it("normalizes encoded structured credential names and fails closed on invalid encoding", () => {
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: session+id=space-encoded-secret, %73ession_id=percent-encoded-secret, invalid%ZZ=malformed-name-secret")
+    );
+
+    expect(sanitized).not.toContain("space-encoded-secret");
+    expect(sanitized).not.toContain("percent-encoded-secret");
+    expect(sanitized).not.toContain("malformed-name-secret");
+    expect(sanitized).toContain("Atlas request failed");
+    expect(sanitized).toContain("[redacted]");
+  });
+
   it("redacts structured credential names with suffixes", () => {
     const secrets = ["password-hash-secret", "client-secret-value"];
     const sanitized = sanitizeConnectionError(
@@ -439,6 +451,29 @@ describe("sanitizeConnectionError", () => {
 
     expect(sanitized).toContain("safe=value");
     expect(sanitized).not.toContain("semicolon-secret");
+  });
+
+  it("redacts complete semicolon-bearing credential values", () => {
+    const messages = [
+      "Atlas request failed: https://core.test?api_key=first-api-secret;second-api-secret&safe=visible",
+      "Atlas request failed: https://core.test?password=first-password-secret;second-password-secret;safe=visible",
+      "Atlas request failed: password: first-structured-secret;second-structured-secret"
+    ];
+
+    for (const message of messages) {
+      const sanitized = sanitizeConnectionError(new Error(message));
+
+      for (const secret of [
+        "first-api-secret",
+        "second-api-secret",
+        "first-password-secret",
+        "second-password-secret",
+        "first-structured-secret",
+        "second-structured-secret"
+      ]) {
+        expect(sanitized).not.toContain(secret);
+      }
+    }
   });
 
   it("redacts credential-shaped fields and query parameters", () => {

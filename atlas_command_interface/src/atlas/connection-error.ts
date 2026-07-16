@@ -1,7 +1,7 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 const QUOTED_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4))/gi;
-const SENSITIVE_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\?])*\4)|[^?&#;]*)/gi;
-const FULL_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|[^&#;\s]*)/gi;
+const SENSITIVE_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\?])*\4)|(?:(?![?&#]|;\s*(?:\{|[^=&#;\s]+=))[^?&#])*)/gi;
+const FULL_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|(?:(?![&#]|;\s*(?:\{|[^=&#;\s]+=))[^&#\s])*)/gi;
 const SENSITIVE_NAME_PATTERN =
   "(?:atlas[ _-]?session|oauth[ _-]?token|x[ _-]?amz[ _-]?credential|database[ _-]?password|user[ _-]?access[ _-]?token|aws[ _-]?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?)|access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?|private[ _-]?key|access[ _-]?token|api[ _-]?key|authorization|auth[ _-]?token|bearer(?:[ _-]?token)?|client[ _-]?(?:secret(?:[ _-]?value)?|token)|cookie|credential(?:s)?|csrf[ _-]?token|db[ _-]?password|id[ _-]?token|j[ _-]?session[ _-]?id(?![A-Za-z0-9])|key|password[ _-]?hash|password|refresh[ _-]?token|secret|session(?:[ _-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[ _-]?api[ _-]?key(?![A-Za-z0-9])|x[ _-]?amz[ _-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
@@ -10,13 +10,14 @@ const BRACKETED_COLLECTION_CONTENT = String.raw`(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.
 const AMBIGUOUS_NESTED_COLLECTION = String.raw`\[(?=${BRACKETED_COLLECTION_CONTENT}\[)[^\n\r]*`;
 const BRACKETED_COLLECTION = String.raw`\[${BRACKETED_COLLECTION_CONTENT}\]`;
 const AMBIGUOUS_OBJECT_VALUE = String.raw`\{[^\n\r]*`;
+const AMBIGUOUS_SEMICOLON_VALUE = String.raw`[^\n\r}]*;[^\n\r}]*`;
 const SENSITIVE_FIELD = new RegExp(
-  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+(?:[._-]|\[))*${SENSITIVE_NAME_PATTERN}(?:[._-][A-Za-z0-9]+)*\b(?:\[[^\]]*\])*\]?\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`,
+  String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+(?:[._-]|\[))*${SENSITIVE_NAME_PATTERN}(?:[._-][A-Za-z0-9]+)*\b(?:\[[^\]]*\])*\]?\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|${AMBIGUOUS_SEMICOLON_VALUE}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`,
   "gi"
 );
-const STRUCTURED_FIELD_PREFIX = /(?:\\?["']?)([A-Za-z0-9_.\[\]-]+)\\?["']?\s*[:=]\s*/g;
+const STRUCTURED_FIELD_PREFIX = /(?:\\?["']?)([A-Za-z0-9_.%+\[\]-]+)\\?["']?\s*[:=]\s*/g;
 const STRUCTURED_VALUE = new RegExp(
-  String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`
+  String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|${AMBIGUOUS_SEMICOLON_VALUE}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`
 );
 const COOKIE_FIELD = new RegExp(
   String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
@@ -27,19 +28,19 @@ const BEARER_TOKEN = /\bBearer\s+[^\s,;]+/gi;
 const KNOWN_SECRET = /\batlas_ak_[A-Za-z0-9._-]+\b/g;
 
 function redactParameter(match: string, prefix: string, name: string): string {
-  let decodedName: string;
-  try {
-    decodedName = decodeURIComponent(name.replace(/\+/g, " "));
-  } catch {
-    return `${prefix}${name}=[redacted]`;
-  }
-  return isSensitiveName(decodedName) ? `${prefix}${name}=[redacted]` : match;
+  return isSensitiveName(name) ? `${prefix}${name}=[redacted]` : match;
 }
 
 function isSensitiveName(name: string): boolean {
-  if (SENSITIVE_PARAMETER_NAME.test(name)) return true;
-  const normalized = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
-  return normalized !== name && CAMEL_SENSITIVE_PARAMETER_NAME.test(normalized);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(name.replace(/\+/g, " "));
+  } catch {
+    return true;
+  }
+  if (SENSITIVE_PARAMETER_NAME.test(decoded)) return true;
+  const normalized = decoded.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
+  return normalized !== decoded && CAMEL_SENSITIVE_PARAMETER_NAME.test(normalized);
 }
 
 function redactStructuredFields(message: string): string {

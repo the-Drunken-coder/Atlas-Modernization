@@ -60,6 +60,11 @@ export function ConnectionBadge({
   }, [connectionError, health.degraded, health.healthy, open]);
 
   useEffect(() => {
+    if (!connectionError || !ownsFocusRef.current || document.activeElement !== document.body) return;
+    triggerRef.current?.focus();
+  }, [connectionError]);
+
+  useEffect(() => {
     if (!retryFocusPendingRef.current) return;
     if (connectionError) {
       retryFocusPendingRef.current = false;

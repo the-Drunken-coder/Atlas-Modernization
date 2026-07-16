@@ -544,6 +544,12 @@ describe("MapConsole command flow", () => {
       });
       expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
       expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
+
+      setHealth(failingHealth);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(screen.getByRole("button", { name: "Atlas connection error" })).toHaveFocus();
     } finally {
       vi.useRealTimers();
     }

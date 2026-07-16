@@ -94,10 +94,7 @@ export class SyncEngine {
       return this.startSyncPromise;
     }
     const generation = ++this.lifecycleGeneration;
-    this.recoveryOperation++;
-    this.activeRecoveryPromise = undefined;
-    this.activeRecoveryGeneration = undefined;
-    this.activeRecoverySinceVersion = undefined;
+    this.invalidateRecovery();
     this.clearReconnectTimer();
     this.reconnecting = false;
     this.reconnectAfterRecovery = false;
@@ -196,7 +193,7 @@ export class SyncEngine {
           if (!isCurrentAttempt()) return;
           if (this.lastError !== "Atlas Core recovery request failed") this.lastError = "Atlas Core feed event failed";
           if (!this.syncRunning) return;
-          this.recoveryOperation++;
+          this.invalidateRecovery();
           this.degraded = true;
           this.healthy = false;
           this.scheduleReconnect();
@@ -205,7 +202,8 @@ export class SyncEngine {
           if (!isCurrentAttempt() || !this.syncRunning) {
             return;
           }
-          this.recoveryOperation++;
+          this.feedConnectionAttempt++;
+          this.invalidateRecovery();
           this.lastError = "Atlas Core feed connection closed";
           this.healthy = false;
           this.degraded = true;
@@ -214,7 +212,7 @@ export class SyncEngine {
       });
     } catch (error) {
       if (!isCurrentAttempt()) throw error;
-      this.recoveryOperation++;
+      this.invalidateRecovery();
       this.lastError = "Atlas Core feed connection failed";
       if (this.syncRunning) {
         this.healthy = false;
@@ -246,7 +244,7 @@ export class SyncEngine {
 
   private async recoverSince(generation: number, sinceVersion: number): Promise<boolean> {
     if (!this.isCurrent(generation)) return false;
-    const operation = ++this.recoveryOperation;
+    const operation = this.invalidateRecovery();
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
       if (!isCurrentOperation()) return false;
@@ -408,10 +406,7 @@ export class SyncEngine {
     this.reconnecting = false;
     this.reconnectAfterRecovery = false;
     this.syncRunning = false;
-    this.recoveryOperation++;
-    this.activeRecoveryPromise = undefined;
-    this.activeRecoveryGeneration = undefined;
-    this.activeRecoverySinceVersion = undefined;
+    this.invalidateRecovery();
     this.lastError = undefined;
     this.feed.close();
     this.healthy = false;
@@ -420,6 +415,14 @@ export class SyncEngine {
 
   private isCurrent(generation: number): boolean {
     return this.lifecycleGeneration === generation;
+  }
+
+  private invalidateRecovery(): number {
+    const operation = ++this.recoveryOperation;
+    this.activeRecoveryPromise = undefined;
+    this.activeRecoveryGeneration = undefined;
+    this.activeRecoverySinceVersion = undefined;
+    return operation;
   }
 
   private beginFeedConnectionAttempt(): number {

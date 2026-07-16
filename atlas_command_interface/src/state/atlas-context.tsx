@@ -54,7 +54,6 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
     let hasCatalog = false;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
-    let hasResolvedConfig = false;
     const cleanup = () => {
       if (healthTimer) {
         clearInterval(healthTimer);
@@ -90,7 +89,6 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       try {
         const resolvedConfig = providedConfig ?? (await loadConfig());
         if (cancelled) return;
-        hasResolvedConfig = true;
         setConfig(resolvedConfig);
 
         const dataSource = createDataSource(resolvedConfig);
@@ -109,7 +107,19 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
           }
         );
 
-        await dataSource.start();
+        try {
+          await dataSource.start();
+        } catch (cause) {
+          if (cancelled) return;
+          cleanup();
+          const message = sanitizeConnectionError(cause);
+          const connectionError = { source: "startup" as const, message };
+          setError(message);
+          setConnectionError(connectionError);
+          setHealth((current) => ({ ...current, error: connectionError }));
+          setStatus("ready");
+          return;
+        }
         if (cancelled) return;
 
         setSnapshot(dataSource.snapshot());
@@ -137,14 +147,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
         cleanup();
         const message = sanitizeConnectionError(cause);
         setError(message);
-        if (hasResolvedConfig) {
-          const connectionError = { source: "startup" as const, message };
-          setConnectionError(connectionError);
-          setHealth((current) => ({ ...current, error: connectionError }));
-          setStatus("ready");
-        } else {
-          setStatus("error");
-        }
+        setStatus("error");
       }
     })();
 

@@ -131,6 +131,42 @@ describe("AtlasProvider", () => {
     expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
   });
 
+  it("treats data source construction failures as fatal initialization errors", async () => {
+    render(
+      <AtlasProvider
+        config={config}
+        createDataSource={() => {
+          throw new Error("data source construction failed");
+        }}
+      >
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("error")).toBeInTheDocument();
+    expect(screen.getByText("data source construction failed")).toBeInTheDocument();
+    expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
+  });
+
+  it("treats data source watch failures as fatal initialization errors", async () => {
+    const dataSource = {
+      ...catalogDataSource(async () => catalog("Commands")).dataSource,
+      watch() {
+        throw new Error("data source watch failed");
+      }
+    };
+
+    render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("error")).toBeInTheDocument();
+    expect(screen.getByText("data source watch failed")).toBeInTheDocument();
+    expect(screen.queryByTestId("connection-error")).not.toBeInTheDocument();
+  });
+
   it("keeps the public connection error until health fully recovers", async () => {
     vi.useFakeTimers();
     let health: ConnectionHealth = {
