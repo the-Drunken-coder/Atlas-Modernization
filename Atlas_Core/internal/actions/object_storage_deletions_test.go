@@ -25,7 +25,7 @@ func TestQueueStorageDeletionRequeueResetsRetryState(t *testing.T) {
 	}
 
 	actions := NewObjectActions(pool, nil)
-	if err := actions.queueStorageDeletion(ctx, "atlas-media", path, objectID); err != nil {
+	if err := actions.queueStorageDeletionWithSQL(ctx, queueStorageDeletionSQL, "atlas-media", path, objectID); err != nil {
 		t.Fatalf("queueStorageDeletion: %v", err)
 	}
 

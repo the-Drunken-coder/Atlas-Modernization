@@ -2,7 +2,6 @@ package actions
 
 import (
 	"fmt"
-	"strings"
 
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
@@ -12,22 +11,8 @@ type ValidationResult struct {
 	Errors []string
 }
 
-func (vr *ValidationResult) AddError(err string) {
-	vr.Errors = append(vr.Errors, err)
-}
-
 func (vr *ValidationResult) HasErrors() bool {
 	return len(vr.Errors) > 0
-}
-
-func (vr *ValidationResult) Error() string {
-	if !vr.HasErrors() {
-		return ""
-	}
-	if len(vr.Errors) == 1 {
-		return vr.Errors[0]
-	}
-	return fmt.Sprintf("Component validation failed (%d errors): %s", len(vr.Errors), strings.Join(vr.Errors, "; "))
 }
 
 func validationResultFromErrors(errors []string) *ValidationResult {

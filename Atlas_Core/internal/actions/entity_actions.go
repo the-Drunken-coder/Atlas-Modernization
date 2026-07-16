@@ -466,13 +466,3 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 
 	return nil
 }
-
-// Count returns the total number of entities.
-func (a *EntityActions) Count(ctx context.Context) (int, error) {
-	var count int
-	err := a.pool.QueryRow(ctx, "SELECT COUNT(*) FROM entities").Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count entities: %w", err)
-	}
-	return count, nil
-}

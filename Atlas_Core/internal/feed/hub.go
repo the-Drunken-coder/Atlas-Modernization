@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -631,12 +630,4 @@ func ProtocolValidationErrors(event protocol.FeedEvent) []string {
 		return []string{err.Error()}
 	}
 	return protocol.ValidateFeedEvent(payload)
-}
-
-func EventsByVersion(events []RoutedEvent) []RoutedEvent {
-	out := append([]RoutedEvent(nil), events...)
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Event.Version < out[j].Event.Version
-	})
-	return out
 }

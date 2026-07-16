@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -62,7 +63,7 @@ func (l *simulationLedger) changedSince(version int64) []RoutedEvent {
 			out = append(out, event)
 		}
 	}
-	return EventsByVersion(out)
+	return eventsByVersion(out)
 }
 
 func (l *simulationLedger) entitled(filter Subscription) []RoutedEvent {
@@ -72,7 +73,15 @@ func (l *simulationLedger) entitled(filter Subscription) []RoutedEvent {
 			out = append(out, event)
 		}
 	}
-	return EventsByVersion(out)
+	return eventsByVersion(out)
+}
+
+func eventsByVersion(events []RoutedEvent) []RoutedEvent {
+	out := append([]RoutedEvent(nil), events...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Event.Version < out[j].Event.Version
+	})
+	return out
 }
 
 type simulatedSubscriber struct {

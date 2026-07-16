@@ -94,18 +94,6 @@ func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
 	}
 }
 
-func NewEntityPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("entity")
-}
-
-func NewTaskPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("task")
-}
-
-func NewObjectPreconditionFailedError() *PreconditionFailedError {
-	return NewPreconditionFailedError("object")
-}
-
 // ConflictError is returned when a create or update violates a unique constraint.
 type ConflictError struct {
 	ActionError
