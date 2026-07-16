@@ -214,15 +214,6 @@ func CombinedAuth(apiKey string, enableAPIKey bool, adminAuth requestAuthenticat
 	}
 }
 
-func ValidAPIKey(r *http.Request, apiKey string) bool {
-	return validAPIKeyValue(requestAPIKey(r), apiKey)
-}
-
-func ValidAPIKeyOrManaged(r *http.Request, apiKey string, adminAuth requestAuthenticator) bool {
-	valid, err := ValidAPIKeyOrManagedResult(r, apiKey, adminAuth)
-	return err == nil && valid
-}
-
 func ValidAPIKeyOrManagedResult(r *http.Request, apiKey string, adminAuth requestAuthenticator) (bool, error) {
 	providedKey := requestAPIKey(r)
 	if validAPIKeyValue(providedKey, apiKey) {

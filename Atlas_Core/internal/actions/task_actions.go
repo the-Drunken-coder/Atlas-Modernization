@@ -582,10 +582,6 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 
 var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
 
-func removeTaskExtraKeys(jsonData map[string]interface{}, keys ...string) {
-	removeBlobExtraKeys(jsonData, taskPromotedBlobFields, keys...)
-}
-
 func taskStatusTransitionUpdate(status string, progress *float64, message *string) UpdateTaskParams {
 	var components map[string]interface{}
 	if progress != nil || message != nil {
@@ -627,14 +623,4 @@ func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status strin
 	params := taskStatusTransitionUpdate(status, progress, message)
 	params.ExpectedVersion = expectedVersion
 	return a.Update(ctx, taskID, params)
-}
-
-// Count returns the total number of tasks.
-func (a *TaskActions) Count(ctx context.Context) (int, error) {
-	var count int
-	err := a.pool.QueryRow(ctx, "SELECT COUNT(*) FROM tasks").Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count tasks: %w", err)
-	}
-	return count, nil
 }

@@ -448,13 +448,3 @@ func (a *ObjectActions) Download(ctx context.Context, objectID string) (io.ReadC
 
 	return reader, info.ContentType, info.SizeBytes, nil
 }
-
-// Count returns the total number of objects.
-func (a *ObjectActions) Count(ctx context.Context) (int, error) {
-	var count int
-	err := a.pool.QueryRow(ctx, "SELECT COUNT(*) FROM objects").Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count objects: %w", err)
-	}
-	return count, nil
-}

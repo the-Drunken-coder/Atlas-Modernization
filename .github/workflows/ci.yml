@@ -56,6 +56,14 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
+      - name: Check for unreachable Go functions
+        run: |
+          output="$(go run golang.org/x/tools/cmd/deadcode@v0.48.0 -test ./...)"
+          if [ -n "$output" ]; then
+            printf 'unreachable Go functions:\n%s\n' "$output"
+            exit 1
+          fi
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:

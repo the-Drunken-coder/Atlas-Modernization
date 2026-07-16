@@ -76,10 +76,6 @@ func (a *ObjectActions) queueStorageDeletionTx(ctx context.Context, tx pgx.Tx, b
 	return nil
 }
 
-func (a *ObjectActions) queueStorageDeletion(ctx context.Context, bucket, path, objectID string) error {
-	return a.queueStorageDeletionWithSQL(ctx, queueStorageDeletionSQL, bucket, path, objectID)
-}
-
 func (a *ObjectActions) queueStorageDeletionPreservingRetry(ctx context.Context, bucket, path, objectID string) error {
 	return a.queueStorageDeletionWithSQL(ctx, queueStorageDeletionPreserveRetrySQL, bucket, path, objectID)
 }

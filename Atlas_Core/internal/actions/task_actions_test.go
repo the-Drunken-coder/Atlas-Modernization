@@ -332,7 +332,7 @@ func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
 		"message":        "legacy message",
 		"result":         map[string]interface{}{"ok": true},
 	}
-	removeTaskExtraKeys(existing, params.RemoveExtraKeys...)
+	removeBlobExtraKeys(existing, taskPromotedBlobFields, params.RemoveExtraKeys...)
 	for _, key := range legacyTaskTransitionExtraKeys {
 		if _, ok := existing[key]; ok {
 			t.Fatalf("legacy extra key %q was not removed: %#v", key, existing)
@@ -365,7 +365,7 @@ func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
 		"message":        "legacy message",
 		"result":         map[string]interface{}{"ok": true},
 	}
-	removeTaskExtraKeys(nilExisting, nilParams.RemoveExtraKeys...)
+	removeBlobExtraKeys(nilExisting, taskPromotedBlobFields, nilParams.RemoveExtraKeys...)
 	for _, key := range legacyTaskTransitionExtraKeys {
 		if _, ok := nilExisting[key]; ok {
 			t.Fatalf("legacy extra key %q was not removed for nil progress/message: %#v", key, nilExisting)
