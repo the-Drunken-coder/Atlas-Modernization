@@ -3,7 +3,7 @@ import type {
   EntityResource,
   FeedEvent,
   JSONValue,
-  ObjectResponse,
+  ObjectDetailResource,
   ObjectResource,
   ResourceType,
   TaskDeleteEvent,
@@ -136,6 +136,7 @@ export type SyncStatus = {
   running: boolean;
   healthy: boolean;
   degraded: boolean;
+  error?: string;
   lastVersion: number;
   subscriptions: AtlasSubscription[];
 };
@@ -149,7 +150,7 @@ export type SyncSnapshot = {
 export type ChangedSinceResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
-  objects: ObjectResponse[];
+  objects: ObjectDetailResource[];
   deleted_entities?: DeletedResourceByType["entity"][];
   deleted_tasks?: DeletedResourceByType["task"][];
   deleted_objects?: DeletedResourceByType["object"][];
@@ -172,7 +173,7 @@ export type ChangedSinceResponse = {
 export type FullDatasetResponse = {
   entities: EntityResource[];
   tasks: TaskResource[];
-  objects: ObjectResponse[];
+  objects: ObjectDetailResource[];
   version: number;
   has_more_entities: boolean;
   has_more_tasks: boolean;

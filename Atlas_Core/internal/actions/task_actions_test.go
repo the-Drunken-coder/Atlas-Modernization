@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
 func TestNormalizeTaskStatus(t *testing.T) {
@@ -139,6 +140,96 @@ func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
 	var notFound *NotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("delete missing task error = %T %v, want NotFoundError", err, err)
+	}
+}
+
+func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	taskID := fmt.Sprintf("task-ack-idempotent-%d", time.Now().UTC().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, "", taskID)
+
+	sink := &channelChangeSink{changes: make(chan ResourceChange, 4)}
+	taskActions := NewTaskActionsWithChangeSink(pool, sink)
+	created, err := taskActions.Create(ctx, CreateTaskParams{TaskID: taskID})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	receiveTaskChange(t, sink.changes)
+
+	acknowledged, err := taskActions.Acknowledge(ctx, taskID, &created.Version)
+	if err != nil {
+		t.Fatalf("acknowledge pending task: %v", err)
+	}
+	if acknowledged.Status != "acknowledged" || acknowledged.Version <= created.Version {
+		t.Fatalf("acknowledged task = %#v, want acknowledged with version after %d", acknowledged, created.Version)
+	}
+	change := receiveTaskChange(t, sink.changes)
+	if change.Event != ChangeEventUpdate || change.ID != taskID || change.Version != acknowledged.Version {
+		t.Fatalf("acknowledgement change = %#v, want task update at version %d", change, acknowledged.Version)
+	}
+
+	repeated, err := taskActions.Acknowledge(ctx, taskID, nil)
+	if err != nil {
+		t.Fatalf("repeat acknowledgement: %v", err)
+	}
+	assertSameTaskVersionAndTimestamp(t, repeated, acknowledged)
+	assertNoTaskChange(t, sink.changes)
+
+	repeated, err = taskActions.Acknowledge(ctx, taskID, &acknowledged.Version)
+	if err != nil {
+		t.Fatalf("repeat acknowledgement with current version: %v", err)
+	}
+	assertSameTaskVersionAndTimestamp(t, repeated, acknowledged)
+	assertNoTaskChange(t, sink.changes)
+
+	_, err = taskActions.Acknowledge(ctx, taskID, &created.Version)
+	var preconditionErr *PreconditionFailedError
+	if !errors.As(err, &preconditionErr) {
+		t.Fatalf("repeat acknowledgement with stale version error = %T %v, want PreconditionFailedError", err, err)
+	}
+	assertNoTaskChange(t, sink.changes)
+
+	status := "acknowledged"
+	updated, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status})
+	if err != nil {
+		t.Fatalf("generic same-status update: %v", err)
+	}
+	if updated.Version <= acknowledged.Version {
+		t.Fatalf("generic same-status update version = %d, want after %d", updated.Version, acknowledged.Version)
+	}
+	change = receiveTaskChange(t, sink.changes)
+	if change.Version != updated.Version {
+		t.Fatalf("generic same-status change version = %d, want %d", change.Version, updated.Version)
+	}
+}
+
+func assertSameTaskVersionAndTimestamp(t *testing.T, got, want *models.Task) {
+	t.Helper()
+	if got.Version != want.Version || !got.UpdatedAt.Equal(want.UpdatedAt) {
+		t.Fatalf("task version/updated_at = %d/%s, want %d/%s", got.Version, got.UpdatedAt, want.Version, want.UpdatedAt)
+	}
+}
+
+func assertNoTaskChange(t *testing.T, changes <-chan ResourceChange) {
+	t.Helper()
+	select {
+	case change := <-changes:
+		t.Fatalf("unexpected task change: %#v", change)
+	default:
+	}
+}
+
+func receiveTaskChange(t *testing.T, changes <-chan ResourceChange) ResourceChange {
+	t.Helper()
+	select {
+	case change := <-changes:
+		return change
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task change")
+		return ResourceChange{}
 	}
 }
 

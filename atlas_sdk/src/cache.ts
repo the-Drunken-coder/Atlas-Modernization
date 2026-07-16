@@ -1,4 +1,11 @@
-import type { EntityResource, ObjectResource, ResourceType, TaskResource } from "./protocol.js";
+import {
+  isObjectDetailResource,
+  type EntityResource,
+  type ObjectDetailResource,
+  type ObjectResource,
+  type ResourceType,
+  type TaskResource
+} from "./protocol.js";
 import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
 
@@ -98,6 +105,11 @@ export class ResourceCache {
     return entry && !entry.deleted ? entry.value : undefined;
   }
 
+  objectDetail(id: string): ObjectDetailResource | undefined {
+    const entry = this.entries.object.get(id);
+    return entry?.detail && entry.value && !entry.deleted && isObjectDetailResource(entry.value) ? entry.value : undefined;
+  }
+
   snapshot(): SyncSnapshot {
     if (this.snapshotDirty) {
       this.snapshotValue = snapshotFromRecords(this.snapshotRecords);
@@ -106,9 +118,7 @@ export class ResourceCache {
     return this.snapshotValue;
   }
 
-  replaceHydratedResources(
-    resources: { entities: readonly EntityResource[]; tasks: readonly TaskResource[]; objects: readonly ObjectResource[] }
-  ): void {
+  replaceHydratedResources(resources: { entities: readonly EntityResource[]; tasks: readonly TaskResource[]; objects: readonly ObjectDetailResource[] }): void {
     this.entries.entity.clear();
     this.entries.task.clear();
     this.entries.object.clear();
@@ -121,7 +131,7 @@ export class ResourceCache {
     this.lastVersion = 0;
     for (const entity of resources.entities) this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
     for (const task of resources.tasks) this.cacheResource("task", task.task_id, task, { advanceCursor: false });
-    for (const object of resources.objects) this.cacheResource("object", object.object_id, object, { advanceCursor: false });
+    for (const object of resources.objects) this.cacheResource("object", object.object_id, object, { detail: true, advanceCursor: false });
   }
 
   cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {

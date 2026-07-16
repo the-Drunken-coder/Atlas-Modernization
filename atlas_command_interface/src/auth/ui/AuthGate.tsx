@@ -1,5 +1,7 @@
-import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
+import { sanitizeConnectionError } from "../../atlas/connection-error.js";
+import { ConnectionBadge } from "../../ui/ConnectionBadge.js";
 import { Button } from "../../ui/primitives/controls.js";
 import { AccountMenu } from "./AccountMenu.js";
 
@@ -14,6 +16,7 @@ type SessionResponse = { authenticated: false } | { authenticated: true; user: {
 export function AuthGate({ baseUrl, children }: { baseUrl: string; children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  const focusErrorAfterRetryRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,21 +65,22 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   if (state.status === "error") {
     return (
       <main className="login-shell">
+        <ConnectionBadge
+          health={{ running: false, healthy: false, degraded: false }}
+          error={{ source: "startup", message: state.error }}
+          focusOnMount={focusErrorAfterRetryRef.current}
+          onRetry={() => {
+            focusErrorAfterRetryRef.current = true;
+            setState({ status: "loading" });
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
         <div className="login-panel" role="alert">
           <div className="login-panel__header">
             <span className="login-panel__eyebrow">Atlas</span>
             <h1>Core unavailable</h1>
           </div>
-          <div className="banner banner--error">{state.error}</div>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setState({ status: "loading" });
-              setSessionAttempt((attempt) => attempt + 1);
-            }}
-          >
-            Retry connection
-          </Button>
+          <p>Open the connection error for details and retry.</p>
         </div>
       </main>
     );
@@ -141,7 +145,7 @@ export class WorkspaceErrorBoundary extends Component<
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return sanitizeConnectionError(error);
 }
 
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
@@ -173,7 +177,7 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
       const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.login({ username, password });
       onAuthenticated(data.user.username);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setSubmitting(false);
     }

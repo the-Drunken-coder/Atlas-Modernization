@@ -48,7 +48,7 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose waits for `minio-init` to provision the bucket on a clean deployment.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose waits for `minio-init` to provision the bucket on a clean deployment. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
 
 ## Baseline migration v1
 
@@ -104,7 +104,7 @@ The database integration tests use isolated PostgreSQL schemas. With `ATLAS_CORE
 
 ## Development scratch workflow
 
-The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then gives developers empty resource tables and an empty `atlas-media` bucket while retaining local `admin_records` and the migration ledger.
+The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then clears disposable resource rows and the `atlas-media` bucket while retaining local `admin_records` and the migration ledger. Before serving HTTP, Core republishes its embedded `command_catalog`, so the resulting scratch dataset contains that Core-owned discovery object even when only the API container was restarted.
 
 ```bash
 python3 Atlas_Core/scripts/atlas.py --dev

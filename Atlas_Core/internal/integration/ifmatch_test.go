@@ -380,17 +380,15 @@ func assertResponseMarker(t *testing.T, resp *http.Response, marker string) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response body: %v", err)
 	}
-	for _, field := range []string{"extra", "payload"} {
-		container, ok := body[field].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if got, ok := container[marker].(bool); ok && got {
-			return
-		}
-		if got, ok := container[marker]; ok {
-			t.Fatalf("response %s.%s = %v, want true", field, marker, got)
-		}
+	container, ok := body["extra"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("response missing extra field: %#v", body)
 	}
-	t.Fatalf("response missing marker %q in extra or payload: %#v", marker, body)
+	if got, ok := container[marker].(bool); ok && got {
+		return
+	}
+	if got, ok := container[marker]; ok {
+		t.Fatalf("response extra.%s = %v, want true", marker, got)
+	}
+	t.Fatalf("response missing marker %q in extra: %#v", marker, body)
 }

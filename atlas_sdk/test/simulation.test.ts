@@ -57,7 +57,6 @@ describe("AtlasClient simulation", () => {
       client.sync.stop();
     }
   });
-
 });
 
 async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): Promise<void> {
@@ -69,7 +68,10 @@ async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): P
       await expect(client.tasks.get(taskValue.task_id)).resolves.toEqual(taskValue);
     }
     for (const objectValue of core.objects.values()) {
-      await expect(client.objects.get(objectValue.object_id)).resolves.toEqual(objectValue);
+      await expect(client.objects.get(objectValue.object_id)).resolves.toEqual({
+        ...objectValue,
+        extra: { ...(core.objectExtras.get(objectValue.object_id) ?? {}) }
+      });
     }
     for (const deletion of core.deletions) {
       if (deletion.resource_type === "entity" && !core.entities.has(deletion.id)) {

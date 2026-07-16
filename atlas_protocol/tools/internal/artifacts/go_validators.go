@@ -24,6 +24,7 @@ var goValidatorFunctions = []goValidatorFunction{
 	{name: "ValidateEntityResource", params: "value any", args: "value", validate: protocolvalidator.ValidateEntityResource},
 	{name: "ValidateTaskResource", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskResource},
 	{name: "ValidateObjectResource", params: "value any", args: "value", validate: protocolvalidator.ValidateObjectResource},
+	{name: "ValidateObjectDetailResource", params: "value any", args: "value", validate: protocolvalidator.ValidateObjectDetailResource},
 	{name: "ValidateErrorResponse", params: "value any", args: "value", validate: protocolvalidator.ValidateErrorResponse},
 	{name: "ValidateFeedEvent", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedEvent},
 	{name: "ValidateFeedAuthMessage", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedAuthMessage},

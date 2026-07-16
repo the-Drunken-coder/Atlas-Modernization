@@ -15,6 +15,43 @@ func TestValidateGoContractsMatchesCanonicalSchema(t *testing.T) {
 	}
 }
 
+func TestObjectDetailResourceOnlyExtendsObjectResourceWithExtra(t *testing.T) {
+	_, bundle := canonicalGoContractFixture(t)
+	detail := schemaDefinition(t, bundle, "ObjectDetailResource")
+	resource := schemaDefinition(t, bundle, "ObjectResource")
+	detailProperties := cloneJSONValue(schemaProperties(t, bundle, "ObjectDetailResource")).(map[string]any)
+	extra, ok := detailProperties["extra"].(map[string]any)
+	if !ok {
+		t.Fatal("ObjectDetailResource is missing extra")
+	}
+	if extra["type"] != "object" {
+		t.Fatalf("ObjectDetailResource extra type = %v, want object", extra["type"])
+	}
+	delete(detailProperties, "extra")
+	if !reflect.DeepEqual(detailProperties, schemaProperties(t, bundle, "ObjectResource")) {
+		t.Fatal("ObjectDetailResource metadata fields drifted from ObjectResource")
+	}
+	detailRequired, ok := detail["required"].([]any)
+	if !ok {
+		t.Fatalf("ObjectDetailResource required = %T, want []any", detail["required"])
+	}
+	resourceRequired := resource["required"].([]any)
+	withoutExtra := make([]any, 0, len(detailRequired)-1)
+	for _, field := range detailRequired {
+		if field != "extra" {
+			withoutExtra = append(withoutExtra, field)
+		}
+	}
+	if len(withoutExtra) == len(detailRequired) || !reflect.DeepEqual(withoutExtra, resourceRequired) {
+		t.Fatalf("ObjectDetailResource required = %v, want ObjectResource fields plus extra", detailRequired)
+	}
+	for _, key := range []string{"additionalProperties", "type"} {
+		if !reflect.DeepEqual(detail[key], resource[key]) {
+			t.Fatalf("ObjectDetailResource %s drifted from ObjectResource", key)
+		}
+	}
+}
+
 func TestValidateGoContractsRejectsSchemaDrift(t *testing.T) {
 	root, canonical := canonicalGoContractFixture(t)
 	tests := []struct {

@@ -1,5 +1,3 @@
-import type { JSONValue, ObjectResource } from "../../atlas_protocol/generated/typescript/index.js";
-
 export {
   ATLAS_PROTOCOL_REVISION,
   isEntityResource,
@@ -8,6 +6,7 @@ export {
   isFeedEvent,
   isFeedHandshakeMessage,
   isJSONValue,
+  isObjectDetailResource,
   isObjectResource,
   isObjectCreateRequest,
   isObjectUpdateRequest,
@@ -18,10 +17,6 @@ export {
   isTaskCreateRequest,
   isTaskUpdateRequest
 } from "../../atlas_protocol/generated/typescript/index.js";
-
-export type ObjectResponse = ObjectResource & {
-  payload?: { [key: string]: JSONValue };
-};
 
 export type {
   EntityCreateRequest,
@@ -36,6 +31,7 @@ export type {
   FeedUnsubscribeMessage,
   JSONValue,
   ObjectCreateRequest,
+  ObjectDetailResource,
   ObjectResource,
   ObjectUpdateRequest,
   ResourceType,

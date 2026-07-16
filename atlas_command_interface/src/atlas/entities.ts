@@ -1,11 +1,14 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { representativePoint, toUiGeometry, type Position, type UiGeometry } from "./geometry.js";
+import { type Position, representativePoint, toUiGeometry, type UiGeometry } from "./geometry.js";
 
 export type EntityKind = "asset" | "track" | "geofeature";
 export type LinkState = "connected" | "disconnected" | "degraded" | "unknown";
 export type Classification = "friendly" | "hostile" | "neutral" | "unknown" | "civilian";
 
 export type HeartbeatLevel = "fresh" | "stale" | "offline";
+export type HeartbeatStatus = HeartbeatLevel | "clock-error";
+export type ConnectionFreshness = HeartbeatStatus | "missing";
+export type EntityConnectionStatus = { reported: LinkState; freshness: ConnectionFreshness };
 
 // Heartbeat freshness thresholds (seconds). Beyond OFFLINE the asset is treated
 // as offline; between the two it is stale.
@@ -78,6 +81,10 @@ export function entityLastSeen(entity: EntityResource): string | undefined {
   return entity.components.heartbeat?.last_seen ?? entity.components.telemetry?.last_update ?? entity.components.status?.last_update;
 }
 
+export function entityHeartbeatLastSeen(entity: EntityResource): string | undefined {
+  return entity.components.heartbeat?.last_seen;
+}
+
 export function entityCurrentTaskId(entity: EntityResource): string | undefined {
   return entity.components.task_queue?.current_task_id ?? undefined;
 }
@@ -86,15 +93,20 @@ export function entityQueuedTaskIds(entity: EntityResource): string[] {
   return entity.components.task_queue?.queued_task_ids ?? [];
 }
 
-export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.now()): HeartbeatLevel | undefined {
+export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.now()): HeartbeatStatus | undefined {
   if (!lastSeen) return undefined;
   const timestamp = Date.parse(lastSeen);
   if (!Number.isFinite(timestamp)) return undefined;
   const seconds = (now - timestamp) / 1000;
-  if (seconds < 0) return undefined;
+  if (seconds < -HEARTBEAT_STALE_SECONDS) return "clock-error";
   if (seconds >= HEARTBEAT_OFFLINE_SECONDS) return "offline";
   if (seconds >= HEARTBEAT_STALE_SECONDS) return "stale";
   return "fresh";
+}
+
+export function entityConnectionStatus(entity: EntityResource, now: number = Date.now()): EntityConnectionStatus | undefined {
+  const reported = entityLinkState(entity);
+  return reported ? { reported, freshness: heartbeatLevel(entityHeartbeatLastSeen(entity), now) ?? "missing" } : undefined;
 }
 
 function numberOrUndefined(value: number | undefined): number | undefined {

@@ -899,6 +899,98 @@
       },
       "type": "object"
     },
+    "ObjectDetailResource": {
+      "additionalProperties": false,
+      "properties": {
+        "bucket": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "content_type": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "extra": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "object"
+        },
+        "metadata": {
+          "$ref": "#/$defs/MetadataBlock"
+        },
+        "object_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "referenced_by": {
+          "items": {
+            "$ref": "#/$defs/ObjectReference"
+          },
+          "type": "array"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "minimum": 0,
+              "type": "integer"
+            }
+          ]
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "usage_hints": {
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bucket",
+        "content_type",
+        "extra",
+        "metadata",
+        "object_id",
+        "path",
+        "size_bytes",
+        "type",
+        "usage_hints"
+      ],
+      "type": "object"
+    },
     "ObjectResource": {
       "additionalProperties": false,
       "properties": {

@@ -4,6 +4,12 @@ If you ever encounter something in the project that surprises you, please alert 
 
 For UI work, ask the developer targeted behavior questions when interaction states or precedence are ambiguous. Confirm the exact user-visible behavior instead of guessing, especially when selection, focus, hover, keyboard, and pointer states can conflict; these questions help the developer describe the intended experience.
 
+Connection-error details may receive arbitrary client or server error text. Sanitization must cover structured fields, URL userinfo, query credentials, and bare bearer tokens before any message reaches the UI.
+
+In `AtlasProvider`, only a failure from `dataSource.start()` is a recoverable Atlas Core connection error. Data-source construction, watch registration, and post-start snapshot failures are fatal interface initialization errors.
+
+The SDK sync engine can receive delayed recovery, feed event, error, or close callbacks from an earlier lifecycle generation; guard that generation before mutating shared recovery-operation, status, or snapshot state across stop/start.
+
 The Go service module lives under **`Atlas_Core/`** (run `go test ./...` and `go run ./cmd/atlas_core` from that directory). The repo is multi-module, so choose the narrowest validation stack that matches the task:
 
 ```sh
@@ -31,6 +37,8 @@ Atlas Core production object-size settings must be passed through `Atlas_Core/do
 
 For docs-only changes, lightweight path and stale-link checks are usually enough; do not run the full stack unless the edit can affect generated artifacts, module wiring, or runtime behavior.
 
+Run the launcher Python tests with the three commands in `.github/workflows/ci.yml` rather than broad `unittest discover`: `Atlas_Core/scripts/test_api_manual.py` is an operator script whose filename matches discovery but imports the optional `requests` package and is not part of the unit-test suite.
+
 Codex-created worktrees may not be checked out on the PR branch even when they are inside this repository. If the local tree looks unexpectedly small or detached, run `git worktree list` and inspect the branch checkout before deciding the PR contents are missing.
 
 Atlas Protocol planning/reference docs live under **`docs/atlas-protocol/`**. The old root-level `Atlas Protocol/` folder was intentionally moved there so the repository root has only one protocol-looking folder. Do not recreate `Atlas Protocol/`; update stale links to `docs/atlas-protocol/` instead. Before docs or layout edits, check for stale protocol paths:
@@ -50,6 +58,8 @@ Atlas Protocol uses draft 2020-12 JSON Schema as its source of truth in **`atlas
 ```
 
 Do not recreate `atlas_protocol/generated/jsonschema/`; schema details belong in the canonical bundle. The Atlas Protocol runtime validator uses `github.com/santhosh-tekuri/jsonschema/v6` against compiled schema definitions and preserves a few narrow semantic checks, such as GeoJSON polygon ring closure and total polygon position limits.
+
+Protocol generation updates the revision artifacts but does not rewrite `atlas_protocol/examples/feed/server/handshake.json`. After a schema revision change, align that example's `protocol_revision` with `atlas_protocol/generated/revision.txt` before running the protocol tests.
 
 This project is super greenfield. It has no users and no real data yet. Prefer the simplest correct long-term design over dirty compatibility shims, duplicated paths, or preserving old architecture just because it already exists. If replacing a subsystem leads to a simpler result, take the rebuild even when the process is more involved; if the quick simple fix is also the clean long-term answer, take that instead. Keep changes scoped to the request, and do not use greenfield status as permission for unrelated refactors.
 

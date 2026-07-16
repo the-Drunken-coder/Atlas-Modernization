@@ -18,14 +18,9 @@ func objectUploadLockKey(objectID string) string {
 }
 
 func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, operation string) (pgx.Tx, error) {
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := beginChangeTx(ctx, a.pool, operation, a.changeSink)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin %s transaction: %w", operation, err)
-	}
-
-	if err := lockChangeVersion(ctx, tx); err != nil {
-		_ = tx.Rollback(ctx)
-		return nil, fmt.Errorf("failed to lock %s change version: %w", operation, err)
+		return nil, err
 	}
 
 	lockKey := objectUploadLockKey(objectID)

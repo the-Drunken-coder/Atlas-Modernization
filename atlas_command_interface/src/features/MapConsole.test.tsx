@@ -8,7 +8,7 @@ import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealt
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import type { AppConfig } from "../app/config.js";
-import { AtlasProvider } from "../state/atlas-context.js";
+import { AtlasProvider, AtlasStaticProvider, type AtlasContextValue } from "../state/atlas-context.js";
 import { MapConsole } from "./MapConsole.js";
 
 type MockMapViewProps = {
@@ -130,6 +130,7 @@ const healthyConnection: ConnectionHealth = { running: true, healthy: true, degr
 
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
   let current: AtlasSnapshot = { entities: { [rover.entity_id]: rover, [geofeature.entity_id]: geofeature }, tasks: {} };
+  let currentHealth = health;
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
   let notifyCatalog: ((update: CatalogUpdate) => void) | undefined;
   const submissions: CommandSubmission[] = [];
@@ -151,7 +152,7 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     },
     async start() {},
     health() {
-      return health;
+      return currentHealth;
     },
     async submitCommand(submission) {
       submissions.push(submission);
@@ -183,7 +184,10 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       current = snapshot;
       notify?.(snapshot);
     },
-    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update)
+    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update),
+    setHealth: (next: ConnectionHealth) => {
+      currentHealth = next;
+    }
   };
 }
 
@@ -210,6 +214,30 @@ function renderConsole(fake: AtlasDataSource, config: AppConfig = appConfig()) {
     <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
       <MapConsole />
     </AtlasProvider>
+  );
+}
+
+function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
+  const snapshot = makeFakeDataSource().fake.snapshot();
+  const value: AtlasContextValue = {
+    status: "ready",
+    config: appConfig(),
+    snapshot,
+    catalog,
+    health: healthyConnection,
+    reconnect: vi.fn(),
+    submitCommand: async () => {
+      throw new Error("not used");
+    },
+    updateGeometry: async () => {
+      throw new Error("not used");
+    },
+    ...overrides
+  };
+  return render(
+    <AtlasStaticProvider value={value}>
+      <MapConsole />
+    </AtlasStaticProvider>
   );
 }
 
@@ -362,9 +390,61 @@ describe("MapConsole command flow", () => {
     expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
   });
 
-  it("offers a one-shot connection retry after initial SDK startup fails", async () => {
+  it("announces a connection error without opening its details", async () => {
+    renderStaticConsole({
+      connectionError: { source: "live-sync", message: "feed connection failed" },
+      health: { running: true, healthy: false, degraded: true }
+    });
+
+    expect(await screen.findByRole("status", { name: "Atlas connection Connection error" })).toHaveTextContent("Connection error");
+    expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+  });
+
+  it("sanitizes a fallback health error before rendering details", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole({
+      health: {
+        running: true,
+        healthy: false,
+        degraded: true,
+        error: { source: "live-sync", message: "Atlas request failed: https://user:password@example.test?api_key=secret Bearer token" }
+      }
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Atlas request failed");
+    expect(dialog).not.toHaveTextContent("user:password");
+    expect(dialog).not.toHaveTextContent("api_key=secret");
+    expect(dialog).not.toHaveTextContent("secret");
+    expect(dialog).not.toHaveTextContent("Bearer token");
+  });
+
+  it("sanitizes an explicit connection error before rendering details", async () => {
+    const user = userEvent.setup();
+    renderStaticConsole({
+      connectionError: {
+        source: "startup",
+        message: "Atlas request failed: https://user:password@example.test?api_key=secret Bearer token"
+      },
+      health: { running: false, healthy: false, degraded: false }
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Atlas connection error" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Atlas request failed");
+    expect(dialog).not.toHaveTextContent("user:password");
+    expect(dialog).not.toHaveTextContent("api_key=secret");
+    expect(dialog).not.toHaveTextContent("secret");
+    expect(dialog).not.toHaveTextContent("Bearer token");
+  });
+
+  it("shows repeated startup failures and returns to Online after recovery", async () => {
     const user = userEvent.setup();
     const failedDispose = vi.fn();
+    const retryFailedDispose = vi.fn();
     const failing: AtlasDataSource = {
       ...makeFakeDataSource().fake,
       async start() {
@@ -372,8 +452,15 @@ describe("MapConsole command flow", () => {
       },
       dispose: failedDispose
     };
+    const retryFailed: AtlasDataSource = {
+      ...makeFakeDataSource().fake,
+      async start() {
+        throw new Error("Core retry failed");
+      },
+      dispose: retryFailedDispose
+    };
     const recovered = makeFakeDataSource().fake;
-    const createDataSource = vi.fn().mockReturnValueOnce(failing).mockReturnValueOnce(recovered);
+    const createDataSource = vi.fn().mockReturnValueOnce(failing).mockReturnValueOnce(retryFailed).mockReturnValueOnce(recovered);
 
     render(
       <AtlasProvider loadConfig={async () => appConfig()} createDataSource={createDataSource}>
@@ -381,15 +468,119 @@ describe("MapConsole command flow", () => {
       </AtlasProvider>
     );
 
-    expect(await screen.findByText("Core startup failed")).toBeInTheDocument();
+    const initialBadge = await screen.findByRole("button", { name: "Atlas connection error" });
+    await user.click(initialBadge);
+    expect(screen.getByText("Core startup failed")).toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(1);
     expect(failedDispose).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Retry connection" }));
 
-    expect(await screen.findByText("Rover")).toBeInTheDocument();
+    const retryBadge = await screen.findByRole("button", { name: "Atlas connection error" });
+    expect(retryBadge).toHaveFocus();
+    await user.click(retryBadge);
+    expect(screen.getByText("Core retry failed")).toBeInTheDocument();
     expect(createDataSource).toHaveBeenCalledTimes(2);
+    expect(retryFailedDispose).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Retry connection" }));
+
+    expect(await screen.findByText("Rover")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "Atlas connection Online" })).toHaveTextContent("Online");
+    expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
+    expect(createDataSource).toHaveBeenCalledTimes(3);
     expect(failedDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens error details by keyboard and restores focus safely on close", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource(area, {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed at https://user:password@example.test?api_key=secret Bearer token" }
+    });
+    renderConsole(fake);
+
+    const badge = await screen.findByRole("button", { name: "Atlas connection error" });
+    badge.focus();
+    await user.keyboard("{Enter}");
+
+    const close = await screen.findByRole("button", { name: "Close connection details" });
+    expect(document.activeElement).toBe(close);
+    const dialog = screen.getByRole("dialog", { name: "Atlas Core connection error" });
+    expect(dialog).toHaveTextContent("Retrying automatically…");
+    expect(dialog).not.toHaveTextContent("user:password");
+    expect(dialog).not.toHaveTextContent("secret");
+    expect(dialog).not.toHaveTextContent("Bearer token");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(badge);
+  });
+
+  it("closes details and preserves a focus target when recovery clears the error", async () => {
+    vi.useFakeTimers();
+    const failingHealth: ConnectionHealth = {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed to open" }
+    };
+    const { fake, setHealth } = makeFakeDataSource(area, failingHealth);
+    try {
+      renderConsole(fake);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const badge = screen.getByRole("button", { name: "Atlas connection error" });
+      fireEvent.click(badge);
+      setHealth(healthyConnection);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
+      expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
+
+      setHealth(failingHealth);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(screen.getByRole("button", { name: "Atlas connection error" })).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves focus from a closed error badge to the recovered status", async () => {
+    vi.useFakeTimers();
+    const failingHealth: ConnectionHealth = {
+      running: true,
+      healthy: false,
+      degraded: true,
+      error: { source: "live-sync", message: "feed websocket failed to open" }
+    };
+    const { fake, setHealth } = makeFakeDataSource(area, failingHealth);
+    try {
+      renderConsole(fake);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      screen.getByRole("button", { name: "Atlas connection error" }).focus();
+      setHealth(healthyConnection);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+
+      expect(document.querySelector('.connection-badge[data-state="live"]')).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("saves geometry edits with the version captured when editing started", async () => {
@@ -458,6 +649,48 @@ describe("MapConsole command flow", () => {
     await user.selectOptions(mapSelect, "usgs-topo");
 
     expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "usgs-topo");
+  });
+
+  it("starts with the configured MapTiler OSM Dark default", async () => {
+    const { fake } = makeFakeDataSource();
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "maptiler-osm-dark",
+        mapSources: [
+          { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", style: style("maptiler-osm-dark") },
+          { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }
+        ]
+      })
+    );
+
+    await screen.findByText("Rover");
+    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.getByTestId("map")).toHaveAttribute("data-style-id", "maptiler-osm-dark");
+  });
+
+  it("does not silently fall back when the configured default map source is unavailable", async () => {
+    const { fake } = makeFakeDataSource(area, {
+      running: false,
+      healthy: false,
+      degraded: false,
+      error: { source: "startup", message: "Core unavailable" }
+    });
+    renderConsole(
+      fake,
+      appConfig({
+        defaultMapSourceId: "maptiler-osm-dark",
+        mapSources: [
+          { id: "maptiler-osm-dark", label: "MapTiler OSM Dark", unavailableReason: "missing key" },
+          { id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }
+        ]
+      })
+    );
+
+    expect(await screen.findByText("The configured default map source is unavailable.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Map")).toHaveValue("maptiler-osm-dark");
+    expect(screen.queryByTestId("map")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Atlas connection error" })).toBeInTheDocument();
   });
 
   it("reverts the map selector when a style switch fails", async () => {

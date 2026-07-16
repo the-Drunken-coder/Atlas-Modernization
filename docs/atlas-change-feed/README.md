@@ -37,7 +37,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 - Write paths publish only after transaction commit.
 - The hub buffers out-of-order post-commit arrivals and fanouts in global version order.
-- A burned version, such as a failed create that consumed a sequence value, is skipped after a short wait so later events are not blocked forever.
+- A write transaction that rolls back after consuming sequence values reports those known-missing versions after rollback, so the hub can skip them immediately. The short gap timeout remains the fallback for gaps Core cannot prove missing.
 - Clients treat any version gap as a recovery trigger, so skipped versions preserve liveness without hiding the gap.
 
 ## Subscriptions

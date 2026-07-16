@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
+import type { Classification, EntityConnectionStatus, HeartbeatLevel } from "../../atlas/entities.js";
 import { isKnownTaskStatus, taskStatusLabel } from "../../atlas/tasks.js";
-import type { Classification, HeartbeatLevel, LinkState } from "../../atlas/entities.js";
 
 type StatusPillProps = {
   label: string;
@@ -23,8 +23,21 @@ export function TaskStatusPill({ status }: { status: string }) {
   return <StatusPill label={taskStatusLabel(status)} color={color} />;
 }
 
-export function LinkStatePill({ state }: { state: LinkState }) {
-  return <StatusPill label={titleCase(state)} color={`var(--link-${state})`} />;
+export function ConnectionStatusPill({ status }: { status: EntityConnectionStatus }) {
+  return <StatusPill label={connectionStatusLabel(status)} color={connectionStatusColor(status)} />;
+}
+
+export function connectionStatusLabel({ reported, freshness }: EntityConnectionStatus): string {
+  if (freshness === "fresh") return titleCase(reported);
+  if (freshness === "missing") return `Reported ${reported} — never checked in`;
+  if (freshness === "clock-error") return `Reported ${reported} — clock error`;
+  return `Reported ${reported} — ${freshness === "stale" ? "stale heartbeat" : "offline"}`;
+}
+
+export function connectionStatusColor({ reported, freshness }: EntityConnectionStatus): string {
+  if (freshness === "fresh") return `var(--link-${reported})`;
+  if (freshness === "missing" || freshness === "clock-error") return "var(--text-3)";
+  return heartbeatColor(freshness);
 }
 
 export function ClassificationPill({ value }: { value: Classification }) {

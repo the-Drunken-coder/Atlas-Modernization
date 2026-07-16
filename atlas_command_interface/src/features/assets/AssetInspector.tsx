@@ -1,13 +1,13 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { CommandCatalog } from "../../atlas/command-model.js";
-import { commandsForTargeting, type CommandAvailability } from "../../atlas/command-targeting.js";
+import { type CommandAvailability, commandsForTargeting } from "../../atlas/command-targeting.js";
 import {
   entityAltitude,
   entityBattery,
+  entityConnectionStatus,
   entityDisplayName,
   entityHeading,
-  entityLastSeen,
-  entityLinkState,
+  entityHeartbeatLastSeen,
   entityPosition,
   entitySpeed,
   entityStatusValue,
@@ -16,11 +16,12 @@ import {
 import { formatNumber, formatPercent, formatRelativeTime } from "../../atlas/format.js";
 import { currentTask, queuedTasks, tasksForEntity } from "../../atlas/selectors.js";
 import type { AtlasSnapshot } from "../../atlas/store.js";
-import { heartbeatColor, LinkStatePill, StatusPill } from "../../ui/primitives/StatusPill.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
+import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
 import { CommandList } from "../commands/CommandList.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 import { TaskHistoryItem, TaskRow } from "../shared/TaskRow.js";
+import { useHeartbeatClock } from "../useHeartbeatClock.js";
 
 const MAX_HISTORY = 25;
 
@@ -32,11 +33,12 @@ type AssetInspectorProps = {
 };
 
 export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: AssetInspectorProps) {
+  const now = useHeartbeatClock();
   const position = entityPosition(entity);
-  const link = entityLinkState(entity);
+  const connection = entityConnectionStatus(entity, now);
   const battery = entityBattery(entity);
-  const lastSeen = entityLastSeen(entity);
-  const level = heartbeatLevel(lastSeen);
+  const lastSeen = entityHeartbeatLastSeen(entity);
+  const level = heartbeatLevel(lastSeen, now);
   const active = currentTask(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
   const history = tasksForEntity(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
@@ -50,8 +52,18 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
         <FieldGrid
           rows={[
             ["State", entityStatusValue(entity) ?? "—"],
-            ["Link", link ? <LinkStatePill state={link} /> : "—"],
-            ["Heartbeat", level ? <StatusPill label={formatRelativeTime(lastSeen)} color={heartbeatColor(level)} /> : "—"],
+            ["Link", connection ? <ConnectionStatusPill status={connection} /> : "—"],
+            [
+              "Heartbeat",
+              level ? (
+                <StatusPill
+                  label={level === "clock-error" ? "Clock error" : formatRelativeTime(lastSeen, now)}
+                  color={level === "clock-error" ? "var(--text-3)" : heartbeatColor(level)}
+                />
+              ) : (
+                "—"
+              )
+            ],
             ["Battery", battery !== undefined ? formatPercent(battery) : "—"]
           ]}
         />

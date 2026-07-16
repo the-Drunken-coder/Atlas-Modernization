@@ -16,7 +16,7 @@ describe("appConfigFromEnv", () => {
     expect(config).toMatchObject({
       atlasBaseUrl: "http://127.0.0.1:8000",
       protocolRevision: ATLAS_PROTOCOL_REVISION,
-      defaultMapSourceId: "openstreetmap-default"
+      defaultMapSourceId: "maptiler-osm-dark"
     });
     expect(config.mapSources.map(({ id, style, unavailableReason }) => ({ id, available: Boolean(style), unavailableReason }))).toEqual([
       { id: "google-satellite", available: false, unavailableReason: "missing key" },
@@ -38,19 +38,32 @@ describe("appConfigFromEnv", () => {
     expect(appConfigFromEnv({ DEV: false, MODE: "production" })).toMatchObject({
       atlasBaseUrl: "https://api.atlasinterface.com",
       protocolRevision: ATLAS_PROTOCOL_REVISION,
-      defaultMapSourceId: "openstreetmap-default"
+      defaultMapSourceId: "maptiler-osm-dark"
     });
   });
 
-  it.each([
-    [{ VITE_MAPBOX_ACCESS_TOKEN: "mapbox-token" }, "mapbox-satellite"],
-    [{ VITE_THUNDERFOREST_API_KEY: "thunderforest-key" }, "thunderforest-outdoors"],
-    [{ VITE_MAPTILER_API_KEY: "maptiler-key" }, "maptiler-satellite"]
-  ])("prefers a configured provider over the production OpenStreetMap fallback", (providerEnv, expectedDefault) => {
-    expect(appConfigFromEnv({ DEV: false, MODE: "production", ...providerEnv }).defaultMapSourceId).toBe(expectedDefault);
+  it("uses MapTiler OSM Dark as the default when it is available", () => {
+    const config = appConfigFromEnv({ DEV: false, MODE: "production", VITE_MAPTILER_API_KEY: "maptiler-key" });
+
+    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+    const source = config.mapSources.find((source) => source.id === "maptiler-osm-dark");
+    expect(source).toMatchObject({ label: "MapTiler OSM Dark" });
+    expect(source?.style).toBeDefined();
+    expect(source?.unavailableReason).toBeUndefined();
   });
 
-  it("uses another configured provider when the Google session is unavailable", () => {
+  it("keeps MapTiler OSM Dark as the configured default when it is unavailable", () => {
+    const config = appConfigFromEnv({ DEV: false, MODE: "production" });
+
+    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+    expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({
+      label: "MapTiler OSM Dark",
+      style: undefined,
+      unavailableReason: "missing key"
+    });
+  });
+
+  it("does not override the configured default when the Google session is unavailable", () => {
     expect(
       appConfigFromEnv({
         DEV: false,
@@ -58,7 +71,7 @@ describe("appConfigFromEnv", () => {
         VITE_GOOGLE_MAPS_API_KEY: "google-key",
         VITE_MAPBOX_ACCESS_TOKEN: "mapbox-token"
       }).defaultMapSourceId
-    ).toBe("mapbox-satellite");
+    ).toBe("maptiler-osm-dark");
   });
 
   it("adds credentialed map sources when their provider env vars are present", () => {
@@ -71,7 +84,7 @@ describe("appConfigFromEnv", () => {
       VITE_THUNDERFOREST_API_KEY: " thunderforest-key "
     });
 
-    expect(config.defaultMapSourceId).toBe("google-satellite");
+    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
     expect(config.mapSources.map((source) => source.id)).toEqual([
       "google-satellite",
       "openstreetmap-default",
@@ -179,7 +192,7 @@ describe("fetchAppConfig", () => {
     ["non-OK response", async () => new Response("unavailable", { status: 503 })],
     ["invalid JSON", async () => new Response("not json", { status: 200, headers: { "Content-Type": "application/json" } })],
     ["missing session token", async () => new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } })]
-  ])("keeps Google unavailable and the default map usable on tile-session %s", async (_name, fetchImpl) => {
+  ])("keeps Google unavailable and preserves the configured default on tile-session %s", async (_name, fetchImpl) => {
     vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
     vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -189,9 +202,16 @@ describe("fetchAppConfig", () => {
     const config = await fetchAppConfig();
 
     expect(fetch).toHaveBeenCalledWith("https://tile.googleapis.com/v1/createSession?key=google-key", expect.objectContaining({ method: "POST" }));
-    expect(config.defaultMapSourceId).toBe("openstreetmap-default");
-    expect(config.mapSources[0]).toMatchObject({ id: "google-satellite", style: undefined, unavailableReason: "session unavailable" });
-    expect(config.mapSources.find((source) => source.id === "openstreetmap-default")?.style).toBeDefined();
+    expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
+    expect(config.mapSources.find((source) => source.id === "google-satellite")).toMatchObject({
+      id: "google-satellite",
+      style: undefined,
+      unavailableReason: "session unavailable"
+    });
+    expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({
+      style: undefined,
+      unavailableReason: "missing key"
+    });
     expect(warn).toHaveBeenCalled();
   });
 });

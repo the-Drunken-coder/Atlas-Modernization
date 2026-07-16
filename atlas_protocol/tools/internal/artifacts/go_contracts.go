@@ -42,6 +42,7 @@ var goStructContracts = []goStructContract{
 		"task_id":   {schemaType: "string", goType: "*string"},
 	}},
 	{goType: "ObjectResource"},
+	{goType: "ObjectDetailResource"},
 	{goType: "FeedEvent"},
 	{goType: "EntityDeleteEvent", syntheticFields: map[string]string{"event": "FeedEventDelete", "resource_type": "ResourceTypeEntity"}},
 	{goType: "TaskDeleteEvent", syntheticFields: map[string]string{"event": "FeedEventDelete", "resource_type": "ResourceTypeTask"}},

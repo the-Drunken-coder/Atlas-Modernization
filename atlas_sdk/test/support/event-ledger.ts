@@ -5,7 +5,7 @@ export type FakeLedgerState = {
   entities: Map<string, EntityResource>;
   tasks: Map<string, TaskResource>;
   objects: Map<string, ObjectResource>;
-  objectPayloads: Map<string, Record<string, unknown>>;
+  objectExtras: Map<string, Record<string, unknown>>;
   deletions: FeedEvent[];
   events: FeedEvent[];
   recordedVersions: Set<number>;
@@ -24,7 +24,7 @@ export function recordLedgerEvent(state: FakeLedgerState, event: FeedEvent): voi
     if (event.resource_type === "task") state.tasks.delete(event.id);
     if (event.resource_type === "object") {
       state.objects.delete(event.id);
-      state.objectPayloads.delete(event.id);
+      state.objectExtras.delete(event.id);
     }
     return;
   }

@@ -6,7 +6,7 @@ import {
   type FeedEvent,
   type JSONValue,
   type ObjectResource,
-  type ObjectResponse,
+  type ObjectDetailResource,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import { createSdkDataSource } from "./data-source.js";
@@ -124,6 +124,66 @@ describe("sdk data source", () => {
     expect(dataSource.health?.()).toEqual({ running: false, healthy: false, degraded: false });
   });
 
+  it("reports and clears startup errors across retry and dispose", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new TestCore();
+    const secret = "startup-userinfo-secret";
+    let failRevision = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (failRevision && new URL(String(input)).pathname === "/protocol/revision") {
+          return Promise.resolve(
+            Response.json({ error_code: "CORE_UNAVAILABLE", message: `Core unavailable: https://user:${secret}@core.test` }, { status: 503 })
+          );
+        }
+        return core.fetch(String(input), init);
+      })
+    );
+
+    const dataSource = createSdkDataSource(config);
+    await expect(dataSource.start()).rejects.toThrow();
+    const health = dataSource.health?.();
+    expect(health).toMatchObject({ error: { source: "startup" } });
+    expect(health?.error?.message).toContain("Core unavailable");
+    expect(health?.error?.message).toContain("[redacted]");
+    expect(health?.error?.message).not.toContain(secret);
+
+    dataSource.dispose();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+
+    failRevision = false;
+    await dataSource.start();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+
+    dataSource.dispose();
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+  });
+
+  it("does not restore a stale startup error after dispose", async () => {
+    vi.stubGlobal("WebSocket", undefined);
+    const core = new TestCore();
+    let rejectRevision!: (cause: unknown) => void;
+    const pendingRevision = new Promise<Response>((_resolve, reject) => {
+      rejectRevision = reject;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === "/protocol/revision") return pendingRevision;
+      return core.fetch(String(input), init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const dataSource = createSdkDataSource(config);
+    const start = dataSource.start();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    dataSource.dispose();
+    rejectRevision(new Error("late startup failure"));
+
+    await expect(start).rejects.toThrow("late startup failure");
+    expect(dataSource.health?.()).not.toHaveProperty("error");
+  });
+
   it("keeps snapshots current through the slow changed-since poll when WebSocket connections are blocked", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", BlockedWebSocket);
@@ -149,7 +209,11 @@ describe("sdk data source", () => {
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} }));
     expect(core.requests.filter((request) => request.startsWith("/queries/changed-since"))).toHaveLength(1);
-    expect(dataSource.health?.()).toMatchObject({ running: true, degraded: true });
+    expect(dataSource.health?.()).toMatchObject({
+      running: true,
+      degraded: true,
+      error: { source: "live-sync", message: "Atlas Core feed connection failed" }
+    });
 
     dataSource.dispose();
     core.requests = [];
@@ -420,7 +484,7 @@ class TestCore {
   requests: string[] = [];
   readonly sockets = new Set<TestWebSocket>();
   private readonly entities = new Map<string, EntityResource>();
-  private readonly objects = new Map<string, ObjectResponse>();
+  private readonly objects = new Map<string, ObjectDetailResource>();
   private readonly events: FeedEvent[] = [];
   private nextObjectDelay: Promise<void> | undefined;
 
@@ -434,7 +498,7 @@ class TestCore {
         version: this.version,
         entities: [...this.entities.values()],
         tasks: [],
-        objects: [...this.objects.values()].map(objectResource),
+        objects: [...this.objects.values()],
         has_more_entities: false,
         has_more_tasks: false,
         has_more_objects: false
@@ -446,7 +510,10 @@ class TestCore {
       return Response.json({
         entities: changed.filter(isEntityUpsert).map((event) => event.resource),
         tasks: [],
-        objects: changed.filter(isObjectUpsert).map((event) => event.resource),
+        objects: changed.filter(isObjectUpsert).flatMap((event) => {
+          const object = this.objects.get(event.id);
+          return object ? [object] : [];
+        }),
         deleted_entities: [],
         deleted_tasks: [],
         deleted_objects: changed.filter(isObjectDelete).map((event) => ({ id: event.id, type: "object", version: event.version })),
@@ -498,7 +565,7 @@ class TestCore {
     return updated;
   }
 
-  upsertObject(id: string, type: string, payload: Record<string, JSONValue> = {}, live = false): ObjectResponse {
+  upsertObject(id: string, type: string, extra: Record<string, JSONValue> = {}, live = false): ObjectDetailResource {
     const version = ++this.version;
     const resource: ObjectResource = {
       object_id: id,
@@ -510,7 +577,7 @@ class TestCore {
       bucket: null,
       metadata: { ...metadata, version }
     };
-    const response = Object.keys(payload).length > 0 ? { ...resource, payload } : resource;
+    const response: ObjectDetailResource = { ...resource, extra };
     this.objects.set(id, response);
     const event: FeedEvent = { event: "update", resource_type: "object", id, version, resource };
     this.events.push(event);
@@ -612,11 +679,6 @@ class BlockedWebSocket {
   private dispatch(type: string, event: { data?: unknown }): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
-}
-
-function objectResource(object: ObjectResponse): ObjectResource {
-  const { payload: _payload, ...resource } = object;
-  return resource;
 }
 
 function isEntityUpsert(event: FeedEvent): event is Extract<FeedEvent, { resource_type: "entity"; event: "create" | "update" }> {

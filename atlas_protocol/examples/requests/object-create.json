@@ -12,5 +12,8 @@
     {
       "task_id": "task-001"
     }
-  ]
+  ],
+  "extra": {
+    "source": "local import"
+  }
 }

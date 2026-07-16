@@ -123,14 +123,24 @@ describe("AtlasClient inbound response validation", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
-  it("accepts the payload field on HTTP ObjectResponse values", async () => {
+  it("accepts the extra field on HTTP ObjectDetailResource values", async () => {
     const response = {
-      ...validObject("object-http-payload", 1),
-      payload: { label: "thermal", nested: { confidence: 0.91 }, values: [1, true, null] }
+      ...validObject("object-http-extra", 1),
+      extra: { label: "thermal", nested: { confidence: 0.91 }, values: [1, true, null] }
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
 
     await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
+  });
+
+  it("rejects the old payload field on HTTP object detail values", async () => {
+    const response = {
+      ...validObject("object-http-payload", 1),
+      payload: { label: "thermal" }
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
+
+    await expect(client.objects.get(response.object_id, { fresh: true })).rejects.toThrow("response failed validation");
   });
 
   it("keeps hydration atomic when a later page is malformed", async () => {

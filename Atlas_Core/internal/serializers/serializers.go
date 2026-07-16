@@ -42,23 +42,7 @@ type TaskResponse struct {
 	Extra      map[string]interface{} `json:"extra,omitempty"`
 }
 
-// ObjectResponse represents the serialized form of a MediaObject (full detail).
-// ReferencedBy is normalized to the protocol ObjectReference shape and emits
-// only entity_id/task_id, even if stored object metadata includes extra keys.
-type ObjectResponse struct {
-	ObjectID     string                     `json:"object_id"`
-	Path         *string                    `json:"path"`
-	ContentType  *string                    `json:"content_type"`
-	Type         *string                    `json:"type"`
-	SizeBytes    *int64                     `json:"size_bytes"`
-	UsageHints   []string                   `json:"usage_hints"`
-	ReferencedBy []protocol.ObjectReference `json:"referenced_by,omitempty"`
-	Bucket       *string                    `json:"bucket"`
-	Metadata     MetadataBlock              `json:"metadata"`
-	Payload      map[string]interface{}     `json:"payload,omitempty"`
-}
-
-// ObjectListResponse represents the serialized form of a MediaObject for list endpoints (without payload).
+// ObjectListResponse represents the serialized form of a MediaObject for list endpoints (without extra).
 type ObjectListResponse struct {
 	ObjectID    string        `json:"object_id"`
 	Path        *string       `json:"path"`
@@ -121,8 +105,8 @@ func SerializeTask(t *models.Task) *TaskResponse {
 	}
 }
 
-// SerializeObject converts a MediaObject to its API response format (with payload).
-func SerializeObject(o *models.MediaObject) *ObjectResponse {
+// SerializeObject converts a MediaObject to its protocol-owned full-detail response.
+func SerializeObject(o *models.MediaObject) *protocol.ObjectDetailResource {
 	if o == nil {
 		return nil
 	}
@@ -131,7 +115,11 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 	if usageHints == nil {
 		usageHints = []string{}
 	}
-	return &ObjectResponse{
+	extra := o.GetExtra()
+	if extra == nil {
+		extra = map[string]interface{}{}
+	}
+	return &protocol.ObjectDetailResource{
 		ObjectID:     o.ObjectID,
 		Path:         o.Path,
 		ContentType:  o.ContentType,
@@ -145,11 +133,11 @@ func SerializeObject(o *models.MediaObject) *ObjectResponse {
 			UpdatedAt: o.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 			Version:   o.Version,
 		},
-		Payload: o.GetPayload(),
+		Extra: extra,
 	}
 }
 
-// SerializeObjectForList converts a MediaObject to its API list response format (without payload).
+// SerializeObjectForList converts a MediaObject to its API list response format (without extra).
 func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 	if o == nil {
 		return nil
@@ -271,16 +259,16 @@ func SerializeTasks(tasks []*models.Task) []*TaskResponse {
 	return result
 }
 
-// SerializeObjects converts a slice of objects to their API response format (with payload).
-func SerializeObjects(objects []*models.MediaObject) []*ObjectResponse {
-	result := make([]*ObjectResponse, len(objects))
+// SerializeObjects converts a slice of objects to full-detail responses.
+func SerializeObjects(objects []*models.MediaObject) []*protocol.ObjectDetailResource {
+	result := make([]*protocol.ObjectDetailResource, len(objects))
 	for i, o := range objects {
 		result[i] = SerializeObject(o)
 	}
 	return result
 }
 
-// SerializeObjectsForList converts a slice of objects to their API list response format (without payload).
+// SerializeObjectsForList converts a slice of objects to their API list response format (without extra).
 func SerializeObjectsForList(objects []*models.MediaObject) []*ObjectListResponse {
 	result := make([]*ObjectListResponse, len(objects))
 	for i, o := range objects {

@@ -58,6 +58,10 @@ func ValidateObjectResource(value any) []string {
 	return validate("ObjectResource", value)
 }
 
+func ValidateObjectDetailResource(value any) []string {
+	return validate("ObjectDetailResource", value)
+}
+
 func ValidateErrorResponse(value any) []string {
 	return validate("ErrorResponse", value)
 }

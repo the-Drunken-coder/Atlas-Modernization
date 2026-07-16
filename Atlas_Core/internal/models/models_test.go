@@ -296,7 +296,7 @@ func TestMediaObjectGetBucket(t *testing.T) {
 	}
 }
 
-func TestMediaObjectGetPayload(t *testing.T) {
+func TestMediaObjectGetExtra(t *testing.T) {
 	jsonData := map[string]interface{}{
 		"size_bytes":  float64(1024),
 		"usage_hints": []interface{}{"thumbnail"},
@@ -314,19 +314,19 @@ func TestMediaObjectGetPayload(t *testing.T) {
 		JSON:     jsonBytes,
 	}
 
-	payload := obj.GetPayload()
-	if payload == nil {
-		t.Fatal("Expected payload, got nil")
+	extra := obj.GetExtra()
+	if extra == nil {
+		t.Fatal("Expected extra, got nil")
 	}
-	if payload["custom"] != "value" {
-		t.Errorf("Expected custom='value', got %v", payload["custom"])
+	if extra["custom"] != "value" {
+		t.Errorf("Expected custom='value', got %v", extra["custom"])
 	}
 	// Promoted fields should be excluded
-	if payload["size_bytes"] != nil {
-		t.Error("size_bytes should be excluded from payload")
+	if _, ok := extra["size_bytes"]; ok {
+		t.Error("size_bytes should be excluded from extra")
 	}
-	if payload["version"] != nil {
-		t.Error("version should be excluded from payload")
+	if _, ok := extra["version"]; ok {
+		t.Error("version should be excluded from extra")
 	}
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { EntityResource, JSONValue, ObjectDetailResource } from "@the-drunken-coder/atlas-sdk";
 import {
   assertEntitySupportsCommand,
   buildCommandTaskRequest,
@@ -64,9 +64,9 @@ function track(supportedTasks?: string[]): EntityResource {
 }
 
 describe("command model", () => {
-  it("normalizes Core object metadata plus JSON payload catalog fields", () => {
-    const payload = { ...catalogPayload };
-    delete payload.type;
+  it("normalizes Core object metadata plus extra catalog fields", () => {
+    const extra = { ...catalogPayload };
+    delete extra.type;
     const catalog = catalogFromObject({
       object_id: "command_catalog",
       path: "objects/command_catalog/1",
@@ -76,14 +76,14 @@ describe("command model", () => {
       usage_hints: ["command_catalog"],
       bucket: "atlas-media",
       metadata,
-      payload
+      extra
     });
 
     expect(catalog.name).toBe("Atlas Command Catalog");
     expect(catalog.commands.map((command) => command.id)).toEqual(["move_to_location", "hold_position"]);
   });
 
-  it("prefers payload type when parsing catalog objects", () => {
+  it("prefers extra type when parsing catalog objects", () => {
     const catalog = catalogFromObject({
       object_id: "command_catalog",
       path: "objects/command_catalog/1",
@@ -93,25 +93,25 @@ describe("command model", () => {
       usage_hints: ["command_catalog"],
       bucket: "atlas-media",
       metadata,
-      payload: catalogPayload
+      extra: catalogPayload
     });
 
     expect(catalog.type).toBe("command_catalog");
   });
 
-  it("parses catalog fields directly when no object payload exists", () => {
-    const catalog = catalogFromObject({
-      object_id: "command_catalog",
-      path: "objects/command_catalog/1",
-      content_type: "application/json",
-      size_bytes: 1,
-      usage_hints: ["command_catalog"],
-      bucket: "atlas-media",
-      metadata,
-      ...catalogPayload
-    } as unknown as Parameters<typeof catalogFromObject>[0]);
-
-    expect(catalog.name).toBe("Atlas Command Catalog");
+  it("rejects catalog objects without extra", () => {
+    expect(() =>
+      catalogFromObject({
+        object_id: "command_catalog",
+        path: "objects/command_catalog/1",
+        content_type: "application/json",
+        type: "command_catalog",
+        size_bytes: 1,
+        usage_hints: ["command_catalog"],
+        bucket: "atlas-media",
+        metadata
+      } as unknown as ObjectDetailResource)
+    ).toThrow("$.extra must be an object");
   });
 
   it("rejects malformed command catalogs", () => {

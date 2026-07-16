@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { entityClassification, entityDisplayName, entityKind, entityLinkState, entityPosition, heartbeatLevel, isSelectableKind } from "./entities.js";
+import { describe, expect, it } from "vitest";
+import {
+  entityClassification,
+  entityConnectionStatus,
+  entityDisplayName,
+  entityKind,
+  entityLinkState,
+  entityPosition,
+  heartbeatLevel,
+  isSelectableKind
+} from "./entities.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
@@ -43,7 +52,39 @@ describe("entity accessors", () => {
     expect(heartbeatLevel("2026-06-20T00:09:50Z", now)).toBe("fresh");
     expect(heartbeatLevel("2026-06-20T00:09:00Z", now)).toBe("stale");
     expect(heartbeatLevel("2026-06-20T00:00:00Z", now)).toBe("offline");
-    expect(heartbeatLevel("2026-06-20T00:10:01Z", now)).toBeUndefined();
+    expect(heartbeatLevel("2026-06-20T00:10:01Z", now)).toBe("fresh");
+    expect(heartbeatLevel("2026-06-20T00:10:30Z", now)).toBe("fresh");
+    expect(heartbeatLevel("2026-06-20T00:10:31Z", now)).toBe("clock-error");
+    expect(heartbeatLevel("2036-06-20T00:10:00Z", now)).toBe("clock-error");
     expect(heartbeatLevel(undefined, now)).toBeUndefined();
+  });
+
+  it.each([
+    ["2026-06-20T00:09:50Z", "fresh"],
+    ["2026-06-20T00:10:01Z", "fresh"],
+    ["2026-06-20T00:10:31Z", "clock-error"],
+    ["2026-06-20T00:09:00Z", "stale"],
+    ["2026-06-20T00:00:00Z", "offline"],
+    [undefined, "missing"]
+  ] as const)("qualifies a reported link using %s heartbeat evidence", (lastSeen, freshness) => {
+    const now = Date.parse("2026-06-20T00:10:00Z");
+    const components: EntityResource["components"] = { communications: { link_state: "connected" } };
+    if (lastSeen) components.heartbeat = { last_seen: lastSeen };
+
+    expect(entityConnectionStatus(entity({ components }), now)).toEqual({ reported: "connected", freshness });
+  });
+
+  it("does not treat other component timestamps as heartbeat evidence", () => {
+    const now = Date.parse("2026-06-20T00:10:00Z");
+    const components = {
+      communications: { link_state: "connected" as const },
+      telemetry: { last_update: "2026-06-20T00:09:50Z" }
+    };
+
+    expect(entityConnectionStatus(entity({ components }), now)).toEqual({ reported: "connected", freshness: "missing" });
+  });
+
+  it("returns no connection status when the entity reports no link state", () => {
+    expect(entityConnectionStatus(entity({ components: {} }))).toBeUndefined();
   });
 });

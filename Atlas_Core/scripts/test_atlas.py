@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from atlas import (
+    ADMIN_PASSWORD_PLACEHOLDER,
+    API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
+    LOCAL_AUTH_ENV_FILE,
     compose_down_command,
     compose_up_command,
     database_recreate_on_startup_enabled,
+    ensure_local_auth,
     print_storage_notice,
     public_base_url_from_hostname,
+    wait_for_api,
     start_containers,
     verify_tunnel_connection,
 )
@@ -34,6 +44,189 @@ class FakeHTTPResponse:
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
+    def test_wait_for_api_diagnoses_stale_development_volume_password(self) -> None:
+        fixture_credential = "do-not-print-this"
+        fixture_stderr_credential = "stderr-do-not-print-this"
+        leaked_secret = f"postgres://atlas:{fixture_credential}@postgres/atlas_core"
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="exited\n", stderr=""),
+            CompletedProcess(
+                [],
+                0,
+                stdout=(
+                    'password authentication failed for user "atlas"\n'
+                    f"DATABASE_URL={leaked_secret}\n"
+                ),
+                stderr=f"diagnostic context: {fixture_stderr_credential}\n",
+            ),
+        ]
+        output = StringIO()
+
+        with patch("atlas.subprocess.run", side_effect=responses), redirect_stdout(output):
+            with self.assertRaisesRegex(RuntimeError, "does not match the existing development volume") as error:
+                wait_for_api(max_retries=3, delay=0)
+
+        message = str(error.exception)
+        self.assertIn("--dev --reset-volumes", message)
+        self.assertIn("deletes all local development volumes", message)
+        self.assertNotIn(leaked_secret, message)
+        self.assertNotIn(fixture_credential, message)
+        self.assertNotIn(fixture_stderr_credential, message)
+        self.assertNotIn(leaked_secret, output.getvalue())
+        self.assertNotIn(fixture_credential, output.getvalue())
+        self.assertNotIn(fixture_stderr_credential, output.getvalue())
+
+    def test_wait_for_api_diagnoses_json_escaped_stale_password(self) -> None:
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="exited\n", stderr=""),
+            CompletedProcess(
+                [],
+                0,
+                stdout=json.dumps(
+                    {"error": 'password authentication failed for user "atlas"'}
+                ),
+                stderr="",
+            ),
+        ]
+
+        with patch("atlas.subprocess.run", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "does not match the existing development volume"):
+                wait_for_api(max_retries=3, delay=0)
+
+    def test_wait_for_api_reports_generic_exited_core_without_stale_password_advice(self) -> None:
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="exited\n", stderr=""),
+            CompletedProcess([], 0, stdout="migration failed", stderr=""),
+        ]
+
+        with patch("atlas.subprocess.run", side_effect=responses):
+            with self.assertRaisesRegex(RuntimeError, "exited during startup") as error:
+                wait_for_api(max_retries=3, delay=0)
+
+        self.assertNotIn("reset-volumes", str(error.exception))
+
+    def test_wait_for_api_keeps_retrying_while_core_is_running(self) -> None:
+        responses = [
+            CompletedProcess([], 1),
+            CompletedProcess([], 0, stdout="running\n", stderr=""),
+            CompletedProcess([], 0),
+        ]
+
+        with patch("atlas.subprocess.run", side_effect=responses) as run, patch("atlas.time.sleep") as sleep:
+            self.assertTrue(wait_for_api(max_retries=2, delay=0.25))
+
+        self.assertEqual(run.call_count, 3)
+        sleep.assert_called_once_with(0.25)
+
+    def test_wait_for_api_preserves_production_readiness_retries(self) -> None:
+        responses = [CompletedProcess([], 1), CompletedProcess([], 0)]
+
+        with patch("atlas.subprocess.run", side_effect=responses) as run, patch("atlas.time.sleep"):
+            self.assertTrue(wait_for_api(max_retries=2, delay=0, production=True))
+
+        self.assertEqual(run.call_count, 2)
+
+    def test_local_auth_generates_redacted_persistent_values(self) -> None:
+        generated_key = "generated-local-machine-key"
+        generated_password = "generated-local-admin-password"
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("atlas.secrets.token_urlsafe", side_effect=[generated_key, generated_password]),
+            patch("builtins.print") as output,
+        ):
+            values = ensure_local_auth("/tmp/docker")
+
+            self.assertEqual(
+                values,
+                {
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": generated_key,
+                    "ATLAS_ADMIN_PASSWORD": generated_password,
+                },
+            )
+            self.assertEqual(os.environ["ENABLE_API_AUTH"], "true")
+            self.assertEqual(os.environ["API_AUTH_KEY"], generated_key)
+            self.assertEqual(os.environ["ATLAS_ADMIN_PASSWORD"], generated_password)
+            rendered_output = " ".join(str(call) for call in output.call_args_list)
+            self.assertNotIn(generated_key, rendered_output)
+            self.assertNotIn(generated_password, rendered_output)
+
+    def test_local_auth_reuses_configured_credentials_and_replaces_placeholders(self) -> None:
+        configured_key = "configured-local-machine-key"
+        configured_password = "configured-local-admin-password"
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "ENABLE_API_AUTH": "false",
+                    "API_AUTH_KEY": configured_key,
+                    "ATLAS_ADMIN_PASSWORD": configured_password,
+                },
+                clear=True,
+            ),
+            patch("atlas.parse_compose_env_file", return_value={}),
+            patch("atlas.secrets.token_urlsafe") as generate,
+            patch("builtins.print") as output,
+        ):
+            self.assertEqual(
+                ensure_local_auth("/tmp/docker"),
+                {
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": configured_key,
+                    "ATLAS_ADMIN_PASSWORD": configured_password,
+                },
+            )
+            generate.assert_not_called()
+            self.assertIn("overriding ENABLE_API_AUTH=false", " ".join(str(call) for call in output.call_args_list))
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "API_AUTH_KEY": API_AUTH_KEY_PLACEHOLDER,
+                    "ATLAS_ADMIN_PASSWORD": ADMIN_PASSWORD_PLACEHOLDER,
+                },
+                clear=True,
+            ),
+            patch("atlas.parse_compose_env_file", return_value={}),
+            patch("atlas.secrets.token_urlsafe", side_effect=["replacement-key", "replacement-password"]),
+        ):
+            self.assertEqual(
+                ensure_local_auth("/tmp/docker"),
+                {
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": "replacement-key",
+                    "ATLAS_ADMIN_PASSWORD": "replacement-password",
+                },
+            )
+
+    def test_local_auth_reuses_owner_only_local_file(self) -> None:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "atlas.parse_compose_env_file",
+                return_value={
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": "persisted-local-key",
+                    "ATLAS_ADMIN_PASSWORD": "persisted-local-password",
+                },
+            ),
+            patch("atlas.secrets.token_urlsafe") as generate,
+        ):
+            self.assertEqual(
+                ensure_local_auth("/tmp/docker"),
+                {
+                    "ENABLE_API_AUTH": "true",
+                    "API_AUTH_KEY": "persisted-local-key",
+                    "ATLAS_ADMIN_PASSWORD": "persisted-local-password",
+                },
+            )
+            generate.assert_not_called()
+            self.assertEqual(os.environ["ENABLE_API_AUTH"], "true")
+
     def test_storage_mode_defaults_match_compose_stacks(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             self.assertTrue(database_recreate_on_startup_enabled(production=False))
@@ -213,6 +406,50 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             check=True,
             cwd="/tmp/Atlas_Core/docker",
         )
+
+    def test_development_start_persists_local_api_auth(self) -> None:
+        local_auth = {
+            "ENABLE_API_AUTH": "true",
+            "API_AUTH_KEY": "generated-local-key",
+            "ATLAS_ADMIN_PASSWORD": "generated-admin-password",
+        }
+        with (
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.ensure_minio_secrets", return_value={}),
+            patch("atlas.ensure_postgres_password", return_value={}),
+            patch("atlas.ensure_local_auth", return_value=local_auth) as ensure_local,
+            patch("atlas.persist_compose_env_values") as persist,
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers"),
+            patch("atlas.subprocess.run"),
+            patch("atlas.wait_for_database_docker"),
+            patch("atlas.wait_for_minio"),
+            patch("atlas.ensure_minio_bucket_docker"),
+            patch("atlas.cleanup_init_containers"),
+            patch("atlas.wait_for_api"),
+            patch("atlas.wait_for_database_schema_docker"),
+            patch("builtins.print"),
+        ):
+            start_containers()
+
+        ensure_local.assert_called_once_with("/tmp/Atlas_Core/docker")
+        persist.assert_any_call("/tmp/Atlas_Core/docker", local_auth, env_filename=LOCAL_AUTH_ENV_FILE)
+
+    def test_public_start_does_not_load_local_auth(self) -> None:
+        for start_options in ({"production": True}, {"tunnel": True}):
+            with (
+                self.subTest(start_options=start_options),
+                patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+                patch("atlas.ensure_local_auth") as ensure_local,
+                patch("atlas.load_compose_dotenv"),
+                patch("atlas.ensure_minio_secrets", side_effect=RuntimeError("stop after auth selection")),
+                patch("builtins.print"),
+                self.assertRaises(SystemExit),
+            ):
+                start_containers(**start_options)
+
+            ensure_local.assert_not_called()
 
 
 if __name__ == "__main__":

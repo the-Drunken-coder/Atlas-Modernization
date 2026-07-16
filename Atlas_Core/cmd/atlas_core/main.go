@@ -161,14 +161,6 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to seed development admin account")
 	}
 
-	versionCtx, versionCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	currentVersion, err := actions.CurrentChangeVersion(versionCtx, db.Pool)
-	versionCancel()
-	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to read current change version")
-	}
-	feedHub := feed.NewHub(currentVersion, feed.Options{})
-
 	storageCtx, storageCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	storageClient, err := initializeStorage(storageCtx, cfg)
 	storageCancel()
@@ -176,10 +168,27 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to initialize storage")
 	}
 	if storageClient == nil {
-		logger.Warn().Msg("Disposable development storage unavailable; storage features disabled")
+		logger.Warn().Msg("Disposable development storage unavailable; storage features and command catalog discovery disabled")
 	} else if cfg.DatabaseRecreateOnStartup {
 		logger.Info().Str("bucket", storageClient.Bucket()).Msg("Cleared storage bucket because DATABASE_RECREATE_ON_STARTUP=true")
 	}
+	if storageClient != nil {
+		catalogCtx, catalogCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := actions.NewObjectActions(db.Pool, storageClient).PublishCommandCatalog(catalogCtx)
+		catalogCancel()
+		if err != nil {
+			logger.Fatal().Err(err).Msg("Failed to publish embedded command catalog")
+		}
+		logger.Info().Msg("Ensured embedded command catalog is published")
+	}
+
+	versionCtx, versionCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	currentVersion, err := actions.CurrentChangeVersion(versionCtx, db.Pool)
+	versionCancel()
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Failed to read current change version")
+	}
+	feedHub := feed.NewHub(currentVersion, feed.Options{})
 
 	reconcilerCtx, stopReconciler := context.WithCancel(context.Background())
 	defer stopReconciler()

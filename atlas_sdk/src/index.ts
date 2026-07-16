@@ -46,7 +46,7 @@ export type {
   FeedEvent,
   JSONValue,
   ObjectCreateRequest,
-  ObjectResponse,
+  ObjectDetailResource,
   ObjectResource,
   ObjectUpdateRequest,
   ResourceType,

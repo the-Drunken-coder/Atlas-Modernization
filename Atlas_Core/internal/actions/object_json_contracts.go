@@ -10,12 +10,13 @@ import (
 
 func objectJSONPatch(raw json.RawMessage, params UpdateObjectParams, storage objectStorage) jsonBlobPatch {
 	return jsonBlobPatch{
-		rawMessage:     raw,
-		decodeMode:     jsonBlobDecodeUseNumber,
-		decodeError:    "existing object json is corrupt or invalid",
-		extra:          params.Extra,
-		promotedFields: objectPromotedBlobFields,
-		validate:       ValidateObjectBlob,
+		rawMessage:      raw,
+		decodeMode:      jsonBlobDecodeUseNumber,
+		decodeError:     "existing object json is corrupt or invalid",
+		extra:           params.Extra,
+		removeExtraKeys: params.RemoveExtraKeys,
+		promotedFields:  objectPromotedBlobFields,
+		validate:        ValidateObjectBlob,
 		apply: func(blob map[string]interface{}) error {
 			if params.SizeBytes != nil {
 				blob[string(objectBlobFieldSizeBytes)] = *params.SizeBytes

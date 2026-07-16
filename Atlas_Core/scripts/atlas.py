@@ -22,20 +22,21 @@ import sys
 import time
 
 try:
-    from .compose_env import load_compose_dotenv, persist_compose_env_values
-    from .seed_command_catalog import publish_command_catalog
+    from .compose_env import load_compose_dotenv, parse_compose_env_file, persist_compose_env_values
 except ImportError:
-    from compose_env import load_compose_dotenv, persist_compose_env_values
-    from seed_command_catalog import publish_command_catalog
+    from compose_env import load_compose_dotenv, parse_compose_env_file, persist_compose_env_values
 
 logger = logging.getLogger(__name__)
 
 API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
+API_AUTH_KEY_PLACEHOLDERS = {API_AUTH_KEY_PLACEHOLDER, "REPLACE_WITH_STRONG_BOOTSTRAP_KEY"}
+ADMIN_PASSWORD_PLACEHOLDER = "REPLACE_WITH_SECURE_ADMIN_PASSWORD"
 DEFAULT_TUNNEL_HOSTNAME = "atlascommandapi.org"
 TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 DEV_COMPOSE_FILE = "docker-compose.yml"
 TUNNEL_COMPOSE_FILE = "docker-compose.tunnel.yml"
 PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
+LOCAL_AUTH_ENV_FILE = ".env.local"
 
 
 def print_banner():
@@ -97,6 +98,35 @@ def ensure_postgres_password():
         print("[INFO] Generated POSTGRES_PASSWORD for this run (redacted)")
         return {"POSTGRES_PASSWORD": generated}
     return {}
+
+
+def ensure_local_auth(docker_dir):
+    """Generate or reuse the credentials required by the local authenticated stack."""
+    local_auth = parse_compose_env_file(os.path.join(docker_dir, LOCAL_AUTH_ENV_FILE))
+    api_auth_key = os.getenv("API_AUTH_KEY", "").strip() or local_auth.get("API_AUTH_KEY", "").strip()
+    if not api_auth_key or api_auth_key in API_AUTH_KEY_PLACEHOLDERS:
+        api_auth_key = secrets.token_urlsafe(32)
+        print("[INFO] Generated local API_AUTH_KEY (redacted)")
+    else:
+        print("[INFO] Reusing local API_AUTH_KEY (redacted)")
+
+    admin_password = os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or local_auth.get("ATLAS_ADMIN_PASSWORD", "").strip()
+    if not admin_password or admin_password == ADMIN_PASSWORD_PLACEHOLDER:
+        admin_password = secrets.token_urlsafe(32)
+        print("[INFO] Generated local ATLAS_ADMIN_PASSWORD (redacted)")
+    else:
+        print("[INFO] Reusing local ATLAS_ADMIN_PASSWORD (redacted)")
+
+    if os.getenv("ENABLE_API_AUTH", "").strip().lower() == "false":
+        print("[INFO] Local authenticated-stack setup is overriding ENABLE_API_AUTH=false")
+    os.environ["ENABLE_API_AUTH"] = "true"
+    os.environ["API_AUTH_KEY"] = api_auth_key
+    os.environ["ATLAS_ADMIN_PASSWORD"] = admin_password
+    return {
+        "ENABLE_API_AUTH": "true",
+        "API_AUTH_KEY": api_auth_key,
+        "ATLAS_ADMIN_PASSWORD": admin_password,
+    }
 
 
 def resolve_atlas_core_dir():
@@ -240,7 +270,43 @@ def cleanup_init_containers():
             logger.debug("Error during container cleanup: %s", exc)
 
 
-def wait_for_api(max_retries=30, delay=2.0):
+def raise_for_exited_development_core(container_name="atlas_core_api"):
+    """Fail fast when the development Core container has stopped during startup."""
+    state = subprocess.run(
+        ["docker", "inspect", "--format={{.State.Status}}", container_name],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if state.returncode != 0 or state.stdout.strip() not in {"dead", "exited"}:
+        return
+
+    logs = subprocess.run(
+        ["docker", "logs", "--tail", "200", container_name],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    output = f"{logs.stdout or ''}\n{logs.stderr or ''}"
+    if (
+        'password authentication failed for user "atlas"' in output
+        or r'password authentication failed for user \"atlas\"' in output
+    ):
+        raise RuntimeError(
+            "Atlas Core exited because its PostgreSQL password does not match the existing "
+            "development volume. Restore the POSTGRES_PASSWORD that initialized the volume, "
+            "or, if its data is disposable, rerun with: python3 Atlas_Core/scripts/atlas.py "
+            "--dev --reset-volumes (deletes all local development volumes)."
+        )
+    raise RuntimeError(
+        f"Atlas Core container {container_name} exited during startup. "
+        f"Run 'docker logs {container_name}' to inspect the failure."
+    )
+
+
+def wait_for_api(max_retries=30, delay=2.0, production=False):
     """Wait for the API to be ready."""
     print("[WAIT] Waiting for API to be ready...")
 
@@ -267,6 +333,12 @@ def wait_for_api(max_retries=30, delay=2.0):
                 return True
         except subprocess.TimeoutExpired:
             pass  # Treat timeout as a failed attempt, continue retrying
+
+        if not production:
+            try:
+                raise_for_exited_development_core()
+            except subprocess.TimeoutExpired:
+                pass  # Docker state/log inspection was transiently unavailable
 
         if attempt < max_retries - 1:
             print(f"[WAIT] API not ready (attempt {attempt + 1}/{max_retries}), retrying...")
@@ -422,7 +494,7 @@ def ensure_api_auth(mode):
     if not api_auth_key:
         print(f"[ERROR] {mode} requires API_AUTH_KEY to be set.")
         return False
-    if api_auth_key == API_AUTH_KEY_PLACEHOLDER:
+    if api_auth_key in API_AUTH_KEY_PLACEHOLDERS:
         print(f"[ERROR] {mode} requires a real API_AUTH_KEY, not the example placeholder.")
         return False
     if not (os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or os.getenv("ATLAS_ADMIN_PASSWORD_FILE", "").strip()):
@@ -521,11 +593,14 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
     try:
         atlas_core_dir = resolve_atlas_core_dir()
         docker_dir = os.path.join(atlas_core_dir, "docker")
+        local_auth_values = ensure_local_auth(docker_dir) if not db_only and not production and not tunnel else {}
         load_compose_dotenv(docker_dir)
         generated_compose_values = {}
         generated_compose_values.update(ensure_minio_secrets())
         generated_compose_values.update(ensure_postgres_password())
         persist_compose_env_values(docker_dir, generated_compose_values)
+        if local_auth_values:
+            persist_compose_env_values(docker_dir, local_auth_values, env_filename=LOCAL_AUTH_ENV_FILE)
         print_storage_notice(db_only=db_only, production=production)
 
         if production and not db_only:
@@ -577,7 +652,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             wait_for_minio()
             ensure_minio_bucket_docker()
             cleanup_init_containers()
-            wait_for_api()
+            wait_for_api(production=production)
             wait_for_database_schema_docker()
         else:
             print(
@@ -593,6 +668,8 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             print("  HTTP:   http://localhost:8000")
             print("  Health:    http://localhost:8000/health")
             print("  Readiness: http://localhost:8000/readiness")
+            if not production and not tunnel:
+                print("  Admin:     admin (password stored in Atlas_Core/docker/.env.local)")
             if production:
                 print("  Auth:      X-API-Key required for API routes")
 
@@ -625,10 +702,6 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
                 print(f"  Status:     [WARN] {tunnel_status}")
 
         print("=" * 60)
-        if not db_only and not publish_command_catalog():
-            print("[ERROR] Failed to publish command catalog")
-            sys.exit(1)
-
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Failed to start containers: {e}")
         sys.exit(1)

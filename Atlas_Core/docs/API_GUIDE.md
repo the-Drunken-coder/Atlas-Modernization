@@ -16,7 +16,7 @@ Atlas Core preserves resource tables, `admin_records`, schema migration history,
 
 ### Authentication
 
-Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session; machine clients should set `ENABLE_API_AUTH=true` and send either the required bootstrap `API_AUTH_KEY` or an active managed API key with one of:
+Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session. The default `atlas.py --dev` launcher enables API-key auth and stores its generated machine key in the owner-only `Atlas_Core/docker/.env.local`; local server-side clients can use that bootstrap key. Manually configured machine clients should set `ENABLE_API_AUTH=true` and send either the bootstrap `API_AUTH_KEY` or an active managed API key with one of:
 
 ```text
 X-API-Key: <api-key>
@@ -159,11 +159,11 @@ Object detail responses:
     "updated_at": "2026-06-21T12:00:00.000000Z",
     "version": 1
   },
-  "payload": {}
+  "extra": {}
 }
 ```
 
-`GET /objects` and relationship object lists omit `payload` and `referenced_by`.
+`GET /objects` and relationship object lists omit `extra` and `referenced_by`. Full object detail and query responses include extension data under `extra`.
 
 ## System, Protocol, And Feed
 
@@ -412,7 +412,7 @@ Status transition body:
 | `GET` | `/objects` | `200` | List object metadata with standard pagination. |
 | `POST` | `/objects` | `201` | Create an object metadata record. |
 | `POST` | `/objects/upload` | `201` | Upload object content with multipart form data. |
-| `GET` | `/objects/{object_id}` | `200` | Fetch object metadata and payload. |
+| `GET` | `/objects/{object_id}` | `200` | Fetch full object metadata and extension data. |
 | `PATCH` | `/objects/{object_id}` | `200` | Update object metadata. |
 | `DELETE` | `/objects/{object_id}` | `204` | Delete object metadata and queue/delete stored content. |
 | `GET` | `/objects/{object_id}/download` | `200` | Stream stored content as an attachment. |
@@ -554,13 +554,14 @@ Response includes changed resources, tombstones, per-stream `has_more_*` boolean
 
 Atlas Core owns browser authentication. Admin routes live under `/admin/*` and are separate from the Atlas resource plane (`entities`, `tasks`, `objects`, `queries`, sync, and feed). Admin records are stored in `admin_records`; they are not returned by full dataset or changed-since queries and do not produce resource feed events.
 
-Core seeds a development admin account on startup:
+Core seeds a development admin account on startup. Raw startup without an
+override uses:
 
 - username: `admin`
 - password: `password`
 - role: `admin`
 
-This credential is development-only scratch state. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
+This credential is development-only scratch state. The default `atlas.py --dev` launcher instead generates `ATLAS_ADMIN_PASSWORD` in the owner-only `Atlas_Core/docker/.env.local`. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
@@ -600,12 +601,24 @@ Smoke browser auth and command task creation against Core:
 
 ```bash
 CORE_URL=http://localhost:8000
-COOKIE_JAR=/tmp/atlas-core-admin.cookies
+COOKIE_JAR=$(umask 077 && mktemp "${TMPDIR:-/tmp}/atlas-core-admin.cookies.XXXXXX") || exit 1
+trap 'rm -f "$COOKIE_JAR"' EXIT
+LOGIN_JSON="$(
+  python3 - <<'PY'
+import json
+from Atlas_Core.scripts.compose_env import parse_compose_env_file
+
+password = parse_compose_env_file("Atlas_Core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
+if not password:
+    raise SystemExit("Atlas_Core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
+print(json.dumps({"username": "admin", "password": password}))
+PY
+)" || exit 1
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H 'Origin: http://localhost:5173' \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"password"}'
+  --data-binary @- <<<"$LOGIN_JSON"
 
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/admin/auth/me"
 
@@ -641,19 +654,38 @@ Response:
 }
 ```
 
+Log out; the `EXIT` trap removes the cookie jar even if logout fails:
+
+```bash
+curl -fsS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
+  -H 'Origin: http://localhost:5173'
+```
+
 ## Minimal Curl Flow
 
 Create an entity:
 
 ```bash
 CORE_URL=http://localhost:8000
-COOKIE_JAR=/tmp/atlas-core-admin.cookies
 UI_ORIGIN=http://localhost:5173
+COOKIE_JAR=$(umask 077 && mktemp "${TMPDIR:-/tmp}/atlas-core-admin.cookies.XXXXXX") || exit 1
+trap 'rm -f "$COOKIE_JAR"' EXIT
+LOGIN_JSON="$(
+  python3 - <<'PY'
+import json
+from Atlas_Core.scripts.compose_env import parse_compose_env_file
+
+password = parse_compose_env_file("Atlas_Core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
+if not password:
+    raise SystemExit("Atlas_Core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
+print(json.dumps({"username": "admin", "password": password}))
+PY
+)" || exit 1
 
 curl -sS -c "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/login" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"password"}'
+  --data-binary @- <<<"$LOGIN_JSON"
 
 curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities" \
   -H "Origin: $UI_ORIGIN" \
@@ -692,4 +724,11 @@ Poll changes since version zero:
 
 ```bash
 curl -sS -b "$COOKIE_JAR" "$CORE_URL/queries/changed-since?since_version=0"
+```
+
+Log out; the `EXIT` trap removes the cookie jar even if logout fails:
+
+```bash
+curl -fsS -b "$COOKIE_JAR" -X POST "$CORE_URL/admin/auth/logout" \
+  -H "Origin: $UI_ORIGIN"
 ```
