@@ -11,7 +11,8 @@
       "atlas_sdk/**/*.{js,mjs,cjs,ts,tsx}",
       "atlas_asset_runtime/**/*.{js,mjs,cjs,ts,tsx}",
       "atlas_command_interface/**/*.{js,mjs,cjs,ts,tsx}",
-      "atlas_simulations/**/*.{js,mjs,cjs,ts,tsx}"
+      "atlas_simulations/**/*.{js,mjs,cjs,ts,tsx}",
+      "!atlas_sdk/src/package-metadata.ts"
     ]
   },
   "formatter": {

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { RunStore } from "../../src/server/run-store.js";
-import { scenarios } from "../../src/server/scenario-registry.js";
-import { parseStartRequest } from "../../src/server/scenario.js";
 import { boundedNumberInput, boundedPositiveIntegerInput, numberInput, point } from "../../src/scenarios/helpers.js";
+import { RunStore } from "../../src/server/run-store.js";
+import { parseStartRequest } from "../../src/server/scenario.js";
+import { scenarios } from "../../src/server/scenario-registry.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("v1 scenarios", () => {
@@ -17,10 +17,13 @@ describe("v1 scenarios", () => {
         jsonInput: scenario.acceptsJson ? '{"test":"yes"}' : undefined
       });
       const run = store.start(scenario, parsed.input);
-      await vi.waitFor(() => {
-        const current = store.get(run.id);
-        expect(["completed", "failed"]).toContain(current?.status);
-      }, { timeout: 5000 });
+      await vi.waitFor(
+        () => {
+          const current = store.get(run.id);
+          expect(["completed", "failed"]).toContain(current?.status);
+        },
+        { timeout: 5000 }
+      );
       const current = store.get(run.id);
       expect(current?.status, current?.lastError).toBe("completed");
       const assertions = current?.assertions ?? [];
@@ -64,13 +67,17 @@ describe("v1 scenarios", () => {
   it("moving-assets updates every asset to the final tick geometry and telemetry", async () => {
     vi.useFakeTimers();
     try {
-      const { core, current } = await runScenario("moving-assets", {
-        assetCount: 2,
-        ticks: 3,
-        tickMs: 0,
-        startLatitude: 38,
-        startLongitude: -77
-      }, '{"mission":"coverage"}');
+      const { core, current } = await runScenario(
+        "moving-assets",
+        {
+          assetCount: 2,
+          ticks: 3,
+          tickMs: 0,
+          startLatitude: 38,
+          startLongitude: -77
+        },
+        '{"mission":"coverage"}'
+      );
 
       const dataset = await core.factory().queries.full();
       const entities = dataset.entities.slice().sort((left, right) => left.entity_id.localeCompare(right.entity_id));
@@ -115,13 +122,17 @@ describe("v1 scenarios", () => {
   it("observations-objects links observer assets, tracks, and object metadata", async () => {
     vi.useFakeTimers();
     try {
-      const { core, current } = await runScenario("observations-objects", {
-        assetCount: 2,
-        observations: 3,
-        tickMs: 0,
-        startLatitude: 38,
-        startLongitude: -77
-      }, '{"collection":"coverage"}');
+      const { core, current } = await runScenario(
+        "observations-objects",
+        {
+          assetCount: 2,
+          observations: 3,
+          tickMs: 0,
+          startLatitude: 38,
+          startLongitude: -77
+        },
+        '{"collection":"coverage"}'
+      );
 
       const dataset = await core.factory().queries.full();
       const observers = dataset.entities.filter((entity) => entity.subtype === "simulated-observer");
@@ -135,7 +146,11 @@ describe("v1 scenarios", () => {
       expect(dataset.objects).toHaveLength(3);
       expect(tracks.every((track) => observerIds.has((track.components.custom_simulation as { observer_id?: string }).observer_id ?? ""))).toBe(true);
       expect(tracks.map((track) => (track.components.custom_simulation as { collection?: string }).collection)).toEqual(["coverage", "coverage", "coverage"]);
-      expect(dataset.objects.every((object) => (object.referenced_by ?? []).some((reference) => typeof reference.entity_id === "string" && trackIds.has(reference.entity_id)))).toBe(true);
+      expect(
+        dataset.objects.every((object) =>
+          (object.referenced_by ?? []).some((reference) => typeof reference.entity_id === "string" && trackIds.has(reference.entity_id))
+        )
+      ).toBe(true);
       expect(dataset.objects.map((object) => object.size_bytes).sort()).toEqual([256, 257, 258]);
     } finally {
       vi.useRealTimers();
@@ -178,10 +193,13 @@ async function runScenario(id: string, inputs: Record<string, string | number | 
     ...(jsonInput === undefined ? {} : { jsonInput })
   });
   const started = store.start(scenario!, parsed.input);
-  await vi.waitFor(() => {
-    const current = store.get(started.id);
-    expect(["completed", "failed"]).toContain(current?.status);
-  }, { timeout: 5000 });
+  await vi.waitFor(
+    () => {
+      const current = store.get(started.id);
+      expect(["completed", "failed"]).toContain(current?.status);
+    },
+    { timeout: 5000 }
+  );
   const current = store.get(started.id);
   expect(current?.status, current?.lastError).toBe("completed");
   return { core, store, current: current! };

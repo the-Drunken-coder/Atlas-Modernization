@@ -14,7 +14,7 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "lint": "biome lint .",
-    "format:check": "biome format --changed --no-errors-on-unmatched .",
+    "format:check": "biome check --linter-enabled=false .",
     "test": "vitest run"
   },
   "dependencies": {

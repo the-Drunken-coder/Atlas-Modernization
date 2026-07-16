@@ -1,8 +1,8 @@
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { formatRelativeTime } from "../../atlas/format.js";
 import { taskCommandId, taskStatusMessage } from "../../atlas/tasks.js";
-import { TaskStatusPill } from "../../ui/primitives/StatusPill.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
+import { TaskStatusPill } from "../../ui/primitives/StatusPill.js";
 
 export function TaskRow({ task }: { task: TaskResource }) {
   const commandId = taskCommandId(task);

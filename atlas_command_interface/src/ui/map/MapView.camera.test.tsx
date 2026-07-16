@@ -1,14 +1,13 @@
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it } from "vitest";
-import { entity, markerSources, notifyResizeObservers, renderMapView, type PointLike } from "./MapView.test-harness.js";
-import { ASSET_VIEW_ZOOM, FOLLOW_EASE_MS, INITIAL_WORLD_BOUNDS, flyDurationMs, type MapCameraCommand } from "./map-camera.js";
+import { entity, markerSources, notifyResizeObservers, type PointLike, renderMapView } from "./MapView.test-harness.js";
+import { ASSET_VIEW_ZOOM, FOLLOW_EASE_MS, flyDurationMs, INITIAL_WORLD_BOUNDS, type MapCameraCommand } from "./map-camera.js";
 import { buildMapSources } from "./map-sources.js";
 
 describe("MapView camera commands", () => {
   const homeView = { center: [0, 0] as [number, number], zoom: 4 };
-  const movedSources = () =>
-    buildMapSources([entity({ entity_id: "asset-1", components: { telemetry: { latitude: 41, longitude: -73 } } })], undefined);
+  const movedSources = () => buildMapSources([entity({ entity_id: "asset-1", components: { telemetry: { latitude: 41, longitude: -73 } } })], undefined);
 
   const startFollowing = async () => {
     const rendered = renderMapView({ sources: markerSources() });
@@ -55,12 +54,7 @@ describe("MapView camera commands", () => {
 
     rerenderMap({ cameraCommand: { seq: 1, target: { type: "point", id: "asset-1", coordinates: [70, 80] } } });
 
-    await waitFor(() =>
-      expect(map.flyTo).toHaveBeenCalledWith(
-        expect.objectContaining({ center: [70, 80], zoom: ASSET_VIEW_ZOOM }),
-        { atlasCamera: true }
-      )
-    );
+    await waitFor(() => expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], zoom: ASSET_VIEW_ZOOM }), { atlasCamera: true }));
     act(() => map.fire("moveend", { atlasCamera: true }));
     map.easeTo.mockClear();
 
@@ -94,10 +88,7 @@ describe("MapView camera commands", () => {
     rerenderMap({ sources: markerSources() });
 
     await waitFor(() =>
-      expect(map.flyTo).toHaveBeenCalledWith(
-        expect.objectContaining({ center: [-74, 40], zoom: ASSET_VIEW_ZOOM }),
-        { atlasCamera: true, atlasFlySeq: 1 }
-      )
+      expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 40], zoom: ASSET_VIEW_ZOOM }), { atlasCamera: true, atlasFlySeq: 1 })
     );
   });
 
@@ -145,10 +136,7 @@ describe("MapView camera commands", () => {
     rerenderMap({ sources: movedSources() });
 
     await waitFor(() =>
-      expect(map.easeTo).toHaveBeenCalledWith(
-        { center: [-73, 41], duration: FOLLOW_EASE_MS, easing: expect.any(Function) },
-        { atlasCamera: true }
-      )
+      expect(map.easeTo).toHaveBeenCalledWith({ center: [-73, 41], duration: FOLLOW_EASE_MS, easing: expect.any(Function) }, { atlasCamera: true })
     );
   });
 

@@ -1,4 +1,4 @@
-import { jsonNumber, type AtlasTargetSummary, type JSONNumber, type RunSummary } from "../shared/types.js";
+import { type AtlasTargetSummary, type JSONNumber, jsonNumber, type RunSummary } from "../shared/types.js";
 import { cloneValue, type RunRecord, type RunTarget } from "./run-store-types.js";
 
 export function toSummary(run: RunRecord): RunSummary {
@@ -31,7 +31,5 @@ export function targetSummary(target: RunTarget): AtlasTargetSummary {
 }
 
 function wireInputs(inputs: Record<string, string | number | boolean>): Record<string, string | JSONNumber | boolean> {
-  return Object.fromEntries(
-    Object.entries(inputs).map(([key, value]) => [key, typeof value === "number" ? jsonNumber(value) : value])
-  );
+  return Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, typeof value === "number" ? jsonNumber(value) : value]));
 }

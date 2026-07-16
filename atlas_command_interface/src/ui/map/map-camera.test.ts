@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  type CameraView,
+  coordsChanged,
   FIT_BOUNDS_PADDING,
   FIT_DURATION_MS,
   FIT_MAX_ZOOM,
   FLY_MAX_DURATION_MS,
   FLY_MIN_DURATION_MS,
-  coordsChanged,
+  type FollowState,
   flyDurationMs,
   followIdle,
   followReducer,
-  planFocusMove,
-  type CameraView,
-  type FollowState
+  planFocusMove
 } from "./map-camera.js";
 
 const view = (center: [number, number], zoom: number): CameraView => ({ center, zoom });

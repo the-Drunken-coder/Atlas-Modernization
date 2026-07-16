@@ -1,7 +1,7 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { entityCurrentTaskId, entityDisplayName, entityKind, entityQueuedTaskIds, isSelectableKind, type EntityKind } from "./entities.js";
-import { sortTasksByRecency } from "./tasks.js";
+import { type EntityKind, entityCurrentTaskId, entityDisplayName, entityKind, entityQueuedTaskIds, isSelectableKind } from "./entities.js";
 import type { AtlasSnapshot } from "./store.js";
+import { sortTasksByRecency } from "./tasks.js";
 
 export function getEntity(snapshot: AtlasSnapshot, id: string | undefined): EntityResource | undefined {
   return id ? snapshot.entities[id] : undefined;

@@ -20,7 +20,10 @@ export function formatTimestamp(iso: string | undefined): string {
   if (!iso) return "—";
   const timestamp = Date.parse(iso);
   if (!Number.isFinite(timestamp)) return iso;
-  return new Date(timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+  return new Date(timestamp)
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d+Z$/, "Z");
 }
 
 export function formatNumber(value: number | undefined, options: { unit?: string; digits?: number } = {}): string {

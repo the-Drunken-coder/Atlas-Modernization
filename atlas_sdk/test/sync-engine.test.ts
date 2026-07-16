@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent, type ResourceType, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
-import { changedSinceToEvents, type ChangedSinceResponse, type ResourceValue } from "../src/types.js";
+import { type ChangedSinceResponse, changedSinceToEvents, type ResourceValue } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync", () => {

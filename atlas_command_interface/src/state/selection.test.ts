@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSidebarState, listForKind, sidebarReducer, type SidebarState } from "./selection.js";
+import { initialSidebarState, listForKind, type SidebarState, sidebarReducer } from "./selection.js";
 
 describe("sidebar reducer", () => {
   it("toggles and sets the collapsed rail", () => {

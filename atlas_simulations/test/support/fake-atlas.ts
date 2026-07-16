@@ -13,7 +13,7 @@ import {
   type TaskCreateRequest,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
-import type { AtlasClientLike, AtlasClientFactory, ClientMode } from "../../src/server/atlas.js";
+import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "../../src/server/atlas.js";
 
 type FakeCoreState = {
   version: number;

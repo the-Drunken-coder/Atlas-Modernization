@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appConfigFromEnv, type AppConfig } from "./config.js";
+import { type AppConfig, appConfigFromEnv } from "./config.js";
 import { renderSecurityHeaders } from "./security-headers.js";
 
 const headers = renderSecurityHeaders({});

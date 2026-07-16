@@ -9,18 +9,24 @@ describe("Atlas client factory", () => {
 
   it("keeps request timeouts active until the response body settles", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("fetch", vi.fn(async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      const signal = init?.signal;
-      let bodyController: ReadableStreamDefaultController<Uint8Array>;
-      signal?.addEventListener("abort", () => {
-        bodyController.error(signal.reason);
-      });
-      return new Response(new ReadableStream<Uint8Array>({
-        start(controller) {
-          bodyController = controller;
-        }
-      }), { status: 200 });
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const signal = init?.signal;
+        let bodyController: ReadableStreamDefaultController<Uint8Array>;
+        signal?.addEventListener("abort", () => {
+          bodyController.error(signal.reason);
+        });
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            }
+          }),
+          { status: 200 }
+        );
+      })
+    );
     const client = createAtlasClientFactory({
       atlasBaseUrl: "http://127.0.0.1:8000",
       port: 0,

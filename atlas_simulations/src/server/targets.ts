@@ -1,6 +1,6 @@
 import type { AtlasTargetSummary } from "../shared/types.js";
-import { createAtlasClientFactory, type AtlasClientFactory } from "./atlas.js";
-import { isDeployedAtlasUrl, type AtlasTargetConfig, type SimulationConfig } from "./config.js";
+import { type AtlasClientFactory, createAtlasClientFactory } from "./atlas.js";
+import { type AtlasTargetConfig, isDeployedAtlasUrl, type SimulationConfig } from "./config.js";
 import type { RunTarget } from "./run-store.js";
 
 export type TargetRegistry = {
@@ -39,11 +39,7 @@ export function targetForId(id: string | undefined, registry: TargetRegistry, ap
   return target && apiKey ? { ...target, apiKey } : target;
 }
 
-export function targetForRun(
-  runTarget: Pick<AtlasTargetSummary, "id" | "baseUrl">,
-  registry: TargetRegistry,
-  apiKey: string | undefined
-): AtlasTargetConfig {
+export function targetForRun(runTarget: Pick<AtlasTargetSummary, "id" | "baseUrl">, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig {
   const configured = registry.targets.get(runTarget.id);
   if (apiKey) {
     return {

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import { describe, expect, it } from "vitest";
 import { parseCommandCatalog } from "./command-model.js";
-import { commandTargeting, commandsForTargeting, evaluateCommand, formParameters } from "./command-targeting.js";
+import { commandsForTargeting, commandTargeting, evaluateCommand, formParameters } from "./command-targeting.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 

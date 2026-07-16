@@ -1,12 +1,12 @@
-import { Marker, type Map as MlMap } from "maplibre-gl";
 import type maplibregl from "maplibre-gl";
+import { Marker, type Map as MlMap } from "maplibre-gl";
 import {
   addVertexAfter,
   displayGeometry,
   geometryVertices,
   moveVertex,
-  removeVertex,
   type Position,
+  removeVertex,
   type UiGeometry,
   type VertexRef
 } from "../../atlas/geometry.js";

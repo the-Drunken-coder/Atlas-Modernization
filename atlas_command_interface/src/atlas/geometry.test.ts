@@ -8,15 +8,29 @@ import {
   removeVertex,
   representativePoint,
   toUiGeometry,
-  validateGeometry,
-  type UiGeometry
+  type UiGeometry,
+  validateGeometry
 } from "./geometry.js";
 
 const point: UiGeometry = { type: "Point", coordinates: [-74.2, 40.1] };
-const line: UiGeometry = { type: "LineString", coordinates: [[-74.2, 40.1], [-74.1, 40.2]] };
+const line: UiGeometry = {
+  type: "LineString",
+  coordinates: [
+    [-74.2, 40.1],
+    [-74.1, 40.2]
+  ]
+};
 const polygon: UiGeometry = {
   type: "Polygon",
-  coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2], [-74.2, 40.1]]]
+  coordinates: [
+    [
+      [-74.2, 40.1],
+      [-74.1, 40.1],
+      [-74.1, 40.2],
+      [-74.2, 40.2],
+      [-74.2, 40.1]
+    ]
+  ]
 };
 const circle: UiGeometry = {
   type: "Feature",
@@ -112,15 +126,34 @@ describe("vertex editing", () => {
   });
 
   it("moves a line vertex while preserving validity", () => {
-    const elevatedLine: UiGeometry = { type: "LineString", coordinates: [[-74.2, 40.1], [-74.1, 40.2, 12]] };
+    const elevatedLine: UiGeometry = {
+      type: "LineString",
+      coordinates: [
+        [-74.2, 40.1],
+        [-74.1, 40.2, 12]
+      ]
+    };
     const moved = moveVertex(elevatedLine, { kind: "LineString", index: 1 }, -73, 41);
-    expect(moved).toEqual({ type: "LineString", coordinates: [[-74.2, 40.1], [-73, 41, 12]] });
+    expect(moved).toEqual({
+      type: "LineString",
+      coordinates: [
+        [-74.2, 40.1],
+        [-73, 41, 12]
+      ]
+    });
     expect(validateGeometry(moved)).toEqual({ valid: true });
   });
 
   it("adds and removes line vertices keeping at least two points", () => {
     const added = addVertexAfter(line, { kind: "LineString", index: 0 }, -74.15, 40.15);
-    expect(added).toEqual({ type: "LineString", coordinates: [[-74.2, 40.1], [-74.15, 40.15], [-74.1, 40.2]] });
+    expect(added).toEqual({
+      type: "LineString",
+      coordinates: [
+        [-74.2, 40.1],
+        [-74.15, 40.15],
+        [-74.1, 40.2]
+      ]
+    });
 
     expect(canRemoveVertex(added, { kind: "LineString", index: 1 })).toBe(true);
     const removed = removeVertex(added, { kind: "LineString", index: 1 });
@@ -173,30 +206,88 @@ describe("geometry validity", () => {
       valid: false,
       reason: "Line needs at least two points"
     });
-    expect(validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.2, 40.1]]] })).toEqual({
+    expect(
+      validateGeometry({
+        type: "Polygon",
+        coordinates: [
+          [
+            [-74.2, 40.1],
+            [-74.1, 40.1],
+            [-74.2, 40.1]
+          ]
+        ]
+      })
+    ).toEqual({
       valid: false,
       reason: "Polygon needs a closed ring of at least four coordinates"
     });
     expect(
-      validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2]]] })
+      validateGeometry({
+        type: "Polygon",
+        coordinates: [
+          [
+            [-74.2, 40.1],
+            [-74.1, 40.1],
+            [-74.1, 40.2],
+            [-74.2, 40.2]
+          ]
+        ]
+      })
     ).toEqual({ valid: false, reason: "Polygon ring must repeat its first coordinate to close" });
-    expect(validateGeometry({ type: "LineString", coordinates: [[-74.2, 40.1], [Number.NaN, 40.2]] })).toEqual({
-      valid: false,
-      reason: "Line contains an invalid coordinate"
-    });
-    expect(validateGeometry({ type: "LineString", coordinates: [[-74.2, 40.1], [-74.1, 40.2, Number.NaN]] })).toEqual({
+    expect(
+      validateGeometry({
+        type: "LineString",
+        coordinates: [
+          [-74.2, 40.1],
+          [Number.NaN, 40.2]
+        ]
+      })
+    ).toEqual({
       valid: false,
       reason: "Line contains an invalid coordinate"
     });
     expect(
-      validateGeometry({ type: "Polygon", coordinates: [[[-74.2, 40.1], [-74.1, 40.1], [Number.POSITIVE_INFINITY, 40.2], [-74.2, 40.1]]] })
+      validateGeometry({
+        type: "LineString",
+        coordinates: [
+          [-74.2, 40.1],
+          [-74.1, 40.2, Number.NaN]
+        ]
+      })
+    ).toEqual({
+      valid: false,
+      reason: "Line contains an invalid coordinate"
+    });
+    expect(
+      validateGeometry({
+        type: "Polygon",
+        coordinates: [
+          [
+            [-74.2, 40.1],
+            [-74.1, 40.1],
+            [Number.POSITIVE_INFINITY, 40.2],
+            [-74.2, 40.1]
+          ]
+        ]
+      })
     ).toEqual({ valid: false, reason: "Polygon contains an invalid coordinate" });
     expect(
       validateGeometry({
         type: "Polygon",
         coordinates: [
-          [[-74.2, 40.1], [-74.1, 40.1], [-74.1, 40.2], [-74.2, 40.2], [-74.2, 40.1]],
-          [[-74.15, 40.15], [-74.12, 40.15], [-74.12, 40.18], [-74.15, 40.18]]
+          [
+            [-74.2, 40.1],
+            [-74.1, 40.1],
+            [-74.1, 40.2],
+            [-74.2, 40.2],
+            [-74.2, 40.1]
+          ],
+          [
+            [-74.15, 40.15],
+            [-74.12, 40.15],
+            [-74.12, 40.18],
+            [-74.15, 40.18]
+          ]
         ]
       })
     ).toEqual({ valid: false, reason: "Polygon ring must repeat its first coordinate to close" });

@@ -1,7 +1,7 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { appendMarker, firePointerMove, rect, renderMapView, type PointLike } from "./MapView.test-harness.js";
+import { appendMarker, firePointerMove, type PointLike, rect, renderMapView } from "./MapView.test-harness.js";
 
 describe("MapView zoom overlay", () => {
   it("delegates completed MapLibre box zooms to fitScreenCoordinates", () => {

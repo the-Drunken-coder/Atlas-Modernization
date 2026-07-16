@@ -17,7 +17,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome lint .",
-    "format:check": "biome format --changed --no-errors-on-unmatched .",
+    "format:check": "biome check --linter-enabled=false .",
     "deploy:pages": "npm run build && wrangler pages deploy dist/client --project-name atlas"
   },
   "dependencies": {

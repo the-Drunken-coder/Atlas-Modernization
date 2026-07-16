@@ -1,10 +1,4 @@
-import type {
-  AssertionResult,
-  CreatedResource,
-  JSONValue,
-  ScenarioDescriptor,
-  ScenarioInputField
-} from "../shared/types.js";
+import type { AssertionResult, CreatedResource, JSONValue, ScenarioDescriptor, ScenarioInputField } from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js";
 
 type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
@@ -466,7 +460,10 @@ function createIdFactory(runId: string): (name: string) => string {
 }
 
 function slug(value: string): string {
-  const cleaned = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return cleaned.slice(0, MAX_ID_SLUG_LENGTH).replace(/-+$/g, "") || "resource";
 }
 

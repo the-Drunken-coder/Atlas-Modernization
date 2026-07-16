@@ -2,15 +2,15 @@ import { AtlasClient, type EntityResource, type JSONValue, type TaskResource } f
 import type { AppConfig } from "../app/config.js";
 import {
   buildCommandTaskRequest,
-  catalogFromObject,
-  coerceParameters,
   COMMAND_CATALOG_OBJECT_ID,
   type CommandCatalog,
-  type CommandDefinition
+  type CommandDefinition,
+  catalogFromObject,
+  coerceParameters
 } from "./command-model.js";
+import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
-import { sanitizeConnectionError } from "./connection-error.js";
 
 const CATALOG_REFRESH_RETRY_DELAYS_MS = [1_000, 5_000, 15_000] as const;
 

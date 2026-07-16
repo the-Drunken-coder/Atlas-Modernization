@@ -8,7 +8,7 @@ import {
   MAX_EVENT_HISTORY_BYTES_PER_RUN,
   MAX_EVENTS_PER_RUN
 } from "./run-store-limits.js";
-import { timestamp, type RunRecord } from "./run-store-types.js";
+import { type RunRecord, timestamp } from "./run-store-types.js";
 
 export function trimEvents(run: RunRecord): void {
   const protectedSequence = latestTerminalStatusSequence(run.events);

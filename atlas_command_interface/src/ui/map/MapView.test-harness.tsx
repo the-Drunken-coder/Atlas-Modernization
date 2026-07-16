@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { MapView } from "./MapView.js";
 import type { MapCameraCommand } from "./map-camera.js";
 import { buildMapSources, type MapSources } from "./map-sources.js";

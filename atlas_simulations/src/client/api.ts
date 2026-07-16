@@ -119,11 +119,7 @@ async function apiJSON<T>(url: string, init: RequestInit | undefined, guard: (va
     throw error;
   });
   if (!response.ok) {
-    throw new Error(
-      isRecord(body) && typeof body.message === "string" && body.message
-        ? body.message
-        : `Request failed (${response.status})`
-    );
+    throw new Error(isRecord(body) && typeof body.message === "string" && body.message ? body.message : `Request failed (${response.status})`);
   }
   if (!guard(body)) {
     throw new Error(`Expected ${label} (${response.status})`);

@@ -16,7 +16,10 @@ export class FakeWebSocket {
   private listeners = new Map<WebSocketEventType, Set<WebSocketListener>>();
   private subscriptions: AtlasSubscription[] = [];
 
-  constructor(readonly url: string, private readonly core: FakeWebSocketOwner) {
+  constructor(
+    readonly url: string,
+    private readonly core: FakeWebSocketOwner
+  ) {
     this.core.feedConnections++;
     this.core.sockets.add(this);
     queueMicrotask(() => {
@@ -36,7 +39,10 @@ export class FakeWebSocket {
     if (parsed.action === "auth") {
       this.core.feedAuthFrames.push({ apiKey: parsed.api_key });
     }
-    if (parsed.action === "auth" && (this.core.rejectFeedAuth || (this.core.expectedFeedApiKey !== undefined && parsed.api_key !== this.core.expectedFeedApiKey))) {
+    if (
+      parsed.action === "auth" &&
+      (this.core.rejectFeedAuth || (this.core.expectedFeedApiKey !== undefined && parsed.api_key !== this.core.expectedFeedApiKey))
+    ) {
       this.close();
       return;
     }

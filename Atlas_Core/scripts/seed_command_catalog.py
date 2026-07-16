@@ -13,15 +13,12 @@ import sys
 import uuid
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib import error, request
 from urllib.parse import urlparse
 
-
 COMMAND_CATALOG_OBJECT_ID = "command_catalog"
-COMMAND_CATALOG_FILE = (
-    Path(__file__).resolve().parents[1] / "command_catalog" / "command_catalog.json"
-)
+COMMAND_CATALOG_FILE = Path(__file__).resolve().parents[1] / "command_catalog" / "command_catalog.json"
 DOCKER_ENV_DIR = Path(__file__).resolve().parents[1] / "docker"
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 API_REQUEST_TIMEOUT = 10.0
@@ -31,7 +28,7 @@ DEFAULT_ADMIN_PASSWORD = "password"
 DEFAULT_UI_ORIGIN = "http://localhost:5173"
 
 logger = logging.getLogger(__name__)
-_SESSION_COOKIE_HEADER: Optional[str] = None
+_SESSION_COOKIE_HEADER: str | None = None
 
 SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 CATALOG_TOP_LEVEL_FIELDS = {"type", "name", "description", "commands"}
@@ -63,7 +60,7 @@ def _is_finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
-def _require_object(value: Any, path: str, errors: list[str]) -> Optional[dict[str, Any]]:
+def _require_object(value: Any, path: str, errors: list[str]) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return value
     errors.append(f"{path} must be an object")
@@ -205,7 +202,7 @@ def _validate_command_catalog_data(catalog_data: dict[str, Any]) -> None:
         raise ValueError("command catalog validation failed:\n  - " + "\n  - ".join(errors))
 
 
-def _load_command_catalog_data() -> Optional[dict[str, Any]]:
+def _load_command_catalog_data() -> dict[str, Any] | None:
     """Load the preset catalog from disk."""
     if not COMMAND_CATALOG_FILE.exists():
         print(f"[CATALOG] Command catalog file not found: {COMMAND_CATALOG_FILE}")
@@ -223,7 +220,7 @@ def _load_command_catalog_data() -> Optional[dict[str, Any]]:
         return None
 
 
-def _build_api_base_url(explicit: Optional[str] = None) -> str:
+def _build_api_base_url(explicit: str | None = None) -> str:
     configured = explicit or os.getenv("ATLAS_CORE_API_URL") or DEFAULT_API_BASE_URL
     return _validate_http_url(configured.rstrip("/"))
 
@@ -305,13 +302,11 @@ def _ensure_admin_session(api_base_url: str) -> bool:
     return False
 
 
-def _api_request(
-    method: str, url: str, payload: Optional[dict[str, Any]] = None
-) -> tuple[int, str]:
+def _api_request(method: str, url: str, payload: dict[str, Any] | None = None) -> tuple[int, str]:
     """Issue a JSON request to the Atlas Core API."""
     safe_url = _validate_http_url(url)
     headers = {"Accept": "application/json", **_api_headers()}
-    data: Optional[bytes] = None
+    data: bytes | None = None
     if payload is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload).encode("utf-8")
@@ -356,34 +351,32 @@ def _ensure_catalog_uploaded(api_base_url: str) -> bool:
     body_parts = []
 
     # Add object_id field
-    body_parts.append(f"--{boundary}".encode("utf-8"))
+    body_parts.append(f"--{boundary}".encode())
     body_parts.append(b'Content-Disposition: form-data; name="object_id"')
     body_parts.append(b"")
     body_parts.append(COMMAND_CATALOG_OBJECT_ID.encode("utf-8"))
 
     # Add usage_hint field
-    body_parts.append(f"--{boundary}".encode("utf-8"))
+    body_parts.append(f"--{boundary}".encode())
     body_parts.append(b'Content-Disposition: form-data; name="usage_hint"')
     body_parts.append(b"")
     body_parts.append(b"command_catalog")
 
     # Add type field
-    body_parts.append(f"--{boundary}".encode("utf-8"))
+    body_parts.append(f"--{boundary}".encode())
     body_parts.append(b'Content-Disposition: form-data; name="type"')
     body_parts.append(b"")
     body_parts.append(b"command_catalog")
 
     # Add file field
-    body_parts.append(f"--{boundary}".encode("utf-8"))
-    body_parts.append(
-        f'Content-Disposition: form-data; name="file"; filename="{CATALOG_UPLOAD_FILENAME}"'.encode("utf-8")
-    )
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{CATALOG_UPLOAD_FILENAME}"'.encode())
     body_parts.append(b"Content-Type: application/json")
     body_parts.append(b"")
     body_parts.append(catalog_bytes)
 
     # Add closing boundary
-    body_parts.append(f"--{boundary}--".encode("utf-8"))
+    body_parts.append(f"--{boundary}--".encode())
 
     # Join all parts with CRLF
     body_bytes = crlf.join(body_parts)
@@ -424,7 +417,7 @@ def _ensure_catalog_uploaded(api_base_url: str) -> bool:
     return False
 
 
-def publish_command_catalog(*, api_base_url: Optional[str] = None) -> bool:
+def publish_command_catalog(*, api_base_url: str | None = None) -> bool:
     """Seed the command catalog using the HTTP API."""
     catalog_data = _load_command_catalog_data()
     if catalog_data is None:
@@ -451,9 +444,7 @@ def publish_command_catalog(*, api_base_url: Optional[str] = None) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Upload the Atlas command catalog through the API")
-    parser.add_argument(
-        "--api-url", help="Base URL for the Atlas Core API (default: env or localhost)"
-    )
+    parser.add_argument("--api-url", help="Base URL for the Atlas Core API (default: env or localhost)")
     args = parser.parse_args()
 
     success = publish_command_catalog(api_base_url=args.api_url)

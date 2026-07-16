@@ -1,8 +1,8 @@
-import maplibregl, { Marker, type Map as MlMap, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
+import maplibregl, { type MapMouseEvent, Marker, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MapReticle } from "./MapReticle.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
+import { MapReticle } from "./MapReticle.js";
 import { CAMERA_EVENT_TAG, type MapCameraCommand } from "./map-camera.js";
 import { createEditingMarkers, type MapEditing } from "./map-editing.js";
 import { pushEditingOverlay, pushSources, registerSourcesAndLayers } from "./map-layers.js";
@@ -10,21 +10,21 @@ import { type MapSources } from "./map-sources.js";
 import {
   clearMarkers,
   createSymbolMarkerElement,
+  type SymbolMarkerFeature,
   symbolMarkerFeatures,
   symbolMarkerPositionsEqual,
   symbolMarkerPresentationsEqual,
-  updateSymbolMarkerElement,
-  type SymbolMarkerFeature
+  updateSymbolMarkerElement
 } from "./map-symbol-markers.js";
 import type { MapReticleTarget } from "./map-targets.js";
+import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 import { useMapCamera } from "./use-map-camera.js";
 import { useMapReticleInteraction } from "./use-map-reticle-interaction.js";
-import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
 
 export type MapContextMenuInfo = { lng: number; lat: number; x: number; y: number };
 export type { MapEditing } from "./map-editing.js";
-export type { MapReticleTarget } from "./map-targets.js";
 export { buildMapSources } from "./map-sources.js";
+export type { MapReticleTarget } from "./map-targets.js";
 
 type MapViewProps = {
   sources: MapSources;

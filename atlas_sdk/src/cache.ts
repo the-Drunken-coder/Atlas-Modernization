@@ -1,13 +1,13 @@
 import {
-  isObjectDetailResource,
   type EntityResource,
+  isObjectDetailResource,
   type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
   type TaskResource
 } from "./protocol.js";
-import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
+import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
 
 export type CacheResourceOptions = {
   detail?: boolean;

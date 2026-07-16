@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { AuthGate } from "../auth/ui/AuthGate.js";
-import type { AtlasDataSource } from "../atlas/data-source.js";
+import { type ReactNode, useEffect, useState } from "react";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
+import type { AtlasDataSource } from "../atlas/data-source.js";
+import { AuthGate } from "../auth/ui/AuthGate.js";
 import { AtlasProvider } from "../state/atlas-context.js";
 import { Button } from "../ui/primitives/controls.js";
-import { coreConfigFromEnv, fetchAppConfig, type AppConfig, type CoreConfig } from "./config.js";
+import { type AppConfig, type CoreConfig, coreConfigFromEnv, fetchAppConfig } from "./config.js";
 
 export type ProvidersProps = {
   children: ReactNode;

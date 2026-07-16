@@ -26,9 +26,7 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
           >
             <span className="command-row__main">
               <span className="command-row__title">{command.name}</span>
-              <span className="command-row__sub">
-                {disabled ? disabledReason : requiresForm ? `${command.id} · needs parameters` : command.id}
-              </span>
+              <span className="command-row__sub">{disabled ? disabledReason : requiresForm ? `${command.id} · needs parameters` : command.id}</span>
             </span>
           </button>
         );

@@ -1,13 +1,13 @@
-import { describe, expect, it } from "vitest";
 import type { EntityResource, JSONValue, ObjectDetailResource } from "@the-drunken-coder/atlas-sdk";
+import { describe, expect, it } from "vitest";
 import {
   assertEntitySupportsCommand,
   buildCommandTaskRequest,
+  CommandModelError,
   catalogFromObject,
   coerceParameters,
   commandById,
   commandLabel,
-  CommandModelError,
   commandsForEntity,
   parseCommandCatalog
 } from "./command-model.js";

@@ -1,20 +1,20 @@
-import type { Map as MlMap, MapGeoJSONFeature } from "maplibre-gl";
+import type { MapGeoJSONFeature, Map as MlMap } from "maplibre-gl";
 import type { UiRawGeometry } from "../../atlas/geometry.js";
 import { collectLngLatPositions, featureForEntityId, type MapTarget } from "./map-camera.js";
-import type { MapFeature, MapSources } from "./map-sources.js";
+import { INTERACTIVE_LAYERS } from "./map-layers.js";
 import {
-  HOVER_MAGNET_RADIUS,
   boxFromProjectedPositions,
   boxIntersectsViewport,
   distanceToBox,
-  reticleForTarget,
-  squareAround,
+  HOVER_MAGNET_RADIUS,
   type ReticleState,
   type ReticleTarget,
+  reticleForTarget,
   type ScreenPoint,
+  squareAround,
   type TargetBox
 } from "./map-reticle.js";
-import { INTERACTIVE_LAYERS } from "./map-layers.js";
+import type { MapFeature, MapSources } from "./map-sources.js";
 
 export type MapReticleTarget = MapTarget;
 export type HoverTarget = ReticleTarget & { entityId: string };

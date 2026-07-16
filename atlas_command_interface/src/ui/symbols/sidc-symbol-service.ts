@@ -1,11 +1,5 @@
-import { renderSymbol, type RenderSymbolOptions } from "sidc-kit";
-import {
-  DEFAULT_SYMBOL_CATALOG,
-  DEFAULT_SYMBOL_FALLBACK,
-  DEFAULT_SYMBOL_TYPE_MAPPING,
-  type SymbolConfig,
-  type SymbolStyleOptions
-} from "./catalog.js";
+import { type RenderSymbolOptions, renderSymbol } from "sidc-kit";
+import { DEFAULT_SYMBOL_CATALOG, DEFAULT_SYMBOL_FALLBACK, DEFAULT_SYMBOL_TYPE_MAPPING, type SymbolConfig, type SymbolStyleOptions } from "./catalog.js";
 
 export type SymbolInfo = {
   sidc: string;
@@ -128,9 +122,7 @@ function mapTrackTypeToConfigKey(trackType: string | undefined, mapping: Normali
   if (directHit) return directHit.configKey;
 
   const candidateTokens = splitCandidateTokens(trackType);
-  const tokenHit = mapping.find(
-    (entry) => entry.rawKey !== "default" && entry.tokens.length === 1 && candidateTokens.includes(entry.tokens[0])
-  );
+  const tokenHit = mapping.find((entry) => entry.rawKey !== "default" && entry.tokens.length === 1 && candidateTokens.includes(entry.tokens[0]));
   if (tokenHit) return tokenHit.configKey;
 
   return defaultKey;
@@ -268,9 +260,7 @@ export function renderSymbolToSvg(symbolInfo: SymbolInfo, options: SymbolRenderO
 }
 
 export function createSidcIconService(config: SidcSymbolServiceConfig) {
-  const symbolCatalog = Object.fromEntries(
-    Object.entries(config.symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])
-  );
+  const symbolCatalog = Object.fromEntries(Object.entries(config.symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)]));
   const typeMapping = { ...config.typeMapping };
   const fallback = cloneSymbolInfo(config.fallback ?? DEFAULT_SYMBOL_FALLBACK);
   const lookup = buildLookup(typeMapping);
@@ -318,8 +308,7 @@ export function createSidcIconService(config: SidcSymbolServiceConfig) {
     getAssetSymbol,
     getTrackSymbol,
     getAvailableSymbols: () => Object.keys(typeMapping).filter((key) => key !== "default"),
-    getSymbolConfigs: () =>
-      Object.fromEntries(Object.entries(symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])),
+    getSymbolConfigs: () => Object.fromEntries(Object.entries(symbolCatalog).map(([key, symbolConfig]) => [key, cloneSymbolConfig(symbolConfig)])),
     render,
     preload
   };

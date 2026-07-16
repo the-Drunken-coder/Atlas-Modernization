@@ -1,7 +1,7 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { buildMapSources } from "./map-sources.js";
 import { entity, firePointerMove, renderMapView } from "./MapView.test-harness.js";
+import { buildMapSources } from "./map-sources.js";
 
 describe("MapView keyboard selection", () => {
   it.each([

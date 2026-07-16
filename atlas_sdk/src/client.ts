@@ -1,3 +1,6 @@
+import { ObjectContentCache, ResourceCache } from "./cache.js";
+import { FeedConnectionManager } from "./feed-connection.js";
+import { HttpTransport } from "./http.js";
 import type {
   EntityCreateRequest,
   EntityResource,
@@ -9,11 +12,7 @@ import type {
   TaskResource,
   TaskUpdateRequest
 } from "./protocol.js";
-import { ObjectContentCache, ResourceCache } from "./cache.js";
-import { FeedConnectionManager } from "./feed-connection.js";
-import { HttpTransport } from "./http.js";
 import { SyncEngine } from "./sync-engine.js";
-import { changedSinceResponseValidator, isEntityResource, isFullDatasetResponse, isObjectDetailResource, isTaskResource } from "./validation.js";
 import type {
   AtlasSubscription,
   ChangedSinceQueryOptions,
@@ -34,7 +33,10 @@ import type {
   WatchCallback,
   WebSocketCtor
 } from "./types.js";
+import { changedSinceResponseValidator, isEntityResource, isFullDatasetResponse, isObjectDetailResource, isTaskResource } from "./validation.js";
 
+export { ProtocolMismatchError } from "./feed-connection.js";
+export { AtlasAPIError, ConflictError } from "./http.js";
 export type {
   AtlasLocalDeleteWatchEvent,
   AtlasRecoveredWatchEvent,
@@ -59,8 +61,6 @@ export type {
   TaskStatus,
   TaskStatusOptions
 } from "./types.js";
-export { AtlasAPIError, ConflictError } from "./http.js";
-export { ProtocolMismatchError } from "./feed-connection.js";
 
 export type AtlasClientOptions = {
   baseUrl: string;

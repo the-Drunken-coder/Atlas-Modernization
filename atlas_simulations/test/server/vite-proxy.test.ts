@@ -1,7 +1,7 @@
-import { createServer as createViteServer, type ViteDevServer } from "vite";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";

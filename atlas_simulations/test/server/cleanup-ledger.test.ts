@@ -1,15 +1,4 @@
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync
-} from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -73,9 +62,7 @@ describe("CleanupLedger", () => {
     const ledger = new CleanupLedger(temporaryLedgerDirectory());
     const run = record();
 
-    expect(() => ledger.save({ ...run, resources: [{ type: "entity", id: "external-entity" }] })).toThrow(
-      "outside its run ID prefix"
-    );
+    expect(() => ledger.save({ ...run, resources: [{ type: "entity", id: "external-entity" }] })).toThrow("outside its run ID prefix");
     expect(() => ledger.save({ ...run, resources: [run.resources[0]!, run.resources[0]!] })).toThrow("duplicate resources");
     expect(ledger.load()).toEqual([]);
   });
@@ -84,12 +71,8 @@ describe("CleanupLedger", () => {
     const ledger = new CleanupLedger(temporaryLedgerDirectory());
     const run = record();
 
-    expect(() =>
-      ledger.save({ ...run, runId: "external", resources: [{ type: "entity", id: "external-entity" }] })
-    ).toThrow("invalid run record");
-    expect(() =>
-      ledger.save({ ...run, target: { ...run.target, baseUrl: "https://localhost:8443" } })
-    ).toThrow("invalid run record");
+    expect(() => ledger.save({ ...run, runId: "external", resources: [{ type: "entity", id: "external-entity" }] })).toThrow("invalid run record");
+    expect(() => ledger.save({ ...run, target: { ...run.target, baseUrl: "https://localhost:8443" } })).toThrow("invalid run record");
     expect(ledger.load()).toEqual([]);
   });
 

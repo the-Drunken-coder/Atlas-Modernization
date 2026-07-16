@@ -23,9 +23,9 @@ from atlas import (
     ensure_local_auth,
     print_storage_notice,
     public_base_url_from_hostname,
-    wait_for_api,
     start_containers,
     verify_tunnel_connection,
+    wait_for_api,
 )
 
 
@@ -33,7 +33,7 @@ class FakeHTTPResponse:
     def __init__(self, body: str) -> None:
         self.body = body
 
-    def __enter__(self) -> "FakeHTTPResponse":
+    def __enter__(self) -> FakeHTTPResponse:
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
@@ -54,10 +54,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             CompletedProcess(
                 [],
                 0,
-                stdout=(
-                    'password authentication failed for user "atlas"\n'
-                    f"DATABASE_URL={leaked_secret}\n"
-                ),
+                stdout=(f'password authentication failed for user "atlas"\nDATABASE_URL={leaked_secret}\n'),
                 stderr=f"diagnostic context: {fixture_stderr_credential}\n",
             ),
         ]
@@ -84,9 +81,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             CompletedProcess(
                 [],
                 0,
-                stdout=json.dumps(
-                    {"error": 'password authentication failed for user "atlas"'}
-                ),
+                stdout=json.dumps({"error": 'password authentication failed for user "atlas"'}),
                 stderr="",
             ),
         ]

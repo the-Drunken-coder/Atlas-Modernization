@@ -7,14 +7,14 @@ import {
   geometryVertices,
   isCircleFeature,
   removeVertex,
+  type UiGeometry,
   updateCircleRadius,
-  validateGeometry,
-  type UiGeometry
+  validateGeometry
 } from "../../atlas/geometry.js";
-import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
-import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { TrashIcon } from "../../ui/primitives/icons.js";
+import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
+import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
 import { FieldGrid, InspectorHeading, Section } from "../shared/panels.js";
 
 export type GeofeatureInspectorProps = {

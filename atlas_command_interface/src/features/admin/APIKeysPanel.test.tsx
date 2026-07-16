@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { emptySnapshot } from "../../atlas/store.js";
-import { AtlasStaticProvider, type AtlasContextValue } from "../../state/atlas-context.js";
+import { type AtlasContextValue, AtlasStaticProvider } from "../../state/atlas-context.js";
 import { APIKeysPanel } from "./APIKeysPanel.js";
 
 const atlasValue: AtlasContextValue = {

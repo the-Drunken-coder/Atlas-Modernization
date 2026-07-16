@@ -37,13 +37,7 @@ export function zoomDeltaFromWheel(event: Pick<WheelEvent<HTMLDivElement>, "delt
 export function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return (
-    a.x === b.x &&
-    a.y === b.y &&
-    a.targetEntityId === b.targetEntityId &&
-    a.targeted === b.targeted &&
-    boxesEqual(a.target, b.target)
-  );
+  return a.x === b.x && a.y === b.y && a.targetEntityId === b.targetEntityId && a.targeted === b.targeted && boxesEqual(a.target, b.target);
 }
 
 export function boxesEqual(a: TargetBox, b: TargetBox): boolean {

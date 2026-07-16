@@ -1,23 +1,23 @@
+import type { ResponseValidator } from "./http.js";
 import {
-  isEntityResource as isGeneratedEntityResource,
-  isFeedEvent as isGeneratedFeedEvent,
-  isFeedHandshakeMessage,
-  isJSONValue,
-  isObjectDetailResource as isGeneratedObjectDetailResource,
-  isObjectResource as isGeneratedObjectResource,
-  isProtocolRevision,
-  isResourceType,
-  isRFC3339Timestamp,
-  isTaskResource as isGeneratedTaskResource,
   type EntityResource,
   type FeedEvent,
   type FeedHandshakeMessage,
+  isFeedHandshakeMessage,
+  isEntityResource as isGeneratedEntityResource,
+  isFeedEvent as isGeneratedFeedEvent,
+  isObjectDetailResource as isGeneratedObjectDetailResource,
+  isObjectResource as isGeneratedObjectResource,
+  isTaskResource as isGeneratedTaskResource,
+  isJSONValue,
+  isProtocolRevision,
+  isResourceType,
+  isRFC3339Timestamp,
   type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
   type TaskResource
 } from "./protocol.js";
-import type { ResponseValidator } from "./http.js";
 import type {
   ChangedSinceResponse,
   DeletedResource,

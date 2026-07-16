@@ -16,7 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BIOME_SINCE: ${{ github.event.pull_request.base.sha || github.event.before }}
   GO_VERSION_FILE: Atlas_Core/go.mod
   GO_SUM_FILE: Atlas_Core/go.sum
   PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
@@ -148,8 +147,8 @@ jobs:
       - name: Lint Atlas SDK
         run: npm run lint --workspace @the-drunken-coder/atlas-sdk
 
-      - name: Check formatting of changed Atlas SDK files
-        run: npm run format:check --workspace @the-drunken-coder/atlas-sdk -- --since="$BIOME_SINCE"
+      - name: Check formatting and import order of Atlas SDK
+        run: npm run format:check --workspace @the-drunken-coder/atlas-sdk
 
       - name: Install browser test runtime
         run: timeout 10m node node_modules/playwright/cli.js install chromium
@@ -213,8 +212,8 @@ jobs:
       - name: Lint asset runtime
         run: npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
 
-      - name: Check formatting of changed asset runtime files
-        run: npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime -- --since="$BIOME_SINCE"
+      - name: Check formatting and import order of asset runtime
+        run: npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime
 
       - name: Type-check asset runtime
         run: npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
@@ -276,8 +275,8 @@ jobs:
       - name: Lint command interface
         run: npm run lint --workspace @the-drunken-coder/atlas-command-interface
 
-      - name: Check formatting of changed command interface files
-        run: npm run format:check --workspace @the-drunken-coder/atlas-command-interface -- --since="$BIOME_SINCE"
+      - name: Check formatting and import order of command interface
+        run: npm run format:check --workspace @the-drunken-coder/atlas-command-interface
 
       - name: Type-check command interface
         run: npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
@@ -317,8 +316,8 @@ jobs:
       - name: Lint simulations
         run: npm run lint --workspace @the-drunken-coder/atlas-simulations
 
-      - name: Check formatting of changed simulations files
-        run: npm run format:check --workspace @the-drunken-coder/atlas-simulations -- --since="$BIOME_SINCE"
+      - name: Check formatting and import order of simulations
+        run: npm run format:check --workspace @the-drunken-coder/atlas-simulations
 
       - name: Type-check simulations
         run: npm run typecheck --workspace @the-drunken-coder/atlas-simulations
@@ -375,6 +374,12 @@ jobs:
           else
             echo "No Python scripts found under scripts/; skipping."
           fi
+
+      - name: Lint Python scripts
+        run: |
+          pip install ruff==0.15.22
+          ruff check scripts/
+          ruff format --check scripts/
 
       - name: Test compose env script
         run: python3 scripts/test_compose_env.py

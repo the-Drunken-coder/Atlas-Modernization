@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
-import { jsonNumber, type AtlasTargetSummary, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
+import { type AtlasTargetSummary, jsonNumber, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -53,21 +53,28 @@ describe("client API", () => {
   });
 
   it("resolves health as offline when the local server cannot be reached", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new TypeError("connection refused");
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("connection refused");
+      })
+    );
 
     await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(0), message: "connection refused" });
   });
 
   it("resolves health as unhealthy for unexpected success bodies", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("not json", { status: 200 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not json", { status: 200 }))
+    );
 
     await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(200), message: "Unexpected health response (200)" });
   });
 
   it("loads API targets and checks health for a selected target", async () => {
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(jsonResponse({ targets: [target], defaultTargetId: target.id }))
       .mockResolvedValueOnce(jsonResponse({ ok: true, status: 200, target }));
     vi.stubGlobal("fetch", fetchMock);
@@ -79,9 +86,12 @@ describe("client API", () => {
   });
 
   it("normalizes transport failures for JSON APIs", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("server offline");
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("server offline");
+      })
+    );
 
     await expect(loadRuns()).rejects.toThrow("server offline");
   });
@@ -90,9 +100,9 @@ describe("client API", () => {
     await expect(startRun({ scenarioId: "moving-assets", inputs: { assetCount: Number.NaN } } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
       "Invalid start run request"
     );
-    await expect(
-      startRun({ scenarioId: "moving-assets", confirmDeployedMutation: false } as unknown as Parameters<typeof startRun>[0])
-    ).rejects.toThrow("Invalid start run request");
+    await expect(startRun({ scenarioId: "moving-assets", confirmDeployedMutation: false } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
+      "Invalid start run request"
+    );
   });
 
   it("serializes valid start payloads with trusted mutation headers", async () => {
@@ -153,13 +163,17 @@ describe("client API", () => {
   });
 
   it("preserves HTTP status errors for non-JSON failures", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("nope", { status: 500 }))
+    );
 
     await expect(loadRuns()).rejects.toThrow("Request failed (500)");
   });
 
   it("validates scenario and mutation response shapes", async () => {
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(jsonResponse({ scenarios: [scenario] }))
       .mockResolvedValueOnce(jsonResponse({ run }));
     vi.stubGlobal("fetch", fetchMock);
@@ -174,7 +188,10 @@ describe("client API", () => {
 });
 
 function stubJSON(body: unknown, status = 200): void {
-  vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(body, status)));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => jsonResponse(body, status))
+  );
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

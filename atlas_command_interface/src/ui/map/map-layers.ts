@@ -1,8 +1,8 @@
 import type maplibregl from "maplibre-gl";
 import type { Map as MlMap } from "maplibre-gl";
 import { displayGeometry } from "../../atlas/geometry.js";
-import { emptyFeatureCollection, type MapSources } from "./map-sources.js";
 import type { MapEditing } from "./map-editing.js";
+import { emptyFeatureCollection, type MapSources } from "./map-sources.js";
 
 const COLORS = {
   geofeature: "#3fd27a",
