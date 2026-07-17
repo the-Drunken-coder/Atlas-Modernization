@@ -318,4 +318,50 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
     expect(client.sync.status()).not.toHaveProperty("error");
   });
+
+  it("does not mutate recovery state after a watcher stops the final recovery event", async () => {
+    const core = new FakeCore();
+    const recovered = core.upsertEntity(entity("asset-stop-during-recovery"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      sync: false,
+      pollIntervalMs: 0
+    });
+    const engine = (
+      client as unknown as {
+        engine: {
+          activeRecoveryPromise?: Promise<boolean>;
+          changedSinceForGeneration: (generation: number) => Promise<boolean>;
+          lifecycleGeneration: number;
+          markSynchronized: () => void;
+        };
+      }
+    ).engine;
+    const markSynchronized = vi.spyOn(engine, "markSynchronized");
+    let statusAtStop!: ReturnType<typeof client.sync.status>;
+    let snapshotAtStop!: ReturnType<typeof client.sync.snapshot>;
+    const stop = vi.fn(() => {
+      client.sync.stop();
+      statusAtStop = client.sync.status();
+      snapshotAtStop = client.sync.snapshot();
+    });
+    client.watch({ filter: "id", resource_type: "entity", id: recovered.entity_id }, stop);
+
+    const recovery = engine.changedSinceForGeneration(engine.lifecycleGeneration);
+
+    await expect(recovery).resolves.toBe(false);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(client.sync.status()).toEqual(statusAtStop);
+    expect(client.sync.snapshot()).toBe(snapshotAtStop);
+    expect(markSynchronized).not.toHaveBeenCalled();
+    expect(client.sync.status()).toMatchObject({
+      running: false,
+      healthy: false,
+      degraded: false,
+      lastVersion: recovered.metadata.version
+    });
+    expect(client.sync.snapshot().entities).toHaveProperty(recovered.entity_id, recovered);
+    expect(engine.activeRecoveryPromise).toBeUndefined();
+  });
 });

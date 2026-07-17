@@ -241,7 +241,7 @@ export class SyncEngine {
         (event) => this.applyEvent(event),
         (event) => this.applyRecoveredEvent(event)
       );
-      if (result.superseded) return false;
+      if (!isCurrentOperation() || result.superseded) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
       if (this.lastError === "Atlas Core recovery request failed") this.lastError = undefined;
