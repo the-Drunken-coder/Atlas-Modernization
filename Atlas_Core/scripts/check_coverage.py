@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Enforce the committed Atlas Core coverage floors from a Go coverprofile."""
 
-from decimal import Decimal, ROUND_HALF_UP
-from pathlib import Path
 import sys
-
+from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 
 FLOORS = {
     "total": Decimal("40.7"),
