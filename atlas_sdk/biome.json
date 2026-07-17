@@ -1,0 +1,32 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+  "extends": "//",
+  "files": {
+    "includes": ["**/*.{js,mjs,cjs,ts,tsx}", "!src/package-metadata.ts"]
+  },
+  "linter": {
+    "rules": {
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/feed-connection.ts", "src/sync-engine.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 15
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -58,7 +58,7 @@ export function assertEventJSONValue(value: unknown, depth = 0, state = { nodes:
   }
   const record = value as Record<string, unknown>;
   for (const key in record) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+    if (!Object.hasOwn(record, key)) continue;
     const item = record[key];
     addEventDataStringBytes(key, state);
     assertEventJSONValue(item, depth + 1, state);

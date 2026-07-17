@@ -187,7 +187,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(value, key);
+  return Object.hasOwn(value, key);
 }
 
 function isNonEmptyString(value: unknown): value is string {

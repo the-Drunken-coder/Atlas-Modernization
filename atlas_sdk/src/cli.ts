@@ -244,7 +244,7 @@ function basename(path: string): string {
 }
 
 if (isCLIEntrypoint()) {
-  runCLI(process.argv.slice(2)).then((code) => {
+  void runCLI(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });
 }
