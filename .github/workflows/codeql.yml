@@ -32,12 +32,16 @@ jobs:
         include:
           - language: actions
             build-mode: none
+            query-suite: ./.github/codeql/actions-max.qls
           - language: go
             build-mode: manual
+            query-suite: ./.github/codeql/go-max.qls
           - language: javascript-typescript
             build-mode: none
+            query-suite: ./.github/codeql/javascript-max.qls
           - language: python
             build-mode: none
+            query-suite: ./.github/codeql/python-max.qls
 
     steps:
       - name: Checkout repository
@@ -59,7 +63,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          queries: security-and-quality
+          queries: ${{ matrix.query-suite }}
 
       - name: Build Go modules
         if: matrix.build-mode == 'manual'

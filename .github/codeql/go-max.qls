@@ -1,0 +1,11 @@
+- description: All alert-producing Go queries
+- queries: .
+  from: codeql/go-queries
+- include:
+    kind:
+      - problem
+      - path-problem
+- exclude:
+    tags contain:
+      - debug
+      - model-generator
