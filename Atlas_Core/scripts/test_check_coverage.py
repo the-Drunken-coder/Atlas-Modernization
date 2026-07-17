@@ -131,6 +131,24 @@ class CoverageCheckerTest(unittest.TestCase):
                 path.write_text(profile(lines), encoding="utf-8")
                 self.assertEqual(main(str(path)), 1, name)
 
+    def test_main_fails_one_statement_below_database_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stdout(StringIO()):
+            path = Path(temp_dir) / "database.out"
+            path.write_text(profile(baseline_lines(below_group="database")), encoding="utf-8")
+            self.assertEqual(main(str(path)), 1)
+
+    def test_main_fails_one_statement_below_storage_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stdout(StringIO()):
+            path = Path(temp_dir) / "storage.out"
+            path.write_text(profile(baseline_lines(below_group="storage")), encoding="utf-8")
+            self.assertEqual(main(str(path)), 1)
+
+    def test_higher_total_does_not_mask_subgroup_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stdout(StringIO()):
+            path = Path(temp_dir) / "higher-total-lower-actions.out"
+            path.write_text(profile(baseline_lines(2119, below_group="actions")), encoding="utf-8")
+            self.assertEqual(main(str(path)), 1)
+
     def test_main_missing_profile(self) -> None:
         with patch("check_coverage.sys.argv", ["check_coverage.py", "/tmp/coverage-checker-file-that-does-not-exist"]):
             self.assertEqual(main(), 1)
