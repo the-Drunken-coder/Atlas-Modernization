@@ -50,6 +50,7 @@ vendor/
 
 # --- JavaScript / TypeScript SDK ---
 node_modules/
+coverage/
 /atlas_sdk/dist/
 /atlas_asset_runtime/dist/
 /atlas_command_interface/dist/

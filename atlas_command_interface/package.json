@@ -14,6 +14,7 @@
     "build:web": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome lint --config-path biome.json .",

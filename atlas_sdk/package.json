@@ -57,6 +57,7 @@
     "format:check": "biome check --linter-enabled=false .",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:coverage": "vitest run --coverage --environment node",
     "test": "npm run test:node && npm run test:browser"
   },
   "dependencies": {},
