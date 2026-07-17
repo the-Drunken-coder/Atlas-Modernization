@@ -2044,6 +2044,76 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("ignores a stale polling failure after same-generation feed recovery", async () => {
+    vi.useFakeTimers();
+    const core = new FakeCore();
+    let holdPoll = false;
+    let rejectPoll!: (reason: unknown) => void;
+    let changedSinceRequests = 0;
+    const pendingPoll = new Promise<Response>((_resolve, reject) => {
+      rejectPoll = reject;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (holdPoll) {
+          holdPoll = false;
+          return pendingPoll;
+        }
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 10_000
+    });
+
+    try {
+      const start = client.sync.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await start;
+      const startupChangedSinceRequests = changedSinceRequests;
+      expect(startupChangedSinceRequests).toBeGreaterThan(0);
+      expect(core.feedConnections).toBe(1);
+
+      holdPoll = true;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(changedSinceRequests).toBe(startupChangedSinceRequests + 1);
+
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.close();
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core feed connection closed"
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => {
+        expect(changedSinceRequests).toBe(startupChangedSinceRequests + 2);
+        expect(core.feedConnections).toBe(2);
+        expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+        expect(client.sync.status()).not.toHaveProperty("error");
+      });
+
+      rejectPoll(new Error("obsolete poll failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+      expect(client.sync.status()).not.toHaveProperty("error");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(core.feedConnections).toBe(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("shares one startup path across concurrent sync.start calls", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({

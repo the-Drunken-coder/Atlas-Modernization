@@ -392,8 +392,10 @@ export class SyncEngine {
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         const pollGeneration = generation;
-        void (this.activeRecoveryPromise ?? this.changedSinceForGeneration(pollGeneration)).catch(() => {
-          if (!this.isCurrent(pollGeneration)) return;
+        const recovery = this.activeRecoveryPromise ?? this.changedSinceForGeneration(pollGeneration);
+        const pollOperation = this.recoveryOperation;
+        void recovery.catch(() => {
+          if (!this.isCurrent(pollGeneration) || this.recoveryOperation !== pollOperation) return;
           this.degraded = true;
           this.healthy = false;
         });
