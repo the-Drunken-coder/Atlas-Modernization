@@ -12,12 +12,13 @@ import {
   resourceUpsertEvent,
   subscriptionKey
 } from "./subscriptions.js";
+import { SyncLifecycle } from "./sync-engine-lifecycle.js";
+import { ReconnectTimer } from "./sync-engine-reconnect.js";
+import { RecoveryCoordinator, RecoveryRunner } from "./sync-engine-recovery.js";
 import type {
   AtlasRecoveredWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
-  ChangedSinceCursors,
-  ChangedSinceResponse,
   EntityCheckInBody,
   EntityCheckInResponse,
   FullDatasetCursors,
@@ -29,9 +30,7 @@ import type {
   SyncStatus,
   WatchCallback
 } from "./types.js";
-import { changedSinceToEvents } from "./types.js";
 import {
-  changedSinceResponseValidator,
   entityCheckInResponseValidator,
   isEntityResource,
   isFullDatasetResponse,
@@ -39,8 +38,6 @@ import {
   isProtocolRevisionResponse,
   isTaskResource
 } from "./validation.js";
-
-const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
 type AutomaticReconnectOwnership = {
   recoveryOperation?: number;
@@ -51,24 +48,19 @@ export class SyncEngine {
   private readonly feed: FeedConnectionManager;
   private readonly cache: ResourceCache;
   private readonly pollIntervalMs: number;
+  private readonly lifecycle = new SyncLifecycle();
+  private readonly recovery = new RecoveryCoordinator();
+  private readonly recoveryRunner: RecoveryRunner;
+  private readonly reconnectTimer = new ReconnectTimer();
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
   private syncRunning = false;
   private healthy = false;
   private degraded = false;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
-  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnecting = false;
   private reconnectAfterRecovery = false;
   private lastError: string | undefined;
-  private recoveryOperation = 0;
-  private activeRecoveryPromise: Promise<boolean> | undefined;
-  private activeRecoveryGeneration: number | undefined;
-  private activeRecoverySinceVersion: number | undefined;
-  private startSyncPromise: Promise<void> | undefined;
-  private lifecycleGeneration = 0;
-  private feedConnectionAttempt = 0;
-
   constructor(options: {
     transport: HttpTransport;
     feed: FeedConnectionManager;
@@ -80,6 +72,7 @@ export class SyncEngine {
     this.feed = options.feed;
     this.cache = options.cache;
     this.pollIntervalMs = options.pollIntervalMs;
+    this.recoveryRunner = new RecoveryRunner(this.transport);
     if (options.initialSync === "all") {
       this.subscriptions.push({ filter: "all" });
     }
@@ -94,17 +87,18 @@ export class SyncEngine {
     if (this.syncRunning) {
       return;
     }
-    if (this.startSyncPromise !== undefined) {
-      return this.startSyncPromise;
+    const pendingStart = this.lifecycle.getStartSyncPromise();
+    if (pendingStart !== undefined) {
+      return pendingStart;
     }
-    const generation = ++this.lifecycleGeneration;
+    const generation = this.lifecycle.beginStart();
     this.invalidateRecovery();
     this.clearReconnectTimer();
     this.reconnecting = false;
     this.reconnectAfterRecovery = false;
     this.lastError = undefined;
     const promise = this.startSyncFromStopped(generation);
-    this.startSyncPromise = promise;
+    this.lifecycle.setStartSyncPromise(promise);
     try {
       await promise;
     } catch (error) {
@@ -113,15 +107,12 @@ export class SyncEngine {
       }
       throw error;
     } finally {
-      if (this.startSyncPromise === promise) {
-        this.startSyncPromise = undefined;
-      }
+      this.lifecycle.clearStartSyncPromiseIf(promise);
     }
   }
 
   stop(): void {
-    this.lifecycleGeneration++;
-    this.startSyncPromise = undefined;
+    this.lifecycle.stop();
     this.stopSideEffects();
   }
 
@@ -195,7 +186,7 @@ export class SyncEngine {
         },
         onEventError: () => {
           if (!isCurrentAttempt()) return;
-          this.feedConnectionAttempt++;
+          this.beginFeedConnectionAttempt();
           if (this.lastError !== "Atlas Core recovery request failed") this.lastError = "Atlas Core feed event failed";
           if (!this.syncRunning) return;
           this.invalidateRecovery();
@@ -205,7 +196,7 @@ export class SyncEngine {
         },
         onClose: () => {
           if (!isCurrentAttempt()) return;
-          this.feedConnectionAttempt++;
+          this.beginFeedConnectionAttempt();
           if (!this.syncRunning) return;
           this.invalidateRecovery();
           this.lastError = "Atlas Core feed connection closed";
@@ -231,64 +222,27 @@ export class SyncEngine {
   }
 
   private changedSinceForGeneration(generation: number, sinceVersion = this.cache.lastVersion): Promise<boolean> {
-    if (!this.isCurrent(generation)) return Promise.resolve(false);
-    if (
-      this.activeRecoveryPromise &&
-      this.activeRecoveryGeneration === generation &&
-      this.activeRecoverySinceVersion === sinceVersion
-    ) {
-      return this.activeRecoveryPromise;
-    }
-    const recovery = this.recoverSince(generation, sinceVersion);
-    this.activeRecoveryPromise = recovery;
-    this.activeRecoveryGeneration = generation;
-    this.activeRecoverySinceVersion = sinceVersion;
-    const clearActiveRecovery = () => {
-      if (!this.isCurrent(generation) || this.activeRecoveryPromise !== recovery) return;
-      this.activeRecoveryPromise = undefined;
-      this.activeRecoveryGeneration = undefined;
-      this.activeRecoverySinceVersion = undefined;
-    };
-    void recovery.then(clearActiveRecovery, clearActiveRecovery);
-    return recovery;
+    return this.recovery.start(
+      generation,
+      sinceVersion,
+      (currentGeneration) => this.isCurrent(currentGeneration),
+      (operation) => this.recoverSince(generation, sinceVersion, operation)
+    );
   }
 
-  private async recoverSince(generation: number, sinceVersion: number): Promise<boolean> {
+  private async recoverSince(generation: number, sinceVersion: number, operation: number): Promise<boolean> {
     if (!this.isCurrent(generation)) return false;
-    const operation = this.invalidateRecovery();
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
       if (!isCurrentOperation()) return false;
-      let snapshotVersion: number | undefined;
-      let cursors: ChangedSinceCursors = {};
-      const recoveredEvents: AtlasWatchEvent[] = [];
-      const seenCursors = new Map<string, Set<string>>();
-      do {
-        if (!isCurrentOperation()) return false;
-        const response = await this.transport.json(
-          "GET",
-          changedSincePath(sinceVersion, cursors),
-          changedSinceResponseValidator(sinceVersion)
-        );
-        if (!isCurrentOperation()) return false;
-        if (snapshotVersion !== undefined && response.version !== snapshotVersion) {
-          throw new TypeError("Atlas changed-since pagination changed response version");
-        }
-        snapshotVersion = response.version;
-        recoveredEvents.push(...changedSinceToEvents(response));
-        cursors = nextChangedSinceCursors(response);
-        assertPaginationProgress("changed-since", cursors, seenCursors);
-      } while (hasMoreChangedSince(cursors));
-      for (const event of recoveredEvents.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
-        if (!isCurrentOperation()) return false;
-        if (event.event === "recovered") {
-          this.applyRecoveredEvent(event);
-        } else if (event.event !== "local_delete") {
-          this.applyEvent(event);
-        }
-      }
-      if (!isCurrentOperation()) return false;
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, snapshotVersion ?? sinceVersion);
+      const result = await this.recoveryRunner.run(
+        sinceVersion,
+        isCurrentOperation,
+        (event) => this.applyEvent(event),
+        (event) => this.applyRecoveredEvent(event)
+      );
+      if (result.superseded) return false;
+      this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
       if (this.lastError === "Atlas Core recovery request failed") this.lastError = undefined;
       return true;
@@ -466,23 +420,39 @@ export class SyncEngine {
   }
 
   private isCurrent(generation: number): boolean {
-    return this.lifecycleGeneration === generation;
+    return this.lifecycle.isCurrent(generation);
+  }
+
+  private get lifecycleGeneration(): number {
+    return this.lifecycle.currentGeneration();
+  }
+
+  private get feedConnectionAttempt(): number {
+    return this.lifecycle.currentFeedConnectionAttempt();
+  }
+
+  private get recoveryOperation(): number {
+    return this.recovery.currentOperation();
+  }
+
+  private get activeRecoveryPromise(): Promise<boolean> | undefined {
+    return this.recovery.activeRecoveryPromise();
+  }
+
+  private get startSyncPromise(): Promise<void> | undefined {
+    return this.lifecycle.getStartSyncPromise();
   }
 
   private invalidateRecovery(): number {
-    const operation = ++this.recoveryOperation;
-    this.activeRecoveryPromise = undefined;
-    this.activeRecoveryGeneration = undefined;
-    this.activeRecoverySinceVersion = undefined;
-    return operation;
+    return this.recovery.invalidate();
   }
 
   private beginFeedConnectionAttempt(): number {
-    return ++this.feedConnectionAttempt;
+    return this.lifecycle.beginFeedConnectionAttempt();
   }
 
   private isCurrentFeedConnection(generation: number, attempt: number): boolean {
-    return this.isCurrent(generation) && this.feedConnectionAttempt === attempt;
+    return this.lifecycle.isCurrentFeedConnection(generation, attempt);
   }
 
   private async hydrate(generation: number): Promise<void> {
@@ -572,7 +542,7 @@ export class SyncEngine {
   }
 
   private scheduleReconnect(): void {
-    if (!this.syncRunning || !this.feed.available || this.reconnectTimer) {
+    if (!this.syncRunning || !this.feed.available || this.reconnectTimer.pending) {
       return;
     }
     if (this.reconnecting) {
@@ -582,8 +552,7 @@ export class SyncEngine {
     this.healthy = false;
     this.degraded = true;
     const generation = this.lifecycleGeneration;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = undefined;
+    this.reconnectTimer.schedule(() => {
       const ownership: AutomaticReconnectOwnership = {};
       const reconnect = this.connectAndRecoverFeedForGeneration(generation, ownership);
       const attempt = this.feedConnectionAttempt;
@@ -594,15 +563,11 @@ export class SyncEngine {
         this.healthy = false;
         this.scheduleReconnect();
       });
-    }, DEFAULT_RECONNECT_DELAY_MS);
+    });
   }
 
   private clearReconnectTimer(): void {
-    if (!this.reconnectTimer) {
-      return;
-    }
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
+    this.reconnectTimer.clear();
   }
 
   private applyEvent(event: FeedEvent, options?: CacheResourceOptions): void {
@@ -706,16 +671,8 @@ export class SyncEngine {
   }
 }
 
-function watchEventVersion(event: AtlasWatchEvent): number {
-  return "version" in event ? event.version : 0;
-}
-
 function fullDatasetPath(cursors: FullDatasetCursors): string {
   return pathWithQuery("/queries/full", cursors);
-}
-
-function changedSincePath(sinceVersion: number, cursors: ChangedSinceCursors): string {
-  return pathWithQuery("/queries/changed-since", { since_version: String(sinceVersion), ...cursors });
 }
 
 function nextFullDatasetCursors(response: FullDatasetResponse): FullDatasetCursors {
@@ -728,27 +685,7 @@ function nextFullDatasetCursors(response: FullDatasetResponse): FullDatasetCurso
   return cursors;
 }
 
-function nextChangedSinceCursors(response: ChangedSinceResponse): ChangedSinceCursors {
-  const cursors: ChangedSinceCursors = {};
-  if (response.has_more_entities)
-    cursors.entity_cursor = requireCursor(response.next_entity_cursor, "next_entity_cursor");
-  if (response.has_more_tasks) cursors.task_cursor = requireCursor(response.next_task_cursor, "next_task_cursor");
-  if (response.has_more_objects)
-    cursors.object_cursor = requireCursor(response.next_object_cursor, "next_object_cursor");
-  if (response.has_more_deleted_entities)
-    cursors.deleted_entity_cursor = requireCursor(response.next_deleted_entity_cursor, "next_deleted_entity_cursor");
-  if (response.has_more_deleted_tasks)
-    cursors.deleted_task_cursor = requireCursor(response.next_deleted_task_cursor, "next_deleted_task_cursor");
-  if (response.has_more_deleted_objects)
-    cursors.deleted_object_cursor = requireCursor(response.next_deleted_object_cursor, "next_deleted_object_cursor");
-  return cursors;
-}
-
 function hasMoreFullDataset(cursors: FullDatasetCursors): boolean {
-  return Object.keys(cursors).length > 0;
-}
-
-function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
   return Object.keys(cursors).length > 0;
 }
 
