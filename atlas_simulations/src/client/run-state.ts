@@ -1,11 +1,19 @@
-import { isCreatedResource, jsonNumber, type RunEvent, type RunSummary, type ScenarioDescriptor, type StartRunRequest } from "../shared/types.js";
+import {
+  isCreatedResource,
+  jsonNumber,
+  type RunEvent,
+  type RunSummary,
+  type ScenarioDescriptor,
+  type StartRunRequest
+} from "../shared/types.js";
 
 export type FieldValues = Record<string, string | number | boolean>;
 
 const MAX_CLIENT_EVENTS = 500;
 
 export function appendRunEvent(current: RunEvent[], event: RunEvent): RunEvent[] | undefined {
-  if (current.some((existing) => existing.runId === event.runId && existing.sequence === event.sequence)) return undefined;
+  if (current.some((existing) => existing.runId === event.runId && existing.sequence === event.sequence))
+    return undefined;
   return [...current, event].slice(-MAX_CLIENT_EVENTS);
 }
 
@@ -23,7 +31,12 @@ export function applyRunEvent(run: RunSummary, event: RunEvent): RunSummary {
       if (run.assertions.some((assertion) => assertion.id === event.assertion.id)) return run;
       return { ...run, assertions: [...run.assertions, event.assertion], updatedAt: event.timestamp };
     case "resource":
-      if (run.createdResources.some((resource) => resource.type === event.resource.type && resource.id === event.resource.id)) return run;
+      if (
+        run.createdResources.some(
+          (resource) => resource.type === event.resource.type && resource.id === event.resource.id
+        )
+      )
+        return run;
       return { ...run, createdResources: [...run.createdResources, event.resource], updatedAt: event.timestamp };
     case "error":
       return { ...run, lastError: event.message, updatedAt: event.timestamp };
@@ -43,7 +56,11 @@ export function displayStatus(run: RunSummary | undefined): string {
   return run?.cleaned ? "cleaned" : (run?.status ?? "idle");
 }
 
-export function mergeRunLists(current: RunSummary[], incoming: RunSummary[], runIdsAtRequestStart: Set<string>): RunSummary[] {
+export function mergeRunLists(
+  current: RunSummary[],
+  incoming: RunSummary[],
+  runIdsAtRequestStart: Set<string>
+): RunSummary[] {
   const byId = new Map(current.map((run) => [run.id, run]));
   const incomingIds = new Set(incoming.map((run) => run.id));
   const retained = current.filter((run) => !incomingIds.has(run.id) && !runIdsAtRequestStart.has(run.id));
@@ -74,7 +91,10 @@ export function mergeRunSummary(existing: RunSummary | undefined, incoming: RunS
   };
 }
 
-export function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): NonNullable<StartRunRequest["inputs"]> {
+export function submissionInputs(
+  scenario: ScenarioDescriptor,
+  values: FieldValues
+): NonNullable<StartRunRequest["inputs"]> {
   return Object.fromEntries(
     scenario.inputFields.map((field): [string, string | boolean | ReturnType<typeof jsonNumber>] => {
       const value = values[field.key];
@@ -86,7 +106,8 @@ export function submissionInputs(scenario: ScenarioDescriptor, values: FieldValu
       if (trimmed === "") return [field.key, field.defaultValue];
       const parsed = Number(trimmed);
       if (!Number.isFinite(parsed)) throw new Error(`${field.label} must be a number`);
-      if (field.min !== undefined && parsed < field.min) throw new Error(`${field.label} must be at least ${field.min}`);
+      if (field.min !== undefined && parsed < field.min)
+        throw new Error(`${field.label} must be at least ${field.min}`);
       if (field.max !== undefined && parsed > field.max) throw new Error(`${field.label} must be at most ${field.max}`);
       if (field.step !== undefined && field.step > 0 && !alignsToStep(parsed, field.step, field.min ?? 0)) {
         throw new Error(`${field.label} must align to step ${field.step}`);
@@ -155,13 +176,19 @@ function runRecency(run: RunSummary): number {
   return Date.parse(run.updatedAt ?? run.finishedAt ?? run.startedAt);
 }
 
-function mergeAssertions(existing: RunSummary["assertions"], incoming: RunSummary["assertions"]): RunSummary["assertions"] {
+function mergeAssertions(
+  existing: RunSummary["assertions"],
+  incoming: RunSummary["assertions"]
+): RunSummary["assertions"] {
   const byId = new Map(existing.map((assertion) => [assertion.id, assertion]));
   for (const assertion of incoming) byId.set(assertion.id, assertion);
   return [...byId.values()];
 }
 
-function mergeResources(existing: RunSummary["createdResources"], incoming: RunSummary["createdResources"]): RunSummary["createdResources"] {
+function mergeResources(
+  existing: RunSummary["createdResources"],
+  incoming: RunSummary["createdResources"]
+): RunSummary["createdResources"] {
   const byId = new Map(existing.map((resource) => [`${resource.type}:${resource.id}`, resource]));
   for (const resource of incoming) byId.set(`${resource.type}:${resource.id}`, resource);
   return [...byId.values()];

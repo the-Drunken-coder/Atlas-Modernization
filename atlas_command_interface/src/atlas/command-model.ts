@@ -132,15 +132,22 @@ export function assertEntitySupportsCommand(entity: EntityResource, commandId: s
   }
   const supported = supportedCommandIds(entity);
   if (supported === undefined || !supported.includes(commandId)) {
-    throw new CommandModelError("UNSUPPORTED_COMMAND", `${entity.entity_id} does not advertise support for ${commandId}`, {
-      entity_id: entity.entity_id,
-      command_id: commandId
-    });
+    throw new CommandModelError(
+      "UNSUPPORTED_COMMAND",
+      `${entity.entity_id} does not advertise support for ${commandId}`,
+      {
+        entity_id: entity.entity_id,
+        command_id: commandId
+      }
+    );
   }
 }
 
 export function coerceParameters(command: CommandDefinition, rawParameters: unknown): Record<string, JSONValue> {
-  const raw = rawParameters === undefined || rawParameters === null ? {} : requireRecord(rawParameters, "parameters", "INVALID_PARAMETERS");
+  const raw =
+    rawParameters === undefined || rawParameters === null
+      ? {}
+      : requireRecord(rawParameters, "parameters", "INVALID_PARAMETERS");
   const result: Record<string, JSONValue> = {};
   const schemaEntries = Object.entries(command.parameters_schema);
   const knownNames = new Set(schemaEntries.map(([name]) => name));
@@ -192,7 +199,9 @@ function parseParameterSchema(value: unknown, path: string): Record<string, Comm
   const parsed: Record<string, CommandParameterSchema> = {};
   for (const [name, rawParameter] of Object.entries(parameters)) {
     if (!isSnakeCase(name)) {
-      throw new CommandModelError("INVALID_CATALOG", `${path}.${name}: parameter name must be lowercase snake_case`, { path: `${path}.${name}` });
+      throw new CommandModelError("INVALID_CATALOG", `${path}.${name}: parameter name must be lowercase snake_case`, {
+        path: `${path}.${name}`
+      });
     }
     const parameterPath = `${path}.${name}`;
     const parameter = requireRecord(rawParameter, parameterPath);
@@ -204,18 +213,28 @@ function parseParameterSchema(value: unknown, path: string): Record<string, Comm
     };
     if (parameter.minimum !== undefined) {
       if (type !== "number") {
-        throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.minimum is only valid for number parameters`, { path: `${parameterPath}.minimum` });
+        throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.minimum is only valid for number parameters`, {
+          path: `${parameterPath}.minimum`
+        });
       }
       parsedParameter.minimum = requireFiniteNumber(parameter.minimum, `${parameterPath}.minimum`);
     }
     if (parameter.maximum !== undefined) {
       if (type !== "number") {
-        throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.maximum is only valid for number parameters`, { path: `${parameterPath}.maximum` });
+        throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.maximum is only valid for number parameters`, {
+          path: `${parameterPath}.maximum`
+        });
       }
       parsedParameter.maximum = requireFiniteNumber(parameter.maximum, `${parameterPath}.maximum`);
     }
-    if (parsedParameter.minimum !== undefined && parsedParameter.maximum !== undefined && parsedParameter.minimum > parsedParameter.maximum) {
-      throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.minimum must be <= maximum`, { path: parameterPath });
+    if (
+      parsedParameter.minimum !== undefined &&
+      parsedParameter.maximum !== undefined &&
+      parsedParameter.minimum > parsedParameter.maximum
+    ) {
+      throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.minimum must be <= maximum`, {
+        path: parameterPath
+      });
     }
     parsed[name] = parsedParameter;
   }
@@ -236,20 +255,31 @@ function coerceParameterValue(name: string, schema: CommandParameterSchema, valu
     throw new CommandModelError("INVALID_PARAMETERS", `${name} must be a boolean`, { parameter: name });
   }
 
-  const numberValue = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN;
+  const numberValue =
+    typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN;
   if (!Number.isFinite(numberValue)) {
     throw new CommandModelError("INVALID_PARAMETERS", `${name} must be a finite number`, { parameter: name });
   }
   if (schema.minimum !== undefined && numberValue < schema.minimum) {
-    throw new CommandModelError("INVALID_PARAMETERS", `${name} must be >= ${schema.minimum}`, { parameter: name, minimum: schema.minimum });
+    throw new CommandModelError("INVALID_PARAMETERS", `${name} must be >= ${schema.minimum}`, {
+      parameter: name,
+      minimum: schema.minimum
+    });
   }
   if (schema.maximum !== undefined && numberValue > schema.maximum) {
-    throw new CommandModelError("INVALID_PARAMETERS", `${name} must be <= ${schema.maximum}`, { parameter: name, maximum: schema.maximum });
+    throw new CommandModelError("INVALID_PARAMETERS", `${name} must be <= ${schema.maximum}`, {
+      parameter: name,
+      maximum: schema.maximum
+    });
   }
   return numberValue;
 }
 
-function requireRecord(value: unknown, path: string, code: CommandModelErrorCode = "INVALID_CATALOG"): Record<string, unknown> {
+function requireRecord(
+  value: unknown,
+  path: string,
+  code: CommandModelErrorCode = "INVALID_CATALOG"
+): Record<string, unknown> {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return value as Record<string, unknown>;
   }

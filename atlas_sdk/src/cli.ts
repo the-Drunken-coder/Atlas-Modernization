@@ -1,5 +1,12 @@
 #!/usr/bin/env node
-import { AtlasClient, type AtlasClientOptions, type AtlasSubscription, isTaskCreateRequest, type ResourceType, type TaskCreateRequest } from "./index.js";
+import {
+  AtlasClient,
+  type AtlasClientOptions,
+  type AtlasSubscription,
+  isTaskCreateRequest,
+  type ResourceType,
+  type TaskCreateRequest
+} from "./index.js";
 import { PACKAGE_BIN, PACKAGE_NAME } from "./package-metadata.js";
 
 export { PACKAGE_BIN, PACKAGE_NAME };
@@ -24,7 +31,8 @@ type CLICommand =
   | { kind: "tasks.create"; options: CLIOptions; body: TaskCreateRequest }
   | { kind: "watch"; options: CLIOptions; filter: AtlasSubscription; follow: boolean };
 
-const usage = "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
+const usage =
+  "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
 export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];
 const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
 const CLI_REQUEST_TIMEOUT_MS = 10_000;
@@ -175,7 +183,8 @@ export function parseFilter(raw: string): AtlasSubscription {
   if (raw === "all") return { filter: "all" };
   const parts = raw.split(":");
   const [kind, secondPart] = parts;
-  if (kind === "type" && isResourceType(secondPart) && parts.length === 2) return { filter: "type", resource_type: secondPart };
+  if (kind === "type" && isResourceType(secondPart) && parts.length === 2)
+    return { filter: "type", resource_type: secondPart };
   if (kind === "id" && isResourceType(secondPart) && parts.length >= 3) {
     const id = parts.slice(2).join(":");
     if (id) return { filter: "id", resource_type: secondPart, id };

@@ -2,12 +2,22 @@ import { waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it } from "vitest";
 import { entity, markerSources, notifyResizeObservers, type PointLike, renderMapView } from "./MapView.test-harness.js";
-import { ASSET_VIEW_ZOOM, FOLLOW_EASE_MS, flyDurationMs, INITIAL_WORLD_BOUNDS, type MapCameraCommand } from "./map-camera.js";
+import {
+  ASSET_VIEW_ZOOM,
+  FOLLOW_EASE_MS,
+  flyDurationMs,
+  INITIAL_WORLD_BOUNDS,
+  type MapCameraCommand
+} from "./map-camera.js";
 import { buildMapSources } from "./map-sources.js";
 
 describe("MapView camera commands", () => {
   const homeView = { center: [0, 0] as [number, number], zoom: 4 };
-  const movedSources = () => buildMapSources([entity({ entity_id: "asset-1", components: { telemetry: { latitude: 41, longitude: -73 } } })], undefined);
+  const movedSources = () =>
+    buildMapSources(
+      [entity({ entity_id: "asset-1", components: { telemetry: { latitude: 41, longitude: -73 } } })],
+      undefined
+    );
 
   const startFollowing = async () => {
     const rendered = renderMapView({ sources: markerSources() });
@@ -21,7 +31,13 @@ describe("MapView camera commands", () => {
   it("fits the world once on load with a tagged instant move", async () => {
     const { map } = renderMapView();
 
-    await waitFor(() => expect(map.fitBounds).toHaveBeenCalledWith(INITIAL_WORLD_BOUNDS, { padding: 0, duration: 0 }, { atlasCamera: true }));
+    await waitFor(() =>
+      expect(map.fitBounds).toHaveBeenCalledWith(
+        INITIAL_WORLD_BOUNDS,
+        { padding: 0, duration: 0 },
+        { atlasCamera: true }
+      )
+    );
   });
 
   it("flies point commands to the standard asset view with a tagged arc flight", async () => {
@@ -54,7 +70,11 @@ describe("MapView camera commands", () => {
 
     rerenderMap({ cameraCommand: { seq: 1, target: { type: "point", id: "asset-1", coordinates: [70, 80] } } });
 
-    await waitFor(() => expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], zoom: ASSET_VIEW_ZOOM }), { atlasCamera: true }));
+    await waitFor(() =>
+      expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [70, 80], zoom: ASSET_VIEW_ZOOM }), {
+        atlasCamera: true
+      })
+    );
     act(() => map.fire("moveend", { atlasCamera: true }));
     map.easeTo.mockClear();
 
@@ -74,7 +94,10 @@ describe("MapView camera commands", () => {
 
     rerenderMap({ cameraCommand: { seq: 2, target: { type: "entity", id: "asset-1" } } });
     await waitFor(() => expect(map.flyTo).toHaveBeenCalledTimes(2));
-    expect(map.flyTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true, atlasFlySeq: 2 });
+    expect(map.flyTo).toHaveBeenLastCalledWith(expect.objectContaining({ center: [-73, 41] }), {
+      atlasCamera: true,
+      atlasFlySeq: 2
+    });
   });
 
   it("waits for an unlocatable entity and flies once it becomes locatable", async () => {
@@ -88,7 +111,10 @@ describe("MapView camera commands", () => {
     rerenderMap({ sources: markerSources() });
 
     await waitFor(() =>
-      expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 40], zoom: ASSET_VIEW_ZOOM }), { atlasCamera: true, atlasFlySeq: 1 })
+      expect(map.flyTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-74, 40], zoom: ASSET_VIEW_ZOOM }), {
+        atlasCamera: true,
+        atlasFlySeq: 1
+      })
     );
   });
 
@@ -136,7 +162,10 @@ describe("MapView camera commands", () => {
     rerenderMap({ sources: movedSources() });
 
     await waitFor(() =>
-      expect(map.easeTo).toHaveBeenCalledWith({ center: [-73, 41], duration: FOLLOW_EASE_MS, easing: expect.any(Function) }, { atlasCamera: true })
+      expect(map.easeTo).toHaveBeenCalledWith(
+        { center: [-73, 41], duration: FOLLOW_EASE_MS, easing: expect.any(Function) },
+        { atlasCamera: true }
+      )
     );
   });
 
@@ -167,7 +196,9 @@ describe("MapView camera commands", () => {
     rerenderMap({ sources: movedSources() });
 
     expect(map.resize).toHaveBeenLastCalledWith({ atlasCamera: true });
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true }));
+    await waitFor(() =>
+      expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true })
+    );
   });
 
   it("re-engages follow when the command sequence bumps after a user gesture", async () => {
@@ -179,7 +210,9 @@ describe("MapView camera commands", () => {
     act(() => map.fire("moveend", { atlasCamera: true, atlasFlySeq: 2 }));
     rerenderMap({ sources: movedSources() });
 
-    await waitFor(() => expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true }));
+    await waitFor(() =>
+      expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ center: [-73, 41] }), { atlasCamera: true })
+    );
   });
 
   it("does not chase mid-flight and catches up once the flight lands", async () => {
@@ -198,7 +231,9 @@ describe("MapView camera commands", () => {
 
   it("stops following when a box zoom completes", async () => {
     const { map, rerenderMap } = await startFollowing();
-    const boxZoom = map.options.boxZoom as { boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void };
+    const boxZoom = map.options.boxZoom as {
+      boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void;
+    };
 
     boxZoom.boxZoomEnd(map, { x: 12, y: 18 }, { x: 220, y: 140 }, new MouseEvent("mouseup"));
     rerenderMap({ sources: movedSources() });

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AtlasClient, AtlasWatchEvent, EntityResource, ObjectDetailResource, ObjectResource, ResourceType, TaskResource } from "../src";
+import type {
+  AtlasClient,
+  AtlasWatchEvent,
+  EntityResource,
+  ObjectDetailResource,
+  ObjectResource,
+  ResourceType,
+  TaskResource
+} from "../src";
 import { createTwoClientFeedHarness, type TwoClientFeedHarness } from "./support/two-client-feed-harness.js";
 
 type ResourceValue = EntityResource | TaskResource | ObjectResource;
@@ -126,20 +134,25 @@ describe("two-client feed harness", () => {
   });
 });
 
-function upsertCases(): Array<UpsertCase<EntityResource> | UpsertCase<TaskResource> | UpsertCase<ObjectDetailResource>> {
+function upsertCases(): Array<
+  UpsertCase<EntityResource> | UpsertCase<TaskResource> | UpsertCase<ObjectDetailResource>
+> {
   return [
     {
       name: "entity",
       resource_type: "entity",
       id: "asset-two-client-feed",
       watch: (receiver, callback) => receiver.entities.watch("asset-two-client-feed", callback),
-      create: (writer) => writer.entities.create({ entity_id: "asset-two-client-feed", entity_type: "asset", alias: "created" }),
+      create: (writer) =>
+        writer.entities.create({ entity_id: "asset-two-client-feed", entity_type: "asset", alias: "created" }),
       update: (writer) => writer.entities.update("asset-two-client-feed", { alias: "updated" }),
       expectedFeedResource: (value) => value,
       assertRead: async ({ core, receiver }, value) => {
         const entityReads = core.requests.filter((request) => request === "/entities/asset-two-client-feed").length;
         await expect(receiver.entities.get("asset-two-client-feed")).resolves.toEqual(value);
-        expect(core.requests.filter((request) => request === "/entities/asset-two-client-feed")).toHaveLength(entityReads);
+        expect(core.requests.filter((request) => request === "/entities/asset-two-client-feed")).toHaveLength(
+          entityReads
+        );
       }
     },
     {
@@ -161,13 +174,16 @@ function upsertCases(): Array<UpsertCase<EntityResource> | UpsertCase<TaskResour
       resource_type: "object",
       id: "object-two-client-feed",
       watch: (receiver, callback) => receiver.objects.watch("object-two-client-feed", callback),
-      create: (writer) => writer.objects.create({ object_id: "object-two-client-feed", type: "image", extra: { label: "created" } }),
+      create: (writer) =>
+        writer.objects.create({ object_id: "object-two-client-feed", type: "image", extra: { label: "created" } }),
       update: (writer) => writer.objects.update("object-two-client-feed", { type: "log", extra: { label: "updated" } }),
       expectedFeedResource: objectFeedResource,
       assertRead: async ({ core, receiver }, value) => {
         const objectReads = core.requests.filter((request) => request === "/objects/object-two-client-feed").length;
         await expect(receiver.objects.get("object-two-client-feed")).resolves.toEqual(value);
-        expect(core.requests.filter((request) => request === "/objects/object-two-client-feed")).toHaveLength(objectReads + 1);
+        expect(core.requests.filter((request) => request === "/objects/object-two-client-feed")).toHaveLength(
+          objectReads + 1
+        );
       }
     }
   ];

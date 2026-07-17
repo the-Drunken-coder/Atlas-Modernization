@@ -37,7 +37,14 @@ function style(id: string): StyleSpecification {
 }
 
 function entity(id: string, version = 1): EntityResource {
-  return { entity_id: id, entity_type: "asset", subtype: null, alias: id, components: {}, metadata: { ...metadata, version } };
+  return {
+    entity_id: id,
+    entity_type: "asset",
+    subtype: null,
+    alias: id,
+    components: {},
+    metadata: { ...metadata, version }
+  };
 }
 
 function task(id: string, entityId: string, version = 1): TaskResource {
@@ -74,7 +81,11 @@ describe("sdk data source", () => {
             next_task_cursor: "next-tasks"
           });
         }
-        if (url.includes("/queries/full?") && url.includes("entity_cursor=next-entities") && url.includes("task_cursor=next-tasks")) {
+        if (
+          url.includes("/queries/full?") &&
+          url.includes("entity_cursor=next-entities") &&
+          url.includes("task_cursor=next-tasks")
+        ) {
           return Response.json({
             version: hydrationVersion,
             entities: [secondEntity],
@@ -134,7 +145,10 @@ describe("sdk data source", () => {
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         if (failRevision && new URL(String(input)).pathname === "/protocol/revision") {
           return Promise.resolve(
-            Response.json({ error_code: "CORE_UNAVAILABLE", message: `Core unavailable: https://user:${secret}@core.test` }, { status: 503 })
+            Response.json(
+              { error_code: "CORE_UNAVAILABLE", message: `Core unavailable: https://user:${secret}@core.test` },
+              { status: 503 }
+            )
           );
         }
         return core.fetch(String(input), init);
@@ -207,7 +221,9 @@ describe("sdk data source", () => {
     expect(core.requests.filter((request) => request.startsWith("/queries/changed-since"))).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} }));
+    await vi.waitFor(() =>
+      expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} })
+    );
     expect(core.requests.filter((request) => request.startsWith("/queries/changed-since"))).toHaveLength(1);
     expect(dataSource.health?.()).toMatchObject({
       running: true,
@@ -249,7 +265,9 @@ describe("sdk data source", () => {
     await vi.advanceTimersByTimeAsync(1);
     await vi.advanceTimersByTimeAsync(0);
 
-    await vi.waitFor(() => expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} }));
+    await vi.waitFor(() =>
+      expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} })
+    );
     expect(core.feedConnections).toBe(2);
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since"))).toBe(true);
     expect(dataSource.health?.()).toEqual({ running: true, healthy: true, degraded: false });
@@ -291,7 +309,12 @@ describe("sdk data source", () => {
     await vi.advanceTimersByTimeAsync(999);
     expect(catalogs).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() => expect(catalogs).toHaveBeenLastCalledWith({ status: "loaded", catalog: expect.objectContaining({ name: "Updated catalog" }) }));
+    await vi.waitFor(() =>
+      expect(catalogs).toHaveBeenLastCalledWith({
+        status: "loaded",
+        catalog: expect.objectContaining({ name: "Updated catalog" })
+      })
+    );
     expect(catalogs).toHaveBeenCalledTimes(2);
     expect(core.requests.filter((request) => request === `/objects/${COMMAND_CATALOG_OBJECT_ID}`)).toHaveLength(2);
 
@@ -387,7 +410,9 @@ describe("sdk data source", () => {
     const snapshots = vi.fn();
     dataSource.watch(snapshots);
 
-    await expect(dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: "5" } })).resolves.toEqual(createdTask);
+    await expect(
+      dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: "5" } })
+    ).resolves.toEqual(createdTask);
     expect(snapshots).toHaveBeenLastCalledWith({ entities: {}, tasks: { [createdTask.task_id]: createdTask } });
     expect(calls[0].input).toBe("https://core.test/tasks");
     expect(calls[0].init).toMatchObject({ method: "POST", credentials: "include" });
@@ -422,7 +447,11 @@ describe("sdk data source", () => {
     );
     const dataSource = createSdkDataSource(config);
     const controller = new AbortController();
-    const request = dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, signal: controller.signal });
+    const request = dataSource.submitCommand({
+      entityId: "asset-1",
+      command: holdPositionCommand,
+      signal: controller.signal
+    });
 
     controller.abort();
 
@@ -434,11 +463,15 @@ describe("sdk data source", () => {
     vi.stubGlobal("window", { dispatchEvent });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ success: false, error_code: "UNAUTHORIZED", message: "Login is required" }, { status: 401 }))
+      vi.fn(async () =>
+        Response.json({ success: false, error_code: "UNAUTHORIZED", message: "Login is required" }, { status: 401 })
+      )
     );
 
     const dataSource = createSdkDataSource(config);
-    await expect(dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: 5 } })).rejects.toMatchObject({
+    await expect(
+      dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: 5 } })
+    ).rejects.toMatchObject({
       status: 401,
       errorCode: "UNAUTHORIZED"
     });
@@ -450,11 +483,15 @@ describe("sdk data source", () => {
     vi.stubGlobal("window", { dispatchEvent });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ success: false, error_code: "SOMETHING_ELSE", message: "Invalid API key" }, { status: 401 }))
+      vi.fn(async () =>
+        Response.json({ success: false, error_code: "SOMETHING_ELSE", message: "Invalid API key" }, { status: 401 })
+      )
     );
 
     const dataSource = createSdkDataSource(config);
-    await expect(dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: 5 } })).rejects.toMatchObject({
+    await expect(
+      dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: 5 } })
+    ).rejects.toMatchObject({
       status: 401,
       errorCode: "SOMETHING_ELSE"
     });
@@ -516,7 +553,9 @@ class TestCore {
         }),
         deleted_entities: [],
         deleted_tasks: [],
-        deleted_objects: changed.filter(isObjectDelete).map((event) => ({ id: event.id, type: "object", version: event.version })),
+        deleted_objects: changed
+          .filter(isObjectDelete)
+          .map((event) => ({ id: event.id, type: "object", version: event.version })),
         has_more_entities: false,
         has_more_tasks: false,
         has_more_objects: false,
@@ -535,7 +574,9 @@ class TestCore {
       const delay = this.nextObjectDelay;
       this.nextObjectDelay = undefined;
       if (delay !== undefined) await delay;
-      return object ? Response.json(object) : Response.json({ error_code: "OBJECT_NOT_FOUND", message: "object not found" }, { status: 404 });
+      return object
+        ? Response.json(object)
+        : Response.json({ error_code: "OBJECT_NOT_FOUND", message: "object not found" }, { status: 404 });
     }
     throw new Error(`Unexpected request: ${url}`);
   };
@@ -681,11 +722,15 @@ class BlockedWebSocket {
   }
 }
 
-function isEntityUpsert(event: FeedEvent): event is Extract<FeedEvent, { resource_type: "entity"; event: "create" | "update" }> {
+function isEntityUpsert(
+  event: FeedEvent
+): event is Extract<FeedEvent, { resource_type: "entity"; event: "create" | "update" }> {
   return event.resource_type === "entity" && event.event !== "delete";
 }
 
-function isObjectUpsert(event: FeedEvent): event is Extract<FeedEvent, { resource_type: "object"; event: "create" | "update" }> {
+function isObjectUpsert(
+  event: FeedEvent
+): event is Extract<FeedEvent, { resource_type: "object"; event: "create" | "update" }> {
   return event.resource_type === "object" && event.event !== "delete";
 }
 

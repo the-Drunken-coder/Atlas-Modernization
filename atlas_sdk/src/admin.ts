@@ -48,7 +48,8 @@ export class AtlasAdminClient {
 
   readonly apiKeys = {
     list: () => this.transport.json("GET", "/admin/api-keys", isAdminAPIKeyList),
-    create: (request: AdminCreateAPIKeyRequest) => this.transport.json("POST", "/admin/api-keys", isAdminCreatedAPIKey, request),
+    create: (request: AdminCreateAPIKeyRequest) =>
+      this.transport.json("POST", "/admin/api-keys", isAdminCreatedAPIKey, request),
     revoke: (id: string) => this.transport.empty("DELETE", `/admin/api-keys/${encodeURIComponent(id)}`)
   };
 

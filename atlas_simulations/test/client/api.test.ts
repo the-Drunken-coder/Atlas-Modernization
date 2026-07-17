@@ -1,6 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
-import { type AtlasTargetSummary, jsonNumber, type RunSummary, type ScenarioDescriptor } from "../../src/shared/types.js";
+import {
+  cleanupRun,
+  loadHealth,
+  loadRun,
+  loadRuns,
+  loadScenarios,
+  loadTargets,
+  startRun,
+  stopRun
+} from "../../src/client/api.js";
+import {
+  type AtlasTargetSummary,
+  jsonNumber,
+  type RunSummary,
+  type ScenarioDescriptor
+} from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
   id: "moving-assets",
@@ -43,7 +57,11 @@ describe("client API", () => {
 
   it("normalizes invalid health responses and rejects invalid run response shapes at the API boundary", async () => {
     stubJSON({ ok: "yes" });
-    await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(200), message: "Unexpected health response (200)" });
+    await expect(loadHealth()).resolves.toMatchObject({
+      ok: false,
+      status: jsonNumber(200),
+      message: "Unexpected health response (200)"
+    });
 
     stubJSON({ run: { id: "missing-fields" } });
     await expect(loadRun(run.id)).rejects.toThrow("Expected run response");
@@ -60,7 +78,11 @@ describe("client API", () => {
       })
     );
 
-    await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(0), message: "connection refused" });
+    await expect(loadHealth()).resolves.toMatchObject({
+      ok: false,
+      status: jsonNumber(0),
+      message: "connection refused"
+    });
   });
 
   it("resolves health as unhealthy for unexpected success bodies", async () => {
@@ -69,7 +91,11 @@ describe("client API", () => {
       vi.fn(async () => new Response("not json", { status: 200 }))
     );
 
-    await expect(loadHealth()).resolves.toMatchObject({ ok: false, status: jsonNumber(200), message: "Unexpected health response (200)" });
+    await expect(loadHealth()).resolves.toMatchObject({
+      ok: false,
+      status: jsonNumber(200),
+      message: "Unexpected health response (200)"
+    });
   });
 
   it("loads API targets and checks health for a selected target", async () => {
@@ -80,7 +106,11 @@ describe("client API", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(loadTargets()).resolves.toEqual({ targets: [target], defaultTargetId: target.id });
-    await expect(loadHealth(target.id, " pasted-key ")).resolves.toMatchObject({ ok: true, status: jsonNumber(200), target });
+    await expect(loadHealth(target.id, " pasted-key ")).resolves.toMatchObject({
+      ok: true,
+      status: jsonNumber(200),
+      target
+    });
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/health?target=${encodeURIComponent(target.id)}`);
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("X-Atlas-Target-Api-Key")).toBe("pasted-key");
   });
@@ -97,16 +127,22 @@ describe("client API", () => {
   });
 
   it("rejects invalid start payloads before serialization", async () => {
-    await expect(startRun({ scenarioId: "moving-assets", inputs: { assetCount: Number.NaN } } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
-      "Invalid start run request"
-    );
-    await expect(startRun({ scenarioId: "moving-assets", confirmDeployedMutation: false } as unknown as Parameters<typeof startRun>[0])).rejects.toThrow(
-      "Invalid start run request"
-    );
+    await expect(
+      startRun({ scenarioId: "moving-assets", inputs: { assetCount: Number.NaN } } as unknown as Parameters<
+        typeof startRun
+      >[0])
+    ).rejects.toThrow("Invalid start run request");
+    await expect(
+      startRun({ scenarioId: "moving-assets", confirmDeployedMutation: false } as unknown as Parameters<
+        typeof startRun
+      >[0])
+    ).rejects.toThrow("Invalid start run request");
   });
 
   it("serializes valid start payloads with trusted mutation headers", async () => {
-    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+      jsonResponse({ run })
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
@@ -137,7 +173,9 @@ describe("client API", () => {
   });
 
   it("sends trusted mutation headers when stopping runs", async () => {
-    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+      jsonResponse({ run })
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(stopRun(run.id)).resolves.toEqual(run);
@@ -149,7 +187,9 @@ describe("client API", () => {
   });
 
   it("forwards a pasted API key when cleaning up a run", async () => {
-    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => jsonResponse({ run }));
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+      jsonResponse({ run })
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(cleanupRun(run.id, " pasted-cleanup-key ")).resolves.toEqual(run);

@@ -1,5 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { type ClientRequest, createServer, type Server as HttpServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  type ClientRequest,
+  createServer,
+  type Server as HttpServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse
+} from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -89,10 +96,11 @@ describe("simulation HTTP server", () => {
       ]
     });
 
-    const health = await fetchJSON<{ ok: boolean; status: number; target: { id: string; deployed: boolean; apiKeyConfigured: boolean } }>(
-      `${baseUrl}/api/health?target=deployed`,
-      { headers: { "X-Atlas-Target-Api-Key": "pasted-key" } }
-    );
+    const health = await fetchJSON<{
+      ok: boolean;
+      status: number;
+      target: { id: string; deployed: boolean; apiKeyConfigured: boolean };
+    }>(`${baseUrl}/api/health?target=deployed`, { headers: { "X-Atlas-Target-Api-Key": "pasted-key" } });
     expect(health).toMatchObject({ ok: true, status: 200, target: { id: "deployed" } });
     expect(coreHealthRequests).toEqual(["/deployed/health"]);
     expect(coreHealthApiKeys).toEqual(["pasted-key"]);
@@ -109,7 +117,12 @@ describe("simulation HTTP server", () => {
         atlasBaseUrl: "http://127.0.0.1:8000",
         atlasTargets: [
           { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: defaultCore.factory },
-          { id: "deployed", label: "Atlas Command API", baseUrl: "https://atlascommandapi.org", clientFactory: selectedCore.factory }
+          {
+            id: "deployed",
+            label: "Atlas Command API",
+            baseUrl: "https://atlascommandapi.org",
+            clientFactory: selectedCore.factory
+          }
         ],
         defaultAtlasTargetId: "local",
         port: 0,
@@ -135,9 +148,9 @@ describe("simulation HTTP server", () => {
       const current = await fetchJSON<{ run: { status: string } }>(`${baseUrl}/api/runs/${started.run.id}`);
       expect(current.run.status).toBe("completed");
     });
-    const current = await fetchJSON<{ run: { cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
-      `${baseUrl}/api/runs/${started.run.id}`
-    );
+    const current = await fetchJSON<{
+      run: { cleaned: boolean; createdResources: Array<{ type: string; id: string }> };
+    }>(`${baseUrl}/api/runs/${started.run.id}`);
     const created = current.run.createdResources[0];
     expect(created).toMatchObject({ type: "entity" });
 
@@ -158,7 +171,12 @@ describe("simulation HTTP server", () => {
         atlasBaseUrl: "http://127.0.0.1:8000",
         atlasTargets: [
           { id: "loopback", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: localCore.factory },
-          { id: "local", label: "Local-looking remote", baseUrl: "https://atlas.example", clientFactory: deployedCore.factory }
+          {
+            id: "local",
+            label: "Local-looking remote",
+            baseUrl: "https://atlas.example",
+            clientFactory: deployedCore.factory
+          }
         ],
         defaultAtlasTargetId: "loopback",
         port: 0,
@@ -176,7 +194,9 @@ describe("simulation HTTP server", () => {
     });
 
     expect(rejected.status).toBe(400);
-    await expect(responseJSON<{ message: string }>(rejected)).resolves.toMatchObject({ message: expect.stringMatching(/confirm/i) });
+    await expect(responseJSON<{ message: string }>(rejected)).resolves.toMatchObject({
+      message: expect.stringMatching(/confirm/i)
+    });
     expect(deployedCore.state.entities.size).toBe(0);
 
     const local = await fetchJSON<{ run: { id: string } }>(`${baseUrl}/api/runs`, {
@@ -245,19 +265,27 @@ describe("simulation HTTP server", () => {
 
       const mismatchedConfig = {
         ...config,
-        atlasTargets: config.atlasTargets.map((target) => (target.id === "deployed" ? { ...target, baseUrl: "https://different-atlas.example.test" } : target))
+        atlasTargets: config.atlasTargets.map((target) =>
+          target.id === "deployed" ? { ...target, baseUrl: "https://different-atlas.example.test" } : target
+        )
       };
       server = createSimulationServer({ config: mismatchedConfig });
       baseUrl = await server.listen();
-      const recovered = await fetchJSON<{ runs: Array<{ id: string; status: string; cleaned: boolean }> }>(`${baseUrl}/api/runs`);
-      expect(recovered.runs).toEqual([expect.objectContaining({ id: started.run.id, status: "abandoned", cleaned: false })]);
+      const recovered = await fetchJSON<{ runs: Array<{ id: string; status: string; cleaned: boolean }> }>(
+        `${baseUrl}/api/runs`
+      );
+      expect(recovered.runs).toEqual([
+        expect.objectContaining({ id: started.run.id, status: "abandoned", cleaned: false })
+      ]);
       expect(core.state.deleted).toEqual([]);
       const refusedCleanup = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.run.id}/cleanup`, {
         method: "POST",
         headers: mutationHeaders()
       });
       expect(refusedCleanup.status).toBe(409);
-      await expect(responseJSON<{ message: string }>(refusedCleanup)).resolves.toMatchObject({ message: expect.stringContaining("no longer matches") });
+      await expect(responseJSON<{ message: string }>(refusedCleanup)).resolves.toMatchObject({
+        message: expect.stringContaining("no longer matches")
+      });
       expect(core.state.deleted).toEqual([]);
       await server.close();
       server = undefined;
@@ -312,11 +340,15 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders({ "X-Atlas-Target-Api-Key": "pasted-key" })
     });
 
-    expect(coreResourceRequests.filter((request) => request.method === "POST" && request.path === "/entities").map((request) => request.apiKey)).toEqual([
-      "pasted-key"
-    ]);
     expect(
-      coreResourceRequests.filter((request) => request.method === "DELETE" && request.path.startsWith("/entities/")).map((request) => request.apiKey)
+      coreResourceRequests
+        .filter((request) => request.method === "POST" && request.path === "/entities")
+        .map((request) => request.apiKey)
+    ).toEqual(["pasted-key"]);
+    expect(
+      coreResourceRequests
+        .filter((request) => request.method === "DELETE" && request.path.startsWith("/entities/"))
+        .map((request) => request.apiKey)
     ).toEqual(["pasted-key"]);
     expect(new Set(coreResourceRequests.map((request) => request.apiKey))).toEqual(new Set(["pasted-key"]));
   });
@@ -349,10 +381,9 @@ describe("simulation HTTP server", () => {
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     const replayAndCleanupEvents = readRunStream(stream);
 
-    const cleaned = await fetchJSON<{ run: { status: string; cleaned: boolean; createdResources: Array<{ type: string; id: string }> } }>(
-      `${baseUrl}/api/runs/${started.run.id}/cleanup`,
-      { method: "POST", headers: mutationHeaders() }
-    );
+    const cleaned = await fetchJSON<{
+      run: { status: string; cleaned: boolean; createdResources: Array<{ type: string; id: string }> };
+    }>(`${baseUrl}/api/runs/${started.run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
     expect(cleaned.run).toMatchObject({ status: "completed", cleaned: true });
     expect(core.state.deleted).toEqual([`entity:${cleaned.run.createdResources[0]?.id}`]);
     const streamedEvents = await replayAndCleanupEvents;
@@ -383,10 +414,13 @@ describe("simulation HTTP server", () => {
       })
     });
 
-    const stopped = await fetchJSON<{ run: { id: string; status: string } }>(`${baseUrl}/api/runs/${started.run.id}/stop`, {
-      method: "POST",
-      headers: mutationHeaders()
-    });
+    const stopped = await fetchJSON<{ run: { id: string; status: string } }>(
+      `${baseUrl}/api/runs/${started.run.id}/stop`,
+      {
+        method: "POST",
+        headers: mutationHeaders()
+      }
+    );
 
     expect(stopped.run).toMatchObject({ id: started.run.id, status: "cancelled" });
     await waitFor(async () => {
@@ -417,7 +451,9 @@ describe("simulation HTTP server", () => {
     });
 
     expect(cleanup.status).toBe(409);
-    await expect(responseJSON<{ message: string }>(cleanup)).resolves.toMatchObject({ message: "Wait for the run to finish before cleanup" });
+    await expect(responseJSON<{ message: string }>(cleanup)).resolves.toMatchObject({
+      message: "Wait for the run to finish before cleanup"
+    });
   });
 
   it("surfaces cleanup deletion failures as server errors", async () => {
@@ -453,10 +489,15 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    const cleanup = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${run.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    const cleanup = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${run.id}/cleanup`, {
+      method: "POST",
+      headers: mutationHeaders()
+    });
 
     expect(cleanup.status).toBe(500);
-    await expect(responseJSON<{ message: string }>(cleanup)).resolves.toMatchObject({ message: expect.stringContaining("delete failed for") });
+    await expect(responseJSON<{ message: string }>(cleanup)).resolves.toMatchObject({
+      message: expect.stringContaining("delete failed for")
+    });
   });
 
   it("waits for a stopped run to unwind before cleanup", async () => {
@@ -484,10 +525,13 @@ describe("simulation HTTP server", () => {
     });
     const baseUrl = await server.listen();
 
-    const cleanup = fetchJSON<{ run: { status: string; cleaned: boolean } }>(`${baseUrl}/api/runs/${started.id}/cleanup`, {
-      method: "POST",
-      headers: mutationHeaders()
-    });
+    const cleanup = fetchJSON<{ run: { status: string; cleaned: boolean } }>(
+      `${baseUrl}/api/runs/${started.id}/cleanup`,
+      {
+        method: "POST",
+        headers: mutationHeaders()
+      }
+    );
     release();
     await expect(cleanup).resolves.toMatchObject({ run: { status: "cancelled", cleaned: true } });
   });
@@ -518,7 +562,12 @@ describe("simulation HTTP server", () => {
         method: "POST",
         headers: mutationHeaders({ Origin: "http://example.test" })
       });
-      await expectChunkedStatus(`${baseUrl}/api/runs/missing/${action}`, 413, ["x".repeat(500_001), "x".repeat(500_001)], mutationHeaders());
+      await expectChunkedStatus(
+        `${baseUrl}/api/runs/missing/${action}`,
+        413,
+        ["x".repeat(500_001), "x".repeat(500_001)],
+        mutationHeaders()
+      );
     }
     await expectStatus(`${baseUrl}/api/runs`, 400, {
       method: "POST",
@@ -535,7 +584,12 @@ describe("simulation HTTP server", () => {
       headers: mutationHeaders({ "Content-Type": "application/json" }),
       body: "x".repeat(1_000_001)
     });
-    await expectChunkedStatus(`${baseUrl}/api/runs`, 413, ["x".repeat(500_001), "x".repeat(500_001)], mutationHeaders({ "Content-Type": "application/json" }));
+    await expectChunkedStatus(
+      `${baseUrl}/api/runs`,
+      413,
+      ["x".repeat(500_001), "x".repeat(500_001)],
+      mutationHeaders({ "Content-Type": "application/json" })
+    );
     await expectStatus(`${baseUrl}/api/runs/missing/events`, 404);
     await expectStatus(`${baseUrl}/api/runs/missing/stop`, 404, { method: "POST", headers: mutationHeaders() });
     await expectStatus(`${baseUrl}/api/runs/missing/cleanup`, 404, { method: "POST", headers: mutationHeaders() });
@@ -590,7 +644,8 @@ async function fetchWithIntegrationTimeout(url: string, init?: RequestInit): Pro
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Timed out waiting for HTTP response after ${INTEGRATION_TIMEOUT_MS}ms`);
+    if (controller.signal.aborted)
+      throw new Error(`Timed out waiting for HTTP response after ${INTEGRATION_TIMEOUT_MS}ms`);
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -664,10 +719,15 @@ async function startCoreResourceServer(): Promise<string> {
           ...((current.components as Record<string, unknown> | undefined) ?? {}),
           ...((body.components as Record<string, unknown> | undefined) ?? {}),
           ...(body.status ? { status: { value: body.status, last_update: new Date().toISOString() } } : {}),
-          ...(body.latitude !== undefined || body.longitude !== undefined || body.speed_m_s !== undefined || body.heading_deg !== undefined
+          ...(body.latitude !== undefined ||
+          body.longitude !== undefined ||
+          body.speed_m_s !== undefined ||
+          body.heading_deg !== undefined
             ? {
                 telemetry: {
-                  ...(((current.components as Record<string, unknown> | undefined)?.telemetry as Record<string, unknown> | undefined) ?? {}),
+                  ...(((current.components as Record<string, unknown> | undefined)?.telemetry as
+                    | Record<string, unknown>
+                    | undefined) ?? {}),
                   ...(body.latitude === undefined ? {} : { latitude: body.latitude }),
                   ...(body.longitude === undefined ? {} : { longitude: body.longitude }),
                   ...(body.speed_m_s === undefined ? {} : { speed_m_s: body.speed_m_s }),
@@ -770,7 +830,12 @@ async function requestStatusWithHost(url: string, host: string): Promise<number>
   });
 }
 
-async function expectChunkedStatus(url: string, status: number, chunks: string[], headers: Record<string, string>): Promise<void> {
+async function expectChunkedStatus(
+  url: string,
+  status: number,
+  chunks: string[],
+  headers: Record<string, string>
+): Promise<void> {
   const target = new URL(url);
   await new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -831,7 +896,9 @@ async function rawRequest(url: string, method: string): Promise<{ status: number
       (response) => {
         response.on("data", (chunk: Buffer) => chunks.push(chunk));
         response.on("error", (error) => finish(() => reject(error)));
-        response.on("end", () => finish(() => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") })));
+        response.on("end", () =>
+          finish(() => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }))
+        );
       }
     );
     request.setTimeout(INTEGRATION_TIMEOUT_MS, () => request.destroy(new Error("Timed out waiting for HTTP response")));

@@ -6,7 +6,9 @@ import { appendMarker, firePointerMove, type PointLike, rect, renderMapView } fr
 describe("MapView zoom overlay", () => {
   it("delegates completed MapLibre box zooms to fitScreenCoordinates", () => {
     const { map } = renderMapView();
-    const boxZoom = map.options.boxZoom as { boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void };
+    const boxZoom = map.options.boxZoom as {
+      boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void;
+    };
     const start = { x: 12, y: 18 };
     const end = { x: 220, y: 140 };
 
@@ -116,7 +118,9 @@ describe("MapView zoom overlay", () => {
 
   it("selects canvas features from direct clicks without a hover reticle", () => {
     const { canvas, map, onBackgroundClick, onSelectEntity } = renderMapView();
-    map.queryRenderedFeatures.mockReturnValue([{ geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-1" } }]);
+    map.queryRenderedFeatures.mockReturnValue([
+      { geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-1" } }
+    ]);
 
     fireEvent.click(canvas, { clientX: 80, clientY: 100 });
 

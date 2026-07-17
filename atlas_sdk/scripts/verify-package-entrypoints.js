@@ -14,7 +14,9 @@ let cliModule;
 try {
   cliModule = await import(cliModuleURL);
 } catch (error) {
-  console.error(`::error::Failed to import CLI module from ${packageJSON.bin.atlas} (${cliModuleURL}): ${errorMessage(error)}`);
+  console.error(
+    `::error::Failed to import CLI module from ${packageJSON.bin.atlas} (${cliModuleURL}): ${errorMessage(error)}`
+  );
   process.exit(1);
 }
 

@@ -88,7 +88,11 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       </Section>
 
       <Section title="Commands">
-        <CommandList availabilities={sidebarCommands} onPick={onPickCommand} emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"} />
+        <CommandList
+          availabilities={sidebarCommands}
+          onPick={onPickCommand}
+          emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"}
+        />
         <p className="field__hint" style={{ marginTop: 8 }}>
           Right-click the map to send position commands to this asset.
         </p>

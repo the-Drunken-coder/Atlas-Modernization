@@ -25,10 +25,17 @@ export function cursorPointsFromEvent(
 }
 
 export function clientPointInsideRect(event: { clientX: number; clientY: number }, rect: DOMRect): boolean {
-  return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  return (
+    event.clientX >= rect.left &&
+    event.clientX <= rect.right &&
+    event.clientY >= rect.top &&
+    event.clientY <= rect.bottom
+  );
 }
 
-export function zoomDeltaFromWheel(event: Pick<WheelEvent<HTMLDivElement>, "deltaMode" | "deltaY" | "shiftKey">): number {
+export function zoomDeltaFromWheel(
+  event: Pick<WheelEvent<HTMLDivElement>, "deltaMode" | "deltaY" | "shiftKey">
+): number {
   let value = event.deltaMode === DOM_DELTA_LINE ? event.deltaY * 40 : event.deltaY;
   if (event.shiftKey && value) value /= 4;
   return -value * WHEEL_ZOOM_RATE;
@@ -37,7 +44,13 @@ export function zoomDeltaFromWheel(event: Pick<WheelEvent<HTMLDivElement>, "delt
 export function reticlesEqual(a: ReticleState | null, b: ReticleState | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.x === b.x && a.y === b.y && a.targetEntityId === b.targetEntityId && a.targeted === b.targeted && boxesEqual(a.target, b.target);
+  return (
+    a.x === b.x &&
+    a.y === b.y &&
+    a.targetEntityId === b.targetEntityId &&
+    a.targeted === b.targeted &&
+    boxesEqual(a.target, b.target)
+  );
 }
 
 export function boxesEqual(a: TargetBox, b: TargetBox): boolean {
@@ -51,7 +64,9 @@ export function cloneStyle(style: StyleSpecification): StyleSpecification {
 export function webglAvailable(): boolean {
   try {
     const canvas = document.createElement("canvas");
-    return Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl") ?? canvas.getContext("experimental-webgl"));
+    return Boolean(
+      canvas.getContext("webgl2") ?? canvas.getContext("webgl") ?? canvas.getContext("experimental-webgl")
+    );
   } catch {
     return false;
   }

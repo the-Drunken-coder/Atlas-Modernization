@@ -298,7 +298,11 @@ describe("RunStore", () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
     const dateNow = vi.spyOn(Date, "now").mockReturnValue(1_000);
-    const random = vi.spyOn(Math, "random").mockReturnValueOnce(0.123456).mockReturnValueOnce(0.123456).mockReturnValueOnce(0.654321);
+    const random = vi
+      .spyOn(Math, "random")
+      .mockReturnValueOnce(0.123456)
+      .mockReturnValueOnce(0.123456)
+      .mockReturnValueOnce(0.654321);
     const scenario: Scenario = {
       id: "id-collision",
       name: "ID collision",
@@ -396,13 +400,17 @@ describe("RunStore", () => {
     await expect(store.cleanup(started.id)).rejects.toThrow("cleanup stop failed");
     expect(cleanupStopCalls).toBe(1);
     expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "cleanup stop failed" });
-    expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
+    expect(
+      store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")
+    ).toHaveLength(1);
     const deletedAfterFailure = [...core.state.deleted];
 
     await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
     expect(cleanupStopCalls).toBe(2);
     expect(core.state.deleted).toEqual(deletedAfterFailure);
-    expect(store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")).toHaveLength(1);
+    expect(
+      store.events(started.id).filter((event) => event.type === "error" && event.message === "cleanup stop failed")
+    ).toHaveLength(1);
   });
 
   it("fails cleanup when a resource delete times out", async () => {
@@ -462,8 +470,13 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
 
     await expect(store.cleanup(started.id)).rejects.toThrow("Unsupported cleanup resource type: track");
-    expect(store.get(started.id)).toMatchObject({ cleaned: false, lastError: "Unsupported cleanup resource type: track" });
-    expect(store.events(started.id).some((event) => event.type === "cleanup" && event.message.includes("Deleted track"))).toBe(false);
+    expect(store.get(started.id)).toMatchObject({
+      cleaned: false,
+      lastError: "Unsupported cleanup resource type: track"
+    });
+    expect(
+      store.events(started.id).some((event) => event.type === "cleanup" && event.message.includes("Deleted track"))
+    ).toBe(false);
   });
 
   it("keeps the overflowing cleanup resource when resource tracking exceeds its cap", async () => {
@@ -570,7 +583,12 @@ describe("RunStore", () => {
     const objects = resources.filter((resource) => resource.type === "object");
     await store.cleanup(started.id);
 
-    expect(core.state.deleted).toEqual([`task:${task?.id}`, `object:${objects[1]?.id}`, `object:${objects[0]?.id}`, `entity:${entity?.id}`]);
+    expect(core.state.deleted).toEqual([
+      `task:${task?.id}`,
+      `object:${objects[1]?.id}`,
+      `object:${objects[0]?.id}`,
+      `entity:${entity?.id}`
+    ]);
   });
 
   it("fake sync clients read the revision visible at their sync version", async () => {
@@ -619,9 +637,13 @@ describe("RunStore", () => {
     const client = core.factory();
 
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
-    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({ status: 409 });
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({
+      status: 409
+    });
     await client.entities.delete("asset-1");
-    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).resolves.toMatchObject({ entity_id: "asset-1" });
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).resolves.toMatchObject({
+      entity_id: "asset-1"
+    });
   });
 
   it("fake core rejects duplicate active entity aliases", async () => {
@@ -630,12 +652,18 @@ describe("RunStore", () => {
 
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset", alias: " Shared alias " });
     expect((await client.entities.get("asset-1")).alias).toBe("Shared alias");
-    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })).rejects.toMatchObject({ status: 409 });
+    await expect(
+      client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Shared alias" })
+    ).rejects.toMatchObject({ status: 409 });
     await client.entities.update("asset-1", { alias: " Updated alias " });
     expect((await client.entities.get("asset-1")).alias).toBe("Updated alias");
-    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).rejects.toMatchObject({ status: 409 });
+    await expect(
+      client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })
+    ).rejects.toMatchObject({ status: 409 });
     await client.entities.delete("asset-1");
-    await expect(client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })).resolves.toMatchObject({
+    await expect(
+      client.entities.create({ entity_id: "asset-2", entity_type: "asset", alias: "Updated alias" })
+    ).resolves.toMatchObject({
       entity_id: "asset-2"
     });
   });
@@ -846,7 +874,9 @@ describe("RunStore", () => {
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
-    const logEvent = store.events(started.id).find((event) => event.type === "log" && event.message.endsWith("...[truncated]"));
+    const logEvent = store
+      .events(started.id)
+      .find((event) => event.type === "log" && event.message.endsWith("...[truncated]"));
 
     expect(logEvent).toBeDefined();
     expect(Buffer.byteLength(logEvent!.message, "utf8")).toBeLessThanOrEqual(200_000);
@@ -903,7 +933,9 @@ describe("RunStore", () => {
         createdResources: [resource],
         lastError: expect.stringContaining("restarted before explicit cleanup")
       });
-      expect(recovered.events(started.id)).toEqual([expect.objectContaining({ type: "status", status: "abandoned", level: "warn" })]);
+      expect(recovered.events(started.id)).toEqual([
+        expect.objectContaining({ type: "status", status: "abandoned", level: "warn" })
+      ]);
 
       const failingCleanupFactory: AtlasClientFactory = (options) => {
         const client = core.factory(options);
@@ -920,7 +952,10 @@ describe("RunStore", () => {
       await expect(recovered.cleanup(started.id, failingCleanupFactory)).rejects.toThrow("cleanup unavailable");
       expect(new CleanupLedger(path.join(directory, "state", "runs")).load()).toHaveLength(1);
 
-      await expect(recovered.cleanup(started.id, core.factory)).resolves.toMatchObject({ status: "abandoned", cleaned: true });
+      await expect(recovered.cleanup(started.id, core.factory)).resolves.toMatchObject({
+        status: "abandoned",
+        cleaned: true
+      });
       expect(new CleanupLedger(path.join(directory, "state", "runs")).load()).toEqual([]);
       expect(core.state.deleted).toEqual([`entity:${resource?.id}`]);
     } finally {

@@ -11,7 +11,11 @@ export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
 
 export type ClientMode = false | "all";
 
-export type AtlasClientFactory = (options?: { sync?: ClientMode; pollIntervalMs?: number; signal?: AbortSignal }) => AtlasClientLike;
+export type AtlasClientFactory = (options?: {
+  sync?: ClientMode;
+  pollIntervalMs?: number;
+  signal?: AbortSignal;
+}) => AtlasClientLike;
 
 const ATLAS_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -36,9 +40,14 @@ export function isNotFoundError(error: unknown): boolean {
 
 function abortableFetch(signal?: AbortSignal): typeof fetch {
   return async (input, init = {}) => {
-    const upstreamSignals = [signal, requestSignal(input), init.signal].filter((value): value is AbortSignal => value != null);
+    const upstreamSignals = [signal, requestSignal(input), init.signal].filter(
+      (value): value is AbortSignal => value != null
+    );
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error(`Atlas request timed out after ${ATLAS_REQUEST_TIMEOUT_MS}ms`)), ATLAS_REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(
+      () => controller.abort(new Error(`Atlas request timed out after ${ATLAS_REQUEST_TIMEOUT_MS}ms`)),
+      ATLAS_REQUEST_TIMEOUT_MS
+    );
     const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason);
     for (const upstreamSignal of upstreamSignals) upstreamSignal.addEventListener("abort", abort, { once: true });
     let cleaned = false;

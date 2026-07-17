@@ -17,7 +17,10 @@ export function APIKeysPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [revoking, setRevoking] = useState<string>();
 
-  const admin = useMemo(() => (config ? new AtlasAdminClient({ baseUrl: config.atlasBaseUrl, credentials: "include" }) : undefined), [config]);
+  const admin = useMemo(
+    () => (config ? new AtlasAdminClient({ baseUrl: config.atlasBaseUrl, credentials: "include" }) : undefined),
+    [config]
+  );
 
   useEffect(() => {
     if (!admin) return;
@@ -137,7 +140,11 @@ export function APIKeysPanel() {
                   {formatCreatedAt(key.created_at)} - {key.created_by}
                 </span>
               </div>
-              <IconButton label={`Revoke ${key.name}`} disabled={revoking === key.id} onClick={() => void revokeKey(key)}>
+              <IconButton
+                label={`Revoke ${key.name}`}
+                disabled={revoking === key.id}
+                onClick={() => void revokeKey(key)}
+              >
                 <TrashIcon size={16} />
               </IconButton>
             </li>

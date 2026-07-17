@@ -1,6 +1,13 @@
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point, requireBeforeDeadline } from "./helpers.js";
+import {
+  boundedNumberInput,
+  boundedPositiveIntegerInput,
+  isoNow,
+  jsonObject,
+  point,
+  requireBeforeDeadline
+} from "./helpers.js";
 
 const VERIFY_READ_TIMEOUT_MS = 5_000;
 
@@ -10,9 +17,33 @@ const observationsObjects: Scenario = {
   summary: "Creates observing assets, tracks, and object metadata linked to observations.",
   acceptsJson: true,
   inputFields: [
-    { key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(10), step: jsonNumber(1) },
-    { key: "observations", label: "Observations", type: "number", defaultValue: jsonNumber(4), min: jsonNumber(1), max: jsonNumber(50), step: jsonNumber(1) },
-    { key: "tickMs", label: "Tick ms", type: "number", defaultValue: jsonNumber(200), min: jsonNumber(0), max: jsonNumber(10000), step: jsonNumber(50) },
+    {
+      key: "assetCount",
+      label: "Asset count",
+      type: "number",
+      defaultValue: jsonNumber(2),
+      min: jsonNumber(1),
+      max: jsonNumber(10),
+      step: jsonNumber(1)
+    },
+    {
+      key: "observations",
+      label: "Observations",
+      type: "number",
+      defaultValue: jsonNumber(4),
+      min: jsonNumber(1),
+      max: jsonNumber(50),
+      step: jsonNumber(1)
+    },
+    {
+      key: "tickMs",
+      label: "Tick ms",
+      type: "number",
+      defaultValue: jsonNumber(200),
+      min: jsonNumber(0),
+      max: jsonNumber(10000),
+      step: jsonNumber(50)
+    },
     {
       key: "startLatitude",
       label: "Start latitude",
@@ -116,7 +147,9 @@ const observationsObjects: Scenario = {
     const verifier = ctx.newClient({ sync: false });
     const observerReadDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
     const observerResults = await Promise.allSettled(
-      assetIds.map((id) => requireBeforeDeadline(() => verifier.entities.get(id), observerReadDeadline, `observer ${id}`))
+      assetIds.map((id) =>
+        requireBeforeDeadline(() => verifier.entities.get(id), observerReadDeadline, `observer ${id}`)
+      )
     );
     const trackReadDeadline = Date.now() + VERIFY_READ_TIMEOUT_MS;
     const trackResults = await Promise.allSettled(
@@ -142,8 +175,14 @@ const observationsObjects: Scenario = {
       !rejectedTrackRead &&
         persistedTracks.length === observations &&
         persistedTracks.every((track, index) => {
-          const simulation = track.components.custom_simulation as { observer_id?: string; observation_index?: number } | undefined;
-          return track.entity_type === "track" && simulation?.observer_id === assetIds[index % assetIds.length] && simulation?.observation_index === index + 1;
+          const simulation = track.components.custom_simulation as
+            | { observer_id?: string; observation_index?: number }
+            | undefined;
+          return (
+            track.entity_type === "track" &&
+            simulation?.observer_id === assetIds[index % assetIds.length] &&
+            simulation?.observation_index === index + 1
+          );
         }),
       rejectedTrackRead ? "readback failed" : `${persistedTracks.length}/${observations} tracks persisted`
     );
@@ -151,7 +190,9 @@ const observationsObjects: Scenario = {
       "Object references persisted",
       !rejectedObjectRead &&
         persistedObjects.length === observations &&
-        persistedObjects.every((object, index) => (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])),
+        persistedObjects.every((object, index) =>
+          (object.referenced_by ?? []).some((reference) => reference.entity_id === trackIds[index])
+        ),
       rejectedObjectRead ? "readback failed" : `${persistedObjects.length}/${observations} objects linked`
     );
   }

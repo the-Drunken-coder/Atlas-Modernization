@@ -37,9 +37,30 @@ describe("asset connection status", () => {
 
   it.each([
     ["fresh", "2026-06-20T00:09:50Z", "Connected", "var(--link-connected)", "10s ago", "var(--heartbeat-fresh)"],
-    ["stale", "2026-06-20T00:09:00Z", "Reported connected — stale heartbeat", "var(--heartbeat-stale)", "1m ago", "var(--heartbeat-stale)"],
-    ["offline", "2026-06-20T00:00:00Z", "Reported connected — offline", "var(--heartbeat-offline)", "10m ago", "var(--heartbeat-offline)"],
-    ["clock error", "2026-06-20T00:10:31Z", "Reported connected — clock error", "var(--text-3)", "Clock error", "var(--text-3)"],
+    [
+      "stale",
+      "2026-06-20T00:09:00Z",
+      "Reported connected — stale heartbeat",
+      "var(--heartbeat-stale)",
+      "1m ago",
+      "var(--heartbeat-stale)"
+    ],
+    [
+      "offline",
+      "2026-06-20T00:00:00Z",
+      "Reported connected — offline",
+      "var(--heartbeat-offline)",
+      "10m ago",
+      "var(--heartbeat-offline)"
+    ],
+    [
+      "clock error",
+      "2026-06-20T00:10:31Z",
+      "Reported connected — clock error",
+      "var(--text-3)",
+      "Clock error",
+      "var(--text-3)"
+    ],
     ["missing", undefined, "Reported connected — never checked in", "var(--text-3)", undefined, undefined]
   ] as const)("shows %s heartbeat qualification consistently", (_case, lastSeen, label, color, heartbeatLabel, heartbeatColor) => {
     const entity = asset(lastSeen);
@@ -71,7 +92,9 @@ describe("asset connection status", () => {
   });
 
   it("updates the inspector through stale and offline thresholds without a snapshot change", () => {
-    render(<AssetInspector entity={asset("2026-06-20T00:09:50Z")} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
+    render(
+      <AssetInspector entity={asset("2026-06-20T00:09:50Z")} snapshot={emptySnapshot()} onPickCommand={() => {}} />
+    );
     expect(screen.getByText("Connected")).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(21_000));

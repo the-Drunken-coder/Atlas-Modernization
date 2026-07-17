@@ -18,7 +18,13 @@ describe("appConfigFromEnv", () => {
       protocolRevision: ATLAS_PROTOCOL_REVISION,
       defaultMapSourceId: "maptiler-osm-dark"
     });
-    expect(config.mapSources.map(({ id, style, unavailableReason }) => ({ id, available: Boolean(style), unavailableReason }))).toEqual([
+    expect(
+      config.mapSources.map(({ id, style, unavailableReason }) => ({
+        id,
+        available: Boolean(style),
+        unavailableReason
+      }))
+    ).toEqual([
       { id: "google-satellite", available: false, unavailableReason: "missing key" },
       { id: "openstreetmap-default", available: true, unavailableReason: undefined },
       { id: "usgs-topo", available: true, unavailableReason: undefined },
@@ -98,7 +104,9 @@ describe("appConfigFromEnv", () => {
       "openmaptiles-dark-matter"
     ]);
     expect(config.mapSources.every((source) => source.style)).toBe(true);
-    expect(JSON.stringify(config.mapSources.find((source) => source.id === "google-satellite")?.style)).toContain("session=google-session&key=google-key");
+    expect(JSON.stringify(config.mapSources.find((source) => source.id === "google-satellite")?.style)).toContain(
+      "session=google-session&key=google-key"
+    );
   });
 
   it("generates valid MapLibre raster styles for every available map source", () => {
@@ -132,7 +140,9 @@ describe("appConfigFromEnv", () => {
       expect(style.layers.length).toBeGreaterThan(0);
       expect(rasterSource?.type).toBe("raster");
       expect(rasterSource?.tiles?.length).toBeGreaterThan(0);
-      expect(style.layers).toEqual(expect.arrayContaining([expect.objectContaining({ type: "raster", source: source.id })]));
+      expect(style.layers).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "raster", source: source.id })])
+      );
       expect(JSON.stringify(rasterSource?.tiles)).toContain(expectedUrlFragments[source.id]);
     }
   });
@@ -140,15 +150,22 @@ describe("appConfigFromEnv", () => {
   it("allows an explicit Core URL override", () => {
     vi.stubGlobal("location", { origin: "https://preview.example" });
 
-    expect(appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: " https://core.test/ " }).atlasBaseUrl).toBe("https://core.test");
+    expect(
+      appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: " https://core.test/ " })
+        .atlasBaseUrl
+    ).toBe("https://core.test");
   });
 
   it("falls back to the default Core URL when the explicit env value is blank", () => {
-    expect(appConfigFromEnv({ DEV: true, MODE: "development", VITE_ATLAS_CORE_BASE_URL: " " }).atlasBaseUrl).toBe("http://127.0.0.1:8000");
+    expect(appConfigFromEnv({ DEV: true, MODE: "development", VITE_ATLAS_CORE_BASE_URL: " " }).atlasBaseUrl).toBe(
+      "http://127.0.0.1:8000"
+    );
   });
 
   it("rejects invalid explicit Core URLs", () => {
-    expect(() => appConfigFromEnv({ DEV: false, VITE_ATLAS_CORE_BASE_URL: "atlas" })).toThrow("Atlas interface config has invalid atlasBaseUrl");
+    expect(() => appConfigFromEnv({ DEV: false, VITE_ATLAS_CORE_BASE_URL: "atlas" })).toThrow(
+      "Atlas interface config has invalid atlasBaseUrl"
+    );
   });
 });
 
@@ -174,14 +191,23 @@ describe("fetchAppConfig", () => {
   it("creates a Google Maps tile session when only the API key is configured", async () => {
     vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
     vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ session: "session-1" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ session: "session-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        })
+    );
     vi.stubGlobal("fetch", fetch);
 
     const config = await fetchAppConfig();
 
     expect(fetch).toHaveBeenCalledWith(
       "https://tile.googleapis.com/v1/createSession?key=google-key",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ mapType: "satellite", language: "en-US", region: "US" }) })
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ mapType: "satellite", language: "en-US", region: "US" })
+      })
     );
     expect(config.mapSources[0].id).toBe("google-satellite");
     expect(JSON.stringify(config.mapSources[0].style)).toContain("session=session-1&key=google-key");
@@ -190,8 +216,14 @@ describe("fetchAppConfig", () => {
   it.each([
     ["network failure", async () => Promise.reject(new Error("network down"))],
     ["non-OK response", async () => new Response("unavailable", { status: 503 })],
-    ["invalid JSON", async () => new Response("not json", { status: 200, headers: { "Content-Type": "application/json" } })],
-    ["missing session token", async () => new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } })]
+    [
+      "invalid JSON",
+      async () => new Response("not json", { status: 200, headers: { "Content-Type": "application/json" } })
+    ],
+    [
+      "missing session token",
+      async () => new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } })
+    ]
   ])("keeps Google unavailable and preserves the configured default on tile-session %s", async (_name, fetchImpl) => {
     vi.stubEnv("VITE_GOOGLE_MAPS_API_KEY", "google-key");
     vi.stubGlobal("location", { origin: "http://127.0.0.1:5173" });
@@ -201,7 +233,10 @@ describe("fetchAppConfig", () => {
 
     const config = await fetchAppConfig();
 
-    expect(fetch).toHaveBeenCalledWith("https://tile.googleapis.com/v1/createSession?key=google-key", expect.objectContaining({ method: "POST" }));
+    expect(fetch).toHaveBeenCalledWith(
+      "https://tile.googleapis.com/v1/createSession?key=google-key",
+      expect.objectContaining({ method: "POST" })
+    );
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
     expect(config.mapSources.find((source) => source.id === "google-satellite")).toMatchObject({
       id: "google-satellite",

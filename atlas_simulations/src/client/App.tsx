@@ -1,6 +1,13 @@
 import { Activity, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor, StartRunRequest } from "../shared/types.js";
+import type {
+  AtlasTargetSummary,
+  HealthResponse,
+  RunEvent,
+  RunSummary,
+  ScenarioDescriptor,
+  StartRunRequest
+} from "../shared/types.js";
 import { AssertionTable, LogList, ResourceTable, RunDetails, RunTable } from "./AppPanels.js";
 import { cleanupRun, loadHealth, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "./api.js";
 import {
@@ -53,7 +60,9 @@ export function App() {
       .then((loaded) => {
         if (cancelled) return;
         setTargets(loaded.targets);
-        const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId) ? loaded.defaultTargetId : (loaded.targets[0]?.id ?? "");
+        const targetId = loaded.targets.some((target) => target.id === loaded.defaultTargetId)
+          ? loaded.defaultTargetId
+          : (loaded.targets[0]?.id ?? "");
         setSelectedTargetId(targetId);
         return refreshHealth(targetId);
       })
@@ -80,10 +89,16 @@ export function App() {
   }, []);
 
   const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
-  const selectedTarget = useMemo(() => targets.find((target) => target.id === selectedTargetId), [selectedTargetId, targets]);
+  const selectedTarget = useMemo(
+    () => targets.find((target) => target.id === selectedTargetId),
+    [selectedTargetId, targets]
+  );
   const selectedApiKey = selectedTargetId ? (apiKeysByTargetId[selectedTargetId] ?? "") : "";
   const hasRunningRuns = useMemo(() => runs.some((run) => run.status === "running"), [runs]);
-  const hasCleanupInFlight = useMemo(() => !!cleanupRunId && runs.some((run) => run.id === cleanupRunId && !run.cleaned), [cleanupRunId, runs]);
+  const hasCleanupInFlight = useMemo(
+    () => !!cleanupRunId && runs.some((run) => run.id === cleanupRunId && !run.cleaned),
+    [cleanupRunId, runs]
+  );
 
   useEffect(() => {
     runsRef.current = runs;
@@ -109,7 +124,9 @@ export function App() {
     const requestId = ++healthRequestRef.current;
     try {
       const apiKey = apiKeyForTarget(targetId);
-      const nextHealth = apiKey ? await loadHealth(targetId || undefined, apiKey) : await loadHealth(targetId || undefined);
+      const nextHealth = apiKey
+        ? await loadHealth(targetId || undefined, apiKey)
+        : await loadHealth(targetId || undefined);
       if (!applyHealthResponse(requestId, nextHealth)) return;
       setError(undefined);
     } catch (errorValue) {
@@ -164,11 +181,18 @@ export function App() {
       clearRunSelection();
       return;
     }
-    const refreshedSelection = selectedRunAfterLoad ? mergedRuns.find((run) => run.id === selectedRunAfterLoad) : undefined;
-    if (refreshedSelection?.status !== "running" && activeRunIdRef.current === selectedRunAfterLoad && cleanupStreamRunIdRef.current !== selectedRunAfterLoad) {
+    const refreshedSelection = selectedRunAfterLoad
+      ? mergedRuns.find((run) => run.id === selectedRunAfterLoad)
+      : undefined;
+    if (
+      refreshedSelection?.status !== "running" &&
+      activeRunIdRef.current === selectedRunAfterLoad &&
+      cleanupStreamRunIdRef.current !== selectedRunAfterLoad
+    ) {
       closeActiveEventSource();
     }
-    const needsCleanupReconnect = cleanupRunId === selectedRunAfterLoad && !!refreshedSelection && !refreshedSelection.cleaned;
+    const needsCleanupReconnect =
+      cleanupRunId === selectedRunAfterLoad && !!refreshedSelection && !refreshedSelection.cleaned;
     setCurrentRun((current) => {
       if (!current) return current;
       const refreshed = mergedRuns.find((run) => run.id === current.id);
@@ -198,7 +222,8 @@ export function App() {
   }
 
   async function startSelectedRun() {
-    if (!selected || !selectedTarget || mutationPending || (selectedTarget.deployed && !deployedMutationConfirmed)) return;
+    if (!selected || !selectedTarget || mutationPending || (selectedTarget.deployed && !deployedMutationConfirmed))
+      return;
     const deployedStart = selectedTarget.deployed;
     setError(undefined);
     setMutationPending(true);
@@ -315,7 +340,8 @@ export function App() {
         runsRef.current = next;
         return next;
       });
-      if (event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId) closeSource();
+      if (event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId)
+        closeSource();
       if (event.type === "cleanup" && !event.resource) {
         setCleanupRunId((current) => (current === runId ? undefined : current));
         closeSource();
@@ -347,7 +373,11 @@ export function App() {
     const targetRunId = currentRun.id;
     const recoveryApiKey = recoveryApiKeysByRunId[targetRunId]?.trim();
     const targetApiKey =
-      currentRun.status === "abandoned" ? recoveryApiKey || undefined : currentRun.target ? apiKeyForTarget(currentRun.target.id) : undefined;
+      currentRun.status === "abandoned"
+        ? recoveryApiKey || undefined
+        : currentRun.target
+          ? apiKeyForTarget(currentRun.target.id)
+          : undefined;
     setError(undefined);
     setMutationPending(true);
     try {
@@ -420,7 +450,12 @@ export function App() {
         <div className="topbar-controls">
           <label className="target-menu">
             <span>API</span>
-            <select value={selectedTargetId} onChange={(event) => selectTarget(event.target.value)} disabled={!targets.length} title={selectedTarget?.baseUrl}>
+            <select
+              value={selectedTargetId}
+              onChange={(event) => selectTarget(event.target.value)}
+              disabled={!targets.length}
+              title={selectedTarget?.baseUrl}
+            >
               {targets.map((target) => (
                 <option key={target.id} value={target.id}>
                   {target.label} ({target.baseUrl})
@@ -470,11 +505,15 @@ export function App() {
           <div className="deployed-warning-content">
             <strong id="deployed-warning-title">Deployed Core selected</strong>
             <p>
-              Starting a simulation will mutate remote resources on <strong>{selectedTarget.label}</strong> at <code>{selectedTarget.baseUrl}</code>. Cleanup is
-              explicit.
+              Starting a simulation will mutate remote resources on <strong>{selectedTarget.label}</strong> at{" "}
+              <code>{selectedTarget.baseUrl}</code>. Cleanup is explicit.
             </p>
             <label className="deployed-confirmation">
-              <input type="checkbox" checked={deployedMutationConfirmed} onChange={(event) => setDeployedMutationConfirmed(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={deployedMutationConfirmed}
+                onChange={(event) => setDeployedMutationConfirmed(event.target.checked)}
+              />
               <span>I understand this start will mutate the deployed Core.</span>
             </label>
           </div>
@@ -510,12 +549,22 @@ export function App() {
                 type="button"
                 title={selectedTarget?.deployed ? "Start run on deployed Core" : "Start run"}
                 onClick={() => void startSelectedRun()}
-                disabled={mutationPending || !selected || !selectedTarget || (selectedTarget.deployed && !deployedMutationConfirmed)}
+                disabled={
+                  mutationPending ||
+                  !selected ||
+                  !selectedTarget ||
+                  (selectedTarget.deployed && !deployedMutationConfirmed)
+                }
               >
                 <Play size={16} aria-hidden="true" />
                 {selectedTarget?.deployed ? "Start on deployed Core" : "Start"}
               </button>
-              <button type="button" title="Stop run" onClick={() => void stopCurrentRun()} disabled={mutationPending || currentRun?.status !== "running"}>
+              <button
+                type="button"
+                title="Stop run"
+                onClick={() => void stopCurrentRun()}
+                disabled={mutationPending || currentRun?.status !== "running"}
+              >
                 <Square size={16} aria-hidden="true" />
                 Stop
               </button>
@@ -593,13 +642,17 @@ export function App() {
                 id="recovery-cleanup-api-key"
                 type="password"
                 value={recoveryApiKeysByRunId[currentRun.id] ?? ""}
-                onChange={(event) => setRecoveryApiKeysByRunId((current) => ({ ...current, [currentRun.id]: event.target.value }))}
+                onChange={(event) =>
+                  setRecoveryApiKeysByRunId((current) => ({ ...current, [currentRun.id]: event.target.value }))
+                }
                 autoComplete="off"
                 spellCheck={false}
                 placeholder="Paste current key if required"
                 aria-describedby="recovery-cleanup-api-key-help"
               />
-              <small id="recovery-cleanup-api-key-help">Kept only in this browser tab and sent with explicit cleanup.</small>
+              <small id="recovery-cleanup-api-key-help">
+                Kept only in this browser tab and sent with explicit cleanup.
+              </small>
             </div>
           ) : null}
         </section>

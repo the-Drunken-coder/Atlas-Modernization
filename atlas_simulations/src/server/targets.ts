@@ -20,7 +20,8 @@ export function createTargetRegistry(config: SimulationConfig): TargetRegistry {
     }
   ];
   const targets = new Map(configuredTargets.map((target) => [target.id, target]));
-  const defaultTarget = (config.defaultAtlasTargetId ? targets.get(config.defaultAtlasTargetId) : undefined) ?? configuredTargets[0];
+  const defaultTarget =
+    (config.defaultAtlasTargetId ? targets.get(config.defaultAtlasTargetId) : undefined) ?? configuredTargets[0];
   if (!defaultTarget) throw new Error("At least one Atlas target is required");
   return {
     targets,
@@ -30,16 +31,28 @@ export function createTargetRegistry(config: SimulationConfig): TargetRegistry {
   };
 }
 
-export function targetForRequest(url: URL, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig | undefined {
+export function targetForRequest(
+  url: URL,
+  registry: TargetRegistry,
+  apiKey: string | undefined
+): AtlasTargetConfig | undefined {
   return targetForId(url.searchParams.get("target") ?? undefined, registry, apiKey);
 }
 
-export function targetForId(id: string | undefined, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig | undefined {
+export function targetForId(
+  id: string | undefined,
+  registry: TargetRegistry,
+  apiKey: string | undefined
+): AtlasTargetConfig | undefined {
   const target = id ? registry.targets.get(id) : registry.defaultTarget;
   return target && apiKey ? { ...target, apiKey } : target;
 }
 
-export function targetForRun(runTarget: Pick<AtlasTargetSummary, "id" | "baseUrl">, registry: TargetRegistry, apiKey: string | undefined): AtlasTargetConfig {
+export function targetForRun(
+  runTarget: Pick<AtlasTargetSummary, "id" | "baseUrl">,
+  registry: TargetRegistry,
+  apiKey: string | undefined
+): AtlasTargetConfig {
   const configured = registry.targets.get(runTarget.id);
   if (apiKey) {
     return {

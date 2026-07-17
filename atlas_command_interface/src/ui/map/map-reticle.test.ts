@@ -30,7 +30,12 @@ describe("map reticle helpers", () => {
 
   it("builds stable boxes around points and drags", () => {
     expect(squareAround({ x: 50, y: 80 }, 22)).toEqual({ x: 39, y: 69, width: 22, height: 22 });
-    expect(boxFromDrag({ start: { x: 120, y: 90 }, current: { x: 20, y: 140 } })).toEqual({ x: 20, y: 90, width: 100, height: 50 });
+    expect(boxFromDrag({ start: { x: 120, y: 90 }, current: { x: 20, y: 140 } })).toEqual({
+      x: 20,
+      y: 90,
+      width: 100,
+      height: 50
+    });
   });
 
   it("measures the distance from a point to a target box", () => {

@@ -27,7 +27,14 @@ const circle: UiGeometry = {
 };
 
 function geofeature(geometry: UiGeometry): EntityResource {
-  return { entity_id: "geo-1", entity_type: "geofeature", subtype: null, alias: "Zone Alpha", components: { geometry }, metadata };
+  return {
+    entity_id: "geo-1",
+    entity_type: "geofeature",
+    subtype: null,
+    alias: "Zone Alpha",
+    components: { geometry },
+    metadata
+  };
 }
 
 const noop = () => {};

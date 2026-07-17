@@ -97,7 +97,12 @@ export function hoverSelectionTargets(
   return candidates;
 }
 
-export function reticleForVisibleTarget(mapCanvas: HTMLElement | null, map: MlMap, sources: MapSources, target: MapReticleTarget): ReticleState | null {
+export function reticleForVisibleTarget(
+  mapCanvas: HTMLElement | null,
+  map: MlMap,
+  sources: MapSources,
+  target: MapReticleTarget
+): ReticleState | null {
   if (!mapCanvas) return null;
   const box = boxForMapReticleTarget(mapCanvas, map, sources, target);
   if (!box) return null;
@@ -106,7 +111,12 @@ export function reticleForVisibleTarget(mapCanvas: HTMLElement | null, map: MlMa
   return reticleForTarget({ id: target.id, entityId: target.type === "entity" ? target.id : undefined, box });
 }
 
-export function targetBoxForEntityId(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, entityId: string): TargetBox | null {
+export function targetBoxForEntityId(
+  mapCanvas: HTMLElement,
+  map: MlMap,
+  sources: MapSources,
+  entityId: string
+): TargetBox | null {
   return boxForEntityMarker(mapCanvas, entityId) ?? boxForFeature(map, featureForEntityId(sources, entityId));
 }
 
@@ -119,19 +129,28 @@ export function nextVisibleEntityInDirection(
 ): string | undefined {
   const viewport = mapCanvas.getBoundingClientRect();
   const size = { width: viewport.width, height: viewport.height };
-  const targets = [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].flatMap((feature) => {
-    const box = targetBoxForEntityId(mapCanvas, map, sources, feature.properties.entityId);
-    const center = box && visibleBoxCenter(box, size);
-    return center ? [{ entityId: feature.properties.entityId, center }] : [];
-  });
-  const origin = targets.find((target) => target.entityId === selectedEntityId)?.center ?? { x: size.width / 2, y: size.height / 2 };
+  const targets = [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].flatMap(
+    (feature) => {
+      const box = targetBoxForEntityId(mapCanvas, map, sources, feature.properties.entityId);
+      const center = box && visibleBoxCenter(box, size);
+      return center ? [{ entityId: feature.properties.entityId, center }] : [];
+    }
+  );
+  const origin = targets.find((target) => target.entityId === selectedEntityId)?.center ?? {
+    x: size.width / 2,
+    y: size.height / 2
+  };
 
   return targets
     .filter((target) => target.entityId !== selectedEntityId)
     .map((target) => ({ target, ...directionalDistances(origin, target.center, direction) }))
     .filter(({ forward }) => forward > 0)
-    .sort((a, b) => a.forward + a.cross * 2 - (b.forward + b.cross * 2) || a.cross - b.cross || a.target.entityId.localeCompare(b.target.entityId))[0]?.target
-    .entityId;
+    .sort(
+      (a, b) =>
+        a.forward + a.cross * 2 - (b.forward + b.cross * 2) ||
+        a.cross - b.cross ||
+        a.target.entityId.localeCompare(b.target.entityId)
+    )[0]?.target.entityId;
 }
 
 function cachedMarkerBoxes(cache: MarkerBoxCache, mapCanvas: HTMLElement, mapRect: DOMRect): HoverTarget[] {
@@ -151,7 +170,12 @@ function boxesEqual(a: TargetBox | null, b: TargetBox): boolean {
   return a?.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
-function boxForMapReticleTarget(mapCanvas: HTMLElement, map: MlMap, sources: MapSources, target: MapReticleTarget): TargetBox | null {
+function boxForMapReticleTarget(
+  mapCanvas: HTMLElement,
+  map: MlMap,
+  sources: MapSources,
+  target: MapReticleTarget
+): TargetBox | null {
   if (target.type === "entity") return targetBoxForEntityId(mapCanvas, map, sources, target.id);
   if (target.type === "point") {
     const point = map.project(target.coordinates);
@@ -187,7 +211,11 @@ function visibleBoxCenter(box: TargetBox, viewport: { width: number; height: num
   return { x: (left + right) / 2, y: (top + bottom) / 2 };
 }
 
-function directionalDistances(origin: ScreenPoint, target: ScreenPoint, direction: MapNavigationDirection): { forward: number; cross: number } {
+function directionalDistances(
+  origin: ScreenPoint,
+  target: ScreenPoint,
+  direction: MapNavigationDirection
+): { forward: number; cross: number } {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   return direction === "up"

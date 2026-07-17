@@ -18,7 +18,13 @@ const UI_SECURITY_HEADERS = {
   "X-Frame-Options": "DENY"
 };
 
-export function serveStatic(response: ServerResponse, packageRoot: string, requestPath: string, headOnly = false, allowSpaFallback = true): void {
+export function serveStatic(
+  response: ServerResponse,
+  packageRoot: string,
+  requestPath: string,
+  headOnly = false,
+  allowSpaFallback = true
+): void {
   const staticRoot = path.join(packageRoot, "dist/client");
   const target = safeStaticPath(staticRoot, requestPath);
   if (target === "invalid-encoding") {
@@ -31,7 +37,12 @@ export function serveStatic(response: ServerResponse, packageRoot: string, reque
     response.end(headOnly ? undefined : "Request path must stay inside the client root");
     return;
   }
-  const file = target && existsSync(target) && statSync(target).isFile() ? target : allowSpaFallback ? path.join(staticRoot, "index.html") : undefined;
+  const file =
+    target && existsSync(target) && statSync(target).isFile()
+      ? target
+      : allowSpaFallback
+        ? path.join(staticRoot, "index.html")
+        : undefined;
   if (!file) {
     response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
     response.end(headOnly ? undefined : "Static asset not found");
@@ -39,7 +50,9 @@ export function serveStatic(response: ServerResponse, packageRoot: string, reque
   }
   if (!existsSync(file)) {
     response.writeHead(404, { ...UI_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8" });
-    response.end(headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev.");
+    response.end(
+      headOnly ? undefined : "Atlas Simulations UI has not been built. Run npm run build or use npm run dev."
+    );
     return;
   }
   if (!isRealPathInsideRoot(staticRoot, file)) {
@@ -77,7 +90,10 @@ function isRealPathInsideRoot(staticRoot: string, file: string): boolean {
   return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function safeStaticPath(staticRoot: string, requestPath: string): string | "invalid-encoding" | "invalid-path" | undefined {
+function safeStaticPath(
+  staticRoot: string,
+  requestPath: string
+): string | "invalid-encoding" | "invalid-path" | undefined {
   const decoded = safeDecodeURIComponent(requestPath);
   if (decoded === undefined) return "invalid-encoding";
   if (decoded.split(/[\\/]+/).includes("..")) return "invalid-path";

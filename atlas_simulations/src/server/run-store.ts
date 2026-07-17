@@ -30,9 +30,23 @@ import {
   MAX_EVENT_HISTORY_BYTES_PER_RUN,
   MAX_RUNS
 } from "./run-store-limits.js";
-import { cleanupOrder, cleanupResourcesForRun, hasResource, sameResource, stopClientSync, withCleanupTimeout } from "./run-store-resources.js";
+import {
+  cleanupOrder,
+  cleanupResourcesForRun,
+  hasResource,
+  sameResource,
+  stopClientSync,
+  withCleanupTimeout
+} from "./run-store-resources.js";
 import { targetSummary, toSummary } from "./run-store-summary.js";
-import { cloneValue, type EventSubscriber, type RunRecord, type RunTarget, runId, timestamp } from "./run-store-types.js";
+import {
+  cloneValue,
+  type EventSubscriber,
+  type RunRecord,
+  type RunTarget,
+  runId,
+  timestamp
+} from "./run-store-types.js";
 import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
 
 export type { RunTarget } from "./run-store-types.js";
@@ -227,7 +241,8 @@ export class RunStore {
         log: (message, data) => {
           if (!run.settled) this.emit(run, { type: "log", message, data });
         },
-        assert: (name, passed, message) => (run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message)),
+        assert: (name, passed, message) =>
+          run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message),
         track: (resource) => {
           if (!run.settled && !run.cleanupStarted && !run.cleaned) this.track(run, resource);
         },
@@ -364,7 +379,8 @@ export class RunStore {
 
   private recover(record: CleanupLedgerRecord): void {
     const target = this.options.resolveTarget?.(cloneValue(record.target));
-    if (!target?.clientFactory) throw new Error(`Cleanup ledger run ${record.runId} has no recoverable deployed target`);
+    if (!target?.clientFactory)
+      throw new Error(`Cleanup ledger run ${record.runId} has no recoverable deployed target`);
     if (!target.deployed || target.id !== record.target.id || target.baseUrl !== record.target.baseUrl) {
       throw new Error(`Cleanup ledger run ${record.runId} no longer matches its deployed target`);
     }

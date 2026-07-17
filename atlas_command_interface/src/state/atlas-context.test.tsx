@@ -47,7 +47,10 @@ function GeometryActionProbe() {
     <div>
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
-      <button type="button" onClick={() => void atlas.updateGeometry("asset-1", { type: "Point", coordinates: [-74.2, 40.1] }, 1)}>
+      <button
+        type="button"
+        onClick={() => void atlas.updateGeometry("asset-1", { type: "Point", coordinates: [-74.2, 40.1] }, 1)}
+      >
         save
       </button>
     </div>

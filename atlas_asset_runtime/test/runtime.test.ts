@@ -1,8 +1,16 @@
-import type { EntityCheckInMinimalTask, EntityCheckInOptions, EntityCheckInResponse, TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type {
+  EntityCheckInMinimalTask,
+  EntityCheckInOptions,
+  EntityCheckInResponse,
+  TaskResource
+} from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AssetCheckInReport, type AtlasAssetClient, AtlasAssetRuntime } from "../src/index.js";
 
-type CheckIn = (id: string, options: EntityCheckInOptions<"minimal">) => Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
+type CheckIn = (
+  id: string,
+  options: EntityCheckInOptions<"minimal">
+) => Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -12,14 +20,22 @@ describe("AtlasAssetRuntime", () => {
   it("validates configuration while allowing telemetry-only runtimes", () => {
     const client = fakeClient();
     expect(() => new AtlasAssetRuntime(client, { entityId: "", handlers: {} })).toThrow("entityId");
-    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", handlers: { "": async () => {} } })).toThrow("handlers");
-    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 0 })).toThrow("checkInIntervalMs");
+    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", handlers: { "": async () => {} } })).toThrow(
+      "handlers"
+    );
+    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 0 })).toThrow(
+      "checkInIntervalMs"
+    );
     expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1" })).not.toThrow();
   });
 
   it("lazily handshakes and preserves the caller's check-in report", async () => {
     const client = fakeClient();
-    const report: AssetCheckInReport = { status: "ready", components: { custom_mode: "survey" }, telemetry: { latitude: 38 } };
+    const report: AssetCheckInReport = {
+      status: "ready",
+      components: { custom_mode: "survey" },
+      telemetry: { latitude: 38 }
+    };
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
 
     await runtime.checkIn(report);
@@ -77,7 +93,16 @@ describe("AtlasAssetRuntime", () => {
 
     await runtime.checkIn();
 
-    expect(order).toEqual(["ack:task-1", "run:task-1", "progress:task-1", "complete:task-1", "ack:task-2", "run:task-2", "progress:task-2", "complete:task-2"]);
+    expect(order).toEqual([
+      "ack:task-1",
+      "run:task-1",
+      "progress:task-1",
+      "complete:task-1",
+      "ack:task-2",
+      "run:task-2",
+      "progress:task-2",
+      "complete:task-2"
+    ]);
     expect(client.tasks.complete).toHaveBeenCalledWith("task-1", { result: { ok: true } });
     expect(client.tasks.setStatus).toHaveBeenCalledWith("task-1", "acknowledged", { progress: 50, message: "moving" });
   });
@@ -87,7 +112,12 @@ describe("AtlasAssetRuntime", () => {
       vi
         .fn<CheckIn>()
         .mockResolvedValue(
-          page([command("throws", "move"), command("unknown", "dance"), command("prototype", "toString"), { task_id: "plain", status: "pending" }])
+          page([
+            command("throws", "move"),
+            command("unknown", "dance"),
+            command("prototype", "toString"),
+            { task_id: "plain", status: "pending" }
+          ])
         )
     );
     const runtime = new AtlasAssetRuntime(client, {
@@ -177,7 +207,11 @@ describe("AtlasAssetRuntime", () => {
 
   it("starts once, retries background failures, and stops idempotently", async () => {
     vi.useFakeTimers();
-    const checkIn = vi.fn<CheckIn>().mockResolvedValueOnce(page([])).mockRejectedValueOnce(new Error("offline")).mockResolvedValue(page([]));
+    const checkIn = vi
+      .fn<CheckIn>()
+      .mockResolvedValueOnce(page([]))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(page([]));
     const client = fakeClient(checkIn);
     const onError = vi.fn();
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 1_000, onError });
@@ -257,7 +291,11 @@ function command(taskId: string, commandId: string): EntityCheckInMinimalTask {
   return { task_id: taskId, status: "pending", entity_id: "asset-1", command_id: commandId, parameters: { speed: 4 } };
 }
 
-function page(tasks: EntityCheckInMinimalTask[], hasMore = false, cursor?: string): EntityCheckInResponse<EntityCheckInMinimalTask> {
+function page(
+  tasks: EntityCheckInMinimalTask[],
+  hasMore = false,
+  cursor?: string
+): EntityCheckInResponse<EntityCheckInMinimalTask> {
   return {
     entity: {} as EntityCheckInResponse["entity"],
     tasks,
@@ -269,7 +307,13 @@ function page(tasks: EntityCheckInMinimalTask[], hasMore = false, cursor?: strin
 }
 
 function taskResource(id: string): TaskResource {
-  return { task_id: id, entity_id: "asset-1", status: "acknowledged", components: {}, metadata: { version: 1 } } as TaskResource;
+  return {
+    task_id: id,
+    entity_id: "asset-1",
+    status: "acknowledged",
+    components: {},
+    metadata: { version: 1 }
+  } as TaskResource;
 }
 
 function deferred<T>() {

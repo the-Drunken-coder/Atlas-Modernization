@@ -57,7 +57,10 @@ export function point(longitude: number, latitude: number): { type: "Point"; coo
   return { type: "Point", coordinates: [longitude, latitude] };
 }
 
-export async function withDeadline<T>(operation: () => Promise<T>, deadline: number): Promise<T | typeof DEADLINE_EXCEEDED> {
+export async function withDeadline<T>(
+  operation: () => Promise<T>,
+  deadline: number
+): Promise<T | typeof DEADLINE_EXCEEDED> {
   if (!Number.isFinite(deadline)) return await operation();
   const remaining = deadline - Date.now();
   if (remaining <= 0) return DEADLINE_EXCEEDED;
@@ -74,7 +77,11 @@ export async function withDeadline<T>(operation: () => Promise<T>, deadline: num
   }
 }
 
-export async function requireBeforeDeadline<T>(operation: () => Promise<T>, deadline: number, label: string): Promise<T> {
+export async function requireBeforeDeadline<T>(
+  operation: () => Promise<T>,
+  deadline: number,
+  label: string
+): Promise<T> {
   const result = await withDeadline(operation, deadline);
   if (deadlineExceeded(result)) throw new Error(`${label} read timed out`);
   return result;

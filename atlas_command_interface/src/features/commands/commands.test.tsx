@@ -31,7 +31,14 @@ const catalog = parseCommandCatalog({
 } as unknown);
 
 function asset(supported: string[]): EntityResource {
-  return { entity_id: "asset-1", entity_type: "asset", subtype: null, alias: "Rover", components: { task_catalog: { supported_tasks: supported } }, metadata };
+  return {
+    entity_id: "asset-1",
+    entity_type: "asset",
+    subtype: null,
+    alias: "Rover",
+    components: { task_catalog: { supported_tasks: supported } },
+    metadata
+  };
 }
 
 describe("CommandList", () => {

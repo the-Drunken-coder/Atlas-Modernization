@@ -29,7 +29,11 @@ export function protocolError(message: string, error_code: ErrorCode, status: nu
   return json({ success: false, message, error_code } satisfies ErrorResponse, status);
 }
 
-export function pageValues<T>(items: T[], limit: number, rawCursor: string | null): { items: T[]; hasMore: boolean; nextCursor?: string } {
+export function pageValues<T>(
+  items: T[],
+  limit: number,
+  rawCursor: string | null
+): { items: T[]; hasMore: boolean; nextCursor?: string } {
   if (limit <= 0) {
     return { items, hasMore: false };
   }

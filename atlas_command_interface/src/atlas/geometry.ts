@@ -13,7 +13,11 @@ export type UiGeometry = UiRawGeometry | UiCircleFeature;
 
 export type GeometryKind = UiGeometry["type"];
 
-export type VertexRef = { kind: "Point" } | { kind: "Circle" } | { kind: "LineString"; index: number } | { kind: "Polygon"; ring: number; index: number };
+export type VertexRef =
+  | { kind: "Point" }
+  | { kind: "Circle" }
+  | { kind: "LineString"; index: number }
+  | { kind: "Polygon"; ring: number; index: number };
 
 export type EditableVertex = {
   ref: VertexRef;
@@ -69,26 +73,41 @@ export function geometryVertices(geometry: UiGeometry): EditableVertex[] {
     return [{ ref: { kind: "Point" }, lng: geometry.coordinates[0], lat: geometry.coordinates[1] }];
   }
   if (geometry.type === "LineString") {
-    return geometry.coordinates.map((position, index) => ({ ref: { kind: "LineString", index }, lng: position[0], lat: position[1] }));
+    return geometry.coordinates.map((position, index) => ({
+      ref: { kind: "LineString", index },
+      lng: position[0],
+      lat: position[1]
+    }));
   }
   return geometry.coordinates.flatMap((ring, ringIndex) =>
-    openRing(ring).map((position, index) => ({ ref: { kind: "Polygon", ring: ringIndex, index }, lng: position[0], lat: position[1] }))
+    openRing(ring).map((position, index) => ({
+      ref: { kind: "Polygon", ring: ringIndex, index },
+      lng: position[0],
+      lat: position[1]
+    }))
   );
 }
 
 export function moveVertex(geometry: UiGeometry, ref: VertexRef, lng: number, lat: number): UiGeometry {
   if (isCircleFeature(geometry) && ref.kind === "Circle") {
-    return { ...geometry, geometry: { type: "Point", coordinates: movePosition(geometry.geometry.coordinates, lng, lat) } };
+    return {
+      ...geometry,
+      geometry: { type: "Point", coordinates: movePosition(geometry.geometry.coordinates, lng, lat) }
+    };
   }
   if (geometry.type === "Point" && ref.kind === "Point") {
     return { type: "Point", coordinates: movePosition(geometry.coordinates, lng, lat) };
   }
   if (geometry.type === "LineString" && ref.kind === "LineString") {
-    const coordinates = geometry.coordinates.map((position, index) => (index === ref.index ? movePosition(position, lng, lat) : position));
+    const coordinates = geometry.coordinates.map((position, index) =>
+      index === ref.index ? movePosition(position, lng, lat) : position
+    );
     return { type: "LineString", coordinates };
   }
   if (geometry.type === "Polygon" && ref.kind === "Polygon") {
-    const coordinates = geometry.coordinates.map((ring, ringIndex) => (ringIndex === ref.ring ? moveRingVertex(ring, ref.index, lng, lat) : ring));
+    const coordinates = geometry.coordinates.map((ring, ringIndex) =>
+      ringIndex === ref.ring ? moveRingVertex(ring, ref.index, lng, lat) : ring
+    );
     return { type: "Polygon", coordinates };
   }
   return geometry;
@@ -152,13 +171,17 @@ export function validateGeometry(geometry: UiGeometry): GeometryValidity {
       : { valid: false, reason: "Circle radius must be greater than zero" };
   }
   if (geometry.type === "Point") {
-    return isFinitePosition(geometry.coordinates) ? { valid: true } : { valid: false, reason: "Point needs one valid coordinate" };
+    return isFinitePosition(geometry.coordinates)
+      ? { valid: true }
+      : { valid: false, reason: "Point needs one valid coordinate" };
   }
   if (geometry.type === "LineString") {
     if (geometry.coordinates.length < 2) {
       return { valid: false, reason: "Line needs at least two points" };
     }
-    return geometry.coordinates.every(isFinitePosition) ? { valid: true } : { valid: false, reason: "Line contains an invalid coordinate" };
+    return geometry.coordinates.every(isFinitePosition)
+      ? { valid: true }
+      : { valid: false, reason: "Line contains an invalid coordinate" };
   }
   if (geometry.coordinates.length === 0) {
     return { valid: false, reason: "Polygon needs a closed ring of at least four coordinates" };
@@ -200,7 +223,9 @@ export function formatMeters(value: number): string {
 
 function moveRingVertex(ring: Position[], index: number, lng: number, lat: number): Position[] {
   const open = openRing(ring);
-  const updated = open.map((position, position_index) => (position_index === index ? movePosition(position, lng, lat) : position));
+  const updated = open.map((position, position_index) =>
+    position_index === index ? movePosition(position, lng, lat) : position
+  );
   return closeRing(updated);
 }
 
@@ -234,7 +259,11 @@ function geometryFromRawGeoJSON(value: unknown): UiRawGeometry | undefined {
   if (value.type === "Point" && onlyKnownKeys(value, ["coordinates", "type"]) && isPosition(value.coordinates)) {
     return { type: "Point", coordinates: toPosition(value.coordinates) };
   }
-  if (value.type === "LineString" && onlyKnownKeys(value, ["coordinates", "type"]) && isPositionArray(value.coordinates)) {
+  if (
+    value.type === "LineString" &&
+    onlyKnownKeys(value, ["coordinates", "type"]) &&
+    isPositionArray(value.coordinates)
+  ) {
     return { type: "LineString", coordinates: value.coordinates.map(toPosition) };
   }
   if (
@@ -255,7 +284,8 @@ function geometryFromCircleFeature(value: unknown): UiCircleFeature | undefined 
   if (geometry?.type !== "Point") return undefined;
   const properties = value.properties;
   if (!isRecord(properties) || !onlyKnownKeys(properties, ["radius_m", "shape"])) return undefined;
-  if (properties.shape !== "circle" || !isFiniteNumber(properties.radius_m) || properties.radius_m <= 0) return undefined;
+  if (properties.shape !== "circle" || !isFiniteNumber(properties.radius_m) || properties.radius_m <= 0)
+    return undefined;
   return { type: "Feature", geometry, properties: { shape: "circle", radius_m: properties.radius_m } };
 }
 
