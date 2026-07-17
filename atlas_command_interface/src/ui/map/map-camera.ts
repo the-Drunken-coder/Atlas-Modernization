@@ -92,7 +92,9 @@ export function geometryForTarget(sources: MapSources, target: MapTarget): UiRaw
 }
 
 export function featureForEntityId(sources: MapSources, entityId: string): MapFeature | undefined {
-  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].find((feature) => feature.properties.entityId === entityId);
+  return [...sources.assets.features, ...sources.tracks.features, ...sources.geofeatures.features].find(
+    (feature) => feature.properties.entityId === entityId
+  );
 }
 
 export function boundsForGeometry(geometry: UiRawGeometry): [[number, number], [number, number]] | null {

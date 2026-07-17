@@ -1,4 +1,11 @@
-import { AtlasClient, type EntityResource, type FeedEvent, type ObjectResource, type ResourceType, type TaskResource } from "../../src";
+import {
+  AtlasClient,
+  type EntityResource,
+  type FeedEvent,
+  type ObjectResource,
+  type ResourceType,
+  type TaskResource
+} from "../../src";
 import type { FetchLike } from "../../src/types.js";
 import { FakeCore } from "./fake-core.js";
 
@@ -45,7 +52,9 @@ function writerFetch(core: FakeCore): FetchLike {
       return response;
     }
     if (route.kind === "delete") {
-      const event = core.deletions.slice(deletionCount).find((value) => value.resource_type === route.resource_type && value.id === route.id);
+      const event = core.deletions
+        .slice(deletionCount)
+        .find((value) => value.resource_type === route.resource_type && value.id === route.id);
       if (event) {
         core.emit(event, { record: false });
       }
@@ -59,7 +68,9 @@ function writerFetch(core: FakeCore): FetchLike {
   };
 }
 
-type WriteRoute = { kind: "upsert"; event: "create" | "update"; resource_type: ResourceType } | { kind: "delete"; resource_type: ResourceType; id: string };
+type WriteRoute =
+  | { kind: "upsert"; event: "create" | "update"; resource_type: ResourceType }
+  | { kind: "delete"; resource_type: ResourceType; id: string };
 
 function writeRoute(url: RequestInfo | URL, init?: RequestInit): WriteRoute | undefined {
   const parsed = new URL(String(url));
@@ -86,7 +97,10 @@ function writeRoute(url: RequestInfo | URL, init?: RequestInit): WriteRoute | un
   return undefined;
 }
 
-async function readResource(response: Response, type: ResourceType): Promise<EntityResource | TaskResource | ObjectResource | undefined> {
+async function readResource(
+  response: Response,
+  type: ResourceType
+): Promise<EntityResource | TaskResource | ObjectResource | undefined> {
   try {
     const value = (await response.json()) as unknown;
     if (type === "entity" && isEntityResource(value)) return value;
@@ -98,7 +112,11 @@ async function readResource(response: Response, type: ResourceType): Promise<Ent
   }
 }
 
-function upsertEvent(event: "create" | "update", type: ResourceType, resource: EntityResource | TaskResource | ObjectResource): FeedEvent {
+function upsertEvent(
+  event: "create" | "update",
+  type: ResourceType,
+  resource: EntityResource | TaskResource | ObjectResource
+): FeedEvent {
   switch (type) {
     case "entity": {
       const value = resource as EntityResource;

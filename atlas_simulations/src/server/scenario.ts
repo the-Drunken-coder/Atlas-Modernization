@@ -1,4 +1,10 @@
-import type { AssertionResult, CreatedResource, JSONValue, ScenarioDescriptor, ScenarioInputField } from "../shared/types.js";
+import type {
+  AssertionResult,
+  CreatedResource,
+  JSONValue,
+  ScenarioDescriptor,
+  ScenarioInputField
+} from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "./atlas.js";
 
 type NumberInputField = Extract<ScenarioInputField, { type: "number" }>;
@@ -289,7 +295,10 @@ function assertGeneratedCommandTask(resource: CreatedResource): void {
   }
 }
 
-function parseFields(fields: readonly ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
+function parseFields(
+  fields: readonly ScenarioInputField[],
+  raw: Record<string, unknown>
+): Record<string, string | number | boolean> {
   const values = Object.create(null) as Record<string, string | number | boolean>;
   for (const field of fields) {
     const value = Object.hasOwn(raw, field.key) ? raw[field.key] : field.defaultValue;

@@ -1,7 +1,14 @@
 import { isNotFoundError } from "../server/atlas.js";
 import type { Scenario, ScenarioContext } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, deadlineExceeded, isoNow, point, withDeadline } from "./helpers.js";
+import {
+  boundedNumberInput,
+  boundedPositiveIntegerInput,
+  deadlineExceeded,
+  isoNow,
+  point,
+  withDeadline
+} from "./helpers.js";
 
 const SYNC_POLL_INTERVAL_MS = 500;
 const MIN_SETTLE_MS = SYNC_POLL_INTERVAL_MS * 3;
@@ -12,8 +19,24 @@ const multiClientSync: Scenario = {
   summary: "Runs multiple SDK sync clients and checks whether they converge after writes.",
   acceptsJson: false,
   inputFields: [
-    { key: "clientCount", label: "Client count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(8), step: jsonNumber(1) },
-    { key: "writes", label: "Writes", type: "number", defaultValue: jsonNumber(3), min: jsonNumber(1), max: jsonNumber(20), step: jsonNumber(1) },
+    {
+      key: "clientCount",
+      label: "Client count",
+      type: "number",
+      defaultValue: jsonNumber(2),
+      min: jsonNumber(1),
+      max: jsonNumber(8),
+      step: jsonNumber(1)
+    },
+    {
+      key: "writes",
+      label: "Writes",
+      type: "number",
+      defaultValue: jsonNumber(3),
+      min: jsonNumber(1),
+      max: jsonNumber(20),
+      step: jsonNumber(1)
+    },
     {
       key: "settleMs",
       label: "Settle ms",
@@ -86,7 +109,11 @@ const multiClientSync: Scenario = {
           const settleDeadline = Date.now() + settleMs;
           const sync = await waitForSyncedResources(ctx, client, seenVersions, ids, writerMaxVersion, settleDeadline);
           const readerSnapshot = snapshotSeenVersions(seenVersions, ids);
-          ctx.assert(`Client ${readerIndex + 1} saw writer resources`, sync.seen === ids.length, `${sync.seen}/${ids.length} resources visible via sync`);
+          ctx.assert(
+            `Client ${readerIndex + 1} saw writer resources`,
+            sync.seen === ids.length,
+            `${sync.seen}/${ids.length} resources visible via sync`
+          );
           ctx.assert(
             `Client ${readerIndex + 1} matched writer versions`,
             snapshotsMatch(readerSnapshot, writerSnapshot),
@@ -94,10 +121,16 @@ const multiClientSync: Scenario = {
           );
           const status = client.sync.status();
           ctx.assert(`Client ${readerIndex + 1} sync running`, status.running, status.running ? "running" : "stopped");
-          ctx.assert(`Client ${readerIndex + 1} sync healthy`, status.healthy, status.healthy ? "healthy" : "degraded or recovering");
+          ctx.assert(
+            `Client ${readerIndex + 1} sync healthy`,
+            status.healthy,
+            status.healthy ? "healthy" : "degraded or recovering"
+          );
         })
       );
-      const rejectedVerification = verificationResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      const rejectedVerification = verificationResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected"
+      );
       if (rejectedVerification) throw rejectedVerification.reason;
     } finally {
       for (const reader of readers) {
@@ -125,7 +158,11 @@ async function waitForSyncedResources(
   return state;
 }
 
-async function snapshotVersions(reader: ScenarioContext["client"], ids: string[], deadline = Number.POSITIVE_INFINITY): Promise<Array<[string, number]>> {
+async function snapshotVersions(
+  reader: ScenarioContext["client"],
+  ids: string[],
+  deadline = Number.POSITIVE_INFINITY
+): Promise<Array<[string, number]>> {
   const snapshot = await Promise.all(ids.map((id) => readVersion(reader, id, deadline)));
   return snapshot.flatMap((version) => (version ? [version] : []));
 }
@@ -145,7 +182,11 @@ function maxVersion(snapshot: Array<[string, number]>): number {
   return Math.max(0, ...snapshot.map(([, version]) => version));
 }
 
-function syncState(reader: ScenarioContext["client"], seenVersions: Map<string, number>, ids: string[]): { seen: number; lastVersion: number } {
+function syncState(
+  reader: ScenarioContext["client"],
+  seenVersions: Map<string, number>,
+  ids: string[]
+): { seen: number; lastVersion: number } {
   const status = reader.sync.status();
   return {
     seen: ids.filter((id) => seenVersions.has(id)).length,
@@ -153,7 +194,11 @@ function syncState(reader: ScenarioContext["client"], seenVersions: Map<string, 
   };
 }
 
-async function readVersion(reader: ScenarioContext["client"], id: string, deadline: number): Promise<[string, number] | undefined> {
+async function readVersion(
+  reader: ScenarioContext["client"],
+  id: string,
+  deadline: number
+): Promise<[string, number] | undefined> {
   try {
     const entity = await withDeadline(() => reader.entities.get(id), deadline);
     if (deadlineExceeded(entity)) return undefined;

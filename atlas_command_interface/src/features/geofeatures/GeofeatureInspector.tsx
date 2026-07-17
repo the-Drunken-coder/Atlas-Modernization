@@ -86,7 +86,11 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
       </Section>
 
       <Section title="Classification">
-        {classification ? <ClassificationPill value={classification} /> : <span style={{ color: "var(--text-3)" }}>Unclassified</span>}
+        {classification ? (
+          <ClassificationPill value={classification} />
+        ) : (
+          <span style={{ color: "var(--text-3)" }}>Unclassified</span>
+        )}
       </Section>
 
       <JsonDrawer title="Raw entity JSON" value={entity} />
@@ -94,7 +98,13 @@ export function GeofeatureInspector(props: GeofeatureInspectorProps) {
   );
 }
 
-function CircleEditor({ geometry, onChange }: { geometry: Extract<UiGeometry, { type: "Feature" }>; onChange: (geometry: UiGeometry) => void }) {
+function CircleEditor({
+  geometry,
+  onChange
+}: {
+  geometry: Extract<UiGeometry, { type: "Feature" }>;
+  onChange: (geometry: UiGeometry) => void;
+}) {
   return (
     <div style={{ marginTop: 8 }}>
       <TextField
@@ -145,7 +155,9 @@ function VertexEditor({
         );
       })}
       <p className="field__hint">
-        {isCircle ? "Drag the center point on the map to move the circle." : "Drag vertices on the map to reshape. Click a mid-point handle to add one."}
+        {isCircle
+          ? "Drag the center point on the map to move the circle."
+          : "Drag vertices on the map to reshape. Click a mid-point handle to add one."}
       </p>
     </div>
   );

@@ -47,7 +47,11 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
 
   return (
     <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 55 }} onClick={onClose} onContextMenu={(event) => event.preventDefault()} />
+      <div
+        style={{ position: "fixed", inset: 0, zIndex: 55 }}
+        onClick={onClose}
+        onContextMenu={(event) => event.preventDefault()}
+      />
       <div ref={menuRef} className="context-menu" style={{ left: position.x, top: position.y }} role="menu">
         {header ? <div className="context-menu__header">{header}</div> : null}
         {items.length === 0 ? (

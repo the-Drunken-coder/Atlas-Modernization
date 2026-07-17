@@ -20,7 +20,10 @@ export function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined):
   const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
   overlay?.setData(
     editing
-      ? ({ type: "FeatureCollection", features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }] } as never)
+      ? ({
+          type: "FeatureCollection",
+          features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
+        } as never)
       : (emptyFeatureCollection() as never)
   );
 }

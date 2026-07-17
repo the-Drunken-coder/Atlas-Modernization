@@ -18,7 +18,10 @@ const MAX_RETRY_DELAY_MS = 10_000;
 
 export type AtlasAssetClient = Pick<AtlasClient, "handshake"> & {
   entities: {
-    checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
+    checkIn(
+      id: string,
+      options: EntityCheckInOptions<"minimal">
+    ): Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
   };
   tasks: {
     acknowledge(id: string, options?: TaskLifecycleOptions): Promise<TaskResource>;
@@ -71,11 +74,16 @@ export class AtlasAssetRuntime {
     const entityId = options.entityId.trim();
     if (!entityId) throw new TypeError("entityId must not be empty");
     const entries = Object.entries(options.handlers ?? {});
-    if (entries.some(([command, handler]) => !command.trim() || command !== command.trim() || typeof handler !== "function")) {
+    if (
+      entries.some(
+        ([command, handler]) => !command.trim() || command !== command.trim() || typeof handler !== "function"
+      )
+    ) {
       throw new TypeError("handlers must map non-empty command IDs to functions");
     }
     const interval = options.checkInIntervalMs ?? DEFAULT_CHECK_IN_INTERVAL_MS;
-    if (!Number.isFinite(interval) || interval <= 0) throw new TypeError("checkInIntervalMs must be a positive finite number");
+    if (!Number.isFinite(interval) || interval <= 0)
+      throw new TypeError("checkInIntervalMs must be a positive finite number");
 
     this.client = client;
     this.entityId = entityId;
@@ -132,7 +140,11 @@ export class AtlasAssetRuntime {
     this.state = "stopping";
     this.controller?.abort();
     this.detachExternalSignal();
-    await Promise.allSettled([this.startPromise, this.loopPromise, this.cycleTail].filter((promise): promise is Promise<void> => promise !== undefined));
+    await Promise.allSettled(
+      [this.startPromise, this.loopPromise, this.cycleTail].filter(
+        (promise): promise is Promise<void> => promise !== undefined
+      )
+    );
     this.loopPromise = undefined;
     this.controller = undefined;
     this.handshakeComplete = false;
@@ -195,7 +207,10 @@ export class AtlasAssetRuntime {
     }
   }
 
-  private async runCheckIn(providedReport: AssetCheckInReport | undefined, signal: AbortSignal | undefined): Promise<void> {
+  private async runCheckIn(
+    providedReport: AssetCheckInReport | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<void> {
     signal?.throwIfAborted();
     await this.ensureHandshake();
     signal?.throwIfAborted();
@@ -233,7 +248,9 @@ export class AtlasAssetRuntime {
     const handler = this.handlers.get(task.command_id);
     if (!handler) {
       signal?.throwIfAborted();
-      await this.client.tasks.fail(task.task_id, { error: { code: "unsupported_command", command_id: task.command_id } });
+      await this.client.tasks.fail(task.task_id, {
+        error: { code: "unsupported_command", command_id: task.command_id }
+      });
       return;
     }
 
@@ -245,7 +262,8 @@ export class AtlasAssetRuntime {
         task,
         signal: signal ?? neverAbortedSignal(),
         reportProgress: async (progress, message) => {
-          if (!Number.isFinite(progress) || progress < 0 || progress > 100) throw new RangeError("progress must be between 0 and 100");
+          if (!Number.isFinite(progress) || progress < 0 || progress > 100)
+            throw new RangeError("progress must be between 0 and 100");
           signal?.throwIfAborted();
           await this.client.tasks.setStatus(task.task_id, "acknowledged", {
             progress,

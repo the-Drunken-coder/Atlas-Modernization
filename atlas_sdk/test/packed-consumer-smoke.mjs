@@ -209,8 +209,12 @@ try {
   const tarball = join(tmpdirPath, packedTarballName(packOutput));
   const projectDir = join(tmpdirPath, "project");
   mkdirSync(projectDir);
-  runStep(`Failed to initialize smoke project at ${projectDir}`, () => run(npmCommand, ["init", "-y", "--silent"], { cwd: projectDir }));
-  runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () => run(npmCommand, ["install", tarball, "--silent"], { cwd: projectDir }));
+  runStep(`Failed to initialize smoke project at ${projectDir}`, () =>
+    run(npmCommand, ["init", "-y", "--silent"], { cwd: projectDir })
+  );
+  runStep(`Failed to install SDK tarball ${tarball} into ${projectDir}`, () =>
+    run(npmCommand, ["install", tarball, "--silent"], { cwd: projectDir })
+  );
   const installedPackageRoot = join(projectDir, "node_modules/@the-drunken-coder/atlas-sdk");
   if (existsSync(join(installedPackageRoot, "dist/stale-package-output.txt"))) {
     throw new Error("prepack included stale dist output in the installed package");
@@ -221,7 +225,19 @@ try {
     }
   }
   const installedPackageJSON = JSON.parse(readFileSync(join(installedPackageRoot, "package.json"), "utf8"));
-  for (const field of ["name", "version", "description", "author", "license", "repository", "homepage", "bugs", "publishConfig", "exports", "bin"]) {
+  for (const field of [
+    "name",
+    "version",
+    "description",
+    "author",
+    "license",
+    "repository",
+    "homepage",
+    "bugs",
+    "publishConfig",
+    "exports",
+    "bin"
+  ]) {
     if (installedPackageJSON[field] === undefined) {
       throw new Error(`installed package.json is missing ${field}`);
     }
@@ -248,7 +264,11 @@ try {
 
   const adminImportOutput = runCombined(
     "node",
-    ["--input-type=module", "-e", "import('@the-drunken-coder/atlas-sdk/admin').then((m) => console.log(typeof m.AtlasAdminClient))"],
+    [
+      "--input-type=module",
+      "-e",
+      "import('@the-drunken-coder/atlas-sdk/admin').then((m) => console.log(typeof m.AtlasAdminClient))"
+    ],
     {
       cwd: projectDir
     }
@@ -317,7 +337,11 @@ void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
       process.stderr.write(output);
       throw new Error("installed atlas binary did not run tasks create successfully");
     }
-    if (!output.includes('"status":"pending"') || !output.includes('"entity_id":null') || !output.includes('"components":{}')) {
+    if (
+      !output.includes('"status":"pending"') ||
+      !output.includes('"entity_id":null') ||
+      !output.includes('"components":{}')
+    ) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not print Core task create defaults");
     }

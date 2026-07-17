@@ -1,6 +1,12 @@
 import { ATLAS_PROTOCOL_REVISION, type FeedEvent } from "./protocol.js";
 import { subscriptionMessage } from "./subscriptions.js";
-import type { AtlasSubscription, WebSocketCtor, WebSocketEventType, WebSocketLike, WebSocketListener } from "./types.js";
+import type {
+  AtlasSubscription,
+  WebSocketCtor,
+  WebSocketEventType,
+  WebSocketLike,
+  WebSocketListener
+} from "./types.js";
 import { isInboundFeedEvent, isInboundFeedHandshake } from "./validation.js";
 
 const WS_OPEN = 1;
@@ -36,7 +42,12 @@ export class FeedConnectionManager {
   private socket: WebSocketLike | undefined;
   private connection: ActiveFeedConnection | undefined;
 
-  constructor(options: { baseUrl: string; apiKey?: string; WebSocketImpl?: WebSocketCtor; feedHandshakeTimeoutMs: number }) {
+  constructor(options: {
+    baseUrl: string;
+    apiKey?: string;
+    WebSocketImpl?: WebSocketCtor;
+    feedHandshakeTimeoutMs: number;
+  }) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.apiKey = options.apiKey;
     this.WebSocketImpl = options.WebSocketImpl;
@@ -98,7 +109,10 @@ export class FeedConnectionManager {
         clearTimeout(timer);
         fn();
       };
-      const timer = setTimeout(() => finish(() => reject(new Error("feed protocol hello timed out"))), this.feedHandshakeTimeoutMs);
+      const timer = setTimeout(
+        () => finish(() => reject(new Error("feed protocol hello timed out"))),
+        this.feedHandshakeTimeoutMs
+      );
       const onMessage: WebSocketListener = (message) => {
         if (settled) {
           return;
@@ -136,7 +150,10 @@ export class FeedConnectionManager {
           clearTimeout(timer);
           fn();
         };
-        const timer = setTimeout(() => finish(() => reject(new Error("feed websocket open timed out"))), this.feedHandshakeTimeoutMs);
+        const timer = setTimeout(
+          () => finish(() => reject(new Error("feed websocket open timed out"))),
+          this.feedHandshakeTimeoutMs
+        );
         const onOpen = () => finish(resolve);
         const onClose = () => finish(() => reject(new Error("feed websocket closed before opening")));
         const onError = () => finish(() => reject(new Error("feed websocket failed to open")));

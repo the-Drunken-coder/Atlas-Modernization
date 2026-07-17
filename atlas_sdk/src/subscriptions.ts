@@ -1,9 +1,18 @@
 import type { FeedEvent, FeedSubscribeMessage, FeedUnsubscribeMessage, ResourceType } from "./protocol.js";
-import type { AtlasLocalDeleteWatchEvent, AtlasSubscription, AtlasWatchEvent, ResourceOf, ResourceValue } from "./types.js";
+import type {
+  AtlasLocalDeleteWatchEvent,
+  AtlasSubscription,
+  AtlasWatchEvent,
+  ResourceOf,
+  ResourceValue
+} from "./types.js";
 
 const RESOURCE_TYPES = new Set<string>(["entity", "task", "object"]);
 
-export function subscriptionMessage(action: "subscribe" | "unsubscribe", filter: AtlasSubscription): FeedSubscribeMessage | FeedUnsubscribeMessage {
+export function subscriptionMessage(
+  action: "subscribe" | "unsubscribe",
+  filter: AtlasSubscription
+): FeedSubscribeMessage | FeedUnsubscribeMessage {
   return { action, ...filter } as FeedSubscribeMessage | FeedUnsubscribeMessage;
 }
 
@@ -50,7 +59,11 @@ export function covers(covering: AtlasSubscription, wanted: AtlasSubscription): 
   return subscriptionKey(covering) === subscriptionKey(wanted);
 }
 
-export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent, previous?: ResourceValue): boolean {
+export function matchesSubscription(
+  filter: AtlasSubscription,
+  event: AtlasWatchEvent,
+  previous?: ResourceValue
+): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -132,13 +145,19 @@ export function resourceUpsertEvent<TType extends ResourceType>(
   }
 }
 
-export function assertResourceMatchesType<TType extends ResourceType>(type: TType, resource: ResourceValue): asserts resource is ResourceOf<TType> {
+export function assertResourceMatchesType<TType extends ResourceType>(
+  type: TType,
+  resource: ResourceValue
+): asserts resource is ResourceOf<TType> {
   if (!resourceMatchesType(type, resource)) {
     throw new TypeError(`Atlas ${resourceTypeName(resource)} resource cannot be used as ${type}`);
   }
 }
 
-export function resourceMatchesType<TType extends ResourceType>(type: TType, resource: ResourceValue): resource is ResourceOf<TType> {
+export function resourceMatchesType<TType extends ResourceType>(
+  type: TType,
+  resource: ResourceValue
+): resource is ResourceOf<TType> {
   switch (type) {
     case "entity":
       return "entity_id" in resource && "entity_type" in resource;
@@ -157,7 +176,10 @@ function isNonEmptyString(value: string | undefined): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function taskEventEntityIDs(event: Extract<AtlasWatchEvent, { resource_type: "task" }>, previous?: ResourceValue): Array<string | null | undefined> {
+function taskEventEntityIDs(
+  event: Extract<AtlasWatchEvent, { resource_type: "task" }>,
+  previous?: ResourceValue
+): Array<string | null | undefined> {
   const ids: Array<string | null | undefined> = [];
   if (event.event === "delete") {
     ids.push(event.entity_id);

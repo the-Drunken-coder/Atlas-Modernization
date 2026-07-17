@@ -93,10 +93,19 @@ describe("AtlasClient HTTP", () => {
   it("rejects non-positive request timeouts", () => {
     const core = new FakeCore();
 
-    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow("positive finite");
-    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: -1 })).toThrow("positive finite");
-    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.NaN })).toThrow("positive finite");
-    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.POSITIVE_INFINITY })).toThrow("positive finite");
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow(
+      "positive finite"
+    );
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: -1 })).toThrow(
+      "positive finite"
+    );
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.NaN })
+    ).toThrow("positive finite");
+    expect(
+      () =>
+        new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.POSITIVE_INFINITY })
+    ).toThrow("positive finite");
   });
 
   it("passes browser credentials through resource requests without adding admin methods", async () => {
@@ -136,18 +145,26 @@ describe("AtlasClient HTTP", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ user: { username: "admin", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ user: { username: "admin", role: "admin" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
     };
     const admin = new AtlasAdminClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, credentials: "include" });
 
     await admin.auth.login({ username: "admin", password: "password" });
 
-    expect(calls[0]).toMatchObject({ url: "http://atlas.test/admin/auth/login", init: { method: "POST", credentials: "include" } });
+    expect(calls[0]).toMatchObject({
+      url: "http://atlas.test/admin/auth/login",
+      init: { method: "POST", credentials: "include" }
+    });
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ username: "admin", password: "password" });
   });
 
   it("accepts plain records and rejects non-plain records in task create requests", async () => {
-    const nullPrototypeRequest = Object.assign(Object.create(null) as Record<string, unknown>, { task_id: "task-null-proto" });
+    const nullPrototypeRequest = Object.assign(Object.create(null) as Record<string, unknown>, {
+      task_id: "task-null-proto"
+    });
     const crossRealmRequest = await crossRealmTaskCreateRequest();
 
     expect(isTaskCreateRequest({ task_id: "task-plain", components: {}, extra: {} })).toBe(true);
@@ -158,9 +175,15 @@ describe("AtlasClient HTTP", () => {
   });
 
   it("rejects malformed generated entity create validator geometry and timestamps", () => {
-    expect(isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", published_at: "2026-06-18T12:00:00Z" })).toBe(true);
-    expect(isEntityCreateRequest({ entity_id: "asset-date-only", entity_type: "asset", published_at: "2026-06-18" })).toBe(false);
-    expect(isEntityCreateRequest({ entity_id: "asset-bad-date", entity_type: "asset", published_at: "2026-02-30T12:00:00Z" })).toBe(false);
+    expect(
+      isEntityCreateRequest({ entity_id: "asset-valid", entity_type: "asset", published_at: "2026-06-18T12:00:00Z" })
+    ).toBe(true);
+    expect(
+      isEntityCreateRequest({ entity_id: "asset-date-only", entity_type: "asset", published_at: "2026-06-18" })
+    ).toBe(false);
+    expect(
+      isEntityCreateRequest({ entity_id: "asset-bad-date", entity_type: "asset", published_at: "2026-02-30T12:00:00Z" })
+    ).toBe(false);
     expect(
       isEntityCreateRequest({
         entity_id: "asset-bad-point",
@@ -229,17 +252,34 @@ describe("AtlasClient HTTP", () => {
     expect(isEntityUpdateRequest({ alias: null })).toBe(true);
     expect(isEntityUpdateRequest({})).toBe(false);
 
-    expect(isTaskCreateRequest({ task_id: "task-valid", entity_id: null, components: { parameters: { latitude: 38, longitude: -77 } } })).toBe(true);
-    expect(isTaskCreateRequest({ entity_id: "asset-command", components: { command: { type: "goto" }, parameters: { latitude: 38, longitude: -77 } } })).toBe(
-      true
-    );
+    expect(
+      isTaskCreateRequest({
+        task_id: "task-valid",
+        entity_id: null,
+        components: { parameters: { latitude: 38, longitude: -77 } }
+      })
+    ).toBe(true);
+    expect(
+      isTaskCreateRequest({
+        entity_id: "asset-command",
+        components: { command: { type: "goto" }, parameters: { latitude: 38, longitude: -77 } }
+      })
+    ).toBe(true);
     expect(isTaskCreateRequest({ task_id: "task-invalid", components: { parameters: { latitude: 91 } } })).toBe(false);
-    expect(isTaskCreateRequest({ task_id: "task-command-invalid", entity_id: "asset-command", components: { command: { type: "goto" } } })).toBe(false);
+    expect(
+      isTaskCreateRequest({
+        task_id: "task-command-invalid",
+        entity_id: "asset-command",
+        components: { command: { type: "goto" } }
+      })
+    ).toBe(false);
     expect(isTaskCreateRequest({ components: { command: { type: "goto" } } })).toBe(false);
     expect(isTaskUpdateRequest({ remove_extra_keys: ["priority"] })).toBe(true);
     expect(isTaskUpdateRequest({})).toBe(false);
 
-    expect(isObjectCreateRequest({ object_id: "object-valid", referenced_by: [{ entity_id: "asset-valid" }] })).toBe(true);
+    expect(isObjectCreateRequest({ object_id: "object-valid", referenced_by: [{ entity_id: "asset-valid" }] })).toBe(
+      true
+    );
     expect(isObjectCreateRequest({ object_id: "object-invalid", referenced_by: [{}] })).toBe(false);
     expect(isObjectUpdateRequest({ usage_hints: ["thumbnail"] })).toBe(true);
     expect(isObjectUpdateRequest({})).toBe(false);
@@ -257,8 +297,12 @@ describe("AtlasClient HTTP", () => {
     expect(entityResponse.status).toBe(200);
     await expect(entityResponse.json()).resolves.toMatchObject({ entity_id: "asset-method" });
 
-    await expect(core.fetch("http://atlas.test/protocol/revision", { method: "POST" }).then((response) => response.status)).resolves.toBe(404);
-    await expect(core.fetch("http://atlas.test/entities/asset-method", { method: "POST" }).then((response) => response.status)).resolves.toBe(404);
+    await expect(
+      core.fetch("http://atlas.test/protocol/revision", { method: "POST" }).then((response) => response.status)
+    ).resolves.toBe(404);
+    await expect(
+      core.fetch("http://atlas.test/entities/asset-method", { method: "POST" }).then((response) => response.status)
+    ).resolves.toBe(404);
   });
 
   it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
@@ -267,7 +311,9 @@ describe("AtlasClient HTTP", () => {
     await client.sync.start();
     const created = await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
     await expect(client.entities.get("asset-1")).resolves.toEqual(created);
-    await expect(client.entities.update("asset-1", { alias: "new" }, { ifMatchVersion: 0 })).rejects.toBeInstanceOf(ConflictError);
+    await expect(client.entities.update("asset-1", { alias: "new" }, { ifMatchVersion: 0 })).rejects.toBeInstanceOf(
+      ConflictError
+    );
   });
 
   it("keeps fresh read and write return mutation from changing cached resources", async () => {
@@ -346,11 +392,19 @@ describe("AtlasClient HTTP", () => {
     expect(acknowledged.status).toBe("acknowledged");
     expect(completed).toMatchObject({ status: "completed", extra: { result: { ok: true } } });
     expect(failed).toMatchObject({ status: "failed", extra: { error: { code: "boom" } } });
-    expect(status).toMatchObject({ status: "acknowledged", components: { progress: { percent: 100 }, status_message: "moving" } });
+    expect(status).toMatchObject({
+      status: "acknowledged",
+      components: { progress: { percent: 100 }, status_message: "moving" }
+    });
     expect(cancelled.status).toBe("cancelled");
     await expect(client.tasks.get("task-ack")).resolves.toEqual(acknowledged);
-    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack/acknowledge")?.ifMatch).toBe(`"v${ackBase.metadata.version}"`);
-    expect(watch).toHaveBeenCalledWith(expect.objectContaining({ status: "acknowledged" }), expect.objectContaining({ event: "update", id: "task-ack" }));
+    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack/acknowledge")?.ifMatch).toBe(
+      `"v${ackBase.metadata.version}"`
+    );
+    expect(watch).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "acknowledged" }),
+      expect.objectContaining({ event: "update", id: "task-ack" })
+    );
     await expect(client.tasks.acknowledge("missing-task")).rejects.toBeInstanceOf(AtlasAPIError);
   });
 
@@ -402,20 +456,36 @@ describe("AtlasClient HTTP", () => {
     await expect(client.entities.get("asset-checkin")).resolves.toEqual(response.entity);
     await expect(client.tasks.get("task-checkin-pending")).resolves.toEqual(response.tasks[0]);
     expect(
-      core.requests.some((request) => request.includes("/entities/asset-checkin/checkin?status_filter=pending&limit=1&since=2026-06-12T00%3A00%3A00.000Z"))
+      core.requests.some((request) =>
+        request.includes(
+          "/entities/asset-checkin/checkin?status_filter=pending&limit=1&since=2026-06-12T00%3A00%3A00.000Z"
+        )
+      )
     ).toBe(true);
-    expect(core.requestHeaders.find((request) => request.path.startsWith("/entities/asset-checkin/checkin?"))?.ifMatch).toBe(
-      `"v${baseEntity.metadata.version}"`
+    expect(
+      core.requestHeaders.find((request) => request.path.startsWith("/entities/asset-checkin/checkin?"))?.ifMatch
+    ).toBe(`"v${baseEntity.metadata.version}"`);
+    expect(entityWatch).toHaveBeenCalledWith(
+      expect.objectContaining({ entity_id: "asset-checkin" }),
+      expect.objectContaining({ event: "update" })
     );
-    expect(entityWatch).toHaveBeenCalledWith(expect.objectContaining({ entity_id: "asset-checkin" }), expect.objectContaining({ event: "update" }));
-    expect(taskWatch).toHaveBeenCalledWith(expect.objectContaining({ task_id: "task-checkin-pending" }), expect.objectContaining({ event: "update" }));
+    expect(taskWatch).toHaveBeenCalledWith(
+      expect.objectContaining({ task_id: "task-checkin-pending" }),
+      expect.objectContaining({ event: "update" })
+    );
   });
 
   it("supports minimal check-in task payloads without requiring task resource metadata", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-minimal-checkin"));
-    core.upsertTask({ ...task("task-minimal-checkin", "asset-minimal-checkin"), components: { command: { id: "move_to", parameters: { latitude: 1 } } } });
-    core.upsertTask({ ...task("task-minimal-target-checkin", "asset-minimal-checkin"), components: { command: { type: "loiter", target: { radius_m: 50 } } } });
+    core.upsertTask({
+      ...task("task-minimal-checkin", "asset-minimal-checkin"),
+      components: { command: { id: "move_to", parameters: { latitude: 1 } } }
+    });
+    core.upsertTask({
+      ...task("task-minimal-target-checkin", "asset-minimal-checkin"),
+      components: { command: { type: "loiter", target: { radius_m: 50 } } }
+    });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     const response = await client.entities.checkIn("asset-minimal-checkin", {
@@ -440,7 +510,9 @@ describe("AtlasClient HTTP", () => {
         parameters: { radius_m: 50 }
       }
     ]);
-    expect(core.requests).toContain("/entities/asset-minimal-checkin/checkin?status_filter=pending%2Cacknowledged&limit=10&fields=minimal");
+    expect(core.requests).toContain(
+      "/entities/asset-minimal-checkin/checkin?status_filter=pending%2Cacknowledged&limit=10&fields=minimal"
+    );
   });
 
   it("surfaces Core-style check-in validation errors from the fake transport", async () => {
@@ -469,7 +541,9 @@ describe("AtlasClient HTTP", () => {
     expect(full.version).toBe(core.version);
     expect(changed.tasks).toEqual([]);
     expect(core.requests).toContain("/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor=1");
-    expect(core.requests).toContain("/queries/changed-since?since_version=0&limit_per_type=1&task_cursor=1&deleted_task_cursor=1");
+    expect(core.requests).toContain(
+      "/queries/changed-since?since_version=0&limit_per_type=1&task_cursor=1&deleted_task_cursor=1"
+    );
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
@@ -478,7 +552,9 @@ describe("AtlasClient HTTP", () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     await client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" });
-    const entityConflict = await client.entities.create({ entity_id: "asset-conflict", entity_type: "asset" }).catch((error) => error);
+    const entityConflict = await client.entities
+      .create({ entity_id: "asset-conflict", entity_type: "asset" })
+      .catch((error) => error);
     expect(entityConflict).toBeInstanceOf(ConflictError);
     expect(entityConflict).toMatchObject({
       status: 409,
@@ -510,7 +586,9 @@ describe("AtlasClient HTTP", () => {
       status: 400,
       errorCode: "INVALID_JSON"
     });
-    await expect(client.objects.create({ ...object("object-with-bucket"), bucket: "client-owned" } as never)).rejects.toMatchObject({
+    await expect(
+      client.objects.create({ ...object("object-with-bucket"), bucket: "client-owned" } as never)
+    ).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
@@ -567,7 +645,13 @@ describe("AtlasClient HTTP", () => {
 
     const feedObject = core.upsertObject({ ...object("object-feed-cache"), type: "log" });
     core.emit(
-      { event: "update", resource_type: "object", id: feedObject.object_id, version: feedObject.metadata.version, resource: feedObject },
+      {
+        event: "update",
+        resource_type: "object",
+        id: feedObject.object_id,
+        version: feedObject.metadata.version,
+        resource: feedObject
+      },
       { record: false }
     );
 
@@ -583,7 +667,9 @@ describe("AtlasClient HTTP", () => {
       type: "log",
       extra: { label: "thermal" }
     });
-    expect(core.requests.filter((request) => request === "/objects/object-feed-cache")).toHaveLength(detailRequestsBeforeRead + 1);
+    expect(core.requests.filter((request) => request === "/objects/object-feed-cache")).toHaveLength(
+      detailRequestsBeforeRead + 1
+    );
   });
 
   it("rejects write payloads with missing required fields or invalid shapes", async () => {
@@ -594,7 +680,9 @@ describe("AtlasClient HTTP", () => {
       status: 400,
       errorCode: "INVALID_JSON"
     });
-    await expect(client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as never)).rejects.toMatchObject({
+    await expect(
+      client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as never)
+    ).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
@@ -649,7 +737,9 @@ describe("AtlasClient HTTP", () => {
     });
     expect(fullResponse.status).toBe(400);
 
-    const changedSinceResponse = await core.fetch("http://atlas.test/queries/changed-since?since_version=0&task_cursor=-1");
+    const changedSinceResponse = await core.fetch(
+      "http://atlas.test/queries/changed-since?since_version=0&task_cursor=-1"
+    );
     await expect(changedSinceResponse.json()).resolves.toMatchObject({
       success: false,
       error_code: "VALIDATION_ERROR"

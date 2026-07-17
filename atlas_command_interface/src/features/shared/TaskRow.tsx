@@ -27,7 +27,10 @@ export function TaskHistoryItem({ task }: { task: TaskResource }) {
     <div style={{ borderBottom: "1px solid var(--border)" }}>
       <TaskRow task={task} />
       <div style={{ padding: "0 12px 8px" }}>
-        <JsonDrawer title="Task payload" value={{ task_id: task.task_id, status: task.status, components: task.components }} />
+        <JsonDrawer
+          title="Task payload"
+          value={{ task_id: task.task_id, status: task.status, components: task.components }}
+        />
       </div>
     </div>
   );

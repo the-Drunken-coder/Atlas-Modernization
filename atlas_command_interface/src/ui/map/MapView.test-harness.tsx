@@ -52,11 +52,13 @@ const maplibreMock = vi.hoisted(() => {
     readonly getZoom = vi.fn(() => this.zoom);
     readonly getLayer = vi.fn((id: string) => this.layers.get(id));
     readonly getSource = vi.fn((id: string) => this.sources.get(id));
-    readonly cameraForBounds = vi.fn((bounds: [[number, number], [number, number]], options?: { maxZoom?: number }) => ({
-      center: { lng: (bounds[0][0] + bounds[1][0]) / 2, lat: (bounds[0][1] + bounds[1][1]) / 2 },
-      zoom: options?.maxZoom ?? 16,
-      bearing: 0
-    }));
+    readonly cameraForBounds = vi.fn(
+      (bounds: [[number, number], [number, number]], options?: { maxZoom?: number }) => ({
+        center: { lng: (bounds[0][0] + bounds[1][0]) / 2, lat: (bounds[0][1] + bounds[1][1]) / 2 },
+        zoom: options?.maxZoom ?? 16,
+        bearing: 0
+      })
+    );
     readonly project = vi.fn((position: [number, number]) => ({ x: position[0], y: position[1] }));
     readonly unproject = vi.fn((point: [number, number] | { x: number; y: number }) =>
       Array.isArray(point) ? { lng: point[0], lat: point[1] } : { lng: point.x, lat: point.y }
@@ -67,7 +69,8 @@ const maplibreMock = vi.hoisted(() => {
       isEnabled: vi.fn(() => true)
     };
     readonly setStyle = vi.fn((style: unknown) => {
-      if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle) throw new Error("bad style");
+      if ((style as { metadata?: { throwOnSetStyle?: boolean } }).metadata?.throwOnSetStyle)
+        throw new Error("bad style");
       this.style = style;
       this.loaded = false;
       this.sources.clear();
@@ -229,7 +232,12 @@ export function renderMapView(props: RenderMapViewProps = {}) {
   const onBackgroundClick = vi.fn();
   const onMapContextMenu = vi.fn();
   const onSelectEntity = vi.fn();
-  const renderProps = { sources: buildMapSources([], undefined), styleId: "test-style", style: style("test-style"), ...props };
+  const renderProps = {
+    sources: buildMapSources([], undefined),
+    styleId: "test-style",
+    style: style("test-style"),
+    ...props
+  };
   const result = render(
     <MapView
       sources={renderProps.sources}
@@ -264,14 +272,26 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       />
     );
   };
-  return { canvas, map: maplibreMock.FakeMap.instances[0], onBackgroundClick, onMapContextMenu, onSelectEntity, rerenderMap, unmount: result.unmount };
+  return {
+    canvas,
+    map: maplibreMock.FakeMap.instances[0],
+    onBackgroundClick,
+    onMapContextMenu,
+    onSelectEntity,
+    rerenderMap,
+    unmount: result.unmount
+  };
 }
 
 export function style(id: string, metadata: Record<string, unknown> = {}): StyleSpecification {
   return { version: 8, sources: {}, layers: [], metadata: { id, ...metadata } };
 }
 
-export function appendMarker(container: HTMLElement, entityId: string, markerRect: DOMRect | (() => DOMRect)): HTMLButtonElement {
+export function appendMarker(
+  container: HTMLElement,
+  entityId: string,
+  markerRect: DOMRect | (() => DOMRect)
+): HTMLButtonElement {
   const marker = document.createElement("button");
   marker.className = "map-symbol-marker";
   marker.dataset.entityId = entityId;
@@ -305,7 +325,15 @@ export function markerSources(): MapSources {
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
 export function entity(overrides: Partial<EntityResource>): EntityResource {
-  return { entity_id: "entity", entity_type: "asset", subtype: null, alias: null, components: {}, metadata, ...overrides };
+  return {
+    entity_id: "entity",
+    entity_type: "asset",
+    subtype: null,
+    alias: null,
+    components: {},
+    metadata,
+    ...overrides
+  };
 }
 
 export function rect(left: number, top: number, width: number, height: number): DOMRect {

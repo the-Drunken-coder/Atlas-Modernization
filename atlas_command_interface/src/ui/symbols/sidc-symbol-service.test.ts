@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_SYMBOL_CATALOG, DEFAULT_SYMBOL_FALLBACK, DEFAULT_SYMBOL_TYPE_MAPPING, type SymbolConfig } from "./catalog.js";
+import {
+  DEFAULT_SYMBOL_CATALOG,
+  DEFAULT_SYMBOL_FALLBACK,
+  DEFAULT_SYMBOL_TYPE_MAPPING,
+  type SymbolConfig
+} from "./catalog.js";
 import { __internals, createSidcIconService, renderSymbolToSvg } from "./sidc-symbol-service.js";
 
 describe("SIDC symbol service", () => {
@@ -29,7 +34,9 @@ describe("SIDC symbol service", () => {
   it("maps current Atlas asset hints onto the inherited catalog", () => {
     expect(service.getAssetSymbol({ subtype: "ground_rover" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.ROVER.sidc);
     expect(service.getAssetSymbol({ subtype: "uas" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.DRONE.sidc);
-    expect(service.getAssetSymbol({ entityId: "relay-03", entityType: "asset" }).sidc).toBe(DEFAULT_SYMBOL_CATALOG.SIGNAL.sidc);
+    expect(service.getAssetSymbol({ entityId: "relay-03", entityType: "asset" }).sidc).toBe(
+      DEFAULT_SYMBOL_CATALOG.SIGNAL.sidc
+    );
   });
 
   it("maps track types to person, dog, and vehicle symbols", () => {
@@ -40,8 +47,12 @@ describe("SIDC symbol service", () => {
 
   it("does not match partial substrings inside larger words", () => {
     const mapping = __internals.buildLookup(DEFAULT_SYMBOL_TYPE_MAPPING);
-    expect(__internals.resolveConfigKey({ subtype: "cargo" }, mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(DEFAULT_SYMBOL_TYPE_MAPPING.default);
-    expect(__internals.mapTrackTypeToConfigKey("command", mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(DEFAULT_SYMBOL_TYPE_MAPPING.default);
+    expect(__internals.resolveConfigKey({ subtype: "cargo" }, mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(
+      DEFAULT_SYMBOL_TYPE_MAPPING.default
+    );
+    expect(__internals.mapTrackTypeToConfigKey("command", mapping, DEFAULT_SYMBOL_TYPE_MAPPING.default)).toBe(
+      DEFAULT_SYMBOL_TYPE_MAPPING.default
+    );
   });
 
   it("returns detached copies for configs and cached renders", () => {
@@ -59,7 +70,10 @@ describe("SIDC symbol service", () => {
 
   it("snapshots caller-owned config at service creation", () => {
     const symbolCatalog: Record<string, SymbolConfig> = Object.fromEntries(
-      Object.entries(DEFAULT_SYMBOL_CATALOG).map(([key, config]) => [key, { ...config, options: config.options ? { ...config.options } : undefined }])
+      Object.entries(DEFAULT_SYMBOL_CATALOG).map(([key, config]) => [
+        key,
+        { ...config, options: config.options ? { ...config.options } : undefined }
+      ])
     );
     const typeMapping = { ...DEFAULT_SYMBOL_TYPE_MAPPING };
     const localService = createSidcIconService({ symbolCatalog, typeMapping, fallback: DEFAULT_SYMBOL_FALLBACK });

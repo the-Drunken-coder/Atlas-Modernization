@@ -58,12 +58,37 @@ describe("AtlasClient feed connection", () => {
 
     const first = { ...entity("entity-ordered-1"), metadata: metadata(1) };
     const second = { ...entity("entity-ordered-2"), metadata: metadata(2) };
-    core.emit({ event: "create", resource_type: "entity", id: first.entity_id, version: first.metadata.version, resource: first }, { record: false });
-    core.emit({ event: "create", resource_type: "entity", id: second.entity_id, version: second.metadata.version, resource: second }, { record: false });
+    core.emit(
+      {
+        event: "create",
+        resource_type: "entity",
+        id: first.entity_id,
+        version: first.metadata.version,
+        resource: first
+      },
+      { record: false }
+    );
+    core.emit(
+      {
+        event: "create",
+        resource_type: "entity",
+        id: second.entity_id,
+        version: second.metadata.version,
+        resource: second
+      },
+      { record: false }
+    );
 
     await vi.waitFor(() => expect(delivery).toEqual(["start:entity-ordered-1"]));
     releaseFirst?.();
-    await vi.waitFor(() => expect(delivery).toEqual(["start:entity-ordered-1", "done:entity-ordered-1", "start:entity-ordered-2", "done:entity-ordered-2"]));
+    await vi.waitFor(() =>
+      expect(delivery).toEqual([
+        "start:entity-ordered-1",
+        "done:entity-ordered-1",
+        "start:entity-ordered-2",
+        "done:entity-ordered-2"
+      ])
+    );
     manager.close();
   });
 
@@ -105,7 +130,13 @@ describe("AtlasClient feed connection", () => {
       { dropForSockets: true, record: false }
     );
     const second = core.upsertTask({ ...first, status: "acknowledged" });
-    const event: FeedEvent = { event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second };
+    const event: FeedEvent = {
+      event: "update",
+      resource_type: "task",
+      id: second.task_id,
+      version: second.metadata.version,
+      resource: second
+    };
     core.emit(event, { record: false });
 
     await vi.waitFor(async () => {
@@ -128,11 +159,23 @@ describe("AtlasClient feed connection", () => {
 
     await client.sync.start();
     const value = core.upsertEntity(entity("asset-auto-feed"));
-    core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value }, { record: false });
+    core.emit(
+      {
+        event: "update",
+        resource_type: "entity",
+        id: value.entity_id,
+        version: value.metadata.version,
+        resource: value
+      },
+      { record: false }
+    );
 
     expect(core.sockets.size).toBe(1);
     await vi.waitFor(() => {
-      expect(watch).toHaveBeenCalledWith(value, expect.objectContaining({ id: "asset-auto-feed", version: value.metadata.version }));
+      expect(watch).toHaveBeenCalledWith(
+        value,
+        expect.objectContaining({ id: "asset-auto-feed", version: value.metadata.version })
+      );
     });
   });
 
@@ -283,7 +326,16 @@ describe("AtlasClient feed connection", () => {
       core.upsertTask(task("task-gap-fail", "asset-1"));
       const second = core.upsertTask({ ...task("task-gap-fail", "asset-1"), status: "acknowledged" });
       core.failChangedSince = true;
-      core.emit({ event: "update", resource_type: "task", id: second.task_id, version: second.metadata.version, resource: second }, { record: false });
+      core.emit(
+        {
+          event: "update",
+          resource_type: "task",
+          id: second.task_id,
+          version: second.metadata.version,
+          resource: second
+        },
+        { record: false }
+      );
 
       await vi.waitFor(() => {
         expect(client.sync.status().degraded).toBe(true);
@@ -293,7 +345,11 @@ describe("AtlasClient feed connection", () => {
       core.failChangedSince = false;
       await vi.waitFor(() => expect(core.feedConnections).toBe(2), { timeout: 2_000 });
       await vi.waitFor(() => expect(client.sync.snapshot().tasks[second.task_id]).toEqual(second), { timeout: 2_000 });
-      expect(client.sync.status()).toMatchObject({ healthy: true, degraded: false, lastVersion: second.metadata.version });
+      expect(client.sync.status()).toMatchObject({
+        healthy: true,
+        degraded: false,
+        lastVersion: second.metadata.version
+      });
     } finally {
       client.sync.stop();
     }
@@ -316,15 +372,36 @@ describe("AtlasClient feed connection", () => {
 
     const dropped = core.upsertTask(task("task-explicit-dropped", "asset-1"));
     core.emit(
-      { event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped },
+      {
+        event: "update",
+        resource_type: "task",
+        id: dropped.task_id,
+        version: dropped.metadata.version,
+        resource: dropped
+      },
       { dropForSockets: true, record: false }
     );
     const delivered = core.upsertTask(task("task-explicit-delivered", "asset-1"));
-    core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+    core.emit(
+      {
+        event: "update",
+        resource_type: "task",
+        id: delivered.task_id,
+        version: delivered.metadata.version,
+        resource: delivered
+      },
+      { record: false }
+    );
 
     await vi.waitFor(() => {
-      expect(watch).toHaveBeenCalledWith(dropped, expect.objectContaining({ event: "recovered", id: "task-explicit-dropped" }));
-      expect(watch).toHaveBeenCalledWith(delivered, expect.objectContaining({ event: "recovered", id: "task-explicit-delivered" }));
+      expect(watch).toHaveBeenCalledWith(
+        dropped,
+        expect.objectContaining({ event: "recovered", id: "task-explicit-dropped" })
+      );
+      expect(watch).toHaveBeenCalledWith(
+        delivered,
+        expect.objectContaining({ event: "recovered", id: "task-explicit-delivered" })
+      );
     });
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
     expect(client.sync.status().degraded).toBe(false);
@@ -347,7 +424,16 @@ describe("AtlasClient feed connection", () => {
 
     try {
       const value = core.upsertEntity(entity("asset-throwing-feed-watch"));
-      core.emit({ event: "update", resource_type: "entity", id: value.entity_id, version: value.metadata.version, resource: value }, { record: false });
+      core.emit(
+        {
+          event: "update",
+          resource_type: "entity",
+          id: value.entity_id,
+          version: value.metadata.version,
+          resource: value
+        },
+        { record: false }
+      );
 
       await vi.waitFor(() => {
         expect(client.sync.status().lastVersion).toBe(value.metadata.version);

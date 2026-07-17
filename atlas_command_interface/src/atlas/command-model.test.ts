@@ -116,7 +116,9 @@ describe("command model", () => {
 
   it("rejects malformed command catalogs", () => {
     expect(() => parseCommandCatalog({ ...catalogPayload, type: "other" })).toThrow("$.type must be command_catalog");
-    expect(() => parseCommandCatalog({ ...catalogPayload, commands: [] })).toThrow("$.commands must be a non-empty array");
+    expect(() => parseCommandCatalog({ ...catalogPayload, commands: [] })).toThrow(
+      "$.commands must be a non-empty array"
+    );
     expect(() =>
       parseCommandCatalog({
         ...catalogPayload,
@@ -144,7 +146,9 @@ describe("command model", () => {
             id: "bad_bounds",
             name: "Bad Bounds",
             description: "Bad.",
-            parameters_schema: { speed: { type: "number", description: "Speed", required: false, minimum: 10, maximum: 1 } }
+            parameters_schema: {
+              speed: { type: "number", description: "Speed", required: false, minimum: 10, maximum: 1 }
+            }
           }
         ]
       })
@@ -194,9 +198,15 @@ describe("command model", () => {
     expect(() => coerceParameters(command, { longitude: -74.2 })).toThrow("latitude is required");
     expect(() => coerceParameters(command, { latitude: -91, longitude: -74.2 })).toThrow("latitude must be >= -90");
     expect(() => coerceParameters(command, { latitude: 91, longitude: -74.2 })).toThrow("latitude must be <= 90");
-    expect(() => coerceParameters(command, { latitude: "north", longitude: -74.2 })).toThrow("latitude must be a finite number");
-    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, mode: [] })).toThrow("mode must be a string");
-    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, verify: "sometimes" })).toThrow("verify must be a boolean");
+    expect(() => coerceParameters(command, { latitude: "north", longitude: -74.2 })).toThrow(
+      "latitude must be a finite number"
+    );
+    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, mode: [] })).toThrow(
+      "mode must be a string"
+    );
+    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, verify: "sometimes" })).toThrow(
+      "verify must be a boolean"
+    );
   });
 
   it("rejects malformed parameter containers as invalid parameters", () => {
@@ -216,14 +226,18 @@ describe("command model", () => {
   it("rejects unknown parameters even when their values are empty", () => {
     const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
 
-    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, typo: "" })).toThrow("Unknown parameter typo");
+    expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, typo: "" })).toThrow(
+      "Unknown parameter typo"
+    );
   });
 
   it("filters commands through explicit supported task declarations", () => {
     const catalog = parseCommandCatalog(catalogPayload);
 
     expect(commandsForEntity(catalog, asset())).toEqual([]);
-    expect(commandsForEntity(catalog, asset(["hold_position"])).map((command) => command.id)).toEqual(["hold_position"]);
+    expect(commandsForEntity(catalog, asset(["hold_position"])).map((command) => command.id)).toEqual([
+      "hold_position"
+    ]);
     expect(commandsForEntity(catalog, asset([]))).toEqual([]);
     expect(
       commandsForEntity(catalog, {
@@ -231,14 +245,18 @@ describe("command model", () => {
         components: { task_catalog: { supported_tasks: "hold_position" } }
       } as unknown as EntityResource).map((command) => command.id)
     ).toEqual([]);
-    expect(commandsForEntity(catalog, asset(["", "hold_position", 42 as unknown as string])).map((command) => command.id)).toEqual(["hold_position"]);
+    expect(
+      commandsForEntity(catalog, asset(["", "hold_position", 42 as unknown as string])).map((command) => command.id)
+    ).toEqual(["hold_position"]);
     expect(commandsForEntity(catalog, track(["hold_position"]))).toEqual([]);
   });
 
   it("builds command task payloads without client-supplied task IDs", () => {
     const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
 
-    expect(buildCommandTaskRequest({ entityId: "asset-1", command, parameters: { latitude: 40.1, longitude: -74.2 } })).toEqual({
+    expect(
+      buildCommandTaskRequest({ entityId: "asset-1", command, parameters: { latitude: 40.1, longitude: -74.2 } })
+    ).toEqual({
       status: "pending",
       entity_id: "asset-1",
       components: {
@@ -257,10 +275,14 @@ describe("command model", () => {
   });
 
   it("enforces entity command support declarations", () => {
-    expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "move_to_location")).toThrow("does not advertise support");
+    expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "move_to_location")).toThrow(
+      "does not advertise support"
+    );
     expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "hold_position")).not.toThrow();
     expect(() => assertEntitySupportsCommand(asset([]), "hold_position")).toThrow("does not advertise support");
     expect(() => assertEntitySupportsCommand(asset(), "move_to_location")).toThrow("does not advertise support");
-    expect(() => assertEntitySupportsCommand(track(["hold_position"]), "hold_position")).toThrow("Only assets can receive commands");
+    expect(() => assertEntitySupportsCommand(track(["hold_position"]), "hold_position")).toThrow(
+      "Only assets can receive commands"
+    );
   });
 });

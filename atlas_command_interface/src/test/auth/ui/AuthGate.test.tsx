@@ -7,7 +7,13 @@ import { SidebarRail } from "../../../ui/layout/SidebarRail.js";
 function Workspace() {
   return (
     <>
-      <SidebarRail collapsed={false} activeList="assets" counts={{ asset: 0, track: 0, geofeature: 0 }} onSelectList={() => {}} onToggleCollapsed={() => {}} />
+      <SidebarRail
+        collapsed={false}
+        activeList="assets"
+        counts={{ asset: 0, track: 0, geofeature: 0 }}
+        onSelectList={() => {}}
+        onToggleCollapsed={() => {}}
+      />
       <div>map console</div>
     </>
   );
@@ -60,7 +66,9 @@ describe("AuthGate", () => {
   });
 
   it("shows login instead of the console when the session is missing", async () => {
-    const fetchStub = stubFetch([{ status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }]);
+    const fetchStub = stubFetch([
+      { status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } }
+    ]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -132,7 +140,10 @@ describe("AuthGate", () => {
 
   it("returns focus to the connection error after a failed pre-auth retry", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("Core is unavailable")).mockRejectedValueOnce(new Error("Core is still unavailable"));
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Core is unavailable"))
+      .mockRejectedValueOnce(new Error("Core is still unavailable"));
     vi.stubGlobal("fetch", fetchMock);
 
     render(
@@ -198,7 +209,11 @@ describe("AuthGate", () => {
       "fetch",
       vi
         .fn()
-        .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }), { status: 401 }))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }), {
+            status: 401
+          })
+        )
         .mockRejectedValueOnce(new Error(`Atlas login failed: https://core.test?api_key=${secret}`))
     );
 
@@ -254,7 +269,9 @@ describe("AuthGate", () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200 })
+      )
       .mockImplementationOnce(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -274,7 +291,10 @@ describe("AuthGate", () => {
 
   it("logs out through Core and returns focus to the login form", async () => {
     const user = userEvent.setup();
-    const fetchStub = stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }, { status: 204 }]);
+    const fetchStub = stubFetch([
+      { status: 200, body: { user: { username: "operator", role: "admin" } } },
+      { status: 204 }
+    ]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -346,15 +366,23 @@ describe("AuthGate", () => {
     expect(await screen.findByLabelText("Username")).toBeInTheDocument();
     fireEvent(window, new Event("atlas-auth-expired"));
 
-    await waitFor(() => expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Your session has expired. Please sign in again.")).toBeInTheDocument()
+    );
   });
 });
 
-function stubFetch(responses: Array<{ status: number; body?: unknown }>): { calls: Array<[RequestInfo | URL, RequestInit | undefined]> } {
+function stubFetch(responses: Array<{ status: number; body?: unknown }>): {
+  calls: Array<[RequestInfo | URL, RequestInit | undefined]>;
+} {
   const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push([input, init]);
-    const response = responses.shift() ?? responses.at(-1) ?? { status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } };
+    const response = responses.shift() ??
+      responses.at(-1) ?? {
+        status: 401,
+        body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }
+      };
     return new Response(response.status === 204 ? null : JSON.stringify(response.body), {
       status: response.status,
       headers: { "Content-Type": "application/json" }

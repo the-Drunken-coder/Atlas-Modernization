@@ -47,11 +47,14 @@ export type SimulationServer = {
   store: RunStore;
 };
 
-export function createSimulationServer(options: { config?: SimulationConfig; store?: RunStore } = {}): SimulationServer {
+export function createSimulationServer(
+  options: { config?: SimulationConfig; store?: RunStore } = {}
+): SimulationServer {
   const config = options.config ?? loadConfig();
   const targetRegistry = createTargetRegistry(config);
   const ownsStore = options.store === undefined;
-  const cleanupLedgerDirectory = config.cleanupLedgerDirectory ?? path.join(config.packageRoot, ".atlas-simulations", "runs");
+  const cleanupLedgerDirectory =
+    config.cleanupLedgerDirectory ?? path.join(config.packageRoot, ".atlas-simulations", "runs");
   const store =
     options.store ??
     new RunStore(createAtlasClientFactory(targetRegistry.defaultTarget), {
@@ -115,7 +118,10 @@ async function handleRequest(
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/targets") {
-    sendJSON(response, 200, { targets: targetRegistry.summaries, defaultTargetId: targetRegistry.defaultTargetId } satisfies TargetListResponse);
+    sendJSON(response, 200, {
+      targets: targetRegistry.summaries,
+      defaultTargetId: targetRegistry.defaultTargetId
+    } satisfies TargetListResponse);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/health") {

@@ -51,7 +51,12 @@ export type CreatedResource = {
 const CREATED_RESOURCE_TYPE_SET = new Set<string>(CREATED_RESOURCE_TYPES);
 
 export function isCreatedResource(value: unknown): value is CreatedResource {
-  return isRecord(value) && typeof value.type === "string" && CREATED_RESOURCE_TYPE_SET.has(value.type) && typeof value.id === "string";
+  return (
+    isRecord(value) &&
+    typeof value.type === "string" &&
+    CREATED_RESOURCE_TYPE_SET.has(value.type) &&
+    typeof value.id === "string"
+  );
 }
 
 export type AssertionResult = {
@@ -82,7 +87,9 @@ export type RunEvent =
   | (RunEventBase & { type: "cleanup"; resource?: CreatedResource });
 
 export type RunEventType = RunEvent["type"];
-type RunEventDetailsFor<Event extends RunEvent> = Event extends RunEvent ? Omit<Event, "sequence" | "runId" | "timestamp"> : never;
+type RunEventDetailsFor<Event extends RunEvent> = Event extends RunEvent
+  ? Omit<Event, "sequence" | "runId" | "timestamp">
+  : never;
 export type RunEventDetails = RunEventDetailsFor<RunEvent>;
 
 export type RunSummary = {

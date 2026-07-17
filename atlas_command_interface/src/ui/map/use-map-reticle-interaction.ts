@@ -1,5 +1,14 @@
 import type { Map as MlMap, PointLike } from "maplibre-gl";
-import { type MouseEvent, type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
+import {
+  type MouseEvent,
+  type PointerEvent,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type WheelEvent
+} from "react";
 import { flushSync } from "react-dom";
 import { type CursorOverlayState, geographicBearingDegrees, geographicDistanceMeters } from "./map-cursor-overlay.js";
 import {
@@ -25,7 +34,13 @@ import {
   reticleForVisibleTarget,
   targetBoxForEntityId
 } from "./map-targets.js";
-import { type CursorHandoffState, clientPointInsideRect, cursorPointsFromEvent, reticlesEqual, zoomDeltaFromWheel } from "./map-view-utils.js";
+import {
+  type CursorHandoffState,
+  clientPointInsideRect,
+  cursorPointsFromEvent,
+  reticlesEqual,
+  zoomDeltaFromWheel
+} from "./map-view-utils.js";
 
 const SCROLL_LOCK_SETTLE_MS = 180;
 const SUPPRESSED_CLICK_FALLBACK_MS = 750;
@@ -104,14 +119,20 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
 
   const setFocusReticle = useCallback(
     (next: ReticleState | null) => {
-      updateState((current) => (reticlesEqual(current.focusReticle, next) ? current : { ...current, focusReticle: next }));
+      updateState((current) =>
+        reticlesEqual(current.focusReticle, next) ? current : { ...current, focusReticle: next }
+      );
     },
     [updateState]
   );
 
   const setPointerPoint = useCallback(
     (next: ScreenPoint | null) => {
-      updateState((current) => (current.pointerPoint?.x === next?.x && current.pointerPoint?.y === next?.y ? current : { ...current, pointerPoint: next }));
+      updateState((current) =>
+        current.pointerPoint?.x === next?.x && current.pointerPoint?.y === next?.y
+          ? current
+          : { ...current, pointerPoint: next }
+      );
     },
     [updateState]
   );
@@ -150,7 +171,11 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
   const clearPointer = useCallback(() => {
     cancelPendingPointer();
     cursorHandoffRef.current = null;
-    updateState((current) => (current.reticle === null && current.pointerPoint === null ? current : { ...current, reticle: null, pointerPoint: null }));
+    updateState((current) =>
+      current.reticle === null && current.pointerPoint === null
+        ? current
+        : { ...current, reticle: null, pointerPoint: null }
+    );
   }, [cancelPendingPointer, updateState]);
 
   const restoreReticleAtScreenPoint = useCallback(
@@ -212,7 +237,8 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       if (!box) return;
       const next = reticleForTarget({ entityId, box });
       updateState((current) => {
-        if (!current.reticle || current.reticle.targetEntityId !== entityId || reticlesEqual(current.reticle, next)) return current;
+        if (!current.reticle || current.reticle.targetEntityId !== entityId || reticlesEqual(current.reticle, next))
+          return current;
         if (cursorHandoffRef.current) cursorHandoffRef.current.visualPoint = { x: next.x, y: next.y };
         return { ...current, reticle: next };
       });
@@ -258,8 +284,16 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     const rect = pointer.currentTarget.getBoundingClientRect();
     const handoff = cursorHandoffRef.current;
     const { rawPoint, visualPoint } = cursorPointsFromEvent(pointer, rect, handoff);
-    const target = hoverSelectionTarget(pointer, rect, visualPoint, optionsRef.current.mapRef.current, markerBoxCacheRef.current);
-    const next = target ? reticleForTarget(target) : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
+    const target = hoverSelectionTarget(
+      pointer,
+      rect,
+      visualPoint,
+      optionsRef.current.mapRef.current,
+      markerBoxCacheRef.current
+    );
+    const next = target
+      ? reticleForTarget(target)
+      : { ...visualPoint, target: squareAround(visualPoint, RETICLE_TARGET_SIZE) };
     if (handoff) cursorHandoffRef.current = { nativePoint: rawPoint, visualPoint: { x: next.x, y: next.y } };
     setPointerPoint(rawPoint);
     setReticle(next);
@@ -319,7 +353,9 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       if (map && activeReticle?.targetEntityId) zoomAroundReticleTarget(map, activeReticle, event);
       if (activeReticle) setReticle(hoverReticle ?? { ...activeReticle, targetEntityId: undefined });
       const visualPoint = activeReticle ? { x: activeReticle.x, y: activeReticle.y } : pointFromClient(event, rect);
-      cursorHandoffRef.current = activeReticle?.targetEntityId ? null : { nativePoint: pointFromClient(event, rect), visualPoint };
+      cursorHandoffRef.current = activeReticle?.targetEntityId
+        ? null
+        : { nativePoint: pointFromClient(event, rect), visualPoint };
       event.currentTarget.classList.add("map-canvas--scrolling");
       setScrollLocked(true);
       if (scrollLockTimeoutRef.current !== undefined) window.clearTimeout(scrollLockTimeoutRef.current);
@@ -350,7 +386,14 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
       const { mapRef, onSelectEntity, onBackgroundClick, selectedEntityId } = optionsRef.current;
       const rect = event.currentTarget.getBoundingClientRect();
       const point = cursorPointsFromEvent(event, rect, cursorHandoffRef.current).visualPoint;
-      const clickTargets = hoverSelectionTargets(event, rect, point, mapRef.current, markerBoxCacheRef.current, event.detail === 0);
+      const clickTargets = hoverSelectionTargets(
+        event,
+        rect,
+        point,
+        mapRef.current,
+        markerBoxCacheRef.current,
+        event.detail === 0
+      );
       if (clickTargets.length > 0) {
         // Re-clicking the already-selected entity cycles through overlapping targets.
         const selectedIndex = clickTargets.findIndex((target) => target.entityId === selectedEntityId);
@@ -541,7 +584,9 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     }
     const nextFocusReticle = () => {
       const current = stateRef.current;
-      return current.zoomOverlay ? current.focusReticle : reticleForVisibleTarget(mapCanvasRef.current, map, sources, focusTarget);
+      return current.zoomOverlay
+        ? current.focusReticle
+        : reticleForVisibleTarget(mapCanvasRef.current, map, sources, focusTarget);
     };
     const sync = () => setFocusReticle(nextFocusReticle());
     sync();
@@ -571,8 +616,14 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
     [cancelPendingPointer]
   );
 
-  const visibleReticle = state.zoomOverlay ? reticleFromTargetBox(boxFromDrag(state.zoomOverlay)) : focusTarget ? state.focusReticle : state.reticle;
-  const cursorOverlay = zooming ? undefined : cursorOverlayState(mapRef.current, state.pointerPoint, focusTarget ? state.focusReticle : null);
+  const visibleReticle = state.zoomOverlay
+    ? reticleFromTargetBox(boxFromDrag(state.zoomOverlay))
+    : focusTarget
+      ? state.focusReticle
+      : state.reticle;
+  const cursorOverlay = zooming
+    ? undefined
+    : cursorOverlayState(mapRef.current, state.pointerPoint, focusTarget ? state.focusReticle : null);
   activeReticleRef.current = visibleReticle;
 
   return {
@@ -587,14 +638,29 @@ export function useMapReticleInteraction(options: UseMapReticleInteractionOption
 }
 
 function directionFromKey(key: string): MapNavigationDirection | null {
-  return key === "ArrowUp" ? "up" : key === "ArrowDown" ? "down" : key === "ArrowLeft" ? "left" : key === "ArrowRight" ? "right" : null;
+  return key === "ArrowUp"
+    ? "up"
+    : key === "ArrowDown"
+      ? "down"
+      : key === "ArrowLeft"
+        ? "left"
+        : key === "ArrowRight"
+          ? "right"
+          : null;
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable);
+  return (
+    target instanceof HTMLElement &&
+    (target.matches("input, textarea, select, [role='separator']") || target.isContentEditable)
+  );
 }
 
-function cursorOverlayState(map: MlMap | undefined, point: ScreenPoint | null, selection: ReticleState | null): CursorOverlayState | undefined {
+function cursorOverlayState(
+  map: MlMap | undefined,
+  point: ScreenPoint | null,
+  selection: ReticleState | null
+): CursorOverlayState | undefined {
   if (!map || !point) return undefined;
   const pointerCoordinates = map.unproject([point.x, point.y]);
   if (!selection) return { point, coordinates: { lng: pointerCoordinates.lng, lat: pointerCoordinates.lat } };

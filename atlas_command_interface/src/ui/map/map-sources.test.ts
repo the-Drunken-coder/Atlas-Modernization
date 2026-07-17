@@ -32,7 +32,9 @@ describe("buildMapSources", () => {
 
   it("renders tracks as read-only point features", () => {
     const sources = buildMapSources(
-      [entity({ entity_id: "track-1", entity_type: "track", components: { telemetry: { latitude: 1, longitude: 2 } } })],
+      [
+        entity({ entity_id: "track-1", entity_type: "track", components: { telemetry: { latitude: 1, longitude: 2 } } })
+      ],
       undefined
     );
     expect(sources.tracks.features).toHaveLength(1);
@@ -42,7 +44,11 @@ describe("buildMapSources", () => {
   it("renders geofeature Point, LineString and Polygon geometries", () => {
     const sources = buildMapSources(
       [
-        entity({ entity_id: "geo-point", entity_type: "geofeature", components: { geometry: { type: "Point", coordinates: [1, 2] } } }),
+        entity({
+          entity_id: "geo-point",
+          entity_type: "geofeature",
+          components: { geometry: { type: "Point", coordinates: [1, 2] } }
+        }),
         entity({
           entity_id: "geo-line",
           entity_type: "geofeature",
@@ -102,7 +108,10 @@ describe("buildMapSources", () => {
   });
 
   it("skips entities without a usable position and non-console kinds", () => {
-    const sources = buildMapSources([entity({ entity_id: "asset-blind", components: {} }), entity({ entity_id: "sensor", entity_type: "sensor" })], undefined);
+    const sources = buildMapSources(
+      [entity({ entity_id: "asset-blind", components: {} }), entity({ entity_id: "sensor", entity_type: "sensor" })],
+      undefined
+    );
     expect(sources.assets.features).toHaveLength(0);
     expect(sources.tracks.features).toHaveLength(0);
     expect(sources.geofeatures.features).toHaveLength(0);

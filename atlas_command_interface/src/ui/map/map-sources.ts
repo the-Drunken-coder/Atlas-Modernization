@@ -1,5 +1,13 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { entityClassification, entityDisplayName, entityGeometry, entityHeading, entityKind, entityLinkState, entityPosition } from "../../atlas/entities.js";
+import {
+  entityClassification,
+  entityDisplayName,
+  entityGeometry,
+  entityHeading,
+  entityKind,
+  entityLinkState,
+  entityPosition
+} from "../../atlas/entities.js";
 import { displayGeometry, type UiRawGeometry } from "../../atlas/geometry.js";
 
 export type MapFeatureProperties = {
@@ -44,7 +52,11 @@ export function emptyFeatureCollection(): MapFeatureCollection {
  * render as points (telemetry preferred); geofeatures render their geometry.
  */
 export function buildMapSources(entities: EntityResource[], selectedId: string | undefined): MapSources {
-  const sources: MapSources = { assets: emptyFeatureCollection(), tracks: emptyFeatureCollection(), geofeatures: emptyFeatureCollection() };
+  const sources: MapSources = {
+    assets: emptyFeatureCollection(),
+    tracks: emptyFeatureCollection(),
+    geofeatures: emptyFeatureCollection()
+  };
 
   for (const entity of entities) {
     const kind = entityKind(entity);
@@ -106,5 +118,7 @@ function firstString(...values: unknown[]): string | undefined {
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }

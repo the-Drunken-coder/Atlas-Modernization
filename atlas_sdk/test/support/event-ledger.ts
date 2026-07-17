@@ -50,7 +50,11 @@ export function isDelete(type: "entity" | "task" | "object") {
 }
 
 export function deleted(event: FeedEvent) {
-  const value: { id: string; type: string; version: number; entity_id?: string | null } = { id: event.id, type: event.resource_type, version: event.version };
+  const value: { id: string; type: string; version: number; entity_id?: string | null } = {
+    id: event.id,
+    type: event.resource_type,
+    version: event.version
+  };
   if ("entity_id" in event && event.entity_id != null) value.entity_id = event.entity_id;
   return value;
 }

@@ -33,7 +33,10 @@ describe("MapView keyboard selection", () => {
   });
 
   it("ignores entities outside the current viewport", () => {
-    const sources = buildMapSources([pointEntity("center", 200, 100), pointEntity("offscreen-down", 200, 240)], "center");
+    const sources = buildMapSources(
+      [pointEntity("center", 200, 100), pointEntity("offscreen-down", 200, 240)],
+      "center"
+    );
     const { canvas, onSelectEntity } = renderMapView({ selectedId: "center", sources });
 
     const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
@@ -44,7 +47,10 @@ describe("MapView keyboard selection", () => {
   });
 
   it("prefers directional alignment over a nearer diagonal target", () => {
-    const sources = buildMapSources([pointEntity("center", 200, 100), pointEntity("aligned-down", 200, 170), pointEntity("diagonal-down", 260, 120)], "center");
+    const sources = buildMapSources(
+      [pointEntity("center", 200, 100), pointEntity("aligned-down", 200, 170), pointEntity("diagonal-down", 260, 120)],
+      "center"
+    );
     const { canvas, onSelectEntity } = renderMapView({ selectedId: "center", sources });
 
     fireEvent.keyDown(canvas, { key: "ArrowDown" });
@@ -131,5 +137,9 @@ function renderDirectionalMap(selectedId?: string) {
 }
 
 function pointEntity(entityId: string, x: number, y: number) {
-  return entity({ entity_id: entityId, entity_type: "geofeature", components: { geometry: { type: "Point", coordinates: [x, y] } } });
+  return entity({
+    entity_id: entityId,
+    entity_type: "geofeature",
+    components: { geometry: { type: "Point", coordinates: [x, y] } }
+  });
 }

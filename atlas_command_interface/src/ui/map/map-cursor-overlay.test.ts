@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatImperialDistance, geographicBearingDegrees, geographicDistanceMeters, tetherSegment } from "./map-cursor-overlay.js";
+import {
+  formatImperialDistance,
+  geographicBearingDegrees,
+  geographicDistanceMeters,
+  tetherSegment
+} from "./map-cursor-overlay.js";
 
 describe("map cursor overlay helpers", () => {
   it("clips the tether to the selected box and leaves a gap around the pointer X", () => {

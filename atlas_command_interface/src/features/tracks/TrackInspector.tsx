@@ -1,5 +1,13 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { entityAltitude, entityClassification, entityDisplayName, entityHeading, entityLastSeen, entityPosition, entitySpeed } from "../../atlas/entities.js";
+import {
+  entityAltitude,
+  entityClassification,
+  entityDisplayName,
+  entityHeading,
+  entityLastSeen,
+  entityPosition,
+  entitySpeed
+} from "../../atlas/entities.js";
 import { formatNumber, formatRelativeTime } from "../../atlas/format.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ClassificationPill } from "../../ui/primitives/StatusPill.js";
@@ -26,7 +34,11 @@ export function TrackInspector({ entity }: { entity: EntityResource }) {
       </Section>
 
       <Section title="Classification">
-        {classification ? <ClassificationPill value={classification} /> : <span style={{ color: "var(--text-3)" }}>Unclassified</span>}
+        {classification ? (
+          <ClassificationPill value={classification} />
+        ) : (
+          <span style={{ color: "var(--text-3)" }}>Unclassified</span>
+        )}
       </Section>
 
       <JsonDrawer title="Raw entity JSON" value={entity} />

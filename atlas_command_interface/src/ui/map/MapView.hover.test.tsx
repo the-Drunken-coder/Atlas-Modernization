@@ -1,7 +1,14 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { appendMarker, entity, firePointerMove, markerCoordinatesFor, rect, renderMapView } from "./MapView.test-harness.js";
+import {
+  appendMarker,
+  entity,
+  firePointerMove,
+  markerCoordinatesFor,
+  rect,
+  renderMapView
+} from "./MapView.test-harness.js";
 import { buildMapSources } from "./map-sources.js";
 
 describe("MapView hover target box", () => {
@@ -91,19 +98,31 @@ describe("MapView hover target box", () => {
     firePointerMove(canvas, { clientX: 210, clientY: 150 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
     firePointerMove(canvas, { clientX: 220, clientY: 160 });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("210px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "210px"
+      )
+    );
 
     expect(measure).toHaveBeenCalledTimes(1);
 
     act(() => map.fire("move"));
     firePointerMove(canvas, { clientX: 230, clientY: 170 });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("220px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "220px"
+      )
+    );
 
     expect(measure).toHaveBeenCalledTimes(2);
 
     act(() => map.fire("resize"));
     firePointerMove(canvas, { clientX: 240, clientY: 180 });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("230px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "230px"
+      )
+    );
 
     expect(measure).toHaveBeenCalledTimes(3);
   });
@@ -129,7 +148,11 @@ describe("MapView hover target box", () => {
     const { canvas, onBackgroundClick, onSelectEntity, rerenderMap } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "point", id: "search-1", coordinates: [200, 150] } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("200px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "200px"
+      )
+    );
 
     vi.useFakeTimers();
     try {
@@ -313,7 +336,10 @@ describe("MapView hover target box", () => {
     });
     const moved = {
       ...initial,
-      components: { ...initial.components, telemetry: { ...initial.components.telemetry, longitude: 170, latitude: 60 } }
+      components: {
+        ...initial.components,
+        telemetry: { ...initial.components.telemetry, longitude: 170, latitude: 60 }
+      }
     };
     const { canvas, rerenderMap } = renderMapView({ sources: buildMapSources([initial], undefined) });
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
@@ -488,8 +514,10 @@ describe("MapView hover target box", () => {
     map.queryRenderedFeatures.mockImplementation((query: unknown) => {
       const [[minX, minY], [maxX, maxY]] = query as [[number, number], [number, number]];
       const contains = (x: number, y: number) => x >= minX && x <= maxX && y >= minY && y <= maxY;
-      if (contains(70, 80)) return [{ geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-visual" } }];
-      if (contains(20, 100)) return [{ geometry: { type: "Point", coordinates: [20, 100] }, properties: { entityId: "geo-raw" } }];
+      if (contains(70, 80))
+        return [{ geometry: { type: "Point", coordinates: [70, 80] }, properties: { entityId: "geo-visual" } }];
+      if (contains(20, 100))
+        return [{ geometry: { type: "Point", coordinates: [20, 100] }, properties: { entityId: "geo-raw" } }];
       return [];
     });
 
@@ -522,7 +550,11 @@ describe("MapView hover target box", () => {
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
 
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "70px"
+      )
+    );
 
     firePointerMove(canvas, { clientX: 220, clientY: 120 });
 
@@ -537,7 +569,8 @@ describe("MapView hover target box", () => {
   it("keeps outside-map pointer listeners stable while the reticle moves", async () => {
     const addListener = vi.spyOn(window, "addEventListener");
     const { canvas } = renderMapView();
-    const pointerMoveRegistrations = () => addListener.mock.calls.filter(([type]) => String(type) === "pointermove").length;
+    const pointerMoveRegistrations = () =>
+      addListener.mock.calls.filter(([type]) => String(type) === "pointermove").length;
     const initialRegistrations = pointerMoveRegistrations();
 
     firePointerMove(canvas, { clientX: 80, clientY: 100 });

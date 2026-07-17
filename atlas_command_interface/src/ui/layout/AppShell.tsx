@@ -70,7 +70,12 @@ export function AppShell({ collapsed, rail, panel, map }: AppShellProps) {
 
   return (
     <div className="app-shell">
-      <div className="sidebar" data-collapsed={collapsed} data-resizing={dragStart ? true : undefined} style={shellStyle}>
+      <div
+        className="sidebar"
+        data-collapsed={collapsed}
+        data-resizing={dragStart ? true : undefined}
+        style={shellStyle}
+      >
         {rail}
         {panel}
         {collapsed ? null : (

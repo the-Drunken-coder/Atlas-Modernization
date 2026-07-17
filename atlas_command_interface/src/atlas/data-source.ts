@@ -24,7 +24,11 @@ export type CommandSubmission = {
 export type ConnectionError = { source: "startup" | "live-sync"; message: string };
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean; error?: ConnectionError };
 
-export type CatalogUpdate = { status: "pending" } | { status: "loaded"; catalog: CommandCatalog } | { status: "failed" } | { status: "deleted" };
+export type CatalogUpdate =
+  | { status: "pending" }
+  | { status: "loaded"; catalog: CommandCatalog }
+  | { status: "failed" }
+  | { status: "deleted" };
 
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
@@ -128,19 +132,33 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     health() {
       const status = client.sync.status();
-      const error = startupError ?? (status.error ? { source: "live-sync" as const, message: sanitizeConnectionError(status.error) } : undefined);
-      return { running: status.running, healthy: status.healthy, degraded: status.degraded, ...(error ? { error } : {}) };
+      const error =
+        startupError ??
+        (status.error ? { source: "live-sync" as const, message: sanitizeConnectionError(status.error) } : undefined);
+      return {
+        running: status.running,
+        healthy: status.healthy,
+        degraded: status.degraded,
+        ...(error ? { error } : {})
+      };
     },
 
     async submitCommand(submission) {
       const parameters = coerceParameters(submission.command, submission.parameters);
-      return client.tasks.create(buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }), {
-        signal: submission.signal
-      });
+      return client.tasks.create(
+        buildCommandTaskRequest({ entityId: submission.entityId, command: submission.command, parameters }),
+        {
+          signal: submission.signal
+        }
+      );
     },
 
     async updateGeometry(entityId, geometry, ifMatchVersion) {
-      return client.entities.update(entityId, { components: { geometry } }, ifMatchVersion === undefined ? undefined : { ifMatchVersion });
+      return client.entities.update(
+        entityId,
+        { components: { geometry } },
+        ifMatchVersion === undefined ? undefined : { ifMatchVersion }
+      );
     },
 
     dispose() {

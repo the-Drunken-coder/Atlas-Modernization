@@ -26,7 +26,10 @@ export function createEditingMarkers(map: MlMap, editing: MapEditing | undefined
     return [];
   }
 
-  overlay?.setData({ type: "FeatureCollection", features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }] } as never);
+  overlay?.setData({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
+  } as never);
 
   const markers: Marker[] = [];
   const { geometry, onChange } = editing;
@@ -66,7 +69,9 @@ function midpoints(geometry: UiGeometry): Midpoint[] {
   const result: Midpoint[] = [];
   if (geometry.type === "LineString") {
     for (let index = 0; index < geometry.coordinates.length - 1; index++) {
-      result.push(midpoint(geometry.coordinates[index], geometry.coordinates[index + 1], { kind: "LineString", index }));
+      result.push(
+        midpoint(geometry.coordinates[index], geometry.coordinates[index + 1], { kind: "LineString", index })
+      );
     }
     return result;
   }

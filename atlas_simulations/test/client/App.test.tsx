@@ -3,8 +3,23 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/client/App.js";
-import { cleanupRun, loadHealth, loadRun, loadRuns, loadScenarios, loadTargets, startRun, stopRun } from "../../src/client/api.js";
-import type { AtlasTargetSummary, HealthResponse, RunEvent, RunSummary, ScenarioDescriptor } from "../../src/shared/types.js";
+import {
+  cleanupRun,
+  loadHealth,
+  loadRun,
+  loadRuns,
+  loadScenarios,
+  loadTargets,
+  startRun,
+  stopRun
+} from "../../src/client/api.js";
+import type {
+  AtlasTargetSummary,
+  HealthResponse,
+  RunEvent,
+  RunSummary,
+  ScenarioDescriptor
+} from "../../src/shared/types.js";
 import { jsonNumber } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
@@ -12,7 +27,16 @@ const scenario: ScenarioDescriptor = {
   name: "Moving assets",
   summary: "Creates assets",
   acceptsJson: true,
-  inputFields: [{ key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(2), min: jsonNumber(1), max: jsonNumber(4) }]
+  inputFields: [
+    {
+      key: "assetCount",
+      label: "Asset count",
+      type: "number",
+      defaultValue: jsonNumber(2),
+      min: jsonNumber(1),
+      max: jsonNumber(4)
+    }
+  ]
 };
 
 const syncScenario: ScenarioDescriptor = {
@@ -109,7 +133,10 @@ describe("App", () => {
   beforeEach(() => {
     eventSources = [];
     vi.resetAllMocks();
-    vi.mocked(loadTargets).mockResolvedValue({ targets: [localTarget, deployedTarget], defaultTargetId: localTarget.id });
+    vi.mocked(loadTargets).mockResolvedValue({
+      targets: [localTarget, deployedTarget],
+      defaultTargetId: localTarget.id
+    });
     vi.mocked(loadHealth).mockResolvedValue({ ok: true, status: jsonNumber(200), message: "ok" });
     vi.mocked(loadScenarios).mockResolvedValue([scenario]);
     vi.mocked(loadRun).mockResolvedValue(cloneRun());
@@ -264,7 +291,9 @@ describe("App", () => {
     expect(screen.queryByRole("alert", { name: "Deployed Core selected" })).not.toBeInTheDocument();
     await user.selectOptions(apiSelect, deployedTarget.id);
 
-    confirmation = await screen.findByRole("checkbox", { name: "I understand this start will mutate the deployed Core." });
+    confirmation = await screen.findByRole("checkbox", {
+      name: "I understand this start will mutate the deployed Core."
+    });
     startButton = screen.getByRole("button", { name: "Start on deployed Core" });
     expect(confirmation).not.toBeChecked();
     expect(startButton).toBeDisabled();
@@ -287,7 +316,9 @@ describe("App", () => {
     const user = userEvent.setup();
     const deployedHealth = deferred<HealthResponse>();
     vi.mocked(loadHealth).mockImplementation((targetId) =>
-      targetId === deployedTarget.id ? deployedHealth.promise : Promise.resolve({ ok: true, status: jsonNumber(200), message: "local ok", target: localTarget })
+      targetId === deployedTarget.id
+        ? deployedHealth.promise
+        : Promise.resolve({ ok: true, status: jsonNumber(200), message: "local ok", target: localTarget })
     );
     render(<App />);
 
@@ -307,7 +338,9 @@ describe("App", () => {
     const user = userEvent.setup();
     const localHealth = deferred<HealthResponse>();
     const deployedHealth = deferred<HealthResponse>();
-    vi.mocked(loadHealth).mockImplementation((targetId) => (targetId === deployedTarget.id ? deployedHealth.promise : localHealth.promise));
+    vi.mocked(loadHealth).mockImplementation((targetId) =>
+      targetId === deployedTarget.id ? deployedHealth.promise : localHealth.promise
+    );
     render(<App />);
 
     const apiSelect = await screen.findByLabelText("API");
@@ -442,7 +475,10 @@ describe("App", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: syncScenario.name }));
 
-    expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
     expect(eventSources).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));
@@ -614,7 +650,10 @@ describe("App", () => {
         status: "completed",
         finishedAt: new Date().toISOString()
       });
-      vi.mocked(loadRuns).mockResolvedValueOnce([]).mockResolvedValueOnce([completedRun]).mockResolvedValue([completedRun]);
+      vi.mocked(loadRuns)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([completedRun])
+        .mockResolvedValue([completedRun]);
 
       render(<App />);
       await vi.waitFor(() => expect(screen.getByRole("button", { name: /start/i })).toBeEnabled());

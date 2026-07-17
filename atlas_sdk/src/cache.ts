@@ -107,7 +107,9 @@ export class ResourceCache {
 
   objectDetail(id: string): ObjectDetailResource | undefined {
     const entry = this.entries.object.get(id);
-    return entry?.detail && entry.value && !entry.deleted && isObjectDetailResource(entry.value) ? entry.value : undefined;
+    return entry?.detail && entry.value && !entry.deleted && isObjectDetailResource(entry.value)
+      ? entry.value
+      : undefined;
   }
 
   snapshot(): SyncSnapshot {
@@ -118,7 +120,11 @@ export class ResourceCache {
     return this.snapshotValue;
   }
 
-  replaceHydratedResources(resources: { entities: readonly EntityResource[]; tasks: readonly TaskResource[]; objects: readonly ObjectDetailResource[] }): void {
+  replaceHydratedResources(resources: {
+    entities: readonly EntityResource[];
+    tasks: readonly TaskResource[];
+    objects: readonly ObjectDetailResource[];
+  }): void {
     this.entries.entity.clear();
     this.entries.task.clear();
     this.entries.object.clear();
@@ -129,19 +135,27 @@ export class ResourceCache {
     this.pendingDeletes.clear();
     this.locallyNotifiedDeletes.clear();
     this.lastVersion = 0;
-    for (const entity of resources.entities) this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
+    for (const entity of resources.entities)
+      this.cacheResource("entity", entity.entity_id, entity, { advanceCursor: false });
     for (const task of resources.tasks) this.cacheResource("task", task.task_id, task, { advanceCursor: false });
-    for (const object of resources.objects) this.cacheResource("object", object.object_id, object, { detail: true, advanceCursor: false });
+    for (const object of resources.objects)
+      this.cacheResource("object", object.object_id, object, { detail: true, advanceCursor: false });
   }
 
-  cacheResource<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>, options?: CacheResourceOptions): boolean {
+  cacheResource<TType extends ResourceType>(
+    type: TType,
+    id: string,
+    value: ResourceOf<TType>,
+    options?: CacheResourceOptions
+  ): boolean {
     const actualID = resourceID(type, value);
     if (actualID !== id) {
       throw new TypeError(`Atlas ${type} resource id ${actualID} does not match cache id ${id}`);
     }
     const version = value.metadata.version;
     const existing = this.entries[type].get(id);
-    const isDetailUpgrade = type === "object" && options?.detail === true && existing?.version === version && !existing.detail;
+    const isDetailUpgrade =
+      type === "object" && options?.detail === true && existing?.version === version && !existing.detail;
     if (existing && existing.version > version) {
       return false;
     }
@@ -153,7 +167,12 @@ export class ResourceCache {
     this.updateSnapshot(type, id, immutableValue);
     this.pendingDeletes.delete(key);
     this.locallyNotifiedDeletes.delete(key);
-    this.entries[type].set(id, { value: immutableValue, version, deleted: false, detail: type === "object" && options?.detail === true });
+    this.entries[type].set(id, {
+      value: immutableValue,
+      version,
+      deleted: false,
+      detail: type === "object" && options?.detail === true
+    });
     if (options?.advanceCursor !== false) {
       this.lastVersion = Math.max(this.lastVersion, version);
     }
@@ -195,7 +214,11 @@ export class ResourceCache {
 }
 
 function snapshotFromRecords(records: SnapshotRecords): SyncSnapshot {
-  return Object.freeze({ entities: records.entity.snapshot(), tasks: records.task.snapshot(), objects: records.object.snapshot() });
+  return Object.freeze({
+    entities: records.entity.snapshot(),
+    tasks: records.task.snapshot(),
+    objects: records.object.snapshot()
+  });
 }
 
 function immutableClone<T>(value: T): T {

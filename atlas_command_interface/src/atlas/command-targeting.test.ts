@@ -123,7 +123,10 @@ describe("command targeting", () => {
   });
 
   it("disables commands when an asset advertises an empty supported task list", () => {
-    const result = evaluateCommand(entity({ components: { task_catalog: { supported_tasks: [] } } }), command("move_to_location"));
+    const result = evaluateCommand(
+      entity({ components: { task_catalog: { supported_tasks: [] } } }),
+      command("move_to_location")
+    );
     expect(result.disabled).toBe(true);
     expect(result.disabledReason).toBe("This asset does not support this command");
   });
@@ -136,7 +139,11 @@ describe("command targeting", () => {
 
     const sidebarCommands = commandsForTargeting(catalog, supporting, "none");
     // hold_position is unsupported here, so it is disabled and sinks below none.
-    expect(sidebarCommands.map((entry) => entry.command.id)).toEqual(["hold_position", "optional_latlng", "string_latlng"]);
+    expect(sidebarCommands.map((entry) => entry.command.id)).toEqual([
+      "hold_position",
+      "optional_latlng",
+      "string_latlng"
+    ]);
     expect(sidebarCommands.every((entry) => entry.disabled)).toBe(true);
   });
 });

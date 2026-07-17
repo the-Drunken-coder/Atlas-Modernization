@@ -8,7 +8,11 @@ export default defineConfig(({ mode }) => ({
     {
       name: "atlas-security-headers",
       generateBundle() {
-        this.emitFile({ type: "asset", fileName: "_headers", source: renderSecurityHeaders(loadEnv(mode, process.cwd(), "")) });
+        this.emitFile({
+          type: "asset",
+          fileName: "_headers",
+          source: renderSecurityHeaders(loadEnv(mode, process.cwd(), ""))
+        });
       }
     }
   ],

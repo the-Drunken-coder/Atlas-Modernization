@@ -20,7 +20,9 @@ export function updateSymbolMarkerElement(element: HTMLButtonElement, feature: S
   const rotation = properties.kind === "asset" ? properties.heading : undefined;
   const symbol =
     properties.kind === "track"
-      ? defaultSidcIconService.getTrackSymbol({ type: properties.symbolType ?? properties.subtype ?? properties.classification ?? properties.name })
+      ? defaultSidcIconService.getTrackSymbol({
+          type: properties.symbolType ?? properties.subtype ?? properties.classification ?? properties.name
+        })
       : defaultSidcIconService.getAssetSymbol({
           entityId: properties.entityId,
           entityType: properties.entityType,
@@ -43,7 +45,10 @@ export function updateSymbolMarkerElement(element: HTMLButtonElement, feature: S
 }
 
 export function symbolMarkerPositionsEqual(left: SymbolMarkerFeature, right: SymbolMarkerFeature): boolean {
-  return left.geometry.coordinates[0] === right.geometry.coordinates[0] && left.geometry.coordinates[1] === right.geometry.coordinates[1];
+  return (
+    left.geometry.coordinates[0] === right.geometry.coordinates[0] &&
+    left.geometry.coordinates[1] === right.geometry.coordinates[1]
+  );
 }
 
 export function symbolMarkerPresentationsEqual(left: SymbolMarkerFeature, right: SymbolMarkerFeature): boolean {

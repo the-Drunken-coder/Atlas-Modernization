@@ -1,7 +1,14 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { appendMarker, entity, firePointerMove, markerCoordinatesFor, rect, renderMapView } from "./MapView.test-harness.js";
+import {
+  appendMarker,
+  entity,
+  firePointerMove,
+  markerCoordinatesFor,
+  rect,
+  renderMapView
+} from "./MapView.test-harness.js";
 import { buildMapSources } from "./map-sources.js";
 
 describe("MapView external reticle targets", () => {
@@ -42,7 +49,11 @@ describe("MapView external reticle targets", () => {
     const { canvas, rerenderMap } = renderMapView({ selectedId: "asset-1" });
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "70px"
+      )
+    );
 
     firePointerMove(canvas, { clientX: 220, clientY: 140 });
 
@@ -115,7 +126,10 @@ describe("MapView external reticle targets", () => {
     });
     const moved = {
       ...initial,
-      components: { ...initial.components, telemetry: { ...initial.components.telemetry, longitude: 170, latitude: 60 } }
+      components: {
+        ...initial.components,
+        telemetry: { ...initial.components.telemetry, longitude: 170, latitude: 60 }
+      }
     };
     const focusTarget = { type: "entity" as const, id: initial.entity_id };
     const { canvas, rerenderMap } = renderMapView({ sources: buildMapSources([initial], undefined) });
@@ -161,7 +175,11 @@ describe("MapView external reticle targets", () => {
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
     firePointerMove(canvas, { clientX: 220, clientY: 140 });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "70px"
+      )
+    );
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onBackgroundClick).toHaveBeenCalledTimes(1);
@@ -178,7 +196,11 @@ describe("MapView external reticle targets", () => {
     const { canvas, onBackgroundClick, rerenderMap } = renderMapView({ selectedId: "asset-1" });
     appendMarker(canvas, "asset-1", rect(70, 90, 20, 20));
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "70px"
+      )
+    );
 
     fireEvent.mouseDown(canvas, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
     fireEvent.mouseMove(window, { clientX: 150, clientY: 180 });
@@ -203,7 +225,11 @@ describe("MapView external reticle targets", () => {
     let markerRect = rect(70, 90, 20, 20);
     appendMarker(canvas, "asset-1", () => markerRect);
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "70px"
+      )
+    );
 
     firePointerMove(canvas, { clientX: 220, clientY: 120 });
     await waitFor(() => expect(document.querySelector(".map-reticle")).toHaveClass("map-reticle--targeted"));
@@ -229,7 +255,11 @@ describe("MapView external reticle targets", () => {
     let markerRect = rect(70, 90, 20, 20);
     appendMarker(canvas, "asset-1", () => markerRect);
     rerenderMap({ focusTarget: { type: "entity", id: "asset-1" } });
-    await waitFor(() => expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe("70px"));
+    await waitFor(() =>
+      expect(document.querySelector<HTMLElement>(".map-reticle")?.style.getPropertyValue("--map-reticle-x")).toBe(
+        "70px"
+      )
+    );
 
     act(() => map.fire("movestart"));
     markerRect = rect(120, 70, 20, 20);

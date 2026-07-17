@@ -10,7 +10,11 @@ export type ReticleTarget = { box: TargetBox; entityId?: string; id?: string };
 export type ReticleState = ScreenPoint & { target: TargetBox; targetEntityId?: string; targeted?: boolean };
 export type ZoomOverlayState = { start: ScreenPoint; current: ScreenPoint };
 
-export function pointFromClient(event: { clientX: number; clientY: number }, rect: DOMRect, clampToRect = false): ScreenPoint {
+export function pointFromClient(
+  event: { clientX: number; clientY: number },
+  rect: DOMRect,
+  clampToRect = false
+): ScreenPoint {
   const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
   if (!clampToRect) return point;
   return { x: clamp(point.x, 0, rect.width), y: clamp(point.y, 0, rect.height) };
@@ -78,7 +82,10 @@ export function boxIntersectsViewport(box: TargetBox, viewport: { width: number;
   return box.x + box.width >= 0 && box.y + box.height >= 0 && box.x <= viewport.width && box.y <= viewport.height;
 }
 
-export function boxFromProjectedPositions(positions: Position[], project: (position: Position) => ScreenPoint): TargetBox | null {
+export function boxFromProjectedPositions(
+  positions: Position[],
+  project: (position: Position) => ScreenPoint
+): TargetBox | null {
   const points = positions.map(project);
   if (points.length === 0) return null;
   const xValues = points.map((position) => position.x);

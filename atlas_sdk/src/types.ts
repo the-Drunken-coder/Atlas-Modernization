@@ -98,7 +98,9 @@ export type EntityCheckInMinimalTask = {
   parameters?: Record<string, JSONValue>;
 };
 
-export type EntityCheckInResponse<TTask extends TaskResource | EntityCheckInMinimalTask = TaskResource | EntityCheckInMinimalTask> = {
+export type EntityCheckInResponse<
+  TTask extends TaskResource | EntityCheckInMinimalTask = TaskResource | EntityCheckInMinimalTask
+> = {
   entity: EntityResource;
   tasks: TTask[];
   task_count: number;
@@ -242,7 +244,10 @@ export type ChangedSinceCursors = FullDatasetCursors & {
   deleted_object_cursor?: string;
 };
 
-export type WatchCallback<T extends ResourceValue = ResourceValue> = (value: T | undefined, event: AtlasWatchEvent) => void;
+export type WatchCallback<T extends ResourceValue = ResourceValue> = (
+  value: T | undefined,
+  event: AtlasWatchEvent
+) => void;
 
 export type CacheEntry<T> = {
   value?: T;
@@ -263,7 +268,13 @@ export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatch
       })
     ),
     ...(response.tasks ?? []).map(
-      (task): ChangedSinceWatchEvent => ({ event: "recovered", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task })
+      (task): ChangedSinceWatchEvent => ({
+        event: "recovered",
+        resource_type: "task",
+        id: task.task_id,
+        version: task.metadata.version,
+        resource: task
+      })
     ),
     ...(response.objects ?? []).map(
       (object): ChangedSinceWatchEvent => ({
@@ -275,7 +286,12 @@ export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatch
       })
     ),
     ...(response.deleted_entities ?? []).map(
-      (item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "entity", id: item.id, version: item.version })
+      (item): ChangedSinceWatchEvent => ({
+        event: "delete",
+        resource_type: "entity",
+        id: item.id,
+        version: item.version
+      })
     ),
     ...(response.deleted_tasks ?? []).map(
       (item): TaskDeleteEvent => ({
@@ -287,7 +303,12 @@ export function changedSinceToEvents(response: ChangedSinceResponse): AtlasWatch
       })
     ),
     ...(response.deleted_objects ?? []).map(
-      (item): ChangedSinceWatchEvent => ({ event: "delete", resource_type: "object", id: item.id, version: item.version })
+      (item): ChangedSinceWatchEvent => ({
+        event: "delete",
+        resource_type: "object",
+        id: item.id,
+        version: item.version
+      })
     )
   ];
   return events.sort((left, right) => left.version - right.version);

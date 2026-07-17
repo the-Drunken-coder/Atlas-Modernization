@@ -58,8 +58,16 @@ export class FakeCore {
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
     if (path === "/queries/full" && method === "GET") {
       try {
-        const entityPage = pageValues([...this.entities.values()], this.fullLimitPerType, parsed.searchParams.get("entity_cursor"));
-        const taskPage = pageValues([...this.tasks.values()], this.fullLimitPerType, parsed.searchParams.get("task_cursor"));
+        const entityPage = pageValues(
+          [...this.entities.values()],
+          this.fullLimitPerType,
+          parsed.searchParams.get("entity_cursor")
+        );
+        const taskPage = pageValues(
+          [...this.tasks.values()],
+          this.fullLimitPerType,
+          parsed.searchParams.get("task_cursor")
+        );
         const objectPage = pageValues(
           [...this.objects.values()].map((object) => this.objectDetail(object)),
           this.fullLimitPerType,
@@ -333,7 +341,12 @@ export class FakeCore {
     return this.upsertTask(next);
   }
 
-  private async taskLifecycleResponse(id: string, action: string, init: RequestInit | undefined, ifMatch: string | null): Promise<Response> {
+  private async taskLifecycleResponse(
+    id: string,
+    action: string,
+    init: RequestInit | undefined,
+    ifMatch: string | null
+  ): Promise<Response> {
     if (!this.tasks.has(id)) {
       return protocolError("task not found", "TASK_NOT_FOUND", 404);
     }
@@ -350,7 +363,10 @@ export class FakeCore {
         return protocolError("Invalid JSON body", "INVALID_JSON", 400);
       }
       return json(
-        this.updateTask(id, { status: "completed", ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } }) })
+        this.updateTask(id, {
+          status: "completed",
+          ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } })
+        })
       );
     }
     if (action === "fail") {
@@ -360,7 +376,10 @@ export class FakeCore {
         return protocolError("Invalid JSON body", "INVALID_JSON", 400);
       }
       return json(
-        this.updateTask(id, { status: "failed", ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } }) })
+        this.updateTask(id, {
+          status: "failed",
+          ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } })
+        })
       );
     }
     if (action === "status") {
@@ -387,7 +406,12 @@ export class FakeCore {
     return protocolError("not found", "VALIDATION_ERROR", 404);
   }
 
-  private async checkInEntityResponse(id: string, parsed: URL, init: RequestInit | undefined, ifMatch: string | null): Promise<Response> {
+  private async checkInEntityResponse(
+    id: string,
+    parsed: URL,
+    init: RequestInit | undefined,
+    ifMatch: string | null
+  ): Promise<Response> {
     if (!this.entities.has(id)) {
       return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
     }
@@ -430,7 +454,10 @@ export class FakeCore {
       return protocolError("Invalid since timestamp format (use RFC3339)", "VALIDATION_ERROR", 400);
     }
     const filteredTasks = [...this.tasks.values()].filter(
-      (value) => value.entity_id === id && statusFilter.includes(value.status) && (sinceMs === undefined || Date.parse(value.metadata.updated_at) >= sinceMs)
+      (value) =>
+        value.entity_id === id &&
+        statusFilter.includes(value.status) &&
+        (sinceMs === undefined || Date.parse(value.metadata.updated_at) >= sinceMs)
     );
     const taskPage = pageValues(filteredTasks, limit, parsed.searchParams.get("task_cursor"));
     const tasks = parsed.searchParams.get("fields") === "minimal" ? taskPage.items.map(minimalTask) : taskPage.items;
@@ -525,18 +552,27 @@ export class FakeCore {
   }
 
   private deleteEntityResponse(id: string): Response {
-    return this.deleteEntity(id) ? new Response(null, { status: 204 }) : protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
+    return this.deleteEntity(id)
+      ? new Response(null, { status: 204 })
+      : protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
   }
 
   private deleteTaskResponse(id: string): Response {
-    return this.deleteTask(id) ? new Response(null, { status: 204 }) : protocolError("task not found", "TASK_NOT_FOUND", 404);
+    return this.deleteTask(id)
+      ? new Response(null, { status: 204 })
+      : protocolError("task not found", "TASK_NOT_FOUND", 404);
   }
 
   private deleteObjectResponse(id: string): Response {
-    return this.deleteObject(id) ? new Response(null, { status: 204 }) : protocolError("object not found", "OBJECT_NOT_FOUND", 404);
+    return this.deleteObject(id)
+      ? new Response(null, { status: 204 })
+      : protocolError("object not found", "OBJECT_NOT_FOUND", 404);
   }
 
-  emit(event: FeedEvent, options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null; record?: boolean }): void {
+  emit(
+    event: FeedEvent,
+    options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null; record?: boolean }
+  ): void {
     if (options?.record !== false) {
       this.record(event);
     }
@@ -592,7 +628,16 @@ export class FakeCore {
   }
 }
 
-const promotedObjectExtraKeys = new Set(["path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by", "version"]);
+const promotedObjectExtraKeys = new Set([
+  "path",
+  "content_type",
+  "type",
+  "size_bytes",
+  "usage_hints",
+  "bucket",
+  "referenced_by",
+  "version"
+]);
 
 async function readRecord(init: RequestInit | undefined): Promise<Record<string, unknown> | Response> {
   let value: unknown;
@@ -636,8 +681,18 @@ function minimalTask(value: TaskResource): Record<string, unknown> {
   };
   if (value.entity_id !== null) entry.entity_id = value.entity_id;
   const command = value.components.command;
-  const commandID = firstNonEmptyString((value.components as Record<string, unknown>).command_id, command?.id, command?.type, command);
-  const parameters = firstRecord(value.components.parameters, value.components.target, command?.parameters, command?.target);
+  const commandID = firstNonEmptyString(
+    (value.components as Record<string, unknown>).command_id,
+    command?.id,
+    command?.type,
+    command
+  );
+  const parameters = firstRecord(
+    value.components.parameters,
+    value.components.target,
+    command?.parameters,
+    command?.target
+  );
   if (commandID) entry.command_id = commandID;
   if (parameters) entry.parameters = parameters;
   return entry;

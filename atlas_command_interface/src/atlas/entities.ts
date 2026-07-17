@@ -42,7 +42,12 @@ export function entityPosition(entity: EntityResource): Position | undefined {
   const telemetry = entity.components.telemetry;
   const latitude = telemetry?.latitude;
   const longitude = telemetry?.longitude;
-  if (typeof latitude === "number" && Number.isFinite(latitude) && typeof longitude === "number" && Number.isFinite(longitude)) {
+  if (
+    typeof latitude === "number" &&
+    Number.isFinite(latitude) &&
+    typeof longitude === "number" &&
+    Number.isFinite(longitude)
+  ) {
     return [longitude, latitude];
   }
   const geometry = entityGeometry(entity);
@@ -78,7 +83,11 @@ export function entityClassification(entity: EntityResource): Classification | u
 }
 
 export function entityLastSeen(entity: EntityResource): string | undefined {
-  return entity.components.heartbeat?.last_seen ?? entity.components.telemetry?.last_update ?? entity.components.status?.last_update;
+  return (
+    entity.components.heartbeat?.last_seen ??
+    entity.components.telemetry?.last_update ??
+    entity.components.status?.last_update
+  );
 }
 
 export function entityHeartbeatLastSeen(entity: EntityResource): string | undefined {
@@ -104,9 +113,14 @@ export function heartbeatLevel(lastSeen: string | undefined, now: number = Date.
   return "fresh";
 }
 
-export function entityConnectionStatus(entity: EntityResource, now: number = Date.now()): EntityConnectionStatus | undefined {
+export function entityConnectionStatus(
+  entity: EntityResource,
+  now: number = Date.now()
+): EntityConnectionStatus | undefined {
   const reported = entityLinkState(entity);
-  return reported ? { reported, freshness: heartbeatLevel(entityHeartbeatLastSeen(entity), now) ?? "missing" } : undefined;
+  return reported
+    ? { reported, freshness: heartbeatLevel(entityHeartbeatLastSeen(entity), now) ?? "missing" }
+    : undefined;
 }
 
 function numberOrUndefined(value: number | undefined): number | undefined {

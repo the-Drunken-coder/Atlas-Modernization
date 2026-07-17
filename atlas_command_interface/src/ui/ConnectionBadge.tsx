@@ -18,7 +18,10 @@ export function ConnectionBadge({
   const errorMessage = unsafeConnectionError?.message;
   const errorSource = unsafeConnectionError?.source;
   const connectionError = useMemo(
-    () => (errorMessage === undefined || errorSource === undefined ? undefined : { message: sanitizeConnectionError(errorMessage), source: errorSource }),
+    () =>
+      errorMessage === undefined || errorSource === undefined
+        ? undefined
+        : { message: sanitizeConnectionError(errorMessage), source: errorSource },
     [errorMessage, errorSource]
   );
   const state = connectionBadgeState(health, connectionError);
@@ -51,10 +54,19 @@ export function ConnectionBadge({
   }, [connectionError, focusOnMount]);
 
   useEffect(() => {
-    if (connectionError || (retryFocusPendingRef.current && !(health.healthy && !health.degraded)) || (!open && !ownsFocusRef.current)) return;
+    if (
+      connectionError ||
+      (retryFocusPendingRef.current && !(health.healthy && !health.degraded)) ||
+      (!open && !ownsFocusRef.current)
+    )
+      return;
     setOpen(false);
     const activeElement = document.activeElement;
-    if (activeElement === document.body || detailRef.current?.contains(activeElement) || focusAnchorRef.current?.contains(activeElement)) {
+    if (
+      activeElement === document.body ||
+      detailRef.current?.contains(activeElement) ||
+      focusAnchorRef.current?.contains(activeElement)
+    ) {
       statusRef.current?.focus();
     }
   }, [connectionError, health.degraded, health.healthy, open]);
@@ -94,7 +106,12 @@ export function ConnectionBadge({
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) ownsFocusRef.current = false;
       }}
     >
-      <span className="connection-badge__status" role="status" aria-live="polite" aria-label={`Atlas connection ${state.label}`}>
+      <span
+        className="connection-badge__status"
+        role="status"
+        aria-live="polite"
+        aria-label={`Atlas connection ${state.label}`}
+      >
         {state.label}
       </span>
       {!connectionError ? (
@@ -140,7 +157,9 @@ export function ConnectionBadge({
                 </Button>
               </div>
               <p id={`${detailId}-description`}>
-                {connectionError.source === "startup" ? "The initial connection to Atlas Core failed." : "The live connection to Atlas Core failed."}
+                {connectionError.source === "startup"
+                  ? "The initial connection to Atlas Core failed."
+                  : "The live connection to Atlas Core failed."}
               </p>
               <p className="connection-detail__message">{connectionError.message}</p>
               <p className="connection-detail__status" role="status">
@@ -167,7 +186,10 @@ export function ConnectionBadge({
   );
 }
 
-function connectionBadgeState(health: ConnectionHealth, error?: ConnectionError): { label: string; state: "live" | "reconnecting" | "connecting" | "error" } {
+function connectionBadgeState(
+  health: ConnectionHealth,
+  error?: ConnectionError
+): { label: string; state: "live" | "reconnecting" | "connecting" | "error" } {
   if (error) return { label: "Connection error", state: "error" };
   if (health.running && health.healthy && !health.degraded) return { label: "Online", state: "live" };
   if (health.running) return { label: "Reconnecting", state: "reconnecting" };

@@ -249,8 +249,10 @@ export function MapView({
       visibleIds.add(entityId);
       const current = markers.get(entityId);
       if (current) {
-        if (!symbolMarkerPositionsEqual(current.feature, feature)) current.marker.setLngLat(feature.geometry.coordinates);
-        if (!symbolMarkerPresentationsEqual(current.feature, feature)) updateSymbolMarkerElement(current.element, feature);
+        if (!symbolMarkerPositionsEqual(current.feature, feature))
+          current.marker.setLngLat(feature.geometry.coordinates);
+        if (!symbolMarkerPresentationsEqual(current.feature, feature))
+          updateSymbolMarkerElement(current.element, feature);
         current.feature = feature;
         continue;
       }
@@ -300,7 +302,11 @@ export function MapView({
       <div className="maplibre-host" ref={containerRef} />
       {reticleInteraction.cursorOverlay ? <MapCursorOverlay {...reticleInteraction.cursorOverlay} /> : null}
       {reticleInteraction.visibleReticle ? (
-        <MapReticle reticle={reticleInteraction.visibleReticle} scrolling={reticleInteraction.scrolling} zooming={reticleInteraction.zooming} />
+        <MapReticle
+          reticle={reticleInteraction.visibleReticle}
+          scrolling={reticleInteraction.scrolling}
+          zooming={reticleInteraction.zooming}
+        />
       ) : null}
       {mapError ? (
         <div className="map-unavailable" role="status" aria-live="polite">

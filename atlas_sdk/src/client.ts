@@ -33,7 +33,13 @@ import type {
   WatchCallback,
   WebSocketCtor
 } from "./types.js";
-import { changedSinceResponseValidator, isEntityResource, isFullDatasetResponse, isObjectDetailResource, isTaskResource } from "./validation.js";
+import {
+  changedSinceResponseValidator,
+  isEntityResource,
+  isFullDatasetResponse,
+  isObjectDetailResource,
+  isTaskResource
+} from "./validation.js";
 
 export { ProtocolMismatchError } from "./feed-connection.js";
 export { AtlasAPIError, ConflictError } from "./http.js";
@@ -78,12 +84,22 @@ export type AtlasClientOptions = {
 export class AtlasClient {
   readonly entities = {
     get: (id: string, options?: ReadOptions) => this.engine.readEntity(id, options),
-    create: (entity: EntityCreateRequest) => this.engine.writeResource("POST", "/entities", entity, "entity", entity.entity_id, isEntityResource),
+    create: (entity: EntityCreateRequest) =>
+      this.engine.writeResource("POST", "/entities", entity, "entity", entity.entity_id, isEntityResource),
     update: (id: string, patch: EntityUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource("PATCH", `/entities/${encodeURIComponent(id)}`, patch, "entity", id, isEntityResource, options?.ifMatchVersion),
+      this.engine.writeResource(
+        "PATCH",
+        `/entities/${encodeURIComponent(id)}`,
+        patch,
+        "entity",
+        id,
+        isEntityResource,
+        options?.ifMatchVersion
+      ),
     delete: (id: string) => this.engine.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`),
     checkIn: ((id: string, options?: EntityCheckInOptions) => this.checkInEntity(id, options)) as EntityCheckInMethod,
-    watch: (id: string, callback: WatchCallback<EntityResource>) => this.engine.watch({ filter: "id", resource_type: "entity", id }, callback)
+    watch: (id: string, callback: WatchCallback<EntityResource>) =>
+      this.engine.watch({ filter: "id", resource_type: "entity", id }, callback)
   };
 
   readonly tasks = {
@@ -101,10 +117,27 @@ export class AtlasClient {
         options?.signal
       ),
     update: (id: string, patch: TaskUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource("PATCH", `/tasks/${encodeURIComponent(id)}`, patch, "task", id, isTaskResource, options?.ifMatchVersion),
+      this.engine.writeResource(
+        "PATCH",
+        `/tasks/${encodeURIComponent(id)}`,
+        patch,
+        "task",
+        id,
+        isTaskResource,
+        options?.ifMatchVersion
+      ),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
     acknowledge: (id: string, options?: TaskLifecycleOptions) =>
-      this.engine.writeResource("POST", `/tasks/${encodeURIComponent(id)}/acknowledge`, {}, "task", id, isTaskResource, options?.ifMatchVersion, "update"),
+      this.engine.writeResource(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/acknowledge`,
+        {},
+        "task",
+        id,
+        isTaskResource,
+        options?.ifMatchVersion,
+        "update"
+      ),
     complete: (id: string, options?: TaskCompleteOptions) =>
       this.engine.writeResource(
         "POST",
@@ -139,23 +172,39 @@ export class AtlasClient {
         "update"
       ),
     cancel: (id: string, options?: TaskLifecycleOptions) => this.tasks.setStatus(id, "cancelled", options),
-    watch: (id: string, callback: WatchCallback<TaskResource>) => this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
+    watch: (id: string, callback: WatchCallback<TaskResource>) =>
+      this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
   };
 
   readonly objects = {
     get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
-    create: (object: ObjectCreateRequest) => this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectDetailResource),
+    create: (object: ObjectCreateRequest) =>
+      this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectDetailResource),
     update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource("PATCH", `/objects/${encodeURIComponent(id)}`, patch, "object", id, isObjectDetailResource, options?.ifMatchVersion),
+      this.engine.writeResource(
+        "PATCH",
+        `/objects/${encodeURIComponent(id)}`,
+        patch,
+        "object",
+        id,
+        isObjectDetailResource,
+        options?.ifMatchVersion
+      ),
     delete: (id: string) => this.engine.deleteResource("object", id, `/objects/${encodeURIComponent(id)}`),
     content: (id: string) => this.objectContent(id),
-    watch: (id: string, callback: WatchCallback<ObjectResource>) => this.engine.watch({ filter: "id", resource_type: "object", id }, callback)
+    watch: (id: string, callback: WatchCallback<ObjectResource>) =>
+      this.engine.watch({ filter: "id", resource_type: "object", id }, callback)
   };
 
   readonly queries = {
-    full: (options?: FullDatasetQueryOptions) => this.transport.json("GET", fullDatasetQueryPath(options), isFullDatasetResponse),
+    full: (options?: FullDatasetQueryOptions) =>
+      this.transport.json("GET", fullDatasetQueryPath(options), isFullDatasetResponse),
     changedSince: (sinceVersion: number, options?: ChangedSinceQueryOptions) =>
-      this.transport.json("GET", changedSinceQueryPath(sinceVersion, options), changedSinceResponseValidator(sinceVersion))
+      this.transport.json(
+        "GET",
+        changedSinceQueryPath(sinceVersion, options),
+        changedSinceResponseValidator(sinceVersion)
+      )
   };
 
   sync = {
@@ -211,7 +260,10 @@ export class AtlasClient {
     await this.engine.unsubscribe(filter);
   }
 
-  watch<T extends EntityResource | TaskResource | ObjectResource>(filter: AtlasSubscription, callback: WatchCallback<T>): () => void {
+  watch<T extends EntityResource | TaskResource | ObjectResource>(
+    filter: AtlasSubscription,
+    callback: WatchCallback<T>
+  ): () => void {
     return this.engine.watch(filter, callback);
   }
 
@@ -252,7 +304,10 @@ export class AtlasClient {
   }
 }
 
-function taskStatusBody(status: TaskStatus, options?: TaskStatusOptions): { status: TaskStatus; progress?: number; message?: string } {
+function taskStatusBody(
+  status: TaskStatus,
+  options?: TaskStatusOptions
+): { status: TaskStatus; progress?: number; message?: string } {
   return {
     status,
     ...(options?.progress === undefined ? {} : { progress: options.progress }),
@@ -272,7 +327,8 @@ function checkInRequest(id: string, options?: EntityCheckInOptions): { path: str
     if (speed_m_s !== undefined) body.speed_m_s = speed_m_s;
     if (heading_deg !== undefined) body.heading_deg = heading_deg;
   }
-  const statusFilter = options?.statusFilter && options.statusFilter.length > 0 ? options.statusFilter.join(",") : undefined;
+  const statusFilter =
+    options?.statusFilter && options.statusFilter.length > 0 ? options.statusFilter.join(",") : undefined;
   const fields = options?.fields === "minimal" ? "minimal" : undefined;
   const path = pathWithQuery(`/entities/${encodeURIComponent(id)}/checkin`, {
     status_filter: statusFilter,

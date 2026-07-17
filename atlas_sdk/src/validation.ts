@@ -40,8 +40,13 @@ const changedSincePaginationFields = [
   ["has_more_deleted_objects", "next_deleted_object_cursor"]
 ] as const;
 
-export const isProtocolRevisionResponse: ResponseValidator<{ protocol_revision: string }> = (value): value is { protocol_revision: string } =>
-  isRecord(value) && Object.keys(value).length === 1 && hasOwn(value, "protocol_revision") && isProtocolRevision(value.protocol_revision);
+export const isProtocolRevisionResponse: ResponseValidator<{ protocol_revision: string }> = (
+  value
+): value is { protocol_revision: string } =>
+  isRecord(value) &&
+  Object.keys(value).length === 1 &&
+  hasOwn(value, "protocol_revision") &&
+  isProtocolRevision(value.protocol_revision);
 
 export const isEntityResource: ResponseValidator<EntityResource> = (value): value is EntityResource =>
   isGeneratedEntityResource(value) && isFeedVersion(value.metadata.version);
@@ -95,7 +100,10 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
   };
 }
 
-export function entityCheckInResponseValidator(expectedEntityID: string, fields: EntityCheckInFields): ResponseValidator<EntityCheckInResponse> {
+export function entityCheckInResponseValidator(
+  expectedEntityID: string,
+  fields: EntityCheckInFields
+): ResponseValidator<EntityCheckInResponse> {
   return (value): value is EntityCheckInResponse => {
     if (
       !isRecord(value) ||
@@ -115,7 +123,9 @@ export function entityCheckInResponseValidator(expectedEntityID: string, fields:
     ) {
       return false;
     }
-    return value.has_more_tasks ? hasOwn(value, "next_task_cursor") && isNonEmptyString(value.next_task_cursor) : !hasOwn(value, "next_task_cursor");
+    return value.has_more_tasks
+      ? hasOwn(value, "next_task_cursor") && isNonEmptyString(value.next_task_cursor)
+      : !hasOwn(value, "next_task_cursor");
   };
 }
 
@@ -166,7 +176,10 @@ function isEntityCheckInMinimalTask(value: unknown): value is EntityCheckInMinim
   );
 }
 
-function hasValidPagination(value: Record<string, unknown>, fields: ReadonlyArray<readonly [hasMore: string, nextCursor: string]>): boolean {
+function hasValidPagination(
+  value: Record<string, unknown>,
+  fields: ReadonlyArray<readonly [hasMore: string, nextCursor: string]>
+): boolean {
   return fields.every(([hasMore, nextCursor]) => {
     if (!hasOwn(value, hasMore) || typeof value[hasMore] !== "boolean") return false;
     if (value[hasMore]) return hasOwn(value, nextCursor) && isNonEmptyString(value[nextCursor]);

@@ -49,7 +49,14 @@ export class HttpTransport {
     this.requestTimeoutMs = options.requestTimeoutMs;
   }
 
-  async json<T>(method: string, path: string, validate: ResponseValidator<T>, body?: unknown, ifMatchVersion?: number, signal?: AbortSignal): Promise<T> {
+  async json<T>(
+    method: string,
+    path: string,
+    validate: ResponseValidator<T>,
+    body?: unknown,
+    ifMatchVersion?: number,
+    signal?: AbortSignal
+  ): Promise<T> {
     const response = await this.raw(method, path, body, ifMatchVersion, signal);
     const value: unknown = await response.json();
     if (!validate(value)) {
@@ -65,7 +72,13 @@ export class HttpTransport {
     }
   }
 
-  async raw(method: string, path: string, body?: unknown, ifMatchVersion?: number, signal?: AbortSignal): Promise<Response> {
+  async raw(
+    method: string,
+    path: string,
+    body?: unknown,
+    ifMatchVersion?: number,
+    signal?: AbortSignal
+  ): Promise<Response> {
     const headers = new Headers();
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
@@ -92,7 +105,10 @@ export class HttpTransport {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
-      return await this.fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal });
+      return await this.fetchImpl(url, {
+        ...init,
+        signal: init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal
+      });
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);

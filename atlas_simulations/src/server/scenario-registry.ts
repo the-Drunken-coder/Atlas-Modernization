@@ -5,7 +5,9 @@ import type { Scenario } from "./scenario.js";
 
 export type RegisteredScenario = Readonly<Scenario>;
 
-const registeredScenarios: RegisteredScenario[] = [movingAssets, observationsObjects, multiClientSync].map(freezeScenario);
+const registeredScenarios: RegisteredScenario[] = [movingAssets, observationsObjects, multiClientSync].map(
+  freezeScenario
+);
 assertUniqueScenarioIds(registeredScenarios);
 
 export const scenarios: readonly RegisteredScenario[] = Object.freeze(registeredScenarios);
