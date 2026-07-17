@@ -398,6 +398,9 @@ jobs:
       - name: Test atlas script helpers
         run: python3 scripts/test_atlas.py
 
+      - name: Test Go coverage checker
+        run: python3 scripts/test_check_coverage.py
+
       - name: Test seed command catalog
         run: python3 scripts/test_seed_command_catalog.py
 
