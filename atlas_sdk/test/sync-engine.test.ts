@@ -429,6 +429,81 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
   });
 
+  it("rejects a stopped feed connection without letting stale cleanup reset its replacement", async () => {
+    let rejectStaleConnect!: (reason: unknown) => void;
+    let releaseCurrentConnect!: () => void;
+    const staleConnect = new Promise<void>((_resolve, reject) => {
+      rejectStaleConnect = reject;
+    });
+    const currentConnect = new Promise<void>((resolve) => {
+      releaseCurrentConnect = resolve;
+    });
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const connect = vi.spyOn(engine.feed, "connect").mockReturnValueOnce(staleConnect).mockReturnValueOnce(currentConnect);
+
+    const stale = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+    client.sync.stop();
+
+    const current = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    const originalError = new Error("stale feed failure");
+    rejectStaleConnect(originalError);
+
+    await expect(stale).rejects.toBe(originalError);
+    await client.connectAndRecoverFeed();
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    releaseCurrentConnect();
+    await current;
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
+  it("rejects a stopped changed-since request without letting stale cleanup reset its replacement", async () => {
+    let rejectRecovery!: (reason: unknown) => void;
+    let releaseCurrentConnect!: () => void;
+    let changedSinceRequests = 0;
+    const pendingRecovery = new Promise<Response>((_resolve, reject) => {
+      rejectRecovery = reject;
+    });
+    const currentConnect = new Promise<void>((resolve) => {
+      releaseCurrentConnect = resolve;
+    });
+    const core = new FakeCore();
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (changedSinceRequests === 1) return pendingRecovery;
+      }
+      return core.fetch(url, init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const connect = vi.spyOn(engine.feed, "connect").mockResolvedValueOnce(undefined).mockReturnValueOnce(currentConnect);
+
+    const stale = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(changedSinceRequests).toBe(1));
+    client.sync.stop();
+
+    const current = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    const originalError = new Error("stale recovery failure");
+    rejectRecovery(originalError);
+
+    await expect(stale).rejects.toBe(originalError);
+    await client.connectAndRecoverFeed();
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    releaseCurrentConnect();
+    await current;
+    expect(changedSinceRequests).toBe(2);
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
   it("keeps changed-since recovery active during a connect-only attempt", async () => {
     const core = new FakeCore();
     const recovered = core.upsertEntity(entity("asset-recovered-during-connect"));
@@ -1233,7 +1308,7 @@ describe("AtlasClient sync", () => {
     }
   });
 
-  it("does not let an older recovery failure overwrite a newer retry", async () => {
+  it("rejects an older recovery failure without overwriting a newer retry", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-newer-recovery"));
     let releaseOlder!: (reason?: unknown) => void;
@@ -1262,8 +1337,9 @@ describe("AtlasClient sync", () => {
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
     await engine.changedSinceForGeneration(engine.lifecycleGeneration, 1);
-    releaseOlder(new Error("stale recovery failed"));
-    await expect(older).resolves.toBeUndefined();
+    const originalError = new Error("stale recovery failed");
+    releaseOlder(originalError);
+    await expect(older).rejects.toBe(originalError);
 
     expect(client.sync.status()).not.toHaveProperty("error");
   });

@@ -281,12 +281,13 @@ export class SyncEngine {
       if (this.lastError === "Atlas Core recovery request failed") this.lastError = undefined;
       return true;
     } catch (error) {
-      if (!isCurrentOperation()) return false;
-      this.lastError = "Atlas Core recovery request failed";
-      if (this.syncRunning) {
-        this.degraded = true;
-        this.healthy = false;
-        this.scheduleReconnect();
+      if (isCurrentOperation()) {
+        this.lastError = "Atlas Core recovery request failed";
+        if (this.syncRunning) {
+          this.degraded = true;
+          this.healthy = false;
+          this.scheduleReconnect();
+        }
       }
       throw error;
     }
@@ -493,19 +494,19 @@ export class SyncEngine {
       try {
         await this.connectFeedForGeneration(generation, attempt);
       } catch (error) {
-        if (!this.isCurrentFeedConnection(generation, attempt)) return;
-        this.invalidateRecovery();
+        if (this.isCurrentFeedConnection(generation, attempt)) this.invalidateRecovery();
         throw error;
       }
       if (!this.isCurrentFeedConnection(generation, attempt)) return;
       const recovered = await this.changedSinceForGeneration(generation);
       if (recovered && this.isCurrentFeedConnection(generation, attempt) && this.lastError?.startsWith("Atlas Core feed ")) this.lastError = undefined;
     } finally {
-      if (!this.isCurrent(generation)) return;
-      this.reconnecting = false;
-      if (this.reconnectAfterRecovery) {
-        this.reconnectAfterRecovery = false;
-        this.scheduleReconnect();
+      if (this.isCurrent(generation)) {
+        this.reconnecting = false;
+        if (this.reconnectAfterRecovery) {
+          this.reconnectAfterRecovery = false;
+          this.scheduleReconnect();
+        }
       }
     }
   }
