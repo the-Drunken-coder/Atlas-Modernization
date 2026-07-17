@@ -429,6 +429,81 @@ describe("AtlasClient sync", () => {
     expect(client.sync.status()).toHaveProperty("error", "Atlas Core feed connection failed");
   });
 
+  it("rejects a stopped feed connection without letting stale cleanup reset its replacement", async () => {
+    let rejectStaleConnect!: (reason: unknown) => void;
+    let releaseCurrentConnect!: () => void;
+    const staleConnect = new Promise<void>((_resolve, reject) => {
+      rejectStaleConnect = reject;
+    });
+    const currentConnect = new Promise<void>((resolve) => {
+      releaseCurrentConnect = resolve;
+    });
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const connect = vi.spyOn(engine.feed, "connect").mockReturnValueOnce(staleConnect).mockReturnValueOnce(currentConnect);
+
+    const stale = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
+    client.sync.stop();
+
+    const current = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    const originalError = new Error("stale feed failure");
+    rejectStaleConnect(originalError);
+
+    await expect(stale).rejects.toBe(originalError);
+    await client.connectAndRecoverFeed();
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    releaseCurrentConnect();
+    await current;
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
+  it("rejects a stopped changed-since request without letting stale cleanup reset its replacement", async () => {
+    let rejectRecovery!: (reason: unknown) => void;
+    let releaseCurrentConnect!: () => void;
+    let changedSinceRequests = 0;
+    const pendingRecovery = new Promise<Response>((_resolve, reject) => {
+      rejectRecovery = reject;
+    });
+    const currentConnect = new Promise<void>((resolve) => {
+      releaseCurrentConnect = resolve;
+    });
+    const core = new FakeCore();
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (changedSinceRequests === 1) return pendingRecovery;
+      }
+      return core.fetch(url, init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const connect = vi.spyOn(engine.feed, "connect").mockResolvedValueOnce(undefined).mockReturnValueOnce(currentConnect);
+
+    const stale = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(changedSinceRequests).toBe(1));
+    client.sync.stop();
+
+    const current = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    const originalError = new Error("stale recovery failure");
+    rejectRecovery(originalError);
+
+    await expect(stale).rejects.toBe(originalError);
+    await client.connectAndRecoverFeed();
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    releaseCurrentConnect();
+    await current;
+    expect(changedSinceRequests).toBe(2);
+    expect(client.sync.status()).toMatchObject({ running: false, healthy: false, degraded: false });
+    expect(client.sync.status()).not.toHaveProperty("error");
+  });
+
   it("keeps changed-since recovery active during a connect-only attempt", async () => {
     const core = new FakeCore();
     const recovered = core.upsertEntity(entity("asset-recovered-during-connect"));
@@ -1233,7 +1308,7 @@ describe("AtlasClient sync", () => {
     }
   });
 
-  it("does not let an older recovery failure overwrite a newer retry", async () => {
+  it("rejects an older recovery failure without overwriting a newer retry", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-newer-recovery"));
     let releaseOlder!: (reason?: unknown) => void;
@@ -1262,8 +1337,9 @@ describe("AtlasClient sync", () => {
     const older = client.changedSince();
     await vi.waitFor(() => expect(changedSinceRequests).toBe(2));
     await engine.changedSinceForGeneration(engine.lifecycleGeneration, 1);
-    releaseOlder(new Error("stale recovery failed"));
-    await expect(older).resolves.toBeUndefined();
+    const originalError = new Error("stale recovery failed");
+    releaseOlder(originalError);
+    await expect(older).rejects.toBe(originalError);
 
     expect(client.sync.status()).not.toHaveProperty("error");
   });
@@ -1962,6 +2038,204 @@ describe("AtlasClient sync", () => {
       await vi.advanceTimersByTimeAsync(100);
 
       expect(pollRequests).toBe(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a stale polling failure after same-generation feed recovery", async () => {
+    vi.useFakeTimers();
+    const core = new FakeCore();
+    let holdPoll = false;
+    let rejectPoll!: (reason: unknown) => void;
+    let changedSinceRequests = 0;
+    const pendingPoll = new Promise<Response>((_resolve, reject) => {
+      rejectPoll = reject;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/changed-since") {
+        changedSinceRequests++;
+        if (holdPoll) {
+          holdPoll = false;
+          return pendingPoll;
+        }
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 10_000
+    });
+
+    try {
+      const start = client.sync.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await start;
+      const startupChangedSinceRequests = changedSinceRequests;
+      expect(startupChangedSinceRequests).toBeGreaterThan(0);
+      expect(core.feedConnections).toBe(1);
+
+      holdPoll = true;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(changedSinceRequests).toBe(startupChangedSinceRequests + 1);
+
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.close();
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: false,
+        degraded: true,
+        error: "Atlas Core feed connection closed"
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => {
+        expect(changedSinceRequests).toBe(startupChangedSinceRequests + 2);
+        expect(core.feedConnections).toBe(2);
+        expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+        expect(client.sync.status()).not.toHaveProperty("error");
+      });
+
+      rejectPoll(new Error("obsolete poll failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sync.status()).toMatchObject({ running: true, healthy: true, degraded: false });
+      expect(client.sync.status()).not.toHaveProperty("error");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(core.feedConnections).toBe(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores an automatic reconnect failure superseded by a same-generation feed connection", async () => {
+    vi.useFakeTimers();
+    const core = new FakeCore();
+    let rejectAutomaticConnect!: (reason: unknown) => void;
+    const automaticConnect = new Promise<void>((_resolve, reject) => {
+      rejectAutomaticConnect = reject;
+    });
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 60_000
+    });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+
+    try {
+      const start = client.sync.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await start;
+      expect(core.feedConnections).toBe(1);
+
+      const connect = vi.spyOn(engine.feed, "connect").mockReturnValueOnce(automaticConnect).mockResolvedValueOnce(undefined);
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.close();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledOnce();
+
+      await client.connectFeed();
+      expect(connect).toHaveBeenCalledTimes(2);
+      await client.changedSince();
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+
+      rejectAutomaticConnect(new Error("superseded automatic reconnect failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledTimes(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores an automatic reconnect recovery superseded within the current feed attempt", async () => {
+    const core = new FakeCore();
+    let holdAutomaticRecovery = false;
+    let automaticRecoveryStarted = false;
+    let rejectAutomaticRecovery!: (reason: unknown) => void;
+    const automaticRecovery = new Promise<Response>((_resolve, reject) => {
+      rejectAutomaticRecovery = reject;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (holdAutomaticRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        holdAutomaticRecovery = false;
+        automaticRecoveryStarted = true;
+        return automaticRecovery;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 60_000
+    });
+
+    try {
+      await client.sync.start();
+      vi.useFakeTimers();
+
+      holdAutomaticRecovery = true;
+      const initialSocket = [...core.sockets][0];
+      if (!initialSocket) throw new Error("expected a connected fake websocket");
+      initialSocket.close();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => {
+        expect(automaticRecoveryStarted).toBe(true);
+        expect(core.feedConnections).toBe(2);
+      });
+
+      const update = core.upsertEntity(entity("asset-during-automatic-recovery"));
+      core.emit({ event: "update", resource_type: "entity", id: update.entity_id, version: update.metadata.version, resource: update }, { record: false });
+      await vi.waitFor(() => {
+        expect(client.sync.snapshot().entities).toHaveProperty(update.entity_id);
+        expect(client.sync.status().lastVersion).toBe(update.metadata.version);
+      });
+
+      await client.changedSince();
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+
+      rejectAutomaticRecovery(new Error("superseded automatic recovery failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(core.feedConnections).toBe(2);
     } finally {
       client.sync.stop();
       vi.useRealTimers();

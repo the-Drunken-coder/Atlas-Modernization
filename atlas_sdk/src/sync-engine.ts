@@ -42,6 +42,10 @@ import {
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
+type AutomaticReconnectOwnership = {
+  recoveryOperation?: number;
+};
+
 export class SyncEngine {
   private readonly transport: HttpTransport;
   private readonly feed: FeedConnectionManager;
@@ -281,12 +285,13 @@ export class SyncEngine {
       if (this.lastError === "Atlas Core recovery request failed") this.lastError = undefined;
       return true;
     } catch (error) {
-      if (!isCurrentOperation()) return false;
-      this.lastError = "Atlas Core recovery request failed";
-      if (this.syncRunning) {
-        this.degraded = true;
-        this.healthy = false;
-        this.scheduleReconnect();
+      if (isCurrentOperation()) {
+        this.lastError = "Atlas Core recovery request failed";
+        if (this.syncRunning) {
+          this.degraded = true;
+          this.healthy = false;
+          this.scheduleReconnect();
+        }
       }
       throw error;
     }
@@ -391,8 +396,10 @@ export class SyncEngine {
     if (this.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => {
         const pollGeneration = generation;
-        void (this.activeRecoveryPromise ?? this.changedSinceForGeneration(pollGeneration)).catch(() => {
-          if (!this.isCurrent(pollGeneration)) return;
+        const recovery = this.activeRecoveryPromise ?? this.changedSinceForGeneration(pollGeneration);
+        const pollOperation = this.recoveryOperation;
+        void recovery.catch(() => {
+          if (!this.isCurrent(pollGeneration) || this.recoveryOperation !== pollOperation) return;
           this.degraded = true;
           this.healthy = false;
         });
@@ -477,7 +484,7 @@ export class SyncEngine {
     this.applyEvent(event);
   }
 
-  private async connectAndRecoverFeedForGeneration(generation: number): Promise<void> {
+  private async connectAndRecoverFeedForGeneration(generation: number, automaticOwnership?: AutomaticReconnectOwnership): Promise<void> {
     if (!this.isCurrent(generation)) {
       return;
     }
@@ -493,19 +500,21 @@ export class SyncEngine {
       try {
         await this.connectFeedForGeneration(generation, attempt);
       } catch (error) {
-        if (!this.isCurrentFeedConnection(generation, attempt)) return;
-        this.invalidateRecovery();
+        if (this.isCurrentFeedConnection(generation, attempt)) this.invalidateRecovery();
         throw error;
       }
       if (!this.isCurrentFeedConnection(generation, attempt)) return;
-      const recovered = await this.changedSinceForGeneration(generation);
+      const recovery = this.changedSinceForGeneration(generation);
+      if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
+      const recovered = await recovery;
       if (recovered && this.isCurrentFeedConnection(generation, attempt) && this.lastError?.startsWith("Atlas Core feed ")) this.lastError = undefined;
     } finally {
-      if (!this.isCurrent(generation)) return;
-      this.reconnecting = false;
-      if (this.reconnectAfterRecovery) {
-        this.reconnectAfterRecovery = false;
-        this.scheduleReconnect();
+      if (this.isCurrent(generation)) {
+        this.reconnecting = false;
+        if (this.reconnectAfterRecovery) {
+          this.reconnectAfterRecovery = false;
+          this.scheduleReconnect();
+        }
       }
     }
   }
@@ -523,8 +532,12 @@ export class SyncEngine {
     const generation = this.lifecycleGeneration;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      void this.connectAndRecoverFeedForGeneration(generation).catch(() => {
-        if (!this.isCurrent(generation)) return;
+      const ownership: AutomaticReconnectOwnership = {};
+      const reconnect = this.connectAndRecoverFeedForGeneration(generation, ownership);
+      const attempt = this.feedConnectionAttempt;
+      void reconnect.catch(() => {
+        if (!this.isCurrentFeedConnection(generation, attempt)) return;
+        if (ownership.recoveryOperation !== undefined && this.recoveryOperation !== ownership.recoveryOperation) return;
         this.degraded = true;
         this.healthy = false;
         this.scheduleReconnect();
