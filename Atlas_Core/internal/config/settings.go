@@ -21,36 +21,13 @@ type SettingsFile struct {
 	MaxViewSizeMB       *int64   `json:"max_view_size_mb"`
 }
 
-const (
-	maxUploadSizeMinMB int64 = 1
-	maxUploadSizeMaxMB int64 = 10240
-	maxViewSizeMinMB   int64 = 1
-	maxViewSizeMaxMB   int64 = 100
-)
-
 func (c *Config) loadSettingsFile() error {
-	paths := []string{
-		"atlas_core.settings.json",
-		"../atlas_core.settings.json",
-	}
-
-	var data []byte
-	var lastErr error
-	for _, path := range paths {
-		// #nosec G304 -- paths are fixed literals above (settings discovery), not user-controlled.
-		b, err := os.ReadFile(path)
-		if err == nil {
-			data = b
-			lastErr = nil
-			break
+	data, err := readSettingsFile()
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+			return nil
 		}
-		lastErr = err
-		if !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	if data == nil {
-		return lastErr
+		return err
 	}
 	if len(data) == 0 {
 		return fmt.Errorf("settings file is empty")
@@ -60,51 +37,69 @@ func (c *Config) loadSettingsFile() error {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return err
 	}
-
-	if _, ok := os.LookupEnv("LOG_LEVEL"); !ok && settings.LogLevel != "" {
-		c.LogLevel = settings.LogLevel
-	}
-	if _, ok := os.LookupEnv("DEBUG"); !ok {
-		c.Debug = settings.Debug
-	}
-	settingsHasCORSAllowlist := settings.CORSOrigins != nil || settings.CORSOriginPatterns != nil
-	_, corsOriginsEnvSet := os.LookupEnv("CORS_ORIGINS")
-	_, corsOriginPatternsEnvSet := os.LookupEnv("CORS_ORIGIN_PATTERNS")
-	if settingsHasCORSAllowlist && !corsOriginsEnvSet && !corsOriginPatternsEnvSet {
-		c.CORSOrigins = nil
-		c.CORSOriginPatterns = nil
-		if settings.CORSOrigins != nil {
-			c.CORSOrigins = settings.CORSOrigins
-		}
-		if settings.CORSOriginPatterns != nil {
-			c.CORSOriginPatterns = settings.CORSOriginPatterns
-		}
-	}
-	if _, ok := os.LookupEnv("ENABLE_API_AUTH"); !ok {
-		c.EnableAPIAuth = settings.EnableAPIAuth
-	}
-	if _, ok := os.LookupEnv("API_AUTH_KEY"); !ok {
-		c.APIAuthKey = settings.APIAuthKey
-	}
-	if _, ok := os.LookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && settings.AdminCookieSameSite != "" {
-		c.AdminCookieSameSite = settings.AdminCookieSameSite
-	}
-	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && settings.MaxUploadSizeMB != nil {
-		c.MaxUploadSizeMB = *settings.MaxUploadSizeMB
-	}
-	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && settings.MaxViewSizeMB != nil {
-		c.MaxViewSizeMB = *settings.MaxViewSizeMB
-	}
-
+	settings.applyTo(c)
 	return nil
 }
 
-func (c *Config) validateSizeLimits() error {
-	if c.MaxUploadSizeMB < maxUploadSizeMinMB || c.MaxUploadSizeMB > maxUploadSizeMaxMB {
-		return fmt.Errorf("MAX_UPLOAD_SIZE_MB/max_upload_size_mb must be between %d and %d MB (got %d)", maxUploadSizeMinMB, maxUploadSizeMaxMB, c.MaxUploadSizeMB)
+func readSettingsFile() ([]byte, error) {
+	paths := []string{
+		"atlas_core.settings.json",
+		"../atlas_core.settings.json",
 	}
-	if c.MaxViewSizeMB < maxViewSizeMinMB || c.MaxViewSizeMB > maxViewSizeMaxMB {
-		return fmt.Errorf("MAX_VIEW_SIZE_MB/max_view_size_mb must be between %d and %d MB (got %d)", maxViewSizeMinMB, maxViewSizeMaxMB, c.MaxViewSizeMB)
+
+	var lastErr error
+	for _, path := range paths {
+		// #nosec G304 -- paths are fixed literals above (settings discovery), not user-controlled.
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !errors.Is(err, fs.ErrNotExist) && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
-	return nil
+	return nil, lastErr
+}
+
+func (s SettingsFile) applyTo(c *Config) {
+	if _, ok := os.LookupEnv("LOG_LEVEL"); !ok && s.LogLevel != "" {
+		c.LogLevel = s.LogLevel
+	}
+	if _, ok := os.LookupEnv("DEBUG"); !ok {
+		c.Debug = s.Debug
+	}
+	if s.hasCORSAllowlist() {
+		s.applyCORSAllowlist(c)
+	}
+	if _, ok := os.LookupEnv("ENABLE_API_AUTH"); !ok {
+		c.EnableAPIAuth = s.EnableAPIAuth
+	}
+	if _, ok := os.LookupEnv("API_AUTH_KEY"); !ok {
+		c.APIAuthKey = s.APIAuthKey
+	}
+	if _, ok := os.LookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && s.AdminCookieSameSite != "" {
+		c.AdminCookieSameSite = s.AdminCookieSameSite
+	}
+	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && s.MaxUploadSizeMB != nil {
+		c.MaxUploadSizeMB = *s.MaxUploadSizeMB
+	}
+	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && s.MaxViewSizeMB != nil {
+		c.MaxViewSizeMB = *s.MaxViewSizeMB
+	}
+}
+
+func (s SettingsFile) hasCORSAllowlist() bool {
+	return s.CORSOrigins != nil || s.CORSOriginPatterns != nil
+}
+
+func (s SettingsFile) applyCORSAllowlist(c *Config) {
+	c.CORSOrigins = nil
+	c.CORSOriginPatterns = nil
+	if s.CORSOrigins != nil {
+		c.CORSOrigins = s.CORSOrigins
+	}
+	if s.CORSOriginPatterns != nil {
+		c.CORSOriginPatterns = s.CORSOriginPatterns
+	}
 }
