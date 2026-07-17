@@ -2114,6 +2114,63 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("ignores an automatic reconnect failure superseded by a same-generation feed connection", async () => {
+    vi.useFakeTimers();
+    const core = new FakeCore();
+    let rejectAutomaticConnect!: (reason: unknown) => void;
+    const automaticConnect = new Promise<void>((_resolve, reject) => {
+      rejectAutomaticConnect = reject;
+    });
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 60_000
+    });
+    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+
+    try {
+      const start = client.sync.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await start;
+      expect(core.feedConnections).toBe(1);
+
+      const connect = vi.spyOn(engine.feed, "connect").mockReturnValueOnce(automaticConnect).mockResolvedValueOnce(undefined);
+      const socket = [...core.sockets][0];
+      if (!socket) throw new Error("expected a connected fake websocket");
+      socket.close();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledOnce();
+
+      await client.connectFeed();
+      expect(connect).toHaveBeenCalledTimes(2);
+      await client.changedSince();
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+
+      rejectAutomaticConnect(new Error("superseded automatic reconnect failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(connect).toHaveBeenCalledTimes(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("shares one startup path across concurrent sync.start calls", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({

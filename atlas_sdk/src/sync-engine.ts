@@ -526,8 +526,10 @@ export class SyncEngine {
     const generation = this.lifecycleGeneration;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      void this.connectAndRecoverFeedForGeneration(generation).catch(() => {
-        if (!this.isCurrent(generation)) return;
+      const reconnect = this.connectAndRecoverFeedForGeneration(generation);
+      const attempt = this.feedConnectionAttempt;
+      void reconnect.catch(() => {
+        if (!this.isCurrentFeedConnection(generation, attempt)) return;
         this.degraded = true;
         this.healthy = false;
         this.scheduleReconnect();
