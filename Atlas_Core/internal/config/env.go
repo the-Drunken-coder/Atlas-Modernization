@@ -8,14 +8,18 @@ import (
 )
 
 func getEnv(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
+	if val, ok := lookupEnv(key); ok && val != "" {
 		return val
 	}
 	return defaultVal
 }
 
+func lookupEnv(key string) (string, bool) {
+	return os.LookupEnv(key)
+}
+
 func getEnvBool(key string, defaultVal bool) (bool, error) {
-	v, ok := os.LookupEnv(key)
+	v, ok := lookupEnv(key)
 	if !ok {
 		return defaultVal, nil
 	}
@@ -34,7 +38,7 @@ func getEnvBool(key string, defaultVal bool) (bool, error) {
 }
 
 func getEnvInt(key string, defaultVal int) (int, error) {
-	v, ok := os.LookupEnv(key)
+	v, ok := lookupEnv(key)
 	if !ok {
 		return defaultVal, nil
 	}
@@ -50,7 +54,7 @@ func getEnvInt(key string, defaultVal int) (int, error) {
 }
 
 func getEnvInt64(key string, defaultVal int64) (int64, error) {
-	v, ok := os.LookupEnv(key)
+	v, ok := lookupEnv(key)
 	if !ok {
 		return defaultVal, nil
 	}
