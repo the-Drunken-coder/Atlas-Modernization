@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "biome lint .",
+    "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false .",
     "deploy:pages": "npm run build && wrangler pages deploy dist/client --project-name atlas"
   },

@@ -3,7 +3,7 @@
   "root": true,
   "extends": ["../biome.json"],
   "files": {
-    "includes": ["**/*.{js,mjs,cjs,ts,tsx}", "!src/package-metadata.ts"]
+    "includes": ["**/*.{js,mjs,cjs,ts,tsx}"]
   },
   "vcs": {
     "root": ".."
@@ -21,7 +21,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/feed-connection.ts", "src/sync-engine.ts"],
+      "includes": ["src/ui/map/use-map-reticle-interaction.ts"],
       "linter": {
         "rules": {
           "complexity": {

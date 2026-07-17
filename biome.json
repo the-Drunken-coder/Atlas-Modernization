@@ -60,22 +60,5 @@
         "useDefaultSwitchClauseLast": "error"
       }
     }
-  },
-  "overrides": [
-    {
-      "includes": ["atlas_command_interface/src/ui/map/use-map-reticle-interaction.ts"],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 15
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }

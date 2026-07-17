@@ -53,7 +53,7 @@
     "prebuild": "node ./scripts/generate-package-metadata.mjs",
     "prepack": "npm run clean && npm run build",
     "test:package": "node ./test/packed-consumer-smoke.mjs",
-    "lint": "biome lint .",
+    "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false .",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
