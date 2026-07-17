@@ -19,6 +19,32 @@ def block(group: str, statements: int, count: int) -> str:
     return f"github.com/example/atlas/atlas_core/internal/{group}/sample.go:1,2 {statements} {count}"
 
 
+def baseline_lines(
+    total_covered: int = 2116,
+    below_group: str | None = None,
+    empty_group: str | None = None,
+) -> list[str]:
+    lines = []
+    group_covered = 0
+    group_total = 0
+    for group, (covered, total) in FLOORS.items():
+        if group == "total":
+            continue
+        if group == empty_group:
+            continue
+        if group == below_group:
+            covered -= 1
+        lines.extend([block(group, covered, 1), block(group, total - covered, 0)])
+        group_covered += covered
+        group_total += total
+    other_covered = total_covered - group_covered
+    other_total = FLOORS["total"][1] - group_total
+    return lines + [
+        f"github.com/example/atlas/atlas_core/other.go:1,2 {other_covered} 1",
+        f"github.com/example/atlas/atlas_core/other_uncovered.go:1,2 {other_total - other_covered} 0",
+    ]
+
+
 class CoverageCheckerTest(unittest.TestCase):
     def test_coverage_groups_and_total_accounting(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -85,6 +111,26 @@ class CoverageCheckerTest(unittest.TestCase):
         self.assertLess(percent(2118, 5208), Decimal("40.7"))
         self.assertGreaterEqual(percent(2118, 5208), Decimal("40.6"))
 
+    def test_main_passes_exact_baselines_and_higher_total(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stdout(StringIO()):
+            for name, total_covered in (("baseline", 2116), ("higher", 2118)):
+                path = Path(temp_dir) / f"{name}.out"
+                path.write_text(profile(baseline_lines(total_covered)), encoding="utf-8")
+                self.assertEqual(main(str(path)), 0)
+
+    def test_main_fails_one_statement_below_exact_baselines(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stdout(StringIO()):
+            cases = {
+                "total": baseline_lines(2115),
+                "actions": baseline_lines(below_group="actions"),
+                "admin": baseline_lines(below_group="admin"),
+                "empty-actions": baseline_lines(empty_group="actions"),
+            }
+            for name, lines in cases.items():
+                path = Path(temp_dir) / f"{name}.out"
+                path.write_text(profile(lines), encoding="utf-8")
+                self.assertEqual(main(str(path)), 1, name)
+
     def test_main_missing_profile(self) -> None:
         with patch("check_coverage.sys.argv", ["check_coverage.py", "/tmp/coverage-checker-file-that-does-not-exist"]):
             self.assertEqual(main(), 1)
@@ -105,7 +151,7 @@ class CoverageCheckerTest(unittest.TestCase):
             pass_path.write_text(profile(passing_lines), encoding="utf-8")
             fail_path.write_text(profile(failing_lines), encoding="utf-8")
 
-            thresholds = {name: Decimal("50.0") for name in FLOORS}
+            thresholds = {name: (1, 2) for name in FLOORS}
             with patch.dict(FLOORS, thresholds), redirect_stdout(StringIO()):
                 self.assertEqual(main(str(pass_path)), 0)
                 self.assertEqual(main(str(fail_path)), 1)

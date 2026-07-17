@@ -6,11 +6,11 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 FLOORS = {
-    "total": Decimal("40.6"),
-    "actions": Decimal("23.0"),
-    "database": Decimal("22.4"),
-    "storage": Decimal("24.1"),
-    "admin": Decimal("10.1"),
+    "total": (2116, 5208),
+    "actions": (453, 1970),
+    "database": (57, 254),
+    "storage": (21, 87),
+    "admin": (32, 318),
 }
 
 
@@ -58,10 +58,12 @@ def main(profile_path: str | None = None) -> int:
 
     failed = False
     for name, (covered, total) in coverage(profile).items():
-        observed = percent(covered, total)
-        floor = FLOORS[name]
-        print(f"{name}: {displayed_percent(covered, total):.1f}% ({covered}/{total}), floor {floor:.1f}%")
-        if observed < floor:
+        floor_covered, floor_total = FLOORS[name]
+        print(
+            f"{name}: {displayed_percent(covered, total):.1f}% ({covered}/{total}), "
+            f"floor {displayed_percent(floor_covered, floor_total):.1f}%"
+        )
+        if total == 0 or covered * floor_total < floor_covered * total:
             failed = True
     return 1 if failed else 0
 
