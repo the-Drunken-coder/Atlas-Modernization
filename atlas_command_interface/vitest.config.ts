@@ -22,6 +22,16 @@ export default defineConfig({
           setupFiles: ["./test/setup.ts"]
         }
       }
-    ]
+    ],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary", "json"],
+      include: ["src/**/*.{ts,tsx}"],
+      thresholds: {
+        statements: 88.88,
+        branches: 81.63,
+        "src/ui/map/use-map-reticle-interaction.ts": { branches: 86.25 }
+      }
+    }
   }
 });

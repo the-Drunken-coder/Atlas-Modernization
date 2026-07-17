@@ -11,6 +11,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:server": "tsx src/server/index.ts",
     "start": "tsx src/server/index.ts",
+    "test:coverage": "vitest run --coverage",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "lint": "biome lint --config-path biome.json .",

@@ -73,6 +73,9 @@ jobs:
       - name: Run Go tests with race detector
         run: go test -race -coverprofile=coverage.out ./...
 
+      - name: Enforce Go coverage ratchets
+        run: python3 scripts/check_coverage.py coverage.out
+
   atlas-protocol:
     name: atlas-protocol
     runs-on: ubuntu-latest
@@ -185,8 +188,8 @@ jobs:
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
 
-      - name: Run Atlas SDK Node tests
-        run: npm run test:node --workspace @the-drunken-coder/atlas-sdk
+      - name: Run Atlas SDK Node tests with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-sdk
 
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
@@ -226,8 +229,8 @@ jobs:
       - name: Type-check asset runtime
         run: npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
 
-      - name: Test asset runtime
-        run: npm test --workspace @the-drunken-coder/atlas-asset-runtime
+      - name: Test asset runtime with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-asset-runtime
 
       - name: Build asset runtime
         run: npm run build --workspace @the-drunken-coder/atlas-asset-runtime
@@ -289,8 +292,8 @@ jobs:
       - name: Type-check command interface
         run: npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
 
-      - name: Test command interface
-        run: npm test --workspace @the-drunken-coder/atlas-command-interface
+      - name: Test command interface with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-command-interface
 
       - name: Build command interface
         run: npm run build --workspace @the-drunken-coder/atlas-command-interface
@@ -330,8 +333,8 @@ jobs:
       - name: Type-check simulations
         run: npm run typecheck --workspace @the-drunken-coder/atlas-simulations
 
-      - name: Test simulations
-        run: npm test --workspace @the-drunken-coder/atlas-simulations
+      - name: Test simulations with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-simulations
 
       - name: Build simulations
         run: npm run build --workspace @the-drunken-coder/atlas-simulations
@@ -394,6 +397,9 @@ jobs:
 
       - name: Test atlas script helpers
         run: python3 scripts/test_atlas.py
+
+      - name: Test Go coverage checker
+        run: python3 scripts/test_check_coverage.py
 
       - name: Test seed command catalog
         run: python3 scripts/test_seed_command_catalog.py
