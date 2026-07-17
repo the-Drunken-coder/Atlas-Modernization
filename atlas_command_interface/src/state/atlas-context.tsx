@@ -85,7 +85,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       }
     };
 
-    (async () => {
+    void (async () => {
       try {
         const resolvedConfig = providedConfig ?? (await loadConfig());
         if (cancelled) return;

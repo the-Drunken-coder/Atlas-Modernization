@@ -506,11 +506,11 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
-    await expect(client.entities.create(entity("asset-with-metadata") as any)).rejects.toMatchObject({
+    await expect(client.entities.create(entity("asset-with-metadata") as never)).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
-    await expect(client.objects.create({ ...object("object-with-bucket"), bucket: "client-owned" } as any)).rejects.toMatchObject({
+    await expect(client.objects.create({ ...object("object-with-bucket"), bucket: "client-owned" } as never)).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
@@ -590,16 +590,16 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
-    await expect(client.tasks.create({} as any)).rejects.toMatchObject({
+    await expect(client.tasks.create({} as never)).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
-    await expect(client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as any)).rejects.toMatchObject({
+    await expect(client.objects.create({ object_id: "object-invalid-ref", referenced_by: [{}] } as never)).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
     core.upsertEntity(entity("asset-empty-update"));
-    await expect(client.entities.update("asset-empty-update", {} as any)).rejects.toMatchObject({
+    await expect(client.entities.update("asset-empty-update", {} as never)).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });

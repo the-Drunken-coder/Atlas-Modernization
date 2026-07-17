@@ -292,7 +292,7 @@ function assertGeneratedCommandTask(resource: CreatedResource): void {
 function parseFields(fields: readonly ScenarioInputField[], raw: Record<string, unknown>): Record<string, string | number | boolean> {
   const values = Object.create(null) as Record<string, string | number | boolean>;
   for (const field of fields) {
-    const value = Object.prototype.hasOwnProperty.call(raw, field.key) ? raw[field.key] : field.defaultValue;
+    const value = Object.hasOwn(raw, field.key) ? raw[field.key] : field.defaultValue;
     if (value === undefined) {
       throw new Error(`${field.label} is required`);
     }

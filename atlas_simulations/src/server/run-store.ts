@@ -131,7 +131,7 @@ export class RunStore {
     }
     if (!run.settled) await run.execution;
     if (!run.settled) throw new Error("Wait for the run to finish before cleanup");
-    if (run.cleanupPromise) return run.cleanupPromise;
+    if (run.cleanupPromise !== undefined) return run.cleanupPromise;
     run.cleanupPromise = this.performCleanup(run, clientFactoryOverride);
     try {
       return await run.cleanupPromise;

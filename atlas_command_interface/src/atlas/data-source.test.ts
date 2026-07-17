@@ -534,7 +534,7 @@ class TestCore {
       const object = this.objects.get(decodeURIComponent(path.slice("/objects/".length)));
       const delay = this.nextObjectDelay;
       this.nextObjectDelay = undefined;
-      if (delay) await delay;
+      if (delay !== undefined) await delay;
       return object ? Response.json(object) : Response.json({ error_code: "OBJECT_NOT_FOUND", message: "object not found" }, { status: 404 });
     }
     throw new Error(`Unexpected request: ${url}`);

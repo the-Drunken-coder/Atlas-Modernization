@@ -94,7 +94,7 @@ export class SyncEngine {
     if (this.syncRunning) {
       return;
     }
-    if (this.startSyncPromise) {
+    if (this.startSyncPromise !== undefined) {
       return this.startSyncPromise;
     }
     const generation = ++this.lifecycleGeneration;

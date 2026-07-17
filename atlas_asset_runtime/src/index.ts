@@ -99,7 +99,7 @@ export class AtlasAssetRuntime {
 
   start(options?: { signal?: AbortSignal }): Promise<void> {
     if (this.state === "running") return Promise.resolve();
-    if (this.startPromise) return this.startPromise;
+    if (this.startPromise !== undefined) return this.startPromise;
     if (this.state === "stopping") return Promise.reject(new Error("Atlas asset runtime is stopping"));
 
     this.state = "starting";
@@ -117,7 +117,7 @@ export class AtlasAssetRuntime {
   }
 
   stop(): Promise<void> {
-    if (this.stopPromise) return this.stopPromise;
+    if (this.stopPromise !== undefined) return this.stopPromise;
     const stop = this.stopRuntime();
     this.stopPromise = stop;
     void stop
@@ -203,7 +203,7 @@ export class AtlasAssetRuntime {
     signal?.throwIfAborted();
     const handled = new Set<string>();
     let taskCursor: string | undefined;
-    do {
+    for (;;) {
       const response = await this.client.entities.checkIn(this.entityId, {
         ...report,
         fields: "minimal",
@@ -224,7 +224,7 @@ export class AtlasAssetRuntime {
         throw new Error("Atlas check-in task pagination did not advance");
       }
       taskCursor = response.next_task_cursor;
-    } while (true);
+    }
   }
 
   private async dispatch(task: EntityCheckInMinimalTask, signal: AbortSignal | undefined): Promise<void> {
@@ -304,7 +304,8 @@ export class AtlasAssetRuntime {
 let idleSignal: AbortSignal | undefined;
 
 function neverAbortedSignal(): AbortSignal {
-  return (idleSignal ??= new AbortController().signal);
+  if (!idleSignal) idleSignal = new AbortController().signal;
+  return idleSignal;
 }
 
 function normalizeError(error: unknown): Record<string, JSONValue> {

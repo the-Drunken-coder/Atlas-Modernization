@@ -29,6 +29,8 @@ The SDK, asset runtime, command interface, and simulations are npm workspaces wi
 
 The root `.nvmrc` and package engines are the Node version source of truth: they currently require Node 24, despite stale docs that previously said Node 26. The first asset-runtime migration is an API proving ground, not an extraction of an existing generic loop: current simulations directly performed check-ins and did not contain repeated handshake, reconnect, task-dispatch, or feed-consumption machinery. Do not preserve or claim behavior that was never there.
 
+Biome 2.5.3's type-aware `noFloatingPromises` and `noMisusedPromises` rules are enabled for all four JavaScript workspaces through package-local configurations with the `types` domain set to `recommended`. Keep each lint script's explicit `--config-path biome.json`: without it, Biome resolves the repository-root configuration and silently skips the package-local type-aware rules.
+
 For the packed CLI smoke under npm 11, assert that installation created `node_modules/.bin/atlas`, then run the installed `bin.atlas` module with Node. Alias-only `npx --no-install atlas ...` and `npm exec -- atlas ...` invocations are rejected as unsupported `npm exec` usage in this harness.
 
 The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
