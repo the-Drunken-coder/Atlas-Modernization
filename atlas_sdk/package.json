@@ -61,7 +61,7 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@biomejs/biome": "2.5.3",
+    "@biomejs/biome": "2.5.4",
     "@vitest/browser": "4.1.10",
     "@vitest/browser-playwright": "4.1.10",
     "@playwright/test": "1.61.1",
