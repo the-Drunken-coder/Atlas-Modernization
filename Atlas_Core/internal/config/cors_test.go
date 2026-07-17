@@ -334,6 +334,78 @@ func TestLoadCORSOriginsEnvClearsSettingsPatterns(t *testing.T) {
 	}
 }
 
+func TestExplicitEmptyCORSEnvOwnsWholeAllowlist(t *testing.T) {
+	tests := []struct {
+		name        string
+		setOrigins  bool
+		setPatterns bool
+	}{
+		{name: "origins only", setOrigins: true},
+		{name: "patterns only", setPatterns: true},
+		{name: "both origins and patterns", setOrigins: true, setPatterns: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirToTemp(t)
+			isolateLoadEnv(t)
+			settings := config.SettingsFile{
+				CORSOrigins:        []string{"https://from-settings.example.com"},
+				CORSOriginPatterns: []string{"https://*-from-settings.example.com"},
+			}
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatalf("marshal settings: %v", err)
+			}
+			if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+				t.Fatalf("write settings: %v", err)
+			}
+			if tt.setOrigins {
+				t.Setenv("CORS_ORIGINS", "")
+			}
+			if tt.setPatterns {
+				t.Setenv("CORS_ORIGIN_PATTERNS", "")
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if len(cfg.CORSOrigins) != 0 || len(cfg.CORSOriginPatterns) != 0 {
+				t.Fatalf("explicit empty CORS env must own whole allowlist, got origins=%#v patterns=%#v", cfg.CORSOrigins, cfg.CORSOriginPatterns)
+			}
+		})
+	}
+}
+
+func TestMalformedCORSEnvPrecedesFinalValidation(t *testing.T) {
+	chdirToTemp(t)
+	isolateLoadEnv(t)
+	settings := config.SettingsFile{
+		EnableAPIAuth: true,
+		APIAuthKey:    "changeme",
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile("atlas_core.settings.json", data, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	t.Setenv("CORS_ORIGINS", "https://atlas.example/path")
+
+	_, err = config.Load()
+	if err == nil {
+		t.Fatal("expected malformed CORS env to fail")
+	}
+	if !strings.Contains(err.Error(), "CORS origins") {
+		t.Fatalf("expected CORS error before final validation, got %v", err)
+	}
+	if strings.Contains(err.Error(), "too weak") {
+		t.Fatalf("expected final API auth validation not to run after malformed CORS env, got %v", err)
+	}
+}
+
 func TestDefaultCORSOriginsAreLocalOnly(t *testing.T) {
 	for _, origin := range config.DefaultCORSOrigins {
 		if !strings.HasPrefix(origin, "http://localhost:") && !strings.HasPrefix(origin, "http://127.0.0.1:") {

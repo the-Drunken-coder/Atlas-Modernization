@@ -1,5 +1,7 @@
 package config
 
+import "os"
+
 func loadFromEnvironment() (*Config, error) {
 	minioSecret, err := loadMinIOSecretKey()
 	if err != nil {
@@ -90,7 +92,7 @@ func (c *Config) applyEnvironmentOverrides() error {
 	if err := c.applyCORSOverrides(); err != nil {
 		return err
 	}
-	if trustedProxyCIDRs, ok := lookupEnv("TRUSTED_PROXY_CIDRS"); ok {
+	if trustedProxyCIDRs, ok := os.LookupEnv("TRUSTED_PROXY_CIDRS"); ok {
 		var err error
 		c.TrustedProxyCIDRs, err = parseTrustedProxyCIDRs(trustedProxyCIDRs)
 		if err != nil {
@@ -101,8 +103,8 @@ func (c *Config) applyEnvironmentOverrides() error {
 }
 
 func (c *Config) applyCORSOverrides() error {
-	corsOrigins, originsSet := lookupEnv("CORS_ORIGINS")
-	corsOriginPatterns, patternsSet := lookupEnv("CORS_ORIGIN_PATTERNS")
+	corsOrigins, originsSet := os.LookupEnv("CORS_ORIGINS")
+	corsOriginPatterns, patternsSet := os.LookupEnv("CORS_ORIGIN_PATTERNS")
 	if !originsSet && !patternsSet {
 		return nil
 	}

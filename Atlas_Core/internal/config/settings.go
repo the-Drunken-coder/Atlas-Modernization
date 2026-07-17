@@ -63,28 +63,28 @@ func readSettingsFile() ([]byte, error) {
 }
 
 func (s SettingsFile) applyTo(c *Config) {
-	if _, ok := lookupEnv("LOG_LEVEL"); !ok && s.LogLevel != "" {
+	if _, ok := os.LookupEnv("LOG_LEVEL"); !ok && s.LogLevel != "" {
 		c.LogLevel = s.LogLevel
 	}
-	if _, ok := lookupEnv("DEBUG"); !ok {
+	if _, ok := os.LookupEnv("DEBUG"); !ok {
 		c.Debug = s.Debug
 	}
 	if s.hasCORSAllowlist() {
 		s.applyCORSAllowlist(c)
 	}
-	if _, ok := lookupEnv("ENABLE_API_AUTH"); !ok {
+	if _, ok := os.LookupEnv("ENABLE_API_AUTH"); !ok {
 		c.EnableAPIAuth = s.EnableAPIAuth
 	}
-	if _, ok := lookupEnv("API_AUTH_KEY"); !ok {
+	if _, ok := os.LookupEnv("API_AUTH_KEY"); !ok {
 		c.APIAuthKey = s.APIAuthKey
 	}
-	if _, ok := lookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && s.AdminCookieSameSite != "" {
+	if _, ok := os.LookupEnv("ATLAS_ADMIN_COOKIE_SAMESITE"); !ok && s.AdminCookieSameSite != "" {
 		c.AdminCookieSameSite = s.AdminCookieSameSite
 	}
-	if _, ok := lookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && s.MaxUploadSizeMB != nil {
+	if _, ok := os.LookupEnv("MAX_UPLOAD_SIZE_MB"); !ok && s.MaxUploadSizeMB != nil {
 		c.MaxUploadSizeMB = *s.MaxUploadSizeMB
 	}
-	if _, ok := lookupEnv("MAX_VIEW_SIZE_MB"); !ok && s.MaxViewSizeMB != nil {
+	if _, ok := os.LookupEnv("MAX_VIEW_SIZE_MB"); !ok && s.MaxViewSizeMB != nil {
 		c.MaxViewSizeMB = *s.MaxViewSizeMB
 	}
 }
@@ -94,13 +94,6 @@ func (s SettingsFile) hasCORSAllowlist() bool {
 }
 
 func (s SettingsFile) applyCORSAllowlist(c *Config) {
-	if _, originsSet := lookupEnv("CORS_ORIGINS"); originsSet {
-		return
-	}
-	if _, patternsSet := lookupEnv("CORS_ORIGIN_PATTERNS"); patternsSet {
-		return
-	}
-
 	c.CORSOrigins = nil
 	c.CORSOriginPatterns = nil
 	if s.CORSOrigins != nil {
