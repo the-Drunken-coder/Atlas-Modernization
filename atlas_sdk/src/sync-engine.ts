@@ -42,6 +42,10 @@ import {
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
+type AutomaticReconnectOwnership = {
+  recoveryOperation?: number;
+};
+
 export class SyncEngine {
   private readonly transport: HttpTransport;
   private readonly feed: FeedConnectionManager;
@@ -480,7 +484,7 @@ export class SyncEngine {
     this.applyEvent(event);
   }
 
-  private async connectAndRecoverFeedForGeneration(generation: number): Promise<void> {
+  private async connectAndRecoverFeedForGeneration(generation: number, automaticOwnership?: AutomaticReconnectOwnership): Promise<void> {
     if (!this.isCurrent(generation)) {
       return;
     }
@@ -500,7 +504,9 @@ export class SyncEngine {
         throw error;
       }
       if (!this.isCurrentFeedConnection(generation, attempt)) return;
-      const recovered = await this.changedSinceForGeneration(generation);
+      const recovery = this.changedSinceForGeneration(generation);
+      if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
+      const recovered = await recovery;
       if (recovered && this.isCurrentFeedConnection(generation, attempt) && this.lastError?.startsWith("Atlas Core feed ")) this.lastError = undefined;
     } finally {
       if (this.isCurrent(generation)) {
@@ -526,10 +532,12 @@ export class SyncEngine {
     const generation = this.lifecycleGeneration;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      const reconnect = this.connectAndRecoverFeedForGeneration(generation);
+      const ownership: AutomaticReconnectOwnership = {};
+      const reconnect = this.connectAndRecoverFeedForGeneration(generation, ownership);
       const attempt = this.feedConnectionAttempt;
       void reconnect.catch(() => {
         if (!this.isCurrentFeedConnection(generation, attempt)) return;
+        if (ownership.recoveryOperation !== undefined && this.recoveryOperation !== ownership.recoveryOperation) return;
         this.degraded = true;
         this.healthy = false;
         this.scheduleReconnect();

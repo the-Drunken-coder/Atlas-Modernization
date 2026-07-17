@@ -2171,6 +2171,77 @@ describe("AtlasClient sync", () => {
     }
   });
 
+  it("ignores an automatic reconnect recovery superseded within the current feed attempt", async () => {
+    const core = new FakeCore();
+    let holdAutomaticRecovery = false;
+    let automaticRecoveryStarted = false;
+    let rejectAutomaticRecovery!: (reason: unknown) => void;
+    const automaticRecovery = new Promise<Response>((_resolve, reject) => {
+      rejectAutomaticRecovery = reject;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (holdAutomaticRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        holdAutomaticRecovery = false;
+        automaticRecoveryStarted = true;
+        return automaticRecovery;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 60_000
+    });
+
+    try {
+      await client.sync.start();
+      vi.useFakeTimers();
+
+      holdAutomaticRecovery = true;
+      const initialSocket = [...core.sockets][0];
+      if (!initialSocket) throw new Error("expected a connected fake websocket");
+      initialSocket.close();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => {
+        expect(automaticRecoveryStarted).toBe(true);
+        expect(core.feedConnections).toBe(2);
+      });
+
+      const update = core.upsertEntity(entity("asset-during-automatic-recovery"));
+      core.emit({ event: "update", resource_type: "entity", id: update.entity_id, version: update.metadata.version, resource: update }, { record: false });
+      await vi.waitFor(() => {
+        expect(client.sync.snapshot().entities).toHaveProperty(update.entity_id);
+        expect(client.sync.status().lastVersion).toBe(update.metadata.version);
+      });
+
+      await client.changedSince();
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+
+      rejectAutomaticRecovery(new Error("superseded automatic recovery failed"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(client.sync.status()).toMatchObject({
+        running: true,
+        healthy: true,
+        degraded: false,
+        error: "Atlas Core feed connection closed"
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(core.feedConnections).toBe(2);
+    } finally {
+      client.sync.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it("shares one startup path across concurrent sync.start calls", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
