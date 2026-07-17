@@ -108,7 +108,7 @@ func TestGetDataChangedSincePaginatesEveryStreamWithoutGaps(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	prefix := fmt.Sprintf("changed-since-matrix-%d-", time.Now().UTC().UnixNano())
+	prefix := fmt.Sprintf("cs-%d-", time.Now().UTC().UnixNano())
 	entityIDs := []string{prefix + "entity-1", prefix + "entity-2"}
 	taskIDs := []string{prefix + "task-1", prefix + "task-2"}
 	objectIDs := []string{prefix + "object-1", prefix + "object-2"}
@@ -116,6 +116,11 @@ func TestGetDataChangedSincePaginatesEveryStreamWithoutGaps(t *testing.T) {
 	deletedTaskIDs := []string{prefix + "deleted-task-1", prefix + "deleted-task-2"}
 	deletedObjectIDs := []string{prefix + "deleted-object-1", prefix + "deleted-object-2"}
 	cleanupIDs := append(append(append(append(append(append([]string{}, entityIDs...), taskIDs...), objectIDs...), deletedEntityIDs...), deletedTaskIDs...), deletedObjectIDs...)
+	for _, id := range cleanupIDs {
+		if len(id) > IDMaxLength {
+			t.Fatalf("changed-since fixture ID %q has length %d, want <= %d", id, len(id), IDMaxLength)
+		}
+	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
