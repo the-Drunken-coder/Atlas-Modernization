@@ -1,5 +1,6 @@
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Button } from "../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../symbols/sidc-runtime.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { MapReticle } from "./MapReticle.js";
@@ -343,6 +344,9 @@ export function MapView({
         <div className="map-unavailable" role="status" aria-live="polite">
           <span>Map unavailable</span>
           <code>{mapError}</code>
+          <Button variant="primary" onClick={() => setMapError(undefined)}>
+            Retry
+          </Button>
         </div>
       ) : null}
     </div>
