@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AtlasClientFactory } from "../../src/server/atlas.js";
-import { CleanupLedger } from "../../src/server/cleanup-ledger.js";
+import { CleanupLedger, type CleanupLedgerStore } from "../../src/server/cleanup-ledger.js";
 import { RunStore, type RunTarget } from "../../src/server/run-store.js";
 import type { Scenario, ScenarioInput } from "../../src/server/scenario.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
@@ -130,6 +130,43 @@ describe("RunStore", () => {
     expect(stopped.status).toBe("cancelled");
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("cancelled"));
     expect(store.get(started.id)?.finishedAt).toBeDefined();
+  });
+
+  it("preserves stop event ordering and ignores callbacks after settlement", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    let lateCallback!: () => void;
+    let lateAssertion: { id: string; name: string } | undefined;
+    const scenario: Scenario = {
+      id: "late-callbacks",
+      name: "Late callbacks",
+      summary: "Stops before delayed callbacks run",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        lateCallback = () => {
+          ctx.log("late log");
+          lateAssertion = ctx.assert("late assertion", true);
+          ctx.track({ type: "entity", id: ctx.id("late") });
+        };
+        await ctx.wait(60_000);
+      }
+    };
+
+    const started = store.start(scenario, { fields: {} });
+    const eventOrder: string[] = [];
+    store.subscribe(started.id, (event) =>
+      eventOrder.push(event.type === "status" ? `${event.type}:${event.status}` : `${event.type}:${event.message}`)
+    );
+    store.stop(started.id);
+    await store.cleanup(started.id);
+
+    expect(eventOrder).toEqual(["status:running", "log:Stop requested", "status:cancelled"]);
+    lateCallback();
+    expect(lateAssertion).toMatchObject({ id: "assert-late", name: "late assertion" });
+    expect(store.get(started.id)?.assertions).toEqual([]);
+    expect(store.get(started.id)?.createdResources).toEqual([]);
+    expect(store.events(started.id).some((event) => event.message === "late log")).toBe(false);
   });
 
   it("marks the run failed when a scenario records a failed assertion", async () => {
@@ -450,6 +487,24 @@ describe("RunStore", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("treats already-deleted cleanup resources as successful", async () => {
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory);
+    const scenario = createOneEntityScenario();
+    const started = store.start(scenario, { fields: {} });
+    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
+    const resource = store.get(started.id)?.createdResources[0]!;
+
+    await core.factory().entities.delete(resource.id);
+    await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+    expect(store.events(started.id)).toContainEqual(
+      expect.objectContaining({
+        type: "cleanup",
+        message: `${resource.type} ${resource.id} was already gone`
+      })
+    );
   });
 
   it("does not mark unsupported cleanup resource types as deleted", async () => {
@@ -913,6 +968,23 @@ describe("RunStore", () => {
     }
   });
 
+  it("rolls back a deployed run when initial ledger persistence fails", () => {
+    const ledger: CleanupLedgerStore = {
+      load: () => [],
+      save: () => {
+        throw new Error("ledger write failed");
+      },
+      remove: () => undefined
+    };
+    const core = createFakeAtlasCore();
+    const store = new RunStore(core.factory, { ledger });
+
+    expect(() => store.start(createOneEntityScenario(), { fields: {} }, deployedTarget(core.factory))).toThrow(
+      "ledger write failed"
+    );
+    expect(store.list()).toEqual([]);
+  });
+
   it("recovers deployed runs as abandoned and retains their ledger until cleanup succeeds", async () => {
     const { directory, ledger } = temporaryLedger();
     try {
@@ -921,6 +993,15 @@ describe("RunStore", () => {
       const started = original.start(createOneEntityScenario(), { fields: {} }, deployedTarget(core.factory));
       await vi.waitFor(() => expect(original.get(started.id)?.status).toBe("completed"));
       const resource = ledger.load()[0]?.resources[0];
+
+      expect(
+        () =>
+          new RunStore(core.factory, {
+            ledger,
+            resolveTarget: (target) =>
+              deployedTarget(core.factory, { ...target, baseUrl: "https://other.example.test" })
+          })
+      ).toThrow(`Cleanup ledger run ${started.id} no longer matches its deployed target`);
 
       const recovered = new RunStore(core.factory, {
         ledger: new CleanupLedger(path.join(directory, "state", "runs")),

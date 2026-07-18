@@ -7,37 +7,25 @@ import {
   type RunStatus,
   type RunSummary
 } from "../shared/types.js";
-import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
-import { isNotFoundError } from "./atlas.js";
-import type { CleanupLedgerRecord, CleanupLedgerStore, CleanupLedgerTarget } from "./cleanup-ledger.js";
+import type { AtlasClientFactory } from "./atlas.js";
+import { cleanupRun, persistRun, type RunStoreOptions, recoverRun } from "./run-store-cleanup.js";
 import {
   assertEventJSONValue,
   assertionBytes,
   boundedAssertionText,
   boundedEventMessage,
-  errorMessage,
   eventBytes,
-  hasFailedAssertions,
-  lateAssertion,
   trimEvents
 } from "./run-store-events.js";
+import { executeRun } from "./run-store-execution.js";
 import {
-  CLEANUP_DELETE_TIMEOUT_MS,
-  CLEANUP_TOTAL_TIMEOUT_MS,
   MAX_ASSERTION_HISTORY_BYTES_PER_RUN,
   MAX_ASSERTIONS_PER_RUN,
   MAX_CREATED_RESOURCES_PER_RUN,
   MAX_EVENT_HISTORY_BYTES_PER_RUN,
   MAX_RUNS
 } from "./run-store-limits.js";
-import {
-  cleanupOrder,
-  cleanupResourcesForRun,
-  hasResource,
-  sameResource,
-  stopClientSync,
-  withCleanupTimeout
-} from "./run-store-resources.js";
+import { hasResource, sameResource } from "./run-store-resources.js";
 import { targetSummary, toSummary } from "./run-store-summary.js";
 import {
   cloneValue,
@@ -47,16 +35,10 @@ import {
   runId,
   timestamp
 } from "./run-store-types.js";
-import { createScenarioContext, type Scenario, type ScenarioInput } from "./scenario.js";
+import type { Scenario, ScenarioInput } from "./scenario.js";
 
+export type { RunStoreOptions } from "./run-store-cleanup.js";
 export type { RunTarget } from "./run-store-types.js";
-
-export type RunStoreOptions = {
-  ledger?: CleanupLedgerStore;
-  resolveTarget?: (target: CleanupLedgerTarget) => RunTarget | undefined;
-};
-
-const ABANDONED_RUN_MESSAGE = "Workbench restarted before explicit cleanup; this deployed run was abandoned";
 
 export class RunStore {
   private readonly runs = new Map<string, RunRecord>();
@@ -65,7 +47,11 @@ export class RunStore {
     private readonly clientFactory: AtlasClientFactory,
     private readonly options: RunStoreOptions = {}
   ) {
-    for (const record of options.ledger?.load() ?? []) this.recover(record);
+    for (const record of options.ledger?.load() ?? []) {
+      const run = recoverRun(record, options.resolveTarget);
+      this.runs.set(run.id, run);
+      this.emit(run, { type: "status", status: "abandoned", level: "warn", message: run.lastError! });
+    }
   }
 
   list(): RunSummary[] {
@@ -118,12 +104,19 @@ export class RunStore {
     this.runs.set(id, run);
     this.emit(run, { type: "status", status: "running", message: `${scenario.name} started` });
     try {
-      this.persist(run);
+      persistRun(run, this.options);
     } catch (error) {
       this.runs.delete(id);
       throw error;
     }
-    run.execution = this.execute(run, scenario, runInput);
+    run.execution = executeRun(run, scenario, runInput, {
+      emit: this.emit.bind(this),
+      assert: this.assert.bind(this),
+      track: this.track.bind(this),
+      trackCleanupCandidate: this.trackCleanupCandidate.bind(this),
+      finish: this.finish.bind(this),
+      prune: this.pruneRuns.bind(this)
+    });
     return toSummary(run);
   }
 
@@ -146,70 +139,18 @@ export class RunStore {
     if (!run.settled) await run.execution;
     if (!run.settled) throw new Error("Wait for the run to finish before cleanup");
     if (run.cleanupPromise !== undefined) return run.cleanupPromise;
-    run.cleanupPromise = this.performCleanup(run, clientFactoryOverride);
+    run.cleanupPromise = cleanupRun(
+      run,
+      this.options,
+      clientFactoryOverride,
+      this.emit.bind(this),
+      this.pruneRuns.bind(this)
+    );
     try {
       return await run.cleanupPromise;
     } finally {
       run.cleanupPromise = undefined;
     }
-  }
-
-  private async performCleanup(run: RunRecord, clientFactoryOverride?: AtlasClientFactory): Promise<RunSummary> {
-    run.cleanupStarted = true;
-    const cleanupResources = cleanupResourcesForRun(run);
-    if (cleanupResources.length === 0) {
-      return this.finishCleanup(run);
-    }
-
-    let client: AtlasClientLike;
-    const cleanupController = new AbortController();
-    try {
-      client = (clientFactoryOverride ?? run.clientFactory)({ sync: false, signal: cleanupController.signal });
-    } catch (error) {
-      run.cleanupError = errorMessage(error);
-      this.emit(run, { type: "error", level: "error", message: run.cleanupError });
-      throw error;
-    }
-    let cleanupFailure: unknown;
-    const cleanupDeadline = Date.now() + CLEANUP_TOTAL_TIMEOUT_MS;
-    for (const resource of cleanupOrder(cleanupResources)) {
-      try {
-        const remainingCleanupMs = cleanupDeadline - Date.now();
-        if (remainingCleanupMs <= 0) {
-          throw new Error(`Timed out cleaning up run resources after ${CLEANUP_TOTAL_TIMEOUT_MS}ms`);
-        }
-        const timeoutMs = Math.min(CLEANUP_DELETE_TIMEOUT_MS, remainingCleanupMs);
-        const resourceType = resource.type as string;
-        if (resourceType === "task") {
-          await withCleanupTimeout(client.tasks.delete(resource.id), cleanupController, resource, timeoutMs);
-        } else if (resourceType === "object") {
-          await withCleanupTimeout(client.objects.delete(resource.id), cleanupController, resource, timeoutMs);
-        } else if (resourceType === "entity") {
-          await withCleanupTimeout(client.entities.delete(resource.id), cleanupController, resource, timeoutMs);
-        } else {
-          throw new Error(`Unsupported cleanup resource type: ${resourceType}`);
-        }
-        this.emit(run, { type: "cleanup", resource, message: `Deleted ${resource.type} ${resource.id}` });
-      } catch (error) {
-        if (isNotFoundError(error)) {
-          this.emit(run, { type: "cleanup", resource, message: `${resource.type} ${resource.id} was already gone` });
-          continue;
-        }
-        run.cleanupError = errorMessage(error);
-        this.emit(run, { type: "error", level: "error", message: run.cleanupError });
-        cleanupFailure = error;
-        break;
-      }
-    }
-    const stopFailure = stopClientSync(client);
-    if (stopFailure) {
-      const message = errorMessage(stopFailure);
-      run.cleanupError ??= message;
-      this.emit(run, { type: "error", level: "error", message });
-    }
-    if (cleanupFailure) throw cleanupFailure;
-    if (stopFailure) throw stopFailure;
-    return this.finishCleanup(run);
   }
 
   subscribe(id: string, subscriber: EventSubscriber): () => void {
@@ -225,82 +166,6 @@ export class RunStore {
     // Completed runs can still emit cleanup events after an explicit cleanup request.
     run.subscribers.add(subscriber);
     return () => run.subscribers.delete(subscriber);
-  }
-
-  private async execute(run: RunRecord, scenario: Readonly<Scenario>, input: ScenarioInput): Promise<void> {
-    let finalStatus: RunStatus = "completed";
-    let finalMessage = "Run completed";
-    let finalError: string | undefined;
-    try {
-      const registerClient = (client: AtlasClientLike) => run.clients.push(client);
-      const context = createScenarioContext({
-        runId: run.id,
-        signal: run.controller.signal,
-        clientFactory: run.clientFactory,
-        registerClient,
-        log: (message, data) => {
-          if (!run.settled) this.emit(run, { type: "log", message, data });
-        },
-        assert: (name, passed, message) =>
-          run.settled ? lateAssertion(name, passed, message) : this.assert(run, name, passed, message),
-        track: (resource) => {
-          if (!run.settled && !run.cleanupStarted && !run.cleaned) this.track(run, resource);
-        },
-        trackCleanupCandidate: (resource) => {
-          if (!run.settled && !run.cleanupStarted && !run.cleaned) this.trackCleanupCandidate(run, resource);
-        },
-        allowGeneratedTaskIds: !run.target?.deployed
-      });
-      await scenario.run(context, input);
-      if (run.controller.signal.aborted) {
-        finalStatus = "cancelled";
-        finalMessage = "Run cancelled";
-      } else if (run.trackingError) {
-        finalStatus = "failed";
-        finalMessage = run.trackingError;
-        run.lastError = run.trackingError;
-      } else if (hasFailedAssertions(run)) {
-        finalStatus = "failed";
-        finalMessage = "Run completed with failed assertions";
-        run.lastError = finalMessage;
-      }
-    } catch (error) {
-      if (run.controller.signal.aborted) {
-        finalStatus = "cancelled";
-        finalMessage = "Run cancelled";
-      } else {
-        finalError = errorMessage(error);
-        run.lastError = finalError;
-        finalStatus = "failed";
-        finalMessage = finalError;
-      }
-    } finally {
-      if (!run.controller.signal.aborted) run.controller.abort(new Error("Simulation finished"));
-      for (const client of run.clients) {
-        try {
-          client.sync.stop();
-        } catch (error) {
-          const message = `Failed to stop client sync: ${errorMessage(error)}`;
-          if (finalStatus === "completed") {
-            run.lastError = message;
-            finalStatus = "failed";
-            finalMessage = message;
-          } else if (!run.lastError) {
-            run.lastError = message;
-          }
-          this.emit(run, {
-            type: "error",
-            level: "error",
-            message
-          });
-        }
-      }
-      run.clients = [];
-      run.settled = true;
-      if (finalError) this.emit(run, { type: "error", level: "error", message: finalError });
-      this.finish(run, finalStatus, finalMessage);
-      this.pruneRuns();
-    }
   }
 
   private finish(run: RunRecord, status: RunStatus, message: string): void {
@@ -329,7 +194,7 @@ export class RunStore {
       if (run.cleanupResources.length >= MAX_CREATED_RESOURCES_PER_RUN) {
         if (!run.overflowCleanupResource) {
           run.overflowCleanupResource = cloneValue(tracked);
-          this.persist(run);
+          persistRun(run, this.options);
         }
         const message = `Simulation can track at most ${MAX_CREATED_RESOURCES_PER_RUN} created resources`;
         run.trackingError = message;
@@ -337,91 +202,8 @@ export class RunStore {
         throw new Error(message);
       }
       run.cleanupResources.push(cloneValue(tracked));
-      this.persist(run);
+      persistRun(run, this.options);
     }
-  }
-
-  private finishCleanup(run: RunRecord): RunSummary {
-    try {
-      if (run.target?.deployed) {
-        if (!this.options.ledger) throw new Error("Deployed simulations require a durable cleanup ledger");
-        this.options.ledger.remove(run.id);
-      }
-    } catch (error) {
-      run.cleanupError = errorMessage(error);
-      this.emit(run, { type: "error", level: "error", message: run.cleanupError });
-      throw error;
-    }
-    run.cleaned = true;
-    run.cleanupError = undefined;
-    this.emit(run, { type: "cleanup", message: "Cleanup complete" });
-    run.subscribers.clear();
-    this.pruneRuns();
-    return toSummary(run);
-  }
-
-  private persist(run: RunRecord): void {
-    if (!run.target?.deployed || run.cleaned) return;
-    if (!this.options.ledger) throw new Error("Deployed simulations require a durable cleanup ledger");
-    this.options.ledger.save({
-      runId: run.id,
-      scenarioId: run.scenario.id,
-      scenarioName: run.scenario.name,
-      startedAt: run.startedAt,
-      target: {
-        id: run.target.id,
-        label: run.target.label,
-        baseUrl: run.target.baseUrl
-      },
-      resources: cloneValue(cleanupResourcesForRun(run))
-    });
-  }
-
-  private recover(record: CleanupLedgerRecord): void {
-    const target = this.options.resolveTarget?.(cloneValue(record.target));
-    if (!target?.clientFactory)
-      throw new Error(`Cleanup ledger run ${record.runId} has no recoverable deployed target`);
-    if (!target.deployed || target.id !== record.target.id || target.baseUrl !== record.target.baseUrl) {
-      throw new Error(`Cleanup ledger run ${record.runId} no longer matches its deployed target`);
-    }
-    const now = timestamp();
-    const controller = new AbortController();
-    controller.abort(new Error(ABANDONED_RUN_MESSAGE));
-    const cleanupResources = cloneValue(record.resources.slice(0, MAX_CREATED_RESOURCES_PER_RUN));
-    const overflowCleanupResource = record.resources[MAX_CREATED_RESOURCES_PER_RUN];
-    const run: RunRecord = {
-      id: record.runId,
-      scenario: { id: record.scenarioId, name: record.scenarioName },
-      target: {
-        id: record.target.id,
-        label: record.target.label,
-        baseUrl: record.target.baseUrl,
-        deployed: true,
-        apiKeyConfigured: target.apiKeyConfigured
-      },
-      clientFactory: target.clientFactory,
-      status: "abandoned",
-      startedAt: record.startedAt,
-      finishedAt: now,
-      inputs: {},
-      createdResources: cloneValue(cleanupResources),
-      cleanupResources,
-      ...(overflowCleanupResource ? { overflowCleanupResource: cloneValue(overflowCleanupResource) } : {}),
-      assertions: [],
-      assertionHistoryBytes: 0,
-      events: [],
-      eventHistoryBytes: 0,
-      subscribers: new Set(),
-      controller,
-      clients: [],
-      settled: true,
-      cleanupStarted: false,
-      cleaned: false,
-      sequence: 0,
-      lastError: ABANDONED_RUN_MESSAGE
-    };
-    this.runs.set(run.id, run);
-    this.emit(run, { type: "status", status: "abandoned", level: "warn", message: ABANDONED_RUN_MESSAGE });
   }
 
   private assert(run: RunRecord, name: string, passed: boolean, message?: string): AssertionResult {
