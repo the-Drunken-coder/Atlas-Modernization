@@ -52,7 +52,7 @@ if (unbudgetedFiles.length > 0) fail(`Unbudgeted emitted JS/CSS assets: ${unbudg
 const records = new Map(assetFiles.map((file) => [file, measure(resolve(outputDir, file))]));
 const entry = manifest["index.html"];
 const shell = manifest["src/features/MapConsole.tsx"];
-const mapView = manifest["src/ui/map/MapView.tsx"];
+const mapView = manifest["src/ui/map/view/MapView.tsx"];
 if (!entry || !shell || !mapView) fail("Manifest is missing the index, MapConsole, or MapView entry");
 
 const initialFiles = new Set([entry.file, ...(entry.css ?? [])]);

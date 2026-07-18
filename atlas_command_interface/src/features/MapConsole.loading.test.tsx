@@ -16,7 +16,7 @@ const mapViewModule = vi.hoisted(() => {
   };
 });
 
-vi.mock("../ui/map/MapView.js", () => mapViewModule.promise);
+vi.mock("../ui/map/view/MapView.js", () => mapViewModule.promise);
 
 const style: StyleSpecification = { version: 8, sources: {}, layers: [] };
 

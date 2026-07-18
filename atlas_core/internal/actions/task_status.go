@@ -1,8 +1,12 @@
 package actions
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"strings"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
 func normalizeTaskStatus(raw string) (string, error) {
@@ -60,4 +64,75 @@ func validateTaskStatusTransition(current, next string) error {
 		return nil
 	}
 	return NewValidationError(fmt.Sprintf("invalid task status transition from %q to %q", current, next))
+}
+
+// Acknowledge marks a task as acknowledged.
+func (a *TaskActions) Acknowledge(ctx context.Context, taskID string, expectedVersion *int64) (*models.Task, error) {
+	status := "acknowledged"
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: expectedVersion, idempotentStatus: true})
+}
+
+// Complete marks a task as completed with optional result.
+func (a *TaskActions) Complete(ctx context.Context, taskID string, result map[string]interface{}, expectedVersion *int64) (*models.Task, error) {
+	status := "completed"
+	var extra map[string]interface{}
+	if result != nil {
+		extra = map[string]interface{}{"result": result}
+	}
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
+}
+
+// Fail marks a task as failed with optional error details.
+func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[string]interface{}, expectedVersion *int64) (*models.Task, error) {
+	status := "failed"
+	var extra map[string]interface{}
+	if errorDetails != nil {
+		extra = map[string]interface{}{"error": errorDetails}
+	}
+	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
+}
+
+var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
+
+func taskStatusTransitionUpdate(status string, progress *float64, message *string) UpdateTaskParams {
+	var components map[string]interface{}
+	if progress != nil || message != nil {
+		components = make(map[string]interface{})
+		if progress != nil {
+			p := normalizeTaskProgressPercent(*progress)
+			components["progress"] = map[string]interface{}{"percent": p}
+		}
+		if message != nil {
+			components["status_message"] = *message
+		}
+	}
+
+	return UpdateTaskParams{
+		Status:          &status,
+		Components:      components,
+		RemoveExtraKeys: append([]string(nil), legacyTaskTransitionExtraKeys...),
+	}
+}
+
+// normalizeTaskProgressPercent clamps progress to the canonical 0–100 percent scale.
+// NaN and infinite values are coerced to 0.
+// Values are not auto-scaled from 0–1; e.g. 1 means 1%, not 100%.
+func normalizeTaskProgressPercent(p float64) float64 {
+	if math.IsNaN(p) || math.IsInf(p, 0) {
+		return 0
+	}
+	if p < 0 {
+		return 0
+	}
+	if p > 100 {
+		return 100
+	}
+	return p
+}
+
+// TransitionStatus updates the task status and optional progress.
+func (a *TaskActions) TransitionStatus(ctx context.Context, taskID, status string, progress *float64, message *string, expectedVersion *int64) (*models.Task, error) {
+	params := taskStatusTransitionUpdate(status, progress, message)
+	params.ExpectedVersion = expectedVersion
+	return a.Update(ctx, taskID, params)
 }
