@@ -33,6 +33,7 @@ function loadRuntime(global: MapLibreGlobal): Promise<MapLibreRuntime> {
       if (global.maplibregl) {
         resolve(global.maplibregl);
       } else {
+        (existingScript ?? script)?.remove();
         reject(new Error("MapLibre runtime did not initialize"));
       }
     };

@@ -56,6 +56,7 @@ function loadRuntime(global: MilsymbolGlobal): Promise<MilsymbolRuntime> {
       if (global.ms) {
         resolve(global.ms);
       } else {
+        (existingScript ?? script)?.remove();
         reject(new Error("SIDC symbol runtime did not initialize"));
       }
     };
