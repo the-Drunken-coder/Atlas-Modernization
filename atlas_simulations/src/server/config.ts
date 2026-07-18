@@ -102,7 +102,7 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
 }
 
 function localCoreAPIKey(packageRoot: string): string | undefined {
-  const coreEnv = readEnvFile(path.resolve(packageRoot, "../Atlas_Core/docker/.env.local"));
+  const coreEnv = readEnvFile(path.resolve(packageRoot, "../atlas_core/docker/.env.local"));
   return coreAPIAuthEnabled(coreEnv.ENABLE_API_AUTH) ? stringValue(coreEnv.API_AUTH_KEY) : undefined;
 }
 

@@ -83,7 +83,7 @@ LOGIN_JSON="$(
   "$2" - "$1" <<'PY'
 import json
 import sys
-from Atlas_Core.scripts.compose_env import parse_compose_env_file
+from atlas_core.scripts.compose_env import parse_compose_env_file
 
 password = parse_compose_env_file(sys.argv[1]).get("ATLAS_ADMIN_PASSWORD")
 if not password:
@@ -140,8 +140,8 @@ printf '%s' "$LOGIN_JSON"
     def test_api_guide_reads_local_credentials_as_data(self) -> None:
         guide = (Path(__file__).resolve().parents[1] / "docs" / "API_GUIDE.md").read_text(encoding="utf-8")
 
-        self.assertNotIn(". Atlas_Core/docker/.env.local", guide)
-        self.assertEqual(guide.count('parse_compose_env_file("Atlas_Core/docker/.env.local")'), 2)
+        self.assertNotIn(". atlas_core/docker/.env.local", guide)
+        self.assertEqual(guide.count('parse_compose_env_file("atlas_core/docker/.env.local")'), 2)
         self.assertEqual(guide.count('--data-binary @- <<<"$LOGIN_JSON"'), 2)
         self.assertEqual(guide.count(')" || exit 1'), 2)
 

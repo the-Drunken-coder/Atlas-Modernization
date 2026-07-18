@@ -8,7 +8,7 @@ proxies public HTTPS traffic to the local ATLAS Core API.
 1. Create a Cloudflare tunnel in the Cloudflare dashboard and copy its **run token**.
 
 2. Export the token, a real API key, and an admin password override before
-   starting Compose, or put them in `Atlas_Core/docker/.env`:
+   starting Compose, or put them in `atlas_core/docker/.env`:
 
    ```bash
 	   export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
@@ -19,13 +19,13 @@ proxies public HTTPS traffic to the local ATLAS Core API.
 3. From the **repository root**, start the tunnel stack:
 
    ```bash
-   python3 Atlas_Core/scripts/atlas.py --tunnel
+   python3 atlas_core/scripts/atlas.py --tunnel
    ```
 
    For the production-image stack:
 
    ```bash
-   python3 Atlas_Core/scripts/atlas.py --production --tunnel
+   python3 atlas_core/scripts/atlas.py --production --tunnel
    ```
 
    Use `atlas.py` for development tunnel starts. The direct development Compose
@@ -75,7 +75,7 @@ shared proxy-IP bucket.
   the config: `envsubst '${CLOUDFLARED_TUNNEL}' < config.yml > /tmp/cloudflared-config.yml`
 - `atlas.py --tunnel` requires `CLOUDFLARE_TUNNEL_TOKEN`, `API_AUTH_KEY`, and
   `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` from the shell or
-  `Atlas_Core/docker/.env`; it does not read
+  `atlas_core/docker/.env`; it does not read
   `credentials/atlas-core.json`.
 
 ## Troubleshooting
@@ -85,5 +85,5 @@ shared proxy-IP bucket.
   that subnet, both static service addresses, and Core's trusted proxy `/32`
   together before restarting the stack.
 - For `atlas.py --tunnel`, verify the token, API key, and admin password override
-  are exported in the shell or present in `Atlas_Core/docker/.env`.
-- Check tunnel logs: `cd Atlas_Core/docker && docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs cloudflared`
+  are exported in the shell or present in `atlas_core/docker/.env`.
+- Check tunnel logs: `cd atlas_core/docker && docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs cloudflared`

@@ -16,12 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION_FILE: Atlas_Core/go.mod
-  GO_SUM_FILE: Atlas_Core/go.sum
+  GO_VERSION_FILE: atlas_core/go.mod
+  GO_SUM_FILE: atlas_core/go.sum
   PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
   PROTOCOL_GO_SUM_FILE: atlas_protocol/go.sum
   PROTOCOL_WORKING_DIRECTORY: atlas_protocol
-  WORKING_DIRECTORY: Atlas_Core
+  WORKING_DIRECTORY: atlas_core
 
 jobs:
   workflow-validation:
@@ -504,7 +504,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: Atlas_Core/docker/Dockerfile
+          file: atlas_core/docker/Dockerfile
           target: development
           push: false
 
@@ -512,6 +512,6 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: Atlas_Core/docker/Dockerfile
+          file: atlas_core/docker/Dockerfile
           target: production
           push: false

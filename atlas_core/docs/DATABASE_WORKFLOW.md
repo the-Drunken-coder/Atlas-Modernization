@@ -59,7 +59,7 @@ The baseline adoption path exists only for the exact unversioned v1 catalog. It 
 Inspect the current production version with:
 
 ```bash
-cd Atlas_Core/docker
+cd atlas_core/docker
 docker compose -f docker-compose.production.yml exec -T \
   -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
   psql -U atlas -d atlas_core \
@@ -93,7 +93,7 @@ Example shape:
 
 Do not edit an existing fingerprint algorithm. If drift coverage itself changes, add a new algorithm version and have a new migration record that version after verifying the prior row with its original algorithm.
 
-Validate from `Atlas_Core/`:
+Validate from `atlas_core/`:
 
 ```bash
 go test -count=1 ./internal/database
@@ -107,13 +107,13 @@ The database integration tests use isolated PostgreSQL schemas. With `ATLAS_CORE
 The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then clears disposable resource rows and the `atlas-media` bucket while retaining local `admin_records` and the migration ledger. Before serving HTTP, Core republishes its embedded `command_catalog`, so the resulting scratch dataset contains that Core-owned discovery object even when only the API container was restarted.
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py --dev
+python3 atlas_core/scripts/atlas.py --dev
 ```
 
 To remove every development volume, including `admin_records`, use the explicitly destructive reset:
 
 ```bash
-cd Atlas_Core/docker
+cd atlas_core/docker
 docker compose down -v --remove-orphans
 ```
 

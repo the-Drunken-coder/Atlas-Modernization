@@ -30,7 +30,7 @@ The command catalog is stored in [`command_catalog.json`](command_catalog.json) 
 }
 ```
 
-Run `go test ./...`, `go run ./cmd/atlas_core`, and the optional repair command `python scripts/seed_command_catalog.py` from the **`Atlas_Core/`** module root (the directory that contains `go.mod`), not from this `command_catalog/` folder alone.
+Run `go test ./...`, `go run ./cmd/atlas_core`, and the optional repair command `python scripts/seed_command_catalog.py` from the **`atlas_core/`** module root (the directory that contains `go.mod`), not from this `command_catalog/` folder alone.
 
 ## Command Structure
 
@@ -90,7 +90,7 @@ To add a new command to the catalog:
 
 1. Add the command definition to the `commands` array in [`command_catalog.json`](command_catalog.json)
 2. Ensure the command follows the structure defined above
-3. From **`Atlas_Core/`**, run `go test ./...`, then rebuild/restart Core so the embedded validator and Core-owned catalog object change together
+3. From **`atlas_core/`**, run `go test ./...`, then rebuild/restart Core so the embedded validator and Core-owned catalog object change together
 4. Update the manual repair script if the object publication contract changes: [`scripts/seed_command_catalog.py`](../scripts/seed_command_catalog.py)
 
 ## Best Practices
@@ -109,10 +109,10 @@ If development storage is deliberately unconfigured, readiness is already `degra
 
 The seed script remains available as a manual repair tool for an already running Core:
 
-The catalog can be published to the Atlas object API using the seed script (from **`Atlas_Core/`**, same as `go test ./...`):
+The catalog can be published to the Atlas object API using the seed script (from **`atlas_core/`**, same as `go test ./...`):
 
 ```bash
-cd Atlas_Core
+cd atlas_core
 python scripts/seed_command_catalog.py --api-url http://localhost:8000
 ```
 

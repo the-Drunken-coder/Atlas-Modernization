@@ -130,20 +130,20 @@ def ensure_local_auth(docker_dir):
 
 
 def resolve_atlas_core_dir():
-    """Return the absolute path to the Atlas_Core directory."""
+    """Return the absolute path to the atlas_core directory."""
     current_dir = os.path.abspath(os.path.dirname(__file__))
     search_dir = current_dir
     while True:
-        if os.path.basename(search_dir) == "Atlas_Core":
+        if os.path.basename(search_dir) == "atlas_core":
             return search_dir
-        candidate = os.path.join(search_dir, "Atlas_Core")
+        candidate = os.path.join(search_dir, "atlas_core")
         if os.path.isdir(candidate):
             return candidate
         parent = os.path.dirname(search_dir)
         if parent == search_dir:
             break
         search_dir = parent
-    raise FileNotFoundError("Atlas_Core directory not found")
+    raise FileNotFoundError("atlas_core directory not found")
 
 
 def database_recreate_on_startup_enabled(production=False):
@@ -297,7 +297,7 @@ def raise_for_exited_development_core(container_name="atlas_core_api"):
         raise RuntimeError(
             "Atlas Core exited because its PostgreSQL password does not match the existing "
             "development volume. Restore the POSTGRES_PASSWORD that initialized the volume, "
-            "or, if its data is disposable, rerun with: python3 Atlas_Core/scripts/atlas.py "
+            "or, if its data is disposable, rerun with: python3 atlas_core/scripts/atlas.py "
             "--dev --reset-volumes (deletes all local development volumes)."
         )
     raise RuntimeError(
@@ -666,7 +666,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             print("  Health:    http://localhost:8000/health")
             print("  Readiness: http://localhost:8000/readiness")
             if not production and not tunnel:
-                print("  Admin:     admin (password stored in Atlas_Core/docker/.env.local)")
+                print("  Admin:     admin (password stored in atlas_core/docker/.env.local)")
             if production:
                 print("  Auth:      X-API-Key required for API routes")
 
