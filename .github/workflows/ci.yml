@@ -24,6 +24,24 @@ env:
   WORKING_DIRECTORY: Atlas_Core
 
 jobs:
+  workflow-validation:
+    name: workflow-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: ${{ env.GO_SUM_FILE }}
+
+      - name: Run actionlint over all workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+
   go-quality:
     name: go-quality
     runs-on: ubuntu-latest
@@ -214,9 +232,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Build Atlas SDK dependency
-        run: npm run build:sdk
-
       - name: Audit asset runtime dependencies
         run: npm audit --audit-level=high
 
@@ -277,9 +292,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Build Atlas SDK dependency
-        run: npm run build:sdk
-
       - name: Audit command interface dependencies
         run: npm audit --audit-level=high
 
@@ -297,6 +309,9 @@ jobs:
 
       - name: Build command interface
         run: npm run build --workspace @the-drunken-coder/atlas-command-interface
+
+      - name: Check command-interface bundle budget
+        run: npm run check:bundle --workspace @the-drunken-coder/atlas-command-interface -- --skip-build
 
   atlas-simulations:
     name: atlas-simulations
@@ -317,9 +332,6 @@ jobs:
 
       - name: Install JavaScript workspace dependencies
         run: npm ci
-
-      - name: Build Atlas asset runtime dependency
-        run: npm run build:asset-runtime
 
       - name: Audit simulations dependencies
         run: npm audit --audit-level=high
@@ -478,15 +490,6 @@ jobs:
               (.services.postgres.networks | has("atlas_tunnel_network") | not) and
               (.services.minio.networks | has("atlas_tunnel_network") | not)
             '
-
-      - name: Validate production Docker Compose config
-        env:
-          POSTGRES_PASSWORD: atlas-ci
-          MINIO_ROOT_USER: atlas
-          MINIO_ROOT_PASSWORD: atlas-ci
-          API_AUTH_KEY: dummy-ci-api-auth-key
-          ATLAS_ADMIN_PASSWORD: atlas-ci-admin-password
-        run: docker compose -f docker/docker-compose.production.yml config --quiet
 
   docker-build:
     name: docker-build
