@@ -590,16 +590,80 @@ describe("MapView hover target box", () => {
     await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
   });
 
-  it("cancels a pending camera settle frame before scheduling the latest one", async () => {
-    const { canvas, map } = renderMapView();
-
-    act(() => {
-      map.fire("moveend");
-      map.fire("movestart");
-      map.fire("moveend");
+  it("cancels a pending camera settle frame before scheduling the latest one", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrameId = 0;
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      const frameId = ++nextFrameId;
+      frames.set(frameId, callback);
+      return frameId;
     });
+    const cancelFrame = vi.fn((frameId: number) => {
+      frames.delete(frameId);
+    });
+    vi.stubGlobal("requestAnimationFrame", requestFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelFrame);
 
-    await waitFor(() => expect(canvas).not.toHaveClass("map-canvas--scrolling"));
+    const rendered = renderMapView();
+    const pendingFrameId = () => {
+      const frameId = frames.keys().next().value;
+      if (frameId === undefined) throw new Error("Expected a pending animation frame");
+      return frameId;
+    };
+    const runFrame = (frameId: number) => {
+      const callback = frames.get(frameId);
+      if (!callback) return false;
+      frames.delete(frameId);
+      callback(0);
+      return true;
+    };
+
+    try {
+      const initialResizeFrame = pendingFrameId();
+      act(() => {
+        expect(runFrame(initialResizeFrame)).toBe(true);
+      });
+      const initialCameraSettleFrame = pendingFrameId();
+      act(() => {
+        expect(runFrame(initialCameraSettleFrame)).toBe(true);
+      });
+      expect(frames.size).toBe(0);
+      expect(rendered.canvas).not.toHaveClass("map-canvas--scrolling");
+      requestFrame.mockClear();
+      cancelFrame.mockClear();
+
+      act(() => rendered.map.fire("moveend"));
+      const frameA = pendingFrameId();
+      expect(frames.size).toBe(1);
+      expect(requestFrame).toHaveBeenCalledTimes(1);
+      expect(rendered.canvas).not.toHaveClass("map-canvas--scrolling");
+
+      act(() => rendered.map.fire("movestart"));
+      expect(cancelFrame).toHaveBeenCalledWith(frameA);
+      expect(rendered.canvas).toHaveClass("map-canvas--scrolling");
+      expect(frames.has(frameA)).toBe(false);
+
+      act(() => rendered.map.fire("moveend"));
+      const frameB = pendingFrameId();
+      expect(frames.size).toBe(1);
+      expect(frameB).not.toBe(frameA);
+      expect(requestFrame).toHaveBeenCalledTimes(2);
+      expect(rendered.canvas).toHaveClass("map-canvas--scrolling");
+
+      act(() => {
+        expect(runFrame(frameA)).toBe(false);
+      });
+      expect(rendered.canvas).toHaveClass("map-canvas--scrolling");
+
+      act(() => {
+        expect(runFrame(frameB)).toBe(true);
+      });
+      expect(rendered.canvas).not.toHaveClass("map-canvas--scrolling");
+    } finally {
+      rendered.unmount();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
   });
 
   it("does not subscribe targeted reticles to render frames", async () => {
