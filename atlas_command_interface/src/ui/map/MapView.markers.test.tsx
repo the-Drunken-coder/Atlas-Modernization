@@ -5,6 +5,17 @@ import { defaultSidcIconService } from "../symbols/sidc-symbol-service.js";
 import { entity, markerOperationCounts, renderMapView, resetMarkerOperationCounts } from "./MapView.test-harness.js";
 import { buildMapSources } from "./map-sources.js";
 
+vi.mock("../symbols/sidc-runtime.js", () => ({
+  getSidcRuntime: () => ({}),
+  loadSidcRuntime: vi.fn(),
+  renderSymbol: (sidc: string) => ({
+    anchor: { x: 0, y: 0 },
+    sidc,
+    size: { height: 1, width: 1 },
+    svg: "<svg />"
+  })
+}));
+
 const TRACK_COUNT = 256;
 
 describe("MapView symbol marker reconciliation", () => {

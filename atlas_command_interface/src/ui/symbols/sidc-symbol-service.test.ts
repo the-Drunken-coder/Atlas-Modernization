@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import milsymbol from "milsymbol";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SYMBOL_CATALOG,
   DEFAULT_SYMBOL_FALLBACK,
@@ -7,10 +8,13 @@ import {
 } from "./catalog.js";
 import { __internals, createSidcIconService, renderSymbolToSvg } from "./sidc-symbol-service.js";
 
+vi.mock("../runtime-asset-urls.js", () => ({ milsymbolScriptUrl: "" }));
+
 describe("SIDC symbol service", () => {
   let service: ReturnType<typeof createSidcIconService>;
 
   beforeEach(() => {
+    vi.stubGlobal("ms", milsymbol);
     service = createSidcIconService({
       symbolCatalog: DEFAULT_SYMBOL_CATALOG,
       typeMapping: DEFAULT_SYMBOL_TYPE_MAPPING,

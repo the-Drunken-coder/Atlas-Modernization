@@ -1,5 +1,5 @@
 import type maplibregl from "maplibre-gl";
-import { Marker, type Map as MlMap } from "maplibre-gl";
+import type { Map as MlMap } from "maplibre-gl";
 import {
   addVertexAfter,
   displayGeometry,
@@ -11,6 +11,7 @@ import {
   type VertexRef
 } from "../../atlas/geometry.js";
 import { emptyFeatureCollection } from "./map-sources.js";
+import type { MapLibreRuntime } from "./maplibre-runtime.js";
 
 export type MapEditing = {
   geometry: UiGeometry;
@@ -19,7 +20,11 @@ export type MapEditing = {
 
 type Midpoint = { lng: number; lat: number; afterRef: VertexRef };
 
-export function createEditingMarkers(map: MlMap, editing: MapEditing | undefined): Marker[] {
+export function createEditingMarkers(
+  map: MlMap,
+  editing: MapEditing | undefined,
+  MarkerConstructor: MapLibreRuntime["Marker"]
+): InstanceType<MapLibreRuntime["Marker"]>[] {
   const overlay = map.getSource("editing") as maplibregl.GeoJSONSource | undefined;
   if (!editing) {
     overlay?.setData(emptyFeatureCollection() as never);
@@ -31,13 +36,13 @@ export function createEditingMarkers(map: MlMap, editing: MapEditing | undefined
     features: [{ type: "Feature", geometry: displayGeometry(editing.geometry), properties: {} }]
   } as never);
 
-  const markers: Marker[] = [];
+  const markers: InstanceType<MapLibreRuntime["Marker"]>[] = [];
   const { geometry, onChange } = editing;
   for (const vertex of geometryVertices(geometry)) {
     const element = document.createElement("div");
     element.className = "vertex-handle";
     element.title = "Drag to move - right-click to remove";
-    const marker = new Marker({ element, draggable: true }).setLngLat([vertex.lng, vertex.lat]).addTo(map);
+    const marker = new MarkerConstructor({ element, draggable: true }).setLngLat([vertex.lng, vertex.lat]).addTo(map);
     marker.on("dragend", () => {
       const next = marker.getLngLat();
       onChange(moveVertex(geometry, vertex.ref, next.lng, next.lat));
@@ -54,7 +59,7 @@ export function createEditingMarkers(map: MlMap, editing: MapEditing | undefined
     const element = document.createElement("div");
     element.className = "vertex-handle vertex-handle--mid";
     element.title = "Click to add a vertex";
-    const marker = new Marker({ element, draggable: false }).setLngLat([mid.lng, mid.lat]).addTo(map);
+    const marker = new MarkerConstructor({ element, draggable: false }).setLngLat([mid.lng, mid.lat]).addTo(map);
     element.addEventListener("click", (event) => {
       event.stopPropagation();
       onChange(addVertexAfter(geometry, mid.afterRef, mid.lng, mid.lat));
