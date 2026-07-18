@@ -30,7 +30,9 @@ export default defineConfig({
       thresholds: {
         statements: 88.88,
         branches: 81.63,
-        "src/ui/map/use-map-reticle-interaction.ts": { branches: 86.25 }
+        "src/ui/map/use-map-reticle-interaction.ts": { branches: 86.25 },
+        "src/ui/map/use-map-reticle-effects.ts": { branches: 86.25 },
+        "src/ui/map/use-map-reticle-pointer.ts": { branches: 86.25 }
       }
     }
   }

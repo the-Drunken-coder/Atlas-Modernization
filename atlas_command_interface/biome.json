@@ -18,22 +18,5 @@
         "noMisusedPromises": "error"
       }
     }
-  },
-  "overrides": [
-    {
-      "includes": ["src/ui/map/use-map-reticle-interaction.ts"],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 15
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }
