@@ -1,3 +1,4 @@
+import type { Map as MlMap } from "maplibre-gl";
 import type { ReticleState, ScreenPoint, TargetBox } from "./map-reticle.js";
 
 const EARTH_RADIUS_METERS = 6_371_008.8;
@@ -13,6 +14,26 @@ export type CursorOverlayState = {
   distanceMeters?: number;
   bearingDegrees?: number;
 };
+
+export function cursorOverlayState(
+  map: MlMap | undefined,
+  point: ScreenPoint | null,
+  selection: ReticleState | null
+): CursorOverlayState | undefined {
+  if (!map || !point) return undefined;
+  const pointerCoordinates = map.unproject([point.x, point.y]);
+  if (!selection) return { point, coordinates: { lng: pointerCoordinates.lng, lat: pointerCoordinates.lat } };
+  const selectionCoordinates = map.unproject([selection.x, selection.y]);
+  const selectionPosition = { lng: selectionCoordinates.lng, lat: selectionCoordinates.lat };
+  const pointerPosition = { lng: pointerCoordinates.lng, lat: pointerCoordinates.lat };
+  return {
+    point,
+    coordinates: pointerPosition,
+    selection,
+    distanceMeters: geographicDistanceMeters(selectionPosition, pointerPosition),
+    bearingDegrees: geographicBearingDegrees(selectionPosition, pointerPosition)
+  };
+}
 
 export function tetherSegment(
   selection: TargetBox,

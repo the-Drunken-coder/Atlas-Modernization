@@ -7,10 +7,23 @@ describe("MapView zoom overlay", () => {
   it("delegates completed MapLibre box zooms to fitScreenCoordinates", () => {
     const { map } = renderMapView();
     const boxZoom = map.options.boxZoom as {
-      boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike, event: MouseEvent) => void;
+      boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike | [number, number], event: MouseEvent) => void;
     };
     const start = { x: 12, y: 18 };
     const end = { x: 220, y: 140 };
+
+    boxZoom.boxZoomEnd(map, start, end, new MouseEvent("mouseup"));
+
+    expect(map.fitScreenCoordinates).toHaveBeenCalledWith(start, end, 0, { linear: true });
+  });
+
+  it("preserves the box-zoom handoff when MapLibre reports an array endpoint", () => {
+    const { map } = renderMapView();
+    const boxZoom = map.options.boxZoom as {
+      boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike | [number, number], event: MouseEvent) => void;
+    };
+    const start = { x: 12, y: 18 };
+    const end: [number, number] = [220, 140];
 
     boxZoom.boxZoomEnd(map, start, end, new MouseEvent("mouseup"));
 
@@ -74,6 +87,30 @@ describe("MapView zoom overlay", () => {
 
     expect(onSelectEntity).toHaveBeenCalledWith("asset-1");
     expect(onBackgroundClick).not.toHaveBeenCalled();
+  });
+
+  it("ignores non-left or control-surface Shift presses", () => {
+    const { canvas } = renderMapView();
+    const control = document.createElement("div");
+    control.className = "maplibregl-control-container";
+    canvas.appendChild(control);
+
+    fireEvent.mouseDown(canvas, { button: 1, shiftKey: true, clientX: 50, clientY: 80 });
+    fireEvent.mouseDown(canvas, { button: 0, shiftKey: false, clientX: 50, clientY: 80 });
+    fireEvent.mouseDown(control, { button: 0, shiftKey: true, clientX: 50, clientY: 80 });
+
+    expect(document.querySelector(".map-reticle--zoom")).not.toBeInTheDocument();
+  });
+
+  it("keeps the reticle visible while pointer leave only clears the wheel-lock point", async () => {
+    const { canvas } = renderMapView();
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+
+    fireEvent.wheel(canvas, { clientX: 80, clientY: 100, deltaY: -120 });
+    fireEvent.pointerLeave(canvas);
+
+    expect(document.querySelector(".map-reticle")).toBeInTheDocument();
   });
 
   it("selects map markers from direct click activation without a hover reticle", () => {
