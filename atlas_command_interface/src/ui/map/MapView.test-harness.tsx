@@ -180,6 +180,27 @@ vi.mock("maplibre-gl", () => ({
   NavigationControl: maplibreMock.FakeControl
 }));
 
+vi.mock("./maplibre-runtime.js", () => ({
+  getMapLibreRuntime: () => ({
+    AttributionControl: maplibreMock.FakeControl,
+    Map: maplibreMock.FakeMap,
+    Marker: maplibreMock.FakeMarker,
+    NavigationControl: maplibreMock.FakeControl
+  }),
+  loadMapLibre: vi.fn()
+}));
+
+vi.mock("../symbols/sidc-runtime.js", () => ({
+  getSidcRuntime: () => ({}),
+  loadSidcRuntime: vi.fn(),
+  renderSymbol: (sidc: string) => ({
+    anchor: { x: 0, y: 0 },
+    sidc,
+    size: { height: 1, width: 1 },
+    svg: "<svg />"
+  })
+}));
+
 beforeEach(() => {
   maplibreMock.FakeMap.instances.length = 0;
   resetMarkerOperationCounts();

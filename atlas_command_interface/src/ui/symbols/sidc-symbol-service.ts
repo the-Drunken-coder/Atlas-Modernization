@@ -1,4 +1,4 @@
-import { type RenderSymbolOptions, renderSymbol } from "sidc-kit";
+import type { RenderSymbolOptions } from "sidc-kit";
 import {
   DEFAULT_SYMBOL_CATALOG,
   DEFAULT_SYMBOL_FALLBACK,
@@ -6,6 +6,7 @@ import {
   type SymbolConfig,
   type SymbolStyleOptions
 } from "./catalog.js";
+import { renderSymbol } from "./sidc-runtime.js";
 
 export type SymbolInfo = {
   sidc: string;

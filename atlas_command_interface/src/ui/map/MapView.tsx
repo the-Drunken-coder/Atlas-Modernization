@@ -1,6 +1,6 @@
-import maplibregl, { type MapMouseEvent, Marker, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { getSidcRuntime, loadSidcRuntime } from "../symbols/sidc-runtime.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { MapReticle } from "./MapReticle.js";
 import { CAMERA_EVENT_TAG, type MapCameraCommand } from "./map-camera.js";
@@ -18,6 +18,7 @@ import {
 } from "./map-symbol-markers.js";
 import type { MapReticleTarget } from "./map-targets.js";
 import { cloneStyle, fitWorldOnce, webglAvailable } from "./map-view-utils.js";
+import { getMapLibreRuntime, loadMapLibre, type MapLibreRuntime } from "./maplibre-runtime.js";
 import { useMapCamera } from "./use-map-camera.js";
 import { useMapReticleInteraction } from "./use-map-reticle-interaction.js";
 
@@ -42,7 +43,7 @@ type MapViewProps = {
 };
 
 type SymbolMarkerEntry = {
-  marker: Marker;
+  marker: InstanceType<MapLibreRuntime["Marker"]>;
   element: HTMLButtonElement;
   feature: SymbolMarkerFeature;
 };
@@ -64,6 +65,7 @@ export function MapView({
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
+  const mapLibreRef = useRef<MapLibreRuntime | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
   const initialMapRef = useRef({ initialCenter, style, styleId });
@@ -72,7 +74,7 @@ export function MapView({
   const readyRef = useRef(false);
   const eventsRegisteredRef = useRef(false);
   const fitWorldOnceRef = useRef(initialCenter !== undefined);
-  const editMarkersRef = useRef<Marker[]>([]);
+  const editMarkersRef = useRef<InstanceType<MapLibreRuntime["Marker"]>[]>([]);
   const symbolMarkersRef = useRef<Map<string, SymbolMarkerEntry>>(new Map());
   const handlersRef = useRef({ onSelectEntity, onMapContextMenu });
   const styleSwitchErrorRef = useRef(onStyleSwitchError);
@@ -106,88 +108,113 @@ export function MapView({
       return;
     }
 
-    let map: MlMap;
+    let map: MlMap | undefined;
+    let resizeObserver: ResizeObserver | undefined;
+    let cancelled = false;
     const initialMap = initialMapRef.current;
-    try {
-      map = new maplibregl.Map({
-        container: containerRef.current,
-        style: cloneStyle(initialMap.style),
-        center: initialMap.initialCenter ?? [0, 0],
-        zoom: initialMap.initialCenter ? 11 : 0,
-        renderWorldCopies: false,
-        keyboard: false,
-        dragRotate: false,
-        pitchWithRotate: false,
-        attributionControl: false,
-        boxZoom: {
-          boxZoomEnd: (zoomMap, start, end) => mapActionsRef.current.completeBoxZoom(zoomMap, start, end)
+    const initializeMap = (maplibre: MapLibreRuntime) => {
+      if (cancelled || !containerRef.current) return;
+
+      mapLibreRef.current = maplibre;
+      try {
+        map = new maplibre.Map({
+          container: containerRef.current,
+          style: cloneStyle(initialMap.style),
+          center: initialMap.initialCenter ?? [0, 0],
+          zoom: initialMap.initialCenter ? 11 : 0,
+          renderWorldCopies: false,
+          keyboard: false,
+          dragRotate: false,
+          pitchWithRotate: false,
+          attributionControl: false,
+          boxZoom: {
+            boxZoomEnd: (zoomMap, start, end) => mapActionsRef.current.completeBoxZoom(zoomMap, start, end)
+          }
+        });
+      } catch (error) {
+        setMapError(error instanceof Error ? error.message : "MapLibre failed to initialize");
+        return;
+      }
+
+      const mapInstance = map;
+      mapRef.current = mapInstance;
+      currentStyleIdRef.current = initialMap.styleId;
+      mapInstance.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
+      mapInstance.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-left");
+
+      resizeObserver = new ResizeObserver(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
+      resizeObserver.observe(containerRef.current);
+      requestAnimationFrame(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
+
+      const initializeLayers = () => {
+        registerSourcesAndLayers(mapInstance);
+        readyRef.current = true;
+        setMapReady(true);
+        pushSources(mapInstance, sourcesRef.current);
+        pushEditingOverlay(mapInstance, editingRef.current);
+        fitWorldOnce(mapInstance, fitWorldOnceRef);
+
+        if (!eventsRegisteredRef.current) {
+          eventsRegisteredRef.current = true;
+          mapInstance.on("contextmenu", (event: MapMouseEvent) => {
+            event.preventDefault();
+            handlersRef.current.onMapContextMenu({
+              lng: event.lngLat.lng,
+              lat: event.lngLat.lat,
+              x: event.originalEvent.clientX,
+              y: event.originalEvent.clientY
+            });
+          });
+        }
+      };
+
+      mapInstance.on("style.load", initializeLayers);
+      if (mapInstance.isStyleLoaded()) initializeLayers();
+      mapInstance.on("boxzoomcancel", () => mapActionsRef.current.cancelBoxZoom());
+      mapInstance.on("error", (event) => {
+        // Tile/style errors should not blank the operator picture. Keep overlays
+        // alive and surface the details in devtools.
+        console.warn("Map render warning", event.error);
+        const failedStyleId = pendingStyleIdRef.current;
+        if (failedStyleId) {
+          pendingStyleIdRef.current = undefined;
+          if (readyRef.current && mapInstance.isStyleLoaded()) {
+            registerSourcesAndLayers(mapInstance);
+            pushSources(mapInstance, sourcesRef.current);
+            pushEditingOverlay(mapInstance, editingRef.current);
+          }
+          styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         }
       });
-    } catch (error) {
-      setMapError(error instanceof Error ? error.message : "MapLibre failed to initialize");
-      return;
-    }
-
-    mapRef.current = map;
-    currentStyleIdRef.current = initialMap.styleId;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
-
-    const resizeObserver = new ResizeObserver(() => map.resize({ [CAMERA_EVENT_TAG]: true }));
-    resizeObserver.observe(containerRef.current);
-    requestAnimationFrame(() => map.resize({ [CAMERA_EVENT_TAG]: true }));
-
-    const initializeLayers = () => {
-      registerSourcesAndLayers(map);
-      readyRef.current = true;
-      setMapReady(true);
-      pushSources(map, sourcesRef.current);
-      pushEditingOverlay(map, editingRef.current);
-      fitWorldOnce(map, fitWorldOnceRef);
-
-      if (!eventsRegisteredRef.current) {
-        eventsRegisteredRef.current = true;
-        map.on("contextmenu", (event: MapMouseEvent) => {
-          event.preventDefault();
-          handlersRef.current.onMapContextMenu({
-            lng: event.lngLat.lng,
-            lat: event.lngLat.lat,
-            x: event.originalEvent.clientX,
-            y: event.originalEvent.clientY
-          });
-        });
-      }
     };
 
-    map.on("style.load", initializeLayers);
-    if (map.isStyleLoaded()) initializeLayers();
-    map.on("boxzoomcancel", () => mapActionsRef.current.cancelBoxZoom());
-    map.on("error", (event) => {
-      // Tile/style errors should not blank the operator picture. Keep overlays
-      // alive and surface the details in devtools.
-      console.warn("Map render warning", event.error);
-      const failedStyleId = pendingStyleIdRef.current;
-      if (failedStyleId) {
-        pendingStyleIdRef.current = undefined;
-        if (readyRef.current && map.isStyleLoaded()) {
-          registerSourcesAndLayers(map);
-          pushSources(map, sourcesRef.current);
-          pushEditingOverlay(map, editingRef.current);
-        }
-        styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
-      }
-    });
+    const maplibre = getMapLibreRuntime();
+    const sidcRuntime = getSidcRuntime();
+    if (maplibre && sidcRuntime) {
+      initializeMap(maplibre);
+    } else {
+      void Promise.all([
+        maplibre ? Promise.resolve(maplibre) : loadMapLibre(),
+        sidcRuntime ? Promise.resolve(sidcRuntime) : loadSidcRuntime()
+      ])
+        .then(([loadedMaplibre]) => initializeMap(loadedMaplibre))
+        .catch((error: unknown) => {
+          if (!cancelled) setMapError(error instanceof Error ? error.message : "Map runtime failed to load");
+        });
+    }
 
     return () => {
+      cancelled = true;
       readyRef.current = false;
       eventsRegisteredRef.current = false;
       setMapReady(false);
-      resizeObserver.disconnect();
+      resizeObserver?.disconnect();
       clearMarkers(editMarkersRef.current);
       clearSymbolMarkers(symbolMarkersRef.current);
       editMarkersRef.current = [];
-      map.remove();
+      map?.remove();
       mapRef.current = undefined;
+      mapLibreRef.current = undefined;
     };
     // Changing props are synchronized through refs and the effects below.
   }, [mapError]);
@@ -239,7 +266,8 @@ export function MapView({
   // Reconcile asset/track DOM markers before reticles read their boxes for this snapshot.
   useLayoutEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    const maplibre = mapLibreRef.current;
+    if (!map || !mapReady || !maplibre) return;
 
     const markers = symbolMarkersRef.current;
     const visibleIds = new Set<string>();
@@ -258,7 +286,9 @@ export function MapView({
       }
 
       const element = createSymbolMarkerElement(feature);
-      const marker = new Marker({ element, anchor: "center" }).setLngLat(feature.geometry.coordinates).addTo(map);
+      const marker = new maplibre.Marker({ element, anchor: "center" })
+        .setLngLat(feature.geometry.coordinates)
+        .addTo(map);
       const entry: SymbolMarkerEntry = { marker, element, feature };
       element.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -285,10 +315,11 @@ export function MapView({
   // Sync the editing overlay (live geometry + draggable handles).
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    const maplibre = mapLibreRef.current;
+    if (!map || !mapReady || !maplibre) return;
 
     clearMarkers(editMarkersRef.current);
-    editMarkersRef.current = createEditingMarkers(map, editing);
+    editMarkersRef.current = createEditingMarkers(map, editing, maplibre.Marker);
   }, [editing, mapReady]);
 
   return (

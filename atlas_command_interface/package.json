@@ -12,6 +12,7 @@
     "dev:local": "vite --host 127.0.0.1",
     "build": "vite build",
     "build:web": "vite build",
+    "check:bundle": "node scripts/check-bundle.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
