@@ -13,7 +13,13 @@ const runtimeSourceMaps = [
     fileName: "assets/maplibre-gl.js.map"
   }
 ];
+const milsymbolAssetPattern = /^assets\/milsymbol-[^/]+\.js$/;
 let emitRuntimeMaps = false;
+
+export function appendMilsymbolSourceMapReference(source: string, fileName: string): string {
+  if (!milsymbolAssetPattern.test(fileName) || source.includes("sourceMappingURL=")) return source;
+  return `${source.replace(/\s*$/, "")}\n//# sourceMappingURL=milsymbol.js.map\n`;
+}
 
 export default defineConfig(({ mode }) => ({
   plugins: [
@@ -39,12 +45,17 @@ export default defineConfig(({ mode }) => ({
       configResolved(config) {
         emitRuntimeMaps = config.build.sourcemap !== false;
       },
-      generateBundle() {
+      generateBundle(_options, bundle) {
         if (!emitRuntimeMaps) return;
         for (const sourceMap of runtimeSourceMaps) {
           if (existsSync(sourceMap.path)) {
             this.emitFile({ type: "asset", fileName: sourceMap.fileName, source: readFileSync(sourceMap.path) });
           }
+        }
+        for (const output of Object.values(bundle)) {
+          if (output.type !== "asset" || !milsymbolAssetPattern.test(output.fileName)) continue;
+          const source = typeof output.source === "string" ? output.source : new TextDecoder().decode(output.source);
+          output.source = appendMilsymbolSourceMapReference(source, output.fileName);
         }
       }
     }
