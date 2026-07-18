@@ -85,6 +85,7 @@ export function MapView({
   styleSwitchErrorRef.current = onStyleSwitchError;
   sourcesRef.current = sources;
   editingRef.current = editing;
+  initialMapRef.current = { initialCenter, style, styleId };
   const { notifyUserGesture } = useMapCamera({ mapRef, mapReady, sources, command: cameraCommand });
   const reticleInteraction = useMapReticleInteraction({
     mapCanvasRef,
@@ -112,10 +113,10 @@ export function MapView({
     let map: MlMap | undefined;
     let resizeObserver: ResizeObserver | undefined;
     let cancelled = false;
-    const initialMap = initialMapRef.current;
     const initializeMap = (maplibre: MapLibreRuntime) => {
       if (cancelled || !containerRef.current) return;
 
+      const initialMap = initialMapRef.current;
       mapLibreRef.current = maplibre;
       try {
         map = new maplibre.Map({

@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MapView } from "./MapView.js";
 import { buildMapSources } from "./map-sources.js";
@@ -89,14 +90,51 @@ describe("MapView runtime boundary", () => {
     await waitFor(() => expect(loaderMocks.mapConstructor).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Map unavailable")).not.toBeInTheDocument();
   });
+
+  it("initializes with the latest style selected while runtimes are loading", async () => {
+    let resolveMapLibre!: (runtime: unknown) => void;
+    let resolveSidc!: (runtime: unknown) => void;
+    const mapLibre = new Promise((resolve) => {
+      resolveMapLibre = resolve;
+    });
+    const sidc = new Promise((resolve) => {
+      resolveSidc = resolve;
+    });
+    loaderMocks.loadMapLibre.mockReturnValue(mapLibre);
+    loaderMocks.loadSidcRuntime.mockReturnValue(sidc);
+
+    const originalStyle = { version: 8, sources: {}, layers: [], metadata: { id: "original" } } as StyleSpecification;
+    const latestStyle = { version: 8, sources: {}, layers: [], metadata: { id: "latest" } } as StyleSpecification;
+    const rendered = renderMapView({ styleId: "original", style: originalStyle });
+    rendered.rerender(
+      <MapView
+        sources={buildMapSources([], undefined)}
+        styleId="latest"
+        style={latestStyle}
+        onSelectEntity={vi.fn()}
+        onMapContextMenu={vi.fn()}
+      />
+    );
+
+    await actResolve(() => {
+      resolveMapLibre(createRuntime());
+      resolveSidc({});
+    });
+    await waitFor(() => expect(loaderMocks.mapConstructor).toHaveBeenCalledTimes(1));
+
+    expect(loaderMocks.mapConstructor).toHaveBeenCalledWith(expect.objectContaining({ style: latestStyle }));
+  });
 });
 
-function renderMapView() {
+function renderMapView({
+  styleId = "test-style",
+  style = { version: 8, sources: {}, layers: [] } as StyleSpecification
+} = {}) {
   return render(
     <MapView
       sources={buildMapSources([], undefined)}
-      styleId="test-style"
-      style={{ version: 8, sources: {}, layers: [] }}
+      styleId={styleId}
+      style={style}
       onSelectEntity={vi.fn()}
       onMapContextMenu={vi.fn()}
     />
