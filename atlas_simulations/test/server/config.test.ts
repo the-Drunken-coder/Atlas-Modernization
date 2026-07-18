@@ -276,7 +276,7 @@ function tempPackageRoot(): string {
 function tempWorkspacePackageRoot(coreEnv: string, envFilename = ".env.local"): string {
   const workspaceRoot = mkdtempSync(path.join(tmpdir(), "atlas-simulations-workspace-"));
   const packageRoot = path.join(workspaceRoot, "atlas_simulations");
-  const coreDockerRoot = path.join(workspaceRoot, "Atlas_Core", "docker");
+  const coreDockerRoot = path.join(workspaceRoot, "atlas_core", "docker");
   mkdirSync(packageRoot);
   mkdirSync(coreDockerRoot, { recursive: true });
   writeFileSync(path.join(coreDockerRoot, envFilename), coreEnv);

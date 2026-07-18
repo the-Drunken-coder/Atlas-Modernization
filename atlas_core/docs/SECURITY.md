@@ -107,16 +107,16 @@ Raw development startup seeds a development-only default admin credential:
 - password: `password`
 - role: `admin`
 
-This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `Atlas_Core/docker/.env.local` so it can safely enable machine auth. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
+This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `atlas_core/docker/.env.local` so it can safely enable machine auth. Production operators must set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` before exposing Core. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 
 Optional API key auth is controlled by:
 
 - `ENABLE_API_AUTH` and `API_AUTH_KEY` environment variables (take precedence)
 - `enable_api_auth` and `api_auth_key` in `atlas_core.settings.json`
 
-`python3 Atlas_Core/scripts/atlas.py --dev` enables API-key auth for the local
+`python3 atlas_core/scripts/atlas.py --dev` enables API-key auth for the local
 stack and generates or reuses the bootstrap key and admin password in the
-owner-only `Atlas_Core/docker/.env.local`. This gives local clients one shared
+owner-only `atlas_core/docker/.env.local`. This gives local clients one shared
 credential source without exposing the machine key to browser-delivered
 configuration or making local secrets available to production and tunnel startup.
 

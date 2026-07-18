@@ -2,11 +2,11 @@
 # run_integration_tests.sh — Standalone integration tests for the Atlas Core API.
 #
 # Usage (from repo root):
-#   ATLAS_CORE_API_URL=http://localhost:8000 ./Atlas_Core/scripts/run_integration_tests.sh
-# or, from within Atlas_Core/scripts/:
+#   ATLAS_CORE_API_URL=http://localhost:8000 ./atlas_core/scripts/run_integration_tests.sh
+# or, from within atlas_core/scripts/:
 #   ATLAS_CORE_API_URL=http://localhost:8000 ./run_integration_tests.sh
 # For authenticated deployments:
-#   API_AUTH_KEY=... ATLAS_CORE_API_URL=http://localhost:8000 ./Atlas_Core/scripts/run_integration_tests.sh
+#   API_AUTH_KEY=... ATLAS_CORE_API_URL=http://localhost:8000 ./atlas_core/scripts/run_integration_tests.sh
 #
 # Requires: curl, jq
 # The API must already be running and ready before this script is invoked.

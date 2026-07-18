@@ -1,4 +1,4 @@
-# Ruff configuration for the Atlas_Core helper scripts.
+# Ruff configuration for the atlas_core helper scripts.
 # CI runs `ruff check` and `ruff format --check` over this directory.
 target-version = "py311"
 line-length = 120

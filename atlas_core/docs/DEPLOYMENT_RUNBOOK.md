@@ -9,14 +9,14 @@ Production storage is durable. Ordinary starts, restarts, and `docker compose do
 From the repository root:
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py --dev
+python3 atlas_core/scripts/atlas.py --dev
 ```
 
 Development Compose explicitly sets `DATABASE_RECREATE_ON_STARTUP=true`: each API startup migrates/verifies the schema, clears disposable resource rows and the configured bucket, resets change versions, preserves local `admin_records` plus migration history, and republishes Core's embedded `command_catalog` before serving HTTP.
 
 ## Production configuration
 
-Set runtime credentials in the shell or `Atlas_Core/docker/.env`:
+Set runtime credentials in the shell or `atlas_core/docker/.env`:
 
 ```bash
 export POSTGRES_PASSWORD='replace-with-strong-password'
@@ -31,12 +31,12 @@ External secrets are not stored in `admin_records` and are not recovered by a da
 Start the production stack:
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py --production
+python3 atlas_core/scripts/atlas.py --production
 ```
 
 Production Compose sets `DATABASE_RECREATE_ON_STARTUP=false`. The production image refuses to start if destructive mode is enabled, API auth is disabled, the bootstrap API key is missing/placeholder, or neither admin password source is set.
 
-This uses `Atlas_Core/docker/docker-compose.production.yml`, builds the
+This uses `atlas_core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings
 files, binds the API to `127.0.0.1:8000`, and requires API-key auth for API
 routes. `API_AUTH_KEY` is the required strong bootstrap machine key; browser
@@ -51,7 +51,7 @@ For a public edge, add the tunnel values and start the same production stack wit
 ```bash
 export CLOUDFLARE_TUNNEL_TOKEN='replace-with-cloudflare-token'
 export ATLAS_TUNNEL_HOSTNAME='atlascommandapi.org'
-python3 Atlas_Core/scripts/atlas.py --production --tunnel
+python3 atlas_core/scripts/atlas.py --production --tunnel
 ```
 
 `ATLAS_TUNNEL_HOSTNAME` defaults to `atlascommandapi.org`. The tunnel container
@@ -113,14 +113,14 @@ chmod 0700 "${BACKUP_DIR}"
 git rev-parse HEAD >"${BACKUP_DIR}/app-revision.txt"
 
 migration_table_present="$(
-  docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
     -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     psql -At -U atlas -d atlas_core \
     -c "SELECT to_regclass('atlas_schema_migrations') IS NOT NULL"
 )" || { printf '%s\n' 'Failed to inspect schema migration state' >&2; exit 1; }
 case "${migration_table_present}" in
   t)
-    docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+    docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
       -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
       psql -At -U atlas -d atlas_core \
       -c "SELECT concat_ws(' ', version, name, checksum, fingerprint_version) FROM atlas_schema_migrations ORDER BY version" \
@@ -139,18 +139,18 @@ esac
 2. Quiesce all writes by stopping Core. Leave PostgreSQL and MinIO running:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
-  docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api
+docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+  docker compose -f atlas_core/docker/docker-compose.production.yml stop api
 ```
 
 3. Create a full custom-format database dump:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
   -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
   pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
   >"${BACKUP_DIR}/postgres.dump"
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T postgres \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
   pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
   >"${BACKUP_DIR}/postgres.contents.txt"
 ```
@@ -173,7 +173,7 @@ mc alias remove atlas-production
 
 ```bash
 test -s "${BACKUP_DIR}/postgres.dump"
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T postgres \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
   pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
 test -d "${BACKUP_DIR}/minio/atlas-media"
 ```
@@ -185,7 +185,7 @@ Keep the dump, bucket mirror, manifests, and revision files under the same `BACK
 Build/pull the intended revision, then start production from the repository root. Schema migration and catalog verification complete before readiness. Add `--tunnel` when the backed-up deployment used the tunnel profile:
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py --production
+python3 atlas_core/scripts/atlas.py --production
 ```
 
 Verify:
@@ -193,7 +193,7 @@ Verify:
 ```bash
 curl -fsS http://127.0.0.1:8000/readiness
 
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
   -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
   psql -U atlas -d atlas_core \
   -c 'SELECT version, name, checksum, fingerprint_version, schema_fingerprint, applied_at FROM atlas_schema_migrations ORDER BY version;'
@@ -204,7 +204,7 @@ Then confirm expected resource/admin counts, one browser-admin login or managed-
 ```bash
 API_AUTH_KEY="${API_AUTH_KEY}" \
 ATLAS_CORE_API_URL=http://127.0.0.1:8000 \
-./Atlas_Core/scripts/run_integration_tests.sh
+./atlas_core/scripts/run_integration_tests.sh
 ```
 
 ## Restore a backup set
@@ -215,16 +215,16 @@ Restoring is destructive to state created after the selected backup.
 2. Restore the entire database:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
-  docker compose -f Atlas_Core/docker/docker-compose.production.yml stop api
+docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+  docker compose -f atlas_core/docker/docker-compose.production.yml stop api
 
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
   -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
   dropdb -U atlas --if-exists atlas_core
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
   -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
   createdb -U atlas atlas_core
-docker compose -f Atlas_Core/docker/docker-compose.production.yml exec -T \
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
   -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
   pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
   <"${BACKUP_DIR}/postgres.dump"
@@ -257,31 +257,31 @@ Core accepts an existing `X-Request-ID` and includes it as `request_id` on struc
 Production logs:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml logs -f api postgres minio
+docker compose -f atlas_core/docker/docker-compose.production.yml logs -f api postgres minio
 ```
 
 Production tunnel logs:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml \
-  -f Atlas_Core/docker/docker-compose.tunnel.yml logs -f api cloudflared
+docker compose -f atlas_core/docker/docker-compose.production.yml \
+  -f atlas_core/docker/docker-compose.tunnel.yml logs -f api cloudflared
 ```
 
 Stop containers without deleting volumes:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml down --remove-orphans
+docker compose -f atlas_core/docker/docker-compose.production.yml down --remove-orphans
 ```
 
 Stop a production tunnel deployment and remove its dedicated ingress network:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml \
-  -f Atlas_Core/docker/docker-compose.tunnel.yml down --remove-orphans
+docker compose -f atlas_core/docker/docker-compose.production.yml \
+  -f atlas_core/docker/docker-compose.tunnel.yml down --remove-orphans
 ```
 
 `down` preserves named volumes. The following command destroys the production database, all `admin_records`, migration history, and the MinIO bucket volume; it is not a rollback mechanism:
 
 ```bash
-docker compose -f Atlas_Core/docker/docker-compose.production.yml down -v --remove-orphans
+docker compose -f atlas_core/docker/docker-compose.production.yml down -v --remove-orphans
 ```

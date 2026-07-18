@@ -16,7 +16,7 @@ Atlas Core preserves resource tables, `admin_records`, schema migration history,
 
 ### Authentication
 
-Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session. The default `atlas.py --dev` launcher enables API-key auth and stores its generated machine key in the owner-only `Atlas_Core/docker/.env.local`; local server-side clients can use that bootstrap key. Manually configured machine clients should set `ENABLE_API_AUTH=true` and send either the bootstrap `API_AUTH_KEY` or an active managed API key with one of:
+Protected Core routes accept the Core-owned browser session cookie. Local browser development uses the seeded admin session. The default `atlas.py --dev` launcher enables API-key auth and stores its generated machine key in the owner-only `atlas_core/docker/.env.local`; local server-side clients can use that bootstrap key. Manually configured machine clients should set `ENABLE_API_AUTH=true` and send either the bootstrap `API_AUTH_KEY` or an active managed API key with one of:
 
 ```text
 X-API-Key: <api-key>
@@ -561,7 +561,7 @@ override uses:
 - password: `password`
 - role: `admin`
 
-This credential is development-only scratch state. The default `atlas.py --dev` launcher instead generates `ATLAS_ADMIN_PASSWORD` in the owner-only `Atlas_Core/docker/.env.local`. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
+This credential is development-only scratch state. The default `atlas.py --dev` launcher instead generates `ATLAS_ADMIN_PASSWORD` in the owner-only `atlas_core/docker/.env.local`. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
@@ -606,11 +606,11 @@ trap 'rm -f "$COOKIE_JAR"' EXIT
 LOGIN_JSON="$(
   python3 - <<'PY'
 import json
-from Atlas_Core.scripts.compose_env import parse_compose_env_file
+from atlas_core.scripts.compose_env import parse_compose_env_file
 
-password = parse_compose_env_file("Atlas_Core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
+password = parse_compose_env_file("atlas_core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
 if not password:
-    raise SystemExit("Atlas_Core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
+    raise SystemExit("atlas_core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
 print(json.dumps({"username": "admin", "password": password}))
 PY
 )" || exit 1
@@ -673,11 +673,11 @@ trap 'rm -f "$COOKIE_JAR"' EXIT
 LOGIN_JSON="$(
   python3 - <<'PY'
 import json
-from Atlas_Core.scripts.compose_env import parse_compose_env_file
+from atlas_core.scripts.compose_env import parse_compose_env_file
 
-password = parse_compose_env_file("Atlas_Core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
+password = parse_compose_env_file("atlas_core/docker/.env.local").get("ATLAS_ADMIN_PASSWORD")
 if not password:
-    raise SystemExit("Atlas_Core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
+    raise SystemExit("atlas_core/docker/.env.local must contain ATLAS_ADMIN_PASSWORD")
 print(json.dumps({"username": "admin", "password": password}))
 PY
 )" || exit 1

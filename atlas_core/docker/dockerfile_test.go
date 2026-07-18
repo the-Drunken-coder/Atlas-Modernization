@@ -16,7 +16,7 @@ func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 	dockerfile := string(data)
 
 	development := dockerfileStage(t, dockerfile, "development")
-	if !strings.Contains(development, "COPY Atlas_Core/atlas_core.settings.json.example ./atlas_core.settings.json") {
+	if !strings.Contains(development, "COPY atlas_core/atlas_core.settings.json.example ./atlas_core.settings.json") {
 		t.Fatal("development image should keep the auth-disabled example settings for local compose")
 	}
 
@@ -26,7 +26,7 @@ func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 			t.Fatalf("production image must not ship settings file reference %q", forbidden)
 		}
 	}
-	if !strings.Contains(production, "COPY Atlas_Core/docker/production-entrypoint.sh ./production-entrypoint.sh") {
+	if !strings.Contains(production, "COPY atlas_core/docker/production-entrypoint.sh ./production-entrypoint.sh") {
 		t.Fatal("production image should copy the fail-closed auth entrypoint")
 	}
 	if !strings.Contains(production, `ENTRYPOINT ["./production-entrypoint.sh"]`) {

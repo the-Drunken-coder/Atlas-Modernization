@@ -53,11 +53,11 @@ Use Node 24 LTS from the repository root `.nvmrc`.
 2. Start local Atlas Core from this checkout:
 
    ```bash
-   python3 Atlas_Core/scripts/atlas.py --dev
+   python3 atlas_core/scripts/atlas.py --dev
    ```
 
-   `atlas.py` starts Docker Compose and waits for PostgreSQL, MinIO, and the API. Atlas Core publishes the embedded command catalog through the object API before serving requests, so an API-only restart also restores or refreshes it. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `Atlas_Core/docker/.env.local`.
-   If an old local Postgres volume has stale credentials, run `python3 Atlas_Core/scripts/atlas.py --dev --reset-volumes`.
+   `atlas.py` starts Docker Compose and waits for PostgreSQL, MinIO, and the API. Atlas Core publishes the embedded command catalog through the object API before serving requests, so an API-only restart also restores or refreshes it. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `atlas_core/docker/.env.local`.
+   If an old local Postgres volume has stale credentials, run `python3 atlas_core/scripts/atlas.py --dev --reset-volumes`.
 
 3. Build the local SDK package and run the Vite app:
 
@@ -65,7 +65,7 @@ Use Node 24 LTS from the repository root `.nvmrc`.
    npm run dev:command-interface
    ```
 
-Open http://127.0.0.1:5173/map and sign in as `admin` with the `ATLAS_ADMIN_PASSWORD` from `Atlas_Core/docker/.env.local`.
+Open http://127.0.0.1:5173/map and sign in as `admin` with the `ATLAS_ADMIN_PASSWORD` from `atlas_core/docker/.env.local`.
 
 If you need a different Core URL:
 

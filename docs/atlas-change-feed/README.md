@@ -1,6 +1,6 @@
 # Atlas Change Feed
 
-The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `atlas_protocol/schema/jsonschema/atlas.schema.json`, Core serves the feed from `Atlas_Core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
+The change feed is the push channel out of Atlas Core: a websocket endpoint (`/feed`) that streams change events to connected clients so they learn about writes without polling. It is implemented across all three packages: the wire contract is authored in `atlas_protocol/schema/jsonschema/atlas.schema.json`, Core serves the feed from `atlas_core/internal/feed/`, and the Atlas SDK ([`../atlas-sdk/README.md`](../atlas-sdk/README.md)) is the primary consumer.
 
 This document is the behavioral contract. The durable rationale lives in the [design decision](../design-decisions/2026-06-12-change-feed-websocket-fat-events.md).
 
@@ -65,6 +65,6 @@ The feed is validated by simulation against ground truth, not just unit tests. T
 
 Three layers implement this philosophy:
 
-- `Atlas_Core/internal/feed/simulation_test.go` — a faked Core ledger driving the real feed hub: realistic entity/task/object traffic, deliberately out-of-order publishes, dropped connections, forced gaps, ledger audits. Fast and deterministic.
-- `Atlas_Core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → post-commit hook → hub → websocket client, including the burned-version regression (a real 409 burning a sequence value, with the feed expected to keep flowing).
+- `atlas_core/internal/feed/simulation_test.go` — a faked Core ledger driving the real feed hub: realistic entity/task/object traffic, deliberately out-of-order publishes, dropped connections, forced gaps, ledger audits. Fast and deterministic.
+- `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → post-commit hook → hub → websocket client, including the burned-version regression (a real 409 burning a sequence value, with the feed expected to keep flowing).
 - `atlas_sdk/test/` — a sibling ledger-style harness around the TypeScript client with a fake Core/feed transport, running identically in Node and browser.

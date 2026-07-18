@@ -1,10 +1,10 @@
 services:
-  # ATLAS Core API (production image)
+  # ATLAS Core API (Go)
   api:
     build:
       context: ../..
-      dockerfile: Atlas_Core/docker/Dockerfile
-      target: production
+      dockerfile: atlas_core/docker/Dockerfile
+      target: development
     container_name: atlas_core_api
     environment:
       DATABASE_URL: postgres://atlas:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/atlas_core
@@ -14,33 +14,33 @@ services:
       DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-30}
       DATABASE_POOL_IDLE_TIMEOUT: ${DATABASE_POOL_IDLE_TIMEOUT:-600}
       DATABASE_POOL_PRE_PING: ${DATABASE_POOL_PRE_PING:-true}
-      # Production is durable; the production entrypoint rejects destructive mode.
-      DATABASE_RECREATE_ON_STARTUP: ${DATABASE_RECREATE_ON_STARTUP:-false}
+      # Explicit disposable mode for local development and integration tests.
+      DATABASE_RECREATE_ON_STARTUP: ${DATABASE_RECREATE_ON_STARTUP:-true}
+      ENABLE_API_AUTH: ${ENABLE_API_AUTH:-false}
+      API_AUTH_KEY: ${API_AUTH_KEY:-}
+      ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:-}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
       MINIO_BUCKET: atlas-media
       MINIO_SECURE: "false"
       SERVER_PORT: "8000"
-      ENABLE_API_AUTH: "true"
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://atlasinterface.com}
-      CORS_ORIGIN_PATTERNS: ${CORS_ORIGIN_PATTERNS:-https://*.atlas-je0.pages.dev}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
-      API_AUTH_KEY: ${API_AUTH_KEY:?API_AUTH_KEY must be set}
-      # atlas.py and the production entrypoint enforce one admin password source before startup.
-      ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:-}
-      ATLAS_ADMIN_PASSWORD_FILE: ${ATLAS_ADMIN_PASSWORD_FILE:-}
-      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
-      MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - ../cmd:/app/cmd
+      - ../internal:/app/internal
+      # Mount the buildable protocol module; planning docs live under docs/atlas-protocol/.
+      - ../../atlas_protocol:/atlas_protocol:ro
+      # Default to the committed example settings. Override by setting:
+      # ATLAS_CORE_SETTINGS_FILE=atlas_core.settings.json
+      - ../${ATLAS_CORE_SETTINGS_FILE:-atlas_core.settings.json.example}:/app/atlas_core.settings.json:ro
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/readiness"]
       interval: 10s
@@ -50,7 +50,7 @@ services:
     networks:
       - atlas_core_network
 
-  # PostgreSQL durable production store
+  # PostgreSQL development scratch store
   postgres:
     image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
     container_name: atlas_core_postgres
@@ -59,6 +59,7 @@ services:
       POSTGRES_USER: atlas
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_INITDB_ARGS: "--auth-local=md5 --auth-host=md5"
+    # Bind to loopback only so Postgres is not exposed on all interfaces by default.
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -72,13 +73,14 @@ services:
     networks:
       - atlas_core_network
 
-  # MinIO for durable production object/blob storage
+  # MinIO for object/blob storage (S3-compatible)
   minio:
     image: minio/minio:RELEASE.2024-01-31T20-20-33Z@sha256:4092433a77e510826874b36f369696df43407a763d7f901a61d74e83e6fd95bc
     container_name: atlas_core_minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+    # Bind to loopback only so MinIO is not exposed on all interfaces by default.
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -101,6 +103,7 @@ services:
     restart: "no"
     environment:
       MC_HOST_myminio: http://${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}:${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}@minio:9000
+      # When "true", apply anonymous download on atlas-media (dev-only; not recommended on untrusted networks).
       ENABLE_PUBLIC_MINIO: ${ENABLE_PUBLIC_MINIO:-false}
     depends_on:
       minio:

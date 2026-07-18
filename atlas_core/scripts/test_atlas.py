@@ -372,7 +372,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
     def test_production_db_only_does_not_require_api_auth(self) -> None:
         with (
-            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
             patch("atlas.load_compose_dotenv"),
             patch("atlas.ensure_minio_secrets", return_value={}),
             patch("atlas.ensure_postgres_password", return_value={}),
@@ -399,7 +399,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 "postgres",
             ],
             check=True,
-            cwd="/tmp/Atlas_Core/docker",
+            cwd="/tmp/atlas_core/docker",
         )
 
     def test_development_start_persists_local_api_auth(self) -> None:
@@ -409,7 +409,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             "ATLAS_ADMIN_PASSWORD": "generated-admin-password",
         }
         with (
-            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
             patch("atlas.load_compose_dotenv"),
             patch("atlas.ensure_minio_secrets", return_value={}),
             patch("atlas.ensure_postgres_password", return_value={}),
@@ -428,14 +428,14 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         ):
             start_containers()
 
-        ensure_local.assert_called_once_with("/tmp/Atlas_Core/docker")
-        persist.assert_any_call("/tmp/Atlas_Core/docker", local_auth, env_filename=LOCAL_AUTH_ENV_FILE)
+        ensure_local.assert_called_once_with("/tmp/atlas_core/docker")
+        persist.assert_any_call("/tmp/atlas_core/docker", local_auth, env_filename=LOCAL_AUTH_ENV_FILE)
 
     def test_public_start_does_not_load_local_auth(self) -> None:
         for start_options in ({"production": True}, {"tunnel": True}):
             with (
                 self.subTest(start_options=start_options),
-                patch("atlas.resolve_atlas_core_dir", return_value="/tmp/Atlas_Core"),
+                patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
                 patch("atlas.ensure_local_auth") as ensure_local,
                 patch("atlas.load_compose_dotenv"),
                 patch("atlas.ensure_minio_secrets", side_effect=RuntimeError("stop after auth selection")),

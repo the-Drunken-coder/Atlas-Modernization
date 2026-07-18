@@ -46,12 +46,12 @@ See `docker/.env.example` for a copy-paste template. For anonymous download on t
 ### Docker
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py --dev
+python3 atlas_core/scripts/atlas.py --dev
 ```
 
 The development launcher enables API-key authentication, generates or reuses a
 strong local machine key and admin password, and persists both with owner-only
-permissions in `Atlas_Core/docker/.env.local`. Local server-side tools such as Atlas
+permissions in `atlas_core/docker/.env.local`. Local server-side tools such as Atlas
 Simulations use that file as the single source of local credentials. The
 launcher never prints either secret. Browser sessions continue to use the
 `admin` account; its password is the `ATLAS_ADMIN_PASSWORD` stored in that file.
@@ -61,13 +61,13 @@ still be supplied explicitly through the environment or `docker/.env`.
 For manual Compose configuration:
 
 ```bash
-cd Atlas_Core/docker
+cd atlas_core/docker
 docker compose up -d
 ```
 
 The Compose stack builds the development image and bind-mounts
 `atlas_core.settings.json.example`. Raw Compose uses the values in
-`Atlas_Core/docker/.env`; copy `.env.example` and set `ENABLE_API_AUTH=true`
+`atlas_core/docker/.env`; copy `.env.example` and set `ENABLE_API_AUTH=true`
 plus a strong `API_AUTH_KEY` when machine clients need access. The production
 Docker target does not ship that settings file and refuses to start unless `ENABLE_API_AUTH=true`,
 `API_AUTH_KEY` is set to a strong, non-placeholder bootstrap secret, and
@@ -80,7 +80,7 @@ For the production-image single-host stack:
 ```bash
 export API_AUTH_KEY='your-secure-api-key'
 export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
-python3 Atlas_Core/scripts/atlas.py --production
+python3 atlas_core/scripts/atlas.py --production
 ```
 
 Add `--tunnel` to start the optional Cloudflare Tunnel public edge. See
@@ -89,17 +89,17 @@ runbook.
 
 ### Local Go Run
 
-With Postgres and MinIO already reachable (e.g. after `docker compose up -d` without the `api` service, or with API stopped to avoid port 8000 conflict), from `Atlas_Core/`: ensure `DATABASE_URL` points at your DB and `MINIO_SECRET_KEY` / `MINIO_ACCESS_KEY` match your MinIO credentials (defaults in `internal/config/config.go` assume `localhost:9000` and access key `atlas`).
+With Postgres and MinIO already reachable (e.g. after `docker compose up -d` without the `api` service, or with API stopped to avoid port 8000 conflict), from `atlas_core/`: ensure `DATABASE_URL` points at your DB and `MINIO_SECRET_KEY` / `MINIO_ACCESS_KEY` match your MinIO credentials (defaults in `internal/config/config.go` assume `localhost:9000` and access key `atlas`).
 
 ```bash
-cd Atlas_Core
+cd atlas_core
 go run ./cmd/atlas_core
 ```
 
 ### Build
 
 ```bash
-cd Atlas_Core
+cd atlas_core
 go build -o atlas_core ./cmd/atlas_core
 ```
 
@@ -113,7 +113,7 @@ curl http://localhost:8000/readiness
 ## Tests and Quality
 
 ```bash
-cd Atlas_Core
+cd atlas_core
 go test ./...
 go fmt ./...
 go vet ./...
