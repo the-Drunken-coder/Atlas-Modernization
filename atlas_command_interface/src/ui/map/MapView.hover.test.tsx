@@ -580,6 +580,28 @@ describe("MapView hover target box", () => {
     expect(pointerMoveRegistrations()).toBe(initialRegistrations);
   });
 
+  it("clears the reticle when the pointer leaves the map bounds", async () => {
+    const { canvas } = renderMapView();
+    firePointerMove(canvas, { clientX: 80, clientY: 100 });
+    await waitFor(() => expect(document.querySelector(".map-reticle")).toBeInTheDocument());
+
+    fireEvent.pointerMove(window, { clientX: 500, clientY: 300 });
+
+    await waitFor(() => expect(document.querySelector(".map-reticle")).not.toBeInTheDocument());
+  });
+
+  it("cancels a pending camera settle frame before scheduling the latest one", async () => {
+    const { canvas, map } = renderMapView();
+
+    act(() => {
+      map.fire("moveend");
+      map.fire("movestart");
+      map.fire("moveend");
+    });
+
+    await waitFor(() => expect(canvas).not.toHaveClass("map-canvas--scrolling"));
+  });
+
   it("does not subscribe targeted reticles to render frames", async () => {
     const { canvas, map } = renderMapView();
     const marker = appendMarker(canvas, "asset-1", rect(70, 90, 28, 40));

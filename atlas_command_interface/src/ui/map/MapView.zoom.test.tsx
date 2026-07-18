@@ -17,7 +17,7 @@ describe("MapView zoom overlay", () => {
     expect(map.fitScreenCoordinates).toHaveBeenCalledWith(start, end, 0, { linear: true });
   });
 
-  it("preserves the box-zoom handoff when MapLibre reports an array endpoint", () => {
+  it("preserves the box-zoom handoff when MapLibre reports an array endpoint", async () => {
     const { map } = renderMapView();
     const boxZoom = map.options.boxZoom as {
       boxZoomEnd: (zoomMap: typeof map, start: PointLike, end: PointLike | [number, number], event: MouseEvent) => void;
@@ -28,6 +28,15 @@ describe("MapView zoom overlay", () => {
     boxZoom.boxZoomEnd(map, start, end, new MouseEvent("mouseup"));
 
     expect(map.fitScreenCoordinates).toHaveBeenCalledWith(start, end, 0, { linear: true });
+    await waitFor(() => {
+      const overlay = document.querySelector<HTMLElement>(".map-reticle");
+      expect(overlay).toBeInTheDocument();
+      expect(overlay).not.toHaveClass("map-reticle--zoom");
+      expect(overlay?.style.getPropertyValue("--map-reticle-x")).toBe("220px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-y")).toBe("140px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-x")).toBe("209px");
+      expect(overlay?.style.getPropertyValue("--map-reticle-target-y")).toBe("129px");
+    });
   });
 
   it("renders Shift-drag as the Atlas reticle target box", async () => {
