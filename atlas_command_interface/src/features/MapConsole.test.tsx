@@ -25,8 +25,8 @@ type MockMapViewProps = {
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
 
 // MapLibre never runs in jsdom; stub the map but keep the real source builder.
-vi.mock("../ui/map/MapView.js", async () => {
-  const sources = await import("../ui/map/map-sources.js");
+vi.mock("../ui/map/view/MapView.js", async () => {
+  const sources = await import("../ui/map/rendering/map-sources.js");
   return {
     MapView: (props: MockMapViewProps) => {
       mapViewMock.lastProps = props;

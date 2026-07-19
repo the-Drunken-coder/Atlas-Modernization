@@ -19,9 +19,9 @@ import { ConnectionBadge } from "../ui/ConnectionBadge.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
-import type { MapContextMenuInfo, MapReticleTarget } from "../ui/map/MapView.js";
-import type { MapCameraCommand } from "../ui/map/map-camera.js";
-import { buildMapSources } from "../ui/map/map-sources.js";
+import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
+import { buildMapSources } from "../ui/map/rendering/map-sources.js";
+import type { MapContextMenuInfo, MapReticleTarget } from "../ui/map/view/MapView.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
@@ -40,7 +40,7 @@ const LIST_TITLES: Record<ListKind, string> = {
   apiKeys: "API Keys"
 };
 
-const MapView = lazy(() => import("../ui/map/MapView.js").then((module) => ({ default: module.MapView })));
+const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
 
