@@ -60,15 +60,14 @@
     "test:coverage": "vitest run --coverage --environment node",
     "test": "npm run test:node && npm run test:browser"
   },
-  "dependencies": {},
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
-    "@vitest/browser": "4.1.10",
-    "@vitest/browser-playwright": "4.1.10",
     "@playwright/test": "1.61.1",
     "@types/node": "24.13.3",
+    "@vitest/browser": "4.1.10",
+    "@vitest/browser-playwright": "4.1.10",
     "playwright": "1.61.1",
-    "typescript": "7.0.2",
+    "typescript": "^7.0.2",
     "vitest": "4.1.10"
   }
 }
