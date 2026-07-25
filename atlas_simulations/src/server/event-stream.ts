@@ -8,7 +8,12 @@ export type EventStream = {
   close(): void;
 };
 
-export function streamRunEvents(response: ServerResponse, store: RunStore, runId: string, eventStreams: Set<EventStream>): void {
+export function streamRunEvents(
+  response: ServerResponse,
+  store: RunStore,
+  runId: string,
+  eventStreams: Set<EventStream>
+): void {
   response.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -66,7 +71,11 @@ function isTerminalRunEvent(event: RunEvent): boolean {
   return (event.type === "status" && event.status !== "running") || (event.type === "cleanup" && !event.resource);
 }
 
-function shouldCloseRunEventStream(event: RunEvent, run: { cleaned: boolean } | undefined, replaying: boolean): boolean {
+function shouldCloseRunEventStream(
+  event: RunEvent,
+  run: { cleaned: boolean } | undefined,
+  replaying: boolean
+): boolean {
   if (!isTerminalRunEvent(event)) return false;
   if (!replaying) return true;
   return event.type === "cleanup" || run?.cleaned === true;

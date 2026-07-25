@@ -1,13 +1,16 @@
 const SAFE_FALLBACK = "Atlas Core returned an unsafe error message.";
 const QUOTED_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4))/gi;
-const SENSITIVE_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\?])*\4)|(?:(?![?&#]|;\s*(?:\{|[^=&#;\s]+=))[^?&#])*)/gi;
-const FULL_PARAMETER = /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|(?:(?![&#]|;\s*(?:\{|[^=&#;\s]+=))[^&#\s])*)/gi;
+const SENSITIVE_PARAMETER =
+  /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\?])*\4)|(?:(?![?&#]|;\s*(?:\{|[^=&#;\s]+=))[^?&#])*)/gi;
+const FULL_PARAMETER =
+  /([?&#;])([^=&#;\s]+)=((?:(["'])(?:\\.|(?!\4)[^\\])*\4)|(?:(?![&#]|;\s*(?:\{|[^=&#;\s]+=))[^&#\s])*)/gi;
 const SENSITIVE_NAME_PATTERN =
   "(?:atlas[ _-]?session|oauth[ _-]?(?:code|token)|saml[ _-]?assertion|x[ _-]?amz[ _-]?credential|database[ _-]?password|user[ _-]?access[ _-]?token|aws[ _-]?(?:access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?)|access[ _-]?key(?:[ _-]?id)?|secret[ _-]?access[ _-]?key(?:[ _-]?id)?|private[ _-]?key|access[ _-]?token|api[ _-]?key|authorization|auth[ _-]?token|bearer(?:[ _-]?token)?|client[ _-]?(?:secret(?:[ _-]?value)?|token)|cookie|credential(?:s)?|csrf[ _-]?token|db[ _-]?password|id[ _-]?token|j[ _-]?session[ _-]?id(?![A-Za-z0-9])|key|password[ _-]?hash|password|refresh[ _-]?token|secret|session(?:[ _-]?(?:id|token))?(?![A-Za-z0-9])|signature|token|x[ _-]?api[ _-]?key(?![A-Za-z0-9])|x[ _-]?amz[ _-]?signature)";
 const SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}`, "i");
 const CAMEL_SENSITIVE_PARAMETER_NAME = new RegExp(`(?:^|[._-]|\\[)${SENSITIVE_NAME_PATTERN}(?:\\]|$)`, "i");
 const SENSITIVE_WIRE_PARAMETER_NAME = /^(?:code|samlresponse)$/i;
-const PREFIXED_COMPOUND_SENSITIVE_NAME = /(?:api[ _-]?key|access[ _-]?token|authorization|password(?:[ _-]?hash)?|secret|token)(?:\]|$)/i;
+const PREFIXED_COMPOUND_SENSITIVE_NAME =
+  /(?:api[ _-]?key|access[ _-]?token|authorization|password(?:[ _-]?hash)?|secret|token)(?:\]|$)/i;
 const BRACKETED_COLLECTION_CONTENT = String.raw`(?:\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\\\[\]"'\n\r])*`;
 const AMBIGUOUS_NESTED_COLLECTION = String.raw`\[(?=${BRACKETED_COLLECTION_CONTENT}\[)[^\n\r]*`;
 const BRACKETED_COLLECTION = String.raw`\[${BRACKETED_COLLECTION_CONTENT}\]`;
@@ -21,7 +24,9 @@ const STRUCTURED_FIELD_PREFIX = /(?:\\?["']?)([A-Za-z0-9_.%+\[\]-]+)\\?["']?\s*[
 const STRUCTURED_VALUE = new RegExp(
   String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|${AMBIGUOUS_OBJECT_VALUE}|${AMBIGUOUS_SEMICOLON_VALUE}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^,;\n\r}]+(?:,(?!\s*["']?[A-Za-z0-9_.-]+["']?\s*[:=])\s*[^,;\n\r}]+)*)`
 );
-const COMPLETE_HEADER_VALUE = new RegExp(String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^\n\r}]+)`);
+const COMPLETE_HEADER_VALUE = new RegExp(
+  String.raw`^(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\1)[^\\])*\\?\1|[^\n\r}]+)`
+);
 const AUTHORIZATION_NAME = /authorization(?:\]|$)/i;
 const COOKIE_FIELD = new RegExp(
   String.raw`((?:\\?["']?\b(?:[A-Za-z0-9]+[._-])*(?:set[_-]?)?cookie\b(?:\[[^\]]*\])*\\?["']?)\s*[:=]\s*)(?:${AMBIGUOUS_NESTED_COLLECTION}|${BRACKETED_COLLECTION}|\\?(["'])(?:\\.|(?!\2)[^\\])*\\?\2|[^\n\r}]+)`,
@@ -56,7 +61,9 @@ function redactStructuredFields(message: string): string {
   for (let field = STRUCTURED_FIELD_PREFIX.exec(message); field; field = STRUCTURED_FIELD_PREFIX.exec(message)) {
     if (!isSensitiveName(field[1])) continue;
     const valueStart = STRUCTURED_FIELD_PREFIX.lastIndex;
-    const value = (isAuthorizationName(field[1]) ? COMPLETE_HEADER_VALUE : STRUCTURED_VALUE).exec(message.slice(valueStart))?.[0];
+    const value = (isAuthorizationName(field[1]) ? COMPLETE_HEADER_VALUE : STRUCTURED_VALUE).exec(
+      message.slice(valueStart)
+    )?.[0];
     if (!value) continue;
     sanitized += `${message.slice(cursor, valueStart)}[redacted]`;
     cursor = valueStart + value.length;

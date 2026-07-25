@@ -10,7 +10,10 @@ export function task(id: string, entity_id: string | null): TaskResource {
 
 export function taskFromCreateRequest(request: TaskCreateRequest): TaskResource {
   return {
-    task_id: "task_id" in request ? request.task_id : `command-${request.components.command.id ?? request.components.command.type}`,
+    task_id:
+      "task_id" in request
+        ? request.task_id
+        : `command-${request.components.command.id ?? request.components.command.type}`,
     status: request.status ?? "pending",
     entity_id: request.entity_id ?? null,
     components: request.components ?? {},

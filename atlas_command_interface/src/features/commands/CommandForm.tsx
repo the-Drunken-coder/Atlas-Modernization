@@ -21,7 +21,9 @@ export function CommandForm(props: CommandFormProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const returnFocusRef = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement ? document.activeElement : null
+  );
 
   useEffect(
     () => () => {
@@ -47,7 +49,9 @@ export function CommandForm(props: CommandFormProps) {
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
 
   const hasValidMapPoint = targeting !== "map_point" || isFiniteMapPoint(mapPoint);
-  const missingRequired = formParameters.some(([name, schema]) => schema.required && schema.type !== "boolean" && !values[name]?.trim());
+  const missingRequired = formParameters.some(
+    ([name, schema]) => schema.required && schema.type !== "boolean" && !values[name]?.trim()
+  );
   const invalidParameter = formParameters.some(([name, schema]) => parameterError(schema, values[name]) !== undefined);
   const canSubmit = !submitting && hasValidMapPoint && !missingRequired && !invalidParameter;
 
@@ -158,7 +162,11 @@ function ParameterField({
   if (schema.type === "boolean") {
     return (
       <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <input type="checkbox" checked={value === "true"} onChange={(event) => onChange(event.target.checked ? "true" : "false")} />
+        <input
+          type="checkbox"
+          checked={value === "true"}
+          onChange={(event) => onChange(event.target.checked ? "true" : "false")}
+        />
         <span className="field__label">{label}</span>
       </label>
     );

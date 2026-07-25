@@ -56,7 +56,9 @@ describe("Atlas CLI", () => {
     const minimal = captureIO();
     minimal.io.fetch = core.fetch;
 
-    await expect(runCLI(["--base-url", "http://atlas.test", "tasks", "create", '{"task_id":"task-minimal"}'], minimal.io)).resolves.toBe(0);
+    await expect(
+      runCLI(["--base-url", "http://atlas.test", "tasks", "create", '{"task_id":"task-minimal"}'], minimal.io)
+    ).resolves.toBe(0);
 
     expect(JSON.parse(minimal.stdout())).toMatchObject({
       task_id: "task-minimal",
@@ -114,10 +116,17 @@ describe("Atlas CLI", () => {
         id: `${resourceType}-1`
       });
     }
-    expect(parseFilter("id:task:task:with:colons")).toEqual({ filter: "id", resource_type: "task", id: "task:with:colons" });
+    expect(parseFilter("id:task:task:with:colons")).toEqual({
+      filter: "id",
+      resource_type: "task",
+      id: "task:with:colons"
+    });
     expect(parseFilter("id:task:::id")).toEqual({ filter: "id", resource_type: "task", id: "::id" });
     expect(parseFilter("tasks_for_entity:asset-1")).toEqual({ filter: "tasks_for_entity", entity_id: "asset-1" });
-    expect(parseFilter("tasks_for_entity:asset:with:colons")).toEqual({ filter: "tasks_for_entity", entity_id: "asset:with:colons" });
+    expect(parseFilter("tasks_for_entity:asset:with:colons")).toEqual({
+      filter: "tasks_for_entity",
+      entity_id: "asset:with:colons"
+    });
   });
 
   it("rejects invalid subscription filters", () => {
@@ -153,11 +162,26 @@ describe("Atlas CLI", () => {
     captured.io.waitForExitSignal = async () => {
       const dropped = core.upsertTask(task("task-cli-dropped", "asset-1"));
       core.emit(
-        { event: "update", resource_type: "task", id: dropped.task_id, version: dropped.metadata.version, resource: dropped },
+        {
+          event: "update",
+          resource_type: "task",
+          id: dropped.task_id,
+          version: dropped.metadata.version,
+          resource: dropped
+        },
         { dropForSockets: true, record: false }
       );
       const delivered = core.upsertTask(task("task-cli-delivered", "asset-1"));
-      core.emit({ event: "update", resource_type: "task", id: delivered.task_id, version: delivered.metadata.version, resource: delivered }, { record: false });
+      core.emit(
+        {
+          event: "update",
+          resource_type: "task",
+          id: delivered.task_id,
+          version: delivered.metadata.version,
+          resource: delivered
+        },
+        { record: false }
+      );
 
       await vi.waitFor(() => {
         expect(captured.stdout()).toContain('"id":"task-cli-dropped"');
@@ -165,7 +189,9 @@ describe("Atlas CLI", () => {
       });
     };
 
-    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)).resolves.toBe(0);
+    await expect(
+      runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)
+    ).resolves.toBe(0);
 
     expect(core.requests.some((request) => request.startsWith("/queries/full"))).toBe(true);
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);
@@ -180,7 +206,9 @@ describe("Atlas CLI", () => {
       throw new Error("follow failed");
     };
 
-    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)).resolves.toBe(1);
+    await expect(
+      runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "type:task", "--follow"], captured.io)
+    ).resolves.toBe(1);
 
     expect(captured.stderr()).toContain("follow failed");
     expect(core.sockets.size).toBe(0);
@@ -195,7 +223,9 @@ describe("Atlas CLI", () => {
       throw "raw follow failure";
     };
 
-    await expect(runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "all", "--follow"], captured.io)).resolves.toBe(1);
+    await expect(
+      runCLI(["--base-url", "http://atlas.test", "watch", "--subscribe", "all", "--follow"], captured.io)
+    ).resolves.toBe(1);
 
     expect(captured.stderr()).toContain("raw follow failure");
   });

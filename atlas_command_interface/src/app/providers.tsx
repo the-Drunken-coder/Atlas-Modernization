@@ -13,7 +13,12 @@ export type ProvidersProps = {
   createDataSource?: (config: AppConfig) => AtlasDataSource;
 };
 
-export function Providers({ children, coreConfig: providedCoreConfig, loadConfig = fetchAppConfig, createDataSource }: ProvidersProps) {
+export function Providers({
+  children,
+  coreConfig: providedCoreConfig,
+  loadConfig = fetchAppConfig,
+  createDataSource
+}: ProvidersProps) {
   let coreConfig: CoreConfig;
   try {
     coreConfig = providedCoreConfig ?? coreConfigFromEnv(import.meta.env);

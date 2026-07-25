@@ -39,12 +39,23 @@ export function JsonDrawer({ value, title = "Raw JSON", defaultOpen = false }: J
   return (
     <div className="json-drawer">
       <div className="json-drawer__summary">
-        <button type="button" className="json-drawer__toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <button
+          type="button"
+          className="json-drawer__toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
           <span>{open ? "▾" : "▸"}</span>
           <span>{title}</span>
         </button>
         {open ? (
-          <button type="button" className="json-drawer__copy" aria-label="Copy JSON" title="Copy JSON" onClick={() => void copy()}>
+          <button
+            type="button"
+            className="json-drawer__copy"
+            aria-label="Copy JSON"
+            title="Copy JSON"
+            onClick={() => void copy()}
+          >
             <CopyIcon size={14} />
             {copied ? "Copied" : "Copy"}
           </button>

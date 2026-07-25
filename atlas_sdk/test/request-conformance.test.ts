@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import requestCorpus from "../../atlas_protocol/conformance/request-validation.json";
-import { isEntityCreateRequest, isEntityUpdateRequest, isObjectCreateRequest, isObjectUpdateRequest, isTaskCreateRequest, isTaskUpdateRequest } from "../src";
+import {
+  isEntityCreateRequest,
+  isEntityUpdateRequest,
+  isObjectCreateRequest,
+  isObjectUpdateRequest,
+  isTaskCreateRequest,
+  isTaskUpdateRequest
+} from "../src";
 
 const validators = {
   EntityCreateRequest: isEntityCreateRequest,

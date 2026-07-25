@@ -31,5 +31,7 @@ export function targetSummary(target: RunTarget): AtlasTargetSummary {
 }
 
 function wireInputs(inputs: Record<string, string | number | boolean>): Record<string, string | JSONNumber | boolean> {
-  return Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, typeof value === "number" ? jsonNumber(value) : value]));
+  return Object.fromEntries(
+    Object.entries(inputs).map(([key, value]) => [key, typeof value === "number" ? jsonNumber(value) : value])
+  );
 }

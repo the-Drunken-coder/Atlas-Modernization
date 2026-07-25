@@ -90,7 +90,9 @@ describe("sanitizeConnectionError", () => {
 
   it("detects encoded URL credentials after malformed percent text", () => {
     const secret = "malformed-prefix-userinfo-secret";
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: bad%ZZ https%3A%2F%2Fuser%3A${secret}%40example.test`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: bad%ZZ https%3A%2F%2Fuser%3A${secret}%40example.test`)
+    );
 
     expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
     expect(sanitized).not.toContain(secret);
@@ -98,7 +100,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts credential parameters in URL fragments", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: https://app.test/callback#access%5Ftoken=fragment-access-secret&id_token=fragment-id-secret&state=visible")
+      new Error(
+        "Atlas request failed: https://app.test/callback#access%5Ftoken=fragment-access-secret&id_token=fragment-id-secret&state=visible"
+      )
     );
 
     expect(sanitized).not.toContain("fragment-access-secret");
@@ -107,7 +111,9 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts quoted query values and URL passwords containing at-signs", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: https://user:pa@ss@example.test?api%5Fkey="top secret"'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: https://user:pa@ss@example.test?api%5Fkey="top secret"')
+    );
 
     expect(sanitized).not.toContain("pa@ss");
     expect(sanitized).not.toContain("top secret");
@@ -117,7 +123,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts AWS-style query credentials", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: https://core.test?AWSAccessKeyId=aws-access-key-secret&AWSSecretAccessKey=aws-secret-access-key-secret")
+      new Error(
+        "Atlas request failed: https://core.test?AWSAccessKeyId=aws-access-key-secret&AWSSecretAccessKey=aws-secret-access-key-secret"
+      )
     );
 
     expect(sanitized).not.toContain("aws-access-key-secret");
@@ -143,7 +151,9 @@ describe("sanitizeConnectionError", () => {
   it("redacts space-separated structured credential labels", () => {
     const secrets = ["access-key-label-secret", "session-label-secret"];
     const sanitized = sanitizeConnectionError(
-      new Error(`Atlas request failed: {"Access Key ID":"${secrets[0]}","Session ID":"${secrets[1]}","message":"safe context"}`)
+      new Error(
+        `Atlas request failed: {"Access Key ID":"${secrets[0]}","Session ID":"${secrets[1]}","message":"safe context"}`
+      )
     );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
@@ -152,7 +162,9 @@ describe("sanitizeConnectionError", () => {
 
   it("normalizes encoded structured credential names and fails closed on invalid encoding", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: session+id=space-encoded-secret, %73ession_id=percent-encoded-secret, invalid%ZZ=malformed-name-secret")
+      new Error(
+        "Atlas request failed: session+id=space-encoded-secret, %73ession_id=percent-encoded-secret, invalid%ZZ=malformed-name-secret"
+      )
     );
 
     expect(sanitized).not.toContain("space-encoded-secret");
@@ -165,7 +177,9 @@ describe("sanitizeConnectionError", () => {
   it("redacts structured credential names with suffixes", () => {
     const secrets = ["password-hash-secret", "client-secret-value"];
     const sanitized = sanitizeConnectionError(
-      new Error(`Atlas request failed: {"password_hash":"${secrets[0]}","client_secret_value":"${secrets[1]}","message":"safe context"}`)
+      new Error(
+        `Atlas request failed: {"password_hash":"${secrets[0]}","client_secret_value":"${secrets[1]}","message":"safe context"}`
+      )
     );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
@@ -225,7 +239,9 @@ describe("sanitizeConnectionError", () => {
     const secrets = ["oauth-code-secret", "saml-response-secret"];
 
     const sanitized = sanitizeConnectionError(
-      new Error(`Atlas request failed: {"code":"safe-context"} https://core.test?code=${secrets[0]}&SAMLResponse=${secrets[1]}&safe=visible`)
+      new Error(
+        `Atlas request failed: {"code":"safe-context"} https://core.test?code=${secrets[0]}&SAMLResponse=${secrets[1]}&safe=visible`
+      )
     );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
@@ -261,7 +277,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts complete quoted credential values containing question marks", () => {
     const secrets = ["quoted-prefix-secret", "quoted-suffix-secret"];
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key="${secrets[0]}?${secrets[1]}"&safe=visible`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: ?api_key="${secrets[0]}?${secrets[1]}"&safe=visible`)
+    );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
     expect(sanitized).toContain("[redacted]");
@@ -270,7 +288,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts complete unquoted credential values containing question marks", () => {
     const secrets = ["unquoted-prefix-secret", "unquoted-suffix-secret"];
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key=${secrets[0]}?${secrets[1]}&safe=visible`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: ?api_key=${secrets[0]}?${secrets[1]}&safe=visible`)
+    );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
     expect(sanitized).toContain("[redacted]");
@@ -279,7 +299,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts complete unquoted credential values containing spaces", () => {
     const secrets = ["spaced-prefix-secret", "spaced-suffix-secret"];
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ?api_key=${secrets[0]} ${secrets[1]}&safe=visible`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: ?api_key=${secrets[0]} ${secrets[1]}&safe=visible`)
+    );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
     expect(sanitized).toContain("[redacted]");
@@ -288,7 +310,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts userinfo in repeatedly escaped URLs", () => {
     const secret = "repeatedly-escaped-password-secret";
-    const sanitized = sanitizeConnectionError(new Error(String.raw`Atlas request failed: https:\\/\\/escaped-user:${secret}@example.test/path`));
+    const sanitized = sanitizeConnectionError(
+      new Error(String.raw`Atlas request failed: https:\\/\\/escaped-user:${secret}@example.test/path`)
+    );
 
     expect(sanitized).not.toContain("escaped-user");
     expect(sanitized).not.toContain(secret);
@@ -310,7 +334,9 @@ describe("sanitizeConnectionError", () => {
 
   it("fails closed before truncating long credential-bearing errors", () => {
     const secret = "long-userinfo-secret";
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: https://user:${secret}${"a".repeat(2_100)}@example.test`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: https://user:${secret}${"a".repeat(2_100)}@example.test`)
+    );
 
     expect(sanitized).toBe("Atlas Core returned an unsafe error message.");
     expect(sanitized).not.toContain(secret);
@@ -318,7 +344,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts escaped URL userinfo and signature query parameters", () => {
     const sanitized = sanitizeConnectionError(
-      new Error(String.raw`Atlas request failed: https:\/\/url-user:url-password@example.test?safe=value&api-key=api-key-secret&signature=signature-secret`)
+      new Error(
+        String.raw`Atlas request failed: https:\/\/url-user:url-password@example.test?safe=value&api-key=api-key-secret&signature=signature-secret`
+      )
     );
 
     expect(sanitized).not.toContain("url-user:url-password");
@@ -356,7 +384,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts quoted fields in prefixed structured error bodies", () => {
     const sanitized = sanitizeConnectionError(
-      new Error('Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value","message":"internal details"}')
+      new Error(
+        'Atlas request failed: 500: {"client_secret":"secret-value","token":"token-value","message":"internal details"}'
+      )
     );
 
     expect(sanitized).not.toContain("secret-value");
@@ -367,7 +397,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts structured fields without an escape prefix", () => {
     const secrets = ["json-password-secret", "plain-password-secret"];
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: {"password":"${secrets[0]}"}, password: ${secrets[1]}, requestId: request-123`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: {"password":"${secrets[0]}"}, password: ${secrets[1]}, requestId: request-123`)
+    );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
     expect(sanitized).toContain("request-123");
@@ -422,7 +454,9 @@ describe("sanitizeConnectionError", () => {
   it("redacts session-shaped query credentials without matching ordinary words", () => {
     const secrets = ["session-secret", "session-id-secret", "atlas-session-secret"];
     const sanitized = sanitizeConnectionError(
-      new Error(`Atlas request failed: https://core.test?session=${secrets[0]}&session_id=${secrets[1]}&atlas_session=${secrets[2]}&sessional=ordinary-value`)
+      new Error(
+        `Atlas request failed: https://core.test?session=${secrets[0]}&session_id=${secrets[1]}&atlas_session=${secrets[2]}&sessional=ordinary-value`
+      )
     );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
@@ -435,14 +469,18 @@ describe("sanitizeConnectionError", () => {
       session_id: "structured-session-id-secret",
       atlas_session: "structured-atlas-session-secret"
     };
-    const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${JSON.stringify({ ...secrets, sessional: "ordinary-value" })}`));
+    const sanitized = sanitizeConnectionError(
+      new Error(`Atlas request failed: ${JSON.stringify({ ...secrets, sessional: "ordinary-value" })}`)
+    );
 
     for (const secret of Object.values(secrets)) expect(sanitized).not.toContain(secret);
     expect(sanitized).toContain("ordinary-value");
   });
 
   it("redacts authorization-shaped structured fields", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"authorization":"Basic dXNlcjpwYXNz","bearer_token":"structured-secret"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"authorization":"Basic dXNlcjpwYXNz","bearer_token":"structured-secret"}')
+    );
 
     expect(sanitized).not.toContain("Basic dXNlcjpwYXNz");
     expect(sanitized).not.toContain("structured-secret");
@@ -452,7 +490,9 @@ describe("sanitizeConnectionError", () => {
   it("redacts complete comma-delimited Digest authorization values", () => {
     const secrets = ["digest-user-secret", "digest-response-secret"];
     const sanitized = sanitizeConnectionError(
-      new Error(`Atlas request failed: {"authorization": Digest username="${secrets[0]}", response="${secrets[1]}", algorithm=MD5} requestId=request-123`)
+      new Error(
+        `Atlas request failed: {"authorization": Digest username="${secrets[0]}", response="${secrets[1]}", algorithm=MD5} requestId=request-123`
+      )
     );
 
     for (const secret of secrets) expect(sanitized).not.toContain(secret);
@@ -462,7 +502,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts authorization-shaped query parameters", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: https://core.test?safe=value&authorization=basic-secret&bearer_token=query-secret")
+      new Error(
+        "Atlas request failed: https://core.test?safe=value&authorization=basic-secret&bearer_token=query-secret"
+      )
     );
 
     expect(sanitized).not.toContain("basic-secret");
@@ -472,7 +514,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts bare bearer fields and query parameters", () => {
     const sanitized = sanitizeConnectionError(
-      new Error('Atlas request failed: {"bearer":"structured-bearer-secret"} https://core.test?safe=value&bearer=query-bearer-secret')
+      new Error(
+        'Atlas request failed: {"bearer":"structured-bearer-secret"} https://core.test?safe=value&bearer=query-bearer-secret'
+      )
     );
 
     expect(sanitized).not.toContain("structured-bearer-secret");
@@ -481,13 +525,17 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts prefixed key query parameters", () => {
-    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?x-api-key=prefixed-api-key-secret"));
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://core.test?x-api-key=prefixed-api-key-secret")
+    );
 
     expect(sanitized).not.toContain("prefixed-api-key-secret");
   });
 
   it("redacts semicolon-delimited credential query parameters", () => {
-    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://core.test?safe=value;api_key=semicolon-secret"));
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://core.test?safe=value;api_key=semicolon-secret")
+    );
 
     expect(sanitized).toContain("safe=value");
     expect(sanitized).not.toContain("semicolon-secret");
@@ -518,7 +566,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts credential-shaped fields and query parameters", () => {
     const sanitized = sanitizeConnectionError(
-      new Error('Atlas request failed: {"credentials":"structured-credential-secret"} https://core.test?X-Amz-Credential=query-credential-secret')
+      new Error(
+        'Atlas request failed: {"credentials":"structured-credential-secret"} https://core.test?X-Amz-Credential=query-credential-secret'
+      )
     );
 
     expect(sanitized).not.toContain("structured-credential-secret");
@@ -526,7 +576,9 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts structured password hashes", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"passwordHash":"password-hash-secret","requestId":"request-123"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"passwordHash":"password-hash-secret","requestId":"request-123"}')
+    );
 
     expect(sanitized).not.toContain("password-hash-secret");
     expect(sanitized).toContain("requestId");
@@ -581,7 +633,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts bracketed structured credential fields", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: credentials[password]=bracket-password-secret, credentials[api_key]: bracket-api-key-secret")
+      new Error(
+        "Atlas request failed: credentials[password]=bracket-password-secret, credentials[api_key]: bracket-api-key-secret"
+      )
     );
 
     expect(sanitized).not.toContain("bracket-password-secret");
@@ -589,7 +643,9 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts every element of sensitive structured collections", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"api_key":["key-one","key-two"],"requestId":"request-123"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"api_key":["key-one","key-two"],"requestId":"request-123"}')
+    );
 
     expect(sanitized).not.toContain("key-one");
     expect(sanitized).not.toContain("key-two");
@@ -597,7 +653,9 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts nested sensitive collections fail closed", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: {"api_key":[["first-secret"],"second-secret"],"requestId":"request-123"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: {"api_key":[["first-secret"],"second-secret"],"requestId":"request-123"}')
+    );
 
     expect(sanitized).not.toContain("first-secret");
     expect(sanitized).not.toContain("second-secret");
@@ -642,7 +700,10 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("redacts complete cookie header values", () => {
-    const headers = ["Cookie: foo=bar; atlas_session=cookie-session-secret; theme=dark", "Set-Cookie: atlas_session=set-cookie-secret; Path=/; HttpOnly"];
+    const headers = [
+      "Cookie: foo=bar; atlas_session=cookie-session-secret; theme=dark",
+      "Set-Cookie: atlas_session=set-cookie-secret; Path=/; HttpOnly"
+    ];
 
     for (const header of headers) {
       const sanitized = sanitizeConnectionError(new Error(`Atlas request failed: ${header}`));
@@ -682,7 +743,9 @@ describe("sanitizeConnectionError", () => {
 
   it("redacts sensitive components in nested structured keys", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: headers[authorization]=Basic nested-basic-secret, auth[api_key]=nested-api-key-secret")
+      new Error(
+        "Atlas request failed: headers[authorization]=Basic nested-basic-secret, auth[api_key]=nested-api-key-secret"
+      )
     );
 
     expect(sanitized).not.toContain("Basic nested-basic-secret");
@@ -692,25 +755,33 @@ describe("sanitizeConnectionError", () => {
 
   it("stops at every JavaScript line separator", () => {
     for (const separator of ["\r", "\u2028", "\u2029"]) {
-      expect(sanitizeConnectionError(new Error(`Atlas Core failed${separator}second line secret`))).toBe("Atlas Core failed");
+      expect(sanitizeConnectionError(new Error(`Atlas Core failed${separator}second line secret`))).toBe(
+        "Atlas Core failed"
+      );
     }
   });
 
   it("redacts URL userinfo with an empty username", () => {
-    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://:empty-user-password@core.example"));
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://:empty-user-password@core.example")
+    );
 
     expect(sanitized).not.toContain("empty-user-password");
   });
 
   it("redacts URL userinfo before hosts with ports", () => {
-    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: https://user:port-password@example.test:8443/path"));
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: https://user:port-password@example.test:8443/path")
+    );
 
     expect(sanitized).not.toContain("user:port-password");
   });
 
   it("redacts nested encoded credential query parameters", () => {
     const sanitized = sanitizeConnectionError(
-      new Error("Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key")
+      new Error(
+        "Atlas request failed: https://core.test?credentials%5Bpassword%5D=nested-password&auth%5Bapi_key%5D=nested-api-key"
+      )
     );
 
     expect(sanitized).not.toContain("nested-password");
@@ -737,21 +808,27 @@ describe("sanitizeConnectionError", () => {
   });
 
   it("preserves comma-delimited text after unquoted sensitive fields", () => {
-    const sanitized = sanitizeConnectionError(new Error("Atlas request failed: token: token-value, requestId=request-123"));
+    const sanitized = sanitizeConnectionError(
+      new Error("Atlas request failed: token: token-value, requestId=request-123")
+    );
 
     expect(sanitized).not.toContain("token-value");
     expect(sanitized).toContain("requestId=request-123");
   });
 
   it("redacts escaped structured fields", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {\\"api_key\\":\\"escaped-secret\\"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: 500: {\\"api_key\\":\\"escaped-secret\\"}')
+    );
 
     expect(sanitized).not.toContain("escaped-secret");
     expect(sanitized).toContain("[redacted]");
   });
 
   it("redacts escaped quotes inside structured secret values", () => {
-    const sanitized = sanitizeConnectionError(new Error('Atlas request failed: 500: {"password":"not\\"a-secret-suffix"}'));
+    const sanitized = sanitizeConnectionError(
+      new Error('Atlas request failed: 500: {"password":"not\\"a-secret-suffix"}')
+    );
 
     expect(sanitized).not.toContain("a-secret-suffix");
     expect(sanitized).toContain("[redacted]");

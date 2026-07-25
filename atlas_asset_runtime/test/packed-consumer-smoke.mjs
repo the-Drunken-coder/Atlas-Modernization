@@ -13,7 +13,8 @@ const tsc = join(dirname(require.resolve("typescript/package.json")), "bin/tsc")
 
 function run(command, args, cwd = root) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8", timeout: 60_000 });
-  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed\n${result.stdout ?? ""}${result.stderr ?? ""}`);
+  if (result.status !== 0)
+    throw new Error(`${command} ${args.join(" ")} failed\n${result.stdout ?? ""}${result.stderr ?? ""}`);
   return result.stdout.trim();
 }
 
@@ -38,7 +39,13 @@ try {
   writeFileSync(
     join(project, "tsconfig.json"),
     JSON.stringify({
-      compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", noEmit: true, strict: true, target: "ES2022" },
+      compilerOptions: {
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        noEmit: true,
+        strict: true,
+        target: "ES2022"
+      },
       include: ["smoke.ts"]
     })
   );

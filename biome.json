@@ -19,7 +19,7 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 160
+    "lineWidth": 120
   },
   "javascript": {
     "formatter": {
@@ -34,16 +34,30 @@
     "rules": {
       "preset": "none",
       "correctness": {
+        "noConstantCondition": "error",
         "noUnusedFunctionParameters": "error",
         "noUnusedImports": "error",
         "noUnusedVariables": "error",
+        "noUnsafeFinally": "error",
         "useExhaustiveDependencies": {
           "level": "error",
           "options": {
             "reportUnnecessaryDependencies": false
           }
         },
-        "useHookAtTopLevel": "error"
+        "useHookAtTopLevel": "error",
+        "useJsxKeyInIterable": "error"
+      },
+      "suspicious": {
+        "noAssignInExpressions": "error",
+        "noCatchAssign": "error",
+        "noCompareNegZero": "error",
+        "noDoubleEquals": "error",
+        "noExplicitAny": "error",
+        "noImplicitAnyLet": "error",
+        "noPrototypeBuiltins": "error",
+        "noSelfCompare": "error",
+        "useDefaultSwitchClauseLast": "error"
       }
     }
   }

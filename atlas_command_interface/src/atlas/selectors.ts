@@ -1,5 +1,12 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import { type EntityKind, entityCurrentTaskId, entityDisplayName, entityKind, entityQueuedTaskIds, isSelectableKind } from "./entities.js";
+import {
+  type EntityKind,
+  entityCurrentTaskId,
+  entityDisplayName,
+  entityKind,
+  entityQueuedTaskIds,
+  isSelectableKind
+} from "./entities.js";
 import type { AtlasSnapshot } from "./store.js";
 import { sortTasksByRecency } from "./tasks.js";
 

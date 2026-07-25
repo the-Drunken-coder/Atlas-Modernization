@@ -60,10 +60,27 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
   );
 }
 
-function RailButton({ item, active, count, onSelect }: { item: RailItem; active: boolean; count: number; onSelect: (list: ListKind) => void }) {
+function RailButton({
+  item,
+  active,
+  count,
+  onSelect
+}: {
+  item: RailItem;
+  active: boolean;
+  count: number;
+  onSelect: (list: ListKind) => void;
+}) {
   return (
     <Tooltip label={item.label}>
-      <button type="button" className="rail-button" aria-label={item.label} aria-pressed={active} data-active={active} onClick={() => onSelect(item.list)}>
+      <button
+        type="button"
+        className="rail-button"
+        aria-label={item.label}
+        aria-pressed={active}
+        data-active={active}
+        onClick={() => onSelect(item.list)}
+      >
         <item.Icon size={20} />
         {count > 0 ? <span className="rail-button__badge">{count}</span> : null}
       </button>

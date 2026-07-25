@@ -17,7 +17,8 @@ const ASSETS: EntityResource[] = [
 
 function Harness() {
   const [state, dispatch] = useReducer(sidebarReducer, initialSidebarState);
-  const activeList = state.view.mode === "list" ? state.view.list : state.selection ? listForKind(state.selection.kind) : null;
+  const activeList =
+    state.view.mode === "list" ? state.view.list : state.selection ? listForKind(state.selection.kind) : null;
 
   return (
     <div className="sidebar" data-collapsed={state.collapsed} data-testid="sidebar">
@@ -38,7 +39,9 @@ function Harness() {
             entities={ASSETS}
             selectedId={state.selection?.id}
             emptyLabel="none"
-            onSelect={(entity) => dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })}
+            onSelect={(entity) =>
+              dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })
+            }
           />
         ) : (
           <div>{state.view.mode === "inspector" ? `inspector ${state.selection?.id}` : `list ${state.view.list}`}</div>
@@ -95,7 +98,15 @@ describe("sidebar rail + panel", () => {
 
   it("does not repeat preview callbacks on row pointer movement", () => {
     const onPreview = vi.fn();
-    render(<EntityList entities={ASSETS} selectedId={undefined} emptyLabel="none" onSelect={() => {}} onPreview={onPreview} />);
+    render(
+      <EntityList
+        entities={ASSETS}
+        selectedId={undefined}
+        emptyLabel="none"
+        onSelect={() => {}}
+        onPreview={onPreview}
+      />
+    );
 
     const row = screen.getByRole("button", { name: /Rover One/ });
     fireEvent.pointerEnter(row);

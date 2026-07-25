@@ -52,11 +52,12 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
         <FieldGrid
           rows={[
             ["State", entityStatusValue(entity) ?? "—"],
-            ["Link", connection ? <ConnectionStatusPill status={connection} /> : "—"],
+            ["Link", connection ? <ConnectionStatusPill key="connection-status" status={connection} /> : "—"],
             [
               "Heartbeat",
               level ? (
                 <StatusPill
+                  key="heartbeat-status"
                   label={level === "clock-error" ? "Clock error" : formatRelativeTime(lastSeen, now)}
                   color={level === "clock-error" ? "var(--text-3)" : heartbeatColor(level)}
                 />
@@ -87,7 +88,11 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       </Section>
 
       <Section title="Commands">
-        <CommandList availabilities={sidebarCommands} onPick={onPickCommand} emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"} />
+        <CommandList
+          availabilities={sidebarCommands}
+          onPick={onPickCommand}
+          emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"}
+        />
         <p className="field__hint" style={{ marginTop: 8 }}>
           Right-click the map to send position commands to this asset.
         </p>

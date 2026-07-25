@@ -34,7 +34,12 @@ describe("Providers", () => {
   it("does not initialize map configuration or Atlas data for an anonymous visit", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }), { status: 401 }))
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ success: false, error_code: "UNAUTHORIZED", message: "unauthorized" }), {
+            status: 401
+          })
+      )
     );
     const loadConfig = vi.fn(async () => config);
     const createDataSource = vi.fn(() => fakeDataSource([]));
@@ -88,7 +93,9 @@ describe("Providers", () => {
     expect(createDataSource).toHaveBeenCalledWith(config);
     expect(calls.slice(0, 4)).toEqual(["watch", "start", "snapshot", "loadCommandCatalog"]);
     expect(startupOrder.slice(0, 3)).toEqual(["session", "map-config", "data-source"]);
-    await waitFor(() => expect(fetchCalls[0]).toMatchObject(["https://core.test/admin/auth/me", { credentials: "include" }]));
+    await waitFor(() =>
+      expect(fetchCalls[0]).toMatchObject(["https://core.test/admin/auth/me", { credentials: "include" }])
+    );
   });
 
   it("retries configuration once when the operator requests it", async () => {
@@ -97,7 +104,10 @@ describe("Providers", () => {
       "fetch",
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200, headers: { "Content-Type": "application/json" } })
+          new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
       )
     );
     const loadConfig = vi.fn().mockRejectedValueOnce(new Error("config unavailable")).mockResolvedValue(config);

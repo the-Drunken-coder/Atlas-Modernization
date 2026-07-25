@@ -1,0 +1,8 @@
+# Ruff configuration for the atlas_core helper scripts.
+# CI runs `ruff check` and `ruff format --check` over this directory.
+target-version = "py311"
+line-length = 120
+
+[lint]
+# E/W: pycodestyle, F: pyflakes, I: import sorting, UP: pyupgrade, B: bugbear
+select = ["E", "W", "F", "I", "UP", "B"]

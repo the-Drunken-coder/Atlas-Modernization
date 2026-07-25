@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { AppShell } from "./AppShell.js";
 
 function renderShell(collapsed = false) {
-  return render(<AppShell collapsed={collapsed} rail={<div>rail</div>} panel={<div>panel</div>} map={<div>map</div>} />);
+  return render(
+    <AppShell collapsed={collapsed} rail={<div>rail</div>} panel={<div>panel</div>} map={<div>map</div>} />
+  );
 }
 
 function pointerEvent(type: string, options: { button?: number; clientX?: number } = {}) {

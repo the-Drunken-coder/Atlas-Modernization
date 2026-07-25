@@ -81,7 +81,9 @@ export function sidebarReducer(state: SidebarState, action: SidebarAction): Side
         view: state.view.mode === "inspector" ? { mode: "list", list: state.view.previousList } : state.view
       };
     case "back":
-      return state.view.mode === "inspector" ? { ...state, view: { mode: "list", list: state.view.previousList } } : state;
+      return state.view.mode === "inspector"
+        ? { ...state, view: { mode: "list", list: state.view.previousList } }
+        : state;
     default:
       return state;
   }

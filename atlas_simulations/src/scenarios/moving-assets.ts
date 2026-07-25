@@ -1,7 +1,14 @@
 import { AtlasAssetRuntime } from "@the-drunken-coder/atlas-asset-runtime";
 import type { Scenario } from "../server/scenario.js";
 import { jsonNumber } from "../shared/types.js";
-import { boundedNumberInput, boundedPositiveIntegerInput, isoNow, jsonObject, point, requireBeforeDeadline } from "./helpers.js";
+import {
+  boundedNumberInput,
+  boundedPositiveIntegerInput,
+  isoNow,
+  jsonObject,
+  point,
+  requireBeforeDeadline
+} from "./helpers.js";
 
 const VERIFY_READ_TIMEOUT_MS = 5_000;
 
@@ -11,9 +18,33 @@ const movingAssets: Scenario = {
   summary: "Creates assets and updates their telemetry through Atlas check-ins.",
   acceptsJson: true,
   inputFields: [
-    { key: "assetCount", label: "Asset count", type: "number", defaultValue: jsonNumber(4), min: jsonNumber(1), max: jsonNumber(25), step: jsonNumber(1) },
-    { key: "ticks", label: "Ticks", type: "number", defaultValue: jsonNumber(5), min: jsonNumber(1), max: jsonNumber(100), step: jsonNumber(1) },
-    { key: "tickMs", label: "Tick ms", type: "number", defaultValue: jsonNumber(250), min: jsonNumber(0), max: jsonNumber(10000), step: jsonNumber(50) },
+    {
+      key: "assetCount",
+      label: "Asset count",
+      type: "number",
+      defaultValue: jsonNumber(4),
+      min: jsonNumber(1),
+      max: jsonNumber(25),
+      step: jsonNumber(1)
+    },
+    {
+      key: "ticks",
+      label: "Ticks",
+      type: "number",
+      defaultValue: jsonNumber(5),
+      min: jsonNumber(1),
+      max: jsonNumber(100),
+      step: jsonNumber(1)
+    },
+    {
+      key: "tickMs",
+      label: "Tick ms",
+      type: "number",
+      defaultValue: jsonNumber(250),
+      min: jsonNumber(0),
+      max: jsonNumber(10000),
+      step: jsonNumber(50)
+    },
     {
       key: "startLatitude",
       label: "Start latitude",
@@ -106,7 +137,9 @@ const movingAssets: Scenario = {
       assets.map(({ id }) => requireBeforeDeadline(() => verifier.entities.get(id), readDeadline, `asset ${id}`))
     );
     const persistedAssets = fulfilledValues(persistedAssetResults);
-    const rejectedAssetRead = persistedAssetResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    const rejectedAssetRead = persistedAssetResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
     const finalSpeed = 12 + ticks;
     ctx.assert(
       "Assets persisted",
@@ -116,7 +149,9 @@ const movingAssets: Scenario = {
     ctx.assert(
       "Telemetry persisted",
       persistedAssets.length === assetCount &&
-        persistedAssets.every((asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed),
+        persistedAssets.every(
+          (asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed
+        ),
       `expected final speed ${finalSpeed}`
     );
   }

@@ -34,6 +34,6 @@ polygon closure and aggregate position limits are semantic checks that draft
 
 ## Boundary
 
-The reusable Go package lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Its `types.go` file is authored for Go ergonomics, while `go run ./tools/check` derives the supported wire shapes and enums from the canonical schema and fails if that public API drifts. Atlas Core consumes this module through a local `replace` during development; protocol code should not move under `Atlas_Core/internal/`.
+The reusable Go package lives under `generated/go/atlasprotocol` and is intended for multiple consumers. Its `types.go` file is authored for Go ergonomics, while `go run ./tools/check` derives the supported wire shapes and enums from the canonical schema and fails if that public API drifts. Atlas Core consumes this module through a local `replace` during development; protocol code should not move under `atlas_core/internal/`.
 
 Generated validators, TypeScript, and revision files are checked in and marked `DO NOT EDIT`; update `schema/jsonschema/atlas.schema.json` and rerun `go run ./tools/generate`. Update authored `types.go` alongside schema changes when the parity check identifies a Go API change.

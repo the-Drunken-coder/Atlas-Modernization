@@ -61,7 +61,9 @@ describe("geometry normalisation", () => {
   it("returns undefined for geometry with non-finite coordinates", () => {
     expect(toUiGeometry({ type: "Point", coordinates: [Number.NaN, 40.1] })).toBeUndefined();
     expect(toUiGeometry({ type: "Point", coordinates: [-74.2, 40.1, Number.NaN] })).toBeUndefined();
-    expect(toUiGeometry({ ...circle, geometry: { type: "Point", coordinates: [-74.2, Number.POSITIVE_INFINITY] } })).toBeUndefined();
+    expect(
+      toUiGeometry({ ...circle, geometry: { type: "Point", coordinates: [-74.2, Number.POSITIVE_INFINITY] } })
+    ).toBeUndefined();
   });
 
   it("returns undefined for missing or unsupported geometry", () => {
@@ -165,7 +167,10 @@ describe("vertex editing", () => {
   });
 
   it("keeps the polygon ring closed when moving the first vertex", () => {
-    const moved = moveVertex(polygon, { kind: "Polygon", ring: 0, index: 0 }, -75, 41) as Extract<UiGeometry, { type: "Polygon" }>;
+    const moved = moveVertex(polygon, { kind: "Polygon", ring: 0, index: 0 }, -75, 41) as Extract<
+      UiGeometry,
+      { type: "Polygon" }
+    >;
     const ring = moved.coordinates[0];
     expect(ring[0]).toEqual([-75, 41]);
     expect(ring[ring.length - 1]).toEqual([-75, 41]);
@@ -173,7 +178,10 @@ describe("vertex editing", () => {
   });
 
   it("adds a polygon vertex and preserves the closed ring", () => {
-    const added = addVertexAfter(polygon, { kind: "Polygon", ring: 0, index: 1 }, -74.05, 40.15) as Extract<UiGeometry, { type: "Polygon" }>;
+    const added = addVertexAfter(polygon, { kind: "Polygon", ring: 0, index: 1 }, -74.05, 40.15) as Extract<
+      UiGeometry,
+      { type: "Polygon" }
+    >;
     const ring = added.coordinates[0];
     expect(ring).toHaveLength(6);
     expect(ring[0]).toEqual(ring[ring.length - 1]);
@@ -182,7 +190,10 @@ describe("vertex editing", () => {
 
   it("removes a polygon vertex only while the ring stays valid", () => {
     expect(canRemoveVertex(polygon, { kind: "Polygon", ring: 0, index: 0 })).toBe(true);
-    const removed = removeVertex(polygon, { kind: "Polygon", ring: 0, index: 2 }) as Extract<UiGeometry, { type: "Polygon" }>;
+    const removed = removeVertex(polygon, { kind: "Polygon", ring: 0, index: 2 }) as Extract<
+      UiGeometry,
+      { type: "Polygon" }
+    >;
     expect(removed.coordinates[0]).toHaveLength(4);
     expect(removed.coordinates[0][0]).toEqual(removed.coordinates[0][3]);
     expect(validateGeometry(removed)).toEqual({ valid: true });

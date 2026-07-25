@@ -20,7 +20,7 @@
    - PostgreSQL and MinIO are one logical durable store for backup and restore. Operators must quiesce writes and capture/restore both under one backup-set identifier.
    - Rolling back after a migration committed means stopping Core, restoring both members of the paired backup, and starting a compatible durable image. The release containing migration v1 is the rollback floor: never boot an older destructive image/Compose stack against retained or restored state. The inaugural cutover must fix forward on the durable runtime. Do not reverse DDL in place.
    - Development keeps one-command scratch startup without weakening production defaults.
-7. **Location:** `Atlas_Core/internal/database/migrations.go`, `Atlas_Core/internal/database/schema_fingerprint.go`, `Atlas_Core/internal/database/db.go`, `Atlas_Core/cmd/atlas_core/main.go`, `Atlas_Core/docker/docker-compose.yml`, `Atlas_Core/docker/docker-compose.production.yml`, `Atlas_Core/docker/production-entrypoint.sh`, and `Atlas_Core/docs/DEPLOYMENT_RUNBOOK.md`.
+7. **Location:** `atlas_core/internal/database/migrations.go`, `atlas_core/internal/database/schema_fingerprint.go`, `atlas_core/internal/database/db.go`, `atlas_core/cmd/atlas_core/main.go`, `atlas_core/docker/docker-compose.yml`, `atlas_core/docker/docker-compose.production.yml`, `atlas_core/docker/production-entrypoint.sh`, and `atlas_core/docs/DEPLOYMENT_RUNBOOK.md`.
 8. **Notes:** This revision supersedes the original “no migrations, permanent disposable storage” posture. It does not add protocol/API compatibility versioning; it only versions the durable PostgreSQL schema required by a specific Core binary.
 
 (End of file)

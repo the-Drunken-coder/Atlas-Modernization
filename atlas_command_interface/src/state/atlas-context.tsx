@@ -3,7 +3,13 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 import { type AppConfig, fetchAppConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { sanitizeConnectionError } from "../atlas/connection-error.js";
-import { type AtlasDataSource, type CommandSubmission, type ConnectionError, type ConnectionHealth, createSdkDataSource } from "../atlas/data-source.js";
+import {
+  type AtlasDataSource,
+  type CommandSubmission,
+  type ConnectionError,
+  type ConnectionHealth,
+  createSdkDataSource
+} from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { type AtlasSnapshot, emptySnapshot } from "../atlas/store.js";
 
@@ -37,7 +43,12 @@ export function AtlasStaticProvider({ children, value }: { children: ReactNode; 
   return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;
 }
 
-export function AtlasProvider({ children, config: providedConfig, loadConfig = fetchAppConfig, createDataSource = createSdkDataSource }: AtlasProviderProps) {
+export function AtlasProvider({
+  children,
+  config: providedConfig,
+  loadConfig = fetchAppConfig,
+  createDataSource = createSdkDataSource
+}: AtlasProviderProps) {
   const [status, setStatus] = useState<AtlasStatus>("loading");
   const [error, setError] = useState<string>();
   const [connectionError, setConnectionError] = useState<ConnectionError>();
@@ -85,7 +96,7 @@ export function AtlasProvider({ children, config: providedConfig, loadConfig = f
       }
     };
 
-    (async () => {
+    void (async () => {
       try {
         const resolvedConfig = providedConfig ?? (await loadConfig());
         if (cancelled) return;

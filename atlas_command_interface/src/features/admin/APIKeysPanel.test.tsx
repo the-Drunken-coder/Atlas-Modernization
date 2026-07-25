@@ -43,7 +43,15 @@ describe("APIKeysPanel", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        jsonResponse([{ id: "atlas_ak_existing", name: "existing", key_prefix: "atlas_ak_existing", created_at: "2026-07-01T12:00:00Z", created_by: "admin" }])
+        jsonResponse([
+          {
+            id: "atlas_ak_existing",
+            name: "existing",
+            key_prefix: "atlas_ak_existing",
+            created_at: "2026-07-01T12:00:00Z",
+            created_by: "admin"
+          }
+        ])
       )
       .mockResolvedValueOnce(
         jsonResponse({

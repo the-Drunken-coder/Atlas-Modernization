@@ -7,11 +7,11 @@ Local workbench for running trusted Atlas simulation scenarios against Atlas Cor
 Start the default local Core from the repository root:
 
 ```bash
-python3 Atlas_Core/scripts/atlas.py --dev
+python3 atlas_core/scripts/atlas.py --dev
 ```
 
 The launcher enables API-key authentication, generates or reuses one local
-machine key, and stores it in the owner-only `Atlas_Core/docker/.env.local`. The
+machine key, and stores it in the owner-only `atlas_core/docker/.env.local`. The
 simulations server reads that same key directly for its loopback target. The
 key is never sent to the browser or copied into a cleanup ledger.
 

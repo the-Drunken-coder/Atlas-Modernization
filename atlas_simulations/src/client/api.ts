@@ -48,7 +48,12 @@ export async function loadHealth(targetId?: string, apiKey?: string): Promise<He
 }
 
 export async function loadScenarios(): Promise<ScenarioDescriptor[]> {
-  const response = await apiJSON<ScenarioListResponse>("/api/scenarios", undefined, isScenarioListResponse, "scenario list response");
+  const response = await apiJSON<ScenarioListResponse>(
+    "/api/scenarios",
+    undefined,
+    isScenarioListResponse,
+    "scenario list response"
+  );
   return response.scenarios;
 }
 
@@ -77,12 +82,22 @@ export async function startRun(request: StartRunRequest, apiKey?: string): Promi
 }
 
 export async function loadRun(id: string): Promise<RunSummary> {
-  const response = await apiJSON<{ run: RunSummary }>(`/api/runs/${encodeURIComponent(id)}`, undefined, isRunResponse, "run response");
+  const response = await apiJSON<{ run: RunSummary }>(
+    `/api/runs/${encodeURIComponent(id)}`,
+    undefined,
+    isRunResponse,
+    "run response"
+  );
   return response.run;
 }
 
 export async function stopRun(id: string): Promise<RunSummary> {
-  const response = await apiJSON<{ run: RunSummary }>(`/api/runs/${encodeURIComponent(id)}/stop`, { method: "POST" }, isRunResponse, "run response");
+  const response = await apiJSON<{ run: RunSummary }>(
+    `/api/runs/${encodeURIComponent(id)}/stop`,
+    { method: "POST" },
+    isRunResponse,
+    "run response"
+  );
   return response.run;
 }
 
@@ -98,7 +113,12 @@ export async function cleanupRun(id: string, apiKey?: string): Promise<RunSummar
   return response.run;
 }
 
-async function apiJSON<T>(url: string, init: RequestInit | undefined, guard: (value: unknown) => value is T, label: string): Promise<T> {
+async function apiJSON<T>(
+  url: string,
+  init: RequestInit | undefined,
+  guard: (value: unknown) => value is T,
+  label: string
+): Promise<T> {
   const method = init?.method?.toUpperCase() ?? "GET";
   const fetchInit = init ?? {};
   const headers = new Headers(fetchInit.headers);
@@ -119,7 +139,11 @@ async function apiJSON<T>(url: string, init: RequestInit | undefined, guard: (va
     throw error;
   });
   if (!response.ok) {
-    throw new Error(isRecord(body) && typeof body.message === "string" && body.message ? body.message : `Request failed (${response.status})`);
+    throw new Error(
+      isRecord(body) && typeof body.message === "string" && body.message
+        ? body.message
+        : `Request failed (${response.status})`
+    );
   }
   if (!guard(body)) {
     throw new Error(`Expected ${label} (${response.status})`);
@@ -257,11 +281,16 @@ function isRunSummary(value: unknown): value is RunSummary {
 }
 
 function isRunStatus(value: unknown): boolean {
-  return value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned";
+  return (
+    value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned"
+  );
 }
 
 function isInputRecord(value: unknown): boolean {
-  return isRecord(value) && Object.values(value).every((item) => typeof item === "string" || typeof item === "boolean" || isFiniteNumber(item));
+  return (
+    isRecord(value) &&
+    Object.values(value).every((item) => typeof item === "string" || typeof item === "boolean" || isFiniteNumber(item))
+  );
 }
 
 function isAssertionResult(value: unknown): boolean {

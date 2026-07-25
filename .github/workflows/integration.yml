@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION_FILE: Atlas_Core/go.mod
-  GO_SUM_FILE: Atlas_Core/go.sum
-  WORKING_DIRECTORY: Atlas_Core
+  GO_VERSION_FILE: atlas_core/go.mod
+  GO_SUM_FILE: atlas_core/go.sum
+  WORKING_DIRECTORY: atlas_core
   ATLAS_CORE_API_URL: http://localhost:8000
   MINIO_ROOT_PASSWORD: atlas-ci
   POSTGRES_PASSWORD: atlas
@@ -53,7 +53,7 @@ jobs:
         run: docker compose -f docker/docker-compose.yml up -d --build
 
       - name: Verify command catalog on fresh startup and API-only restart
-        run: ATLAS_API_AUTH_KEY= API_AUTH_KEY= ./scripts/test_development_restart.sh
+        run: ATLAS_API_AUTH_KEY='' API_AUTH_KEY='' ./scripts/test_development_restart.sh
 
       - name: Run shell API integration tests
         run: ./scripts/run_integration_tests.sh

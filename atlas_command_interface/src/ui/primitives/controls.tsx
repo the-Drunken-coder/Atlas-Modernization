@@ -1,12 +1,24 @@
-import { type ButtonHTMLAttributes, forwardRef, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, useId } from "react";
+import {
+  type ButtonHTMLAttributes,
+  forwardRef,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  useId
+} from "react";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "primary" | "ghost";
 };
 
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ variant = "default", className, ...props }, ref) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = "default", className, ...props },
+  ref
+) {
   const variantClass = variant === "primary" ? " btn--primary" : variant === "ghost" ? " btn--ghost" : "";
-  return <button ref={ref} type="button" className={`btn${variantClass}${className ? ` ${className}` : ""}`} {...props} />;
+  return (
+    <button ref={ref} type="button" className={`btn${variantClass}${className ? ` ${className}` : ""}`} {...props} />
+  );
 });
 
 type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -16,7 +28,13 @@ type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 export function IconButton({ label, children, className, ...props }: IconButtonProps) {
   return (
-    <button type="button" className={`icon-button${className ? ` ${className}` : ""}`} aria-label={label} title={label} {...props}>
+    <button
+      type="button"
+      className={`icon-button${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      {...props}
+    >
       {children}
     </button>
   );

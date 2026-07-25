@@ -25,8 +25,8 @@ type MockMapViewProps = {
 const mapViewMock = vi.hoisted(() => ({ lastProps: undefined as MockMapViewProps | undefined }));
 
 // MapLibre never runs in jsdom; stub the map but keep the real source builder.
-vi.mock("../ui/map/MapView.js", async () => {
-  const sources = await import("../ui/map/map-sources.js");
+vi.mock("../ui/map/view/MapView.js", async () => {
+  const sources = await import("../ui/map/rendering/map-sources.js");
   return {
     MapView: (props: MockMapViewProps) => {
       mapViewMock.lastProps = props;
@@ -91,7 +91,10 @@ const rover: EntityResource = {
   entity_type: "asset",
   subtype: null,
   alias: "Rover",
-  components: { task_catalog: { supported_tasks: ["hold_position", "goto", "set_speed"] }, telemetry: { latitude: 40, longitude: -74 } },
+  components: {
+    task_catalog: { supported_tasks: ["hold_position", "goto", "set_speed"] },
+    telemetry: { latitude: 40, longitude: -74 }
+  },
   metadata
 };
 
@@ -129,7 +132,10 @@ const circleArea: EntityResource = {
 const healthyConnection: ConnectionHealth = { running: true, healthy: true, degraded: false };
 
 function makeFakeDataSource(geofeature: EntityResource = area, health: ConnectionHealth = healthyConnection) {
-  let current: AtlasSnapshot = { entities: { [rover.entity_id]: rover, [geofeature.entity_id]: geofeature }, tasks: {} };
+  let current: AtlasSnapshot = {
+    entities: { [rover.entity_id]: rover, [geofeature.entity_id]: geofeature },
+    tasks: {}
+  };
   let currentHealth = health;
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
   let notifyCatalog: ((update: CatalogUpdate) => void) | undefined;
@@ -160,7 +166,10 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
         task_id: "task-1",
         status: "pending",
         entity_id: submission.entityId,
-        components: { command: { type: submission.command.id, id: submission.command.id }, parameters: submission.parameters ?? {} },
+        components: {
+          command: { type: submission.command.id, id: submission.command.id },
+          parameters: submission.parameters ?? {}
+        },
         metadata: { ...metadata, version: 2 }
       };
       current = { ...current, tasks: { ...current.tasks, [task.task_id]: task } };
@@ -169,7 +178,11 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     },
     async updateGeometry(entityId, geometry, ifMatchVersion) {
       geometryUpdates.push({ entityId, geometry, ifMatchVersion });
-      const updated = { ...geofeature, components: { ...geofeature.components, geometry }, metadata: { ...geofeature.metadata, version: 10 } };
+      const updated = {
+        ...geofeature,
+        components: { ...geofeature.components, geometry },
+        metadata: { ...geofeature.metadata, version: 10 }
+      };
       current = { ...current, entities: { ...current.entities, [updated.entity_id]: updated } };
       notify?.(current);
       return updated;
@@ -254,7 +267,10 @@ describe("MapConsole command flow", () => {
     // The asset inspector lists the supported command and greys out the rest.
     const hold = await screen.findByRole("button", { name: /Hold Position/ });
     expect(screen.getByRole("button", { name: /Return To Home/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute("title", "This asset does not support this command");
+    expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute(
+      "title",
+      "This asset does not support this command"
+    );
 
     await user.click(hold);
     await waitFor(() => expect(submissions).toHaveLength(1));
@@ -387,7 +403,9 @@ describe("MapConsole command flow", () => {
     const { fake } = makeFakeDataSource(area, { running: true, healthy: false, degraded: true });
     renderConsole(fake);
 
-    expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent("Reconnecting");
+    expect(await screen.findByRole("status", { name: "Atlas connection Reconnecting" })).toHaveTextContent(
+      "Reconnecting"
+    );
   });
 
   it("announces a connection error without opening its details", async () => {
@@ -396,7 +414,9 @@ describe("MapConsole command flow", () => {
       health: { running: true, healthy: false, degraded: true }
     });
 
-    expect(await screen.findByRole("status", { name: "Atlas connection Connection error" })).toHaveTextContent("Connection error");
+    expect(await screen.findByRole("status", { name: "Atlas connection Connection error" })).toHaveTextContent(
+      "Connection error"
+    );
     expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
   });
 
@@ -407,7 +427,10 @@ describe("MapConsole command flow", () => {
         running: true,
         healthy: false,
         degraded: true,
-        error: { source: "live-sync", message: "Atlas request failed: https://user:password@example.test?api_key=secret Bearer token" }
+        error: {
+          source: "live-sync",
+          message: "Atlas request failed: https://user:password@example.test?api_key=secret Bearer token"
+        }
       }
     });
 
@@ -460,7 +483,11 @@ describe("MapConsole command flow", () => {
       dispose: retryFailedDispose
     };
     const recovered = makeFakeDataSource().fake;
-    const createDataSource = vi.fn().mockReturnValueOnce(failing).mockReturnValueOnce(retryFailed).mockReturnValueOnce(recovered);
+    const createDataSource = vi
+      .fn()
+      .mockReturnValueOnce(failing)
+      .mockReturnValueOnce(retryFailed)
+      .mockReturnValueOnce(recovered);
 
     render(
       <AtlasProvider loadConfig={async () => appConfig()} createDataSource={createDataSource}>
@@ -498,7 +525,10 @@ describe("MapConsole command flow", () => {
       running: true,
       healthy: false,
       degraded: true,
-      error: { source: "live-sync", message: "feed websocket failed at https://user:password@example.test?api_key=secret Bearer token" }
+      error: {
+        source: "live-sync",
+        message: "feed websocket failed at https://user:password@example.test?api_key=secret Bearer token"
+      }
     });
     renderConsole(fake);
 
@@ -629,7 +659,11 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
 
     await waitFor(() => expect(submissions).toHaveLength(1));
-    expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "goto" }, parameters: { latitude: 47.61, longitude: -122.33 } });
+    expect(submissions[0]).toMatchObject({
+      entityId: "asset-1",
+      command: { id: "goto" },
+      parameters: { latitude: 47.61, longitude: -122.33 }
+    });
   });
 
   it("switches between configured map sources", async () => {
@@ -642,7 +676,11 @@ describe("MapConsole command flow", () => {
 
     const mapSelect = screen.getByLabelText("Map");
     const options = Array.from(mapSelect.querySelectorAll("option"));
-    expect(options.map((option) => option.textContent)).toEqual(["Google Satellite (missing key)", "OpenStreetMap Default", "USGS Topo"]);
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Google Satellite (missing key)",
+      "OpenStreetMap Default",
+      "USGS Topo"
+    ]);
     expect(options[0]).toBeDisabled();
     expect(options[1]).not.toBeDisabled();
 

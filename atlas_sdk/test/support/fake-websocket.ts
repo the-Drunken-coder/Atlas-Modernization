@@ -41,7 +41,8 @@ export class FakeWebSocket {
     }
     if (
       parsed.action === "auth" &&
-      (this.core.rejectFeedAuth || (this.core.expectedFeedApiKey !== undefined && parsed.api_key !== this.core.expectedFeedApiKey))
+      (this.core.rejectFeedAuth ||
+        (this.core.expectedFeedApiKey !== undefined && parsed.api_key !== this.core.expectedFeedApiKey))
     ) {
       this.close();
       return;

@@ -62,7 +62,12 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
               <span>Settings</span>
               <small>Coming soon</small>
             </button>
-            <button type="button" className="account-menu__item account-menu__item--danger" disabled={loggingOut} onClick={onLogout}>
+            <button
+              type="button"
+              className="account-menu__item account-menu__item--danger"
+              disabled={loggingOut}
+              onClick={onLogout}
+            >
               {loggingOut ? "Logging out..." : "Log out"}
             </button>
           </div>

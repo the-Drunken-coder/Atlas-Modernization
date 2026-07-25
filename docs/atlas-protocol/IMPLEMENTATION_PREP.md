@@ -29,6 +29,6 @@ Atlas Core still owns service behavior: HTTP routes, auth, status codes, databas
 ## Notes For Future Changes
 
 - Edit `atlas_protocol/schema/jsonschema/atlas.schema.json`, not generated artifacts. Update the authored Go `types.go` only when a supported public contract changes.
-- Keep the reusable Go package under `atlas_protocol/generated/go/atlasprotocol`; do not move protocol source or protocol packages under `Atlas_Core/internal/`.
+- Keep the reusable Go package under `atlas_protocol/generated/go/atlasprotocol`; do not move protocol source or protocol packages under `atlas_core/internal/`.
 - Preserve narrow semantic checks in `atlas_protocol/validator` when JSON Schema cannot express them cleanly, such as GeoJSON polygon ring closure and aggregate polygon position limits.
 - OpenAPI fragments, Postgres JSON checks, and command-catalog schema ownership remain deferred.

@@ -6,7 +6,9 @@ import { scenarios } from "../../src/server/scenario-registry.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("v1 scenarios", () => {
-  it.each(scenarios.map((scenario) => [scenario.id, scenario]))("%s completes against the shared fake Atlas client", async (_id, scenario) => {
+  it.each(
+    scenarios.map((scenario) => [scenario.id, scenario])
+  )("%s completes against the shared fake Atlas client", async (_id, scenario) => {
     vi.useFakeTimers();
     try {
       const core = createFakeAtlasCore();
@@ -30,8 +32,12 @@ describe("v1 scenarios", () => {
       expect(assertions.length).toBeGreaterThan(0);
       expect(assertions.every((assertion) => assertion.passed)).toBe(true);
       const beforeCleanup = await core.factory().queries.full();
-      expect(beforeCleanup.entities.length + beforeCleanup.tasks.length + beforeCleanup.objects.length).toBeGreaterThan(0);
-      const expectedDeletes = new Set((store.get(run.id)?.createdResources ?? []).map((resource) => `${resource.type}:${resource.id}`));
+      expect(beforeCleanup.entities.length + beforeCleanup.tasks.length + beforeCleanup.objects.length).toBeGreaterThan(
+        0
+      );
+      const expectedDeletes = new Set(
+        (store.get(run.id)?.createdResources ?? []).map((resource) => `${resource.type}:${resource.id}`)
+      );
 
       await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
       const afterCleanup = await core.factory().queries.full();
@@ -43,7 +49,9 @@ describe("v1 scenarios", () => {
     }
   });
 
-  it.each(scenarios.map((scenario) => [scenario.id, scenario]))("%s can run twice before cleanup", async (_id, scenario) => {
+  it.each(
+    scenarios.map((scenario) => [scenario.id, scenario])
+  )("%s can run twice before cleanup", async (_id, scenario) => {
     vi.useFakeTimers();
     try {
       const core = createFakeAtlasCore();
@@ -86,10 +94,19 @@ describe("v1 scenarios", () => {
       expect(entities).toHaveLength(2);
       expect(entities.map((entity) => entity.entity_type)).toEqual(["asset", "asset"]);
       expect(entities.map((entity) => entity.subtype)).toEqual(["simulated", "simulated"]);
-      expect(entities.map((entity) => (entity.components.telemetry as { speed_m_s?: number }).speed_m_s)).toEqual([15, 15]);
-      expect(entities.map((entity) => (entity.components.custom_simulation as { mission?: string }).mission)).toEqual(["coverage", "coverage"]);
-      expect((entities[0]!.components.geometry as unknown as { coordinates: [number, number] }).coordinates).toEqual([-76.9976, 38.0015]);
-      expect((entities[1]!.components.geometry as unknown as { coordinates: [number, number] }).coordinates).toEqual([-76.9956, 38.0025]);
+      expect(entities.map((entity) => (entity.components.telemetry as { speed_m_s?: number }).speed_m_s)).toEqual([
+        15, 15
+      ]);
+      expect(entities.map((entity) => (entity.components.custom_simulation as { mission?: string }).mission)).toEqual([
+        "coverage",
+        "coverage"
+      ]);
+      expect((entities[0]!.components.geometry as unknown as { coordinates: [number, number] }).coordinates).toEqual([
+        -76.9976, 38.0015
+      ]);
+      expect((entities[1]!.components.geometry as unknown as { coordinates: [number, number] }).coordinates).toEqual([
+        -76.9956, 38.0025
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -107,7 +124,11 @@ describe("v1 scenarios", () => {
       const dataset = await core.factory().queries.full();
 
       expect(dataset.entities).toHaveLength(3);
-      expect(dataset.entities.map((entity) => (entity.components.custom_simulation as { write_index?: number }).write_index).sort()).toEqual([1, 2, 3]);
+      expect(
+        dataset.entities
+          .map((entity) => (entity.components.custom_simulation as { write_index?: number }).write_index)
+          .sort()
+      ).toEqual([1, 2, 3]);
       expect(core.state.clients.filter((client) => client.sync === "all").length).toBeGreaterThanOrEqual(2);
       for (const reader of [1, 2]) {
         expect(assertionByName.get(`Client ${reader} saw writer resources`)?.passed).toBe(true);
@@ -136,7 +157,9 @@ describe("v1 scenarios", () => {
 
       const dataset = await core.factory().queries.full();
       const observers = dataset.entities.filter((entity) => entity.subtype === "simulated-observer");
-      const tracks = dataset.entities.filter((entity) => entity.entity_type === "track").sort((left, right) => left.entity_id.localeCompare(right.entity_id));
+      const tracks = dataset.entities
+        .filter((entity) => entity.entity_type === "track")
+        .sort((left, right) => left.entity_id.localeCompare(right.entity_id));
       const observerIds = new Set(observers.map((entity) => entity.entity_id));
       const trackIds = new Set(tracks.map((entity) => entity.entity_id));
 
@@ -144,11 +167,19 @@ describe("v1 scenarios", () => {
       expect(observers).toHaveLength(2);
       expect(tracks).toHaveLength(3);
       expect(dataset.objects).toHaveLength(3);
-      expect(tracks.every((track) => observerIds.has((track.components.custom_simulation as { observer_id?: string }).observer_id ?? ""))).toBe(true);
-      expect(tracks.map((track) => (track.components.custom_simulation as { collection?: string }).collection)).toEqual(["coverage", "coverage", "coverage"]);
+      expect(
+        tracks.every((track) =>
+          observerIds.has((track.components.custom_simulation as { observer_id?: string }).observer_id ?? "")
+        )
+      ).toBe(true);
+      expect(tracks.map((track) => (track.components.custom_simulation as { collection?: string }).collection)).toEqual(
+        ["coverage", "coverage", "coverage"]
+      );
       expect(
         dataset.objects.every((object) =>
-          (object.referenced_by ?? []).some((reference) => typeof reference.entity_id === "string" && trackIds.has(reference.entity_id))
+          (object.referenced_by ?? []).some(
+            (reference) => typeof reference.entity_id === "string" && trackIds.has(reference.entity_id)
+          )
         )
       ).toBe(true);
       expect(dataset.objects.map((object) => object.size_bytes).sort()).toEqual([256, 257, 258]);
@@ -164,13 +195,21 @@ describe("v1 scenarios", () => {
 
   it("rejects non-finite scenario number inputs", () => {
     expect(() => numberInput({ fields: { tickMs: Number.NaN } }, "tickMs")).toThrow("tickMs must be a finite number");
-    expect(() => numberInput({ fields: { tickMs: Number.POSITIVE_INFINITY } }, "tickMs")).toThrow("tickMs must be a finite number");
+    expect(() => numberInput({ fields: { tickMs: Number.POSITIVE_INFINITY } }, "tickMs")).toThrow(
+      "tickMs must be a finite number"
+    );
   });
 
   it("rejects scenario number inputs outside runtime bounds", () => {
-    expect(() => boundedNumberInput({ fields: { tickMs: -1 } }, "tickMs", 0, 10000)).toThrow("tickMs must be between 0 and 10000");
-    expect(() => boundedNumberInput({ fields: { startLatitude: 91 } }, "startLatitude", -90, 90)).toThrow("startLatitude must be between -90 and 90");
-    expect(() => boundedPositiveIntegerInput({ fields: { assetCount: 26 } }, "assetCount", 25)).toThrow("assetCount must be <= 25");
+    expect(() => boundedNumberInput({ fields: { tickMs: -1 } }, "tickMs", 0, 10000)).toThrow(
+      "tickMs must be between 0 and 10000"
+    );
+    expect(() => boundedNumberInput({ fields: { startLatitude: 91 } }, "startLatitude", -90, 90)).toThrow(
+      "startLatitude must be between -90 and 90"
+    );
+    expect(() => boundedPositiveIntegerInput({ fields: { assetCount: 26 } }, "assetCount", 25)).toThrow(
+      "assetCount must be <= 25"
+    );
   });
 });
 

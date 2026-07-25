@@ -1,5 +1,10 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { type CommandCatalog, type CommandDefinition, type CommandParameterSchema, supportedCommandIds } from "./command-model.js";
+import {
+  type CommandCatalog,
+  type CommandDefinition,
+  type CommandParameterSchema,
+  supportedCommandIds
+} from "./command-model.js";
 
 // Parameters that a map-point command receives from the right-click coordinate.
 // They are never asked for in a form because the map fills them in.
@@ -24,11 +29,16 @@ export type CommandAvailability = {
  * `latitude` and `longitude` parameters. Everything else is a sidebar command.
  */
 export function commandTargeting(command: CommandDefinition): CommandTargeting {
-  return isRequiredNumber(command.parameters_schema.latitude) && isRequiredNumber(command.parameters_schema.longitude) ? "map_point" : "none";
+  return isRequiredNumber(command.parameters_schema.latitude) && isRequiredNumber(command.parameters_schema.longitude)
+    ? "map_point"
+    : "none";
 }
 
 /** Parameters the operator still has to provide for the given targeting. */
-export function formParameters(command: CommandDefinition, targeting: CommandTargeting): Array<[string, CommandParameterSchema]> {
+export function formParameters(
+  command: CommandDefinition,
+  targeting: CommandTargeting
+): Array<[string, CommandParameterSchema]> {
   const autoFilled = targeting === "map_point" ? new Set<string>(MAP_POINT_PARAMETERS) : new Set<string>();
   return Object.entries(command.parameters_schema).filter(([name]) => !autoFilled.has(name));
 }
@@ -71,8 +81,14 @@ export function evaluateCommand(entity: EntityResource, command: CommandDefiniti
  * `none` for the sidebar). Valid commands come first, disabled commands sink to
  * the bottom; catalog order is preserved within each group.
  */
-export function commandsForTargeting(catalog: CommandCatalog, entity: EntityResource, targeting: CommandTargeting): CommandAvailability[] {
-  const matches = catalog.commands.filter((command) => commandTargeting(command) === targeting).map((command) => evaluateCommand(entity, command));
+export function commandsForTargeting(
+  catalog: CommandCatalog,
+  entity: EntityResource,
+  targeting: CommandTargeting
+): CommandAvailability[] {
+  const matches = catalog.commands
+    .filter((command) => commandTargeting(command) === targeting)
+    .map((command) => evaluateCommand(entity, command));
   return [...matches.filter((entry) => !entry.disabled), ...matches.filter((entry) => entry.disabled)];
 }
 

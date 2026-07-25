@@ -32,14 +32,22 @@ describe("entity accessors", () => {
   });
 
   it("prefers telemetry location, then geometry, for position", () => {
-    expect(entityPosition(entity({ components: { telemetry: { latitude: 40.1, longitude: -74.2 } } }))).toEqual([-74.2, 40.1]);
-    expect(entityPosition(entity({ components: { geometry: { type: "Point", coordinates: [-1, 2] } } }))).toEqual([-1, 2]);
+    expect(entityPosition(entity({ components: { telemetry: { latitude: 40.1, longitude: -74.2 } } }))).toEqual([
+      -74.2, 40.1
+    ]);
+    expect(entityPosition(entity({ components: { geometry: { type: "Point", coordinates: [-1, 2] } } }))).toEqual([
+      -1, 2
+    ]);
     expect(entityPosition(entity({ components: {} }))).toBeUndefined();
   });
 
   it("rejects non-finite telemetry positions", () => {
-    expect(entityPosition(entity({ components: { telemetry: { latitude: Number.NaN, longitude: -74.2 } } }))).toBeUndefined();
-    expect(entityPosition(entity({ components: { telemetry: { latitude: 40.1, longitude: Infinity } } }))).toBeUndefined();
+    expect(
+      entityPosition(entity({ components: { telemetry: { latitude: Number.NaN, longitude: -74.2 } } }))
+    ).toBeUndefined();
+    expect(
+      entityPosition(entity({ components: { telemetry: { latitude: 40.1, longitude: Infinity } } }))
+    ).toBeUndefined();
   });
 
   it("reads structured indicators", () => {
@@ -81,7 +89,10 @@ describe("entity accessors", () => {
       telemetry: { last_update: "2026-06-20T00:09:50Z" }
     };
 
-    expect(entityConnectionStatus(entity({ components }), now)).toEqual({ reported: "connected", freshness: "missing" });
+    expect(entityConnectionStatus(entity({ components }), now)).toEqual({
+      reported: "connected",
+      freshness: "missing"
+    });
   });
 
   it("returns no connection status when the entity reports no link state", () => {

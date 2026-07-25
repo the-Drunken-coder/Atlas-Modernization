@@ -19,7 +19,7 @@ Linting covers each package in full. Formatting is checked only for JavaScript/T
 
 ## What lives here
 
-- **`Atlas_Core/`** — the core backend: the Go HTTP API, durable production database/object-store layer, Docker setup, and command catalog.
+- **`atlas_core/`** — the core backend: the Go HTTP API, durable production database/object-store layer, Docker setup, and command catalog.
 - **`atlas_protocol/`** — the buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, and protocol tooling.
 - **`atlas_sdk/`** — the TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, and Node/browser test suites.
 - **`atlas_asset_runtime/`** — the TypeScript/Node runtime for check-in-driven asset telemetry and command handling through the SDK.

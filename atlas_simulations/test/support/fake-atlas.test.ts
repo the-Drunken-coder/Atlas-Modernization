@@ -47,8 +47,13 @@ describe("fake Atlas core", () => {
     await expect(reader.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
     await reader.sync.status();
     await expect(reader.entities.get("asset-1")).resolves.toMatchObject({ entity_id: "asset-1" });
-    await expect(reader.queries.full()).resolves.toMatchObject({ entities: [expect.objectContaining({ entity_id: "asset-1" })] });
-    expect(watch).toHaveBeenCalledWith(expect.objectContaining({ entity_id: "asset-1" }), expect.objectContaining({ event: "recovered", id: "asset-1" }));
+    await expect(reader.queries.full()).resolves.toMatchObject({
+      entities: [expect.objectContaining({ entity_id: "asset-1" })]
+    });
+    expect(watch).toHaveBeenCalledWith(
+      expect.objectContaining({ entity_id: "asset-1" }),
+      expect.objectContaining({ event: "recovered", id: "asset-1" })
+    );
   });
 
   it("enforces conflicts, tombstone reads, deletion logging, and re-create", async () => {
@@ -56,7 +61,9 @@ describe("fake Atlas core", () => {
     const client = core.factory();
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
 
-    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({ status: 409 });
+    await expect(client.entities.create({ entity_id: "asset-1", entity_type: "asset" })).rejects.toMatchObject({
+      status: 409
+    });
     await client.entities.delete("asset-1");
     await expect(client.entities.get("asset-1")).rejects.toMatchObject({ status: 404 });
     expect(core.state.deleted).toEqual(["entity:asset-1"]);

@@ -36,7 +36,8 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         }
       }
     };
-    const expireSession = () => setState({ status: "unauthenticated", error: "Your session has expired. Please sign in again." });
+    const expireSession = () =>
+      setState({ status: "unauthenticated", error: "Your session has expired. Please sign in again." });
 
     void checkSession();
     window.addEventListener("atlas-auth-expired", expireSession);
@@ -56,7 +57,11 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
 
   if (state.status === "authenticated") {
     return (
-      <AuthenticatedShell baseUrl={baseUrl} username={state.username} onLoggedOut={() => setState({ status: "unauthenticated" })}>
+      <AuthenticatedShell
+        baseUrl={baseUrl}
+        username={state.username}
+        onLoggedOut={() => setState({ status: "unauthenticated" })}
+      >
         {children}
       </AuthenticatedShell>
     );
@@ -86,10 +91,26 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
     );
   }
 
-  return <LoginPanel baseUrl={baseUrl} initialError={state.error} onAuthenticated={(username) => setState({ status: "authenticated", username })} />;
+  return (
+    <LoginPanel
+      baseUrl={baseUrl}
+      initialError={state.error}
+      onAuthenticated={(username) => setState({ status: "authenticated", username })}
+    />
+  );
 }
 
-function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { baseUrl: string; username: string; children: ReactNode; onLoggedOut: () => void }) {
+function AuthenticatedShell({
+  baseUrl,
+  username,
+  children,
+  onLoggedOut
+}: {
+  baseUrl: string;
+  username: string;
+  children: ReactNode;
+  onLoggedOut: () => void;
+}) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -108,7 +129,12 @@ function AuthenticatedShell({ baseUrl, username, children, onLoggedOut }: { base
   return (
     <section className="authenticated-shell">
       <AccountMenu username={username} loggingOut={loggingOut} error={error} onLogout={() => void logout()} />
-      <WorkspaceErrorBoundary loggingOut={loggingOut} logoutError={error} onRetry={() => window.location.reload()} onLogout={() => void logout()}>
+      <WorkspaceErrorBoundary
+        loggingOut={loggingOut}
+        logoutError={error}
+        onRetry={() => window.location.reload()}
+        onLogout={() => void logout()}
+      >
         {children}
       </WorkspaceErrorBoundary>
     </section>
@@ -149,7 +175,10 @@ function errorMessage(error: unknown): string {
 }
 
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/admin/auth/me`, { credentials: "include", headers: { Accept: "application/json" } });
+  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/admin/auth/me`, {
+    credentials: "include",
+    headers: { Accept: "application/json" }
+  });
   if (response.status === 401) return { authenticated: false };
   if (!response.ok) throw new Error(`Session check failed (${response.status})`);
   const data = (await response.json()) as { user?: { username?: unknown } };
@@ -159,7 +188,15 @@ async function loadSession(baseUrl: string): Promise<SessionResponse> {
   throw new Error("Session check returned an unexpected shape");
 }
 
-function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: string; initialError?: string; onAuthenticated: (username: string) => void }) {
+function LoginPanel({
+  baseUrl,
+  initialError,
+  onAuthenticated
+}: {
+  baseUrl: string;
+  initialError?: string;
+  onAuthenticated: (username: string) => void;
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -192,11 +229,23 @@ function LoginPanel({ baseUrl, initialError, onAuthenticated }: { baseUrl: strin
         </div>
         <label className="field">
           <span className="field__label">Username</span>
-          <input className="input" autoComplete="username" autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
+          <input
+            className="input"
+            autoComplete="username"
+            autoFocus
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
         </label>
         <label className="field">
           <span className="field__label">Password</span>
-          <input className="input" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <input
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
         </label>
         {error ? <div className="banner banner--error">{error}</div> : null}
         <Button type="submit" variant="primary" disabled={submitting || username.trim() === "" || password === ""}>

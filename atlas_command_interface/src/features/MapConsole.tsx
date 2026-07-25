@@ -1,5 +1,5 @@
 import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
@@ -8,13 +8,20 @@ import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { useAtlas } from "../state/atlas-context.js";
-import { initialSidebarState, type ListKind, listForKind, type SidebarState, sidebarReducer } from "../state/selection.js";
+import {
+  initialSidebarState,
+  type ListKind,
+  listForKind,
+  type SidebarState,
+  sidebarReducer
+} from "../state/selection.js";
 import { ConnectionBadge } from "../ui/ConnectionBadge.js";
 import { AppShell } from "../ui/layout/AppShell.js";
 import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
-import { buildMapSources, type MapContextMenuInfo, type MapReticleTarget, MapView } from "../ui/map/MapView.js";
-import type { MapCameraCommand } from "../ui/map/map-camera.js";
+import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
+import { buildMapSources } from "../ui/map/rendering/map-sources.js";
+import type { MapContextMenuInfo, MapReticleTarget } from "../ui/map/view/MapView.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
@@ -32,6 +39,8 @@ const LIST_TITLES: Record<ListKind, string> = {
   commands: "Commands",
   apiKeys: "API Keys"
 };
+
+const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
 
@@ -98,11 +107,16 @@ export function MapConsole() {
     const config = atlas.config;
     if (!config) return;
     setSelectedMapSourceId((current) =>
-      current && config.mapSources.some((source) => source.id === current && source.style) ? current : config.defaultMapSourceId
+      current && config.mapSources.some((source) => source.id === current && source.style)
+        ? current
+        : config.defaultMapSourceId
     );
   }, [atlas.config]);
 
-  const sources = useMemo(() => buildMapSources(Object.values(snapshot.entities), selectedId), [snapshot.entities, selectedId]);
+  const sources = useMemo(
+    () => buildMapSources(Object.values(snapshot.entities), selectedId),
+    [snapshot.entities, selectedId]
+  );
   const counts = useMemo(() => countsByKind(snapshot), [snapshot]);
   const handleMapStyleSwitchError = useCallback(
     ({ activeStyleId }: { failedStyleId: string; activeStyleId: string }) => {
@@ -115,7 +129,10 @@ export function MapConsole() {
   // Camera intent is derived from the sidebar's claim, not the snapshot, so
   // its identity only changes when the user asks to go somewhere.
   const cameraCommand = useMemo<MapCameraCommand | null>(
-    () => (sidebar.focusRequest ? { seq: sidebar.focusRequest.seq, target: { type: "entity", id: sidebar.focusRequest.id } } : null),
+    () =>
+      sidebar.focusRequest
+        ? { seq: sidebar.focusRequest.seq, target: { type: "entity", id: sidebar.focusRequest.id } }
+        : null,
     [sidebar.focusRequest]
   );
 
@@ -131,7 +148,11 @@ export function MapConsole() {
   );
 
   const submit = useCallback(
-    async (availability: CommandAvailability, parameters: Record<string, JSONValue>, errorFormState?: CommandFormState) => {
+    async (
+      availability: CommandAvailability,
+      parameters: Record<string, JSONValue>,
+      errorFormState?: CommandFormState
+    ) => {
       if (!selectedEntity) return;
       commandDismissedRef.current = false;
       setSubmitting(true);
@@ -250,7 +271,8 @@ export function MapConsole() {
     );
   }
 
-  const activeList: ListKind | null = sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
+  const activeList: ListKind | null =
+    sidebar.view.mode === "list" ? sidebar.view.list : selection ? listForKind(selection.kind) : null;
   const selectedMapSource =
     availableMapSource(atlas.config.mapSources.find((source) => source.id === selectedMapSourceId)) ??
     availableMapSource(atlas.config.mapSources.find((source) => source.id === atlas.config?.defaultMapSourceId));
@@ -316,33 +338,49 @@ export function MapConsole() {
             <div className="map-world-frame">
               <div className="map-stage">
                 {selectedMapSource ? (
-                  <MapView
-                    sources={sources}
-                    styleId={selectedMapSource.id}
-                    style={selectedMapSource.style}
-                    selectedId={selectedId}
-                    editing={
-                      edit
-                        ? { geometry: edit.draft, onChange: (geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current)) }
-                        : undefined
+                  <Suspense
+                    fallback={
+                      <div className="app-loading" role="status">
+                        <span>Loading map workspace…</span>
+                      </div>
                     }
-                    focusTarget={focusTarget}
-                    cameraCommand={cameraCommand}
-                    onSelectEntity={selectEntityById}
-                    onMapContextMenu={onMapContextMenu}
-                    onBackgroundClick={() => {
-                      setMapMenu(null);
-                      dispatch({ type: "clearSelection" });
-                    }}
-                    onStyleSwitchError={handleMapStyleSwitchError}
-                  />
+                  >
+                    <MapView
+                      sources={sources}
+                      styleId={selectedMapSource.id}
+                      style={selectedMapSource.style}
+                      selectedId={selectedId}
+                      editing={
+                        edit
+                          ? {
+                              geometry: edit.draft,
+                              onChange: (geometry) =>
+                                setEdit((current) => (current ? { ...current, draft: geometry } : current))
+                            }
+                          : undefined
+                      }
+                      focusTarget={focusTarget}
+                      cameraCommand={cameraCommand}
+                      onSelectEntity={selectEntityById}
+                      onMapContextMenu={onMapContextMenu}
+                      onBackgroundClick={() => {
+                        setMapMenu(null);
+                        dispatch({ type: "clearSelection" });
+                      }}
+                      onStyleSwitchError={handleMapStyleSwitchError}
+                    />
+                  </Suspense>
                 ) : (
                   <div className="app-error" role="alert">
                     <span>The configured default map source is unavailable.</span>
                   </div>
                 )}
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
-                <MapSourcePicker sources={atlas.config.mapSources} value={mapSourcePickerValue} onChange={setSelectedMapSourceId} />
+                <MapSourcePicker
+                  sources={atlas.config.mapSources}
+                  value={mapSourcePickerValue}
+                  onChange={setSelectedMapSourceId}
+                />
               </div>
             </div>
           </>
@@ -382,7 +420,15 @@ export function MapConsole() {
   );
 }
 
-function MapSourcePicker({ sources, value, onChange }: { sources: MapSourceConfig[]; value: string; onChange: (value: string) => void }) {
+function MapSourcePicker({
+  sources,
+  value,
+  onChange
+}: {
+  sources: MapSourceConfig[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <div className="map-overlay-tr map-source-control">
       <SelectField
@@ -437,7 +483,14 @@ function PanelBody(props: PanelBodyProps) {
 
   const kind = entityKind(selectedEntity);
   if (kind === "asset") {
-    return <AssetInspector entity={selectedEntity} snapshot={snapshot} catalog={catalog} onPickCommand={props.onPickCommand} />;
+    return (
+      <AssetInspector
+        entity={selectedEntity}
+        snapshot={snapshot}
+        catalog={catalog}
+        onPickCommand={props.onPickCommand}
+      />
+    );
   }
   if (kind === "track") {
     return <TrackInspector entity={selectedEntity} />;
@@ -460,7 +513,14 @@ function PanelBody(props: PanelBodyProps) {
   return <div className="panel__empty">Unsupported entity type.</div>;
 }
 
-function ListBody({ list, snapshot, selectedEntity, catalog, onSelectEntity, onPickCommand }: { list: ListKind } & PanelBodyProps) {
+function ListBody({
+  list,
+  snapshot,
+  selectedEntity,
+  catalog,
+  onSelectEntity,
+  onPickCommand
+}: { list: ListKind } & PanelBodyProps) {
   if (list === "commands") {
     if (selectedEntity && entityKind(selectedEntity) === "asset") {
       return (

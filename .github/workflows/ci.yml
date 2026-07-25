@@ -16,14 +16,32 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION_FILE: Atlas_Core/go.mod
-  GO_SUM_FILE: Atlas_Core/go.sum
+  GO_VERSION_FILE: atlas_core/go.mod
+  GO_SUM_FILE: atlas_core/go.sum
   PROTOCOL_GO_VERSION_FILE: atlas_protocol/go.mod
   PROTOCOL_GO_SUM_FILE: atlas_protocol/go.sum
   PROTOCOL_WORKING_DIRECTORY: atlas_protocol
-  WORKING_DIRECTORY: Atlas_Core
+  WORKING_DIRECTORY: atlas_core
 
 jobs:
+  workflow-validation:
+    name: workflow-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: ${{ env.GO_SUM_FILE }}
+
+      - name: Run actionlint over all workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+
   go-quality:
     name: go-quality
     runs-on: ubuntu-latest
@@ -72,6 +90,9 @@ jobs:
 
       - name: Run Go tests with race detector
         run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Enforce Go coverage ratchets
+        run: python3 scripts/check_coverage.py coverage.out
 
   atlas-protocol:
     name: atlas-protocol
@@ -185,8 +206,8 @@ jobs:
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
 
-      - name: Run Atlas SDK Node tests
-        run: npm run test:node --workspace @the-drunken-coder/atlas-sdk
+      - name: Run Atlas SDK Node tests with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-sdk
 
       - name: Run Atlas SDK browser tests
         run: npm run test:browser --workspace @the-drunken-coder/atlas-sdk
@@ -211,9 +232,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Build Atlas SDK dependency
-        run: npm run build:sdk
-
       - name: Audit asset runtime dependencies
         run: npm audit --audit-level=high
 
@@ -226,8 +244,8 @@ jobs:
       - name: Type-check asset runtime
         run: npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
 
-      - name: Test asset runtime
-        run: npm test --workspace @the-drunken-coder/atlas-asset-runtime
+      - name: Test asset runtime with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-asset-runtime
 
       - name: Build asset runtime
         run: npm run build --workspace @the-drunken-coder/atlas-asset-runtime
@@ -274,9 +292,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Build Atlas SDK dependency
-        run: npm run build:sdk
-
       - name: Audit command interface dependencies
         run: npm audit --audit-level=high
 
@@ -289,11 +304,14 @@ jobs:
       - name: Type-check command interface
         run: npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
 
-      - name: Test command interface
-        run: npm test --workspace @the-drunken-coder/atlas-command-interface
+      - name: Test command interface with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-command-interface
 
       - name: Build command interface
         run: npm run build --workspace @the-drunken-coder/atlas-command-interface
+
+      - name: Check command-interface bundle budget
+        run: npm run check:bundle --workspace @the-drunken-coder/atlas-command-interface -- --skip-build
 
   atlas-simulations:
     name: atlas-simulations
@@ -315,9 +333,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Build Atlas asset runtime dependency
-        run: npm run build:asset-runtime
-
       - name: Audit simulations dependencies
         run: npm audit --audit-level=high
 
@@ -330,8 +345,8 @@ jobs:
       - name: Type-check simulations
         run: npm run typecheck --workspace @the-drunken-coder/atlas-simulations
 
-      - name: Test simulations
-        run: npm test --workspace @the-drunken-coder/atlas-simulations
+      - name: Test simulations with coverage ratchet
+        run: npm run test:coverage --workspace @the-drunken-coder/atlas-simulations
 
       - name: Build simulations
         run: npm run build --workspace @the-drunken-coder/atlas-simulations
@@ -394,6 +409,9 @@ jobs:
 
       - name: Test atlas script helpers
         run: python3 scripts/test_atlas.py
+
+      - name: Test Go coverage checker
+        run: python3 scripts/test_check_coverage.py
 
       - name: Test seed command catalog
         run: python3 scripts/test_seed_command_catalog.py
@@ -473,15 +491,6 @@ jobs:
               (.services.minio.networks | has("atlas_tunnel_network") | not)
             '
 
-      - name: Validate production Docker Compose config
-        env:
-          POSTGRES_PASSWORD: atlas-ci
-          MINIO_ROOT_USER: atlas
-          MINIO_ROOT_PASSWORD: atlas-ci
-          API_AUTH_KEY: dummy-ci-api-auth-key
-          ATLAS_ADMIN_PASSWORD: atlas-ci-admin-password
-        run: docker compose -f docker/docker-compose.production.yml config --quiet
-
   docker-build:
     name: docker-build
     runs-on: ubuntu-latest
@@ -495,7 +504,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: Atlas_Core/docker/Dockerfile
+          file: atlas_core/docker/Dockerfile
           target: development
           push: false
 
@@ -503,6 +512,6 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: Atlas_Core/docker/Dockerfile
+          file: atlas_core/docker/Dockerfile
           target: production
           push: false

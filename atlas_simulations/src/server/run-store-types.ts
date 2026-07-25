@@ -1,4 +1,12 @@
-import type { AssertionResult, AtlasTargetSummary, CreatedResource, JSONValue, RunEvent, RunStatus, RunSummary } from "../shared/types.js";
+import type {
+  AssertionResult,
+  AtlasTargetSummary,
+  CreatedResource,
+  JSONValue,
+  RunEvent,
+  RunStatus,
+  RunSummary
+} from "../shared/types.js";
 import type { AtlasClientFactory, AtlasClientLike } from "./atlas.js";
 
 export type EventSubscriber = (event: RunEvent) => void;
