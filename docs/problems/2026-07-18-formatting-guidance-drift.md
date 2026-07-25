@@ -5,10 +5,10 @@
 3. **Issue:** The root JavaScript-toolchain guidance says formatting is checked only for files changed from a selected base, but CI runs each workspace formatting command without a `--since` argument.
 4. **Severity:** S4 (Minor)
 5. **Location:** `README.md`, `.github/workflows/ci.yml`, JavaScript workspace `package.json` files
-6. **Expected:** The README describes the same formatting scope that contributors and CI actually exercise.
-7. **Actual:** The README example shows `--since=origin/main` and states that only changed files are checked, while CI invokes each package's full `format:check` script.
+6. **Expected:** The README tells contributors to run the same full-workspace formatting check enforced by CI.
+7. **Actual:** `README.md:15-18` passes `--since=origin/main` and says only changed files are checked, while `.github/workflows/ci.yml` invokes every workspace's unscoped `format:check` script.
 8. **Reproduction:**
-   1. Inspect the JavaScript toolchain section in `README.md`
-   2. Inspect the formatting steps in `.github/workflows/ci.yml`
-   3. Compare them with each workspace's `format:check` script
-9. **Notes:** Decide whether the intended policy is full-workspace formatting or changed-file formatting, then align the README and CI rather than documenting both behaviors as equivalent.
+   1. Run `rg -n 'format:check|only.*changed' README.md`
+   2. Run `rg -n 'format:check' .github/workflows/ci.yml atlas_*/package.json`
+   3. Observe that the README alone adds `--since=origin/main`; CI runs the unscoped package scripts for all four JavaScript workspaces.
+9. **Notes:** Verified against `main` at `a8b73d7` on 2026-07-24. Remove the `--since` argument and changed-files claim from the README so the contributor example matches the existing CI policy.

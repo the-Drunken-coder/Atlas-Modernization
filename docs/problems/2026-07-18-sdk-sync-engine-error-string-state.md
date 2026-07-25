@@ -5,9 +5,9 @@
 3. **Issue:** `SyncEngine` stores human-readable error text in `lastError` and then branches on exact string equality and prefix matches to decide reconnect/recovery behavior, so rewording a message silently changes engine logic.
 4. **Severity:** S4 (Minor)
 5. **Location:** `atlas_sdk/src/sync-engine.ts` (lines 173, 190, 247, 530)
-6. **Expected:** The engine tracks a typed error kind (small fixed set of values) for branching, and derives the display message from the kind. Renaming a message is then a cosmetic change with no behavioral effect.
+6. **Expected:** The engine tracks a small typed error kind for lifecycle decisions and keeps human-readable error text out of control flow.
 7. **Actual:** Branches include `this.lastError === "Atlas Core feed connection failed"`, `this.lastError !== "Atlas Core recovery request failed"`, and `this.lastError?.startsWith("Atlas Core feed ")`. The message doubles as the machine-readable state discriminator.
 8. **Reproduction:**
    1. Run `rg -n 'lastError ===|lastError !==|lastError\?\.startsWith' atlas_sdk/src/`
-   2. Observe that each hit gates reconnect or error-clearing logic on message text
-9. **Notes:** Latent fragility rather than a current bug: an innocent-looking message reword would pass type checks and most tests while changing which errors get cleared after a successful reconnect (the `startsWith("Atlas Core feed ")` case at line 530 is the most fragile). Fix pairs naturally with [2026-07-18-sdk-sync-engine-implicit-state-machine.md](2026-07-18-sdk-sync-engine-implicit-state-machine.md) since the error kind is part of the same state model. The existing reconnect/recovery test suites (`test/sync-engine-feed-recovery.test.ts`, `test/sync-engine-reconnect-cleanup.test.ts`) are the safety net for the change.
+   2. Observe four hits in `sync-engine.ts` at lines 173, 190, 247, and 530, each gating error preservation or clearing on message text.
+9. **Notes:** Verified against `main` at `a8b73d7` on 2026-07-24. Add a private typed error kind alongside the existing public message, switch these four branches to the kind, and preserve the current messages and lifecycle behavior. Cover the change with `test/sync-engine-feed-recovery.test.ts` and `test/sync-engine-reconnect-cleanup.test.ts`.
