@@ -62,25 +62,28 @@ describe("asset connection status", () => {
       "var(--text-3)"
     ],
     ["missing", undefined, "Reported connected — never checked in", "var(--text-3)", undefined, undefined]
-  ] as const)("shows %s heartbeat qualification consistently", (_case, lastSeen, label, color, heartbeatLabel, heartbeatColor) => {
-    const entity = asset(lastSeen);
-    const { unmount } = render(<EntityList entities={[entity]} emptyLabel="none" onSelect={() => {}} />);
+  ] as const)(
+    "shows %s heartbeat qualification consistently",
+    (_case, lastSeen, label, color, heartbeatLabel, heartbeatColor) => {
+      const entity = asset(lastSeen);
+      const { unmount } = render(<EntityList entities={[entity]} emptyLabel="none" onSelect={() => {}} />);
 
-    expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
-    expect(document.querySelector<HTMLElement>(".entity-row__dot")).toHaveStyle({ background: color });
-    unmount();
+      expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
+      expect(document.querySelector<HTMLElement>(".entity-row__dot")).toHaveStyle({ background: color });
+      unmount();
 
-    render(<AssetInspector entity={entity} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
-    expect(screen.getByText(label)).toBeInTheDocument();
-    const heartbeat = fieldValue("Heartbeat");
-    if (heartbeatLabel && heartbeatColor) {
-      expect(heartbeat).toHaveTextContent(heartbeatLabel);
-      expect(heartbeat.querySelector(".pill")).toHaveStyle(`--pill-color: ${heartbeatColor}`);
-    } else {
-      expect(heartbeat).toHaveTextContent("—");
-      expect(heartbeat.querySelector(".pill")).toBeNull();
+      render(<AssetInspector entity={entity} snapshot={emptySnapshot()} onPickCommand={() => {}} />);
+      expect(screen.getByText(label)).toBeInTheDocument();
+      const heartbeat = fieldValue("Heartbeat");
+      if (heartbeatLabel && heartbeatColor) {
+        expect(heartbeat).toHaveTextContent(heartbeatLabel);
+        expect(heartbeat.querySelector(".pill")).toHaveStyle(`--pill-color: ${heartbeatColor}`);
+      } else {
+        expect(heartbeat).toHaveTextContent("—");
+        expect(heartbeat.querySelector(".pill")).toBeNull();
+      }
     }
-  });
+  );
 
   it("updates the entity list when a fresh heartbeat becomes stale without a snapshot change", () => {
     render(<EntityList entities={[asset("2026-06-20T00:09:50Z")]} emptyLabel="none" onSelect={() => {}} />);

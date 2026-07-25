@@ -6,71 +6,73 @@ import { scenarios } from "../../src/server/scenario-registry.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("v1 scenarios", () => {
-  it.each(
-    scenarios.map((scenario) => [scenario.id, scenario])
-  )("%s completes against the shared fake Atlas client", async (_id, scenario) => {
-    vi.useFakeTimers();
-    try {
-      const core = createFakeAtlasCore();
-      const store = new RunStore(core.factory);
-      const parsed = parseStartRequest(scenario, {
-        scenarioId: scenario.id,
-        inputs: Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.defaultValue])),
-        jsonInput: scenario.acceptsJson ? '{"test":"yes"}' : undefined
-      });
-      const run = store.start(scenario, parsed.input);
-      await vi.waitFor(
-        () => {
-          const current = store.get(run.id);
-          expect(["completed", "failed"]).toContain(current?.status);
-        },
-        { timeout: 5000 }
-      );
-      const current = store.get(run.id);
-      expect(current?.status, current?.lastError).toBe("completed");
-      const assertions = current?.assertions ?? [];
-      expect(assertions.length).toBeGreaterThan(0);
-      expect(assertions.every((assertion) => assertion.passed)).toBe(true);
-      const beforeCleanup = await core.factory().queries.full();
-      expect(beforeCleanup.entities.length + beforeCleanup.tasks.length + beforeCleanup.objects.length).toBeGreaterThan(
-        0
-      );
-      const expectedDeletes = new Set(
-        (store.get(run.id)?.createdResources ?? []).map((resource) => `${resource.type}:${resource.id}`)
-      );
+  it.each(scenarios.map((scenario) => [scenario.id, scenario]))(
+    "%s completes against the shared fake Atlas client",
+    async (_id, scenario) => {
+      vi.useFakeTimers();
+      try {
+        const core = createFakeAtlasCore();
+        const store = new RunStore(core.factory);
+        const parsed = parseStartRequest(scenario, {
+          scenarioId: scenario.id,
+          inputs: Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.defaultValue])),
+          jsonInput: scenario.acceptsJson ? '{"test":"yes"}' : undefined
+        });
+        const run = store.start(scenario, parsed.input);
+        await vi.waitFor(
+          () => {
+            const current = store.get(run.id);
+            expect(["completed", "failed"]).toContain(current?.status);
+          },
+          { timeout: 5000 }
+        );
+        const current = store.get(run.id);
+        expect(current?.status, current?.lastError).toBe("completed");
+        const assertions = current?.assertions ?? [];
+        expect(assertions.length).toBeGreaterThan(0);
+        expect(assertions.every((assertion) => assertion.passed)).toBe(true);
+        const beforeCleanup = await core.factory().queries.full();
+        expect(
+          beforeCleanup.entities.length + beforeCleanup.tasks.length + beforeCleanup.objects.length
+        ).toBeGreaterThan(0);
+        const expectedDeletes = new Set(
+          (store.get(run.id)?.createdResources ?? []).map((resource) => `${resource.type}:${resource.id}`)
+        );
 
-      await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
-      const afterCleanup = await core.factory().queries.full();
-      expect(afterCleanup).toMatchObject({ entities: [], tasks: [], objects: [] });
-      expect(core.state.deleted).toHaveLength(expectedDeletes.size);
-      expect(new Set(core.state.deleted)).toEqual(expectedDeletes);
-    } finally {
-      vi.useRealTimers();
+        await expect(store.cleanup(run.id)).resolves.toMatchObject({ cleaned: true });
+        const afterCleanup = await core.factory().queries.full();
+        expect(afterCleanup).toMatchObject({ entities: [], tasks: [], objects: [] });
+        expect(core.state.deleted).toHaveLength(expectedDeletes.size);
+        expect(new Set(core.state.deleted)).toEqual(expectedDeletes);
+      } finally {
+        vi.useRealTimers();
+      }
     }
-  });
+  );
 
-  it.each(
-    scenarios.map((scenario) => [scenario.id, scenario])
-  )("%s can run twice before cleanup", async (_id, scenario) => {
-    vi.useFakeTimers();
-    try {
-      const core = createFakeAtlasCore();
-      const store = new RunStore(core.factory);
-      const start = () => store.start(scenario, parseStartRequest(scenario, defaultStartRequest(scenario)).input);
-      const first = start();
-      await vi.waitFor(() => expect(store.get(first.id)?.status).toBe("completed"), { timeout: 5000 });
-      const second = start();
-      await vi.waitFor(() => expect(store.get(second.id)?.status).toBe("completed"), { timeout: 5000 });
+  it.each(scenarios.map((scenario) => [scenario.id, scenario]))(
+    "%s can run twice before cleanup",
+    async (_id, scenario) => {
+      vi.useFakeTimers();
+      try {
+        const core = createFakeAtlasCore();
+        const store = new RunStore(core.factory);
+        const start = () => store.start(scenario, parseStartRequest(scenario, defaultStartRequest(scenario)).input);
+        const first = start();
+        await vi.waitFor(() => expect(store.get(first.id)?.status).toBe("completed"), { timeout: 5000 });
+        const second = start();
+        await vi.waitFor(() => expect(store.get(second.id)?.status).toBe("completed"), { timeout: 5000 });
 
-      expect(store.get(first.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
-      expect(store.get(second.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
-      await expect(store.cleanup(first.id)).resolves.toMatchObject({ cleaned: true });
-      await expect(store.cleanup(second.id)).resolves.toMatchObject({ cleaned: true });
-      await expect(core.factory().queries.full()).resolves.toMatchObject({ entities: [], tasks: [], objects: [] });
-    } finally {
-      vi.useRealTimers();
+        expect(store.get(first.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
+        expect(store.get(second.id)?.assertions.every((assertion) => assertion.passed)).toBe(true);
+        await expect(store.cleanup(first.id)).resolves.toMatchObject({ cleaned: true });
+        await expect(store.cleanup(second.id)).resolves.toMatchObject({ cleaned: true });
+        await expect(core.factory().queries.full()).resolves.toMatchObject({ entities: [], tasks: [], objects: [] });
+      } finally {
+        vi.useRealTimers();
+      }
     }
-  });
+  );
 
   it("moving-assets updates every asset to the final tick geometry and telemetry", async () => {
     vi.useFakeTimers();

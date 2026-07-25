@@ -1,5 +1,5 @@
 import { lazy, type ReactNode, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { Providers } from "./providers.js";
 
 const MapConsole = lazy(() => import("../features/MapConsole.js").then((module) => ({ default: module.MapConsole })));
