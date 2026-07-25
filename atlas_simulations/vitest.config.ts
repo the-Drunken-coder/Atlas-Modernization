@@ -14,7 +14,8 @@ export default defineConfig({
       thresholds: {
         statements: 85.35,
         branches: 77.73,
-        "src/client/App.tsx": { branches: 74.01 }
+        "src/client/App.tsx": { branches: 74.01 },
+        "src/client/use-run-session.ts": { branches: 74.01 }
       }
     }
   }

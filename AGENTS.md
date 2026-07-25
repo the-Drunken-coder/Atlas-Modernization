@@ -12,6 +12,8 @@ The SDK sync engine can receive delayed recovery, feed event, error, or close ca
 
 The Go service module lives under **`atlas_core/`** (run `go test ./...` and `go run ./cmd/atlas_core` from that directory). The repo is multi-module, so choose the narrowest validation stack that matches the task:
 
+The handlers package already uses `handler_query.go` for full-dataset and changed-since HTTP handlers. Put shared query-parameter parsing in `handler_query_parsing.go`; do not overwrite or repurpose the existing handler file during structural splits.
+
 ```sh
 git status --short --branch
 git worktree list
@@ -31,6 +33,8 @@ The root `.nvmrc` and package engines are the Node version source of truth: they
 
 Biome 2.5.3's type-aware `noFloatingPromises` and `noMisusedPromises` rules are enabled for all four JavaScript workspaces through package-local configurations with the `types` domain set to `recommended`. Keep each lint script's explicit `--config-path biome.json`: without it, Biome resolves the repository-root configuration and silently skips the package-local type-aware rules.
 
+Biome 2.5.3 can panic in its module resolver when a newly split, shorter `MapView` test uses named imports from the much larger `MapView.test-harness.tsx`. Use a namespace import for that harness instead of adding a lint exemption; the equivalent named import previously produced an out-of-bounds resolver index.
+
 For the packed CLI smoke under npm 11, assert that installation created `node_modules/.bin/atlas`, then run the installed `bin.atlas` module with Node. Alias-only `npx --no-install atlas ...` and `npm exec -- atlas ...` invocations are rejected as unsupported `npm exec` usage in this harness.
 
 The live Atlas Core API is hosted on the developer's Proxmox box, not in Cloudflare itself. Cloudflare Tunnel only exposes that Core service. If the live Core API is stale, unhealthy, or on the wrong protocol revision, tell the developer what needs to be reset or updated on the Proxmox host so they can restart it and pull changes there. Do not assume a local Docker tunnel replica is the production Core instance.
@@ -42,6 +46,8 @@ For docs-only changes, lightweight path and stale-link checks are usually enough
 Run the launcher Python tests with the three commands in `.github/workflows/ci.yml` rather than broad `unittest discover`: `atlas_core/scripts/test_api_manual.py` is an operator script whose filename matches discovery but imports the optional `requests` package and is not part of the unit-test suite.
 
 Codex-created worktrees may not be checked out on the PR branch even when they are inside this repository. If the local tree looks unexpectedly small or detached, run `git worktree list` and inspect the branch checkout before deciding the PR contents are missing.
+
+On case-insensitive macOS filesystems, an older worktree can physically retain the historical `Atlas_Core` spelling even though Git canonically tracks `atlas_core/`. Normalize it through an explicit temporary directory name and verify `git status` remains clean; never commit or recreate the uppercase path.
 
 Atlas Protocol planning/reference docs live under **`docs/atlas-protocol/`**. The old root-level `Atlas Protocol/` folder was intentionally moved there so the repository root has only one protocol-looking folder. Do not recreate `Atlas Protocol/`; update stale links to `docs/atlas-protocol/` instead. Before docs or layout edits, check for stale protocol paths:
 
