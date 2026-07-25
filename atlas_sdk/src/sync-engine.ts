@@ -633,7 +633,7 @@ export class SyncEngine {
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
-    if (!this.syncRunning || this.startSyncPromise || !this.healthy || this.degraded) {
+    if (!this.syncRunning || this.startSyncPromise !== undefined || !this.healthy || this.degraded) {
       return false;
     }
     return this.subscriptions.some((sub) => covers(sub, filter));

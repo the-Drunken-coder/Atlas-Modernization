@@ -31,9 +31,7 @@ The SDK, asset runtime, command interface, and simulations are npm workspaces wi
 
 The root `.nvmrc` and package engines are the Node version source of truth: they currently require Node 24, despite stale docs that previously said Node 26. The first asset-runtime migration is an API proving ground, not an extraction of an existing generic loop: current simulations directly performed check-ins and did not contain repeated handshake, reconnect, task-dispatch, or feed-consumption machinery. Do not preserve or claim behavior that was never there.
 
-Biome 2.5.3's type-aware `noFloatingPromises` and `noMisusedPromises` rules are enabled for all four JavaScript workspaces through package-local configurations with the `types` domain set to `recommended`. Keep each lint script's explicit `--config-path biome.json`: without it, Biome resolves the repository-root configuration and silently skips the package-local type-aware rules.
-
-Biome 2.5.3 can panic in its module resolver when a newly split, shorter `MapView` test uses named imports from the much larger `MapView.test-harness.tsx`. Use a namespace import for that harness instead of adding a lint exemption; the equivalent named import previously produced an out-of-bounds resolver index.
+Biome 2.5.5's type-aware `noFloatingPromises` and `noMisusedPromises` rules are enabled for all four JavaScript workspaces through package-local configurations with the `types` domain set to `recommended`. Keep each lint script's explicit `--config-path biome.json`: without it, Biome resolves the repository-root configuration and silently skips the package-local type-aware rules. Biome 2.5.3's namespace-import workaround no longer prevents its module resolver from panicking with the current dependency layout; keep all workspaces aligned on 2.5.5 or newer rather than adding lint exemptions.
 
 For the packed CLI smoke under npm 11, assert that installation created `node_modules/.bin/atlas`, then run the installed `bin.atlas` module with Node. Alias-only `npx --no-install atlas ...` and `npm exec -- atlas ...` invocations are rejected as unsupported `npm exec` usage in this harness.
 

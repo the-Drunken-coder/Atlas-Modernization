@@ -222,28 +222,32 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.snapshot()).toEqual({ entities: {}, tasks: {}, objects: {} });
   });
 
-  it.each([
-    -1,
-    1.5,
-    Number.MAX_SAFE_INTEGER + 1
-  ])("rejects invalid full-dataset version watermark %s", async (version) => {
-    const core = new FakeCore();
-    const fetchImpl: typeof fetch = async (url, init) => {
-      if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
-      return Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        version,
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid full-dataset version watermark %s",
+    async (version) => {
+      const core = new FakeCore();
+      const fetchImpl: typeof fetch = async (url, init) => {
+        if (new URL(String(url)).pathname !== "/queries/full") return core.fetch(String(url), init);
+        return Response.json({
+          entities: [],
+          tasks: [],
+          objects: [],
+          version,
+          has_more_entities: false,
+          has_more_tasks: false,
+          has_more_objects: false
+        });
+      };
+      const client = new AtlasClient({
+        baseUrl: "http://atlas.test",
+        fetch: fetchImpl,
+        sync: "all",
+        pollIntervalMs: 0
       });
-    };
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
 
-    await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
-  });
+      await expect(client.sync.start()).rejects.toThrow("Atlas response failed validation for GET /queries/full");
+    }
+  );
 
   it("rejects changing full-dataset version watermarks", async () => {
     const core = new FakeCore();

@@ -10,4 +10,4 @@
 8. **Reproduction:**
    1. Run `rg -n 'lastError ===|lastError !==|lastError\?\.startsWith' atlas_sdk/src/`
    2. Observe four hits in `sync-engine.ts` at lines 173, 190, 247, and 530, each gating error preservation or clearing on message text.
-9. **Notes:** Verified against `main` at `a8b73d7` on 2026-07-24. Add a private typed error kind alongside the existing public message, switch these four branches to the kind, and preserve the current messages and lifecycle behavior. Cover the change with `test/sync-engine-feed-recovery.test.ts` and `test/sync-engine-reconnect-cleanup.test.ts`.
+9. **Notes:** Verified against `main` at `2d6106e` on 2026-07-25. Add a private typed error kind alongside the existing public message, switch these four branches to the kind, and preserve the current messages and lifecycle behavior. Cover the change with `test/sync-engine-feed-recovery.test.ts` and `test/sync-engine-reconnect-cleanup.test.ts`.

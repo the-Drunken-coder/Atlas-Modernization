@@ -11,4 +11,4 @@
    1. Run `rg -n 'format:check|only.*changed' README.md`
    2. Run `rg -n 'format:check' .github/workflows/ci.yml atlas_*/package.json`
    3. Observe that the README alone adds `--since=origin/main`; CI runs the unscoped package scripts for all four JavaScript workspaces.
-9. **Notes:** Verified against `main` at `a8b73d7` on 2026-07-24. Remove the `--since` argument and changed-files claim from the README so the contributor example matches the existing CI policy.
+9. **Notes:** Verified against `main` at `2d6106e` on 2026-07-25. Remove the `--since` argument and changed-files claim from the README so the contributor example matches the existing CI policy.

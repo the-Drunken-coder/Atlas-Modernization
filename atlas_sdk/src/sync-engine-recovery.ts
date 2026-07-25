@@ -36,7 +36,11 @@ export class RecoveryCoordinator {
     recover: (operation: number) => Promise<boolean>
   ): Promise<boolean> {
     if (!isCurrentGeneration(generation)) return Promise.resolve(false);
-    if (this.activePromise && this.activeGeneration === generation && this.activeSinceVersion === sinceVersion) {
+    if (
+      this.activePromise !== undefined &&
+      this.activeGeneration === generation &&
+      this.activeSinceVersion === sinceVersion
+    ) {
       return this.activePromise;
     }
     const operation = this.invalidate();
