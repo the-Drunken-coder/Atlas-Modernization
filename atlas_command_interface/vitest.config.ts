@@ -27,9 +27,12 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary", "json"],
       include: ["src/**/*.{ts,tsx}"],
+      // Bootstrap entry point: `createRoot(...).render(...)` with no branching
+      // logic worth asserting, and it cannot run outside a real document.
+      exclude: ["src/app/main.tsx"],
       thresholds: {
-        statements: 88.88,
-        branches: 81.63,
+        statements: 89.6,
+        branches: 82.77,
         "src/ui/map/interaction/use-map-reticle-interaction.ts": { branches: 86.25 },
         "src/ui/map/interaction/use-map-reticle-effects.ts": { branches: 86.25 },
         "src/ui/map/interaction/use-map-reticle-pointer.ts": { branches: 86.25 }
