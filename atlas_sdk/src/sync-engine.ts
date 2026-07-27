@@ -1,6 +1,7 @@
 import { type CacheResourceOptions, ResourceCache } from "./cache.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport, ResponseValidator } from "./http.js";
+import { assertPaginationProgress, pathWithQuery, requireCursor } from "./pagination.js";
 import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
 import {
   covers,
@@ -45,7 +46,8 @@ type AutomaticReconnectOwnership = {
 
 export class SyncEngine {
   private readonly transport: HttpTransport;
-  private readonly feed: FeedConnectionManager;
+  /** @internal Test seam via sync-engine-test-internals.ts; not part of the public API. */
+  readonly feed: FeedConnectionManager;
   private readonly cache: ResourceCache;
   private readonly pollIntervalMs: number;
   private readonly lifecycle = new SyncLifecycle();
@@ -54,7 +56,8 @@ export class SyncEngine {
   private readonly reconnectTimer = new ReconnectTimer();
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
-  private syncRunning = false;
+  /** @internal Test seam via sync-engine-test-internals.ts; not part of the public API. */
+  syncRunning = false;
   private healthy = false;
   private degraded = false;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -221,7 +224,8 @@ export class SyncEngine {
     return this.changedSinceForGeneration(this.lifecycleGeneration, this.cache.lastVersion);
   }
 
-  private changedSinceForGeneration(generation: number, sinceVersion = this.cache.lastVersion): Promise<boolean> {
+  /** @internal Test seam via sync-engine-test-internals.ts; not part of the public API. */
+  changedSinceForGeneration(generation: number, sinceVersion = this.cache.lastVersion): Promise<boolean> {
     return this.recovery.start(
       generation,
       sinceVersion,
@@ -423,7 +427,8 @@ export class SyncEngine {
     return this.lifecycle.isCurrent(generation);
   }
 
-  private get lifecycleGeneration(): number {
+  /** @internal Test seam via sync-engine-test-internals.ts; not part of the public API. */
+  get lifecycleGeneration(): number {
     return this.lifecycle.currentGeneration();
   }
 
@@ -435,7 +440,8 @@ export class SyncEngine {
     return this.recovery.currentOperation();
   }
 
-  private get activeRecoveryPromise(): Promise<boolean> | undefined {
+  /** @internal Test seam via sync-engine-test-internals.ts; not part of the public API. */
+  get activeRecoveryPromise(): Promise<boolean> | undefined {
     return this.recovery.activeRecoveryPromise();
   }
 
@@ -639,7 +645,8 @@ export class SyncEngine {
     return this.subscriptions.some((sub) => covers(sub, filter));
   }
 
-  private markSynchronized(): void {
+  /** @internal Test seam via sync-engine-test-internals.ts; not part of the public API. */
+  markSynchronized(): void {
     const hasAutomaticUpdates = this.feed.connected || this.pollIntervalMs > 0;
     this.healthy = this.syncRunning && hasAutomaticUpdates;
     this.degraded = this.syncRunning && !hasAutomaticUpdates;
@@ -700,41 +707,11 @@ function assertExpectedResourceID<TType extends ResourceType>(
   }
 }
 
-function assertPaginationProgress(label: string, cursors: object, seen: Map<string, Set<string>>): void {
-  for (const [stream, cursor] of Object.entries(cursors)) {
-    let values = seen.get(stream);
-    if (!values) {
-      values = new Set<string>();
-      seen.set(stream, values);
-    }
-    if (values.has(cursor)) throw new Error(`Atlas ${label} pagination repeated ${stream}`);
-    values.add(cursor);
-  }
-}
-
-function requireCursor(cursor: string | undefined, name: string): string {
-  if (!cursor) {
-    throw new Error(`Atlas response set ${name.replace(/^next_/, "has_more_")} without ${name}`);
-  }
-  return cursor;
-}
-
 function requireFullDatasetVersion(version: number): number {
   if (!Number.isSafeInteger(version) || version < 0) {
     throw new Error("Atlas full-dataset response version watermark must be a non-negative safe integer");
   }
   return version;
-}
-
-function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      query.set(key, value);
-    }
-  }
-  const encoded = query.toString();
-  return encoded ? `${path}?${encoded}` : path;
 }
 
 function reportWatchCallbackError(error: unknown): void {

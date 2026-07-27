@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -18,6 +19,13 @@ type queuedStorageDeletion struct {
 }
 
 const storageDeletionClaimLease = 5 * time.Minute
+
+// maxObjectStorageDeletionAttempts caps storage deletion outbox retries. With
+// the exponential backoff (capped at 64 minutes) a row reaches this cap after
+// roughly 15 hours of failures; at that point it is dead-lettered — excluded
+// from claims and left in the table for operators to inspect or requeue
+// manually.
+const maxObjectStorageDeletionAttempts = 20
 
 const queueStorageDeletionSQL = `
 	INSERT INTO storage_deletion_outbox (bucket, path, object_id)
@@ -161,10 +169,11 @@ func (a *ObjectActions) claimQueuedStorageDeletions(ctx context.Context, limit i
 		SELECT id, bucket, path, attempts
 		FROM storage_deletion_outbox
 		WHERE next_attempt_at <= clock_timestamp()
+			AND attempts < $2
 		ORDER BY next_attempt_at, id
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
-	`, limit)
+	`, limit, maxObjectStorageDeletionAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("query storage deletion outbox: %w", err)
 	}
@@ -228,6 +237,21 @@ func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id i
 		return fmt.Errorf("clear storage deletion outbox row: %w", err)
 	}
 	return nil
+}
+
+// logDeadLetteredStorageDeletion reports rows whose recorded failures reached
+// maxObjectStorageDeletionAttempts; they are no longer claimed and remain in
+// storage_deletion_outbox for manual operator handling.
+func logDeadLetteredStorageDeletion(bucket, path string, attempts int, lastError string) {
+	if attempts < maxObjectStorageDeletionAttempts {
+		return
+	}
+	log.Error().
+		Str("bucket", bucket).
+		Str("path", path).
+		Int("attempts", attempts).
+		Str("last_error", lastError).
+		Msg("Storage deletion dead-lettered after reaching the retry cap")
 }
 
 // ReconcileStorageDeletions retries queued storage deletions and clears successful rows.

@@ -3,12 +3,19 @@ package actions
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 )
 
 const changeVersionLockKey = "atlas-core-change-version"
+
+// changeVersionLockWarnThreshold is the advisory-lock acquisition wait above
+// which a warning is logged. Every write serializes on this lock, so a wait
+// beyond it means writers are queuing behind another mutation.
+const changeVersionLockWarnThreshold = 250 * time.Millisecond
 
 const currentChangeSequenceSQL = `
 	SELECT CASE WHEN is_called THEN last_value ELSE 0 END
@@ -59,8 +66,19 @@ func beginChangeTx(ctx context.Context, pool *pgxpool.Pool, label string, sink C
 }
 
 func lockChangeVersion(ctx context.Context, tx pgx.Tx) error {
+	start := time.Now()
 	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, changeVersionLockKey)
+	warnOnSlowChangeVersionLock(time.Since(start))
 	return err
+}
+
+// warnOnSlowChangeVersionLock logs when advisory lock acquisition queued
+// behind another writer longer than changeVersionLockWarnThreshold.
+func warnOnSlowChangeVersionLock(wait time.Duration) {
+	if wait <= changeVersionLockWarnThreshold {
+		return
+	}
+	log.Warn().Dur("wait", wait).Msg("Change version advisory lock acquisition exceeded threshold; writers are queuing")
 }
 
 func readChangeSequence(ctx context.Context, tx pgx.Tx) (int64, error) {

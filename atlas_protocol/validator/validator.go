@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	schemaBundlePath     = "jsonschema/atlas.schema.json"
-	schemaBundleLocation = "atlas.schema.json"
+	schemaBundlePath = "jsonschema/atlas.schema.json"
 	// MaxGeometryPositions is the aggregate position limit for one Polygon.
 	MaxGeometryPositions = 10000
 )
@@ -336,10 +335,10 @@ func loadSchema() (*compiledSchema, error) {
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	compiler.AssertFormat()
-	if err := compiler.AddResource(schemaBundleLocation, bundle); err != nil {
+	if err := compiler.AddResource(protocolschema.BundleLocation, bundle); err != nil {
 		return nil, err
 	}
-	if _, err := compiler.Compile(schemaBundleLocation); err != nil {
+	if _, err := compiler.Compile(protocolschema.BundleLocation); err != nil {
 		return nil, err
 	}
 
@@ -354,7 +353,7 @@ func loadSchema() (*compiledSchema, error) {
 	sort.Strings(definitions)
 	schemas := make(map[string]*jsonschema.Schema, len(definitions))
 	for _, definition := range definitions {
-		schema, err := compiler.Compile(schemaDefinitionLocation(definition))
+		schema, err := compiler.Compile(protocolschema.DefinitionLocation(definition))
 		if err != nil {
 			return nil, fmt.Errorf("compile %s: %w", definition, err)
 		}
@@ -365,10 +364,6 @@ func loadSchema() (*compiledSchema, error) {
 		return nil, err
 	}
 	return &compiledSchema{schemas: schemas, componentFields: componentFields}, nil
-}
-
-func schemaDefinitionLocation(definition string) string {
-	return schemaBundleLocation + "#/$defs/" + definition
 }
 
 func schemaComponentFields(bundle map[string]any) (map[string]map[string]struct{}, error) {

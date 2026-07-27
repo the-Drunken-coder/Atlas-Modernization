@@ -75,9 +75,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	// Build JSON payload: merge Extra first so typed PublishedAt/UpdatedAt override duplicate keys.
 	jsonData := make(map[string]interface{})
 	if params.Components != nil {
-		jsonData[string(jsonBlobFieldComponents)] = params.Components
+		jsonData[string(models.BlobFieldComponents)] = params.Components
 	}
-	mergeBlobExtraFields(jsonData, params.Extra, entityPromotedBlobFields)
+	mergeBlobExtraFields(jsonData, params.Extra, models.EntityPromotedBlobFields)
 	if params.PublishedAt != nil {
 		jsonData["published_at"] = params.PublishedAt.Format(time.RFC3339)
 	}
@@ -329,7 +329,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		components:      params.Components,
 		mergeComponents: mergeEntityComponents,
 		extra:           params.Extra,
-		promotedFields:  entityPromotedBlobFields,
+		promotedFields:  models.EntityPromotedBlobFields,
 		validate:        ValidateEntityBlob,
 	})
 	if err != nil {

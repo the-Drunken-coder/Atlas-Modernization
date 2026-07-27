@@ -1,0 +1,5 @@
+{
+  "action": "unsubscribe",
+  "filter": "type",
+  "resource_type": "object"
+}

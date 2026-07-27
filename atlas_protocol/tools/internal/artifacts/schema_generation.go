@@ -10,13 +10,11 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	protocolschema "github.com/the-drunken-coder/atlas/atlas_protocol/schema"
 	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
 
-const (
-	schemaBundlePath     = "schema/jsonschema/atlas.schema.json"
-	schemaBundleLocation = "atlas.schema.json"
-)
+const schemaBundlePath = "schema/jsonschema/atlas.schema.json"
 
 type schemaBundle map[string]any
 
@@ -62,7 +60,7 @@ func ValidateExamples(root string) error {
 }
 
 func validateExampleSet(root string, compiler *jsonschema.Compiler, set exampleSet) error {
-	schema, err := compiler.Compile(schemaDefinitionLocation(set.definition))
+	schema, err := compiler.Compile(protocolschema.DefinitionLocation(set.definition))
 	if err != nil {
 		return fmt.Errorf("compile %s: %w", set.definition, err)
 	}
@@ -119,10 +117,10 @@ func schemaCompiler(bundle schemaBundle) (*jsonschema.Compiler, error) {
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	compiler.AssertFormat()
-	if err := compiler.AddResource(schemaBundleLocation, map[string]any(bundle)); err != nil {
+	if err := compiler.AddResource(protocolschema.BundleLocation, map[string]any(bundle)); err != nil {
 		return nil, fmt.Errorf("add schema bundle: %w", err)
 	}
-	if _, err := compiler.Compile(schemaBundleLocation); err != nil {
+	if _, err := compiler.Compile(protocolschema.BundleLocation); err != nil {
 		return nil, fmt.Errorf("compile schema bundle: %w", err)
 	}
 	return compiler, nil
@@ -162,10 +160,6 @@ func schemaDefs(bundle schemaBundle) (map[string]any, error) {
 		return nil, fmt.Errorf("%s has no $defs object", schemaBundlePath)
 	}
 	return defs, nil
-}
-
-func schemaDefinitionLocation(definition string) string {
-	return schemaBundleLocation + "#/$defs/" + definition
 }
 
 func displayPath(root, path string) string {

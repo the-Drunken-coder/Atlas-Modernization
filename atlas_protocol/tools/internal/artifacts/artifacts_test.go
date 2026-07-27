@@ -309,13 +309,29 @@ func TestRuntimeValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 			},
 			"required": []any{"widget_id"},
 		},
+		"GadgetRequest": {
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"widget": map[string]any{"$ref": "#/$defs/WidgetRequest"},
+			},
+			"required": []any{"widget"},
+		},
 	}}
 	source, err := runtimeValidatorSource(generator)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(source, "export function isWidgetRequest(value: unknown): value is WidgetRequest") {
-		t.Fatalf("runtimeValidatorSource did not discover WidgetRequest:\n%s", source)
+	for _, want := range []string{
+		"export function isWidgetRequest(value: unknown): value is WidgetRequest",
+		"export function isGadgetRequest(value: unknown): value is GadgetRequest",
+		// A $ref to a dynamically discovered request type must call the
+		// generated is* function instead of inlining the referenced schema.
+		`(atlasProtocolHasOwn(value, "widget") && isWidgetRequest(value["widget"]))`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("runtimeValidatorSource missing %q:\n%s", want, source)
+		}
 	}
 }
 

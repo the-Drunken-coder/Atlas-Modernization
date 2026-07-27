@@ -70,9 +70,9 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
 	if params.Components != nil {
-		jsonData[string(jsonBlobFieldComponents)] = params.Components
+		jsonData[string(models.BlobFieldComponents)] = params.Components
 	}
-	mergeBlobExtraFields(jsonData, params.Extra, taskPromotedBlobFields)
+	mergeBlobExtraFields(jsonData, params.Extra, models.TaskPromotedBlobFields)
 
 	jsonBytes, err := marshalValidatedJSONBlob(jsonData, ValidateTaskBlob)
 	if err != nil {
@@ -321,7 +321,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		mergeComponents: mergeTaskComponents,
 		extra:           params.Extra,
 		removeExtraKeys: params.RemoveExtraKeys,
-		promotedFields:  taskPromotedBlobFields,
+		promotedFields:  models.TaskPromotedBlobFields,
 		validate:        ValidateTaskBlob,
 	})
 	if err != nil {

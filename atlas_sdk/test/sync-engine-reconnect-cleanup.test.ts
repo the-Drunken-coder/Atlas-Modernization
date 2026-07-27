@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type ResourceType } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
+import { syncEngineTestInternals } from "../src/sync-engine-test-internals.js";
 import { type ResourceValue } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
@@ -177,7 +178,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       sync: "all",
       pollIntervalMs: 60_000
     });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
 
     try {
       const start = client.sync.start();

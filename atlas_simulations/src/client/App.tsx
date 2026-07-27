@@ -1,9 +1,10 @@
-import { Activity, CircleAlert, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AtlasTargetSummary, HealthResponse, ScenarioDescriptor, StartRunRequest } from "../shared/types.js";
-import { AssertionTable, LogList, ResourceTable, RunDetails, RunTable } from "./AppPanels.js";
+import type { AtlasTargetSummary, HealthResponse, ScenarioDescriptor } from "../shared/types.js";
+import { AssertionTable, LogList, ResourceTable, RunTable } from "./AppPanels.js";
+import { ControlsPanel, DeployedWarning, RunPanel, ScenarioList, TopBar } from "./AppSections.js";
 import { loadHealth, loadScenarios, loadTargets } from "./api.js";
-import { displayStatus, errorMessage, type FieldValues, submissionInputs } from "./run-state.js";
+import { errorMessage, type FieldValues } from "./run-state.js";
+import { startSelectedRun } from "./start-run.js";
 import { useRunSession } from "./use-run-session.js";
 
 export function App() {
@@ -108,34 +109,33 @@ export function App() {
     return trimmed ? trimmed : undefined;
   }
 
-  async function startSelectedRun() {
-    if (!selected || !selectedTarget || mutationPending || (selectedTarget.deployed && !deployedMutationConfirmed))
-      return;
-    const deployedStart = selectedTarget.deployed;
+  function handleStartRun() {
+    return startSelectedRun({
+      scenario: selected,
+      target: selectedTarget,
+      mutationPending,
+      deployedMutationConfirmed,
+      inputs,
+      jsonInput,
+      apiKeyForTarget,
+      clearError: runSession.clearError,
+      reportError: runSession.reportError,
+      start: runSession.start,
+      onDeployedStartSettled: () => setDeployedMutationConfirmed(false)
+    });
+  }
+
+  function handleRefreshHealth() {
     runSession.clearError();
-    try {
-      const normalizedJsonInput = selected.acceptsJson && jsonInput.trim() !== "" ? jsonInput : undefined;
-      if (normalizedJsonInput !== undefined) {
-        try {
-          JSON.parse(normalizedJsonInput);
-        } catch {
-          throw new Error("JSON input must be valid JSON");
-        }
-      }
-      const request: StartRunRequest = {
-        scenarioId: selected.id,
-        targetId: selectedTarget.id,
-        ...(selectedTarget.deployed ? { confirmDeployedMutation: true } : {}),
-        inputs: submissionInputs(selected, inputs),
-        ...(normalizedJsonInput ? { jsonInput: normalizedJsonInput } : {})
-      };
-      const apiKey = apiKeyForTarget(selectedTarget.id);
-      await runSession.start(request, apiKey);
-    } catch (errorValue) {
-      runSession.reportError(errorValue);
-    } finally {
-      if (deployedStart) setDeployedMutationConfirmed(false);
-    }
+    void refreshHealth().catch(runSession.reportError);
+  }
+
+  function handleInputChange(key: string, value: string | boolean) {
+    setInputs((current) => ({ ...current, [key]: value }));
+  }
+
+  function handleRecoveryApiKeyChange(runId: string, value: string) {
+    setRecoveryApiKeysByRunId((current) => ({ ...current, [runId]: value }));
   }
 
   function selectScenario(scenarioId: string) {
@@ -165,56 +165,16 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>Atlas Simulations</h1>
-          <div className="subtle">Atlas Core</div>
-        </div>
-        <div className="topbar-controls">
-          <label className="target-menu">
-            <span>API</span>
-            <select
-              value={selectedTargetId}
-              onChange={(event) => selectTarget(event.target.value)}
-              disabled={!targets.length}
-              title={selectedTarget?.baseUrl}
-            >
-              {targets.map((target) => (
-                <option key={target.id} value={target.id}>
-                  {target.label} ({target.baseUrl})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="api-key-field">
-            <span>API key</span>
-            <input
-              type="password"
-              value={selectedApiKey}
-              onChange={(event) => setSelectedApiKey(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Paste key"
-            />
-          </label>
-          <div className={`health ${health ? (health.ok ? "ok" : "bad") : ""}`} role="status" aria-live="polite">
-            <Activity size={18} aria-hidden="true" />
-            <span>{health ? (health.ok ? "Core reachable" : "Core offline") : "Checking"}</span>
-            <button
-              className="icon-button"
-              type="button"
-              title="Refresh Core status"
-              aria-label="Refresh Core status"
-              onClick={() => {
-                runSession.clearError();
-                void refreshHealth().catch(runSession.reportError);
-              }}
-            >
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <TopBar
+        targets={targets}
+        selectedTargetId={selectedTargetId}
+        selectedTarget={selectedTarget}
+        selectedApiKey={selectedApiKey}
+        health={health}
+        onSelectTarget={selectTarget}
+        onApiKeyChange={setSelectedApiKey}
+        onRefreshHealth={handleRefreshHealth}
+      />
 
       {error ? (
         <div className="error-banner" role="alert">
@@ -223,162 +183,36 @@ export function App() {
       ) : null}
 
       {selectedTarget?.deployed ? (
-        <section className="deployed-warning" role="alert" aria-labelledby="deployed-warning-title">
-          <CircleAlert size={24} aria-hidden="true" />
-          <div className="deployed-warning-content">
-            <strong id="deployed-warning-title">Deployed Core selected</strong>
-            <p>
-              Starting a simulation will mutate remote resources on <strong>{selectedTarget.label}</strong> at{" "}
-              <code>{selectedTarget.baseUrl}</code>. Cleanup is explicit.
-            </p>
-            <label className="deployed-confirmation">
-              <input
-                type="checkbox"
-                checked={deployedMutationConfirmed}
-                onChange={(event) => setDeployedMutationConfirmed(event.target.checked)}
-              />
-              <span>I understand this start will mutate the deployed Core.</span>
-            </label>
-          </div>
-        </section>
+        <DeployedWarning
+          target={selectedTarget}
+          confirmed={deployedMutationConfirmed}
+          onConfirmedChange={setDeployedMutationConfirmed}
+        />
       ) : null}
 
       <section className="workspace">
-        <aside className="panel scenario-panel">
-          <h2>Scenarios</h2>
-          <div className="scenario-list">
-            {scenarios.map((scenario) => (
-              <button
-                className={`scenario-option ${scenario.id === selectedId ? "selected" : ""}`}
-                type="button"
-                key={scenario.id}
-                aria-pressed={scenario.id === selectedId}
-                aria-label={`${scenario.name} ${scenario.summary}`}
-                onClick={() => selectScenario(scenario.id)}
-              >
-                <span>{scenario.name}</span>
-                <small>{scenario.summary}</small>
-              </button>
-            ))}
-          </div>
-        </aside>
+        <ScenarioList scenarios={scenarios} selectedId={selectedId} onSelect={selectScenario} />
 
-        <section className="panel controls-panel">
-          <div className="panel-head">
-            <h2>{selected?.name ?? "Scenario"}</h2>
-            <div className="actions">
-              <button
-                className={selectedTarget?.deployed ? "danger" : "primary"}
-                type="button"
-                title={selectedTarget?.deployed ? "Start run on deployed Core" : "Start run"}
-                onClick={() => void startSelectedRun()}
-                disabled={
-                  mutationPending ||
-                  !selected ||
-                  !selectedTarget ||
-                  (selectedTarget.deployed && !deployedMutationConfirmed)
-                }
-              >
-                <Play size={16} aria-hidden="true" />
-                {selectedTarget?.deployed ? "Start on deployed Core" : "Start"}
-              </button>
-              <button
-                type="button"
-                title="Stop run"
-                onClick={() => void runSession.stopCurrentRun()}
-                disabled={mutationPending || currentRun?.status !== "running"}
-              >
-                <Square size={16} aria-hidden="true" />
-                Stop
-              </button>
-              <button
-                type="button"
-                title="Cleanup run resources"
-                onClick={() => void cleanupCurrentRun()}
-                disabled={mutationPending || !currentRun || currentRun.status === "running" || currentRun.cleaned}
-              >
-                <Trash2 size={16} aria-hidden="true" />
-                Cleanup
-              </button>
-            </div>
-          </div>
+        <ControlsPanel
+          selected={selected}
+          selectedTarget={selectedTarget}
+          currentRun={currentRun}
+          mutationPending={mutationPending}
+          deployedMutationConfirmed={deployedMutationConfirmed}
+          inputs={inputs}
+          jsonInput={jsonInput}
+          onStart={() => void handleStartRun()}
+          onStop={() => void runSession.stopCurrentRun()}
+          onCleanup={() => void cleanupCurrentRun()}
+          onInputChange={handleInputChange}
+          onJsonInputChange={setJsonInput}
+        />
 
-          <div className="input-grid">
-            {selected?.inputFields.map((field) => (
-              <label key={field.key} className="field">
-                <span>{field.label}</span>
-                {field.type === "boolean" ? (
-                  <input
-                    type="checkbox"
-                    checked={Boolean(inputs[field.key])}
-                    onChange={(event) => setInputs((current) => ({ ...current, [field.key]: event.target.checked }))}
-                  />
-                ) : field.type === "number" ? (
-                  <input
-                    type="number"
-                    value={String(inputs[field.key] ?? "")}
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    onChange={(event) => {
-                      const rawValue = event.target.value;
-                      setInputs((current) => ({
-                        ...current,
-                        [field.key]: rawValue
-                      }));
-                    }}
-                  />
-                ) : field.type === "text" ? (
-                  <input
-                    type="text"
-                    value={String(inputs[field.key] ?? "")}
-                    onChange={(event) =>
-                      setInputs((current) => ({
-                        ...current,
-                        [field.key]: event.target.value
-                      }))
-                    }
-                  />
-                ) : null}
-              </label>
-            ))}
-          </div>
-
-          {selected?.acceptsJson ? (
-            <label className="json-field">
-              <span>JSON input</span>
-              <textarea value={jsonInput} onChange={(event) => setJsonInput(event.target.value)} spellCheck={false} />
-            </label>
-          ) : null}
-        </section>
-
-        <section className="panel run-panel">
-          <div className="panel-head">
-            <h2>Run</h2>
-            <span className={`status-pill ${displayStatus(currentRun)}`}>{displayStatus(currentRun)}</span>
-          </div>
-          <RunDetails run={currentRun} />
-          {currentRun?.status === "abandoned" && currentRun.target?.deployed ? (
-            <div className="recovery-key-field">
-              <label htmlFor="recovery-cleanup-api-key">Cleanup API key</label>
-              <input
-                id="recovery-cleanup-api-key"
-                type="password"
-                value={recoveryApiKeysByRunId[currentRun.id] ?? ""}
-                onChange={(event) =>
-                  setRecoveryApiKeysByRunId((current) => ({ ...current, [currentRun.id]: event.target.value }))
-                }
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Paste current key if required"
-                aria-describedby="recovery-cleanup-api-key-help"
-              />
-              <small id="recovery-cleanup-api-key-help">
-                Kept only in this browser tab and sent with explicit cleanup.
-              </small>
-            </div>
-          ) : null}
-        </section>
+        <RunPanel
+          currentRun={currentRun}
+          recoveryApiKeys={recoveryApiKeysByRunId}
+          onRecoveryApiKeyChange={handleRecoveryApiKeyChange}
+        />
       </section>
 
       <section className="lower-grid">

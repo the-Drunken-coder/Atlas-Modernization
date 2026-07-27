@@ -1,0 +1,6 @@
+{
+  "action": "subscribe",
+  "filter": "id",
+  "resource_type": "entity",
+  "id": "asset-1"
+}

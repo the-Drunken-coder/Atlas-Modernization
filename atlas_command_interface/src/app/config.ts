@@ -120,12 +120,78 @@ function configUrlBase(): string {
   return globalThis.location?.origin ?? CONFIG_URL_BASE;
 }
 
+type KeyedMapSource = {
+  id: string;
+  label: string;
+  key: string | undefined;
+  tiles: (key: string) => string;
+  attribution: string;
+};
+
+const MAPBOX_ATTRIBUTION = '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>';
+
+function keyedMapSource({ id, label, key, tiles, attribution }: KeyedMapSource): MapSourceConfig {
+  return key
+    ? rasterMapSource({ id, label, tiles: [tiles(key)], maxzoom: 22, attribution })
+    : unavailableMapSource({ id, label, unavailableReason: "missing key" });
+}
+
 function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
   const googleMapsApiKey = envValue(env.VITE_GOOGLE_MAPS_API_KEY);
   const googleMapsTileSession = envValue(env.googleMapsTileSession);
   const mapboxAccessToken = envValue(env.VITE_MAPBOX_ACCESS_TOKEN);
   const thunderforestApiKey = envValue(env.VITE_THUNDERFOREST_API_KEY);
   const maptilerApiKey = envValue(env.VITE_MAPTILER_API_KEY);
+
+  // Provider sources gated on a single API key; unavailable without it.
+  const keyedSources: KeyedMapSource[] = [
+    {
+      id: "mapbox-satellite",
+      label: "Mapbox Satellite",
+      key: mapboxAccessToken,
+      tiles: (key) => `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=${urlParam(key)}`,
+      attribution: MAPBOX_ATTRIBUTION
+    },
+    {
+      id: "mapbox-outdoors",
+      label: "Mapbox Outdoors",
+      key: mapboxAccessToken,
+      tiles: (key) =>
+        `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}?access_token=${urlParam(key)}`,
+      attribution: MAPBOX_ATTRIBUTION
+    },
+    {
+      id: "mapbox-dark",
+      label: "Mapbox Dark",
+      key: mapboxAccessToken,
+      tiles: (key) =>
+        `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=${urlParam(key)}`,
+      attribution: MAPBOX_ATTRIBUTION
+    },
+    {
+      id: "thunderforest-outdoors",
+      label: "Thunderforest Outdoors",
+      key: thunderforestApiKey,
+      tiles: (key) => `https://api.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${urlParam(key)}`,
+      attribution:
+        '&copy; <a href="https://www.thunderforest.com/">Thunderforest</a>, &copy; OpenStreetMap contributors'
+    },
+    {
+      id: "maptiler-satellite",
+      label: "MapTiler Satellite",
+      key: maptilerApiKey,
+      tiles: (key) => `https://api.maptiler.com/maps/satellite/256/{z}/{x}/{y}.jpg?key=${urlParam(key)}`,
+      attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>'
+    },
+    {
+      id: "maptiler-osm-dark",
+      label: "MapTiler OSM Dark",
+      key: maptilerApiKey,
+      tiles: (key) => `https://api.maptiler.com/maps/openstreetmap-dark/256/{z}/{x}/{y}.png?key=${urlParam(key)}`,
+      attribution:
+        '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>, &copy; OpenStreetMap contributors'
+    }
+  ];
 
   return [
     googleMapsApiKey && googleMapsTileSession
@@ -158,78 +224,7 @@ function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {
       attribution: "USGS The National Map",
       rasterContrast: 0.08
     }),
-    mapboxAccessToken
-      ? rasterMapSource({
-          id: "mapbox-satellite",
-          label: "Mapbox Satellite",
-          tiles: [
-            `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token=${urlParam(mapboxAccessToken)}`
-          ],
-          maxzoom: 22,
-          attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
-        })
-      : unavailableMapSource({ id: "mapbox-satellite", label: "Mapbox Satellite", unavailableReason: "missing key" }),
-    mapboxAccessToken
-      ? rasterMapSource({
-          id: "mapbox-outdoors",
-          label: "Mapbox Outdoors",
-          tiles: [
-            `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/tiles/256/{z}/{x}/{y}?access_token=${urlParam(mapboxAccessToken)}`
-          ],
-          maxzoom: 22,
-          attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
-        })
-      : unavailableMapSource({ id: "mapbox-outdoors", label: "Mapbox Outdoors", unavailableReason: "missing key" }),
-    mapboxAccessToken
-      ? rasterMapSource({
-          id: "mapbox-dark",
-          label: "Mapbox Dark",
-          tiles: [
-            `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}?access_token=${urlParam(mapboxAccessToken)}`
-          ],
-          maxzoom: 22,
-          attribution: '&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
-        })
-      : unavailableMapSource({ id: "mapbox-dark", label: "Mapbox Dark", unavailableReason: "missing key" }),
-    thunderforestApiKey
-      ? rasterMapSource({
-          id: "thunderforest-outdoors",
-          label: "Thunderforest Outdoors",
-          tiles: [`https://api.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${urlParam(thunderforestApiKey)}`],
-          maxzoom: 22,
-          attribution:
-            '&copy; <a href="https://www.thunderforest.com/">Thunderforest</a>, &copy; OpenStreetMap contributors'
-        })
-      : unavailableMapSource({
-          id: "thunderforest-outdoors",
-          label: "Thunderforest Outdoors",
-          unavailableReason: "missing key"
-        }),
-    maptilerApiKey
-      ? rasterMapSource({
-          id: "maptiler-satellite",
-          label: "MapTiler Satellite",
-          tiles: [`https://api.maptiler.com/maps/satellite/256/{z}/{x}/{y}.jpg?key=${urlParam(maptilerApiKey)}`],
-          maxzoom: 22,
-          attribution: '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>'
-        })
-      : unavailableMapSource({
-          id: "maptiler-satellite",
-          label: "MapTiler Satellite",
-          unavailableReason: "missing key"
-        }),
-    maptilerApiKey
-      ? rasterMapSource({
-          id: "maptiler-osm-dark",
-          label: "MapTiler OSM Dark",
-          tiles: [
-            `https://api.maptiler.com/maps/openstreetmap-dark/256/{z}/{x}/{y}.png?key=${urlParam(maptilerApiKey)}`
-          ],
-          maxzoom: 22,
-          attribution:
-            '&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a>, &copy; OpenStreetMap contributors'
-        })
-      : unavailableMapSource({ id: "maptiler-osm-dark", label: "MapTiler OSM Dark", unavailableReason: "missing key" }),
+    ...keyedSources.map(keyedMapSource),
     rasterMapSource({
       id: "openmaptiles-dark-matter",
       label: "OpenMapTiles Dark Matter",

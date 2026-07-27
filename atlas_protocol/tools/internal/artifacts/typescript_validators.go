@@ -80,13 +80,20 @@ func validatorFunctionName(typeName string) string {
 	return "is" + typeName
 }
 
-func hasRuntimeValidator(typeName string) bool {
+// hasRuntimeValidator reports whether runtimeValidatorSource will emit an is*
+// function for typeName: either a statically selected type or a dynamically
+// discovered *Request definition, mirroring runtimeValidatorNames.
+func (g *typeScriptGenerator) hasRuntimeValidator(typeName string) bool {
 	for _, name := range runtimeValidatorTypeNames {
 		if name == typeName {
 			return true
 		}
 	}
-	return false
+	if !strings.HasSuffix(typeName, "Request") {
+		return false
+	}
+	_, ok := g.defs[typeName]
+	return ok
 }
 
 func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr string, schema typeScriptSchema, seenRefs map[string]bool) (string, error) {
@@ -162,7 +169,7 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 
 func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, ref string, seenRefs map[string]bool) (string, error) {
 	name := typeNameFromRef(ref)
-	if !seenRefs[name] && hasRuntimeValidator(name) {
+	if !seenRefs[name] && g.hasRuntimeValidator(name) {
 		if _, ok := g.defs[name]; ok {
 			return validatorFunctionName(name) + "(" + valueExpr + ")", nil
 		}
@@ -182,7 +189,7 @@ func (g *typeScriptGenerator) runtimeRefValidatorExpression(valueExpr string, re
 	if seenRefs[name] {
 		return "", fmt.Errorf("cyclic runtime validator ref %q", ref)
 	}
-	nextSeenRefs := cloneSeenRefs(seenRefs)
+	nextSeenRefs := cloneBoolMap(seenRefs)
 	nextSeenRefs[name] = true
 	expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, schema, nextSeenRefs)
 	if err != nil {

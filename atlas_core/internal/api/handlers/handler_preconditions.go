@@ -84,5 +84,3 @@ func parseStrongETagVersion(token string) (int64, error) {
 	}
 	return version, nil
 }
-
-// parseNonNegativeIntQuery parses a query parameter as a non-negative integer; empty uses defaultVal.

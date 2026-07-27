@@ -57,15 +57,15 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
 	if params.SizeBytes != nil {
-		jsonData[string(objectBlobFieldSizeBytes)] = *params.SizeBytes
+		jsonData[string(models.ObjectBlobFieldSizeBytes)] = *params.SizeBytes
 	}
 	if params.UsageHints != nil {
-		jsonData[string(objectBlobFieldUsageHints)] = params.UsageHints
+		jsonData[string(models.ObjectBlobFieldUsageHints)] = params.UsageHints
 	}
 	if params.ReferencedBy != nil {
-		jsonData[string(objectBlobFieldReferencedBy)] = params.ReferencedBy
+		jsonData[string(models.ObjectBlobFieldReferencedBy)] = params.ReferencedBy
 	}
-	mergeBlobExtraFields(jsonData, params.Extra, objectPromotedBlobFields)
+	mergeBlobExtraFields(jsonData, params.Extra, models.ObjectPromotedBlobFields)
 	applyConfiguredObjectBucket(jsonData, a.storage)
 
 	jsonBytes, err := marshalValidatedJSONBlob(jsonData, ValidateObjectBlob)

@@ -1,0 +1,5 @@
+{
+  "action": "subscribe",
+  "filter": "type",
+  "resource_type": "task"
+}

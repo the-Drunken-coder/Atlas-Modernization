@@ -488,11 +488,11 @@ func boolStringSet(values []string) map[string]bool {
 }
 
 func goEnumStrings(values []goEnumValue) []string {
-	strings := make([]string, 0, len(values))
+	out := make([]string, 0, len(values))
 	for _, value := range values {
-		strings = append(strings, value.value)
+		out = append(out, value.value)
 	}
-	return strings
+	return out
 }
 
 func goConstantValue(enums map[string][]goEnumValue, name string) (string, bool) {

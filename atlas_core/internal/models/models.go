@@ -112,15 +112,81 @@ func (c *jsonBlobCache) decoded(raw json.RawMessage, recordField, recordID, labe
 	return deepCopyMap(c.data)
 }
 
-func jsonFieldsExcept(data map[string]interface{}, excluded ...string) map[string]interface{} {
+// BlobField is the JSON key of a stored blob field promoted to a typed column
+// or accessor. The per-resource promoted sets below are the single source of
+// truth for the blob contract: GetExtra excludes them from extras, and the
+// actions package's merge/patch pipeline refuses to write them as extras.
+type BlobField string
+
+// BlobFieldSet is the set of promoted blob fields for one resource kind.
+type BlobFieldSet []BlobField
+
+// Contains reports whether key names a promoted field in the set.
+func (s BlobFieldSet) Contains(key string) bool {
+	for _, field := range s {
+		if string(field) == key {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	BlobFieldComponents BlobField = "components"
+	BlobFieldVersion    BlobField = "version"
+
+	EntityBlobFieldType    BlobField = "type"
+	EntityBlobFieldSubtype BlobField = "subtype"
+	EntityBlobFieldAlias   BlobField = "alias"
+
+	TaskBlobFieldStatus   BlobField = "status"
+	TaskBlobFieldEntityID BlobField = "entity_id"
+
+	ObjectBlobFieldPath         BlobField = "path"
+	ObjectBlobFieldContentType  BlobField = "content_type"
+	ObjectBlobFieldType         BlobField = "type"
+	ObjectBlobFieldSizeBytes    BlobField = "size_bytes"
+	ObjectBlobFieldUsageHints   BlobField = "usage_hints"
+	ObjectBlobFieldBucket       BlobField = "bucket"
+	ObjectBlobFieldReferencedBy BlobField = "referenced_by"
+)
+
+var (
+	EntityPromotedBlobFields = BlobFieldSet{
+		EntityBlobFieldType,
+		EntityBlobFieldSubtype,
+		EntityBlobFieldAlias,
+		BlobFieldComponents,
+		BlobFieldVersion,
+	}
+	TaskPromotedBlobFields = BlobFieldSet{
+		BlobFieldComponents,
+		TaskBlobFieldStatus,
+		TaskBlobFieldEntityID,
+		BlobFieldVersion,
+	}
+	ObjectPromotedBlobFields = BlobFieldSet{
+		ObjectBlobFieldPath,
+		ObjectBlobFieldContentType,
+		ObjectBlobFieldType,
+		ObjectBlobFieldSizeBytes,
+		ObjectBlobFieldUsageHints,
+		ObjectBlobFieldBucket,
+		ObjectBlobFieldReferencedBy,
+		BlobFieldVersion,
+	}
+)
+
+func jsonFieldsExcept(data map[string]interface{}, promoted BlobFieldSet, excluded ...string) map[string]interface{} {
 	if data == nil {
 		return nil
 	}
 	out := make(map[string]interface{})
 	for k, v := range data {
-		if !slices.Contains(excluded, k) {
-			out[k] = v
+		if promoted.Contains(k) || slices.Contains(excluded, k) {
+			continue
 		}
+		out[k] = v
 	}
 	if len(out) == 0 {
 		return nil
@@ -165,9 +231,8 @@ func (e *Entity) GetComponents() map[string]interface{} {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (e *Entity) GetExtra() map[string]interface{} {
-	return jsonFieldsExcept(e.decodedJSON(),
-		"components", "type", "subtype", "alias",
-		"entity_id", "task_id", "object_id", "created_at", "updated_at", "version",
+	return jsonFieldsExcept(e.decodedJSON(), EntityPromotedBlobFields,
+		"entity_id", "task_id", "object_id", "created_at", "updated_at",
 	)
 }
 
@@ -207,9 +272,8 @@ func (t *Task) GetComponents() map[string]interface{} {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (t *Task) GetExtra() map[string]interface{} {
-	return jsonFieldsExcept(t.decodedJSON(),
-		"components", "status", "entity_id", "task_id",
-		"object_id", "created_at", "updated_at", "version",
+	return jsonFieldsExcept(t.decodedJSON(), TaskPromotedBlobFields,
+		"task_id", "object_id", "created_at", "updated_at",
 	)
 }
 
@@ -291,9 +355,8 @@ func (o *MediaObject) GetBucket() *string {
 
 // GetExtra returns extra fields from the JSON blob (excluding promoted fields).
 func (o *MediaObject) GetExtra() map[string]interface{} {
-	return jsonFieldsExcept(o.decodedJSON(),
-		"path", "content_type", "type", "size_bytes", "usage_hints", "bucket", "referenced_by",
-		"object_id", "created_at", "updated_at", "version",
+	return jsonFieldsExcept(o.decodedJSON(), ObjectPromotedBlobFields,
+		"object_id", "created_at", "updated_at",
 	)
 }
 

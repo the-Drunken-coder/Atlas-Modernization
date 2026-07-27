@@ -52,14 +52,6 @@ func cloneSchemaWithoutKey(schema typeScriptSchema, without string) typeScriptSc
 	return out
 }
 
-func cloneSeenRefs(seen map[string]bool) map[string]bool {
-	out := make(map[string]bool, len(seen)+1)
-	for key, value := range seen {
-		out[key] = value
-	}
-	return out
-}
-
 func typeNameFromRef(ref string) string {
 	const prefix = "#/$defs/"
 	if strings.HasPrefix(ref, prefix) {

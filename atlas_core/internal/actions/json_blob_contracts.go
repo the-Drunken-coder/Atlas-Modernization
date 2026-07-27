@@ -6,68 +6,10 @@ import (
 	"fmt"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
-
-type jsonBlobField string
 
 const maxStoredJSONBlobBytes = 1 * 1024 * 1024
-
-const (
-	jsonBlobFieldComponents jsonBlobField = "components"
-	jsonBlobFieldVersion    jsonBlobField = "version"
-
-	entityBlobFieldType    jsonBlobField = "type"
-	entityBlobFieldSubtype jsonBlobField = "subtype"
-	entityBlobFieldAlias   jsonBlobField = "alias"
-
-	taskBlobFieldStatus   jsonBlobField = "status"
-	taskBlobFieldEntityID jsonBlobField = "entity_id"
-
-	objectBlobFieldPath         jsonBlobField = "path"
-	objectBlobFieldContentType  jsonBlobField = "content_type"
-	objectBlobFieldType         jsonBlobField = "type"
-	objectBlobFieldSizeBytes    jsonBlobField = "size_bytes"
-	objectBlobFieldUsageHints   jsonBlobField = "usage_hints"
-	objectBlobFieldBucket       jsonBlobField = "bucket"
-	objectBlobFieldReferencedBy jsonBlobField = "referenced_by"
-)
-
-type jsonBlobFieldSet []jsonBlobField
-
-func (s jsonBlobFieldSet) contains(key string) bool {
-	for _, field := range s {
-		if string(field) == key {
-			return true
-		}
-	}
-	return false
-}
-
-var (
-	entityPromotedBlobFields = jsonBlobFieldSet{
-		entityBlobFieldType,
-		entityBlobFieldSubtype,
-		entityBlobFieldAlias,
-		jsonBlobFieldComponents,
-		jsonBlobFieldVersion,
-	}
-	taskPromotedBlobFields = jsonBlobFieldSet{
-		jsonBlobFieldComponents,
-		taskBlobFieldStatus,
-		taskBlobFieldEntityID,
-		jsonBlobFieldVersion,
-	}
-	objectPromotedBlobFields = jsonBlobFieldSet{
-		objectBlobFieldPath,
-		objectBlobFieldContentType,
-		objectBlobFieldType,
-		objectBlobFieldSizeBytes,
-		objectBlobFieldUsageHints,
-		objectBlobFieldBucket,
-		objectBlobFieldReferencedBy,
-		jsonBlobFieldVersion,
-	}
-)
 
 type jsonBlobDecodeMode int
 
@@ -86,7 +28,7 @@ type jsonBlobPatch struct {
 	mergeComponents func(map[string]interface{}, map[string]interface{}) error
 	extra           map[string]interface{}
 	removeExtraKeys []string
-	promotedFields  jsonBlobFieldSet
+	promotedFields  models.BlobFieldSet
 	apply           func(map[string]interface{}) error
 	validate        func(map[string]interface{}) error
 }
@@ -141,17 +83,17 @@ func decodeObjectJSONForPatch(raw json.RawMessage) (map[string]interface{}, erro
 	return decodeJSONBlobForPatch(raw, jsonBlobDecodeUseNumber)
 }
 
-func mergeBlobExtraFields(blob map[string]interface{}, extra map[string]interface{}, promoted jsonBlobFieldSet) {
+func mergeBlobExtraFields(blob map[string]interface{}, extra map[string]interface{}, promoted models.BlobFieldSet) {
 	for key, value := range extra {
-		if !promoted.contains(key) {
+		if !promoted.Contains(key) {
 			blob[key] = value
 		}
 	}
 }
 
-func removeBlobExtraKeys(blob map[string]interface{}, promoted jsonBlobFieldSet, keys ...string) {
+func removeBlobExtraKeys(blob map[string]interface{}, promoted models.BlobFieldSet, keys ...string) {
 	for _, key := range keys {
-		if promoted.contains(key) {
+		if promoted.Contains(key) {
 			continue
 		}
 		delete(blob, key)
@@ -175,7 +117,7 @@ func mergeBlobComponents(blob map[string]interface{}, components map[string]inte
 	}
 
 	existingComponents := make(map[string]interface{})
-	rawStored, hadStored := blob[string(jsonBlobFieldComponents)]
+	rawStored, hadStored := blob[string(models.BlobFieldComponents)]
 	if hadStored && rawStored != nil {
 		storedMap, ok := rawStored.(map[string]interface{})
 		if !ok {
@@ -190,7 +132,7 @@ func mergeBlobComponents(blob map[string]interface{}, components map[string]inte
 	if err := validate(existingComponents); err != nil {
 		return err
 	}
-	blob[string(jsonBlobFieldComponents)] = existingComponents
+	blob[string(models.BlobFieldComponents)] = existingComponents
 	return nil
 }
 

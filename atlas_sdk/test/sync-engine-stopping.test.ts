@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient } from "../src";
+import { syncEngineTestInternals } from "../src/sync-engine-test-internals.js";
 import { entity, FakeCore, metadata } from "./support/fake-core.js";
 
 describe("AtlasClient sync: stopping and lifecycle generations", () => {
@@ -84,14 +85,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     const restart = client.sync.start();
     await vi.waitFor(() => expect(secondStartRecoveryStarted).toBe(true));
 
-    const engine = (
-      client as unknown as {
-        engine: {
-          activeRecoveryPromise?: Promise<boolean>;
-          changedSinceForGeneration: (generation: number) => Promise<boolean>;
-        };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     const currentRecovery = engine.activeRecoveryPromise;
     expect(currentRecovery).toBeDefined();
     await engine.changedSinceForGeneration(1);
@@ -132,9 +126,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
       onEventError: () => void;
       onClose: () => void;
     };
-    const engine = (
-      client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
       feedOptions = options;
       await feedConnect;
@@ -162,7 +154,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
 
   it("clears a failed manual feed connection after a later successful retry", async () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect")
       .mockRejectedValueOnce(new Error("first feed failure"))
       .mockResolvedValueOnce(undefined);
@@ -182,7 +174,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
       releaseOlder = resolve;
     });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect")
       .mockReturnValueOnce(olderConnect)
       .mockRejectedValueOnce(new Error("newer feed failure"));
@@ -201,7 +193,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
       rejectOlder = reject;
     });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockReturnValueOnce(olderConnect).mockResolvedValueOnce(undefined);
 
     const older = client.connectFeed();
@@ -219,11 +211,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     });
     const fetchImpl = vi.fn<typeof fetch>();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (
-      client as unknown as {
-        engine: { activeRecoveryPromise?: Promise<boolean>; feed: { connect: () => Promise<void> } };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect")
       .mockReturnValueOnce(olderConnect)
       .mockRejectedValueOnce(new Error("newer feed failure"));
@@ -249,7 +237,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     });
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     const connect = vi
       .spyOn(engine.feed, "connect")
       .mockReturnValueOnce(staleConnect)
@@ -293,7 +281,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
       return core.fetch(url, init);
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     const connect = vi
       .spyOn(engine.feed, "connect")
       .mockResolvedValueOnce(undefined)
@@ -328,16 +316,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
       sync: false,
       pollIntervalMs: 0
     });
-    const engine = (
-      client as unknown as {
-        engine: {
-          activeRecoveryPromise?: Promise<boolean>;
-          changedSinceForGeneration: (generation: number) => Promise<boolean>;
-          lifecycleGeneration: number;
-          markSynchronized: () => void;
-        };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     const markSynchronized = vi.spyOn(engine, "markSynchronized");
     let statusAtStop!: ReturnType<typeof client.sync.status>;
     let snapshotAtStop!: ReturnType<typeof client.sync.snapshot>;

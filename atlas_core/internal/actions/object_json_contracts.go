@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -15,17 +16,17 @@ func objectJSONPatch(raw json.RawMessage, params UpdateObjectParams, storage obj
 		decodeError:     "existing object json is corrupt or invalid",
 		extra:           params.Extra,
 		removeExtraKeys: params.RemoveExtraKeys,
-		promotedFields:  objectPromotedBlobFields,
+		promotedFields:  models.ObjectPromotedBlobFields,
 		validate:        ValidateObjectBlob,
 		apply: func(blob map[string]interface{}) error {
 			if params.SizeBytes != nil {
-				blob[string(objectBlobFieldSizeBytes)] = *params.SizeBytes
+				blob[string(models.ObjectBlobFieldSizeBytes)] = *params.SizeBytes
 			}
 			if params.UsageHints != nil {
-				blob[string(objectBlobFieldUsageHints)] = params.UsageHints
+				blob[string(models.ObjectBlobFieldUsageHints)] = params.UsageHints
 			}
 			if params.ReferencedBy != nil {
-				blob[string(objectBlobFieldReferencedBy)] = params.ReferencedBy
+				blob[string(models.ObjectBlobFieldReferencedBy)] = params.ReferencedBy
 			}
 			applyConfiguredObjectBucket(blob, storage)
 			return nil
@@ -35,15 +36,15 @@ func objectJSONPatch(raw json.RawMessage, params UpdateObjectParams, storage obj
 
 func applyConfiguredObjectBucket(blob map[string]interface{}, storageClient objectStorage) {
 	if storageClient == nil {
-		delete(blob, string(objectBlobFieldBucket))
+		delete(blob, string(models.ObjectBlobFieldBucket))
 		return
 	}
 	bucket := strings.TrimSpace(storageClient.Bucket())
 	if bucket == "" {
-		delete(blob, string(objectBlobFieldBucket))
+		delete(blob, string(models.ObjectBlobFieldBucket))
 		return
 	}
-	blob[string(objectBlobFieldBucket)] = bucket
+	blob[string(models.ObjectBlobFieldBucket)] = bucket
 }
 
 // ValidateObjectBlob validates storage-facing object metadata.

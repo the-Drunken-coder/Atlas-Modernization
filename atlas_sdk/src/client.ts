@@ -1,6 +1,7 @@
 import { ObjectContentCache, ResourceCache } from "./cache.js";
 import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport } from "./http.js";
+import { pathWithQuery } from "./pagination.js";
 import type {
   EntityCreateRequest,
   EntityResource,
@@ -13,6 +14,7 @@ import type {
   TaskUpdateRequest
 } from "./protocol.js";
 import { SyncEngine } from "./sync-engine.js";
+import { registerSyncEngineForTests } from "./sync-engine-test-internals.js";
 import type {
   AtlasSubscription,
   ChangedSinceQueryOptions,
@@ -246,6 +248,7 @@ export class AtlasClient {
       pollIntervalMs: options.pollIntervalMs ?? 120_000,
       initialSync: options.sync
     });
+    registerSyncEngineForTests(this, this.engine);
   }
 
   async handshake(): Promise<void> {
@@ -362,17 +365,6 @@ function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQuery
     deleted_task_cursor: options?.deletedTaskCursor,
     deleted_object_cursor: options?.deletedObjectCursor
   });
-}
-
-function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      query.set(key, value);
-    }
-  }
-  const encoded = query.toString();
-  return encoded ? `${path}?${encoded}` : path;
 }
 
 function encodeTimestamp(value: string | Date | undefined): string | undefined {

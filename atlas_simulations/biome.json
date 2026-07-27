@@ -18,22 +18,5 @@
         "noMisusedPromises": "error"
       }
     }
-  },
-  "overrides": [
-    {
-      "includes": ["src/client/App.tsx"],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 15
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }

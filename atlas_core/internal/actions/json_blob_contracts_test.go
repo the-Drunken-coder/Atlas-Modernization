@@ -5,27 +5,29 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
 func TestMergeBlobExtraFieldsFiltersPromotedFields(t *testing.T) {
 	blob := map[string]interface{}{
-		string(taskBlobFieldStatus): "pending",
-		"priority":                  "low",
+		string(models.TaskBlobFieldStatus): "pending",
+		"priority":                         "low",
 	}
 	extra := map[string]interface{}{
-		string(taskBlobFieldStatus):   "completed",
-		string(taskBlobFieldEntityID): "entity-1",
-		string(jsonBlobFieldVersion):  float64(99),
-		"priority":                    "high",
-		"operator_note":               "hold position",
+		string(models.TaskBlobFieldStatus):   "completed",
+		string(models.TaskBlobFieldEntityID): "entity-1",
+		string(models.BlobFieldVersion):      float64(99),
+		"priority":                           "high",
+		"operator_note":                      "hold position",
 	}
 
-	mergeBlobExtraFields(blob, extra, taskPromotedBlobFields)
+	mergeBlobExtraFields(blob, extra, models.TaskPromotedBlobFields)
 
 	want := map[string]interface{}{
-		string(taskBlobFieldStatus): "pending",
-		"priority":                  "high",
-		"operator_note":             "hold position",
+		string(models.TaskBlobFieldStatus): "pending",
+		"priority":                         "high",
+		"operator_note":                    "hold position",
 	}
 	if !reflect.DeepEqual(blob, want) {
 		t.Fatalf("merged blob = %#v, want %#v", blob, want)
@@ -60,31 +62,31 @@ func TestPatchValidatedJSONBlobRejectsOversizedMergedFinalState(t *testing.T) {
 
 func TestRemoveBlobExtraKeysKeepsPromotedFields(t *testing.T) {
 	blob := map[string]interface{}{
-		string(jsonBlobFieldComponents): map[string]interface{}{},
-		string(taskBlobFieldStatus):     "pending",
-		string(taskBlobFieldEntityID):   "entity-1",
-		string(jsonBlobFieldVersion):    float64(12),
-		"progress":                      float64(20),
-		"status_message":                "legacy",
-		"result":                        map[string]interface{}{"ok": true},
+		string(models.BlobFieldComponents):   map[string]interface{}{},
+		string(models.TaskBlobFieldStatus):   "pending",
+		string(models.TaskBlobFieldEntityID): "entity-1",
+		string(models.BlobFieldVersion):      float64(12),
+		"progress":                           float64(20),
+		"status_message":                     "legacy",
+		"result":                             map[string]interface{}{"ok": true},
 	}
 
 	removeBlobExtraKeys(
 		blob,
-		taskPromotedBlobFields,
-		string(jsonBlobFieldComponents),
-		string(taskBlobFieldStatus),
-		string(taskBlobFieldEntityID),
-		string(jsonBlobFieldVersion),
+		models.TaskPromotedBlobFields,
+		string(models.BlobFieldComponents),
+		string(models.TaskBlobFieldStatus),
+		string(models.TaskBlobFieldEntityID),
+		string(models.BlobFieldVersion),
 		"progress",
 		"status_message",
 	)
 
 	for _, key := range []string{
-		string(jsonBlobFieldComponents),
-		string(taskBlobFieldStatus),
-		string(taskBlobFieldEntityID),
-		string(jsonBlobFieldVersion),
+		string(models.BlobFieldComponents),
+		string(models.TaskBlobFieldStatus),
+		string(models.TaskBlobFieldEntityID),
+		string(models.BlobFieldVersion),
 		"result",
 	} {
 		if _, ok := blob[key]; !ok {
@@ -122,7 +124,7 @@ func TestObjectJSONPatchReplacesSelectedExtraFields(t *testing.T) {
 
 func TestMergeEntityComponentsUsesSharedStoredTypeGuard(t *testing.T) {
 	blob := map[string]interface{}{
-		string(jsonBlobFieldComponents): "corrupt",
+		string(models.BlobFieldComponents): "corrupt",
 	}
 	incoming := map[string]interface{}{
 		"status": map[string]interface{}{"value": "active"},
@@ -143,7 +145,7 @@ func TestMergeEntityComponentsUsesSharedStoredTypeGuard(t *testing.T) {
 
 func TestMergeEntityComponentsDeepMergesNestedMapsAndReplacesOtherValues(t *testing.T) {
 	blob := map[string]interface{}{
-		string(jsonBlobFieldComponents): map[string]interface{}{
+		string(models.BlobFieldComponents): map[string]interface{}{
 			"custom_data": map[string]interface{}{
 				"keep":           "stored",
 				"replace_scalar": "stored",
@@ -170,7 +172,7 @@ func TestMergeEntityComponentsDeepMergesNestedMapsAndReplacesOtherValues(t *test
 		t.Fatalf("mergeEntityComponents: %v", err)
 	}
 
-	components := blob[string(jsonBlobFieldComponents)].(map[string]interface{})
+	components := blob[string(models.BlobFieldComponents)].(map[string]interface{})
 	got := components["custom_data"]
 	want := map[string]interface{}{
 		"keep":           "stored",
@@ -196,9 +198,9 @@ func TestDecodeObjectJSONForPatchStillPreservesNumbers(t *testing.T) {
 		t.Fatalf("decodeJSONBlobForPatch: %v", err)
 	}
 
-	size, ok := blob[string(objectBlobFieldSizeBytes)].(json.Number)
+	size, ok := blob[string(models.ObjectBlobFieldSizeBytes)].(json.Number)
 	if !ok {
-		t.Fatalf("size_bytes type = %T, want json.Number", blob[string(objectBlobFieldSizeBytes)])
+		t.Fatalf("size_bytes type = %T, want json.Number", blob[string(models.ObjectBlobFieldSizeBytes)])
 	}
 	got, err := size.Int64()
 	if err != nil {

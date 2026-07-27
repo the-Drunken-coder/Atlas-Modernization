@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent } from "../src";
+import { syncEngineTestInternals } from "../src/sync-engine-test-internals.js";
 import { entity, FakeCore, metadata } from "./support/fake-core.js";
 
 describe("AtlasClient sync: feed connections and recovery handoff", () => {
@@ -13,7 +14,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     const fetchImpl: typeof fetch = (url, init) =>
       new URL(String(url)).pathname === "/queries/changed-since" ? pendingRecovery : core.fetch(url, init);
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockResolvedValue(undefined);
 
     const recovery = client.changedSince();
@@ -51,7 +52,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     const fetchImpl: typeof fetch = (url, init) =>
       new URL(String(url)).pathname === "/queries/changed-since" ? pendingRecovery : core.fetch(url, init);
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockRejectedValue(new Error("connect-only failure"));
 
     const recovery = client.changedSince();
@@ -92,9 +93,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
       throw new Error(`unexpected request: ${String(url)}`);
     });
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (
-      client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
       feedOptions.push(options);
     });
@@ -136,9 +135,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
     type FeedConnectOptions = { onEventError: () => void };
     let feedOptions!: FeedConnectOptions;
-    const engine = (
-      client as unknown as { engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } } }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
       feedOptions = options;
     });
@@ -158,11 +155,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     type FeedConnectOptions = { onEvent: (event: FeedEvent) => void | Promise<void>; onClose: () => void };
     let feedOptions!: FeedConnectOptions;
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
-    const engine = (
-      client as unknown as {
-        engine: { feed: { connect: (options: FeedConnectOptions) => Promise<void> } };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
       feedOptions = options;
     });
@@ -185,11 +178,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     type FeedConnectOptions = { onEvent: (event: FeedEvent) => void | Promise<void>; onEventError: () => void };
     let feedOptions!: FeedConnectOptions;
     const client = new AtlasClient({ baseUrl: "http://atlas.test", sync: false, pollIntervalMs: 0 });
-    const engine = (
-      client as unknown as {
-        engine: { syncRunning: boolean; feed: { connect: (options: FeedConnectOptions) => Promise<void> } };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
     vi.spyOn(engine.feed, "connect").mockImplementation(async (options) => {
       feedOptions = options;
     });
@@ -623,14 +612,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
       sync: "all",
       pollIntervalMs: 0
     });
-    const engine = (
-      client as unknown as {
-        engine: {
-          lifecycleGeneration: number;
-          changedSinceForGeneration: (generation: number, sinceVersion: number) => Promise<boolean>;
-        };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
 
     let unsubscribe: (() => void) | undefined;
     try {
@@ -839,14 +821,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
       return core.fetch(String(url), init);
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (
-      client as unknown as {
-        engine: {
-          lifecycleGeneration: number;
-          changedSinceForGeneration: (generation: number, sinceVersion: number) => Promise<boolean>;
-        };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
 
     await expect(client.changedSince()).rejects.toThrow("initial recovery failed");
     const older = client.changedSince();
@@ -879,14 +854,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
       return core.fetch(String(url), init);
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
-    const engine = (
-      client as unknown as {
-        engine: {
-          lifecycleGeneration: number;
-          changedSinceForGeneration: (generation: number, sinceVersion: number) => Promise<boolean>;
-        };
-      }
-    ).engine;
+    const engine = syncEngineTestInternals(client);
 
     await client.changedSince();
     const older = client.changedSince();
