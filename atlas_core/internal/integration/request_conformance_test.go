@@ -22,9 +22,6 @@ func TestRequestValidationConformance(t *testing.T) {
 	prefix := TestArtifactPrefix()
 
 	for index, testCase := range cases {
-		if testCase.Definition != "EntityCreateRequest" && testCase.Definition != "EntityUpdateRequest" {
-			continue
-		}
 		t.Run(testCase.Name, func(t *testing.T) {
 			var payload map[string]interface{}
 			if err := json.Unmarshal(testCase.Value, &payload); err != nil {
@@ -39,15 +36,30 @@ func TestRequestValidationConformance(t *testing.T) {
 				response, requestErr = client.Post(ctx, "/entities", payload)
 			case "EntityUpdateRequest":
 				entityID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
-				created, createErr := client.Post(ctx, "/entities", map[string]interface{}{
+				requireConformanceSetup(t, client, ctx, "/entities", map[string]interface{}{
 					"entity_id": entityID, "entity_type": "geofeature",
-				})
-				if createErr != nil {
-					t.Fatal(createErr)
-				}
-				requireHTTPStatus(t, created, http.StatusCreated, "create entity for conformance update")
-				drainClose(created)
+				}, "create entity for conformance update")
 				response, requestErr = client.Patch(ctx, "/entities/"+entityID, payload)
+			case "TaskCreateRequest":
+				payload["task_id"] = fmt.Sprintf("%s-conformance-%d", prefix, index)
+				response, requestErr = client.Post(ctx, "/tasks", payload)
+			case "TaskUpdateRequest":
+				taskID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
+				requireConformanceSetup(t, client, ctx, "/tasks", map[string]interface{}{
+					"task_id": taskID,
+				}, "create task for conformance update")
+				response, requestErr = client.Patch(ctx, "/tasks/"+taskID, payload)
+			case "ObjectCreateRequest":
+				payload["object_id"] = fmt.Sprintf("%s-conformance-%d", prefix, index)
+				response, requestErr = client.Post(ctx, "/objects", payload)
+			case "ObjectUpdateRequest":
+				objectID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
+				requireConformanceSetup(t, client, ctx, "/objects", map[string]interface{}{
+					"object_id": objectID,
+				}, "create object for conformance update")
+				response, requestErr = client.Patch(ctx, "/objects/"+objectID, payload)
+			default:
+				t.Fatalf("unsupported request definition %q", testCase.Definition)
 			}
 			if requestErr != nil {
 				t.Fatal(requestErr)
@@ -56,11 +68,23 @@ func TestRequestValidationConformance(t *testing.T) {
 			want := http.StatusBadRequest
 			if testCase.Valid {
 				want = http.StatusCreated
-				if testCase.Definition == "EntityUpdateRequest" {
+				if testCase.Definition == "EntityUpdateRequest" ||
+					testCase.Definition == "TaskUpdateRequest" ||
+					testCase.Definition == "ObjectUpdateRequest" {
 					want = http.StatusOK
 				}
 			}
 			requireHTTPStatus(t, response, want, testCase.Name)
 		})
 	}
+}
+
+func requireConformanceSetup(t *testing.T, client *APIClient, ctx context.Context, path string, payload map[string]interface{}, operation string) {
+	t.Helper()
+	response, err := client.Post(ctx, path, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireHTTPStatus(t, response, http.StatusCreated, operation)
+	drainClose(response)
 }
