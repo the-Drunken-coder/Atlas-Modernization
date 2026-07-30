@@ -4,52 +4,23 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
 func protocolRevision(root string) (string, error) {
-	var files []string
-	dir := filepath.Join(root, "schema", "jsonschema")
-	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if filepath.Ext(path) != ".json" {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	})
+	path := filepath.Join(root, filepath.FromSlash(schemaBundlePath))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(files)
-	if len(files) == 0 {
-		return "", fmt.Errorf("no JSON Schema protocol source files found")
-	}
 
 	hash := sha256.New()
-	for _, path := range files {
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return "", err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
-		}
-		hash.Write([]byte(filepath.ToSlash(rel)))
-		hash.Write([]byte{0})
-		hash.Write(data)
-		hash.Write([]byte{0})
-	}
+	hash.Write([]byte(schemaBundlePath))
+	hash.Write([]byte{0})
+	hash.Write(data)
+	hash.Write([]byte{0})
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 

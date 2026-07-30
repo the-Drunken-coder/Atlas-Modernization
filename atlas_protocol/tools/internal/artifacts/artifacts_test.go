@@ -68,6 +68,27 @@ func writeTestSchemaBundle(t *testing.T, root string) {
 	}
 }
 
+func TestProtocolRevisionIgnoresUnloadedJSONFiles(t *testing.T) {
+	root := t.TempDir()
+	writeTestSchemaBundle(t, root)
+
+	want, err := protocolRevision(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(root, "schema", "jsonschema", "unrelated.json")
+	if err := os.WriteFile(unrelated, []byte(`{"not":"part of the protocol"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := protocolRevision(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("protocol revision changed for unloaded JSON: got %q, want %q", got, want)
+	}
+}
+
 func TestTypeScriptGeneratorAddDefAllowsIdenticalSchema(t *testing.T) {
 	schema := typeScriptSchema{"type": "object"}
 	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}
