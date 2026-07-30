@@ -1,13 +1,15 @@
-# SDK sync engine uses error message strings as control flow
+# SDK sync engine uses error message strings as status control flow
 
-1. **Time & Date:** 2026-07-18T08:29:35-04:00
-2. **Name:** SDK sync engine uses error message strings as control flow
-3. **Issue:** `SyncEngine` stores human-readable error text in `lastError` and then branches on exact string equality and prefix matches to decide reconnect/recovery behavior, so rewording a message silently changes engine logic.
-4. **Severity:** S4 (Minor)
-5. **Location:** `atlas_sdk/src/sync-engine.ts` (lines 173, 190, 247, 530)
-6. **Expected:** The engine tracks a small typed error kind for lifecycle decisions and keeps human-readable error text out of control flow.
-7. **Actual:** Branches include `this.lastError === "Atlas Core feed connection failed"`, `this.lastError !== "Atlas Core recovery request failed"`, and `this.lastError?.startsWith("Atlas Core feed ")`. The message doubles as the machine-readable state discriminator.
-8. **Reproduction:**
-   1. Run `rg -n 'lastError ===|lastError !==|lastError\?\.startsWith' atlas_sdk/src/`
-   2. Observe four hits in `sync-engine.ts` at lines 173, 190, 247, and 530, each gating error preservation or clearing on message text.
-9. **Notes:** Verified against `main` at `2d6106e` on 2026-07-25. Add a private typed error kind alongside the existing public message, switch these four branches to the kind, and preserve the current messages and lifecycle behavior. Cover the change with `test/sync-engine-feed-recovery.test.ts` and `test/sync-engine-reconnect-cleanup.test.ts`.
+1. **Time & Date:** 2026-07-30T08:33:00Z (audit revalidation; originally recorded 2026-07-18)
+2. **Original Audit Finding:** 31
+3. **Validation Status:** Partially confirmed against `main` at `2426bb6`. Human-readable strings do control error preservation and clearing, but the audited claim overstates the consequence: none of the four comparisons decides whether connection, reconnect, or recovery work runs.
+4. **Name:** SDK sync engine uses error message strings as status control flow
+5. **Affected Surface & Severity:** Atlas SDK `SyncStatus.error` accuracy during feed/recovery transitions; S4 (Minor). Rewording can leave stale errors visible or replace the wrong error, but current evidence does not show it suppressing recovery itself.
+6. **Current vs. Expected:** `SyncEngine` stores only `lastError: string` and later interprets exact text or a prefix to decide which error to clear or preserve. Display wording should be independent from a small structured error discriminator, while reconnect and recovery scheduling should retain current behavior.
+7. **Concrete Source Evidence:** All machine comparisons are in `atlas_sdk/src/sync-engine.ts`: lines 173-175 clear a prior feed-connect failure after a successful connection; lines 187-195 preserve an exact recovery-request failure instead of overwriting it with a feed-event failure; lines 244-251 clear an exact recovery-request failure after successful recovery; and lines 527-532 clear any `"Atlas Core feed "` error after connect-and-recover succeeds. The corresponding assignments are at lines 106, 190, 202, 210, and 251. Reconnect/recovery actions are scheduled or awaited independently at lines 181-217, 224-258, 501-541, and 544-565.
+8. **Reproduction / Static Proof:** `rg -n 'lastError ===|lastError !==|lastError\?\.startsWith' atlas_sdk/src/sync-engine.ts` returns exactly four comparisons at lines 173, 190, 247, and 530. Rewording only the assignment at line 210 would stop line 173 from clearing a successful reconnection's error; rewording only line 251 would let line 190 overwrite the recovery error and stop line 247 from clearing it. Conversely, tracing each branch shows that it mutates only `lastError`; feed connection, recovery invalidation, health flags, and reconnect scheduling occur outside the string predicates.
+9. **Root Cause:** One human-readable field serves both as the public status message and as the private error category.
+10. **Simplest Correct Proposed Solution:** Store one private `{ kind, message }` value (or equivalent string-union kind beside the message), branch only on `kind`, and continue exposing only the existing message through `SyncStatus.error`. Preserve all current wording and transition ordering.
+11. **Acceptance Criteria / Regression-Test Plan:** Extend `atlas_sdk/test/sync-engine-feed-recovery.test.ts` and `sync-engine-reconnect-cleanup.test.ts` to prove: successful feed connect clears only `feed_connection_failed`; feed-event failure does not overwrite `recovery_request_failed`; successful recovery clears only the recovery kind; and successful reconnect/recovery clears all feed-related kinds. Add a test-only wording change or construct the state by kind so message text cannot affect those outcomes.
+12. **Scope / Non-Goals:** Do not change the public `SyncStatus` shape, redesign reconnect/recovery lifecycle state, or introduce a general error hierarchy. Close the stronger claim that wording currently changes whether recovery runs unless a separate behavioral reproduction is found.
+13. **Overlaps:** Finding 4 also touches `SyncEngine` but concerns delete event ordering. Finding 5 concerns sanitizing error content before UI/terminal display; a structured kind does not replace sanitization.
