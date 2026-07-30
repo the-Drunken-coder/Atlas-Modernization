@@ -94,7 +94,7 @@ Object `referenced_by` entries are normalized to the protocol `ObjectReference` 
 
 ## Types: generated, not hand-written
 
-Resource types come from `atlas_protocol` generated artifacts: the SDK compiles the generated TypeScript source into the package and imports it through ESM `.js` specifiers, rather than copying or hand-writing resource shapes. Protocol changes propagate by regeneration and the SDK stays in lockstep with Core. The generated `ATLAS_PROTOCOL_REVISION` constant is the SDK/API mismatch token (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
+Resource types come from `atlas_protocol` generated artifacts: the SDK compiles the generated TypeScript source into the package and imports it through ESM `.js` specifiers, rather than copying or hand-writing resource shapes. Protocol changes propagate by regeneration, while the generated `ATLAS_PROTOCOL_REVISION` constant detects SDK/API mismatches across independently built or deployed versions (see the [protocol doc](../atlas-protocol/README.md)). SDK-specific types (client config, sync status, event/debug shapes) are authored in the SDK.
 
 The TypeScript compiler intentionally uses the repository root as `rootDir` so the built package contains both `dist/atlas_sdk/src/*` and the generated `dist/atlas_protocol/generated/typescript/*` module that the SDK imports. Package metadata points the root export at the built SDK entrypoint, exposes `@the-drunken-coder/atlas-sdk/admin` for browser admin/session and managed API-key calls, and installs the `atlas` CLI binary. The command interface and simulations declare the SDK through the root npm workspace and import those same public exports; no source alias bypasses the package boundary.
 
@@ -104,7 +104,7 @@ The SDK ships a CLI (`atlas entities get <id>`, `atlas tasks create <json>`, JSO
 
 The language-neutral contract remains Atlas Protocol plus the change-feed consumption rules. A future Python SDK should be a port of that contract, not a new design.
 
-Install JavaScript dependencies once from the repository root with `npm ci`. Focused SDK commands are `npm run build:sdk`, `npm run lint --workspace @the-drunken-coder/atlas-sdk`, `npm run format:check --workspace @the-drunken-coder/atlas-sdk -- --since=origin/main`, `npm test --workspace @the-drunken-coder/atlas-sdk`, and `npm run test:package --workspace @the-drunken-coder/atlas-sdk`. The package smoke starts with deliberately stale `dist/` output, creates a clean tarball, installs it into a temporary consumer, compiles its public declarations, and exercises the root, admin, CLI, and generated protocol paths. CI also runs `npm audit --audit-level=high` against the complete workspace dependency tree.
+Install JavaScript dependencies once from the repository root with `npm ci`. Focused SDK commands are `npm run build:sdk`, `npm run lint --workspace @the-drunken-coder/atlas-sdk`, `npm run format:check --workspace @the-drunken-coder/atlas-sdk`, `npm test --workspace @the-drunken-coder/atlas-sdk`, and `npm run test:package --workspace @the-drunken-coder/atlas-sdk`. The package smoke starts with deliberately stale `dist/` output, creates a clean tarball, installs it into a temporary consumer, compiles its public declarations, and exercises the root, admin, CLI, and generated protocol paths. CI also runs `npm audit --audit-level=high` against the complete workspace dependency tree.
 
 ## Auth
 

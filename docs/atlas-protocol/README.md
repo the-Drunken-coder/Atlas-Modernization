@@ -6,11 +6,13 @@ Atlas Protocol is the reusable contract layer for Atlas data. The buildable modu
 
 - JSON Schema in `atlas_protocol/schema/jsonschema/atlas.schema.json` is the source of truth.
 - Checked-in examples validate against the JSON Schema source.
-- Authored, schema-parity-checked Go types plus generated Go validators, TypeScript types, targeted TypeScript request validators, and a protocol revision stamp live under `atlas_protocol/generated/`.
-- Atlas Core consumes the reusable protocol package; it does not own or duplicate the protocol source.
-- The Atlas SDK imports generated TypeScript directly so SDK, Core, and protocol artifacts move in lockstep.
+- Authored, schema-parity-checked Go types plus generated Go validators, TypeScript types and runtime predicates, and a protocol revision stamp live under `atlas_protocol/generated/`.
+- Atlas Core consumes protocol validators and types at shared contract boundaries while retaining Core-owned HTTP request types and service behavior.
+- The Atlas SDK imports and re-exports generated TypeScript directly; generated-artifact checks and the protocol revision token detect drift or deployment mismatches.
 
-The implemented contract covers entity, task, and object resources; request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client messages; feed handshake messages; generated Go validators; generated TypeScript types and targeted request validators; and revision metadata.
+The implemented contract covers entity, task, and object resources; all six create/update request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client and handshake messages; generated Go validators; generated TypeScript types and runtime predicates for requests, resources, feed contracts, and shared values; and revision metadata.
+
+The shared request corpus in `atlas_protocol/conformance/request-validation.json` checks the canonical schema, Go validation, generated TypeScript predicates, and all six Core create/update request boundaries against the same cases.
 
 ## Boundary
 
@@ -58,7 +60,7 @@ Generated validators, TypeScript, and revision files are checked in and marked `
 
 ## Deferred
 
-- TypeScript runtime validators beyond the targeted request checks the SDK already needs.
+- Additional TypeScript runtime predicates beyond the generated request, resource, feed, and shared-value contracts.
 - OpenAPI fragments.
 - Postgres JSON checks.
 - Command catalog schema ownership.
