@@ -59,7 +59,7 @@ jobs:
         run: ./scripts/run_integration_tests.sh
 
       - name: Run full Go test suite against live stack
-        run: go test -count=1 ./...
+        run: go test -count=1 -race ./...
 
       - name: Collect Compose logs
         if: failure()
