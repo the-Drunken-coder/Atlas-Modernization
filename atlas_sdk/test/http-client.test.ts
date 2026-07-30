@@ -305,15 +305,51 @@ describe("AtlasClient HTTP", () => {
     ).resolves.toBe(404);
   });
 
-  it("applies writes to cache and exposes precondition conflicts as ConflictError", async () => {
+  it("applies writes to cache and rejects stale nonzero preconditions across mutable routes", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
     const created = await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
     await expect(client.entities.get("asset-1")).resolves.toEqual(created);
-    await expect(client.entities.update("asset-1", { alias: "new" }, { ifMatchVersion: 0 })).rejects.toBeInstanceOf(
-      ConflictError
-    );
+    const currentEntity = core.upsertEntity(created);
+    const currentTask = core.upsertTask({ ...task("task-precondition", currentEntity.entity_id), status: "pending" });
+    const currentObject = core.upsertObject(object("object-precondition"));
+
+    const staleWrites = [
+      () =>
+        client.entities.update(
+          currentEntity.entity_id,
+          { alias: "new" },
+          { ifMatchVersion: currentEntity.metadata.version - 1 }
+        ),
+      () =>
+        client.entities.checkIn(currentEntity.entity_id, {
+          status: "active",
+          ifMatchVersion: currentEntity.metadata.version - 1
+        }),
+      () =>
+        client.tasks.update(
+          currentTask.task_id,
+          { status: "acknowledged" },
+          { ifMatchVersion: currentTask.metadata.version - 1 }
+        ),
+      () => client.tasks.acknowledge(currentTask.task_id, { ifMatchVersion: currentTask.metadata.version - 1 }),
+      () =>
+        client.objects.update(
+          currentObject.object_id,
+          { type: "log" },
+          { ifMatchVersion: currentObject.metadata.version - 1 }
+        )
+    ];
+
+    for (const write of staleWrites) {
+      const conflict = await write().catch((error) => error);
+      expect(conflict).toBeInstanceOf(ConflictError);
+      expect(conflict).toMatchObject({ status: 412, errorCode: "PRECONDITION_FAILED" });
+    }
+    expect(core.entities.get(currentEntity.entity_id)).toEqual(currentEntity);
+    expect(core.tasks.get(currentTask.task_id)).toEqual(currentTask);
+    expect(core.objects.get(currentObject.object_id)).toEqual(currentObject);
   });
 
   it("keeps fresh read and write return mutation from changing cached resources", async () => {
@@ -576,6 +612,23 @@ describe("AtlasClient HTTP", () => {
       status: 409,
       errorCode: "OBJECT_ALREADY_EXISTS"
     });
+  });
+
+  it("assigns distinct UUID task IDs to repeated command requests", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const command = {
+      entity_id: "asset-command",
+      components: { command: { type: "goto" as const }, parameters: { latitude: 38, longitude: -77 } }
+    };
+
+    const first = await client.tasks.create(command);
+    const second = await client.tasks.create(command);
+
+    expect(first.task_id).toMatch(/^command-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(second.task_id).toMatch(/^command-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(second.task_id).not.toBe(first.task_id);
+    expect([...core.tasks.keys()]).toEqual([first.task_id, second.task_id]);
   });
 
   it("rejects response-shaped write payloads with protocol error details", async () => {
