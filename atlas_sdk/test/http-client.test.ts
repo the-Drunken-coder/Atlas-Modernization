@@ -376,6 +376,41 @@ describe("AtlasClient HTTP", () => {
     }
   });
 
+  it("rejects malformed fake Core resource paths without throwing or mutating resources", async () => {
+    const core = new FakeCore();
+    const originalEntity = core.upsertEntity(entity("route-entity"));
+    const originalTask = core.upsertTask(task("route-task", originalEntity.entity_id));
+    const originalObject = core.upsertObject(object("route-object"));
+
+    const malformedRoutes = [
+      ["PATCH", "/entities/route-entity/extra", { alias: "changed" }],
+      ["POST", "/entities/route-entity/checkin/extra", {}],
+      ["PATCH", "/tasks/route-task/extra", { status: "acknowledged" }],
+      ["POST", "/tasks/route-task/acknowledge/extra", {}],
+      ["PATCH", "/objects/route-object/extra", { type: "log" }],
+      ["GET", "/objects/route-object/extra/download", undefined]
+    ] as const;
+
+    for (const [method, path, body] of malformedRoutes) {
+      const response = await core.fetch(`http://atlas.test${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+      expect(response.status, `${method} ${path}`).toBe(404);
+    }
+    expect(core.entities.get(originalEntity.entity_id)).toEqual(originalEntity);
+    expect(core.tasks.get(originalTask.task_id)).toEqual(originalTask);
+    expect(core.objects.get(originalObject.object_id)).toEqual(originalObject);
+  });
+
+  it("returns a controlled error for malformed fake Core path escapes", async () => {
+    const core = new FakeCore();
+    const invalidEscape = await core.fetch("http://atlas.test/entities/%zz");
+    expect(invalidEscape.status).toBe(400);
+    await expect(invalidEscape.json()).resolves.toMatchObject({ error_code: "VALIDATION_ERROR" });
+  });
+
   it("keeps fresh read and write return mutation from changing cached resources", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({

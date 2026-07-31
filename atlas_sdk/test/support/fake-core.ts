@@ -55,14 +55,19 @@ export class FakeCore {
     const apiKey = headers.get("X-API-Key");
     this.requests.push(parsed.pathname + parsed.search);
     this.requestHeaders.push({ path: parsed.pathname + parsed.search, ifMatch, apiKey });
+    let segments: string[];
+    try {
+      segments = path.split("/").slice(1).map(decodeURIComponent);
+    } catch {
+      return protocolError("Invalid URL path", "VALIDATION_ERROR", 400);
+    }
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
     if (path === "/queries/full" || path === "/queries/changed-since") return this.queryResponse(parsed, method);
-    if (path === "/entities" || path.startsWith("/entities/")) {
-      return this.entityResponse(parsed, method, init, ifMatch);
+    if (segments[0] === "entities") {
+      return this.entityResponse(parsed, segments, method, init, ifMatch);
     }
-    if (path === "/tasks" || path.startsWith("/tasks/")) return this.taskResponse(parsed, method, init, ifMatch);
-    if (path === "/objects" || path.startsWith("/objects/"))
-      return this.objectRouteResponse(parsed, method, init, ifMatch);
+    if (segments[0] === "tasks") return this.taskResponse(segments, method, init, ifMatch);
+    if (segments[0] === "objects") return this.objectRouteResponse(segments, method, init, ifMatch);
     return protocolError("not found", "VALIDATION_ERROR", 404);
   };
 
@@ -184,12 +189,12 @@ export class FakeCore {
 
   private async entityResponse(
     parsed: URL,
+    segments: string[],
     method: string,
     init: RequestInit | undefined,
     ifMatch: string | null
   ): Promise<Response> {
-    const path = parsed.pathname;
-    if (path === "/entities" && method === "POST") {
+    if (segments.length === 1 && method === "POST") {
       const body = await readValidatedBody<EntityCreateRequest>(init, requestValidators.entityCreate);
       if (body instanceof Response) return body;
       if (this.entities.has(body.entity_id)) {
@@ -197,10 +202,12 @@ export class FakeCore {
       }
       return json(this.createEntity(body), 201);
     }
-    const id = decodeURIComponent(path.split("/")[2]);
-    if (path.endsWith("/checkin") && method === "POST") {
+    const [, id, action] = segments;
+    if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (segments.length === 3 && action === "checkin" && method === "POST") {
       return this.checkInEntityResponse(id, parsed, init, ifMatch);
     }
+    if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
     if (method === "GET") return jsonOrNotFound(this.entities.get(id), "entity not found");
     if (method === "PATCH") {
       const current = this.entities.get(id);
@@ -215,13 +222,12 @@ export class FakeCore {
   }
 
   private async taskResponse(
-    parsed: URL,
+    segments: string[],
     method: string,
     init: RequestInit | undefined,
     ifMatch: string | null
   ): Promise<Response> {
-    const path = parsed.pathname;
-    if (path === "/tasks" && method === "POST") {
+    if (segments.length === 1 && method === "POST") {
       const body = await readValidatedBody<TaskCreateRequest>(init, requestValidators.taskCreate);
       if (body instanceof Response) return body;
       if ("task_id" in body && this.tasks.has(body.task_id)) {
@@ -229,10 +235,13 @@ export class FakeCore {
       }
       return json(this.createTask(body), 201);
     }
-    const [, , rawID, action] = path.split("/");
-    const id = decodeURIComponent(rawID);
+    const [, id, action] = segments;
+    if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (segments.length === 3 && action && method === "POST") {
+      return this.taskLifecycleResponse(id, action, init, ifMatch);
+    }
+    if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
     if (method === "GET") return jsonOrNotFound(this.tasks.get(id), "task not found");
-    if (method === "POST") return this.taskLifecycleResponse(id, action, init, ifMatch);
     if (method === "PATCH") {
       const current = this.tasks.get(id);
       if (!current) return protocolError("task not found", "TASK_NOT_FOUND", 404);
@@ -246,13 +255,12 @@ export class FakeCore {
   }
 
   private async objectRouteResponse(
-    parsed: URL,
+    segments: string[],
     method: string,
     init: RequestInit | undefined,
     ifMatch: string | null
   ): Promise<Response> {
-    const path = parsed.pathname;
-    if (path === "/objects" && method === "POST") {
+    if (segments.length === 1 && method === "POST") {
       const body = await readValidatedBody<ObjectCreateRequest>(init, requestValidators.objectCreate);
       if (body instanceof Response) return body;
       if (this.objects.has(body.object_id)) {
@@ -260,13 +268,15 @@ export class FakeCore {
       }
       return json(this.createObject(body), 201);
     }
-    const id = decodeURIComponent(path.split("/")[2]);
-    if (path.endsWith("/download") && method === "GET") {
+    const [, id, action] = segments;
+    if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (segments.length === 3 && action === "download" && method === "GET") {
       if (!this.objects.has(id)) return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
       this.objectDownloadCount++;
       this.onObjectDownload?.(id);
       return new Response(new Uint8Array([1, 2, 3]));
     }
+    if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
     if (method === "GET") return jsonOrNotFound(this.objectResponse(id), "object not found");
     if (method === "PATCH") {
       const current = this.objects.get(id);
