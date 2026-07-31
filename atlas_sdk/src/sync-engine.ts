@@ -43,6 +43,43 @@ type AutomaticReconnectOwnership = {
   recoveryOperation?: number;
 };
 
+/**
+ * Internal identity of the engine's last failure. Reconnect and recovery
+ * decisions branch on these codes, never on the display text: the strings in
+ * `SYNC_ERROR_MESSAGES` are presentation only and are safe to reword.
+ */
+type SyncErrorCode =
+  | "initial-sync-failed"
+  | "feed-connection-failed"
+  | "feed-event-failed"
+  | "feed-connection-closed"
+  | "recovery-request-failed";
+
+const SYNC_ERROR_MESSAGES: Record<SyncErrorCode, string> = {
+  "initial-sync-failed": "Atlas Core initial synchronization failed",
+  "feed-connection-failed": "Atlas Core feed connection failed",
+  "feed-event-failed": "Atlas Core feed event failed",
+  "feed-connection-closed": "Atlas Core feed connection closed",
+  "recovery-request-failed": "Atlas Core recovery request failed"
+};
+
+const FEED_ERROR_CODES = new Set<SyncErrorCode>([
+  "feed-connection-failed",
+  "feed-event-failed",
+  "feed-connection-closed"
+]);
+
+function isFeedErrorCode(code: SyncErrorCode | undefined): boolean {
+  return code !== undefined && FEED_ERROR_CODES.has(code);
+}
+
+/**
+ * One engine health state. `SyncStatus` still reports this as the separate
+ * `healthy`/`degraded` booleans it always has; keeping a single field here
+ * stops the two from drifting out of sync at the ~10 sites that set them.
+ */
+type SyncHealth = "idle" | "healthy" | "degraded";
+
 export class SyncEngine {
   private readonly transport: HttpTransport;
   private readonly feed: FeedConnectionManager;
@@ -55,12 +92,11 @@ export class SyncEngine {
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
   private syncRunning = false;
-  private healthy = false;
-  private degraded = false;
+  private health: SyncHealth = "idle";
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private reconnecting = false;
   private reconnectAfterRecovery = false;
-  private lastError: string | undefined;
+  private lastErrorCode: SyncErrorCode | undefined;
   constructor(options: {
     transport: HttpTransport;
     feed: FeedConnectionManager;
@@ -96,14 +132,14 @@ export class SyncEngine {
     this.clearReconnectTimer();
     this.reconnecting = false;
     this.reconnectAfterRecovery = false;
-    this.lastError = undefined;
+    this.lastErrorCode = undefined;
     const promise = this.startSyncFromStopped(generation);
     this.lifecycle.setStartSyncPromise(promise);
     try {
       await promise;
     } catch (error) {
-      if (this.isCurrent(generation) && !this.lastError) {
-        this.lastError = "Atlas Core initial synchronization failed";
+      if (this.isCurrent(generation) && !this.lastErrorCode) {
+        this.lastErrorCode = "initial-sync-failed";
       }
       throw error;
     } finally {
@@ -119,9 +155,9 @@ export class SyncEngine {
   status(): SyncStatus {
     return {
       running: this.syncRunning,
-      healthy: this.healthy,
-      degraded: this.degraded,
-      ...(this.lastError ? { error: this.lastError } : {}),
+      healthy: this.health === "healthy",
+      degraded: this.health === "degraded",
+      ...(this.lastErrorCode ? { error: SYNC_ERROR_MESSAGES[this.lastErrorCode] } : {}),
       lastVersion: this.cache.lastVersion,
       subscriptions: [...this.subscriptions]
     };
@@ -170,8 +206,8 @@ export class SyncEngine {
     const generation = this.lifecycleGeneration;
     const attempt = this.beginFeedConnectionAttempt();
     await this.connectFeedForGeneration(generation, attempt);
-    if (this.isCurrentFeedConnection(generation, attempt) && this.lastError === "Atlas Core feed connection failed") {
-      this.lastError = undefined;
+    if (this.isCurrentFeedConnection(generation, attempt) && this.lastErrorCode === "feed-connection-failed") {
+      this.lastErrorCode = undefined;
     }
   }
 
@@ -187,11 +223,10 @@ export class SyncEngine {
         onEventError: () => {
           if (!isCurrentAttempt()) return;
           this.beginFeedConnectionAttempt();
-          if (this.lastError !== "Atlas Core recovery request failed") this.lastError = "Atlas Core feed event failed";
+          if (this.lastErrorCode !== "recovery-request-failed") this.lastErrorCode = "feed-event-failed";
           if (!this.syncRunning) return;
           this.invalidateRecovery();
-          this.degraded = true;
-          this.healthy = false;
+          this.health = "degraded";
           this.scheduleReconnect();
         },
         onClose: () => {
@@ -199,18 +234,16 @@ export class SyncEngine {
           this.beginFeedConnectionAttempt();
           if (!this.syncRunning) return;
           this.invalidateRecovery();
-          this.lastError = "Atlas Core feed connection closed";
-          this.healthy = false;
-          this.degraded = true;
+          this.lastErrorCode = "feed-connection-closed";
+          this.health = "degraded";
           this.scheduleReconnect();
         }
       });
     } catch (error) {
       if (!isCurrentAttempt()) throw error;
-      this.lastError = "Atlas Core feed connection failed";
+      this.lastErrorCode = "feed-connection-failed";
       if (this.syncRunning) {
-        this.healthy = false;
-        this.degraded = true;
+        this.health = "degraded";
         this.scheduleReconnect();
       }
       throw error;
@@ -244,14 +277,13 @@ export class SyncEngine {
       if (!isCurrentOperation() || result.superseded) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
-      if (this.lastError === "Atlas Core recovery request failed") this.lastError = undefined;
+      if (this.lastErrorCode === "recovery-request-failed") this.lastErrorCode = undefined;
       return true;
     } catch (error) {
       if (isCurrentOperation()) {
-        this.lastError = "Atlas Core recovery request failed";
+        this.lastErrorCode = "recovery-request-failed";
         if (this.syncRunning) {
-          this.degraded = true;
-          this.healthy = false;
+          this.health = "degraded";
           this.scheduleReconnect();
         }
       }
@@ -383,8 +415,7 @@ export class SyncEngine {
         await this.connectAndRecoverFeedForGeneration(generation);
       } catch {
         if (!this.isCurrent(generation)) return;
-        this.degraded = true;
-        this.healthy = false;
+        this.health = "degraded";
         this.scheduleReconnect();
       }
     }
@@ -396,8 +427,7 @@ export class SyncEngine {
         const pollOperation = this.recoveryOperation;
         void recovery.catch(() => {
           if (!this.isCurrent(pollGeneration) || this.recoveryOperation !== pollOperation) return;
-          this.degraded = true;
-          this.healthy = false;
+          this.health = "degraded";
         });
       }, this.pollIntervalMs);
     }
@@ -413,10 +443,9 @@ export class SyncEngine {
     this.reconnectAfterRecovery = false;
     this.syncRunning = false;
     this.invalidateRecovery();
-    this.lastError = undefined;
+    this.lastErrorCode = undefined;
     this.feed.close();
-    this.healthy = false;
-    this.degraded = false;
+    this.health = "idle";
   }
 
   private isCurrent(generation: number): boolean {
@@ -489,8 +518,7 @@ export class SyncEngine {
   private async consumeFeedEvent(event: FeedEvent, generation: number, attempt: number): Promise<void> {
     if (!this.isCurrentFeedConnection(generation, attempt)) return;
     if (event.version > this.cache.lastVersion + 1) {
-      this.degraded = true;
-      this.healthy = false;
+      this.health = "degraded";
       const recovered = await this.changedSinceForGeneration(generation);
       if (!recovered || !this.isCurrentFeedConnection(generation, attempt)) return;
     }
@@ -524,12 +552,8 @@ export class SyncEngine {
       const recovery = this.changedSinceForGeneration(generation);
       if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
       const recovered = await recovery;
-      if (
-        recovered &&
-        this.isCurrentFeedConnection(generation, attempt) &&
-        this.lastError?.startsWith("Atlas Core feed ")
-      )
-        this.lastError = undefined;
+      if (recovered && this.isCurrentFeedConnection(generation, attempt) && isFeedErrorCode(this.lastErrorCode))
+        this.lastErrorCode = undefined;
     } finally {
       if (this.isCurrent(generation)) {
         this.reconnecting = false;
@@ -549,8 +573,7 @@ export class SyncEngine {
       this.reconnectAfterRecovery = true;
       return;
     }
-    this.healthy = false;
-    this.degraded = true;
+    this.health = "degraded";
     const generation = this.lifecycleGeneration;
     this.reconnectTimer.schedule(() => {
       const ownership: AutomaticReconnectOwnership = {};
@@ -559,8 +582,7 @@ export class SyncEngine {
       void reconnect.catch(() => {
         if (!this.isCurrentFeedConnection(generation, attempt)) return;
         if (ownership.recoveryOperation !== undefined && this.recoveryOperation !== ownership.recoveryOperation) return;
-        this.degraded = true;
-        this.healthy = false;
+        this.health = "degraded";
         this.scheduleReconnect();
       });
     });
@@ -633,7 +655,7 @@ export class SyncEngine {
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
-    if (!this.syncRunning || this.startSyncPromise !== undefined || !this.healthy || this.degraded) {
+    if (!this.syncRunning || this.startSyncPromise !== undefined || this.health !== "healthy") {
       return false;
     }
     return this.subscriptions.some((sub) => covers(sub, filter));
@@ -641,8 +663,7 @@ export class SyncEngine {
 
   private markSynchronized(): void {
     const hasAutomaticUpdates = this.feed.connected || this.pollIntervalMs > 0;
-    this.healthy = this.syncRunning && hasAutomaticUpdates;
-    this.degraded = this.syncRunning && !hasAutomaticUpdates;
+    this.health = !this.syncRunning ? "idle" : hasAutomaticUpdates ? "healthy" : "degraded";
   }
 
   private advanceCursor(event: FeedEvent, enabled: boolean): void {

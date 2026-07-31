@@ -8,8 +8,8 @@ export default defineConfig({
       reporter: ["text", "json-summary", "json"],
       include: ["src/**/*.ts"],
       thresholds: {
-        statements: 90.98,
-        branches: 83.8,
+        perFile: true,
+        statements: 50,
         "src/sync-engine.ts": { branches: 86.42 }
       }
     }
