@@ -12,10 +12,10 @@ The Node packages remain independent but share one root lockfile. Install and ru
 nvm use
 npm ci
 npm run lint --workspace @the-drunken-coder/atlas-command-interface
-npm run format:check --workspace @the-drunken-coder/atlas-command-interface -- --since=origin/main
+npm run format:check --workspace @the-drunken-coder/atlas-command-interface
 ```
 
-Linting covers each package in full. Formatting is checked only for JavaScript/TypeScript files changed from the selected base so adopting the gate does not rewrite the existing codebase.
+Linting and formatting checks cover each selected package in full, matching the commands run by CI.
 
 ## What lives here
 

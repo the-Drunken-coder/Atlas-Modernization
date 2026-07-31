@@ -12,7 +12,7 @@ catalog before serving HTTP, including after an API-container-only restart.
 
 ## Stack
 
-- Go 1.26 with the pinned `go1.26.4` toolchain
+- Go 1.26 with the pinned `go1.26.5` toolchain
 - Chi router
 - PostgreSQL 15+ (the Docker dev stack uses plain Postgres; the app schema is plain tables)
 - MinIO (S3-compatible) for object storage

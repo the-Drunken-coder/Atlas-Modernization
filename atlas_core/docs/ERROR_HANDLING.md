@@ -1,11 +1,11 @@
 # Error Handling
 
-_Revision: 2026-07-10_
+_Revision: 2026-07-30_
 
 ## Overview
 
 Atlas Core returns a consistent JSON error envelope from **HTTP handler** code paths. Error mapping is
-implemented in `internal/api/handlers/handler_http.go` (`handleActionError`, `writeError`,
+implemented in `internal/api/handlers/handler_response.go` (`handleActionError`, `writeError`,
 `writeValidationError`). The canonical error-code enum lives in Atlas Protocol as `$defs/ErrorCode`;
 running `go run ./tools/check` from `atlas_protocol/` structurally enforces the matching authored Go enum `atlasprotocol.ErrorCode`.
 

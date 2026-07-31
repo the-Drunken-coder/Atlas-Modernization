@@ -108,6 +108,35 @@
           "note": "preserve current entity"
         }
       }
+    },
+    {
+      "name": "task create accepts a minimal non-command task",
+      "definition": "TaskCreateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {
+        "task_id": "task-conformance"
+      }
+    },
+    {
+      "name": "object create accepts minimal metadata",
+      "definition": "ObjectCreateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {
+        "object_id": "object-conformance"
+      }
+    },
+    {
+      "name": "object update accepts extra metadata",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {
+        "extra": {
+          "note": "updated by conformance"
+        }
+      }
     }
   ]
 }

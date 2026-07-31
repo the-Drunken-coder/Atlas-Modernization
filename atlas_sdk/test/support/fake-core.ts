@@ -55,206 +55,19 @@ export class FakeCore {
     const apiKey = headers.get("X-API-Key");
     this.requests.push(parsed.pathname + parsed.search);
     this.requestHeaders.push({ path: parsed.pathname + parsed.search, ifMatch, apiKey });
+    let segments: string[];
+    try {
+      segments = path.split("/").slice(1).map(decodeURIComponent);
+    } catch {
+      return protocolError("Invalid URL path", "VALIDATION_ERROR", 400);
+    }
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
-    if (path === "/queries/full" && method === "GET") {
-      try {
-        const entityPage = pageValues(
-          [...this.entities.values()],
-          this.fullLimitPerType,
-          parsed.searchParams.get("entity_cursor")
-        );
-        const taskPage = pageValues(
-          [...this.tasks.values()],
-          this.fullLimitPerType,
-          parsed.searchParams.get("task_cursor")
-        );
-        const objectPage = pageValues(
-          [...this.objects.values()].map((object) => this.objectDetail(object)),
-          this.fullLimitPerType,
-          parsed.searchParams.get("object_cursor")
-        );
-        return json({
-          entities: entityPage.items,
-          tasks: taskPage.items,
-          objects: objectPage.items,
-          version: this.version,
-          has_more_entities: entityPage.hasMore,
-          has_more_tasks: taskPage.hasMore,
-          has_more_objects: objectPage.hasMore,
-          next_entity_cursor: entityPage.nextCursor,
-          next_task_cursor: taskPage.nextCursor,
-          next_object_cursor: objectPage.nextCursor
-        });
-      } catch (error) {
-        if (error instanceof InvalidCursorError) {
-          return protocolError(error.message, "VALIDATION_ERROR", 400);
-        }
-        throw error;
-      }
+    if (path === "/queries/full" || path === "/queries/changed-since") return this.queryResponse(parsed, method);
+    if (segments[0] === "entities") {
+      return this.entityResponse(parsed, segments, method, init, ifMatch);
     }
-    if (path === "/queries/changed-since" && method === "GET") {
-      if (this.failChangedSince) {
-        return protocolError("changed-since unavailable", "INTERNAL_SERVER_ERROR", 500);
-      }
-      const rawSince = parsed.searchParams.get("since_version");
-      const since = rawSince === null ? 0 : Number(rawSince);
-      if (!Number.isInteger(since) || since < 0 || String(since) !== rawSince) {
-        return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
-      }
-      const changed = this.events.filter((event) => event.version > since);
-      try {
-        const entityPage = pageValues(
-          changed.filter(isEntityUpsert).map((event) => event.resource),
-          this.changedSinceLimitPerType,
-          parsed.searchParams.get("entity_cursor")
-        );
-        const taskPage = pageValues(
-          changed.filter(isTaskUpsert).map((event) => event.resource),
-          this.changedSinceLimitPerType,
-          parsed.searchParams.get("task_cursor")
-        );
-        const objectPage = pageValues(
-          changed.filter(isObjectUpsert).map((event) => this.objectDetail(event.resource)),
-          this.changedSinceLimitPerType,
-          parsed.searchParams.get("object_cursor")
-        );
-        const deletedEntityPage = pageValues(
-          changed.filter(isDelete("entity")).map(deleted),
-          this.changedSinceLimitPerType,
-          parsed.searchParams.get("deleted_entity_cursor")
-        );
-        const deletedTaskPage = pageValues(
-          changed.filter(isDelete("task")).map(deleted),
-          this.changedSinceLimitPerType,
-          parsed.searchParams.get("deleted_task_cursor")
-        );
-        const deletedObjectPage = pageValues(
-          changed.filter(isDelete("object")).map(deleted),
-          this.changedSinceLimitPerType,
-          parsed.searchParams.get("deleted_object_cursor")
-        );
-        return json({
-          entities: entityPage.items,
-          tasks: taskPage.items,
-          objects: objectPage.items,
-          deleted_entities: deletedEntityPage.items,
-          deleted_tasks: deletedTaskPage.items,
-          deleted_objects: deletedObjectPage.items,
-          has_more_entities: entityPage.hasMore,
-          has_more_tasks: taskPage.hasMore,
-          has_more_objects: objectPage.hasMore,
-          has_more_deleted_entities: deletedEntityPage.hasMore,
-          has_more_deleted_tasks: deletedTaskPage.hasMore,
-          has_more_deleted_objects: deletedObjectPage.hasMore,
-          next_entity_cursor: entityPage.nextCursor,
-          next_task_cursor: taskPage.nextCursor,
-          next_object_cursor: objectPage.nextCursor,
-          next_deleted_entity_cursor: deletedEntityPage.nextCursor,
-          next_deleted_task_cursor: deletedTaskPage.nextCursor,
-          next_deleted_object_cursor: deletedObjectPage.nextCursor,
-          version: this.version
-        });
-      } catch (error) {
-        if (error instanceof InvalidCursorError) {
-          return protocolError(error.message, "VALIDATION_ERROR", 400);
-        }
-        throw error;
-      }
-    }
-    if (path.startsWith("/entities/") && path.endsWith("/checkin") && method === "POST") {
-      return this.checkInEntityResponse(decodeURIComponent(path.split("/")[2]), parsed, init, ifMatch);
-    }
-    if (path.startsWith("/entities/") && method === "GET") {
-      return jsonOrNotFound(this.entities.get(decodeURIComponent(path.split("/")[2])), "entity not found");
-    }
-    if (path === "/entities" && method === "POST") {
-      const body = await readValidatedBody<EntityCreateRequest>(init, requestValidators.entityCreate);
-      if (body instanceof Response) return body;
-      if (this.entities.has(body.entity_id)) {
-        return protocolError("entity already exists", "ENTITY_ALREADY_EXISTS", 409);
-      }
-      return json(this.createEntity(body), 201);
-    }
-    if (path.startsWith("/entities/") && method === "PATCH") {
-      const id = decodeURIComponent(path.split("/")[2]);
-      if (!this.entities.has(id)) {
-        return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
-      }
-      if (ifMatch === '"v0"') {
-        return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
-      }
-      const body = await readValidatedBody<EntityUpdateRequest>(init, requestValidators.entityUpdate);
-      if (body instanceof Response) return body;
-      return json(this.updateEntity(id, body));
-    }
-    if (path.startsWith("/entities/") && method === "DELETE") {
-      return this.deleteEntityResponse(decodeURIComponent(path.split("/")[2]));
-    }
-    if (path.startsWith("/tasks/") && method === "GET") {
-      return jsonOrNotFound(this.tasks.get(decodeURIComponent(path.split("/")[2])), "task not found");
-    }
-    if (path === "/tasks" && method === "POST") {
-      const body = await readValidatedBody<TaskCreateRequest>(init, requestValidators.taskCreate);
-      if (body instanceof Response) return body;
-      if (this.tasks.has(body.task_id)) {
-        return protocolError("task already exists", "TASK_ALREADY_EXISTS", 409);
-      }
-      return json(this.createTask(body), 201);
-    }
-    if (path.startsWith("/tasks/") && method === "POST") {
-      const [, , rawID, action] = path.split("/");
-      return this.taskLifecycleResponse(decodeURIComponent(rawID), action, init, ifMatch);
-    }
-    if (path.startsWith("/tasks/") && method === "PATCH") {
-      const id = decodeURIComponent(path.split("/")[2]);
-      if (!this.tasks.has(id)) {
-        return protocolError("task not found", "TASK_NOT_FOUND", 404);
-      }
-      if (ifMatch === '"v0"') {
-        return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
-      }
-      const body = await readValidatedBody<TaskUpdateRequest>(init, requestValidators.taskUpdate);
-      if (body instanceof Response) return body;
-      return json(this.updateTask(id, body));
-    }
-    if (path.startsWith("/tasks/") && method === "DELETE") {
-      return this.deleteTaskResponse(decodeURIComponent(path.split("/")[2]));
-    }
-    if (path.startsWith("/objects/") && path.endsWith("/download") && method === "GET") {
-      const id = decodeURIComponent(path.split("/")[2]);
-      if (!this.objects.has(id)) {
-        return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
-      }
-      this.objectDownloadCount++;
-      this.onObjectDownload?.(id);
-      return new Response(new Uint8Array([1, 2, 3]));
-    }
-    if (path.startsWith("/objects/") && method === "GET") {
-      return jsonOrNotFound(this.objectResponse(decodeURIComponent(path.split("/")[2])), "object not found");
-    }
-    if (path === "/objects" && method === "POST") {
-      const body = await readValidatedBody<ObjectCreateRequest>(init, requestValidators.objectCreate);
-      if (body instanceof Response) return body;
-      if (this.objects.has(body.object_id)) {
-        return protocolError("object already exists", "OBJECT_ALREADY_EXISTS", 409);
-      }
-      return json(this.createObject(body), 201);
-    }
-    if (path.startsWith("/objects/") && method === "PATCH") {
-      const id = decodeURIComponent(path.split("/")[2]);
-      if (!this.objects.has(id)) {
-        return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
-      }
-      if (ifMatch === '"v0"') {
-        return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
-      }
-      const body = await readValidatedBody<ObjectUpdateRequest>(init, requestValidators.objectUpdate);
-      if (body instanceof Response) return body;
-      return json(this.updateObject(id, body));
-    }
-    if (path.startsWith("/objects/") && method === "DELETE") {
-      return this.deleteObjectResponse(decodeURIComponent(path.split("/")[2]));
-    }
+    if (segments[0] === "tasks") return this.taskResponse(segments, method, init, ifMatch);
+    if (segments[0] === "objects") return this.objectRouteResponse(segments, method, init, ifMatch);
     return protocolError("not found", "VALIDATION_ERROR", 404);
   };
 
@@ -265,6 +78,222 @@ export class FakeCore {
         super(url, owningCore);
       }
     };
+  }
+
+  private queryResponse(parsed: URL, method: string): Response {
+    if (method !== "GET") return protocolError("not found", "VALIDATION_ERROR", 404);
+    try {
+      return parsed.pathname === "/queries/full"
+        ? this.fullQueryResponse(parsed)
+        : this.changedSinceQueryResponse(parsed);
+    } catch (error) {
+      if (error instanceof InvalidCursorError) {
+        return protocolError(error.message, "VALIDATION_ERROR", 400);
+      }
+      throw error;
+    }
+  }
+
+  private fullQueryResponse(parsed: URL): Response {
+    const entityPage = pageValues(
+      [...this.entities.values()],
+      this.fullLimitPerType,
+      parsed.searchParams.get("entity_cursor")
+    );
+    const taskPage = pageValues(
+      [...this.tasks.values()],
+      this.fullLimitPerType,
+      parsed.searchParams.get("task_cursor")
+    );
+    const objectPage = pageValues(
+      [...this.objects.values()].map((object) => this.objectDetail(object)),
+      this.fullLimitPerType,
+      parsed.searchParams.get("object_cursor")
+    );
+    return json({
+      entities: entityPage.items,
+      tasks: taskPage.items,
+      objects: objectPage.items,
+      version: this.version,
+      has_more_entities: entityPage.hasMore,
+      has_more_tasks: taskPage.hasMore,
+      has_more_objects: objectPage.hasMore,
+      next_entity_cursor: entityPage.nextCursor,
+      next_task_cursor: taskPage.nextCursor,
+      next_object_cursor: objectPage.nextCursor
+    });
+  }
+
+  private changedSinceQueryResponse(parsed: URL): Response {
+    if (this.failChangedSince) {
+      return protocolError("changed-since unavailable", "INTERNAL_SERVER_ERROR", 500);
+    }
+    const rawSince = parsed.searchParams.get("since_version");
+    const since = rawSince === null ? 0 : Number(rawSince);
+    if (!Number.isInteger(since) || since < 0 || String(since) !== rawSince) {
+      return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
+    }
+    const changed = this.events.filter((event) => event.version > since);
+    const entityPage = pageValues(
+      changed.filter(isEntityUpsert).map((event) => event.resource),
+      this.changedSinceLimitPerType,
+      parsed.searchParams.get("entity_cursor")
+    );
+    const taskPage = pageValues(
+      changed.filter(isTaskUpsert).map((event) => event.resource),
+      this.changedSinceLimitPerType,
+      parsed.searchParams.get("task_cursor")
+    );
+    const objectPage = pageValues(
+      changed.filter(isObjectUpsert).map((event) => this.objectDetail(event.resource)),
+      this.changedSinceLimitPerType,
+      parsed.searchParams.get("object_cursor")
+    );
+    const deletedEntityPage = pageValues(
+      changed.filter(isDelete("entity")).map(deleted),
+      this.changedSinceLimitPerType,
+      parsed.searchParams.get("deleted_entity_cursor")
+    );
+    const deletedTaskPage = pageValues(
+      changed.filter(isDelete("task")).map(deleted),
+      this.changedSinceLimitPerType,
+      parsed.searchParams.get("deleted_task_cursor")
+    );
+    const deletedObjectPage = pageValues(
+      changed.filter(isDelete("object")).map(deleted),
+      this.changedSinceLimitPerType,
+      parsed.searchParams.get("deleted_object_cursor")
+    );
+    return json({
+      entities: entityPage.items,
+      tasks: taskPage.items,
+      objects: objectPage.items,
+      deleted_entities: deletedEntityPage.items,
+      deleted_tasks: deletedTaskPage.items,
+      deleted_objects: deletedObjectPage.items,
+      has_more_entities: entityPage.hasMore,
+      has_more_tasks: taskPage.hasMore,
+      has_more_objects: objectPage.hasMore,
+      has_more_deleted_entities: deletedEntityPage.hasMore,
+      has_more_deleted_tasks: deletedTaskPage.hasMore,
+      has_more_deleted_objects: deletedObjectPage.hasMore,
+      next_entity_cursor: entityPage.nextCursor,
+      next_task_cursor: taskPage.nextCursor,
+      next_object_cursor: objectPage.nextCursor,
+      next_deleted_entity_cursor: deletedEntityPage.nextCursor,
+      next_deleted_task_cursor: deletedTaskPage.nextCursor,
+      next_deleted_object_cursor: deletedObjectPage.nextCursor,
+      version: this.version
+    });
+  }
+
+  private async entityResponse(
+    parsed: URL,
+    segments: string[],
+    method: string,
+    init: RequestInit | undefined,
+    ifMatch: string | null
+  ): Promise<Response> {
+    if (segments.length === 1 && method === "POST") {
+      const body = await readValidatedBody<EntityCreateRequest>(init, requestValidators.entityCreate);
+      if (body instanceof Response) return body;
+      if (this.entities.has(body.entity_id)) {
+        return protocolError("entity already exists", "ENTITY_ALREADY_EXISTS", 409);
+      }
+      return json(this.createEntity(body), 201);
+    }
+    const [, id, action] = segments;
+    if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (segments.length === 3 && action === "checkin" && method === "POST") {
+      return this.checkInEntityResponse(id, parsed, init, ifMatch);
+    }
+    if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (method === "GET") return jsonOrNotFound(this.entities.get(id), "entity not found");
+    if (method === "PATCH") {
+      const current = this.entities.get(id);
+      if (!current) return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
+      const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
+      if (conflict) return conflict;
+      const body = await readValidatedBody<EntityUpdateRequest>(init, requestValidators.entityUpdate);
+      return body instanceof Response ? body : json(this.updateEntity(id, body));
+    }
+    if (method === "DELETE") return this.deleteEntityResponse(id);
+    return protocolError("not found", "VALIDATION_ERROR", 404);
+  }
+
+  private async taskResponse(
+    segments: string[],
+    method: string,
+    init: RequestInit | undefined,
+    ifMatch: string | null
+  ): Promise<Response> {
+    if (segments.length === 1 && method === "POST") {
+      const body = await readValidatedBody<TaskCreateRequest>(init, requestValidators.taskCreate);
+      if (body instanceof Response) return body;
+      if ("task_id" in body && this.tasks.has(body.task_id)) {
+        return protocolError("task already exists", "TASK_ALREADY_EXISTS", 409);
+      }
+      return json(this.createTask(body), 201);
+    }
+    const [, id, action] = segments;
+    if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (segments.length === 3 && action && method === "POST") {
+      return this.taskLifecycleResponse(id, action, init, ifMatch);
+    }
+    if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (method === "GET") return jsonOrNotFound(this.tasks.get(id), "task not found");
+    if (method === "PATCH") {
+      const current = this.tasks.get(id);
+      if (!current) return protocolError("task not found", "TASK_NOT_FOUND", 404);
+      const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
+      if (conflict) return conflict;
+      const body = await readValidatedBody<TaskUpdateRequest>(init, requestValidators.taskUpdate);
+      return body instanceof Response ? body : json(this.updateTask(id, body));
+    }
+    if (method === "DELETE") return this.deleteTaskResponse(id);
+    return protocolError("not found", "VALIDATION_ERROR", 404);
+  }
+
+  private async objectRouteResponse(
+    segments: string[],
+    method: string,
+    init: RequestInit | undefined,
+    ifMatch: string | null
+  ): Promise<Response> {
+    if (segments.length === 1 && method === "POST") {
+      const body = await readValidatedBody<ObjectCreateRequest>(init, requestValidators.objectCreate);
+      if (body instanceof Response) return body;
+      if (this.objects.has(body.object_id)) {
+        return protocolError("object already exists", "OBJECT_ALREADY_EXISTS", 409);
+      }
+      return json(this.createObject(body), 201);
+    }
+    const [, id, action] = segments;
+    if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (segments.length === 3 && action === "download" && method === "GET") {
+      if (!this.objects.has(id)) return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
+      this.objectDownloadCount++;
+      this.onObjectDownload?.(id);
+      return new Response(new Uint8Array([1, 2, 3]));
+    }
+    if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
+    if (method === "GET") return jsonOrNotFound(this.objectResponse(id), "object not found");
+    if (method === "PATCH") {
+      const current = this.objects.get(id);
+      if (!current) return protocolError("object not found", "OBJECT_NOT_FOUND", 404);
+      const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
+      if (conflict) return conflict;
+      const body = await readValidatedBody<ObjectUpdateRequest>(init, requestValidators.objectUpdate);
+      return body instanceof Response ? body : json(this.updateObject(id, body));
+    }
+    if (method === "DELETE") return this.deleteObjectResponse(id);
+    return protocolError("not found", "VALIDATION_ERROR", 404);
+  }
+
+  private preconditionFailure(ifMatch: string | null, currentVersion: number): Response | undefined {
+    return ifMatch !== null && ifMatch !== "*" && ifMatch !== `"v${currentVersion}"`
+      ? protocolError("precondition failed", "PRECONDITION_FAILED", 412)
+      : undefined;
   }
 
   upsertEntity(entity: EntityResource): EntityResource {
@@ -347,12 +376,10 @@ export class FakeCore {
     init: RequestInit | undefined,
     ifMatch: string | null
   ): Promise<Response> {
-    if (!this.tasks.has(id)) {
-      return protocolError("task not found", "TASK_NOT_FOUND", 404);
-    }
-    if (ifMatch === '"v0"') {
-      return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
-    }
+    const current = this.tasks.get(id);
+    if (!current) return protocolError("task not found", "TASK_NOT_FOUND", 404);
+    const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
+    if (conflict) return conflict;
     if (action === "acknowledge") {
       return json(this.updateTask(id, { status: "acknowledged" }));
     }
@@ -412,12 +439,10 @@ export class FakeCore {
     init: RequestInit | undefined,
     ifMatch: string | null
   ): Promise<Response> {
-    if (!this.entities.has(id)) {
-      return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
-    }
-    if (ifMatch === '"v0"') {
-      return protocolError("precondition failed", "PRECONDITION_FAILED", 412);
-    }
+    const current = this.entities.get(id);
+    if (!current) return protocolError("entity not found", "ENTITY_NOT_FOUND", 404);
+    const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
+    if (conflict) return conflict;
     const limit = Number(parsed.searchParams.get("limit") ?? "10");
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
       return protocolError("limit must be between 1 and 20", "VALIDATION_ERROR", 400);

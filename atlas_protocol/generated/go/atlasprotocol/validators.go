@@ -36,6 +36,30 @@ func ValidateErrorResponse(value any) []string {
 	return validator.ValidateErrorResponse(value)
 }
 
+func ValidateEntityCreateRequest(value any) []string {
+	return validator.ValidateEntityCreateRequest(value)
+}
+
+func ValidateEntityUpdateRequest(value any) []string {
+	return validator.ValidateEntityUpdateRequest(value)
+}
+
+func ValidateTaskCreateRequest(value any) []string {
+	return validator.ValidateTaskCreateRequest(value)
+}
+
+func ValidateTaskUpdateRequest(value any) []string {
+	return validator.ValidateTaskUpdateRequest(value)
+}
+
+func ValidateObjectCreateRequest(value any) []string {
+	return validator.ValidateObjectCreateRequest(value)
+}
+
+func ValidateObjectUpdateRequest(value any) []string {
+	return validator.ValidateObjectUpdateRequest(value)
+}
+
 func ValidateFeedEvent(value any) []string {
 	return validator.ValidateFeedEvent(value)
 }
