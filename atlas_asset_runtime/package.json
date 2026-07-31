@@ -10,11 +10,21 @@
     "directory": "atlas_asset_runtime"
   },
   "homepage": "https://github.com/the-Drunken-coder/Atlas-Modernization/tree/main/atlas_asset_runtime#readme",
-  "bugs": { "url": "https://github.com/the-Drunken-coder/Atlas-Modernization/issues" },
-  "keywords": ["atlas", "asset", "runtime"],
+  "bugs": {
+    "url": "https://github.com/the-Drunken-coder/Atlas-Modernization/issues"
+  },
+  "keywords": [
+    "atlas",
+    "asset",
+    "runtime"
+  ],
   "type": "module",
-  "engines": { "node": ">=24" },
-  "files": ["dist/"],
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist/"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -24,7 +34,9 @@
       "default": "./dist/index.js"
     }
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json",
@@ -36,11 +48,13 @@
     "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false ."
   },
-  "dependencies": { "@the-drunken-coder/atlas-sdk": "0.1.0" },
+  "dependencies": {
+    "@the-drunken-coder/atlas-sdk": "0.1.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
     "@types/node": "24.13.3",
-    "typescript": "7.0.2",
+    "typescript": "^7.0.2",
     "vitest": "4.1.10"
   }
 }
