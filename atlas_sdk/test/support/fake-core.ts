@@ -281,7 +281,7 @@ export class FakeCore {
   }
 
   private preconditionFailure(ifMatch: string | null, currentVersion: number): Response | undefined {
-    return ifMatch !== null && ifMatch !== `"v${currentVersion}"`
+    return ifMatch !== null && ifMatch !== "*" && ifMatch !== `"v${currentVersion}"`
       ? protocolError("precondition failed", "PRECONDITION_FAILED", 412)
       : undefined;
   }

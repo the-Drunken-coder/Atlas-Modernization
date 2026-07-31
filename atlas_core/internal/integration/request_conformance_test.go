@@ -36,7 +36,7 @@ func TestRequestValidationConformance(t *testing.T) {
 				response, requestErr = client.Post(ctx, "/entities", payload)
 			case "EntityUpdateRequest":
 				entityID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
-				requireConformanceSetup(t, client, ctx, "/entities", map[string]interface{}{
+				requireConformanceSetup(ctx, t, client, "/entities", map[string]interface{}{
 					"entity_id": entityID, "entity_type": "geofeature",
 				}, "create entity for conformance update")
 				response, requestErr = client.Patch(ctx, "/entities/"+entityID, payload)
@@ -45,7 +45,7 @@ func TestRequestValidationConformance(t *testing.T) {
 				response, requestErr = client.Post(ctx, "/tasks", payload)
 			case "TaskUpdateRequest":
 				taskID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
-				requireConformanceSetup(t, client, ctx, "/tasks", map[string]interface{}{
+				requireConformanceSetup(ctx, t, client, "/tasks", map[string]interface{}{
 					"task_id": taskID,
 				}, "create task for conformance update")
 				response, requestErr = client.Patch(ctx, "/tasks/"+taskID, payload)
@@ -54,7 +54,7 @@ func TestRequestValidationConformance(t *testing.T) {
 				response, requestErr = client.Post(ctx, "/objects", payload)
 			case "ObjectUpdateRequest":
 				objectID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
-				requireConformanceSetup(t, client, ctx, "/objects", map[string]interface{}{
+				requireConformanceSetup(ctx, t, client, "/objects", map[string]interface{}{
 					"object_id": objectID,
 				}, "create object for conformance update")
 				response, requestErr = client.Patch(ctx, "/objects/"+objectID, payload)
@@ -79,7 +79,7 @@ func TestRequestValidationConformance(t *testing.T) {
 	}
 }
 
-func requireConformanceSetup(t *testing.T, client *APIClient, ctx context.Context, path string, payload map[string]interface{}, operation string) {
+func requireConformanceSetup(ctx context.Context, t *testing.T, client *APIClient, path string, payload map[string]interface{}, operation string) {
 	t.Helper()
 	response, err := client.Post(ctx, path, payload)
 	if err != nil {

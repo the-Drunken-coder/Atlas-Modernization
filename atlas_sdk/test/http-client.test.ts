@@ -352,6 +352,30 @@ describe("AtlasClient HTTP", () => {
     expect(core.objects.get(currentObject.object_id)).toEqual(currentObject);
   });
 
+  it("accepts wildcard preconditions across mutable fake Core routes", async () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-wildcard"));
+    core.upsertTask(task("task-wildcard", "asset-wildcard"));
+    core.upsertObject(object("object-wildcard"));
+
+    const wildcardWrites = [
+      ["PATCH", "/entities/asset-wildcard", { alias: "updated" }],
+      ["POST", "/entities/asset-wildcard/checkin", {}],
+      ["PATCH", "/tasks/task-wildcard", { status: "acknowledged" }],
+      ["POST", "/tasks/task-wildcard/acknowledge", {}],
+      ["PATCH", "/objects/object-wildcard", { type: "log" }]
+    ] as const;
+
+    for (const [method, path, body] of wildcardWrites) {
+      const response = await core.fetch(`http://atlas.test${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", "If-Match": "*" },
+        body: JSON.stringify(body)
+      });
+      expect(response.status, `${method} ${path}`).toBe(200);
+    }
+  });
+
   it("keeps fresh read and write return mutation from changing cached resources", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
