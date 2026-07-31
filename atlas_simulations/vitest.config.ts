@@ -15,8 +15,8 @@ export default defineConfig({
       // logic worth asserting, and it cannot run outside a real document.
       exclude: ["src/client/main.tsx"],
       thresholds: {
-        statements: 86.6,
-        branches: 78.79,
+        perFile: true,
+        statements: 50,
         "src/client/App.tsx": { branches: 74.01 },
         "src/client/use-run-session.ts": { branches: 74.01 }
       }

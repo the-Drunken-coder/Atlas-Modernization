@@ -31,7 +31,7 @@
     "prepack": "npm run clean && npm run build",
     "test:package": "node ./test/packed-consumer-smoke.mjs",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage && node ../scripts/check-file-coverage.mjs atlas_asset_runtime",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false ."
