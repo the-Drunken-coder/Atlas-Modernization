@@ -92,3 +92,9 @@ The Cloudflare-hosted Atlas command interface is a static Vite app intended for 
 `wrangler pages dev` can otherwise select today's compatibility date even when that date is newer than its bundled `workerd` runtime. Keep the explicit supported `compatibility_date` in `atlas_command_interface/wrangler.jsonc` so local Pages and `_headers` validation starts deterministically.
 
 The four Node packages share the root npm workspace and lockfile. Keep the active development/CI version in the root `.nvmrc`; the command-interface `.nvmrc` mirrors it for tooling that inspects the package directory.
+
+## General implementation principles
+
+- Do not preserve backward compatibility.
+- Choose the simplest implementation that fully meets the current requirements.
+- Prefer established, well-maintained libraries over custom implementations.
