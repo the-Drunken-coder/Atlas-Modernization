@@ -1,13 +1,13 @@
-# SDK sync engine uses error message strings as control flow
+# SDK sync engine uses error message strings as status control flow
 
-1. **Time & Date:** 2026-07-18T08:29:35-04:00
-2. **Name:** SDK sync engine uses error message strings as control flow
-3. **Issue:** `SyncEngine` stores human-readable error text in `lastError` and then branches on exact string equality and prefix matches to decide reconnect/recovery behavior, so rewording a message silently changes engine logic.
-4. **Severity:** S4 (Minor)
-5. **Location:** `atlas_sdk/src/sync-engine.ts` (lines 173, 190, 247, 530)
-6. **Expected:** The engine tracks a small typed error kind for lifecycle decisions and keeps human-readable error text out of control flow.
-7. **Actual:** Branches include `this.lastError === "Atlas Core feed connection failed"`, `this.lastError !== "Atlas Core recovery request failed"`, and `this.lastError?.startsWith("Atlas Core feed ")`. The message doubles as the machine-readable state discriminator.
+1. **Time & Date:** 2026-07-30T08:33:00Z (audit revalidation; originally recorded 2026-07-18)
+2. **Name:** SDK sync engine uses error message strings as status control flow
+3. **Issue:** `SyncEngine` stores only `lastError: string` and compares exact display wording or prefixes to decide which error to clear or preserve.
+4. **Severity:** **S4 (Minor)** — rewording can leave stale errors visible or replace the wrong error, but current evidence does not show it suppressing connection, recovery, or reconnect work.
+5. **Location:** `atlas_sdk/src/sync-engine.ts:106,173-217,224-258,501-565`
+6. **Expected:** Display wording is independent from a small structured error discriminator; reconnect and recovery scheduling retain current behavior.
+7. **Actual:** Four string predicates control only `lastError` mutation. Connection, recovery invalidation, health flags, and reconnect scheduling occur outside them. The original stronger recovery-suppression claim was not confirmed against `main` at `2426bb6`.
 8. **Reproduction:**
-   1. Run `rg -n 'lastError ===|lastError !==|lastError\?\.startsWith' atlas_sdk/src/`
-   2. Observe four hits in `sync-engine.ts` at lines 173, 190, 247, and 530, each gating error preservation or clearing on message text.
-9. **Notes:** Verified against `main` at `2d6106e` on 2026-07-25. Add a private typed error kind alongside the existing public message, switch these four branches to the kind, and preserve the current messages and lifecycle behavior. Cover the change with `test/sync-engine-feed-recovery.test.ts` and `test/sync-engine-reconnect-cleanup.test.ts`.
+   1. Run `rg -n 'lastError ===|lastError !==|lastError\?\.startsWith' atlas_sdk/src/sync-engine.ts`; it returns four comparisons.
+   2. Rewording assignments can prevent the corresponding successful path from clearing an error or allow a feed error to overwrite a recovery error.
+   3. Store a private structured kind beside the message, branch only on kind, preserve the public `SyncStatus` shape, and add wording-independent feed/recovery tests.
