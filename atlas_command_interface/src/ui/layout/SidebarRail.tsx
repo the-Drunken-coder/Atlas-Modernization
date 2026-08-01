@@ -7,18 +7,19 @@ import { Tooltip } from "../primitives/Tooltip.js";
 type RailItem = {
   list: ListKind;
   label: string;
+  code: string;
   Icon: (props: { size?: number }) => ReactElement;
   kind?: EntityKind;
 };
 
 const PRIMARY_RAIL_ITEMS: RailItem[] = [
-  { list: "assets", label: "Assets", Icon: AssetsIcon, kind: "asset" },
-  { list: "tracks", label: "Tracks", Icon: TracksIcon, kind: "track" },
-  { list: "geofeatures", label: "Geo Features", Icon: GeofeaturesIcon, kind: "geofeature" },
-  { list: "commands", label: "Commands", Icon: CommandsIcon }
+  { list: "assets", label: "Assets", code: "01", Icon: AssetsIcon, kind: "asset" },
+  { list: "tracks", label: "Tracks", code: "02", Icon: TracksIcon, kind: "track" },
+  { list: "geofeatures", label: "Geo Features", code: "03", Icon: GeofeaturesIcon, kind: "geofeature" },
+  { list: "commands", label: "Commands", code: "04", Icon: CommandsIcon }
 ];
 
-const ADMIN_RAIL_ITEMS: RailItem[] = [{ list: "apiKeys", label: "API Keys", Icon: KeyIcon }];
+const ADMIN_RAIL_ITEMS: RailItem[] = [{ list: "apiKeys", label: "API Keys", code: "05", Icon: KeyIcon }];
 
 type SidebarRailProps = {
   collapsed: boolean;
@@ -81,7 +82,13 @@ function RailButton({
         data-active={active}
         onClick={() => onSelect(item.list)}
       >
+        <span className="rail-button__code" aria-hidden>
+          {item.code}
+        </span>
         <item.Icon size={20} />
+        <span className="rail-button__label" aria-hidden>
+          {item.label}
+        </span>
         {count > 0 ? <span className="rail-button__badge">{count}</span> : null}
       </button>
     </Tooltip>

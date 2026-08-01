@@ -70,6 +70,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
   if (state.status === "error") {
     return (
       <main className="login-shell">
+        <LoginIdentity />
         <ConnectionBadge
           health={{ running: false, healthy: false, degraded: false }}
           error={{ source: "startup", message: state.error }}
@@ -222,6 +223,7 @@ function LoginPanel({
 
   return (
     <main className="login-shell">
+      <LoginIdentity />
       <form className="login-panel" aria-label="Atlas login" onSubmit={submit}>
         <div className="login-panel__header">
           <span className="login-panel__eyebrow">Atlas</span>
@@ -253,5 +255,21 @@ function LoginPanel({
         </Button>
       </form>
     </main>
+  );
+}
+
+function LoginIdentity() {
+  return (
+    <div className="login-identity" aria-hidden>
+      <div className="login-identity__mark">
+        <i />
+        <i />
+        <i />
+        <i />
+      </div>
+      <strong>ATLAS</strong>
+      <span>COMMAND INTERFACE</span>
+      <small>[ SECURE OPERATIONS NETWORK ]</small>
+    </div>
   );
 }

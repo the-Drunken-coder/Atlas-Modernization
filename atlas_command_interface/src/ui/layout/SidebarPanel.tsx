@@ -18,7 +18,10 @@ export function SidebarPanel({ title, onBack, onCollapse, children }: SidebarPan
             <BackIcon size={18} />
           </IconButton>
         ) : null}
-        <span className="panel__title">{title}</span>
+        <span className="panel__heading">
+          <span className="panel__eyebrow">DIRECTORY / ACTIVE</span>
+          <span className="panel__title">{title}</span>
+        </span>
         <span style={{ flex: 1 }} />
         <IconButton label="Collapse panel" onClick={onCollapse}>
           <CollapseIcon size={18} />

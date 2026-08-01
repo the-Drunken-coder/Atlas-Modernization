@@ -2,7 +2,6 @@
 /* ---------- JSON drawer ---------- */
 .json-drawer {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
   background: var(--surface-1);
   overflow: hidden;
 }
@@ -17,8 +16,9 @@
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -59,7 +59,7 @@
   max-height: 320px;
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 9px;
   line-height: 1.5;
   color: var(--text-2);
   white-space: pre;
@@ -71,9 +71,11 @@
 }
 
 .banner {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .banner--error {
@@ -100,15 +102,16 @@
   z-index: 70;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.5);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgb(8 8 6 / 15%) 3px 4px),
+    rgb(0 0 0 / 72%);
 }
 
 .modal {
   width: min(420px, calc(100vw - 32px));
   background: var(--surface-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-panel);
+  border: 1px solid var(--text-1);
+  box-shadow: 12px 12px 0 var(--bg-base);
   overflow: hidden;
 }
 
@@ -117,12 +120,16 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-3);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--text-1);
+  background: var(--bg-base);
 }
 
 .modal__title {
-  font-size: 14px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .modal__body {

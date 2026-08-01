@@ -2,11 +2,16 @@
 /* ---------- Map ---------- */
 .map-region {
   position: relative;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
   height: 100%;
-  background: var(--bg-base);
   overflow: hidden;
+  background:
+    linear-gradient(rgb(240 238 227 / 3%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(240 238 227 / 3%) 1px, transparent 1px),
+    var(--bg-base);
+  background-size: 28px 28px;
 }
 
 .map-world-frame {
@@ -15,6 +20,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  padding: 10px;
 }
 
 .map-stage {
@@ -24,6 +30,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border: 1px solid var(--border-strong);
   background: #05070a;
 }
 
@@ -46,15 +53,15 @@
   z-index: 30;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--connection-color) 58%, var(--border-strong));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--text-1);
+  background: color-mix(in srgb, var(--bg-base) 90%, transparent);
   color: var(--text-1);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   line-height: 1;
   pointer-events: none;
   text-transform: uppercase;
@@ -62,18 +69,18 @@
 
 button.connection-badge {
   margin: 0;
-  border-color: color-mix(in srgb, var(--connection-color) 58%, var(--border-strong));
   cursor: pointer;
   pointer-events: auto;
 }
 
 button.connection-badge:hover:not([disabled]) {
-  background: color-mix(in srgb, var(--surface-hover) 88%, transparent);
+  background: var(--text-1);
+  color: var(--text-on-accent);
 }
 
 .connection-badge:focus-visible,
 .connection-badge__anchor:focus > .connection-badge {
-  outline: 2px solid var(--selected-ring);
+  outline: 1px solid var(--selected-ring);
   outline-offset: 2px;
 }
 
@@ -94,16 +101,14 @@ button.connection-badge:hover:not([disabled]) {
 }
 
 .connection-badge__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  width: 6px;
+  height: 6px;
   background: var(--connection-color);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--connection-color) 72%, transparent);
 }
 
 .connection-detail {
   position: absolute;
-  top: calc(var(--space-3) + 29px);
+  top: calc(var(--space-3) + 34px);
   left: var(--space-3);
   max-height: calc(100% - var(--space-3) - var(--space-3) - 29px);
   overflow-y: auto;
@@ -114,15 +119,11 @@ button.connection-badge:hover:not([disabled]) {
   width: min(360px, calc(100% - 24px));
   padding: var(--space-3);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
   background: var(--surface-1);
   box-shadow: var(--shadow-panel);
   color: var(--text-2);
-  font-size: 12px;
-}
-
-.connection-detail p {
-  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .connection-detail__header,
@@ -133,23 +134,10 @@ button.connection-badge:hover:not([disabled]) {
   gap: var(--space-2);
 }
 
-.connection-detail__header strong {
-  color: var(--text-1);
-}
-
-.connection-detail__close {
-  flex: 0 0 auto;
-  padding: 2px 6px;
-}
-
 .connection-detail__message {
   color: var(--text-1);
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
-}
-
-.connection-detail__status {
-  color: var(--warning);
 }
 
 .map-overlay-tr {
@@ -157,12 +145,10 @@ button.connection-badge:hover:not([disabled]) {
   top: var(--space-3);
   right: var(--space-3);
   z-index: 30;
-  min-width: 190px;
-  padding: var(--space-2) var(--space-3);
-  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  backdrop-filter: blur(4px);
+  min-width: 210px;
+  padding: 7px 10px;
+  border: 1px solid var(--text-1);
+  background: color-mix(in srgb, var(--bg-base) 90%, transparent);
 }
 
 .map-source-control .field {
@@ -174,6 +160,10 @@ button.connection-badge:hover:not([disabled]) {
   inset: 0;
   -webkit-user-select: none;
   user-select: none;
+}
+
+.map-canvas .maplibregl-canvas {
+  filter: saturate(0.58) contrast(1.08) brightness(0.86);
 }
 
 .map-canvas > .maplibre-host,
@@ -208,8 +198,8 @@ button.connection-badge:hover:not([disabled]) {
   z-index: 20;
   isolation: isolate;
   pointer-events: none;
-  --map-reticle-line-width: 3px;
-  --map-reticle-line-color: color-mix(in srgb, var(--accent-strong) 62%, transparent);
+  --map-reticle-line-width: 2px;
+  --map-reticle-line-color: color-mix(in srgb, var(--accent-strong) 72%, transparent);
   --map-reticle-line-shadow: 0 0 0 1px color-mix(in srgb, black 58%, transparent);
 }
 
@@ -298,8 +288,8 @@ button.connection-badge:hover:not([disabled]) {
 }
 
 .map-cursor-locator__tether {
-  stroke-width: 1.5px;
-  stroke-dasharray: 5 4;
+  stroke-width: 1px;
+  stroke-dasharray: 3 5;
 }
 
 .map-cursor-locator__x {
@@ -315,15 +305,14 @@ button.connection-badge:hover:not([disabled]) {
   display: grid;
   gap: 2px;
   min-width: 176px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
+  padding: 8px 10px;
+  border: 1px solid var(--text-1);
+  background: color-mix(in srgb, var(--bg-base) 90%, transparent);
   color: var(--text-1);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
-  backdrop-filter: blur(4px);
   pointer-events: none;
 }
 
@@ -362,13 +351,15 @@ button.connection-badge:hover:not([disabled]) {
   padding: var(--space-4);
   background: var(--bg-base);
   color: var(--text-2);
+  font-family: var(--font-mono);
   text-align: center;
+  text-transform: uppercase;
 }
 
 .map-unavailable span {
   color: var(--text-1);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .map-unavailable code {
@@ -386,11 +377,13 @@ button.connection-badge:hover:not([disabled]) {
   transform: translateX(-50%);
   z-index: 10;
   padding: var(--space-2) var(--space-3);
-  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  font-size: 12px;
+  border: 1px solid var(--text-1);
+  background: color-mix(in srgb, var(--bg-base) 90%, transparent);
   color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* NATO-style entity markers generated from the local SIDC catalog. */
@@ -405,7 +398,7 @@ button.connection-badge:hover:not([disabled]) {
 }
 
 .map-symbol-marker:focus-visible {
-  outline: 2px solid var(--selected-ring);
+  outline: 1px solid var(--selected-ring);
   outline-offset: 3px;
   border-radius: var(--radius-sm);
 }
@@ -434,17 +427,15 @@ button.connection-badge:hover:not([disabled]) {
 
 .atlas-symbol-svg--fallback {
   background: var(--accent);
-  border: 2px solid var(--selected);
-  border-radius: 50%;
+  border: 1px solid var(--selected);
 }
 
 /* Map vertex handles (maplibre markers) */
 .vertex-handle {
   width: 12px;
   height: 12px;
-  border-radius: 50%;
   background: var(--map-vertex);
-  border: 2px solid var(--accent);
+  border: 1px solid var(--accent);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 

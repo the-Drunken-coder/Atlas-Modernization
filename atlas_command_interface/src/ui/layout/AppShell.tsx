@@ -70,6 +70,34 @@ export function AppShell({ collapsed, rail, panel, map }: AppShellProps) {
 
   return (
     <div className="app-shell">
+      <header className="system-header">
+        <div className="system-header__brand" aria-label="Atlas Command Interface">
+          <span className="system-header__mark" aria-hidden>
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="system-header__wordmark">ATLAS</span>
+          <span className="system-header__division">
+            COMMAND
+            <br />
+            INTERFACE
+          </span>
+        </div>
+        <div className="system-header__metadata" aria-hidden>
+          <span>TACTICAL OPERATIONS</span>
+          <strong>CONTROL SYSTEM / 01</strong>
+        </div>
+        <div className="system-header__designation" aria-hidden>
+          <span>NETWORKED AUTONOMOUS SYSTEMS</span>
+          <strong>FIELD OPERATIONS CONSOLE</strong>
+        </div>
+        <div className="system-header__serial" aria-hidden>
+          <span>SYS: ATLAS-CI</span>
+          <span>MODE: LIVE</span>
+        </div>
+      </header>
       <div
         className="sidebar"
         data-collapsed={collapsed}
