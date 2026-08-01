@@ -118,6 +118,8 @@ export function AtlasProvider({
           }
         );
 
+        // Only a failed connection attempt is recoverable here. Construction,
+        // watch registration, and the initial snapshot remain fatal setup errors.
         try {
           await dataSource.start();
         } catch (cause) {
