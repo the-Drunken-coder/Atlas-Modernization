@@ -27,6 +27,7 @@ export {
   type TaskStatus,
   type TaskStatusOptions
 } from "./client.js";
+export { type ErrorMessageSanitizerOptions, sanitizeErrorMessage } from "./error-sanitizer.js";
 export type {
   EntityComponents,
   EntityCreateRequest,

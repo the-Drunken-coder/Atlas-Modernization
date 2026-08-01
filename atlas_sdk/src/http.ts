@@ -1,3 +1,4 @@
+import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import type { FetchLike } from "./types.js";
 
 export type ResponseValidator<T> = (value: unknown) => value is T;
@@ -16,11 +17,12 @@ export class AtlasAPIError extends Error {
   readonly errorCode?: string;
 
   constructor(message: string, status: number, response: unknown) {
-    super(message);
+    const safeResponse = safeErrorPayload(response);
+    super(sanitizeErrorMessage(message));
     this.name = "AtlasAPIError";
     this.status = status;
-    this.response = response;
-    this.errorCode = errorCodeFromPayload(response);
+    this.response = safeResponse;
+    this.errorCode = errorCodeFromPayload(safeResponse);
   }
 }
 
@@ -91,7 +93,7 @@ export class HttpTransport {
       signal
     });
     if (!response.ok) {
-      const payload = await readErrorPayload(response);
+      const payload = safeErrorPayload(await readErrorPayload(response));
       const message = errorMessage(response.status, payload);
       if (response.status === 409 || response.status === 412) {
         throw new ConflictError(message, response.status, payload);
@@ -113,7 +115,9 @@ export class HttpTransport {
       if (controller.signal.aborted) {
         throw new Error(`Atlas request timed out after ${this.requestTimeoutMs}ms`);
       }
-      throw error;
+      const message = sanitizeErrorMessage(error);
+      if (error instanceof Error && error.message === message) throw error;
+      throw new Error(message);
     } finally {
       clearTimeout(timeout);
     }
@@ -149,10 +153,29 @@ function errorResponseFields(payload: unknown): { error_code?: string; message?:
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return undefined;
   }
-  const errorCode = "error_code" in payload && typeof payload.error_code === "string" ? payload.error_code : undefined;
+  const errorCode =
+    "error_code" in payload &&
+    typeof payload.error_code === "string" &&
+    /^[A-Z][A-Z0-9_]{0,63}$/.test(payload.error_code)
+      ? payload.error_code
+      : undefined;
   const message = "message" in payload && typeof payload.message === "string" ? payload.message : undefined;
   return {
     ...(errorCode === undefined ? {} : { error_code: errorCode }),
     ...(message === undefined ? {} : { message })
+  };
+}
+
+function safeErrorPayload(payload: unknown): unknown {
+  const fields = errorResponseFields(payload);
+  if (!fields) return undefined;
+  const success =
+    typeof payload === "object" && payload !== null && "success" in payload && payload.success === false
+      ? false
+      : undefined;
+  return {
+    ...(success === undefined ? {} : { success }),
+    ...(fields.error_code === undefined ? {} : { error_code: fields.error_code }),
+    ...(fields.message === undefined ? {} : { message: sanitizeErrorMessage(fields.message) })
   };
 }

@@ -309,6 +309,90 @@ func TestRequestExamplesValidate(t *testing.T) {
 	}
 }
 
+func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    int
+		request  func(string) any
+		validate func(any) []string
+	}{
+		{
+			name:  "entity id",
+			limit: 50,
+			request: func(value string) any {
+				return map[string]any{"entity_id": value, "entity_type": "asset"}
+			},
+			validate: ValidateEntityCreateRequest,
+		},
+		{
+			name:  "entity type",
+			limit: 50,
+			request: func(value string) any {
+				return map[string]any{"entity_id": "entity-1", "entity_type": value}
+			},
+			validate: ValidateEntityCreateRequest,
+		},
+		{
+			name:  "entity subtype",
+			limit: 50,
+			request: func(value string) any {
+				return map[string]any{"entity_id": "entity-1", "entity_type": "asset", "subtype": value}
+			},
+			validate: ValidateEntityCreateRequest,
+		},
+		{
+			name:  "entity alias",
+			limit: 255,
+			request: func(value string) any {
+				return map[string]any{"entity_id": "entity-1", "entity_type": "asset", "alias": value}
+			},
+			validate: ValidateEntityCreateRequest,
+		},
+		{
+			name:  "object id",
+			limit: 50,
+			request: func(value string) any {
+				return map[string]any{"object_id": value}
+			},
+			validate: ValidateObjectCreateRequest,
+		},
+		{
+			name:  "object path",
+			limit: 500,
+			request: func(value string) any {
+				return map[string]any{"object_id": "object-1", "path": value}
+			},
+			validate: ValidateObjectCreateRequest,
+		},
+		{
+			name:  "object content type",
+			limit: 100,
+			request: func(value string) any {
+				return map[string]any{"object_id": "object-1", "content_type": value}
+			},
+			validate: ValidateObjectCreateRequest,
+		},
+		{
+			name:  "object type",
+			limit: 50,
+			request: func(value string) any {
+				return map[string]any{"object_id": "object-1", "type": value}
+			},
+			validate: ValidateObjectCreateRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if errors := tt.validate(tt.request(strings.Repeat("x", tt.limit))); len(errors) > 0 {
+				t.Fatalf("maximum-length value rejected: %v", errors)
+			}
+			errors := tt.validate(tt.request(strings.Repeat("x", tt.limit+1)))
+			assertAnyContains(t, errors, "maxLength")
+		})
+	}
+}
+
 func TestRequestValidationConformance(t *testing.T) {
 	cases, err := conformance.LoadRequestValidationCases()
 	if err != nil {

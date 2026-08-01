@@ -47,4 +47,14 @@ if [ -z "$admin_password" ] && [ -z "$admin_password_file" ]; then
     exit 1
 fi
 
+if [ -z "$admin_password_file" ]; then
+    normalized_admin_password="$(printf '%s' "$admin_password" | tr '[:upper:]' '[:lower:]')"
+    case "$normalized_admin_password" in
+        password|replace_with_secure_admin_password|replace-with-secure-admin-password|your-secure-admin-password)
+            printf '%s\n' "Refusing to start production Atlas Core image: ATLAS_ADMIN_PASSWORD is a development default or example placeholder." >&2
+            exit 1
+            ;;
+    esac
+fi
+
 exec "$@"

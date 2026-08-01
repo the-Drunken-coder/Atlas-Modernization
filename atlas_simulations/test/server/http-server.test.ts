@@ -398,6 +398,49 @@ describe("simulation HTTP server", () => {
     expect(cleanupEvent).toMatchObject({ type: "cleanup", message: "Cleanup complete" });
   });
 
+  it("keeps secrets and terminal controls out of stored, HTTP, and SSE error messages", async () => {
+    const secrets = ["userinfo-canary", "query-canary", "bearer-canary", "basic-canary", "atlas_ak_canary"];
+    const unsafeMessage =
+      `failed https://user:${secrets[0]}@core.test?api_key=${secrets[1]} ` +
+      `Bearer ${secrets[2]} Basic ${secrets[3]} ${secrets[4]} \u001b[31m\nstack-canary`;
+    const store = new RunStore(createFakeAtlasCore().factory);
+    const scenario: Scenario = {
+      id: "unsafe-errors",
+      name: "Unsafe errors",
+      summary: "Exercises error boundaries",
+      acceptsJson: false,
+      inputFields: [],
+      async run(ctx) {
+        ctx.assert("unsafe assertion", false, unsafeMessage);
+        throw new Error(unsafeMessage);
+      }
+    };
+    const started = store.start(scenario, { fields: {} });
+    await waitFor(async () => expect(store.get(started.id)?.status).toBe("failed"));
+    server = createSimulationServer({
+      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      store
+    });
+    const baseUrl = await server.listen();
+
+    const stored = JSON.stringify({ run: store.get(started.id), events: store.events(started.id) });
+    const response = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.id}`);
+    const responseText = await response.text();
+    const stream = await fetchWithIntegrationTimeout(`${baseUrl}/api/runs/${started.id}/events`);
+    const streamedEvents = readRunStream(stream);
+    await fetchJSON(`${baseUrl}/api/runs/${started.id}/cleanup`, { method: "POST", headers: mutationHeaders() });
+    const streamed = await streamedEvents;
+    const outputs = [stored, responseText, JSON.stringify(streamed)];
+
+    for (const output of outputs) {
+      for (const secret of secrets) expect(output).not.toContain(secret);
+      expect(output).not.toContain("stack-canary");
+      expect(output).not.toContain("\\u001b");
+    }
+    const assertionEvent = streamed.find((event) => event.type === "assertion");
+    expect(assertionEvent).toMatchObject({ assertion: { message: expect.stringContaining("[redacted]") } });
+  });
+
   it("stops a live run through the HTTP API", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({

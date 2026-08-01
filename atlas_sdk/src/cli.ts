@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import {
   AtlasClient,
   type AtlasClientOptions,
@@ -99,13 +100,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  return String(error ?? "unknown error");
+  return sanitizeErrorMessage(error, { fallback: "unknown error" });
 }
 
 function parseArgs(argv: string[], env: Record<string, string | undefined>): CLICommand {

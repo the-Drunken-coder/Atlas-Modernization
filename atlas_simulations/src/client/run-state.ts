@@ -1,3 +1,4 @@
+import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import {
   isCreatedResource,
   jsonNumber,
@@ -139,10 +140,10 @@ export function parseRunEvent(value: unknown): RunEvent {
         value.status === "cancelled" ||
         value.status === "abandoned"
       )
-        return value as RunEvent;
+        return sanitizedRunEvent(value as RunEvent);
       break;
     case "log":
-      if (value.level === undefined || isRunEventLevel(value.level)) return value as RunEvent;
+      if (value.level === undefined || isRunEventLevel(value.level)) return sanitizedRunEvent(value as RunEvent);
       break;
     case "assertion":
       if (
@@ -153,23 +154,35 @@ export function parseRunEvent(value: unknown): RunEvent {
         typeof value.assertion.timestamp === "string" &&
         (value.assertion.message === undefined || typeof value.assertion.message === "string")
       )
-        return value as RunEvent;
+        return sanitizedRunEvent(value as RunEvent);
       break;
     case "resource":
-      if (isCreatedResource(value.resource)) return value as RunEvent;
+      if (isCreatedResource(value.resource)) return sanitizedRunEvent(value as RunEvent);
       break;
     case "error":
-      if (value.level === "error") return value as RunEvent;
+      if (value.level === "error") return sanitizedRunEvent(value as RunEvent);
       break;
     case "cleanup":
-      if (value.resource === undefined || isCreatedResource(value.resource)) return value as RunEvent;
+      if (value.resource === undefined || isCreatedResource(value.resource))
+        return sanitizedRunEvent(value as RunEvent);
       break;
   }
   throw new Error("Invalid run event");
 }
 
 export function errorMessage(errorValue: unknown): string {
-  return errorValue instanceof Error ? errorValue.message : String(errorValue);
+  return sanitizeErrorMessage(errorValue, { fallback: "Unknown error" });
+}
+
+function sanitizedRunEvent(event: RunEvent): RunEvent {
+  if (event.type !== "assertion" || event.assertion.message === undefined) {
+    return { ...event, message: sanitizeErrorMessage(event.message) };
+  }
+  return {
+    ...event,
+    message: sanitizeErrorMessage(event.message),
+    assertion: { ...event.assertion, message: sanitizeErrorMessage(event.assertion.message) }
+  };
 }
 
 function runRecency(run: RunSummary): number {

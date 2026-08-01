@@ -1,4 +1,5 @@
 import { type CacheResourceOptions, ResourceCache } from "./cache.js";
+import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport, ResponseValidator } from "./http.js";
 import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
@@ -762,5 +763,5 @@ function reportWatchCallbackError(error: unknown): void {
   if (typeof console === "undefined" || typeof console.error !== "function") {
     return;
   }
-  console.error("Atlas watch callback failed", error);
+  console.error("Atlas watch callback failed", sanitizeErrorMessage(error));
 }

@@ -1,4 +1,4 @@
-import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
+import { ATLAS_PROTOCOL_REVISION, sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 
 export type MapSourceConfig = {
@@ -318,7 +318,7 @@ async function fetchGoogleMapsTileSession(apiKey: string): Promise<string | unde
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mapType: "satellite", language: "en-US", region: "US" })
   }).catch((error: unknown) => {
-    console.warn("Google Maps satellite session request failed", error);
+    console.warn("Google Maps satellite session request failed", sanitizeErrorMessage(error));
     return undefined;
   });
   if (!response) return undefined;

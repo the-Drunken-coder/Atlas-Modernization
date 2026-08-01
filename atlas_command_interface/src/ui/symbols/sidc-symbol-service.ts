@@ -1,4 +1,5 @@
 import type { RenderSymbolOptions } from "sidc-kit";
+import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import {
   DEFAULT_SYMBOL_CATALOG,
   DEFAULT_SYMBOL_FALLBACK,
@@ -253,14 +254,7 @@ function buildFallbackMarkup(
   const selectedStyle = normalized.selected
     ? "box-shadow: 0 0 8px var(--selected-ring); border-color: var(--selected-ring);"
     : "";
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "object" && error !== null && "message" in error
-        ? String((error as { message?: unknown }).message)
-        : error
-          ? String(error)
-          : undefined;
+  const message = error ? sanitizeConnectionError(error) : undefined;
 
   return {
     html: `

@@ -1,4 +1,5 @@
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type { StartRunRequest } from "../shared/types.js";
 
 const MUTATION_HEADER = "x-atlas-simulations-request";
@@ -67,7 +68,7 @@ export function sendJSON(response: ServerResponse, status: number, body: unknown
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff"
   });
-  response.end(JSON.stringify(body));
+  response.end(JSON.stringify(sanitizeResponseMessages(body)));
 }
 
 export function requireTrustedMutation(request: IncomingMessage, response: ServerResponse): boolean {
@@ -91,7 +92,7 @@ export function safeDecodeURIComponent(value: string): string | undefined {
 }
 
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return sanitizeErrorMessage(error, { fallback: "Unknown error" });
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,6 +106,19 @@ function readJSON(body: string): unknown {
   } catch {
     throw new RequestBodyError(400, "Request body must be valid JSON");
   }
+}
+
+function sanitizeResponseMessages(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeResponseMessages);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      (key === "message" || key === "lastError") && typeof item === "string"
+        ? sanitizeErrorMessage(item, { fallback: "Unknown error" })
+        : sanitizeResponseMessages(item)
+    ])
+  );
 }
 
 function hasTrustedMutation(request: IncomingMessage): boolean {

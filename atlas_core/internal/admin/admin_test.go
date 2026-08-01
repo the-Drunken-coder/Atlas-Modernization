@@ -10,7 +10,9 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,6 +160,207 @@ func TestLoginThrottleBoundary(t *testing.T) {
 	_, _, err := service.Login(ctx, "admin", "wrong", "198.51.100.10", now.Add(time.Duration(loginMaxFails)*time.Second))
 	if !errors.Is(err, ErrTooManyAttempts) {
 		t.Fatalf("post-boundary error = %v, want ErrTooManyAttempts", err)
+	}
+}
+
+func TestConcurrentLoginAdmissionCannotBypassThrottle(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		username func(int) string
+		ip       func(int) string
+	}{
+		{
+			name:     "username bucket",
+			username: func(int) string { return "missing-admin" },
+			ip:       func(i int) string { return fmt.Sprintf("198.51.100.%d", i+1) },
+		},
+		{
+			name:     "client IP bucket",
+			username: func(i int) string { return fmt.Sprintf("missing-admin-%d", i) },
+			ip:       func(int) string { return "198.51.100.100" },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := openAdminTestPool(t)
+			ctx := context.Background()
+			cleanupAdminRows(ctx, t, pool)
+
+			services := []*Service{
+				NewService(pool, &config.Config{AdminCookieSameSite: "lax"}),
+				NewService(pool, &config.Config{AdminCookieSameSite: "lax"}),
+			}
+			entered := make(chan struct{}, loginMaxFails+4)
+			release := make(chan struct{}, loginMaxFails)
+			var callsMu sync.Mutex
+			verifyCalls := 0
+			verifier := func(string, PasswordHash) bool {
+				callsMu.Lock()
+				verifyCalls++
+				callsMu.Unlock()
+				entered <- struct{}{}
+				<-release
+				return false
+			}
+			for _, service := range services {
+				service.verifyPassword = verifier
+			}
+
+			const attempts = loginMaxFails + 4
+			start := make(chan struct{})
+			results := make(chan error, attempts)
+			now := time.Now().UTC()
+			for i := 0; i < attempts; i++ {
+				go func(i int) {
+					<-start
+					_, _, err := services[i%len(services)].Login(ctx, tc.username(i), "wrong", tc.ip(i), now)
+					results <- err
+				}(i)
+			}
+			close(start)
+
+			for i := 0; i < loginMaxFails; i++ {
+				<-entered
+				release <- struct{}{}
+			}
+			close(release)
+
+			invalid, throttled := 0, 0
+			for i := 0; i < attempts; i++ {
+				switch err := <-results; {
+				case errors.Is(err, ErrInvalidCredentials):
+					invalid++
+				case errors.Is(err, ErrTooManyAttempts):
+					throttled++
+				default:
+					t.Fatalf("login error = %v, want invalid credentials or too many attempts", err)
+				}
+			}
+			callsMu.Lock()
+			gotCalls := verifyCalls
+			callsMu.Unlock()
+			if gotCalls != loginMaxFails || invalid != loginMaxFails || throttled != attempts-loginMaxFails {
+				t.Fatalf("verification/invalid/throttled = %d/%d/%d, want %d/%d/%d", gotCalls, invalid, throttled, loginMaxFails, loginMaxFails, attempts-loginMaxFails)
+			}
+		})
+	}
+}
+
+func TestArgon2VerificationHasProcessWideConcurrencyBound(t *testing.T) {
+	slots := make(chan struct{}, 2)
+	entered := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	var activeMu sync.Mutex
+	active, maxActive := 0, 0
+
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			releaseSlot, err := acquireLoginSlot(context.Background(), slots)
+			if err != nil {
+				t.Errorf("acquire login slot: %v", err)
+				return
+			}
+			defer releaseSlot()
+			activeMu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			activeMu.Unlock()
+			entered <- struct{}{}
+			<-release
+			activeMu.Lock()
+			active--
+			activeMu.Unlock()
+		}()
+	}
+
+	<-entered
+	<-entered
+	if got := len(slots); got != cap(slots) {
+		t.Fatalf("occupied Argon2 slots = %d, want %d", got, cap(slots))
+	}
+	release <- struct{}{}
+	<-entered
+	close(release)
+	wg.Wait()
+
+	activeMu.Lock()
+	gotMax := maxActive
+	activeMu.Unlock()
+	if gotMax > cap(slots) {
+		t.Fatalf("concurrent Argon2 work = %d, limit = %d", gotMax, cap(slots))
+	}
+}
+
+func TestLoginSlotWaitHonorsContextCancellation(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	release, err := acquireLoginSlot(ctx, slots)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquire error = %v, want context.Canceled", err)
+	}
+	if release != nil {
+		t.Fatal("cancelled acquisition returned a release function")
+	}
+}
+
+func TestLoginAcquiresSlotBeforeDatabaseAdmission(t *testing.T) {
+	for i := 0; i < cap(loginArgon2Slots); i++ {
+		loginArgon2Slots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(loginArgon2Slots); i++ {
+			<-loginArgon2Slots
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	service := NewService(nil, &config.Config{AdminCookieSameSite: "lax"})
+	_, _, err := service.Login(ctx, "admin", "wrong", "198.51.100.10", time.Now().UTC())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Login error = %v, want context.Canceled before database access", err)
+	}
+}
+
+func TestLoginUsesSamePasswordVerifierForEveryAccountState(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
+
+	insertAdminRecord(ctx, t, pool, "account:enabled", "account", AccountRecord{
+		Username: "enabled",
+		Password: PasswordHash{Hash: "enabled-hash"},
+		Role:     defaultRole,
+	})
+	insertAdminRecord(ctx, t, pool, "account:disabled", "account", AccountRecord{
+		Username: "disabled",
+		Password: PasswordHash{Hash: "disabled-hash"},
+		Role:     defaultRole,
+		Disabled: true,
+	})
+
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	var hashes []string
+	service.verifyPassword = func(_ string, stored PasswordHash) bool {
+		hashes = append(hashes, stored.Hash)
+		return false
+	}
+	for i, username := range []string{"missing", "enabled", "disabled"} {
+		_, _, err := service.Login(ctx, username, "wrong", fmt.Sprintf("203.0.113.%d", i+1), time.Now().UTC())
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("Login(%q) error = %v, want ErrInvalidCredentials", username, err)
+		}
+	}
+	want := []string{dummyPasswordHash.Hash, "enabled-hash", "disabled-hash"}
+	if !slices.Equal(hashes, want) {
+		t.Fatalf("verified hashes = %v, want %v", hashes, want)
 	}
 }
 
@@ -488,6 +691,44 @@ func TestUsesDefaultDevelopmentPassword(t *testing.T) {
 	if UsesDefaultDevelopmentPassword() {
 		t.Fatal("expected password file to disable default development password")
 	}
+}
+
+func TestValidateProductionAdminPassword(t *testing.T) {
+	for _, password := range []string{
+		"password",
+		" PASSWORD ",
+		"REPLACE_WITH_SECURE_ADMIN_PASSWORD",
+		"replace-with-secure-admin-password",
+		"your-secure-admin-password",
+	} {
+		t.Run(password, func(t *testing.T) {
+			t.Setenv("ATLAS_ADMIN_PASSWORD", password)
+			t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+			if err := ValidateProductionAdminPassword(); err == nil {
+				t.Fatalf("expected committed credential %q to be rejected", password)
+			}
+		})
+	}
+
+	t.Run("password file placeholder", func(t *testing.T) {
+		path := t.TempDir() + "/admin-password"
+		if err := os.WriteFile(path, []byte("REPLACE_WITH_SECURE_ADMIN_PASSWORD\n"), 0o600); err != nil {
+			t.Fatalf("write password file: %v", err)
+		}
+		t.Setenv("ATLAS_ADMIN_PASSWORD", "")
+		t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", path)
+		if err := ValidateProductionAdminPassword(); err == nil {
+			t.Fatal("expected committed password-file placeholder to be rejected")
+		}
+	})
+
+	t.Run("real password", func(t *testing.T) {
+		t.Setenv("ATLAS_ADMIN_PASSWORD", "correct-horse-battery-staple")
+		t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+		if err := ValidateProductionAdminPassword(); err != nil {
+			t.Fatalf("real password rejected: %v", err)
+		}
+	})
 }
 
 func openAdminTestPool(t *testing.T) *pgxpool.Pool {

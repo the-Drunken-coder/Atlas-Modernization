@@ -50,7 +50,7 @@ export function streamRunEvents(
     response.on("close", removeStream);
     unsubscribe = store.subscribe(runId, (event) => {
       if (dropFurtherEvents || closeScheduled || response.writableEnded) return;
-      const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`);
+      const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(safeStreamEvent(event))}\n\n`);
       if (!wrote) {
         dropFurtherEvents = true;
         closeAfterCurrentReplay();
@@ -65,6 +65,17 @@ export function streamRunEvents(
     response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);
     response.end();
   }
+}
+
+function safeStreamEvent(event: RunEvent): RunEvent {
+  if (event.type !== "assertion" || event.assertion.message === undefined) {
+    return { ...event, message: errorMessage(event.message) };
+  }
+  return {
+    ...event,
+    message: errorMessage(event.message),
+    assertion: { ...event.assertion, message: errorMessage(event.assertion.message) }
+  };
 }
 
 function isTerminalRunEvent(event: RunEvent): boolean {

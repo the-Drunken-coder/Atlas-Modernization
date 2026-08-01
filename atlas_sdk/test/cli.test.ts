@@ -229,6 +229,22 @@ describe("Atlas CLI", () => {
 
     expect(captured.stderr()).toContain("raw follow failure");
   });
+
+  it("sanitizes failures before writing to stderr", async () => {
+    const secret = "cli-canary-secret";
+    const captured = captureIO();
+    captured.io.fetch = async () => {
+      throw new Error(`failed https://user:${secret}@core.test?api_key=${secret} Bearer ${secret} \u001b[31m`);
+    };
+
+    await expect(runCLI(["--base-url", "http://atlas.test", "entities", "get", "asset-1"], captured.io)).resolves.toBe(
+      1
+    );
+
+    expect(captured.stderr()).not.toContain(secret);
+    expect(captured.stderr()).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/);
+    expect(captured.stderr()).toContain("[redacted]");
+  });
 });
 
 function captureIO(): { io: CLIIO; stdout: () => string; stderr: () => string } {

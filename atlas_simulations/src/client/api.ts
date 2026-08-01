@@ -1,3 +1,4 @@
+import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type {
   AtlasTargetSummary,
   HealthResponse,
@@ -41,10 +42,14 @@ export async function loadHealth(targetId?: string, apiKey?: string): Promise<He
       ...body,
       ok: false,
       status: jsonNumber(body.status ?? response.status),
-      message: body.message || `Request failed (${response.status})`
+      message: body.message ? sanitizeErrorMessage(body.message) : `Request failed (${response.status})`
     };
   }
-  return { ...body, status: jsonNumber(body.status ?? response.status) };
+  return {
+    ...body,
+    status: jsonNumber(body.status ?? response.status),
+    ...(body.message === undefined ? {} : { message: sanitizeErrorMessage(body.message) })
+  };
 }
 
 export async function loadScenarios(): Promise<ScenarioDescriptor[]> {
@@ -59,7 +64,7 @@ export async function loadScenarios(): Promise<ScenarioDescriptor[]> {
 
 export async function loadRuns(): Promise<RunSummary[]> {
   const response = await apiJSON<RunListResponse>("/api/runs", undefined, isRunListResponse, "run list response");
-  return response.runs;
+  return response.runs.map(sanitizeRunSummary);
 }
 
 export async function startRun(request: StartRunRequest, apiKey?: string): Promise<RunSummary> {
@@ -78,7 +83,7 @@ export async function startRun(request: StartRunRequest, apiKey?: string): Promi
     isStartRunResponse,
     "start run response"
   );
-  return response.run;
+  return sanitizeRunSummary(response.run);
 }
 
 export async function loadRun(id: string): Promise<RunSummary> {
@@ -88,7 +93,7 @@ export async function loadRun(id: string): Promise<RunSummary> {
     isRunResponse,
     "run response"
   );
-  return response.run;
+  return sanitizeRunSummary(response.run);
 }
 
 export async function stopRun(id: string): Promise<RunSummary> {
@@ -98,7 +103,7 @@ export async function stopRun(id: string): Promise<RunSummary> {
     isRunResponse,
     "run response"
   );
-  return response.run;
+  return sanitizeRunSummary(response.run);
 }
 
 export async function cleanupRun(id: string, apiKey?: string): Promise<RunSummary> {
@@ -110,7 +115,7 @@ export async function cleanupRun(id: string, apiKey?: string): Promise<RunSummar
     isRunResponse,
     "run response"
   );
-  return response.run;
+  return sanitizeRunSummary(response.run);
 }
 
 async function apiJSON<T>(
@@ -141,7 +146,7 @@ async function apiJSON<T>(
   if (!response.ok) {
     throw new Error(
       isRecord(body) && typeof body.message === "string" && body.message
-        ? body.message
+        ? sanitizeErrorMessage(body.message)
         : `Request failed (${response.status})`
     );
   }
@@ -319,6 +324,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function transportErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return "Unable to reach simulation server";
+  return sanitizeErrorMessage(error, { fallback: "Unable to reach simulation server" });
+}
+
+function sanitizeRunSummary(run: RunSummary): RunSummary {
+  return {
+    ...run,
+    assertions: run.assertions.map((assertion) => ({
+      ...assertion,
+      ...(assertion.message === undefined ? {} : { message: sanitizeErrorMessage(assertion.message) })
+    })),
+    ...(run.lastError === undefined ? {} : { lastError: sanitizeErrorMessage(run.lastError) })
+  };
 }
