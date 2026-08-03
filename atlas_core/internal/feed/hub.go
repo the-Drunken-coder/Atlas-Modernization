@@ -308,6 +308,16 @@ func (h *Hub) Publish(event RoutedEvent) {
 			Msg("Dropping stale Atlas feed event")
 		return
 	}
+	if reason, skipped := h.skipped[event.Event.Version]; skipped {
+		log.Warn().
+			Int64("event_version", event.Event.Version).
+			Str("skip_reason", reason).
+			Str("event", string(event.Event.Event)).
+			Str("resource_type", string(event.Event.ResourceType)).
+			Str("id", event.Event.ID).
+			Msg("Dropping invalidated Atlas feed event")
+		return
+	}
 	if _, exists := h.pending[event.Event.Version]; exists {
 		log.Warn().
 			Int64("event_version", event.Event.Version).
@@ -372,6 +382,7 @@ func (h *Hub) advanceLocked() {
 		next, ok := h.pending[h.nextVersion]
 		if ok {
 			delete(h.pending, h.nextVersion)
+			delete(h.skipped, h.nextVersion)
 			h.deliverLocked(next)
 			h.nextVersion++
 			continue

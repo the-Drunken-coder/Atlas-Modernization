@@ -284,7 +284,7 @@ func TestHubInvalidatesClientsWhenCommittedChangeCannotBeBuilt(t *testing.T) {
 	}
 }
 
-func TestHubDuplicateCommittedDropKeepsRecoveredClients(t *testing.T) {
+func TestHubDroppedCommittedVersionKeepsRecoveredClients(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()
 
@@ -296,6 +296,7 @@ func TestHubDuplicateCommittedDropKeepsRecoveredClients(t *testing.T) {
 	reconnected := hub.NewClient()
 	reconnected.Subscribe(Subscription{Filter: FilterAll})
 	hub.DropCommittedVersion(2, "duplicate_notification")
+	hub.Publish(entityEvent("create", "asset-dropped-late", 2, "asset"))
 	hub.Publish(entityEvent("create", "asset-before-drop", 1, "asset"))
 	hub.Publish(entityEvent("create", "asset-after-drop", 3, "asset"))
 
