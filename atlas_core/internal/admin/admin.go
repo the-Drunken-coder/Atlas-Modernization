@@ -175,15 +175,6 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	if username == "" || password == "" {
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}
-	releaseSlot, err := acquireLoginSlot(ctx, loginArgon2Slots)
-	if err != nil {
-		return "", SessionRecord{}, err
-	}
-	defer func() {
-		if releaseSlot != nil {
-			releaseSlot()
-		}
-	}()
 	if err := s.CleanupExpiredAuthRecords(ctx, now); err != nil {
 		return "", SessionRecord{}, err
 	}
@@ -202,16 +193,23 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	}
 
 	accountID := "account:" + username
-	account, err := getAccount(ctx, tx, accountID)
+	account, accountErr := getAccount(ctx, tx, accountID)
 	passwordHash := dummyPasswordHash
 	accountEnabled := false
-	if err == nil {
+	if accountErr == nil {
 		passwordHash = account.Password
 		accountEnabled = !account.Disabled
 	}
-	passwordMatches := s.verifyPassword(password, passwordHash)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	releaseSlot, err := acquireLoginSlot(ctx, loginArgon2Slots)
+	if err != nil {
 		return "", SessionRecord{}, err
+	}
+	passwordMatches := func() bool {
+		defer releaseSlot()
+		return s.verifyPassword(password, passwordHash)
+	}()
+	if accountErr != nil && !errors.Is(accountErr, pgx.ErrNoRows) {
+		return "", SessionRecord{}, accountErr
 	}
 	if !passwordMatches || !accountEnabled {
 		if err := recordLoginFailure(ctx, tx, username, ip, now); err != nil {
@@ -228,8 +226,6 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	if err := tx.Commit(ctx); err != nil {
 		return "", SessionRecord{}, err
 	}
-	releaseSlot()
-	releaseSlot = nil
 
 	token, err := randomToken()
 	if err != nil {
@@ -388,10 +384,6 @@ func recordLoginFailure(ctx context.Context, store adminStore, username, ip stri
 	return nil
 }
 
-func (s *Service) clearLoginFailures(ctx context.Context, username, ip string) error {
-	return clearLoginFailures(ctx, s.pool, username, ip)
-}
-
 func clearLoginFailures(ctx context.Context, store adminStore, username, ip string) error {
 	keys := []string{"login_fail:user:" + username}
 	if strings.TrimSpace(ip) != "" {
@@ -399,10 +391,6 @@ func clearLoginFailures(ctx context.Context, store adminStore, username, ip stri
 	}
 	_, err := store.Exec(ctx, `DELETE FROM admin_records WHERE id = ANY($1::text[]) AND type = 'login_fail'`, keys)
 	return err
-}
-
-func (s *Service) getLoginFailure(ctx context.Context, key string) (LoginFailureRecord, error) {
-	return getLoginFailure(ctx, s.pool, key)
 }
 
 func getLoginFailure(ctx context.Context, store adminStore, key string) (LoginFailureRecord, error) {
@@ -414,10 +402,6 @@ func getLoginFailure(ctx context.Context, store adminStore, key string) (LoginFa
 	}
 	err = json.Unmarshal(payload, &record)
 	return record, err
-}
-
-func (s *Service) upsertLoginFailure(ctx context.Context, key string, now time.Time) error {
-	return upsertLoginFailure(ctx, s.pool, key, now)
 }
 
 func upsertLoginFailure(ctx context.Context, store adminStore, key string, now time.Time) error {

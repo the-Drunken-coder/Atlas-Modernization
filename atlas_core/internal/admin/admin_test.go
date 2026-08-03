@@ -310,7 +310,10 @@ func TestLoginSlotWaitHonorsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestLoginAcquiresSlotBeforeDatabaseAdmission(t *testing.T) {
+func TestLoginAcquiresSlotAfterDatabaseAdmission(t *testing.T) {
+	pool := openAdminTestPool(t)
+	ctx := context.Background()
+	cleanupAdminRows(ctx, t, pool)
 	for i := 0; i < cap(loginArgon2Slots); i++ {
 		loginArgon2Slots <- struct{}{}
 	}
@@ -319,13 +322,42 @@ func TestLoginAcquiresSlotBeforeDatabaseAdmission(t *testing.T) {
 			<-loginArgon2Slots
 		}
 	}()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	loginCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	result := make(chan error, 1)
+	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
+	go func() {
+		_, _, err := service.Login(loginCtx, "admin", "wrong", "198.51.100.10", time.Now().UTC())
+		result <- err
+	}()
 
-	service := NewService(nil, &config.Config{AdminCookieSameSite: "lax"})
-	_, _, err := service.Login(ctx, "admin", "wrong", "198.51.100.10", time.Now().UTC())
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Login error = %v, want context.Canceled before database access", err)
+	lockID := loginAdmissionLockID("user:admin")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin admission probe: %v", err)
+		}
+		var acquired bool
+		err = tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, lockID).Scan(&acquired)
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+			t.Fatalf("rollback admission probe: %v", rollbackErr)
+		}
+		if err != nil {
+			t.Fatalf("probe login admission lock: %v", err)
+		}
+		if !acquired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("login did not reach database admission while the Argon2 gate was full")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Login error = %v, want context.Canceled while waiting for an Argon2 slot", err)
 	}
 }
 
