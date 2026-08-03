@@ -1,6 +1,6 @@
 # Problem Template
 
-Each active entry under `docs/problems/` is a short-lived note for agent-to-agent reference, spanning any Atlas package (Atlas Core, Atlas Protocol, Atlas SDK, …). Most are resolved in minutes, and active blockers should be closed out or moved to durable docs within a day or two. Use this template to keep the format consistent:
+Each active entry under `docs/problems/` is a short-lived note for agent-to-agent reference, spanning any Atlas package (Atlas Core, Atlas Protocol, Atlas SDK, …). Most are resolved in minutes. Delete a note when its issue is fixed or invalidated, update it when its evidence drifts, and move durable decisions or guidance to their proper documentation. Use this template to keep the format consistent:
 
 1. **Time & Date:** [UTC timestamp or local time zone timestamp]
 2. **Name:** [One-line summary identifier]
@@ -15,7 +15,8 @@ Each active entry under `docs/problems/` is a short-lived note for agent-to-agen
 ## What belongs here
 
 - Problems hit while building, testing, or debugging — logged so the next agent session can pick up context quickly.
-- Resolved or abandoned problems can stay in place as reference after they are clearly no longer active; no status tracker is required.
+- Keep active notes current when code paths, evidence, scope, or severity change.
+- Delete resolved, abandoned, or invalidated notes; Git history is the reference for closed problems.
 
 ### What does not belong here
 
