@@ -495,11 +495,12 @@ def ensure_api_auth(mode):
     if api_auth_key in API_AUTH_KEY_PLACEHOLDERS:
         print(f"[ERROR] {mode} requires a real API_AUTH_KEY, not the example placeholder.")
         return False
-    if not (os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or os.getenv("ATLAS_ADMIN_PASSWORD_FILE", "").strip()):
-        print(
-            f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD or ATLAS_ADMIN_PASSWORD_FILE "
-            "to replace the development admin/password seed."
-        )
+    admin_password = os.getenv("ATLAS_ADMIN_PASSWORD", "").strip()
+    if not admin_password:
+        print(f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD; the bundled Compose stack mounts no password file.")
+        return False
+    if admin_password == ADMIN_PASSWORD_PLACEHOLDER:
+        print(f"[ERROR] {mode} requires a real ATLAS_ADMIN_PASSWORD, not the example placeholder.")
         return False
 
     os.environ["ENABLE_API_AUTH"] = "true"

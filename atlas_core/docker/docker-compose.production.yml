@@ -27,9 +27,8 @@ services:
       CORS_ORIGIN_PATTERNS: ${CORS_ORIGIN_PATTERNS:-https://*.atlas-je0.pages.dev}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       API_AUTH_KEY: ${API_AUTH_KEY:?API_AUTH_KEY must be set}
-      # atlas.py and the production entrypoint enforce one admin password source before startup.
-      ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:-}
-      ATLAS_ADMIN_PASSWORD_FILE: ${ATLAS_ADMIN_PASSWORD_FILE:-}
+      # The bundled stack accepts the direct value; it does not mount a password file.
+      ATLAS_ADMIN_PASSWORD: ${ATLAS_ADMIN_PASSWORD:?ATLAS_ADMIN_PASSWORD must be set}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
       MAX_VIEW_SIZE_MB: ${MAX_VIEW_SIZE_MB:-10}
     ports:

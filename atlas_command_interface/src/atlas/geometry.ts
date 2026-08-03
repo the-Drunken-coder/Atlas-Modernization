@@ -113,9 +113,9 @@ export function moveVertex(geometry: UiGeometry, ref: VertexRef, lng: number, la
   return geometry;
 }
 
-/** Insert a vertex immediately after the referenced one. No-op for points. */
-export function addVertexAfter(geometry: UiGeometry, ref: VertexRef, lng: number, lat: number): UiGeometry {
-  const next: Position = [lng, lat];
+/** Insert a complete position immediately after the referenced vertex. No-op for points. */
+export function addVertexAfter(geometry: UiGeometry, ref: VertexRef, position: Position): UiGeometry {
+  const next: Position = [...position];
   if (geometry.type === "LineString" && ref.kind === "LineString") {
     const coordinates = [...geometry.coordinates];
     coordinates.splice(ref.index + 1, 0, next);
@@ -131,6 +131,16 @@ export function addVertexAfter(geometry: UiGeometry, ref: VertexRef, lng: number
     return { type: "Polygon", coordinates };
   }
   return geometry;
+}
+
+/** Midpoint along the shortest longitude path, retaining dimensions shared by both positions. */
+export function midpointPosition(current: Position, next: Position): Position {
+  const longitudeDelta = normalizeLongitude(next[0] - current[0]);
+  const midpoint: number[] = [normalizeLongitude(current[0] + longitudeDelta / 2), (current[1] + next[1]) / 2];
+  for (let index = 2; index < Math.min(current.length, next.length); index++) {
+    midpoint.push((current[index] + next[index]) / 2);
+  }
+  return midpoint as Position;
 }
 
 export function canRemoveVertex(geometry: UiGeometry, ref: VertexRef): boolean {

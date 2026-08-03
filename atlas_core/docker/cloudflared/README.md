@@ -43,8 +43,8 @@ Compose runs do not require or expand `CLOUDFLARE_TUNNEL_TOKEN`. Both developmen
 and production tunnel starts layer that file over their base Compose file.
 
 Managed tunnel starts force `ENABLE_API_AUTH=true` for the API service and
-require `API_AUTH_KEY` plus `ATLAS_ADMIN_PASSWORD` or
-`ATLAS_ADMIN_PASSWORD_FILE` to be set to real values. The committed example
+require `API_AUTH_KEY` plus `ATLAS_ADMIN_PASSWORD` to be set to real values.
+The bundled Compose stack does not mount an admin-password file. The committed example
 settings file keeps auth disabled for local development, but public tunnel
 traffic must not use that development default.
 
@@ -74,8 +74,7 @@ shared proxy-IP bucket.
 - For manual config-file runs, set `CLOUDFLARED_TUNNEL` to your tunnel UUID and render
   the config: `envsubst '${CLOUDFLARED_TUNNEL}' < config.yml > /tmp/cloudflared-config.yml`
 - `atlas.py --tunnel` requires `CLOUDFLARE_TUNNEL_TOKEN`, `API_AUTH_KEY`, and
-  `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` from the shell or
-  `atlas_core/docker/.env`; it does not read
+  `ATLAS_ADMIN_PASSWORD` from the shell or `atlas_core/docker/.env`; it does not read
   `credentials/atlas-core.json`.
 
 ## Troubleshooting
