@@ -137,6 +137,49 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 	}
 }
 
+func TestProductionSchemaUpgradesFromVersionOne(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:1]); err != nil {
+		t.Fatalf("install version-one schema: %v", err)
+	}
+	var version, fingerprintVersion int
+	var name, checksum, fingerprint string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT version, name, checksum, fingerprint_version, schema_fingerprint
+		FROM atlas_schema_migrations
+	`).Scan(&version, &name, &checksum, &fingerprintVersion, &fingerprint); err != nil {
+		t.Fatalf("read version-one migration: %v", err)
+	}
+	if version != 1 || name != baselineMigrationName || checksum != baselineMigrationChecksum || fingerprintVersion != fingerprintVersionV1 || strings.TrimSpace(fingerprint) == "" {
+		t.Fatalf("version-one migration row = %d/%s/%s/fingerprint-v%d/%s", version, name, checksum, fingerprintVersion, fingerprint)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO objects (object_id, path) VALUES ('version-one-object', 'objects/version-one-object/blob')`); err != nil {
+		t.Fatalf("insert version-one object: %v", err)
+	}
+
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("upgrade version-one schema: %v", err)
+	}
+	assertCurrentMigration(ctx, t, db)
+
+	var intentTableExists, objectPreserved bool
+	if err := db.Pool.QueryRow(ctx, `SELECT to_regclass('storage_upload_intents') IS NOT NULL`).Scan(&intentTableExists); err != nil {
+		t.Fatalf("check upload-intent table: %v", err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = 'version-one-object')`).Scan(&objectPreserved); err != nil {
+		t.Fatalf("check version-one object: %v", err)
+	}
+	if !intentTableExists || !objectPreserved {
+		t.Fatalf("upgrade state = upload-intents:%t object-preserved:%t, want true/true", intentTableExists, objectPreserved)
+	}
+}
+
 func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	dbURL := migrationTestSchema(t)
 	parsed, err := url.Parse(dbURL)

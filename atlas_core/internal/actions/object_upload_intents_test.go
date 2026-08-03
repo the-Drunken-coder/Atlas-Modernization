@@ -183,6 +183,107 @@ func TestUploadHeartbeatOwnershipLossCancelsBeforeMetadataCommit(t *testing.T) {
 	}
 }
 
+func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("heartbeat-retry-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	ownerID := uuid.NewString()
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() + interval '5 minutes')
+	`, path, objectID, ownerID); err != nil {
+		t.Fatalf("insert upload intent: %v", err)
+	}
+
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	sequenceName := "heartbeat_retry_sequence_" + suffix
+	functionName := "heartbeat_retry_function_" + suffix
+	triggerName := "heartbeat_retry_trigger_" + suffix
+	sequenceIdentifier := pgx.Identifier{sequenceName}.Sanitize()
+	functionIdentifier := pgx.Identifier{functionName}.Sanitize()
+	triggerIdentifier := pgx.Identifier{triggerName}.Sanitize()
+	if _, err := pool.Exec(ctx, "CREATE SEQUENCE "+sequenceIdentifier); err != nil {
+		t.Fatalf("create heartbeat retry sequence: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE FUNCTION `+functionIdentifier+`() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF nextval('`+sequenceName+`') = 1 THEN
+				RAISE EXCEPTION 'forced transient heartbeat failure';
+			END IF;
+			RETURN NEW;
+		END
+	$$`); err != nil {
+		t.Fatalf("create heartbeat retry function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TRIGGER `+triggerIdentifier+`
+		BEFORE UPDATE ON storage_upload_intents
+		FOR EACH ROW EXECUTE FUNCTION `+functionIdentifier+`()`); err != nil {
+		t.Fatalf("create heartbeat retry trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, "DROP TRIGGER IF EXISTS "+triggerIdentifier+" ON storage_upload_intents")
+		_, _ = pool.Exec(cleanupCtx, "DROP FUNCTION IF EXISTS "+functionIdentifier+"()")
+		_, _ = pool.Exec(cleanupCtx, "DROP SEQUENCE IF EXISTS "+sequenceIdentifier)
+	})
+
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	failure := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		NewObjectActions(pool, nil).runStorageUploadHeartbeat(
+			heartbeatCtx, "atlas-media", path, ownerID, 10*time.Millisecond,
+			func(err error) { failure <- err },
+		)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var attempts int64
+		var renewed bool
+		if err := pool.QueryRow(ctx, `SELECT last_value FROM `+sequenceIdentifier).Scan(&attempts); err != nil {
+			t.Fatalf("read heartbeat retry attempts: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `
+			SELECT expires_at > clock_timestamp() + interval '4 minutes'
+			FROM storage_upload_intents WHERE bucket = 'atlas-media' AND path = $1
+		`, path).Scan(&renewed); err != nil {
+			t.Fatalf("check renewed upload intent: %v", err)
+		}
+		if attempts >= 2 && renewed {
+			break
+		}
+		select {
+		case err := <-failure:
+			t.Fatalf("heartbeat stopped after transient renewal failure: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("heartbeat did not retry and renew the upload intent")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	stopHeartbeat()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("heartbeat did not stop")
+	}
+	select {
+	case err := <-failure:
+		t.Fatalf("heartbeat reported a transient renewal failure: %v", err)
+	default:
+	}
+}
+
 type crashFileObjectStorage struct {
 	crashAfterWrite bool
 }
@@ -410,10 +511,10 @@ func TestRecoverStorageUploadIntentRejectsCreateAfterAbsentPathCheck(t *testing.
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM pg_stat_activity
-				WHERE $1 = ANY(pg_blocking_pids(pid))
-					AND wait_event_type = 'Lock'
-					AND query LIKE '%INSERT INTO storage_deletion_outbox%'
+				FROM pg_locks
+				WHERE NOT granted
+					AND relation = 'storage_deletion_outbox'::regclass
+					AND $1 = ANY(pg_blocking_pids(pid))
 			)
 		`, blockerPID).Scan(&blocked); err != nil {
 			t.Fatalf("check recovery blocker: %v", err)

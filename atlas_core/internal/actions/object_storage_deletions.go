@@ -256,13 +256,11 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 		return 0, errors.New("storage deletion reconciliation requires a database")
 	}
 
-	if _, err := a.recoverStorageUploadIntents(ctx, limit); err != nil {
-		return 0, err
-	}
+	_, recoveryErr := a.recoverStorageUploadIntents(ctx, limit)
 
 	queued, err := a.claimQueuedStorageDeletions(ctx, limit)
 	if err != nil {
-		return 0, err
+		return 0, errors.Join(recoveryErr, err)
 	}
 
 	deleted := 0
@@ -270,34 +268,34 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 	for _, item := range queued {
 		if strings.TrimSpace(item.bucket) != configuredBucket {
 			if err := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, "configured storage bucket does not match queued deletion bucket"); err != nil {
-				return deleted, fmt.Errorf("record storage deletion bucket mismatch: %w", err)
+				return deleted, errors.Join(recoveryErr, fmt.Errorf("record storage deletion bucket mismatch: %w", err))
 			}
 			continue
 		}
 
 		var live bool
 		if err := a.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
-			return deleted, fmt.Errorf("check queued storage path live reference: %w", err)
+			return deleted, errors.Join(recoveryErr, fmt.Errorf("check queued storage path live reference: %w", err))
 		}
 		if live {
 			if err := a.clearQueuedStorageDeletionByID(ctx, item.id); err != nil {
-				return deleted, err
+				return deleted, errors.Join(recoveryErr, err)
 			}
 			continue
 		}
 
 		if err := a.storage.DeleteObjectPath(ctx, item.path); err != nil {
 			if updateErr := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, err.Error()); updateErr != nil {
-				return deleted, fmt.Errorf("record storage deletion failure: %w", updateErr)
+				return deleted, errors.Join(recoveryErr, fmt.Errorf("record storage deletion failure: %w", updateErr))
 			}
 			continue
 		}
 
 		if err := a.clearQueuedStorageDeletionByID(ctx, item.id); err != nil {
-			return deleted, err
+			return deleted, errors.Join(recoveryErr, err)
 		}
 		deleted++
 	}
 
-	return deleted, nil
+	return deleted, recoveryErr
 }

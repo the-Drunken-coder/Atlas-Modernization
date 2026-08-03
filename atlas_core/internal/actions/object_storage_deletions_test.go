@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestQueueStorageDeletionRequeueResetsRetryState(t *testing.T) {
@@ -100,6 +104,75 @@ func TestQueueStorageDeletionAfterFailurePreservesRetryAttempts(t *testing.T) {
 	}
 }
 
+func TestReconcileStorageDeletionDrainsQueueAfterUploadRecoveryFailure(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	recoveryObjectID := fmt.Sprintf("recovery-failure-%d", time.Now().UTC().UnixNano())
+	recoveryPath := fmt.Sprintf("objects/%s/blob", recoveryObjectID)
+	queuedObjectID := fmt.Sprintf("queued-after-recovery-failure-%d", time.Now().UTC().UnixNano())
+	queuedPath := fmt.Sprintf("objects/%s/blob", queuedObjectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, recoveryObjectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, queuedObjectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents
+			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() - interval '11 minutes', clock_timestamp() - interval '6 minutes')
+	`, recoveryPath, recoveryObjectID, uuid.NewString()); err != nil {
+		t.Fatalf("insert recoverable upload intent: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-media', $1, $2)
+	`, queuedPath, queuedObjectID); err != nil {
+		t.Fatalf("insert independent queued deletion: %v", err)
+	}
+
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	functionIdentifier := pgx.Identifier{"fail_recovery_outbox_function_" + suffix}.Sanitize()
+	triggerIdentifier := pgx.Identifier{"fail_recovery_outbox_trigger_" + suffix}.Sanitize()
+	if _, err := pool.Exec(ctx, `CREATE FUNCTION `+functionIdentifier+`() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced upload recovery failure';
+		END
+	$$`); err != nil {
+		t.Fatalf("create recovery failure function: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TRIGGER `+triggerIdentifier+`
+		BEFORE INSERT ON storage_deletion_outbox
+		FOR EACH ROW EXECUTE FUNCTION `+functionIdentifier+`()`); err != nil {
+		t.Fatalf("create recovery failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, "DROP TRIGGER IF EXISTS "+triggerIdentifier+" ON storage_deletion_outbox")
+		_, _ = pool.Exec(cleanupCtx, "DROP FUNCTION IF EXISTS "+functionIdentifier+"()")
+	})
+
+	storageClient := &recordingObjectStorage{}
+	deleted, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10)
+	if err == nil || !strings.Contains(err.Error(), "forced upload recovery failure") {
+		t.Fatalf("ReconcileStorageDeletions error = %v, want recovery failure", err)
+	}
+	if deleted != 1 || len(storageClient.deletedPaths) != 1 || storageClient.deletedPaths[0] != queuedPath {
+		t.Fatalf("reconciliation deleted=%d paths=%#v, want independent path %q", deleted, storageClient.deletedPaths, queuedPath)
+	}
+
+	var intentExists, outboxExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)`, recoveryPath).Scan(&intentExists); err != nil {
+		t.Fatalf("check rolled-back upload intent: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, queuedPath).Scan(&outboxExists); err != nil {
+		t.Fatalf("check drained deletion row: %v", err)
+	}
+	if !intentExists || outboxExists {
+		t.Fatalf("post-reconcile rows = intent:%t outbox:%t, want true/false", intentExists, outboxExists)
+	}
+}
+
 func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -137,9 +210,9 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsPathWhenQueuedDeletionClearsBeforeWriteLock(t *testing.T) {
+func TestCreateRejectsPathWhileReconcileDeletesBlob(t *testing.T) {
 	pool := openActionsTestPool(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	objectID := fmt.Sprintf("deletion-create-race-%d", time.Now().UTC().UnixNano())
@@ -151,6 +224,21 @@ func TestCreateRejectsPathWhenQueuedDeletionClearsBeforeWriteLock(t *testing.T) 
 		VALUES ('atlas-media', $1, $2)
 	`, path, objectID); err != nil {
 		t.Fatalf("insert queued deletion: %v", err)
+	}
+
+	storageClient := newPausingDeleteObjectStorage()
+	defer storageClient.releaseDelete()
+	type reconcileResult struct {
+		deleted int
+		err     error
+	}
+	reconcileDone := make(chan reconcileResult, 1)
+	go func() {
+		deleted, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10)
+		reconcileDone <- reconcileResult{deleted: deleted, err: err}
+	}()
+	if deletedPath := storageClient.waitForDeleteStart(t); deletedPath != path {
+		t.Fatalf("reconciler deleting %q, want %q", deletedPath, path)
 	}
 
 	blocker, err := pool.Begin(ctx)
@@ -191,7 +279,6 @@ waitForCreate:
 				FROM pg_stat_activity
 				WHERE $1 = ANY(pg_blocking_pids(pid))
 					AND wait_event_type = 'Lock'
-					AND query LIKE '%pg_advisory_xact_lock%'
 			)
 		`, blockerPID).Scan(&blocked); err != nil {
 			t.Fatalf("check blocked Create: %v", err)
@@ -205,8 +292,14 @@ waitForCreate:
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE path = $1`, path); err != nil {
-		t.Fatalf("clear queued deletion: %v", err)
+	storageClient.releaseDelete()
+	select {
+	case result := <-reconcileDone:
+		if result.err != nil || result.deleted != 1 {
+			t.Fatalf("reconciliation result = (%d, %v), want (1, nil)", result.deleted, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation did not finish after storage deletion")
 	}
 	if err := blocker.Rollback(ctx); err != nil {
 		t.Fatalf("release write blocker: %v", err)
@@ -229,6 +322,6 @@ waitForCreate:
 		t.Fatalf("check object row: %v", err)
 	}
 	if objectExists {
-		t.Fatal("Create committed a path whose queued blob deletion had completed")
+		t.Fatal("Create committed metadata for a blob deleted by reconciliation")
 	}
 }

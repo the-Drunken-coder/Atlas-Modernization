@@ -70,19 +70,25 @@ func (a *ObjectActions) renewStorageUploadIntent(ctx context.Context, bucket, pa
 func (a *ObjectActions) runStorageUploadHeartbeat(ctx context.Context, bucket, path, ownerID string, interval time.Duration, reportFailure func(error)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	lastRenewed := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			owned, err := a.renewStorageUploadIntent(ctx, bucket, path, ownerID)
-			if err == nil && !owned {
-				err = errors.New("storage upload intent ownership was lost")
-			}
 			if err != nil {
-				reportFailure(err)
+				if time.Since(lastRenewed) < storageUploadIntentLease-interval {
+					continue
+				}
+				reportFailure(fmt.Errorf("storage upload intent lease could not be renewed: %w", err))
 				return
 			}
+			if !owned {
+				reportFailure(errors.New("storage upload intent ownership was lost"))
+				return
+			}
+			lastRenewed = time.Now()
 		}
 	}
 }
@@ -195,15 +201,15 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 	for _, item := range intents {
 		var live bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
-			return recovered, fmt.Errorf("check storage upload intent live reference: %w", err)
+			return 0, fmt.Errorf("check storage upload intent live reference: %w", err)
 		}
 		if !live {
 			if err := a.queueStorageDeletionTx(ctx, tx, item.bucket, item.path, item.objectID); err != nil {
-				return recovered, err
+				return 0, err
 			}
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM storage_upload_intents WHERE bucket = $1 AND path = $2`, item.bucket, item.path); err != nil {
-			return recovered, fmt.Errorf("clear recovered storage upload intent: %w", err)
+			return 0, fmt.Errorf("clear recovered storage upload intent: %w", err)
 		}
 		recovered++
 	}
