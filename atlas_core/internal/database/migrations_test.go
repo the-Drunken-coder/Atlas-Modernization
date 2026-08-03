@@ -40,6 +40,16 @@ func TestUploadIntentMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestPathTombstoneMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[2]
+	if actual := migrationChecksum(migration); actual != pathTombstonesMigrationChecksum {
+		t.Fatalf("path-tombstone migration checksum = %s, want %s", actual, pathTombstonesMigrationChecksum)
+	}
+	if len(migration.statements) != 1 || migration.statements[0] != `CREATE INDEX idx_storage_deletion_outbox_path ON storage_deletion_outbox(path)` {
+		t.Fatalf("path-tombstone migration statements = %#v", migration.statements)
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
@@ -48,22 +58,34 @@ func TestMigrationDefinitionsAreValid(t *testing.T) {
 
 func TestAppliedMigrationHistoryMustMatchKnownPrefix(t *testing.T) {
 	known := coreSchemaMigrations()
-	valid := appliedMigration{
-		version:            known[0].version,
-		name:               known[0].name,
-		checksum:           known[0].checksum,
-		fingerprintVersion: known[0].fingerprintVersion,
-		schemaFingerprint:  "fingerprint",
+	validPrefix := make([]appliedMigration, len(known))
+	for index, migration := range known {
+		validPrefix[index] = appliedMigration{
+			version:            migration.version,
+			name:               migration.name,
+			checksum:           migration.checksum,
+			fingerprintVersion: migration.fingerprintVersion,
+			schemaFingerprint:  "fingerprint",
+		}
 	}
-	if err := verifyAppliedMigrations([]appliedMigration{valid}, known); err != nil {
+	if err := verifyAppliedMigrations(validPrefix, known); err != nil {
 		t.Fatalf("valid migration history: %v", err)
 	}
+	valid := validPrefix[0]
+	futureApplied := append([]appliedMigration(nil), validPrefix...)
+	futureApplied = append(futureApplied, appliedMigration{
+		version:            known[len(known)-1].version + 1,
+		name:               "future",
+		checksum:           "future",
+		fingerprintVersion: fingerprintVersionV1,
+		schemaFingerprint:  "future",
+	})
 
 	tests := []struct {
 		name    string
 		applied []appliedMigration
 	}{
-		{name: "future version", applied: []appliedMigration{valid, {version: 2, name: "future", checksum: "future", fingerprintVersion: fingerprintVersionV1, schemaFingerprint: "future"}}},
+		{name: "future version", applied: futureApplied},
 		{name: "wrong version", applied: []appliedMigration{{version: 2, name: valid.name, checksum: valid.checksum, fingerprintVersion: valid.fingerprintVersion, schemaFingerprint: valid.schemaFingerprint}}},
 		{name: "changed checksum", applied: []appliedMigration{{version: valid.version, name: valid.name, checksum: "changed", fingerprintVersion: valid.fingerprintVersion, schemaFingerprint: valid.schemaFingerprint}}},
 		{name: "changed fingerprint version", applied: []appliedMigration{{version: valid.version, name: valid.name, checksum: valid.checksum, fingerprintVersion: 2, schemaFingerprint: valid.schemaFingerprint}}},
@@ -168,15 +190,48 @@ func TestProductionSchemaUpgradesFromVersionOne(t *testing.T) {
 	}
 	assertCurrentMigration(ctx, t, db)
 
-	var intentTableExists, objectPreserved bool
+	var intentTableExists bool
 	if err := db.Pool.QueryRow(ctx, `SELECT to_regclass('storage_upload_intents') IS NOT NULL`).Scan(&intentTableExists); err != nil {
 		t.Fatalf("check upload-intent table: %v", err)
 	}
-	if err := db.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = 'version-one-object')`).Scan(&objectPreserved); err != nil {
+	var preservedPath string
+	if err := db.Pool.QueryRow(ctx, `SELECT path FROM objects WHERE object_id = 'version-one-object'`).Scan(&preservedPath); err != nil {
 		t.Fatalf("check version-one object: %v", err)
 	}
-	if !intentTableExists || !objectPreserved {
-		t.Fatalf("upgrade state = upload-intents:%t object-preserved:%t, want true/true", intentTableExists, objectPreserved)
+	if !intentTableExists || preservedPath != "objects/version-one-object/blob" {
+		t.Fatalf("upgrade state = upload-intents:%t object-path:%q", intentTableExists, preservedPath)
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT version, name, checksum, fingerprint_version, schema_fingerprint
+		FROM atlas_schema_migrations ORDER BY version
+	`)
+	if err != nil {
+		t.Fatalf("read upgraded migration history: %v", err)
+	}
+	defer rows.Close()
+	var applied []appliedMigration
+	for rows.Next() {
+		var migration appliedMigration
+		if err := rows.Scan(&migration.version, &migration.name, &migration.checksum, &migration.fingerprintVersion, &migration.schemaFingerprint); err != nil {
+			t.Fatalf("scan upgraded migration history: %v", err)
+		}
+		applied = append(applied, migration)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate upgraded migration history: %v", err)
+	}
+	if len(applied) != len(migrations) {
+		t.Fatalf("applied migrations = %d, want %d", len(applied), len(migrations))
+	}
+	for index, expected := range migrations {
+		actual := applied[index]
+		if actual.version != expected.version || actual.name != expected.name || actual.checksum != expected.checksum || actual.fingerprintVersion != expected.fingerprintVersion || strings.TrimSpace(actual.schemaFingerprint) == "" {
+			t.Fatalf("migration %d = %d/%s/%s/fingerprint-v%d/%s", index+1, actual.version, actual.name, actual.checksum, actual.fingerprintVersion, actual.schemaFingerprint)
+		}
+	}
+	if applied[0].schemaFingerprint != fingerprint {
+		t.Fatalf("version-one fingerprint changed from %s to %s", fingerprint, applied[0].schemaFingerprint)
 	}
 }
 
@@ -196,7 +251,7 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	defer cancel()
 	migrations := coreSchemaMigrations()
 	searchPathMigration := schemaMigration{
-		version:            3,
+		version:            4,
 		name:               "verify_search_path_restoration",
 		fingerprintVersion: fingerprintVersionV1,
 		statements: []string{`DO $$
@@ -215,8 +270,8 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != 3 {
-		t.Fatalf("migration version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("migration version = %d, want 4", version)
 	}
 }
 
@@ -405,14 +460,14 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	failing := schemaMigration{
-		version:            3,
+		version:            4,
 		name:               "deliberate_rollback_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE entities ADD COLUMN rollback_probe TEXT`, `THIS IS NOT VALID SQL`},
 	}
 	failing.checksum = migrationChecksum(failing)
 	migrations = append(migrations, failing)
-	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 3") {
+	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 4") {
 		t.Fatalf("failing migration error = %v", err)
 	}
 
@@ -500,7 +555,7 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	adminMigration := schemaMigration{
-		version:            3,
+		version:            4,
 		name:               "add_admin_migration_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE admin_records ADD COLUMN migration_probe TEXT`},
@@ -520,8 +575,8 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&migrationVersion); err != nil {
 		t.Fatalf("read scratch migration version: %v", err)
 	}
-	if adminCount != 1 || migrationVersion != 3 {
-		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 3", adminCount, migrationVersion)
+	if adminCount != 1 || migrationVersion != 4 {
+		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 4", adminCount, migrationVersion)
 	}
 }
 
@@ -600,7 +655,7 @@ func assertCurrentMigration(ctx context.Context, t *testing.T, db *DB) {
 		LIMIT 1`).Scan(&version, &name, &checksum, &fingerprintVersion, &fingerprint); err != nil {
 		t.Fatalf("read current schema migration: %v", err)
 	}
-	if version != 2 || name != uploadIntentsMigrationName || checksum != uploadIntentsMigrationChecksum || fingerprintVersion != fingerprintVersionV1 || strings.TrimSpace(fingerprint) == "" {
+	if version != 3 || name != pathTombstonesMigrationName || checksum != pathTombstonesMigrationChecksum || fingerprintVersion != fingerprintVersionV1 || strings.TrimSpace(fingerprint) == "" {
 		t.Fatalf("migration row = %d/%s/%s/fingerprint-v%d/%s", version, name, checksum, fingerprintVersion, fingerprint)
 	}
 }

@@ -64,6 +64,9 @@ expired intents orphaned, waits through a safety grace period, verifies that no
 object references the path, and then transfers deletion to the durable outbox.
 Successful deletion rows remain with `next_attempt_at = 'infinity'` as permanent
 path tombstones so deleted generated paths cannot be reused by later metadata.
+Migration v3 adds the path-leading index used to reject those tombstones without
+scanning the append-only outbox. Retention is deliberate: each generated path
+adds at most one compact row, and removing it would reopen the reuse race.
 
 Inspect the current production version with:
 

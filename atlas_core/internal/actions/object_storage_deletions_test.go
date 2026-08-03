@@ -142,7 +142,8 @@ func TestReconcileStorageDeletionDrainsQueueAfterUploadRecoveryFailure(t *testin
 	}
 	if _, err := pool.Exec(ctx, `CREATE TRIGGER `+triggerIdentifier+`
 		BEFORE INSERT ON storage_deletion_outbox
-		FOR EACH ROW EXECUTE FUNCTION `+functionIdentifier+`()`); err != nil {
+		FOR EACH ROW WHEN (NEW.path = '`+strings.ReplaceAll(recoveryPath, "'", "''")+`')
+		EXECUTE FUNCTION `+functionIdentifier+`()`); err != nil {
 		t.Fatalf("create recovery failure trigger: %v", err)
 	}
 	t.Cleanup(func() {
@@ -151,6 +152,16 @@ func TestReconcileStorageDeletionDrainsQueueAfterUploadRecoveryFailure(t *testin
 		_, _ = pool.Exec(cleanupCtx, "DROP TRIGGER IF EXISTS "+triggerIdentifier+" ON storage_deletion_outbox")
 		_, _ = pool.Exec(cleanupCtx, "DROP FUNCTION IF EXISTS "+functionIdentifier+"()")
 	})
+	unrelatedPath := recoveryPath + "-unrelated"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-media', $1, $2)
+	`, unrelatedPath, recoveryObjectID); err != nil {
+		t.Fatalf("insert unrelated outbox row while failure trigger is active: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE path = $1`, unrelatedPath); err != nil {
+		t.Fatalf("clear unrelated outbox row: %v", err)
+	}
 
 	storageClient := &recordingObjectStorage{}
 	deleted, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10)

@@ -1,6 +1,6 @@
 # Objects JSON Guide
 
-_Revision: 2026-02-13_
+_Revision: 2026-08-03_
 
 Atlas Core stores object metadata in `objects`, with selected fields promoted to columns.
 Binary content is served through the storage client when configured.

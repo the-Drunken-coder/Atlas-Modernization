@@ -193,10 +193,12 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 	ownerID := uuid.NewString()
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	if _, err := pool.Exec(ctx, `
+	var originalExpiry time.Time
+	if err := pool.QueryRow(ctx, `
 		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
 		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() + interval '5 minutes')
-	`, path, objectID, ownerID); err != nil {
+		RETURNING expires_at
+	`, path, objectID, ownerID).Scan(&originalExpiry); err != nil {
 		t.Fatalf("insert upload intent: %v", err)
 	}
 
@@ -222,7 +224,8 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `CREATE TRIGGER `+triggerIdentifier+`
 		BEFORE UPDATE ON storage_upload_intents
-		FOR EACH ROW EXECUTE FUNCTION `+functionIdentifier+`()`); err != nil {
+		FOR EACH ROW WHEN (NEW.path = '`+strings.ReplaceAll(path, "'", "''")+`')
+		EXECUTE FUNCTION `+functionIdentifier+`()`); err != nil {
 		t.Fatalf("create heartbeat retry trigger: %v", err)
 	}
 	t.Cleanup(func() {
@@ -252,9 +255,9 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 			t.Fatalf("read heartbeat retry attempts: %v", err)
 		}
 		if err := pool.QueryRow(ctx, `
-			SELECT expires_at > clock_timestamp() + interval '4 minutes'
+			SELECT expires_at > $2
 			FROM storage_upload_intents WHERE bucket = 'atlas-media' AND path = $1
-		`, path).Scan(&renewed); err != nil {
+		`, path, originalExpiry).Scan(&renewed); err != nil {
 			t.Fatalf("check renewed upload intent: %v", err)
 		}
 		if attempts >= 2 && renewed {
