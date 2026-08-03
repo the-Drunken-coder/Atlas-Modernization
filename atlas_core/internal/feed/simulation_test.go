@@ -435,7 +435,7 @@ func (s *blockingHubSink) PublishResourceChange(change actions.ResourceChange) {
 		close(s.started)
 		<-s.release
 	})
-	s.Hub.Publish(entityEvent(string(change.Event), change.ID, change.Version, "asset"))
+	s.Publish(entityEvent(string(change.Event), change.ID, change.Version, "asset"))
 }
 
 func (s *blockingChangeSink) PublishResourceChange(change actions.ResourceChange) {
