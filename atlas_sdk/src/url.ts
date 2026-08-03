@@ -5,6 +5,9 @@ export function normalizeAtlasBaseUrl(baseUrl: string): string {
   if (!value || hasUnsafeUrlCharacters(value) || value.startsWith("//")) {
     throw new TypeError("Atlas base URL must be an absolute HTTP(S) URL or a root-relative path");
   }
+  if (hasPathTraversal(value)) {
+    throw new TypeError("Atlas base URL must not contain path traversal");
+  }
 
   if (value.startsWith("/")) {
     if (value.includes("?") || value.includes("#")) {
@@ -38,11 +41,12 @@ export function joinAtlasUrl(baseUrl: string, endpoint: string): string {
   const base = normalizeAtlasBaseUrl(baseUrl);
   if (
     hasUnsafeUrlCharacters(endpoint) ||
+    hasPathTraversal(endpoint) ||
     !endpoint.startsWith("/") ||
     endpoint.startsWith("//") ||
     endpoint.includes("#")
   ) {
-    throw new TypeError("Atlas endpoint must be a root-relative path without a fragment");
+    throw new TypeError("Atlas endpoint must be a safe root-relative path without a fragment");
   }
   return base === "/" ? endpoint : `${base}${endpoint}`;
 }
@@ -61,4 +65,13 @@ function hasUnsafeUrlCharacters(value: string): boolean {
     if (value[index] === "\\" || code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function hasPathTraversal(value: string): boolean {
+  const queryStart = value.indexOf("?");
+  const path = queryStart === -1 ? value : value.slice(0, queryStart);
+  return path.split("/").some((segment) => {
+    const decodedDots = segment.toLowerCase().replaceAll("%2e", ".");
+    return decodedDots === "." || decodedDots === "..";
+  });
 }

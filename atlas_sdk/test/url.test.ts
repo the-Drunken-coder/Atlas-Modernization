@@ -12,6 +12,9 @@ describe("Atlas URL handling", () => {
     "https://core.test#fragment",
     "/\\core.test",
     "/atlas\tignored",
+    "/atlas/../admin",
+    "/../admin",
+    "/%2e%2e/admin",
     "core.test"
   ])("rejects unsafe base URL %s", (value) => {
     expect(() => normalizeAtlasBaseUrl(value)).toThrow();
@@ -33,14 +36,20 @@ describe("Atlas URL handling", () => {
     expect(joinAtlasUrl("/atlas", "/feed")).toBe("/atlas/feed");
   });
 
-  it.each(["feed", "//feed", "/feed#fragment", "/\\evil.test", "/feed\nignored"])(
-    "rejects unsafe endpoint %s",
-    (endpoint) => {
-      expect(() => joinAtlasUrl("/", endpoint)).toThrow(
-        "Atlas endpoint must be a root-relative path without a fragment"
-      );
-    }
-  );
+  it.each([
+    "feed",
+    "//feed",
+    "/feed#fragment",
+    "/\\evil.test",
+    "/feed\nignored",
+    "/atlas/../admin",
+    "/../admin",
+    "/%2e%2e/admin"
+  ])("rejects unsafe endpoint %s", (endpoint) => {
+    expect(() => joinAtlasUrl("/", endpoint)).toThrow(
+      "Atlas endpoint must be a safe root-relative path without a fragment"
+    );
+  });
 
   it("handles long runs of trailing slashes without a regular expression", () => {
     expect(normalizeAtlasBaseUrl(`/atlas${"/".repeat(10_000)}`)).toBe("/atlas");
