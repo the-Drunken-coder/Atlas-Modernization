@@ -47,6 +47,7 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 				}
 			}
 
+			// #nosec G204 -- os.Args[0] is the current test binary, not external input.
 			cmd := exec.Command(os.Args[0], "-test.run=^TestStorageUploadCrashHelper$")
 			cmd.Env = append(os.Environ(),
 				storageUploadCrashHelperEnv+"=1",
@@ -240,6 +241,7 @@ func (s *crashFileObjectStorage) UploadObjectFromReaderToPath(
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
 		return nil, err
 	}
+	// #nosec G304 -- filePath is rooted in the test-owned temporary directory.
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, err

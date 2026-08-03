@@ -234,7 +234,7 @@ func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id i
 func (a *ObjectActions) deleteQueuedStoragePathNow(ctx context.Context, bucket, path string) error {
 	if err := a.storage.DeleteObjectPath(ctx, path); err != nil {
 		if recordErr := a.recordQueuedStorageDeletionFailure(ctx, bucket, path, err); recordErr != nil {
-			return fmt.Errorf("storage deletion failed: %w (also failed to update retry metadata: %v)", err, recordErr)
+			return fmt.Errorf("storage deletion failed: %w (also failed to update retry metadata: %w)", err, recordErr)
 		}
 		return err
 	}

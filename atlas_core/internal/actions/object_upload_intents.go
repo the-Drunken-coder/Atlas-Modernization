@@ -98,22 +98,22 @@ func (a *ObjectActions) abandonStorageUpload(ctx context.Context, bucket, path, 
 
 	tx, err := a.pool.BeginTx(cleanupCtx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("%w (also failed to begin durable upload cleanup: %v)", cause, err)
+		return fmt.Errorf("%w (also failed to begin durable upload cleanup: %w)", cause, err)
 	}
 	defer func() { _ = tx.Rollback(cleanupCtx) }()
 
 	if err := a.deleteStorageUploadIntentTx(cleanupCtx, tx, bucket, path, ownerID); err != nil {
-		return fmt.Errorf("%w (durable upload cleanup remains pending: %v)", cause, err)
+		return fmt.Errorf("%w (durable upload cleanup remains pending: %w)", cause, err)
 	}
 	if err := a.queueStorageDeletionTx(cleanupCtx, tx, bucket, path, objectID); err != nil {
-		return fmt.Errorf("%w (durable upload cleanup remains pending: %v)", cause, err)
+		return fmt.Errorf("%w (durable upload cleanup remains pending: %w)", cause, err)
 	}
 	if err := tx.Commit(cleanupCtx); err != nil {
-		return fmt.Errorf("%w (failed to commit durable upload cleanup: %v)", cause, err)
+		return fmt.Errorf("%w (failed to commit durable upload cleanup: %w)", cause, err)
 	}
 
 	if err := a.deleteQueuedStoragePathNow(cleanupCtx, bucket, path); err != nil {
-		return fmt.Errorf("%w (uploaded blob cleanup queued: %v)", cause, err)
+		return fmt.Errorf("%w (uploaded blob cleanup queued: %w)", cause, err)
 	}
 	return cause
 }
