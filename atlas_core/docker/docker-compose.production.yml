@@ -93,7 +93,7 @@ services:
     networks:
       - atlas_core_network
 
-  # MinIO bucket initialization (runs once and exits)
+  # Verify that the durable MinIO bucket was provisioned or restored.
   minio-init:
     image: minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2
     container_name: atlas_core_minio_init
@@ -109,9 +109,9 @@ services:
       - -c
       - |
         set -e
-        mc mb --ignore-existing myminio/atlas-media
+        mc stat myminio/atlas-media >/dev/null
         case "$$ENABLE_PUBLIC_MINIO" in true|1|yes|on) mc anonymous set download myminio/atlas-media ;; esac
-        echo 'MinIO bucket initialized successfully'
+        echo 'MinIO bucket verified successfully'
     networks:
       - atlas_core_network
 

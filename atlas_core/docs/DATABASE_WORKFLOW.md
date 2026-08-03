@@ -6,7 +6,7 @@ Atlas Core has two explicit startup modes:
 
 | Mode | Setting | PostgreSQL | MinIO | Intended use |
 | --- | --- | --- | --- | --- |
-| Durable | `DATABASE_RECREATE_ON_STARTUP=false` | Applies ordered migrations and verifies schema drift; preserves all rows | Ensures the bucket exists and preserves every object | Production and any environment whose data matters |
+| Durable | `DATABASE_RECREATE_ON_STARTUP=false` | Applies ordered migrations and verifies schema drift; preserves all rows | Requires the bucket to exist and preserves every object | Production and any environment whose data matters |
 | Scratch | `DATABASE_RECREATE_ON_STARTUP=true` | Migrates/verifies the schema, truncates resource rows, and resets change versions; preserves `admin_records` and migration history | Empties the configured bucket | Local development and disposable integration tests |
 
 Durable mode is the application default and the only mode accepted by the production image. Development Compose explicitly selects scratch mode so the normal local workflow stays simple.
@@ -49,7 +49,7 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose waits for `minio-init` to provision the bucket on a clean deployment. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose verifies the bucket before starting Core; operators must provision it explicitly for a clean deployment or restore it from the backup paired with PostgreSQL. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
 
 ## Baseline migration v1
 

@@ -352,16 +352,10 @@ def wait_for_api(max_retries=30, delay=2.0, production=False):
     raise Exception(f"API not ready after {max_retries} attempts")
 
 
-def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-media"):
-    """Ensure the MinIO bucket exists using mc client.
+def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-media", production=False):
+    """Verify the configured bucket after Compose startup."""
+    print(f"[CHECK] Verifying MinIO bucket: {bucket}")
 
-    Production Core requires the bucket to exist before startup; the
-    minio-init container owns bucket creation for Compose deployments.
-    """
-    print(f"[BUILD] Ensuring MinIO bucket exists: {bucket}")
-
-    # The minio-init container in docker compose handles bucket creation;
-    # verify that prerequisite before Core starts.
     try:
         result = subprocess.run(
             ["docker", "exec", container_name, "mc", "stat", f"local/{bucket}"],
@@ -372,13 +366,21 @@ def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-
         if result.returncode == 0:
             print("[OK] MinIO bucket ready!")
             return
-    except subprocess.TimeoutExpired:
-        pass
+    except subprocess.TimeoutExpired as error:
+        if production:
+            raise RuntimeError(f'Timed out verifying durable MinIO bucket "{bucket}"') from error
     except Exception as e:
+        if production:
+            raise RuntimeError(f'Could not verify durable MinIO bucket "{bucket}"') from e
         print(f"[WARN] Could not verify MinIO bucket: {e}")
 
-    # Bucket creation is handled by minio-init container in docker compose
-    print("[OK] MinIO bucket initialization delegated to minio-init container!")
+    if production:
+        raise RuntimeError(
+            f'Durable MinIO bucket "{bucket}" is missing; provision it for a clean deployment '
+            "or restore the paired MinIO backup before startup"
+        )
+
+    print("[OK] Development bucket initialization delegated to minio-init container!")
 
 
 def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_retries=60, delay=2.0):
@@ -658,7 +660,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
 
         if not db_only:
             wait_for_minio()
-            ensure_minio_bucket_docker()
+            ensure_minio_bucket_docker(production=production)
             cleanup_init_containers()
             wait_for_api(production=production)
             wait_for_database_schema_docker()

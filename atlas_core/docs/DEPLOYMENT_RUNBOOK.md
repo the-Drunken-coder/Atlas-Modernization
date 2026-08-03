@@ -28,7 +28,22 @@ export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 
 External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
-Start the production stack:
+For the first deployment onto a new MinIO volume, start MinIO and explicitly
+provision the durable bucket with a host-installed MinIO client:
+
+```bash
+docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+mc alias set atlas-production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+mc mb atlas-production/atlas-media
+```
+
+Do not run this provisioning step during restore. Restore the MinIO backup
+paired with PostgreSQL before starting Core instead. Production startup only
+verifies the bucket so a missing blob store cannot be silently replaced with an
+empty one.
+
+Then start the production stack:
 
 ```bash
 python3 atlas_core/scripts/atlas.py --production

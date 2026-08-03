@@ -93,6 +93,15 @@ verify_sentinels() {
 
 printf '%s' 'atlas durable restart marker' >"${MARKER_FILE}"
 
+# Provision the bucket explicitly for this clean production deployment. The
+# normal production startup only verifies durable storage and must not create a
+# missing bucket that could indicate an incomplete restore.
+compose up -d minio
+if compose run --rm minio-init; then
+    printf 'Production storage verification accepted a missing bucket\n' >&2
+    exit 1
+fi
+mc mb atlas/atlas-media
 compose up -d --build
 wait_for_api
 
