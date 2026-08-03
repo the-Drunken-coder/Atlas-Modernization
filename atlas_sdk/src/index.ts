@@ -19,6 +19,7 @@ export {
   type FullDatasetResponse,
   ProtocolMismatchError,
   type ReadOptions,
+  type ResourceForSubscription,
   type SyncSnapshot,
   type SyncStatus,
   type TaskCompleteOptions,
@@ -55,3 +56,4 @@ export {
   isTaskCreateRequest,
   isTaskUpdateRequest
 } from "./protocol.js";
+export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";

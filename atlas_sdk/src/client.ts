@@ -23,6 +23,7 @@ import type {
   FetchLike,
   FullDatasetQueryOptions,
   ReadOptions,
+  ResourceForSubscription,
   SyncSnapshot,
   SyncStatus,
   TaskCompleteOptions,
@@ -59,6 +60,7 @@ export type {
   FullDatasetQueryOptions,
   FullDatasetResponse,
   ReadOptions,
+  ResourceForSubscription,
   SyncSnapshot,
   SyncStatus,
   TaskCompleteOptions,
@@ -260,9 +262,9 @@ export class AtlasClient {
     await this.engine.unsubscribe(filter);
   }
 
-  watch<T extends EntityResource | TaskResource | ObjectResource>(
-    filter: AtlasSubscription,
-    callback: WatchCallback<T>
+  watch<TFilter extends AtlasSubscription>(
+    filter: TFilter,
+    callback: WatchCallback<ResourceForSubscription<TFilter>>
   ): () => void {
     return this.engine.watch(filter, callback);
   }

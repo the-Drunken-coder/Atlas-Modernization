@@ -1,3 +1,4 @@
+import { joinAtlasUrl } from "@the-drunken-coder/atlas-sdk";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Component, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
@@ -175,7 +176,7 @@ function errorMessage(error: unknown): string {
 }
 
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
-  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/admin/auth/me`, {
+  const response = await fetch(joinAtlasUrl(baseUrl, "/admin/auth/me"), {
     credentials: "include",
     headers: { Accept: "application/json" }
   });

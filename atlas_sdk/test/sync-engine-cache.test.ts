@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AtlasClient, type TaskResource } from "../src";
+import { AtlasClient, type FeedEvent, type TaskResource } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
@@ -116,6 +116,56 @@ describe("AtlasClient sync: cache projection and reads", () => {
       status: 404,
       errorCode: "ENTITY_NOT_FOUND"
     });
+  });
+
+  it("does not acknowledge a pending local delete from a stale feed tombstone", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-stale-delete"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const applyFeedEvent = (
+      client as unknown as { engine: { applyEvent(event: FeedEvent): void } }
+    ).engine.applyEvent.bind((client as unknown as { engine: object }).engine);
+    const watch = vi.fn();
+    client.entities.watch(original.entity_id, watch);
+
+    await client.entities.delete(original.entity_id);
+    const authoritativeDelete = core.deletions.at(-1);
+    if (!authoritativeDelete) throw new Error("fake core did not record delete event");
+    core.events = core.events.filter((event) => event.version !== authoritativeDelete.version);
+    const recreated = core.upsertEntity({ ...entity(original.entity_id), alias: "authoritative but suppressed" });
+
+    applyFeedEvent({
+      event: "delete",
+      resource_type: "entity",
+      id: original.entity_id,
+      version: original.metadata.version
+    });
+    await client.changedSince();
+
+    expect(client.sync.snapshot().entities[original.entity_id]).toBeUndefined();
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch.mock.calls[0][1]).toMatchObject({ event: "local_delete", id: original.entity_id });
+    expect(client.sync.status().lastVersion).toBe(recreated.metadata.version);
+
+    const confirmingDelete = core.deleteEntity(original.entity_id);
+    if (!confirmingDelete) throw new Error("fake core did not record confirming delete event");
+    applyFeedEvent(confirmingDelete);
+    const visible = core.upsertEntity({ ...recreated, alias: "visible after authoritative delete" });
+    applyFeedEvent({
+      event: "create",
+      resource_type: "entity",
+      id: visible.entity_id,
+      version: visible.metadata.version,
+      resource: visible
+    });
+    expect(client.sync.snapshot().entities[visible.entity_id]).toEqual(visible);
+    expect(watch).toHaveBeenCalledTimes(2);
   });
 
   it("drains paginated full-dataset hydration responses", async () => {

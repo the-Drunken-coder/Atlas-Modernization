@@ -208,6 +208,13 @@ export type ResourceByType = {
 
 export type ResourceValue = ResourceByType[ResourceType];
 export type ResourceOf<TType extends ResourceType> = ResourceByType[TType];
+export type ResourceForSubscription<TFilter extends AtlasSubscription> = TFilter extends { filter: "all" }
+  ? ResourceValue
+  : TFilter extends { filter: "tasks_for_entity" }
+    ? TaskResource
+    : TFilter extends { resource_type: infer TType extends ResourceType }
+      ? ResourceOf<TType>
+      : never;
 
 export type AtlasRecoveredWatchEvent = {
   [TType in ResourceType]: {

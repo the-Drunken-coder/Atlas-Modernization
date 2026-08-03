@@ -57,8 +57,9 @@
     "format:check": "biome check --linter-enabled=false .",
     "test:node": "vitest run --environment node",
     "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:types": "tsc -p tsconfig.type-tests.json",
     "test:coverage": "vitest run --coverage --environment node",
-    "test": "npm run test:node && npm run test:browser"
+    "test": "npm run test:types && npm run test:node && npm run test:browser"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",

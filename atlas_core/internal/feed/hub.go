@@ -46,6 +46,7 @@ type Hub struct {
 type AsyncChangeSink interface {
 	actions.ChangeSink
 	SkipVersion(version int64, reason string)
+	DropCommittedVersion(version int64, reason string)
 	Close()
 }
 
@@ -59,6 +60,10 @@ type asyncChangeSink struct {
 
 type versionSkipper interface {
 	SkipVersion(version int64, reason string)
+}
+
+type committedVersionDropper interface {
+	DropCommittedVersion(version int64, reason string)
 }
 
 type doneSignaler interface {
@@ -94,7 +99,9 @@ func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
 	case <-s.done:
 	case <-s.sinkDone:
 	default:
-		if skipper, ok := s.sink.(versionSkipper); ok && change.Version > 0 {
+		if dropper, ok := s.sink.(committedVersionDropper); ok && change.Version > 0 {
+			dropper.DropCommittedVersion(change.Version, "async_sink_queue_full")
+		} else if skipper, ok := s.sink.(versionSkipper); ok && change.Version > 0 {
 			skipper.SkipVersion(change.Version, "async_sink_queue_full")
 		}
 		log.Warn().
@@ -108,6 +115,19 @@ func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
 
 func (s *asyncChangeSink) SkipVersion(version int64, reason string) {
 	if s.isClosed() {
+		return
+	}
+	if skipper, ok := s.sink.(versionSkipper); ok {
+		skipper.SkipVersion(version, reason)
+	}
+}
+
+func (s *asyncChangeSink) DropCommittedVersion(version int64, reason string) {
+	if s.isClosed() {
+		return
+	}
+	if dropper, ok := s.sink.(committedVersionDropper); ok {
+		dropper.DropCommittedVersion(version, reason)
 		return
 	}
 	if skipper, ok := s.sink.(versionSkipper); ok {
@@ -251,7 +271,7 @@ func (h *Hub) PublishResourceChange(change actions.ResourceChange) {
 			Str("id", change.ID).
 			Int64("version", change.Version).
 			Msg("Atlas feed change could not be converted to a feed event; skipping version")
-		h.SkipVersion(change.Version, "event_conversion_failed")
+		h.DropCommittedVersion(change.Version, "event_conversion_failed")
 		return
 	}
 	if errors := ProtocolValidationErrors(routed.Event); len(errors) > 0 {
@@ -262,7 +282,7 @@ func (h *Hub) PublishResourceChange(change actions.ResourceChange) {
 			Str("id", change.ID).
 			Int64("version", change.Version).
 			Msg("Atlas feed event failed protocol validation; skipping version")
-		h.SkipVersion(change.Version, "invalid_feed_event")
+		h.DropCommittedVersion(change.Version, "invalid_feed_event")
 		return
 	}
 	h.Publish(routed)
@@ -316,6 +336,30 @@ func (h *Hub) SkipVersion(version int64, reason string) {
 	if reason == "" {
 		reason = "unknown"
 	}
+	h.skipped[version] = reason
+	h.advanceLocked()
+}
+
+// DropCommittedVersion invalidates current clients before advancing past a
+// committed change that cannot be delivered. Reconnecting clients recover the
+// authoritative state through changed-since.
+func (h *Hub) DropCommittedVersion(version int64, reason string) {
+	if version <= 0 {
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || version < h.nextVersion {
+		return
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
+	for client := range h.clients {
+		h.closeClientLocked(client)
+	}
+	delete(h.pending, version)
 	h.skipped[version] = reason
 	h.advanceLocked()
 }

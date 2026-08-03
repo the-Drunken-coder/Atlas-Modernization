@@ -250,7 +250,7 @@ func TestHubSkipsTimedOutMissingVersions(t *testing.T) {
 	assertVersionWithin(t, all, 2, time.Second)
 }
 
-func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
+func TestHubInvalidatesClientsWhenCommittedChangeCannotBeBuilt(t *testing.T) {
 	hub := NewHub(0, Options{MissingVersionTimeout: time.Second})
 	defer hub.Close()
 	logs := captureFeedTestLogs(t)
@@ -264,9 +264,13 @@ func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
 		ID:           "asset-missing-after-state",
 		Version:      1,
 	})
+	assertClientClosed(t, all)
+
+	reconnected := hub.NewClient()
+	reconnected.Subscribe(Subscription{Filter: FilterAll})
 	hub.Publish(entityEvent("create", "asset-after-unbuildable-event", 2, "asset"))
 
-	assertVersionWithin(t, all, 2, time.Second)
+	assertVersionWithin(t, reconnected, 2, time.Second)
 	logOutput := logs.String()
 	for _, want := range []string{
 		"Atlas feed change could not be converted to a feed event",
@@ -278,6 +282,42 @@ func TestHubSkipsKnownMissingVersionWhenChangeCannotBeBuilt(t *testing.T) {
 			t.Fatalf("captured logs missing %q:\n%s", want, logOutput)
 		}
 	}
+}
+
+func TestAsyncChangeSinkOverflowInvalidatesHubClients(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+	client := hub.NewClient()
+	client.Subscribe(Subscription{Filter: FilterAll})
+
+	blocking := &blockingHubSink{
+		Hub:     hub,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	sink := NewAsyncChangeSink(blocking, AsyncChangeSinkOptions{Buffer: 1})
+	t.Cleanup(func() {
+		blocking.releaseOnce.Do(func() { close(blocking.release) })
+		sink.Close()
+	})
+
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-1", Version: 1})
+	select {
+	case <-blocking.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for blocked hub sink")
+	}
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-2", Version: 2})
+	sink.PublishResourceChange(actions.ResourceChange{Event: actions.ChangeEventCreate, ResourceType: actions.ChangeResourceEntity, ID: "asset-3", Version: 3})
+
+	assertClientClosed(t, client)
+	reconnected := hub.NewClient()
+	reconnected.Subscribe(Subscription{Filter: FilterAll})
+	blocking.releaseOnce.Do(func() { close(blocking.release) })
+	hub.Publish(entityEvent("create", "asset-4", 4, "asset"))
+	assertVersionWithin(t, reconnected, 1, time.Second)
+	assertVersionWithin(t, reconnected, 2, time.Second)
+	assertVersionWithin(t, reconnected, 4, time.Second)
 }
 
 func TestAsyncChangeSinkDoesNotBlockPublisher(t *testing.T) {
@@ -380,6 +420,22 @@ func TestAsyncChangeSinkStopsWhenWrappedSinkCloses(t *testing.T) {
 type blockingChangeSink struct {
 	received chan actions.ResourceChange
 	release  chan struct{}
+}
+
+type blockingHubSink struct {
+	*Hub
+	started     chan struct{}
+	release     chan struct{}
+	blockOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func (s *blockingHubSink) PublishResourceChange(change actions.ResourceChange) {
+	s.blockOnce.Do(func() {
+		close(s.started)
+		<-s.release
+	})
+	s.Hub.Publish(entityEvent(string(change.Event), change.ID, change.Version, "asset"))
 }
 
 func (s *blockingChangeSink) PublishResourceChange(change actions.ResourceChange) {
@@ -511,6 +567,18 @@ func assertNoEvent(t *testing.T, client *Client) {
 	case event := <-client.Events():
 		t.Fatalf("unexpected event version %d", event.Event.Version)
 	default:
+	}
+}
+
+func assertClientClosed(t *testing.T, client *Client) {
+	t.Helper()
+	select {
+	case _, ok := <-client.Events():
+		if ok {
+			t.Fatal("client received an event instead of being invalidated")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for client invalidation")
 	}
 }
 

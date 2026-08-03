@@ -1,4 +1,4 @@
-import { ATLAS_PROTOCOL_REVISION, sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
+import { ATLAS_PROTOCOL_REVISION, normalizeAtlasBaseUrl, sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 
 export type MapSourceConfig = {
@@ -17,8 +17,6 @@ export type AppConfig = {
 
 export type CoreConfig = Pick<AppConfig, "atlasBaseUrl" | "protocolRevision">;
 
-const CONFIG_URL_BASE = "http://localhost";
-const URL_SCHEME = /^[a-z][a-z\d+\-.]*:/i;
 const LOCAL_CORE_BASE_URL = "http://127.0.0.1:8000";
 const REMOTE_CORE_BASE_URL = "https://api.atlasinterface.com";
 const DEFAULT_MAP_SOURCE_ID = "maptiler-osm-dark";
@@ -106,18 +104,25 @@ function parseMapSource(value: unknown): MapSourceConfig {
 function parseConfigUrl(value: string, field: "atlasBaseUrl"): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(`Atlas interface config has empty ${field}`);
-  if (!URL_SCHEME.test(trimmed) && !trimmed.startsWith("/")) {
-    throw new Error(`Atlas interface config has invalid ${field}`);
-  }
+  let normalized: string;
   try {
-    return new URL(trimmed, configUrlBase()).toString();
+    normalized = normalizeAtlasBaseUrl(trimmed);
   } catch {
     throw new Error(`Atlas interface config has invalid ${field}`);
   }
+  if (normalized.startsWith("/")) return normalized;
+  const parsed = new URL(normalized);
+  if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
+    throw new Error(`Atlas interface config has invalid ${field}`);
+  }
+  return normalized;
 }
 
-function configUrlBase(): string {
-  return globalThis.location?.origin ?? CONFIG_URL_BASE;
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host === "::1") return true;
+  const octets = host.split(".");
+  return octets.length === 4 && octets[0] === "127" && octets.every((part) => /^\d{1,3}$/.test(part));
 }
 
 function buildMapSourceConfig(env: RuntimeEnv): MapSourceConfig[] {

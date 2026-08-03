@@ -14,8 +14,10 @@ const tileOrigins = [
 ];
 
 export function renderSecurityHeaders(env: Record<string, string | boolean | undefined>): string {
-  const coreOrigin = new URL(appConfigFromEnv({ DEV: false, MODE: "production", ...env }).atlasBaseUrl).origin;
-  const websocketOrigin = coreOrigin.replace(/^http/, "ws");
+  const coreBaseUrl = appConfigFromEnv({ DEV: false, MODE: "production", ...env }).atlasBaseUrl;
+  const coreSources = coreBaseUrl.startsWith("/")
+    ? []
+    : [new URL(coreBaseUrl).origin, new URL(coreBaseUrl).origin.replace(/^http/, "ws")];
   const csp = [
     "default-src 'self'",
     "base-uri 'none'",
@@ -26,7 +28,7 @@ export function renderSecurityHeaders(env: Record<string, string | boolean | und
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: ${tileOrigins.join(" ")}`,
-    `connect-src 'self' ${coreOrigin} ${websocketOrigin} ${tileOrigins.join(" ")}`,
+    `connect-src 'self' ${coreSources.join(" ")} ${tileOrigins.join(" ")}`,
     "worker-src 'self' blob:",
     "child-src blob:"
   ].join("; ");
