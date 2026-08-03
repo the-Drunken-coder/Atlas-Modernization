@@ -13,7 +13,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from atlas import (
-    ADMIN_PASSWORD_PLACEHOLDER,
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
@@ -62,6 +61,26 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         with patch.dict("os.environ", {**base, "ATLAS_ADMIN_PASSWORD": "configured-admin-password"}, clear=True):
             self.assertTrue(ensure_api_auth("Production mode"))
             self.assertEqual(os.environ["ENABLE_API_AUTH"], "true")
+
+    def test_public_auth_rejects_admin_password_defaults_and_examples(self) -> None:
+        for admin_password in (
+            "password",
+            " PASSWORD ",
+            "REPLACE_WITH_SECURE_ADMIN_PASSWORD",
+            "replace-with-secure-admin-password",
+            "your-secure-admin-password",
+        ):
+            with (
+                self.subTest(admin_password=admin_password),
+                patch.dict(
+                    "os.environ",
+                    {"API_AUTH_KEY": "configured-machine-key", "ATLAS_ADMIN_PASSWORD": admin_password},
+                    clear=True,
+                ),
+                patch("builtins.print") as output,
+            ):
+                self.assertFalse(ensure_api_auth("Production mode"))
+                self.assertIn("development default or example", output.call_args.args[0])
 
     def test_production_file_only_auth_stops_before_docker(self) -> None:
         with (
@@ -238,7 +257,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 "os.environ",
                 {
                     "API_AUTH_KEY": API_AUTH_KEY_PLACEHOLDER,
-                    "ATLAS_ADMIN_PASSWORD": ADMIN_PASSWORD_PLACEHOLDER,
+                    "ATLAS_ADMIN_PASSWORD": "REPLACE_WITH_SECURE_ADMIN_PASSWORD",
                 },
                 clear=True,
             ),

@@ -30,7 +30,12 @@ logger = logging.getLogger(__name__)
 
 API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
 API_AUTH_KEY_PLACEHOLDERS = {API_AUTH_KEY_PLACEHOLDER, "REPLACE_WITH_STRONG_BOOTSTRAP_KEY"}
-ADMIN_PASSWORD_PLACEHOLDER = "REPLACE_WITH_SECURE_ADMIN_PASSWORD"
+ADMIN_PASSWORD_PLACEHOLDERS = {
+    "password",
+    "replace_with_secure_admin_password",
+    "replace-with-secure-admin-password",
+    "your-secure-admin-password",
+}
 DEFAULT_TUNNEL_HOSTNAME = "atlascommandapi.org"
 TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 DEV_COMPOSE_FILE = "docker-compose.yml"
@@ -111,7 +116,7 @@ def ensure_local_auth(docker_dir):
         print("[INFO] Reusing local API_AUTH_KEY (redacted)")
 
     admin_password = os.getenv("ATLAS_ADMIN_PASSWORD", "").strip() or local_auth.get("ATLAS_ADMIN_PASSWORD", "").strip()
-    if not admin_password or admin_password == ADMIN_PASSWORD_PLACEHOLDER:
+    if not admin_password or admin_password.lower() in ADMIN_PASSWORD_PLACEHOLDERS:
         admin_password = secrets.token_urlsafe(32)
         print("[INFO] Generated local ATLAS_ADMIN_PASSWORD (redacted)")
     else:
@@ -499,8 +504,8 @@ def ensure_api_auth(mode):
     if not admin_password:
         print(f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD; the bundled Compose stack mounts no password file.")
         return False
-    if admin_password == ADMIN_PASSWORD_PLACEHOLDER:
-        print(f"[ERROR] {mode} requires a real ATLAS_ADMIN_PASSWORD, not the example placeholder.")
+    if admin_password.lower() in ADMIN_PASSWORD_PLACEHOLDERS:
+        print(f"[ERROR] {mode} requires a real ATLAS_ADMIN_PASSWORD, not a development default or example.")
         return False
 
     os.environ["ENABLE_API_AUTH"] = "true"
