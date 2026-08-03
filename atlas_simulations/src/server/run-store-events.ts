@@ -1,3 +1,4 @@
+import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import type { AssertionResult, RunEvent } from "../shared/types.js";
 import {
   EVENT_MESSAGE_TRUNCATION_SUFFIX,
@@ -66,11 +67,11 @@ export function assertEventJSONValue(value: unknown, depth = 0, state = { nodes:
 }
 
 export function boundedEventMessage(message: string): string {
-  return boundedText(message, MAX_EVENT_DATA_STRING_BYTES);
+  return boundedText(sanitizeSimulationMessage(message), MAX_EVENT_DATA_STRING_BYTES);
 }
 
 export function boundedAssertionText(message: string): string {
-  return boundedText(message, MAX_ASSERTION_FIELD_BYTES);
+  return boundedText(sanitizeSimulationMessage(message), MAX_ASSERTION_FIELD_BYTES);
 }
 
 export function hasFailedAssertions(run: RunRecord): boolean {
@@ -119,15 +120,14 @@ function addEventDataStringBytes(value: string, state: { stringBytes: number }):
 }
 
 function boundedText(message: string, maxBytes: number): string {
-  if (Buffer.byteLength(message, "utf8") <= maxBytes) return message;
+  const encoded = Buffer.from(message, "utf8");
+  if (encoded.length <= maxBytes) return message;
   const budget = maxBytes - Buffer.byteLength(EVENT_MESSAGE_TRUNCATION_SUFFIX, "utf8");
-  let bytes = 0;
-  let result = "";
-  for (const char of message) {
-    const charBytes = Buffer.byteLength(char, "utf8");
-    if (bytes + charBytes > budget) break;
-    bytes += charBytes;
-    result += char;
-  }
-  return `${result}${EVENT_MESSAGE_TRUNCATION_SUFFIX}`;
+  let end = budget;
+  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end--;
+  return `${encoded.subarray(0, end).toString("utf8")}${EVENT_MESSAGE_TRUNCATION_SUFFIX}`;
+}
+
+function sanitizeSimulationMessage(message: string): string {
+  return sanitizeErrorMessage(message, { fallback: "Unknown error", maxLength: MAX_EVENT_DATA_STRING_BYTES + 1 });
 }

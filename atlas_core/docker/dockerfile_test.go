@@ -69,6 +69,26 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "development admin password",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=password"},
+			wantErr: true,
+		},
+		{
+			name:    "example admin password placeholder",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=REPLACE_WITH_SECURE_ADMIN_PASSWORD"},
+			wantErr: true,
+		},
+		{
+			name:    "documented admin password placeholder",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=your-secure-admin-password"},
+			wantErr: true,
+		},
+		{
+			name:    "deployment runbook admin password placeholder",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=replace-with-secure-admin-password"},
+			wantErr: true,
+		},
+		{
 			name:    "destructive database mode",
 			env:     []string{"DATABASE_RECREATE_ON_STARTUP=true", "ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=real-admin-secret"},
 			wantErr: true,

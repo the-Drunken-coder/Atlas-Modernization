@@ -165,9 +165,20 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, err
 	}
 	objectID = SanitizeID(objectID)
+	if err := validateStringMaxLength("content_type", contentType, objectContentMaxLength); err != nil {
+		return nil, err
+	}
+	if err := validateStringMaxLength("type", objType, objectTypeMaxLength); err != nil {
+		return nil, err
+	}
+	objType = strings.TrimSpace(objType)
 
 	if a.storage == nil {
 		return nil, &storage.StorageError{Message: "storage not configured"}
+	}
+	objectPath := a.storage.NewObjectPath(objectID)
+	if err := validateStringMaxLength("path", objectPath, objectPathMaxLength); err != nil {
+		return nil, err
 	}
 
 	var usageHints []string
@@ -176,7 +187,6 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	bucket := a.storage.Bucket()
-	objType = strings.TrimSpace(objType)
 	var typePtr *string
 	if objType != "" {
 		typePtr = &objType
@@ -196,7 +206,6 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return nil, fmt.Errorf("failed to commit upload preflight transaction: %w", err)
 	}
 
-	objectPath := a.storage.NewObjectPath(objectID)
 	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload to storage: %w", err)

@@ -52,7 +52,22 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, err
 	}
 	objectID := SanitizeID(params.ObjectID)
+	if params.Type != nil {
+		if err := validateStringMaxLength("type", *params.Type, objectTypeMaxLength); err != nil {
+			return nil, err
+		}
+	}
 	normalizedType := normalizeOptionalObjectString(params.Type)
+	if params.Path != nil {
+		if err := validateStringMaxLength("path", *params.Path, objectPathMaxLength); err != nil {
+			return nil, err
+		}
+	}
+	if params.ContentType != nil {
+		if err := validateStringMaxLength("content_type", *params.ContentType, objectContentMaxLength); err != nil {
+			return nil, err
+		}
+	}
 
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
@@ -192,6 +207,22 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 	objectID = SanitizeID(objectID)
+	if params.Path != nil {
+		if err := validateStringMaxLength("path", *params.Path, objectPathMaxLength); err != nil {
+			return nil, err
+		}
+	}
+	if params.ContentType != nil {
+		if err := validateStringMaxLength("content_type", *params.ContentType, objectContentMaxLength); err != nil {
+			return nil, err
+		}
+	}
+	if params.Type != nil {
+		if err := validateStringMaxLength("type", *params.Type, objectTypeMaxLength); err != nil {
+			return nil, err
+		}
+	}
+	normalizedType := normalizeOptionalObjectString(params.Type)
 
 	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
 		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
@@ -247,12 +278,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 
 	newType := obj.Type
 	if params.Type != nil {
-		trimmed := strings.TrimSpace(*params.Type)
-		if trimmed == "" {
-			newType = nil
-		} else {
-			newType = &trimmed
-		}
+		newType = normalizedType
 	}
 
 	jsonBytes, err := patchValidatedJSONBlob(objectJSONPatch(obj.JSON, params, a.storage))

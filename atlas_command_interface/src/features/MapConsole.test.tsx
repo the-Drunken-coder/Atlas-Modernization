@@ -280,6 +280,28 @@ describe("MapConsole command flow", () => {
     expect(await screen.findByText("Pending")).toBeInTheDocument();
   });
 
+  it("sanitizes command mutation failures before rendering them", async () => {
+    const user = userEvent.setup();
+    const secret = "mutation-canary-secret";
+    const { fake } = makeFakeDataSource();
+    fake.submitCommand = async () => {
+      throw new Error(
+        `failed https://user:${secret}@core.test?api_key=${secret} Bearer ${secret} Basic ${secret} \u001b[31m`
+      );
+    };
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+    await screen.findByText(/failed/);
+
+    expect(document.body.textContent).not.toContain(secret);
+    expect(document.body.textContent).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/);
+    expect(document.body.textContent).toContain("[redacted]");
+  });
+
   it("closes an open command form when the live catalog becomes unavailable", async () => {
     const user = userEvent.setup();
     const { fake, emitCatalog, submissions } = makeFakeDataSource();

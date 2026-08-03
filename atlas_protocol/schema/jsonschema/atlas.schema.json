@@ -129,7 +129,9 @@
           "const": "create"
         },
         "id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "resource": {
           "$ref": "#/$defs/EntityResource"
@@ -159,7 +161,9 @@
               "type": "null"
             },
             {
-              "$ref": "#/$defs/NonEmptyString"
+              "$ref": "#/$defs/NonEmptyString",
+              "maxLength": 255,
+              "type": "string"
             }
           ]
         },
@@ -167,10 +171,14 @@
           "$ref": "#/$defs/EntityComponents"
         },
         "entity_id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "entity_type": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "extra": {
           "additionalProperties": {
@@ -182,7 +190,9 @@
           "$ref": "#/$defs/RFC3339Timestamp"
         },
         "subtype": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "updated_at": {
           "$ref": "#/$defs/RFC3339Timestamp"
@@ -201,7 +211,9 @@
           "const": "delete"
         },
         "id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "resource_type": {
           "const": "entity"
@@ -227,7 +239,9 @@
               "type": "null"
             },
             {
-              "$ref": "#/$defs/NonEmptyString"
+              "$ref": "#/$defs/NonEmptyString",
+              "maxLength": 255,
+              "type": "string"
             }
           ]
         },
@@ -235,10 +249,14 @@
           "$ref": "#/$defs/EntityComponents"
         },
         "entity_id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "entity_type": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "extra": {
           "additionalProperties": {
@@ -255,7 +273,9 @@
               "type": "null"
             },
             {
-              "$ref": "#/$defs/NonEmptyString"
+              "$ref": "#/$defs/NonEmptyString",
+              "maxLength": 50,
+              "type": "string"
             }
           ]
         }
@@ -277,7 +297,9 @@
           "const": "update"
         },
         "id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "resource": {
           "$ref": "#/$defs/EntityResource"
@@ -308,7 +330,9 @@
               "type": "null"
             },
             {
-              "$ref": "#/$defs/NonEmptyString"
+              "$ref": "#/$defs/NonEmptyString",
+              "maxLength": 255,
+              "type": "string"
             }
           ]
         },
@@ -316,7 +340,9 @@
           "$ref": "#/$defs/EntityComponents"
         },
         "entity_type": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "extra": {
           "additionalProperties": {
@@ -330,7 +356,9 @@
               "type": "null"
             },
             {
-              "$ref": "#/$defs/NonEmptyString"
+              "$ref": "#/$defs/NonEmptyString",
+              "maxLength": 50,
+              "type": "string"
             }
           ]
         }
@@ -798,7 +826,9 @@
           "const": "create"
         },
         "id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "resource": {
           "$ref": "#/$defs/ObjectResource"
@@ -823,6 +853,7 @@
       "additionalProperties": false,
       "properties": {
         "content_type": {
+          "maxLength": 100,
           "type": "string"
         },
         "extra": {
@@ -832,9 +863,12 @@
           "type": "object"
         },
         "object_id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "path": {
+          "maxLength": 500,
           "type": "string"
         },
         "referenced_by": {
@@ -848,6 +882,7 @@
           "type": "integer"
         },
         "type": {
+          "maxLength": 50,
           "type": "string"
         },
         "usage_hints": {
@@ -869,7 +904,9 @@
           "const": "delete"
         },
         "id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "resource_type": {
           "const": "object"
@@ -918,6 +955,7 @@
               "type": "null"
             },
             {
+              "maxLength": 100,
               "type": "string"
             }
           ]
@@ -932,7 +970,9 @@
           "$ref": "#/$defs/MetadataBlock"
         },
         "object_id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "path": {
           "anyOf": [
@@ -940,6 +980,7 @@
               "type": "null"
             },
             {
+              "maxLength": 500,
               "type": "string"
             }
           ]
@@ -967,6 +1008,7 @@
               "type": "null"
             },
             {
+              "maxLength": 50,
               "type": "string"
             }
           ]
@@ -1010,6 +1052,7 @@
               "type": "null"
             },
             {
+              "maxLength": 100,
               "type": "string"
             }
           ]
@@ -1018,7 +1061,9 @@
           "$ref": "#/$defs/MetadataBlock"
         },
         "object_id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "path": {
           "anyOf": [
@@ -1026,6 +1071,7 @@
               "type": "null"
             },
             {
+              "maxLength": 500,
               "type": "string"
             }
           ]
@@ -1053,6 +1099,7 @@
               "type": "null"
             },
             {
+              "maxLength": 50,
               "type": "string"
             }
           ]
@@ -1083,7 +1130,9 @@
           "const": "update"
         },
         "id": {
-          "$ref": "#/$defs/NonEmptyString"
+          "$ref": "#/$defs/NonEmptyString",
+          "maxLength": 50,
+          "type": "string"
         },
         "resource": {
           "$ref": "#/$defs/ObjectResource"
@@ -1109,6 +1158,7 @@
       "minProperties": 1,
       "properties": {
         "content_type": {
+          "maxLength": 100,
           "type": "string"
         },
         "extra": {
@@ -1118,6 +1168,7 @@
           "type": "object"
         },
         "path": {
+          "maxLength": 500,
           "type": "string"
         },
         "referenced_by": {
@@ -1131,6 +1182,7 @@
           "type": "integer"
         },
         "type": {
+          "maxLength": 50,
           "type": "string"
         },
         "usage_hints": {

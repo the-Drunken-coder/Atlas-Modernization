@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, us
 import type { MapSourceConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
+import { sanitizeConnectionError } from "../atlas/connection-error.js";
 import { type EntityKind, entityGeometry, entityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
@@ -162,7 +163,7 @@ export function MapConsole() {
         setCommandForm(null);
       } catch (cause) {
         if (!commandDismissedRef.current) {
-          const message = cause instanceof Error ? cause.message : String(cause);
+          const message = sanitizeConnectionError(cause);
           setSubmitError(message);
           setCommandForm((current) => current ?? errorFormState ?? null);
         }
@@ -232,7 +233,7 @@ export function MapConsole() {
       await atlas.updateGeometry(edit.entityId, edit.draft, edit.version);
       setEdit(null);
     } catch (cause) {
-      setSaveError(cause instanceof Error ? cause.message : String(cause));
+      setSaveError(sanitizeConnectionError(cause));
     } finally {
       setSaving(false);
     }

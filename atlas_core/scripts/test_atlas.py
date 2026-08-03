@@ -21,6 +21,7 @@ from atlas import (
     compose_up_command,
     database_recreate_on_startup_enabled,
     ensure_local_auth,
+    main,
     print_storage_notice,
     public_base_url_from_hostname,
     start_containers,
@@ -44,6 +45,20 @@ class FakeHTTPResponse:
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
+    def test_reset_volumes_help_warns_about_production_data_loss(self) -> None:
+        output = StringIO()
+        with patch.object(sys, "argv", ["atlas.py", "--help"]), redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exit_result:
+                main()
+
+        self.assertEqual(exit_result.exception.code, 0)
+        help_text = output.getvalue()
+        self.assertIn("--reset-volumes", help_text)
+        self.assertIn(
+            "deliberately deletes durable production PostgreSQL and MinIO volumes",
+            " ".join(help_text.split()),
+        )
+
     def test_wait_for_api_diagnoses_stale_development_volume_password(self) -> None:
         fixture_credential = "do-not-print-this"
         fixture_stderr_credential = "stderr-do-not-print-this"

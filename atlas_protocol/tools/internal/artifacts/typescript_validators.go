@@ -205,10 +205,10 @@ func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema)
 		checks = append(checks, "atlasProtocolStringMatches("+valueExpr+", "+jsonString(pattern)+")")
 	}
 	if minLength, ok := schema["minLength"].(float64); ok {
-		checks = append(checks, valueExpr+".length >= "+jsonNumber(minLength))
+		checks = append(checks, "Array.from("+valueExpr+").length >= "+jsonNumber(minLength))
 	}
 	if maxLength, ok := schema["maxLength"].(float64); ok {
-		checks = append(checks, valueExpr+".length <= "+jsonNumber(maxLength))
+		checks = append(checks, "Array.from("+valueExpr+").length <= "+jsonNumber(maxLength))
 	}
 	return strings.Join(checks, " && ")
 }

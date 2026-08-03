@@ -3,8 +3,10 @@ package handlers
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -75,6 +77,27 @@ func TestUploadObjectRejectsFileOverLimitWith413(t *testing.T) {
 	body := decodeBody(t, rec)
 	if body["error_code"] != "FILE_TOO_LARGE" {
 		t.Fatalf("expected FILE_TOO_LARGE, got %v", body["error_code"])
+	}
+}
+
+func TestUploadObjectMapsOversizedTypeTo400(t *testing.T) {
+	storageClient := &storage.Client{}
+	handler := newTestHandler()
+	handler.storage = storageClient
+	handler.objectActions = actions.NewObjectActions(nil, storageClient)
+	recorder := httptest.NewRecorder()
+	request := multipartUploadRequest(t, map[string]string{
+		"object_id": "object-1",
+		"type":      strings.Repeat("a", 51),
+	}, 1)
+
+	handler.UploadObject(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
 	}
 }
 

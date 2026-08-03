@@ -553,8 +553,9 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     });
     await client.sync.start();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const secret = "watch-canary-secret";
     client.entities.watch("asset-throwing-write-watch", () => {
-      throw new Error("watch failed");
+      throw new Error(`watch failed https://user:${secret}@core.test?api_key=${secret} Bearer ${secret} \u001b[31m`);
     });
 
     try {
@@ -565,6 +566,9 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       });
       expect(client.sync.status().degraded).toBe(false);
       expect(errorSpy).toHaveBeenCalled();
+      const consoleOutput = JSON.stringify(errorSpy.mock.calls);
+      expect(consoleOutput).not.toContain(secret);
+      expect(consoleOutput).not.toContain("\\u001b");
     } finally {
       errorSpy.mockRestore();
     }

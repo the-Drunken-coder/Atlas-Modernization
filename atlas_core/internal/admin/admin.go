@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"golang.org/x/crypto/argon2"
@@ -31,6 +33,9 @@ const (
 	sessionTTL    = 7 * 24 * time.Hour
 	loginWindow   = 15 * time.Minute
 	loginMaxFails = 8
+	// Four concurrent Argon2 verifications cap the login path at roughly 76 MiB
+	// with hashes created by HashPassword.
+	loginArgon2Concurrency = 4
 
 	maxArgon2HashLength = 1<<32 - 1
 )
@@ -48,6 +53,7 @@ var (
 		Salt:        "AAAAAAAAAAAAAAAAAAAAAA",
 		Hash:        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 	}
+	loginArgon2Slots = make(chan struct{}, loginArgon2Concurrency)
 )
 
 type PasswordHash struct {
@@ -89,10 +95,16 @@ type AuthenticatedSession struct {
 type Service struct {
 	pool           *pgxpool.Pool
 	cookieSameSite http.SameSite
+	verifyPassword func(string, PasswordHash) bool
+}
+
+type adminStore interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 func NewService(pool *pgxpool.Pool, cfg *config.Config) *Service {
-	return &Service{pool: pool, cookieSameSite: sameSiteMode(cfg)}
+	return &Service{pool: pool, cookieSameSite: sameSiteMode(cfg), verifyPassword: verifyPassword}
 }
 
 func (s *Service) SeedDevelopmentAdmin(ctx context.Context) error {
@@ -143,9 +155,13 @@ func (s *Service) upsertAccount(ctx context.Context, id string, account AccountR
 }
 
 func (s *Service) GetAccount(ctx context.Context, id string) (AccountRecord, error) {
+	return getAccount(ctx, s.pool, id)
+}
+
+func getAccount(ctx context.Context, store adminStore, id string) (AccountRecord, error) {
 	var account AccountRecord
 	var payload []byte
-	err := s.pool.QueryRow(ctx, `SELECT json FROM admin_records WHERE id = $1 AND type = 'account'`, id).Scan(&payload)
+	err := store.QueryRow(ctx, `SELECT json FROM admin_records WHERE id = $1 AND type = 'account'`, id).Scan(&payload)
 	if err != nil {
 		return account, err
 	}
@@ -155,44 +171,65 @@ func (s *Service) GetAccount(ctx context.Context, id string) (AccountRecord, err
 
 func (s *Service) Login(ctx context.Context, username, password, ip string, now time.Time) (string, SessionRecord, error) {
 	username = strings.TrimSpace(username)
+	ip = strings.TrimSpace(ip)
 	if username == "" || password == "" {
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}
 	if err := s.CleanupExpiredAuthRecords(ctx, now); err != nil {
 		return "", SessionRecord{}, err
 	}
-	if throttled, err := s.loginThrottled(ctx, username, ip, now); err != nil {
+	if throttled, err := loginThrottled(ctx, s.pool, username, ip, now); err != nil {
 		return "", SessionRecord{}, err
 	} else if throttled {
 		return "", SessionRecord{}, ErrTooManyAttempts
 	}
 
 	accountID := "account:" + username
-	account, err := s.GetAccount(ctx, accountID)
+	account, accountErr := getAccount(ctx, s.pool, accountID)
+	passwordHash := dummyPasswordHash
+	accountEnabled := false
+	if accountErr == nil {
+		passwordHash = account.Password
+		accountEnabled = !account.Disabled
+	}
+	releaseSlot, err := acquireLoginSlot(ctx, loginArgon2Slots)
 	if err != nil {
-		_ = VerifyPassword(password, dummyPasswordHash)
-		if !errors.Is(err, pgx.ErrNoRows) {
+		return "", SessionRecord{}, err
+	}
+	passwordMatches := func() bool {
+		defer releaseSlot()
+		return s.verifyPassword(password, passwordHash)
+	}()
+	if accountErr != nil && !errors.Is(accountErr, pgx.ErrNoRows) {
+		return "", SessionRecord{}, accountErr
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", SessionRecord{}, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := lockLoginAdmission(ctx, tx, username, ip); err != nil {
+		return "", SessionRecord{}, err
+	}
+	if throttled, err := loginThrottled(ctx, tx, username, ip, now); err != nil {
+		return "", SessionRecord{}, err
+	} else if throttled {
+		return "", SessionRecord{}, ErrTooManyAttempts
+	}
+	if !passwordMatches || !accountEnabled {
+		if err := recordLoginFailure(ctx, tx, username, ip, now); err != nil {
 			return "", SessionRecord{}, err
 		}
-		if err := s.recordLoginFailure(ctx, username, ip, now); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return "", SessionRecord{}, err
 		}
 		return "", SessionRecord{}, ErrInvalidCredentials
 	}
-	if account.Disabled {
-		_ = VerifyPassword(password, account.Password)
-		if err := s.recordLoginFailure(ctx, username, ip, now); err != nil {
-			return "", SessionRecord{}, err
-		}
-		return "", SessionRecord{}, ErrInvalidCredentials
+	if err := clearLoginFailures(ctx, tx, username, ip); err != nil {
+		return "", SessionRecord{}, err
 	}
-	if !VerifyPassword(password, account.Password) {
-		if err := s.recordLoginFailure(ctx, username, ip, now); err != nil {
-			return "", SessionRecord{}, err
-		}
-		return "", SessionRecord{}, ErrInvalidCredentials
-	}
-	if err := s.clearLoginFailures(ctx, username, ip); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return "", SessionRecord{}, err
 	}
 
@@ -316,12 +353,16 @@ func (s *Service) deleteSession(ctx context.Context, token string) error {
 }
 
 func (s *Service) loginThrottled(ctx context.Context, username, ip string, now time.Time) (bool, error) {
+	return loginThrottled(ctx, s.pool, username, ip, now)
+}
+
+func loginThrottled(ctx context.Context, store adminStore, username, ip string, now time.Time) (bool, error) {
 	keys := []string{"login_fail:user:" + username}
 	if strings.TrimSpace(ip) != "" {
 		keys = append(keys, "login_fail:ip:"+ip)
 	}
 	for _, key := range keys {
-		record, err := s.getLoginFailure(ctx, key)
+		record, err := getLoginFailure(ctx, store, key)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, err
 		}
@@ -333,31 +374,35 @@ func (s *Service) loginThrottled(ctx context.Context, username, ip string, now t
 }
 
 func (s *Service) recordLoginFailure(ctx context.Context, username, ip string, now time.Time) error {
+	return recordLoginFailure(ctx, s.pool, username, ip, now)
+}
+
+func recordLoginFailure(ctx context.Context, store adminStore, username, ip string, now time.Time) error {
 	keys := []string{"login_fail:user:" + username}
 	if strings.TrimSpace(ip) != "" {
 		keys = append(keys, "login_fail:ip:"+ip)
 	}
 	for _, key := range keys {
-		if err := s.upsertLoginFailure(ctx, key, now.UTC()); err != nil {
+		if err := upsertLoginFailure(ctx, store, key, now.UTC()); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) clearLoginFailures(ctx context.Context, username, ip string) error {
+func clearLoginFailures(ctx context.Context, store adminStore, username, ip string) error {
 	keys := []string{"login_fail:user:" + username}
 	if strings.TrimSpace(ip) != "" {
 		keys = append(keys, "login_fail:ip:"+ip)
 	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM admin_records WHERE id = ANY($1::text[]) AND type = 'login_fail'`, keys)
+	_, err := store.Exec(ctx, `DELETE FROM admin_records WHERE id = ANY($1::text[]) AND type = 'login_fail'`, keys)
 	return err
 }
 
-func (s *Service) getLoginFailure(ctx context.Context, key string) (LoginFailureRecord, error) {
+func getLoginFailure(ctx context.Context, store adminStore, key string) (LoginFailureRecord, error) {
 	var record LoginFailureRecord
 	var payload []byte
-	err := s.pool.QueryRow(ctx, `SELECT json FROM admin_records WHERE id = $1 AND type = 'login_fail'`, key).Scan(&payload)
+	err := store.QueryRow(ctx, `SELECT json FROM admin_records WHERE id = $1 AND type = 'login_fail'`, key).Scan(&payload)
 	if err != nil {
 		return record, err
 	}
@@ -365,8 +410,8 @@ func (s *Service) getLoginFailure(ctx context.Context, key string) (LoginFailure
 	return record, err
 }
 
-func (s *Service) upsertLoginFailure(ctx context.Context, key string, now time.Time) error {
-	_, err := s.pool.Exec(ctx, `
+func upsertLoginFailure(ctx context.Context, store adminStore, key string, now time.Time) error {
+	_, err := store.Exec(ctx, `
 		INSERT INTO admin_records (id, type, json)
 		VALUES ($1, 'login_fail', jsonb_build_object('count', 1, 'reset_at', $2::timestamptz))
 		ON CONFLICT (id) DO UPDATE SET
@@ -405,6 +450,15 @@ func HashPassword(password string) (PasswordHash, error) {
 }
 
 func VerifyPassword(password string, stored PasswordHash) bool {
+	release, err := acquireLoginSlot(context.Background(), loginArgon2Slots)
+	if err != nil {
+		return false
+	}
+	defer release()
+	return verifyPassword(password, stored)
+}
+
+func verifyPassword(password string, stored PasswordHash) bool {
 	if stored.Algorithm != "argon2id" {
 		return false
 	}
@@ -423,6 +477,39 @@ func VerifyPassword(password string, stored PasswordHash) bool {
 	keyLength := uint32(len(expected))
 	actual := argon2.IDKey([]byte(password), salt, stored.Time, stored.MemoryKiB, stored.Parallelism, keyLength)
 	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func acquireLoginSlot(ctx context.Context, slots chan struct{}) (func(), error) {
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func lockLoginAdmission(ctx context.Context, tx pgx.Tx, username, ip string) error {
+	locks := []int64{loginAdmissionLockID("user:" + username)}
+	if ip != "" {
+		ipLock := loginAdmissionLockID("ip:" + ip)
+		if ipLock != locks[0] {
+			locks = append(locks, ipLock)
+		}
+	}
+	if len(locks) == 2 && locks[0] > locks[1] {
+		locks[0], locks[1] = locks[1], locks[0]
+	}
+	for _, lock := range locks {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, lock); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loginAdmissionLockID(key string) int64 {
+	sum := sha256.Sum256([]byte(key))
+	return int64(binary.BigEndian.Uint64(sum[:8])) //nolint:gosec // Preserve all hash bits in PostgreSQL's signed advisory-lock key.
 }
 
 // ClientIP returns the browser-login throttle identity after enforcing the
@@ -545,4 +632,19 @@ func developmentPassword() (string, error) {
 
 func UsesDefaultDevelopmentPassword() bool {
 	return strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD_FILE")) == "" && strings.TrimSpace(os.Getenv("ATLAS_ADMIN_PASSWORD")) == ""
+}
+
+// ValidateProductionAdminPassword rejects credentials that are committed as
+// development defaults or operator-facing examples.
+func ValidateProductionAdminPassword() error {
+	password, err := developmentPassword()
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(password)) {
+	case defaultPass, "replace_with_secure_admin_password", "replace-with-secure-admin-password", "your-secure-admin-password":
+		return errors.New("configured admin password is a development default or example placeholder")
+	default:
+		return nil
+	}
 }

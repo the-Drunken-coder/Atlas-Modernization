@@ -1,5 +1,6 @@
 import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { useAtlas } from "../../state/atlas-context.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
 import { CopyIcon, PlusIcon, TrashIcon } from "../../ui/primitives/icons.js";
@@ -162,7 +163,7 @@ function handleAdminError(error: unknown) {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return sanitizeConnectionError(error);
 }
 
 function formatCreatedAt(value: string): string {

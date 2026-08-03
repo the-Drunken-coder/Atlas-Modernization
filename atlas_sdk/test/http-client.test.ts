@@ -38,6 +38,28 @@ async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
 }
 
 describe("AtlasClient HTTP", () => {
+  it("sanitizes untrusted HTTP errors while preserving status and error code", async () => {
+    const secret = "http-canary-secret";
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () =>
+        Response.json(
+          {
+            success: false,
+            error_code: "CORE_UNAVAILABLE",
+            message: `failed https://user:${secret}@core.test?api_key=${secret} Bearer ${secret} Basic ${secret} \u001b[31m`,
+            details: { api_key: secret }
+          },
+          { status: 503 }
+        )
+    });
+
+    const failure = await client.queries.full().catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ status: 503, errorCode: "CORE_UNAVAILABLE" });
+    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect((failure as Error).message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+  });
   it("binds the default global fetch for browser callers", async () => {
     const receivers: unknown[] = [];
     const fetchImpl: typeof fetch = async function (this: unknown, url) {
@@ -283,6 +305,11 @@ describe("AtlasClient HTTP", () => {
     expect(isObjectCreateRequest({ object_id: "object-invalid", referenced_by: [{}] })).toBe(false);
     expect(isObjectUpdateRequest({ usage_hints: ["thumbnail"] })).toBe(true);
     expect(isObjectUpdateRequest({})).toBe(false);
+  });
+
+  it("counts Unicode code points at generated string-length boundaries", () => {
+    expect(isEntityCreateRequest({ entity_id: "x", entity_type: "🙂".repeat(50) })).toBe(true);
+    expect(isEntityCreateRequest({ entity_id: "x", entity_type: "🙂".repeat(51) })).toBe(false);
   });
 
   it("enforces fake Core route verbs while preserving default GET semantics", async () => {

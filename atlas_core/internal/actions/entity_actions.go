@@ -51,6 +51,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	}
 	entityID := SanitizeID(params.EntityID)
 
+	if err := validateStringMaxLength("entity_type", params.EntityType, entityTypeMaxLength); err != nil {
+		return nil, err
+	}
 	entityType := strings.TrimSpace(params.EntityType)
 	if entityType == "" {
 		return nil, NewValidationError("type is required for entity creation")
@@ -59,6 +62,9 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 	// Subtype is optional - trim if provided
 	var subtype *string
 	if params.Subtype != "" {
+		if err := validateStringMaxLength("subtype", params.Subtype, entitySubtypeMaxLength); err != nil {
+			return nil, err
+		}
 		s := strings.TrimSpace(params.Subtype)
 		if s != "" {
 			subtype = &s
@@ -248,6 +254,20 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, err
 	}
 	entityID = SanitizeID(entityID)
+	if params.EntityType != nil {
+		if err := validateStringMaxLength("entity_type", *params.EntityType, entityTypeMaxLength); err != nil {
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(*params.EntityType)
+		if trimmed == "" {
+			return nil, NewValidationError("entity_type cannot be empty")
+		}
+	}
+	if params.Subtype != nil {
+		if err := validateStringMaxLength("subtype", *params.Subtype, entitySubtypeMaxLength); err != nil {
+			return nil, err
+		}
+	}
 
 	if params.IsEmpty() && params.ExpectedVersion == nil {
 		return a.Get(ctx, entityID)

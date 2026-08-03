@@ -437,7 +437,7 @@ func TestTypeScriptSourceGeneratesExactOneOfValidators(t *testing.T) {
 	}
 	text := string(source)
 	for _, want := range []string{
-		`[typeof value["choice"] === "string", typeof value["choice"] === "string" && value["choice"].length >= 2].filter((valid) => valid).length === 1`,
+		`[typeof value["choice"] === "string", typeof value["choice"] === "string" && Array.from(value["choice"]).length >= 2].filter((valid) => valid).length === 1`,
 		`function atlasProtocolStringMatches(value: string, pattern: string): boolean`,
 	} {
 		if !strings.Contains(text, want) {
@@ -473,8 +473,8 @@ func TestTypeScriptSourceGeneratesStringPatternAndLengthValidators(t *testing.T)
 	for _, want := range []string{
 		`typeof value["code"] === "string"`,
 		`atlasProtocolStringMatches(value["code"], "^[A-Z]+$")`,
-		`value["code"].length >= 2`,
-		`value["code"].length <= 4`,
+		`Array.from(value["code"]).length >= 2`,
+		`Array.from(value["code"]).length <= 4`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)

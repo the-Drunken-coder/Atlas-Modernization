@@ -1,5 +1,6 @@
 import { type MapMouseEvent, type Map as MlMap, type StyleSpecification } from "maplibre-gl";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { sanitizeConnectionError } from "../../../atlas/connection-error.js";
 import { Button } from "../../primitives/controls.js";
 import { getSidcRuntime, loadSidcRuntime } from "../../symbols/sidc-runtime.js";
 import { CAMERA_EVENT_TAG, type MapCameraCommand } from "../interaction/map-camera.js";
@@ -134,7 +135,7 @@ export function MapView({
           }
         });
       } catch (error) {
-        setMapError(error instanceof Error ? error.message : "MapLibre failed to initialize");
+        setMapError(sanitizeConnectionError(error));
         return;
       }
 
@@ -176,7 +177,7 @@ export function MapView({
       mapInstance.on("error", (event) => {
         // Tile/style errors should not blank the operator picture. Keep overlays
         // alive and surface the details in devtools.
-        console.warn("Map render warning", event.error);
+        console.warn("Map render warning", sanitizeConnectionError(event.error));
         const failedStyleId = pendingStyleIdRef.current;
         if (failedStyleId) {
           pendingStyleIdRef.current = undefined;
@@ -201,7 +202,7 @@ export function MapView({
       ])
         .then(([loadedMaplibre]) => initializeMap(loadedMaplibre))
         .catch((error: unknown) => {
-          if (!cancelled) setMapError(error instanceof Error ? error.message : "Map runtime failed to load");
+          if (!cancelled) setMapError(sanitizeConnectionError(error));
         });
     }
 
@@ -232,7 +233,7 @@ export function MapView({
     const handleFailure = (error: unknown) => {
       if (cancelled || pendingStyleIdRef.current !== styleId) return;
       pendingStyleIdRef.current = undefined;
-      console.warn("Map style switch failed", error);
+      console.warn("Map style switch failed", sanitizeConnectionError(error));
       if (readyRef.current && map.isStyleLoaded()) {
         registerSourcesAndLayers(map);
         pushSources(map, sourcesRef.current);

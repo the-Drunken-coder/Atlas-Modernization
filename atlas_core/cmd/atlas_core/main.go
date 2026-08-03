@@ -132,6 +132,9 @@ func main() {
 		if apiKey == "REPLACE_WITH_SECURE_KEY" {
 			logger.Fatal().Msg("API auth is enabled but api_auth_key is still the example placeholder REPLACE_WITH_SECURE_KEY — set a real secret in atlas_core.settings.json or API_AUTH_KEY")
 		}
+		if err := admin.ValidateProductionAdminPassword(); err != nil {
+			logger.Fatal().Err(err).Msg("API auth is enabled but the admin password is not production-safe")
+		}
 	}
 
 	// Connect to database

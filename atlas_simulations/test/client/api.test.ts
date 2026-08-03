@@ -102,6 +102,7 @@ describe("client API", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ targets: [target], defaultTargetId: target.id }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, status: 200, target }))
       .mockResolvedValueOnce(jsonResponse({ ok: true, status: 200, target }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -111,6 +112,7 @@ describe("client API", () => {
       status: jsonNumber(200),
       target
     });
+    expect(await loadHealth(target.id)).not.toHaveProperty("message");
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/health?target=${encodeURIComponent(target.id)}`);
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("X-Atlas-Target-Api-Key")).toBe("pasted-key");
   });
@@ -124,6 +126,23 @@ describe("client API", () => {
     );
 
     await expect(loadRuns()).rejects.toThrow("server offline");
+  });
+
+  it("sanitizes server failures and stored run errors before returning them", async () => {
+    const secret = "simulation-client-canary";
+    const unsafeMessage = `failed https://user:${secret}@core.test?api_key=${secret} Bearer ${secret} \u001b[31m`;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ message: unsafeMessage }, 500))
+      .mockResolvedValueOnce(jsonResponse({ runs: [{ ...run, lastError: unsafeMessage }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const failure = await loadRuns().catch((error: unknown) => error);
+    const runs = await loadRuns();
+
+    expect((failure as Error).message).not.toContain(secret);
+    expect(runs[0]?.lastError).not.toContain(secret);
+    expect(JSON.stringify([failure instanceof Error ? failure.message : failure, runs])).not.toContain("\\u001b");
   });
 
   it("rejects invalid start payloads before serialization", async () => {
