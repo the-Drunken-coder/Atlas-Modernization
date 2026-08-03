@@ -14,6 +14,9 @@ Regenerate checked-in artifacts:
 go run ./tools/generate
 ```
 
+When a schema change updates the protocol revision, also copy the generated
+revision into `examples/feed/server/handshake.json`.
+
 Check examples, authored Go/schema parity, and generated artifact freshness without rewriting files:
 
 ```sh
