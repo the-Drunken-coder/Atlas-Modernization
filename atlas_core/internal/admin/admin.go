@@ -178,22 +178,14 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	if err := s.CleanupExpiredAuthRecords(ctx, now); err != nil {
 		return "", SessionRecord{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return "", SessionRecord{}, err
-	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	if err := lockLoginAdmission(ctx, tx, username, ip); err != nil {
-		return "", SessionRecord{}, err
-	}
-	if throttled, err := loginThrottled(ctx, tx, username, ip, now); err != nil {
+	if throttled, err := loginThrottled(ctx, s.pool, username, ip, now); err != nil {
 		return "", SessionRecord{}, err
 	} else if throttled {
 		return "", SessionRecord{}, ErrTooManyAttempts
 	}
 
 	accountID := "account:" + username
-	account, accountErr := getAccount(ctx, tx, accountID)
+	account, accountErr := getAccount(ctx, s.pool, accountID)
 	passwordHash := dummyPasswordHash
 	accountEnabled := false
 	if accountErr == nil {
@@ -210,6 +202,20 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	}()
 	if accountErr != nil && !errors.Is(accountErr, pgx.ErrNoRows) {
 		return "", SessionRecord{}, accountErr
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", SessionRecord{}, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := lockLoginAdmission(ctx, tx, username, ip); err != nil {
+		return "", SessionRecord{}, err
+	}
+	if throttled, err := loginThrottled(ctx, tx, username, ip, now); err != nil {
+		return "", SessionRecord{}, err
+	} else if throttled {
+		return "", SessionRecord{}, ErrTooManyAttempts
 	}
 	if !passwordMatches || !accountEnabled {
 		if err := recordLoginFailure(ctx, tx, username, ip, now); err != nil {

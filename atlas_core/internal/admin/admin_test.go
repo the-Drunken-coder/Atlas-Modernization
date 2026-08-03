@@ -238,8 +238,8 @@ func TestConcurrentLoginAdmissionCannotBypassThrottle(t *testing.T) {
 			callsMu.Lock()
 			gotCalls := verifyCalls
 			callsMu.Unlock()
-			if gotCalls != loginMaxFails || invalid != loginMaxFails || throttled != attempts-loginMaxFails {
-				t.Fatalf("verification/invalid/throttled = %d/%d/%d, want %d/%d/%d", gotCalls, invalid, throttled, loginMaxFails, loginMaxFails, attempts-loginMaxFails)
+			if gotCalls < loginMaxFails || gotCalls > attempts || invalid != loginMaxFails || throttled != attempts-loginMaxFails {
+				t.Fatalf("verification/invalid/throttled = %d/%d/%d, want %d-%d/%d/%d", gotCalls, invalid, throttled, loginMaxFails, attempts, loginMaxFails, attempts-loginMaxFails)
 			}
 		})
 	}
@@ -310,10 +310,12 @@ func TestLoginSlotWaitHonorsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestLoginAcquiresSlotAfterDatabaseAdmission(t *testing.T) {
+func TestLoginWaitsForSlotWithoutHoldingDatabaseAdmission(t *testing.T) {
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
 	cleanupAdminRows(ctx, t, pool)
+	expiredSessionID := "session:slot-wait-probe"
+	insertAdminRecord(ctx, t, pool, expiredSessionID, "session", SessionRecord{ExpiresAt: time.Now().Add(-time.Minute)})
 	for i := 0; i < cap(loginArgon2Slots); i++ {
 		loginArgon2Slots <- struct{}{}
 	}
@@ -322,7 +324,7 @@ func TestLoginAcquiresSlotAfterDatabaseAdmission(t *testing.T) {
 			<-loginArgon2Slots
 		}
 	}()
-	loginCtx, cancel := context.WithCancel(ctx)
+	loginCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	result := make(chan error, 1)
 	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
@@ -331,9 +333,24 @@ func TestLoginAcquiresSlotAfterDatabaseAdmission(t *testing.T) {
 		result <- err
 	}()
 
-	lockID := loginAdmissionLockID("user:admin")
 	deadline := time.Now().Add(5 * time.Second)
+	for adminRecordExists(ctx, t, pool, expiredSessionID) {
+		if time.Now().After(deadline) {
+			t.Fatal("login did not complete expired-record cleanup")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	lockID := loginAdmissionLockID("user:admin")
 	for {
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Login error = %v, want context deadline while waiting for an Argon2 slot", err)
+			}
+			return
+		default:
+		}
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin admission probe: %v", err)
@@ -347,17 +364,9 @@ func TestLoginAcquiresSlotAfterDatabaseAdmission(t *testing.T) {
 			t.Fatalf("probe login admission lock: %v", err)
 		}
 		if !acquired {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("login did not reach database admission while the Argon2 gate was full")
+			t.Fatal("login held database admission while waiting for an Argon2 slot")
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-
-	cancel()
-	if err := <-result; !errors.Is(err, context.Canceled) {
-		t.Fatalf("Login error = %v, want context.Canceled while waiting for an Argon2 slot", err)
 	}
 }
 
