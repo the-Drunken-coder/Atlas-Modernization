@@ -136,3 +136,99 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 		t.Fatal("live path remained queued for deletion")
 	}
 }
+
+func TestCreateRejectsPathWhenQueuedDeletionClearsBeforeWriteLock(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("deletion-create-race-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-media', $1, $2)
+	`, path, objectID); err != nil {
+		t.Fatalf("insert queued deletion: %v", err)
+	}
+
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin write blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if err := lockChangeVersion(ctx, blocker); err != nil {
+		t.Fatalf("lock object writes: %v", err)
+	}
+	var blockerPID int32
+	if err := blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatalf("read blocker backend pid: %v", err)
+	}
+
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &path})
+		createDone <- err
+	}()
+
+	var createErr error
+	createReturned := false
+	deadline := time.Now().Add(5 * time.Second)
+waitForCreate:
+	for {
+		select {
+		case createErr = <-createDone:
+			createReturned = true
+			break waitForCreate
+		default:
+		}
+
+		var blocked bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity
+				WHERE $1 = ANY(pg_blocking_pids(pid))
+					AND wait_event_type = 'Lock'
+					AND query LIKE '%pg_advisory_xact_lock%'
+			)
+		`, blockerPID).Scan(&blocked); err != nil {
+			t.Fatalf("check blocked Create: %v", err)
+		}
+		if blocked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Create neither rejected the queued path nor waited for the write lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE path = $1`, path); err != nil {
+		t.Fatalf("clear queued deletion: %v", err)
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release write blocker: %v", err)
+	}
+
+	if !createReturned {
+		select {
+		case createErr = <-createDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent Create did not finish")
+		}
+	}
+	var conflict *ConflictError
+	if !errors.As(createErr, &conflict) {
+		t.Fatalf("concurrent Create error = %v, want object path conflict", createErr)
+	}
+
+	var objectExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&objectExists); err != nil {
+		t.Fatalf("check object row: %v", err)
+	}
+	if objectExists {
+		t.Fatal("Create committed a path whose queued blob deletion had completed")
+	}
+}

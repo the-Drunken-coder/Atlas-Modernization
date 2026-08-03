@@ -182,6 +182,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	if err := validateStringMaxLength("path", objectPath, objectPathMaxLength); err != nil {
 		return nil, err
 	}
+	if err := ensureObjectStoragePathAvailable(ctx, a.pool, objectPath, objectID); err != nil {
+		return nil, err
+	}
 
 	var usageHints []string
 	if usageHint != nil && *usageHint != "" {

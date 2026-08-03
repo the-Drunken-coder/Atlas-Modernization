@@ -16,17 +16,22 @@ const (
 	storageUploadOrphanGrace     = 5 * time.Minute
 )
 
-func ensureObjectStoragePathAvailableTx(ctx context.Context, tx pgx.Tx, path string) error {
+type objectStoragePathQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func ensureObjectStoragePathAvailable(ctx context.Context, db objectStoragePathQueryer, path, objectID string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
 	}
 
 	var unavailable bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)
+	if err := db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1 AND object_id <> $2)
+			OR EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)
 			OR EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)
-	`, path).Scan(&unavailable); err != nil {
+	`, path, strings.TrimSpace(objectID)).Scan(&unavailable); err != nil {
 		return fmt.Errorf("failed to check object storage path state: %w", err)
 	}
 	if unavailable {
@@ -36,7 +41,7 @@ func ensureObjectStoragePathAvailableTx(ctx context.Context, tx pgx.Tx, path str
 }
 
 func (a *ObjectActions) createStorageUploadIntentTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID, ownerID string) error {
-	if err := ensureObjectStoragePathAvailableTx(ctx, tx, path); err != nil {
+	if err := ensureObjectStoragePathAvailable(ctx, tx, path, objectID); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, `

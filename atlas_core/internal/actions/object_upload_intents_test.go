@@ -434,8 +434,12 @@ func TestRecoverStorageUploadIntentRejectsCreateAfterAbsentPathCheck(t *testing.
 	}()
 	select {
 	case createErr := <-createDone:
-		t.Fatalf("concurrent Create returned before recovery committed: %v", createErr)
-	case <-time.After(100 * time.Millisecond):
+		var conflict *ConflictError
+		if !errors.As(createErr, &conflict) {
+			t.Fatalf("concurrent Create error = %v, want object path conflict", createErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent Create did not reject the recovering path")
 	}
 
 	if err := blocker.Rollback(ctx); err != nil {
@@ -448,15 +452,6 @@ func TestRecoverStorageUploadIntentRejectsCreateAfterAbsentPathCheck(t *testing.
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("recovery did not finish after releasing the outbox blocker")
-	}
-	select {
-	case createErr := <-createDone:
-		var conflict *ConflictError
-		if !errors.As(createErr, &conflict) {
-			t.Fatalf("concurrent Create error = %v, want object path conflict", createErr)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("concurrent Create did not finish after recovery committed")
 	}
 
 	var objectExists, outboxExists bool
