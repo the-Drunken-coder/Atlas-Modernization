@@ -92,7 +92,7 @@ Example shape:
 
 ```go
 {
-    version: 2,
+    version: 4,
     name: "add_entity_priority",
     checksum: "<frozen sha256>",
     fingerprintVersion: fingerprintVersionV1,
