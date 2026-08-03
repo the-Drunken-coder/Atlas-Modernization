@@ -15,6 +15,7 @@ describe("Atlas URL handling", () => {
     "/atlas/../admin",
     "/../admin",
     "/%2e%2e/admin",
+    "/%2e%2e%2fadmin",
     "core.test"
   ])("rejects unsafe base URL %s", (value) => {
     expect(() => normalizeAtlasBaseUrl(value)).toThrow();
@@ -44,7 +45,8 @@ describe("Atlas URL handling", () => {
     "/feed\nignored",
     "/atlas/../admin",
     "/../admin",
-    "/%2e%2e/admin"
+    "/%2e%2e/admin",
+    "/%2E%2E%5Cadmin"
   ])("rejects unsafe endpoint %s", (endpoint) => {
     expect(() => joinAtlasUrl("/", endpoint)).toThrow(
       "Atlas endpoint must be a safe root-relative path without a fragment"

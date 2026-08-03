@@ -70,8 +70,9 @@ function hasUnsafeUrlCharacters(value: string): boolean {
 function hasPathTraversal(value: string): boolean {
   const queryStart = value.indexOf("?");
   const path = queryStart === -1 ? value : value.slice(0, queryStart);
-  return path.split("/").some((segment) => {
-    const decodedDots = segment.toLowerCase().replaceAll("%2e", ".");
+  const normalizedPath = path.toLowerCase().replaceAll("%2f", "/").replaceAll("%5c", "/");
+  return normalizedPath.split("/").some((segment) => {
+    const decodedDots = segment.replaceAll("%2e", ".");
     return decodedDots === "." || decodedDots === "..";
   });
 }
