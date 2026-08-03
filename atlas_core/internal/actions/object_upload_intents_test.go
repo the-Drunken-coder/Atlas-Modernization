@@ -20,9 +20,30 @@ import (
 
 const storageUploadCrashHelperEnv = "ATLAS_STORAGE_UPLOAD_CRASH_HELPER"
 
+const storageUploadCrashFileName = "crash-blob"
+
+func storageUploadCrashRoot() string {
+	pid := os.Getpid()
+	if os.Getenv(storageUploadCrashHelperEnv) == "1" {
+		pid = os.Getppid()
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("atlas-storage-upload-crash-%d", pid))
+}
+
+func storageUploadCrashFilePath() string {
+	return filepath.Join(storageUploadCrashRoot(), storageUploadCrashFileName)
+}
+
 func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.T) {
 	pool := openActionsTestPool(t)
-	root := t.TempDir()
+	root := storageUploadCrashRoot()
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("clear crash storage root: %v", err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("create crash storage root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 
 	for _, replacement := range []bool{false, true} {
 		name := "new"
@@ -52,14 +73,13 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 			cmd.Env = append(os.Environ(),
 				storageUploadCrashHelperEnv+"=1",
 				"ATLAS_STORAGE_UPLOAD_CRASH_OBJECT_ID="+objectID,
-				"ATLAS_STORAGE_UPLOAD_CRASH_ROOT="+root,
 			)
 			output, err := cmd.CombinedOutput()
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 86 {
 				t.Fatalf("crash helper error = %v, output = %s", err, output)
 			}
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(newPath))); err != nil {
+			if _, err := os.Stat(storageUploadCrashFilePath()); err != nil {
 				t.Fatalf("crashed upload blob missing: %v", err)
 			}
 
@@ -82,13 +102,13 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 			if _, err := pool.Exec(ctx, `UPDATE storage_upload_intents SET expires_at = clock_timestamp() - interval '1 second' WHERE path = $1`, newPath); err != nil {
 				t.Fatalf("expire upload intent: %v", err)
 			}
-			filesystem := &crashFileObjectStorage{root: root}
+			filesystem := &crashFileObjectStorage{}
 			if deleted, err := NewObjectActions(pool, filesystem).ReconcileStorageDeletions(ctx, 10); err != nil {
 				t.Fatalf("mark orphaned upload intent: %v", err)
 			} else if deleted != 0 {
 				t.Fatalf("first recovery deleted %d blobs before the orphan grace elapsed", deleted)
 			}
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(newPath))); err != nil {
+			if _, err := os.Stat(storageUploadCrashFilePath()); err != nil {
 				t.Fatalf("first recovery removed blob before grace: %v", err)
 			}
 			if _, err := pool.Exec(ctx, `UPDATE storage_upload_intents SET orphaned_at = clock_timestamp() - interval '6 minutes' WHERE path = $1`, newPath); err != nil {
@@ -99,7 +119,7 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 			} else if deleted != 1 {
 				t.Fatalf("second recovery deleted %d blobs, want 1", deleted)
 			}
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(newPath))); !errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Stat(storageUploadCrashFilePath()); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("orphaned blob still exists or stat failed: %v", err)
 			}
 		})
@@ -112,8 +132,7 @@ func TestStorageUploadCrashHelper(t *testing.T) {
 	}
 	pool := openActionsTestPool(t)
 	objectID := os.Getenv("ATLAS_STORAGE_UPLOAD_CRASH_OBJECT_ID")
-	root := os.Getenv("ATLAS_STORAGE_UPLOAD_CRASH_ROOT")
-	_, _ = NewObjectActions(pool, &crashFileObjectStorage{root: root, crashAfterWrite: true}).Upload(
+	_, _ = NewObjectActions(pool, &crashFileObjectStorage{crashAfterWrite: true}).Upload(
 		context.Background(), objectID, strings.NewReader("crash"), 5, "text/plain", "data", nil,
 	)
 	t.Fatal("upload returned instead of crashing")
@@ -165,7 +184,6 @@ func TestUploadHeartbeatOwnershipLossCancelsBeforeMetadataCommit(t *testing.T) {
 }
 
 type crashFileObjectStorage struct {
-	root            string
 	crashAfterWrite bool
 }
 
@@ -237,12 +255,7 @@ func (s *crashFileObjectStorage) NewObjectPath(objectID string) string {
 func (s *crashFileObjectStorage) UploadObjectFromReaderToPath(
 	_ context.Context, objectID, path string, reader io.Reader, size int64, contentType string,
 ) (*storage.ObjectInfo, error) {
-	filePath := filepath.Join(s.root, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
-		return nil, err
-	}
-	// #nosec G304 -- filePath is rooted in the test-owned temporary directory.
-	file, err := os.Create(filePath)
+	file, err := os.Create(storageUploadCrashFilePath())
 	if err != nil {
 		return nil, err
 	}
@@ -259,8 +272,8 @@ func (s *crashFileObjectStorage) UploadObjectFromReaderToPath(
 	return &storage.ObjectInfo{ObjectID: objectID, Bucket: s.Bucket(), Path: path, SizeBytes: size, ContentType: contentType}, nil
 }
 
-func (s *crashFileObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
-	err := os.Remove(filepath.Join(s.root, filepath.FromSlash(path)))
+func (s *crashFileObjectStorage) DeleteObjectPath(_ context.Context, _ string) error {
+	err := os.Remove(storageUploadCrashFilePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

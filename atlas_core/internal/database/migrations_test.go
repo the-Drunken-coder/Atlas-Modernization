@@ -40,6 +40,12 @@ func TestUploadIntentMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestMigrationDefinitionsAreValid(t *testing.T) {
+	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
+		t.Fatalf("migration definitions: %v", err)
+	}
+}
+
 func TestAppliedMigrationHistoryMustMatchKnownPrefix(t *testing.T) {
 	known := coreSchemaMigrations()
 	valid := appliedMigration{
