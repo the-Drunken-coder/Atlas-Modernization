@@ -47,7 +47,7 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 				}
 			}
 
-			// #nosec G204 -- os.Args[0] is the current test binary, not external input.
+			// #nosec G204 G702 -- os.Args[0] is the current test binary, not external input.
 			cmd := exec.Command(os.Args[0], "-test.run=^TestStorageUploadCrashHelper$")
 			cmd.Env = append(os.Environ(),
 				storageUploadCrashHelperEnv+"=1",
