@@ -7,7 +7,8 @@ describe("fake Atlas core", () => {
     const client = core.factory();
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
     await client.tasks.create({ task_id: "task-1", entity_id: "asset-1" });
-    await client.tasks.create({ task_id: "task-2", entity_id: "asset-1", status: "acknowledged" });
+    await client.tasks.create({ task_id: "task-2", entity_id: "asset-1" });
+    await client.tasks.acknowledge("task-2");
 
     const checkIn = await client.entities.checkIn("asset-1");
 

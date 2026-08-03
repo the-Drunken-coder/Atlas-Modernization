@@ -215,10 +215,11 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		`"task_id": NonEmptyString;`,
 		"export function isTaskCreateRequest(value: unknown): value is TaskCreateRequest",
 		"atlasProtocolIsJSONValue",
-		"return atlasProtocolIsJSONValueInternal(value, new WeakSet<object>())",
-		"function atlasProtocolIsJSONValueInternal(value: unknown, seen: WeakSet<object>): value is JSONValue",
-		"if (seen.has(value))",
-		"seen.delete(value)",
+		"type WorkItem = { value: unknown } | { leave: object }",
+		"const active = new WeakSet<object>()",
+		"while (work.length > 0)",
+		"active.delete(item.leave)",
+		"if (active.has(current)) return false",
 		"export function isJSONValue(value: unknown): value is JSONValue",
 		"return atlasProtocolIsJSONValue(value);",
 		`Object.entries(value["extra"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || isJSONValue(item))`,
@@ -226,6 +227,9 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "atlasProtocolIsJSONValueInternal") {
+		t.Fatal("generated JSON value validator must not recurse")
 	}
 }
 

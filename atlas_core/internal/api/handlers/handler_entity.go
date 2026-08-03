@@ -38,7 +38,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
 	var req createEntityRequest
-	if !h.decodeJSONRequestBody(w, r, &req, false) {
+	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateEntityCreateRequest) {
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
 	var req updateEntityRequest
-	if !h.decodeJSONRequestBody(w, r, &req, false) {
+	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateEntityUpdateRequest) {
 		return
 	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")

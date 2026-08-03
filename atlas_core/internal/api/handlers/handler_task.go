@@ -32,7 +32,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
 	var req createTaskRequest
-	if !h.decodeJSONRequestBody(w, r, &req, false) {
+	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateTaskCreateRequest) {
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
 
 	var req updateTaskRequest
-	if !h.decodeJSONRequestBody(w, r, &req, false) {
+	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateTaskUpdateRequest) {
 		return
 	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")

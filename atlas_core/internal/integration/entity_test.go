@@ -457,7 +457,7 @@ func TestEntityCheckin(t *testing.T) {
 		"status":    "pending",
 		"components": map[string]interface{}{
 			"command": map[string]interface{}{
-				"id": "move_to_location",
+				"type": "move_to_location",
 			},
 			"parameters": map[string]interface{}{
 				"latitude":   40.73061,

@@ -76,7 +76,7 @@ describe("Atlas CLI", () => {
           "http://atlas.test",
           "tasks",
           "create",
-          '{"task_id":"task-expanded","status":"acknowledged","entity_id":"asset-1","components":{"parameters":{"latitude":1}},"extra":{"priority":"high"}}'
+          '{"task_id":"task-expanded","status":"pending","entity_id":"asset-1","components":{"parameters":{"latitude":1}},"extra":{"priority":"high"}}'
         ],
         expanded.io
       )
@@ -84,7 +84,7 @@ describe("Atlas CLI", () => {
 
     expect(JSON.parse(expanded.stdout())).toMatchObject({
       task_id: "task-expanded",
-      status: "acknowledged",
+      status: "pending",
       entity_id: "asset-1",
       components: { parameters: { latitude: 1 } },
       extra: { priority: "high" }
@@ -93,6 +93,7 @@ describe("Atlas CLI", () => {
 
   it.each([
     '{"task_id":""}',
+    '{"task_id":"task-invalid","status":"acknowledged"}',
     '{"task_id":"task-invalid","entity_id":""}',
     '{"task_id":"task-invalid","components":[]}',
     '{"task_id":"task-invalid","extra":[]}',
