@@ -233,7 +233,12 @@ function immutableClone<T>(value: T): T {
         throw new TypeError("Atlas cache values must be structured-cloneable");
       }
       if (typeof child !== "object" || child === null) {
-        Reflect.set(target, key, child);
+        Object.defineProperty(target, key, {
+          value: child,
+          enumerable: true,
+          writable: true,
+          configurable: true
+        });
         continue;
       }
       if (
@@ -249,7 +254,12 @@ function immutableClone<T>(value: T): T {
         clones.set(child, clonedChild);
         work.push({ source: child, target: clonedChild });
       }
-      Reflect.set(target, key, clonedChild);
+      Object.defineProperty(target, key, {
+        value: clonedChild,
+        enumerable: true,
+        writable: true,
+        configurable: true
+      });
     }
   }
   return deepFreeze(root as T);
