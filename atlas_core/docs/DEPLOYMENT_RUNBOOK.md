@@ -38,10 +38,12 @@ mc alias set atlas-production http://127.0.0.1:9000 \
 mc mb atlas-production/atlas-media
 ```
 
-Do not run this provisioning step during restore. Restore the MinIO backup
-paired with PostgreSQL before starting Core instead. Production startup only
-verifies the bucket so a missing blob store cannot be silently replaced with an
-empty one.
+For a restore onto a replacement volume, follow [Restore a backup
+set](#restore-a-backup-set): create the bucket only as the mirror target, restore
+the MinIO backup paired with PostgreSQL, and verify it before starting Core.
+Never start Core with a merely provisioned empty bucket against a restored
+database. Production startup only verifies the bucket so a missing blob store
+cannot be silently replaced with an empty one.
 
 Then start the production stack:
 
@@ -254,11 +256,14 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
 3. Replace the configured bucket with the matching mirror:
 
 ```bash
+docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 mc alias set atlas-production http://127.0.0.1:9000 \
   "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+mc mb --ignore-existing atlas-production/atlas-media
 mc rm --recursive --force atlas-production/atlas-media
 mc mirror --overwrite --remove "${BACKUP_DIR}/minio/atlas-media" \
   atlas-production/atlas-media
+test -z "$(mc diff "${BACKUP_DIR}/minio/atlas-media" atlas-production/atlas-media)"
 mc alias remove atlas-production
 ```
 

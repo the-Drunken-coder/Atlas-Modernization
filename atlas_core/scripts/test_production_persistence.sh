@@ -145,10 +145,13 @@ compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION atlas;' \
     >/dev/null
 mc rm --recursive --force atlas/atlas-media
+mc rb atlas/atlas-media
 compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
     <"${POSTGRES_DUMP}"
+mc mb atlas/atlas-media
 mc mirror --overwrite /backup/minio atlas/atlas-media
+test -z "$(mc diff /backup/minio atlas/atlas-media)"
 compose start api
 wait_for_api
 verify_sentinels "${RESTORED_FILE}"

@@ -49,7 +49,7 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose verifies the bucket before starting Core; operators must provision it explicitly for a clean deployment or restore it from the backup paired with PostgreSQL. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. The production Compose API service waits for the `minio-init` verifier to succeed, so a missing bucket prevents the Core process from starting. Operators must provision the bucket explicitly for a clean deployment or restore it from the backup paired with PostgreSQL. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
 
 ## Baseline migration v1
 
