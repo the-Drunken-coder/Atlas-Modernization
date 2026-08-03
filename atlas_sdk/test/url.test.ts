@@ -31,6 +31,10 @@ describe("Atlas URL handling", () => {
     expect(joinAtlasUrl("/atlas", "/feed")).toBe("/atlas/feed");
   });
 
+  it("handles long runs of trailing slashes without a regular expression", () => {
+    expect(normalizeAtlasBaseUrl(`/atlas${"/".repeat(10_000)}`)).toBe("/atlas");
+  });
+
   it("uses the same base path for resource and admin HTTP", async () => {
     const calls: string[] = [];
     const fetchImpl: typeof fetch = async (input) => {

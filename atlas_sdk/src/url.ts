@@ -43,6 +43,9 @@ export function joinAtlasUrl(baseUrl: string, endpoint: string): string {
 }
 
 function stripTrailingSlashes(value: string): string {
-  const stripped = value.replace(/\/+$/, "");
-  return stripped || "/";
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+  return end === 0 ? "/" : value.slice(0, end);
 }
