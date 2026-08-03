@@ -161,7 +161,8 @@ describe("appConfigFromEnv", () => {
     ["http://localhost:8000/atlas", "http://localhost:8000/atlas"],
     ["http://127.12.34.56:8000/atlas", "http://127.12.34.56:8000/atlas"],
     ["http://[::1]:8000/atlas", "http://[::1]:8000/atlas"],
-    ["/atlas/", "/atlas"]
+    ["/atlas/", "/atlas"],
+    ["/", "/"]
   ])("accepts safe Core base URL %s", (value, expected) => {
     expect(appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: value }).atlasBaseUrl).toBe(
       expected

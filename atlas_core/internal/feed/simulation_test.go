@@ -284,6 +284,25 @@ func TestHubInvalidatesClientsWhenCommittedChangeCannotBeBuilt(t *testing.T) {
 	}
 }
 
+func TestHubDuplicateCommittedDropKeepsRecoveredClients(t *testing.T) {
+	hub := NewHub(0, Options{})
+	defer hub.Close()
+
+	original := hub.NewClient()
+	original.Subscribe(Subscription{Filter: FilterAll})
+	hub.DropCommittedVersion(2, "async_sink_queue_full")
+	assertClientClosed(t, original)
+
+	reconnected := hub.NewClient()
+	reconnected.Subscribe(Subscription{Filter: FilterAll})
+	hub.DropCommittedVersion(2, "duplicate_notification")
+	hub.Publish(entityEvent("create", "asset-before-drop", 1, "asset"))
+	hub.Publish(entityEvent("create", "asset-after-drop", 3, "asset"))
+
+	assertVersionWithin(t, reconnected, 1, time.Second)
+	assertVersionWithin(t, reconnected, 3, time.Second)
+}
+
 func TestAsyncChangeSinkOverflowInvalidatesHubClients(t *testing.T) {
 	hub := NewHub(0, Options{})
 	defer hub.Close()

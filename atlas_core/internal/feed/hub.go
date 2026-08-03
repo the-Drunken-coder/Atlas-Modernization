@@ -353,6 +353,9 @@ func (h *Hub) DropCommittedVersion(version int64, reason string) {
 	if h.closed || version < h.nextVersion {
 		return
 	}
+	if _, alreadySkipped := h.skipped[version]; alreadySkipped {
+		return
+	}
 	if reason == "" {
 		reason = "unknown"
 	}

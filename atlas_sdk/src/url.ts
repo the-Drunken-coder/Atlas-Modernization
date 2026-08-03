@@ -2,7 +2,7 @@ const ABSOLUTE_HTTP_URL = /^https?:\/\//i;
 
 export function normalizeAtlasBaseUrl(baseUrl: string): string {
   const value = baseUrl.trim();
-  if (!value || value.startsWith("//")) {
+  if (!value || hasUnsafeUrlCharacters(value) || value.startsWith("//")) {
     throw new TypeError("Atlas base URL must be an absolute HTTP(S) URL or a root-relative path");
   }
 
@@ -36,7 +36,12 @@ export function normalizeAtlasBaseUrl(baseUrl: string): string {
 
 export function joinAtlasUrl(baseUrl: string, endpoint: string): string {
   const base = normalizeAtlasBaseUrl(baseUrl);
-  if (!endpoint.startsWith("/") || endpoint.startsWith("//") || endpoint.includes("#")) {
+  if (
+    hasUnsafeUrlCharacters(endpoint) ||
+    !endpoint.startsWith("/") ||
+    endpoint.startsWith("//") ||
+    endpoint.includes("#")
+  ) {
     throw new TypeError("Atlas endpoint must be a root-relative path without a fragment");
   }
   return base === "/" ? endpoint : `${base}${endpoint}`;
@@ -48,4 +53,12 @@ function stripTrailingSlashes(value: string): string {
     end -= 1;
   }
   return end === 0 ? "/" : value.slice(0, end);
+}
+
+function hasUnsafeUrlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (value[index] === "\\" || code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
 }

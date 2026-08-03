@@ -43,10 +43,7 @@ export async function fetchAppConfig(): Promise<AppConfig> {
 /** Resolve the non-network Core settings needed by the public authentication shell. */
 export function coreConfigFromEnv(env: RuntimeEnv): CoreConfig {
   return {
-    atlasBaseUrl: parseConfigUrl(
-      envValue(env.VITE_ATLAS_CORE_BASE_URL) ?? defaultCoreBaseUrl(env),
-      "atlasBaseUrl"
-    ).replace(/\/$/, ""),
+    atlasBaseUrl: parseConfigUrl(envValue(env.VITE_ATLAS_CORE_BASE_URL) ?? defaultCoreBaseUrl(env), "atlasBaseUrl"),
     protocolRevision: ATLAS_PROTOCOL_REVISION
   };
 }
