@@ -466,8 +466,8 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 				log.Error().Err(recordErr).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion failed and retry metadata could not be updated")
 			}
 			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Object deleted from database but storage delete failed; queued retry")
-		} else if err := a.clearQueuedStorageDeletion(ctx, queuedBucket, queuedPath); err != nil {
-			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but queued retry could not be cleared")
+		} else if err := a.completeQueuedStorageDeletion(ctx, queuedBucket, queuedPath); err != nil {
+			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but path tombstone could not be completed")
 		}
 	}
 

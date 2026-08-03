@@ -412,15 +412,20 @@ func TestReconcileStorageUploadIntentDeletesUnreferencedBlob(t *testing.T) {
 		t.Fatalf("reconciliation deleted=%d paths=%#v, want %q", deleted, storageClient.deletedPaths, path)
 	}
 
-	var intentExists, outboxExists bool
+	var intentExists, pathTombstoned bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)`, path).Scan(&intentExists); err != nil {
 		t.Fatalf("check upload intent: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, path).Scan(&outboxExists); err != nil {
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM storage_deletion_outbox
+			WHERE path = $1 AND next_attempt_at = 'infinity'::timestamptz
+		)
+	`, path).Scan(&pathTombstoned); err != nil {
 		t.Fatalf("check deletion outbox: %v", err)
 	}
-	if intentExists || outboxExists {
-		t.Fatalf("recovered rows remain: intent=%t outbox=%t", intentExists, outboxExists)
+	if intentExists || !pathTombstoned {
+		t.Fatalf("recovery state = intent:%t path-tombstone:%t, want false/true", intentExists, pathTombstoned)
 	}
 }
 

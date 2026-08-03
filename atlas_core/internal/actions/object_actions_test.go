@@ -463,17 +463,18 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 		t.Fatalf("deleted paths = %#v, want %q", storageClient.deletedPaths, path)
 	}
 
-	var rowExists bool
+	var pathTombstoned bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM storage_deletion_outbox
 			WHERE bucket = 'atlas-media' AND path = $1
+				AND next_attempt_at = 'infinity'::timestamptz
 		)
-	`, path).Scan(&rowExists); err != nil {
+	`, path).Scan(&pathTombstoned); err != nil {
 		t.Fatalf("check outbox row: %v", err)
 	}
-	if rowExists {
-		t.Fatal("outbox row still exists after successful reconciliation")
+	if !pathTombstoned {
+		t.Fatal("successful reconciliation did not retain a path tombstone")
 	}
 }
 

@@ -23,7 +23,7 @@ func TestQueueStorageDeletionRequeueResetsRetryState(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id, attempts, last_error, next_attempt_at)
-		VALUES ('atlas-media', $1, $2, 5, 'old backoff', clock_timestamp() + interval '1 hour')
+		VALUES ('atlas-media', $1, $2, 5, 'old backoff', 'infinity'::timestamptz)
 	`, path, "old-"+objectID); err != nil {
 		t.Fatalf("insert stale outbox row: %v", err)
 	}
@@ -161,15 +161,20 @@ func TestReconcileStorageDeletionDrainsQueueAfterUploadRecoveryFailure(t *testin
 		t.Fatalf("reconciliation deleted=%d paths=%#v, want independent path %q", deleted, storageClient.deletedPaths, queuedPath)
 	}
 
-	var intentExists, outboxExists bool
+	var intentExists, pathTombstoned bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)`, recoveryPath).Scan(&intentExists); err != nil {
 		t.Fatalf("check rolled-back upload intent: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, queuedPath).Scan(&outboxExists); err != nil {
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM storage_deletion_outbox
+			WHERE path = $1 AND next_attempt_at = 'infinity'::timestamptz
+		)
+	`, queuedPath).Scan(&pathTombstoned); err != nil {
 		t.Fatalf("check drained deletion row: %v", err)
 	}
-	if !intentExists || outboxExists {
-		t.Fatalf("post-reconcile rows = intent:%t outbox:%t, want true/false", intentExists, outboxExists)
+	if !intentExists || !pathTombstoned {
+		t.Fatalf("post-reconcile rows = intent:%t path-tombstone:%t, want true/true", intentExists, pathTombstoned)
 	}
 }
 
@@ -323,5 +328,112 @@ waitForCreate:
 	}
 	if objectExists {
 		t.Fatal("Create committed metadata for a blob deleted by reconciliation")
+	}
+}
+
+func TestCreateRejectsDeletedPathAfterPassingPreflight(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("deletion-preflight-race-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin write blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if err := lockChangeVersion(ctx, blocker); err != nil {
+		t.Fatalf("lock object writes: %v", err)
+	}
+	var blockerPID int32
+	if err := blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatalf("read blocker backend pid: %v", err)
+	}
+
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &path})
+		createDone <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var blocked bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks waiting
+				JOIN pg_locks held
+					ON waiting.locktype = held.locktype
+					AND waiting.database IS NOT DISTINCT FROM held.database
+					AND waiting.classid IS NOT DISTINCT FROM held.classid
+					AND waiting.objid IS NOT DISTINCT FROM held.objid
+					AND waiting.objsubid IS NOT DISTINCT FROM held.objsubid
+				WHERE waiting.locktype = 'advisory'
+					AND NOT waiting.granted
+					AND held.granted
+					AND held.pid = $1
+			)
+		`, blockerPID).Scan(&blocked); err != nil {
+			t.Fatalf("check blocked Create: %v", err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case createErr := <-createDone:
+			t.Fatalf("Create returned before the deletion reservation appeared: %v", createErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Create did not pass preflight and wait for the write lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-media', $1, $2)
+	`, path, objectID); err != nil {
+		t.Fatalf("insert concurrent deletion reservation: %v", err)
+	}
+	storageClient := &recordingObjectStorage{}
+	if err := NewObjectActions(pool, storageClient).deleteQueuedStoragePathNow(ctx, "atlas-media", path); err != nil {
+		t.Fatalf("complete concurrent storage deletion: %v", err)
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release write blocker: %v", err)
+	}
+
+	select {
+	case createErr := <-createDone:
+		var conflict *ConflictError
+		if !errors.As(createErr, &conflict) {
+			t.Fatalf("concurrent Create error = %v, want object path conflict", createErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Create did not finish after releasing the write lock")
+	}
+	if len(storageClient.deletedPaths) != 1 || storageClient.deletedPaths[0] != path {
+		t.Fatalf("deleted paths = %#v, want %q", storageClient.deletedPaths, path)
+	}
+
+	var objectExists, pathTombstoned bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&objectExists); err != nil {
+		t.Fatalf("check object row: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM storage_deletion_outbox
+			WHERE path = $1 AND next_attempt_at = 'infinity'::timestamptz
+		)
+	`, path).Scan(&pathTombstoned); err != nil {
+		t.Fatalf("check completed path tombstone: %v", err)
+	}
+	if objectExists || !pathTombstoned {
+		t.Fatalf("post-race state = object:%t path-tombstone:%t, want false/true", objectExists, pathTombstoned)
 	}
 }

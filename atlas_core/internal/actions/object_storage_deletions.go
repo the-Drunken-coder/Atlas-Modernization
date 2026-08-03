@@ -103,16 +103,22 @@ func (a *ObjectActions) queueStorageDeletionAfterFailure(ctx context.Context, bu
 	return a.recordQueuedStorageDeletionFailure(ctx, bucket, path, deleteErr)
 }
 
-func (a *ObjectActions) clearQueuedStorageDeletion(ctx context.Context, bucket, path string) error {
+func (a *ObjectActions) completeQueuedStorageDeletion(ctx context.Context, bucket, path string) error {
 	if a.pool == nil {
 		return nil
 	}
-	_, err := a.pool.Exec(ctx, `
-		DELETE FROM storage_deletion_outbox
+	result, err := a.pool.Exec(ctx, `
+		UPDATE storage_deletion_outbox
+		SET last_error = NULL,
+			next_attempt_at = 'infinity'::timestamptz,
+			updated_at = clock_timestamp()
 		WHERE bucket = $1 AND path = $2
 	`, strings.TrimSpace(bucket), strings.TrimSpace(path))
 	if err != nil {
-		return fmt.Errorf("failed to clear storage deletion retry: %w", err)
+		return fmt.Errorf("failed to complete storage deletion: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("failed to complete storage deletion: path reservation is missing")
 	}
 	return nil
 }
@@ -231,6 +237,26 @@ func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id i
 	return nil
 }
 
+func (a *ObjectActions) completeQueuedStorageDeletionByID(ctx context.Context, id int64) error {
+	if a.pool == nil {
+		return nil
+	}
+	result, err := a.pool.Exec(ctx, `
+		UPDATE storage_deletion_outbox
+		SET last_error = NULL,
+			next_attempt_at = 'infinity'::timestamptz,
+			updated_at = clock_timestamp()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("complete storage deletion outbox row: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("complete storage deletion outbox row: path reservation is missing")
+	}
+	return nil
+}
+
 func (a *ObjectActions) deleteQueuedStoragePathNow(ctx context.Context, bucket, path string) error {
 	if err := a.storage.DeleteObjectPath(ctx, path); err != nil {
 		if recordErr := a.recordQueuedStorageDeletionFailure(ctx, bucket, path, err); recordErr != nil {
@@ -238,10 +264,11 @@ func (a *ObjectActions) deleteQueuedStoragePathNow(ctx context.Context, bucket, 
 		}
 		return err
 	}
-	return a.clearQueuedStorageDeletion(ctx, bucket, path)
+	return a.completeQueuedStorageDeletion(ctx, bucket, path)
 }
 
-// ReconcileStorageDeletions retries queued storage deletions and clears successful rows.
+// ReconcileStorageDeletions retries queued storage deletions and retains
+// successful rows as path tombstones.
 func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int) (int, error) {
 	if a.storage == nil {
 		return 0, &storage.StorageError{Message: "storage not configured"}
@@ -291,7 +318,7 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 			continue
 		}
 
-		if err := a.clearQueuedStorageDeletionByID(ctx, item.id); err != nil {
+		if err := a.completeQueuedStorageDeletionByID(ctx, item.id); err != nil {
 			return deleted, errors.Join(recoveryErr, err)
 		}
 		deleted++

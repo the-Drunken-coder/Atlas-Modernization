@@ -62,6 +62,8 @@ blob write, renews its lease while the upload is active, and removes it in the
 same transaction that commits object metadata. The storage reconciler marks
 expired intents orphaned, waits through a safety grace period, verifies that no
 object references the path, and then transfers deletion to the durable outbox.
+Successful deletion rows remain with `next_attempt_at = 'infinity'` as permanent
+path tombstones so deleted generated paths cannot be reused by later metadata.
 
 Inspect the current production version with:
 

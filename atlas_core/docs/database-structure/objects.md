@@ -72,10 +72,12 @@ PostgreSQL and blob storage. An upload owns a renewable lease until its metadata
 commit. If Core stops after writing the blob, the reconciler waits for the lease
 and orphan grace period, then serializes its live-reference decision with object
 metadata writes before queuing the unreferenced blob in
-`storage_deletion_outbox`. Object path writers reject paths reserved by either
-an upload intent or queued deletion, both before waiting for the database write
-lock and again inside their transaction, so a deletion already in progress
-cannot be outwaited and reused by live metadata.
+`storage_deletion_outbox`. Object path writers reject paths reserved by an
+upload intent or deletion outbox row, both before waiting for the database
+write lock and again inside their transaction, so a deletion already in progress
+cannot be outwaited and reused by live metadata. After blob deletion succeeds,
+the outbox row remains with an infinite next-attempt timestamp as a permanent
+path tombstone; generated blob paths are never reused.
 
 ## Heatmap Convention
 
