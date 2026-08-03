@@ -67,6 +67,12 @@ inside the same database transaction as the object tombstone. The service then
 attempts immediate blob deletion. If storage deletion fails, the queued row
 remains and the background reconciler retries until the path is deleted.
 
+Uploads use `storage_upload_intents` to bridge the transaction boundary between
+PostgreSQL and blob storage. An upload owns a renewable lease until its metadata
+commit. If Core stops after writing the blob, the reconciler waits for the lease
+and orphan grace period, rechecks that no object references the path, and queues
+the unreferenced blob in `storage_deletion_outbox`.
+
 ## Heatmap Convention
 
 Heatmap data is modeled as a standard media object convention:

@@ -1,0 +1,438 @@
+package actions
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
+)
+
+const storageUploadCrashHelperEnv = "ATLAS_STORAGE_UPLOAD_CRASH_HELPER"
+
+func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.T) {
+	pool := openActionsTestPool(t)
+	root := t.TempDir()
+
+	for _, replacement := range []bool{false, true} {
+		name := "new"
+		if replacement {
+			name = "replacement"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			objectID := fmt.Sprintf("crash-%s-%d", name, time.Now().UTC().UnixNano())
+			newPath := crashStoragePath(objectID)
+			oldPath := fmt.Sprintf("objects/%s/old", objectID)
+			defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+			if replacement {
+				contentType := "text/plain"
+				sizeBytes := int64(3)
+				if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{
+					ObjectID: objectID, Path: &oldPath, ContentType: &contentType, SizeBytes: &sizeBytes,
+				}); err != nil {
+					t.Fatalf("create replacement fixture: %v", err)
+				}
+			}
+
+			cmd := exec.Command(os.Args[0], "-test.run=^TestStorageUploadCrashHelper$")
+			cmd.Env = append(os.Environ(),
+				storageUploadCrashHelperEnv+"=1",
+				"ATLAS_STORAGE_UPLOAD_CRASH_OBJECT_ID="+objectID,
+				"ATLAS_STORAGE_UPLOAD_CRASH_ROOT="+root,
+			)
+			output, err := cmd.CombinedOutput()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 86 {
+				t.Fatalf("crash helper error = %v, output = %s", err, output)
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(newPath))); err != nil {
+				t.Fatalf("crashed upload blob missing: %v", err)
+			}
+
+			var intentCount int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM storage_upload_intents WHERE object_id = $1 AND path = $2`, objectID, newPath).Scan(&intentCount); err != nil {
+				t.Fatalf("query crashed upload intent: %v", err)
+			}
+			if intentCount != 1 {
+				t.Fatalf("upload intents = %d, want 1", intentCount)
+			}
+			var currentPath *string
+			if err := pool.QueryRow(ctx, `SELECT path FROM objects WHERE object_id = $1`, objectID).Scan(&currentPath); err != nil {
+				if replacement || !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("query object after crash: %v", err)
+				}
+			} else if !replacement || currentPath == nil || *currentPath != oldPath {
+				t.Fatalf("object path after crash = %v, want unchanged %q", currentPath, oldPath)
+			}
+
+			if _, err := pool.Exec(ctx, `UPDATE storage_upload_intents SET expires_at = clock_timestamp() - interval '1 second' WHERE path = $1`, newPath); err != nil {
+				t.Fatalf("expire upload intent: %v", err)
+			}
+			filesystem := &crashFileObjectStorage{root: root}
+			if deleted, err := NewObjectActions(pool, filesystem).ReconcileStorageDeletions(ctx, 10); err != nil {
+				t.Fatalf("mark orphaned upload intent: %v", err)
+			} else if deleted != 0 {
+				t.Fatalf("first recovery deleted %d blobs before the orphan grace elapsed", deleted)
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(newPath))); err != nil {
+				t.Fatalf("first recovery removed blob before grace: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `UPDATE storage_upload_intents SET orphaned_at = clock_timestamp() - interval '6 minutes' WHERE path = $1`, newPath); err != nil {
+				t.Fatalf("age orphaned upload intent: %v", err)
+			}
+			if deleted, err := NewObjectActions(pool, filesystem).ReconcileStorageDeletions(ctx, 10); err != nil {
+				t.Fatalf("recover orphaned upload intent: %v", err)
+			} else if deleted != 1 {
+				t.Fatalf("second recovery deleted %d blobs, want 1", deleted)
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(newPath))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("orphaned blob still exists or stat failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestStorageUploadCrashHelper(t *testing.T) {
+	if os.Getenv(storageUploadCrashHelperEnv) != "1" {
+		return
+	}
+	pool := openActionsTestPool(t)
+	objectID := os.Getenv("ATLAS_STORAGE_UPLOAD_CRASH_OBJECT_ID")
+	root := os.Getenv("ATLAS_STORAGE_UPLOAD_CRASH_ROOT")
+	_, _ = NewObjectActions(pool, &crashFileObjectStorage{root: root, crashAfterWrite: true}).Upload(
+		context.Background(), objectID, strings.NewReader("crash"), 5, "text/plain", "data", nil,
+	)
+	t.Fatal("upload returned instead of crashing")
+}
+
+func TestUploadHeartbeatOwnershipLossCancelsBeforeMetadataCommit(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("heartbeat-loss-%d", time.Now().UTC().UnixNano())
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	storageClient := newCancelAwareObjectStorage()
+	actions := NewObjectActions(pool, storageClient)
+	actions.uploadHeartbeatPeriod = 10 * time.Millisecond
+
+	uploadErr := make(chan error, 1)
+	go func() {
+		_, err := actions.Upload(ctx, objectID, strings.NewReader("blocked"), 7, "text/plain", "data", nil)
+		uploadErr <- err
+	}()
+	uploadPath := storageClient.waitForUploadStart(t)
+	if _, err := pool.Exec(ctx, `
+		UPDATE storage_upload_intents
+		SET orphaned_at = clock_timestamp()
+		WHERE object_id = $1 AND path = $2
+	`, objectID, uploadPath); err != nil {
+		t.Fatalf("mark upload intent orphaned: %v", err)
+	}
+
+	select {
+	case err := <-uploadErr:
+		if err == nil || !strings.Contains(err.Error(), "ownership was lost") {
+			t.Fatalf("upload error = %v, want lost ownership", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload was not canceled after heartbeat ownership loss")
+	}
+	var rowExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&rowExists); err != nil {
+		t.Fatalf("query object after heartbeat failure: %v", err)
+	}
+	if rowExists {
+		t.Fatal("upload metadata committed after heartbeat ownership loss")
+	}
+	if !storageClient.deletedPath(uploadPath) {
+		t.Fatalf("canceled upload path %q was not cleaned", uploadPath)
+	}
+}
+
+type crashFileObjectStorage struct {
+	root            string
+	crashAfterWrite bool
+}
+
+type cancelAwareObjectStorage struct {
+	uploadStarted chan string
+	mu            sync.Mutex
+	deletedPaths  []string
+}
+
+func newCancelAwareObjectStorage() *cancelAwareObjectStorage {
+	return &cancelAwareObjectStorage{uploadStarted: make(chan string, 1)}
+}
+
+func (s *cancelAwareObjectStorage) Bucket() string { return "atlas-media" }
+
+func (s *cancelAwareObjectStorage) NewObjectPath(objectID string) string {
+	return fmt.Sprintf("objects/%s/heartbeat-blob", objectID)
+}
+
+func (s *cancelAwareObjectStorage) UploadObjectFromReaderToPath(
+	ctx context.Context, _ string, path string, _ io.Reader, _ int64, _ string,
+) (*storage.ObjectInfo, error) {
+	s.uploadStarted <- path
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (s *cancelAwareObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deletedPaths = append(s.deletedPaths, path)
+	return nil
+}
+
+func (s *cancelAwareObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (s *cancelAwareObjectStorage) waitForUploadStart(t *testing.T) string {
+	t.Helper()
+	select {
+	case path := <-s.uploadStarted:
+		return path
+	case <-time.After(5 * time.Second):
+		t.Fatal("storage upload did not start")
+		return ""
+	}
+}
+
+func (s *cancelAwareObjectStorage) deletedPath(path string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, deleted := range s.deletedPaths {
+		if deleted == path {
+			return true
+		}
+	}
+	return false
+}
+
+func crashStoragePath(objectID string) string { return fmt.Sprintf("objects/%s/crash-blob", objectID) }
+
+func (s *crashFileObjectStorage) Bucket() string { return "atlas-media" }
+
+func (s *crashFileObjectStorage) NewObjectPath(objectID string) string {
+	return crashStoragePath(objectID)
+}
+
+func (s *crashFileObjectStorage) UploadObjectFromReaderToPath(
+	_ context.Context, objectID, path string, reader io.Reader, size int64, contentType string,
+) (*storage.ObjectInfo, error) {
+	filePath := filepath.Join(s.root, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		return nil, err
+	}
+	file, err := os.Create(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(file, reader); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	if s.crashAfterWrite {
+		os.Exit(86)
+	}
+	return &storage.ObjectInfo{ObjectID: objectID, Bucket: s.Bucket(), Path: path, SizeBytes: size, ContentType: contentType}, nil
+}
+
+func (s *crashFileObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
+	err := os.Remove(filepath.Join(s.root, filepath.FromSlash(path)))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func (s *crashFileObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func TestReconcileStorageUploadIntentDeletesUnreferencedBlob(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("orphan-upload-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents
+			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() - interval '11 minutes', clock_timestamp() - interval '6 minutes')
+	`, path, objectID, uuid.NewString()); err != nil {
+		t.Fatalf("insert orphaned upload intent: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{}
+	actions := NewObjectActions(pool, storageClient)
+	deleted, err := actions.ReconcileStorageDeletions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ReconcileStorageDeletions: %v", err)
+	}
+	if deleted != 1 || len(storageClient.deletedPaths) != 1 || storageClient.deletedPaths[0] != path {
+		t.Fatalf("reconciliation deleted=%d paths=%#v, want %q", deleted, storageClient.deletedPaths, path)
+	}
+
+	var intentExists, outboxExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)`, path).Scan(&intentExists); err != nil {
+		t.Fatalf("check upload intent: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, path).Scan(&outboxExists); err != nil {
+		t.Fatalf("check deletion outbox: %v", err)
+	}
+	if intentExists || outboxExists {
+		t.Fatalf("recovered rows remain: intent=%t outbox=%t", intentExists, outboxExists)
+	}
+}
+
+func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("live-upload-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO objects (object_id, path) VALUES ($1, $2)`, objectID, path); err != nil {
+		t.Fatalf("insert live object: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents
+			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() - interval '11 minutes', clock_timestamp() - interval '6 minutes')
+	`, path, objectID, uuid.NewString()); err != nil {
+		t.Fatalf("insert stale upload intent: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{}
+	if _, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10); err != nil {
+		t.Fatalf("ReconcileStorageDeletions: %v", err)
+	}
+	if len(storageClient.deletedPaths) != 0 {
+		t.Fatalf("deleted live paths: %#v", storageClient.deletedPaths)
+	}
+
+	var intentExists, outboxExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)`, path).Scan(&intentExists); err != nil {
+		t.Fatalf("check upload intent: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, path).Scan(&outboxExists); err != nil {
+		t.Fatalf("check deletion outbox: %v", err)
+	}
+	if intentExists || outboxExists {
+		t.Fatalf("live path recovery left rows: intent=%t outbox=%t", intentExists, outboxExists)
+	}
+}
+
+func TestReconcileStorageUploadIntentLeavesActiveLease(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("active-upload-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() + interval '5 minutes')
+	`, path, objectID, uuid.NewString()); err != nil {
+		t.Fatalf("insert active upload intent: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{}
+	if _, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10); err != nil {
+		t.Fatalf("ReconcileStorageDeletions: %v", err)
+	}
+	if len(storageClient.deletedPaths) != 0 {
+		t.Fatalf("active upload path was deleted: %#v", storageClient.deletedPaths)
+	}
+	var active bool
+	if err := pool.QueryRow(ctx, `
+		SELECT orphaned_at IS NULL AND expires_at > clock_timestamp()
+		FROM storage_upload_intents WHERE path = $1
+	`, path).Scan(&active); err != nil {
+		t.Fatalf("check active upload intent: %v", err)
+	}
+	if !active {
+		t.Fatal("active upload intent was changed by reconciliation")
+	}
+}
+
+func TestUploadDoesNotResurrectObjectCreatedAndDeletedAfterMissingPreflight(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	storageClient := newBlockingObjectStorage()
+	defer storageClient.releaseUpload()
+	actions := NewObjectActions(pool, storageClient)
+
+	objectID := fmt.Sprintf("missing-race-%d", time.Now().UTC().UnixNano())
+	initialPath := fmt.Sprintf("objects/%s/initial", objectID)
+	contentType := "text/plain"
+	sizeBytes := int64(3)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	uploadErr := make(chan error, 1)
+	go func() {
+		_, err := actions.Upload(ctx, objectID, strings.NewReader("new"), sizeBytes, contentType, "data", nil)
+		uploadErr <- err
+	}()
+	uploadedPath := storageClient.waitForUploadStart(t)
+
+	if _, err := actions.Create(ctx, CreateObjectParams{
+		ObjectID: objectID, Path: &initialPath, ContentType: &contentType, SizeBytes: &sizeBytes,
+	}); err != nil {
+		t.Fatalf("create object after missing preflight: %v", err)
+	}
+	if err := actions.Delete(ctx, objectID); err != nil {
+		t.Fatalf("delete object after missing preflight: %v", err)
+	}
+	storageClient.releaseUpload()
+
+	select {
+	case err := <-uploadErr:
+		var notFound *NotFoundError
+		if !errors.As(err, &notFound) {
+			t.Fatalf("upload error = %v, want object not found", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload did not finish")
+	}
+
+	var rowExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE object_id = $1)`, objectID).Scan(&rowExists); err != nil {
+		t.Fatalf("check object row: %v", err)
+	}
+	if rowExists {
+		t.Fatal("missing-row upload resurrected a concurrently deleted object")
+	}
+	if !storageClient.deletedPath(uploadedPath) {
+		t.Fatalf("failed upload path %q was not cleaned", uploadedPath)
+	}
+}

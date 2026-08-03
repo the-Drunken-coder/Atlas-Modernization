@@ -19,7 +19,7 @@ var ErrNilDB = errors.New("database: nil DB")
 var ErrNilPool = errors.New("database: nil pool")
 
 // coreSchemaTables are owned by Atlas Core schema migrations.
-var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "admin_records"}
+var coreSchemaTables = []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "storage_upload_intents", "admin_records"}
 
 // baselineSchemaDDL is immutable migration v1. Later schema changes must be
 // appended as new migrations rather than changing these statements.
@@ -126,7 +126,7 @@ func baselineSchemaDDL() []string {
 
 func scratchDataResetDDL() []string {
 	return []string{
-		`TRUNCATE TABLE storage_deletion_outbox, tasks, entities, objects, deletions RESTART IDENTITY CASCADE`,
+		`TRUNCATE TABLE storage_upload_intents, storage_deletion_outbox, tasks, entities, objects, deletions RESTART IDENTITY CASCADE`,
 		`ALTER SEQUENCE atlas_change_version_seq RESTART WITH 1`,
 	}
 }

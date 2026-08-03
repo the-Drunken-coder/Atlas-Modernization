@@ -161,7 +161,7 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgr
   >"${BACKUP_DIR}/postgres.contents.txt"
 ```
 
-Every full dump must contain resource tables, `deletions`, `storage_deletion_outbox`, `atlas_change_version_seq`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata). After durable v1 adoption it must also contain `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to be unversioned and is marked `unversioned-v1-candidate` instead.
+Every full dump must contain resource tables, `deletions`, `storage_deletion_outbox`, `storage_upload_intents`, `atlas_change_version_seq`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata). After durable v1 adoption it must also contain `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to be unversioned and is marked `unversioned-v1-candidate` instead.
 
 4. Mirror the entire configured bucket into the same backup set:
 

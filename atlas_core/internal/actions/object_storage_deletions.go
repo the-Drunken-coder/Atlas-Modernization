@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -230,6 +231,16 @@ func (a *ObjectActions) clearQueuedStorageDeletionByID(ctx context.Context, id i
 	return nil
 }
 
+func (a *ObjectActions) deleteQueuedStoragePathNow(ctx context.Context, bucket, path string) error {
+	if err := a.storage.DeleteObjectPath(ctx, path); err != nil {
+		if recordErr := a.recordQueuedStorageDeletionFailure(ctx, bucket, path, err); recordErr != nil {
+			return fmt.Errorf("storage deletion failed: %w (also failed to update retry metadata: %v)", err, recordErr)
+		}
+		return err
+	}
+	return a.clearQueuedStorageDeletion(ctx, bucket, path)
+}
+
 // ReconcileStorageDeletions retries queued storage deletions and clears successful rows.
 func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int) (int, error) {
 	if a.storage == nil {
@@ -240,6 +251,13 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 	}
 	if limit > 500 {
 		limit = 500
+	}
+	if a.pool == nil {
+		return 0, errors.New("storage deletion reconciliation requires a database")
+	}
+
+	if _, err := a.recoverStorageUploadIntents(ctx, limit); err != nil {
+		return 0, err
 	}
 
 	queued, err := a.claimQueuedStorageDeletions(ctx, limit)

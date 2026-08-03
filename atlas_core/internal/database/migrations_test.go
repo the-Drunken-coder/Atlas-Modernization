@@ -23,6 +23,23 @@ func TestBaselineMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestUploadIntentMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[1]
+	if actual := migrationChecksum(migration); actual != uploadIntentsMigrationChecksum {
+		t.Fatalf("upload-intent migration checksum = %s, want %s", actual, uploadIntentsMigrationChecksum)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"CREATE TABLE storage_upload_intents",
+		"PRIMARY KEY (bucket, path)",
+		"CREATE INDEX idx_storage_upload_intents_recovery",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("upload-intent migration is missing %q", required)
+		}
+	}
+}
+
 func TestAppliedMigrationHistoryMustMatchKnownPrefix(t *testing.T) {
 	known := coreSchemaMigrations()
 	valid := appliedMigration{
@@ -77,6 +94,11 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 		VALUES ('durable-admin', 'test', '{"preserved":true}')`); err != nil {
 		t.Fatalf("insert durable admin record: %v", err)
 	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
+		VALUES ('atlas-media', 'objects/durable-upload/blob', 'durable-upload', '00000000-0000-0000-0000-000000000001', clock_timestamp() + interval '5 minutes')`); err != nil {
+		t.Fatalf("insert durable upload intent: %v", err)
+	}
 	db.Close()
 
 	db = openMigrationTestDB(t, dbURL, false)
@@ -100,6 +122,13 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 	if adminCount != 1 {
 		t.Fatalf("durable admin record count = %d, want 1", adminCount)
 	}
+	var intentCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM storage_upload_intents WHERE object_id = 'durable-upload'`).Scan(&intentCount); err != nil {
+		t.Fatalf("read durable upload intent after restart: %v", err)
+	}
+	if intentCount != 1 {
+		t.Fatalf("durable upload intent count = %d, want 1", intentCount)
+	}
 }
 
 func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
@@ -118,7 +147,7 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	defer cancel()
 	migrations := coreSchemaMigrations()
 	searchPathMigration := schemaMigration{
-		version:            2,
+		version:            3,
 		name:               "verify_search_path_restoration",
 		fingerprintVersion: fingerprintVersionV1,
 		statements: []string{`DO $$
@@ -137,8 +166,8 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("migration version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("migration version = %d, want 3", version)
 	}
 }
 
@@ -327,14 +356,14 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	failing := schemaMigration{
-		version:            2,
+		version:            3,
 		name:               "deliberate_rollback_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE entities ADD COLUMN rollback_probe TEXT`, `THIS IS NOT VALID SQL`},
 	}
 	failing.checksum = migrationChecksum(failing)
 	migrations = append(migrations, failing)
-	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 2") {
+	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 3") {
 		t.Fatalf("failing migration error = %v", err)
 	}
 
@@ -373,19 +402,27 @@ func TestScratchSchemaRestartDropsResourcesButPreservesAdminRecords(t *testing.T
 	if _, err := db.Pool.Exec(ctx, `INSERT INTO admin_records (id, type, json) VALUES ('scratch-admin', 'test', '{}')`); err != nil {
 		t.Fatalf("insert scratch admin record: %v", err)
 	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
+		VALUES ('atlas-media', 'objects/scratch-upload/blob', 'scratch-upload', '00000000-0000-0000-0000-000000000002', clock_timestamp() + interval '5 minutes')`); err != nil {
+		t.Fatalf("insert scratch upload intent: %v", err)
+	}
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("restart scratch schema: %v", err)
 	}
 
-	var resourceCount, adminCount int
+	var resourceCount, adminCount, intentCount int
 	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM entities`).Scan(&resourceCount); err != nil {
 		t.Fatalf("count scratch resources: %v", err)
 	}
 	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_records WHERE id = 'scratch-admin'`).Scan(&adminCount); err != nil {
 		t.Fatalf("count scratch admin records: %v", err)
 	}
-	if resourceCount != 0 || adminCount != 1 {
-		t.Fatalf("scratch restart counts = resources:%d admin:%d, want 0 and 1", resourceCount, adminCount)
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM storage_upload_intents`).Scan(&intentCount); err != nil {
+		t.Fatalf("count scratch upload intents: %v", err)
+	}
+	if resourceCount != 0 || adminCount != 1 || intentCount != 0 {
+		t.Fatalf("scratch restart counts = resources:%d admin:%d intents:%d, want 0, 1, and 0", resourceCount, adminCount, intentCount)
 	}
 	var resetVersion int64
 	if err := db.Pool.QueryRow(ctx, `
@@ -414,7 +451,7 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	adminMigration := schemaMigration{
-		version:            2,
+		version:            3,
 		name:               "add_admin_migration_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE admin_records ADD COLUMN migration_probe TEXT`},
@@ -434,8 +471,8 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&migrationVersion); err != nil {
 		t.Fatalf("read scratch migration version: %v", err)
 	}
-	if adminCount != 1 || migrationVersion != 2 {
-		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 2", adminCount, migrationVersion)
+	if adminCount != 1 || migrationVersion != 3 {
+		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 3", adminCount, migrationVersion)
 	}
 }
 
@@ -509,10 +546,12 @@ func assertCurrentMigration(ctx context.Context, t *testing.T, db *DB) {
 	var fingerprintVersion int
 	if err := db.Pool.QueryRow(ctx, `
 		SELECT version, name, checksum, fingerprint_version, schema_fingerprint
-		FROM atlas_schema_migrations`).Scan(&version, &name, &checksum, &fingerprintVersion, &fingerprint); err != nil {
+		FROM atlas_schema_migrations
+		ORDER BY version DESC
+		LIMIT 1`).Scan(&version, &name, &checksum, &fingerprintVersion, &fingerprint); err != nil {
 		t.Fatalf("read current schema migration: %v", err)
 	}
-	if version != 1 || name != baselineMigrationName || checksum != baselineMigrationChecksum || fingerprintVersion != fingerprintVersionV1 || strings.TrimSpace(fingerprint) == "" {
+	if version != 2 || name != uploadIntentsMigrationName || checksum != uploadIntentsMigrationChecksum || fingerprintVersion != fingerprintVersionV1 || strings.TrimSpace(fingerprint) == "" {
 		t.Fatalf("migration row = %d/%s/%s/fingerprint-v%d/%s", version, name, checksum, fingerprintVersion, fingerprint)
 	}
 }

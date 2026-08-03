@@ -18,9 +18,10 @@ import (
 
 // ObjectActions handles object business logic.
 type ObjectActions struct {
-	pool       *pgxpool.Pool
-	storage    objectStorage
-	changeSink ChangeSink
+	pool                  *pgxpool.Pool
+	storage               objectStorage
+	changeSink            ChangeSink
+	uploadHeartbeatPeriod time.Duration
 }
 
 // NewObjectActions creates a new ObjectActions instance.
@@ -31,7 +32,12 @@ func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectAc
 // NewObjectActionsWithChangeSink creates a new ObjectActions instance that
 // emits committed changes to sink.
 func NewObjectActionsWithChangeSink(pool *pgxpool.Pool, storageClient objectStorage, sink ChangeSink) *ObjectActions {
-	return &ObjectActions{pool: pool, storage: storageClient, changeSink: sink}
+	return &ObjectActions{
+		pool:                  pool,
+		storage:               storageClient,
+		changeSink:            sink,
+		uploadHeartbeatPeriod: storageUploadHeartbeatPeriod,
+	}
 }
 
 // CreateObjectParams holds parameters for creating an object.

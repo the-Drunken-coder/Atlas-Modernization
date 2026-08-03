@@ -27,6 +27,7 @@ The managed schema contains:
 - `entities`, `tasks`, and `objects`
 - `deletions` change-feed tombstones
 - `storage_deletion_outbox` durable blob-deletion retries
+- `storage_upload_intents` leased upload ownership and crash recovery
 - `admin_records` accounts, sessions, login throttles, and managed API-key metadata
 - `atlas_change_version_seq`
 - `atlas_schema_migrations`
@@ -55,6 +56,12 @@ After PostgreSQL succeeds, durable startup verifies that the configured MinIO bu
 Migration v1 represents the exact schema that predated durable production storage. Its checksum is frozen. Do not edit v1 to make a new binary fit an old database; add the next migration instead.
 
 The baseline adoption path exists only for the exact unversioned v1 catalog. It deliberately does not add missing columns or indexes and does not stamp a partial schema as current.
+
+Migration v2 adds `storage_upload_intents`. Core records an intent before each
+blob write, renews its lease while the upload is active, and removes it in the
+same transaction that commits object metadata. The storage reconciler marks
+expired intents orphaned, waits through a safety grace period, verifies that no
+object references the path, and then transfers deletion to the durable outbox.
 
 Inspect the current production version with:
 
