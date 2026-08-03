@@ -99,3 +99,40 @@ func TestQueueStorageDeletionAfterFailurePreservesRetryAttempts(t *testing.T) {
 		t.Fatal("next_attempt_at was not scheduled for a future retry")
 	}
 }
+
+func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("live-deletion-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO objects (object_id, path) VALUES ($1, $2)`, objectID, path); err != nil {
+		t.Fatalf("insert live object: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
+		VALUES ('atlas-media', $1, $2)
+	`, path, objectID); err != nil {
+		t.Fatalf("insert queued deletion: %v", err)
+	}
+
+	storageClient := &recordingObjectStorage{}
+	deleted, err := NewObjectActions(pool, storageClient).ReconcileStorageDeletions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ReconcileStorageDeletions: %v", err)
+	}
+	if deleted != 0 || len(storageClient.deletedPaths) != 0 {
+		t.Fatalf("reconciliation deleted=%d paths=%#v, want live path preserved", deleted, storageClient.deletedPaths)
+	}
+
+	var outboxExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, path).Scan(&outboxExists); err != nil {
+		t.Fatalf("check deletion outbox: %v", err)
+	}
+	if outboxExists {
+		t.Fatal("live path remained queued for deletion")
+	}
+}

@@ -99,6 +99,11 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if params.Path != nil {
+		if err := ensureObjectStoragePathAvailableTx(ctx, tx, *params.Path); err != nil {
+			return nil, err
+		}
+	}
 
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
@@ -248,6 +253,11 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if params.Path != nil {
+		if err := ensureObjectStoragePathAvailableTx(ctx, tx, *params.Path); err != nil {
+			return nil, err
+		}
+	}
 
 	// Fetch existing object with row lock
 	var obj models.MediaObject

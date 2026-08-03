@@ -363,6 +363,114 @@ func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
 	}
 }
 
+func TestRecoverStorageUploadIntentRejectsCreateAfterAbsentPathCheck(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("recovery-create-race-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents
+			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() - interval '11 minutes', clock_timestamp() - interval '6 minutes')
+	`, path, objectID, uuid.NewString()); err != nil {
+		t.Fatalf("insert orphaned upload intent: %v", err)
+	}
+
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin outbox blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err := blocker.Exec(ctx, `LOCK TABLE storage_deletion_outbox IN SHARE MODE`); err != nil {
+		t.Fatalf("lock storage deletion outbox: %v", err)
+	}
+	var blockerPID int32
+	if err := blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatalf("read blocker backend pid: %v", err)
+	}
+
+	type recoveryResult struct {
+		recovered int
+		err       error
+	}
+	recoveryDone := make(chan recoveryResult, 1)
+	actions := NewObjectActions(pool, &recordingObjectStorage{})
+	go func() {
+		recovered, err := actions.recoverStorageUploadIntents(ctx, 10)
+		recoveryDone <- recoveryResult{recovered: recovered, err: err}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var blocked bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity
+				WHERE $1 = ANY(pg_blocking_pids(pid))
+					AND wait_event_type = 'Lock'
+					AND query LIKE '%INSERT INTO storage_deletion_outbox%'
+			)
+		`, blockerPID).Scan(&blocked); err != nil {
+			t.Fatalf("check recovery blocker: %v", err)
+		}
+		if blocked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("recovery did not reach the outbox write after checking the absent path")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := actions.Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &path})
+		createDone <- err
+	}()
+	select {
+	case createErr := <-createDone:
+		t.Fatalf("concurrent Create returned before recovery committed: %v", createErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release outbox blocker: %v", err)
+	}
+	select {
+	case result := <-recoveryDone:
+		if result.err != nil || result.recovered != 1 {
+			t.Fatalf("recovery result = (%d, %v), want (1, nil)", result.recovered, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery did not finish after releasing the outbox blocker")
+	}
+	select {
+	case createErr := <-createDone:
+		var conflict *ConflictError
+		if !errors.As(createErr, &conflict) {
+			t.Fatalf("concurrent Create error = %v, want object path conflict", createErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent Create did not finish after recovery committed")
+	}
+
+	var objectExists, outboxExists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, path).Scan(&objectExists); err != nil {
+		t.Fatalf("check object path: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)`, path).Scan(&outboxExists); err != nil {
+		t.Fatalf("check deletion outbox: %v", err)
+	}
+	if objectExists || !outboxExists {
+		t.Fatalf("post-race state = object:%t outbox:%t, want object:false outbox:true", objectExists, outboxExists)
+	}
+}
+
 func TestReconcileStorageUploadIntentLeavesActiveLease(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

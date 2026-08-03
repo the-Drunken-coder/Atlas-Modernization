@@ -275,6 +275,17 @@ func (a *ObjectActions) ReconcileStorageDeletions(ctx context.Context, limit int
 			continue
 		}
 
+		var live bool
+		if err := a.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
+			return deleted, fmt.Errorf("check queued storage path live reference: %w", err)
+		}
+		if live {
+			if err := a.clearQueuedStorageDeletionByID(ctx, item.id); err != nil {
+				return deleted, err
+			}
+			continue
+		}
+
 		if err := a.storage.DeleteObjectPath(ctx, item.path); err != nil {
 			if updateErr := a.recordQueuedStorageDeletionFailureByID(ctx, item.id, item.attempts, err.Error()); updateErr != nil {
 				return deleted, fmt.Errorf("record storage deletion failure: %w", updateErr)

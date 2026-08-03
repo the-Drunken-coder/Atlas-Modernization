@@ -16,7 +16,29 @@ const (
 	storageUploadOrphanGrace     = 5 * time.Minute
 )
 
+func ensureObjectStoragePathAvailableTx(ctx context.Context, tx pgx.Tx, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+
+	var unavailable bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM storage_upload_intents WHERE path = $1)
+			OR EXISTS (SELECT 1 FROM storage_deletion_outbox WHERE path = $1)
+	`, path).Scan(&unavailable); err != nil {
+		return fmt.Errorf("failed to check object storage path state: %w", err)
+	}
+	if unavailable {
+		return NewObjectPathConflictError()
+	}
+	return nil
+}
+
 func (a *ObjectActions) createStorageUploadIntentTx(ctx context.Context, tx pgx.Tx, bucket, path, objectID, ownerID string) error {
+	if err := ensureObjectStoragePathAvailableTx(ctx, tx, path); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO storage_upload_intents (bucket, path, object_id, owner_id, expires_at)
 		VALUES ($1, $2, $3, $4, clock_timestamp() + make_interval(secs => $5))
@@ -132,6 +154,9 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 		return 0, fmt.Errorf("begin storage upload intent recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockChangeVersion(ctx, tx); err != nil {
+		return 0, fmt.Errorf("lock storage upload intent recovery against object writes: %w", err)
+	}
 
 	rows, err := tx.Query(ctx, `
 		SELECT bucket, path, object_id
