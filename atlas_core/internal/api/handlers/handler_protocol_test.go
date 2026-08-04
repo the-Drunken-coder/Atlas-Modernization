@@ -54,6 +54,32 @@ func TestProtocolRevisionHandlerAcceptHeaders(t *testing.T) {
 	}
 }
 
+func TestCommandCatalogHandlerReturnsEmbeddedCatalog(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/command-catalog", nil)
+
+	(&Handler{}).CommandCatalog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var response struct {
+		Type     string `json:"type"`
+		Commands []struct {
+			ID string `json:"id"`
+		} `json:"commands"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Type != "command_catalog" {
+		t.Fatalf("type = %q, want command_catalog", response.Type)
+	}
+	if len(response.Commands) == 0 {
+		t.Fatal("commands is empty")
+	}
+}
+
 func decodeProtocolRevisionResponse(t *testing.T, rec *httptest.ResponseRecorder) protocolRevisionResponse {
 	t.Helper()
 	var response protocolRevisionResponse

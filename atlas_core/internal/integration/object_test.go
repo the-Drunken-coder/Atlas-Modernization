@@ -307,11 +307,11 @@ func TestObjectsByTask(t *testing.T) {
 		t.Fatalf("Expected 201 creating task, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/complete", nil)
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, map[string]interface{}{"status": "completed"})
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete (objects fixture)")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (complete objects fixture)")
 	resp.Body.Close()
 
 	// Create objects referencing the task

@@ -148,41 +148,6 @@ func (h *Handler) DeleteEntity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// UpdateEntityTelemetry handles PATCH /entities/{entity_id}/telemetry.
-func (h *Handler) UpdateEntityTelemetry(w http.ResponseWriter, r *http.Request) {
-	entityID := chi.URLParam(r, "entity_id")
-
-	// Limit request body to 256KB for telemetry updates
-	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
-
-	var req updateEntityTelemetryRequest
-	if !h.decodeJSONRequestBody(w, r, &req, false) {
-		return
-	}
-
-	telemetry := req.telemetryComponent(nil)
-	if len(telemetry) == 0 {
-		h.writeError(w, r, http.StatusBadRequest, "At least one telemetry field must be provided", protocol.ErrorCodeValidationError)
-		return
-	}
-	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
-	if !ok {
-		return
-	}
-
-	entity, err := h.entityActions.Update(r.Context(), entityID, actions.UpdateEntityParams{
-		Components:      map[string]interface{}{"telemetry": telemetry},
-		ExpectedVersion: expectedVersion,
-	})
-	if err != nil {
-		h.handleActionError(w, r, err)
-		return
-	}
-
-	setResourceETag(w, entity.Version)
-	writeJSON(w, r, http.StatusOK, serializers.SerializeEntity(entity))
-}
-
 // EntityCheckin handles POST /entities/{entity_id}/checkin.
 func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	entityID := chi.URLParam(r, "entity_id")

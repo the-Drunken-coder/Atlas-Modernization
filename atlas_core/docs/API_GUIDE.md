@@ -76,7 +76,7 @@ For concurrency-sensitive writes, send the latest version back with:
 If-Match: "v12"
 ```
 
-`PATCH`, task lifecycle routes, telemetry, and check-in all accept this header. If the header is omitted, the server applies the write without a version precondition.
+`PATCH` and check-in accept this header. If the header is omitted, the server applies the write without a version precondition.
 
 ### Pagination
 
@@ -174,6 +174,7 @@ Object detail responses:
 | `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
 | `GET` | `/resources` | `200` | Returns operator CPU, memory, disk, and Go process diagnostics. Requires protected-route auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
+| `GET` | `/command-catalog` | `200` | Returns Core's authoritative embedded command definitions. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
 Readiness is HTTP `503` with `status: "unhealthy"` when the database is unavailable or configured storage cannot be initialized, reached, or verified. A missing configured bucket is also unhealthy. With a healthy database, deliberately omitting storage credentials keeps DB-only/local Core available as HTTP `200` with `status: "degraded"` and the storage check marked `unconfigured`; use `/health` when only process liveness matters.
@@ -217,7 +218,6 @@ Subscribe examples:
 | `GET` | `/entities/alias/{alias}` | `200` | Fetch one entity by alias. |
 | `PATCH` | `/entities/{entity_id}` | `200` | Update type, subtype, alias, components, or extra fields. |
 | `DELETE` | `/entities/{entity_id}` | `204` | Delete an entity. |
-| `PATCH` | `/entities/{entity_id}/telemetry` | `200` | Merge telemetry fields into `components.telemetry`. |
 | `POST` | `/entities/{entity_id}/checkin` | `200` | Update heartbeat/status/telemetry and return tasks for that entity. |
 | `GET` | `/entities/{entity_id}/tasks` | `200` | List tasks attached to the entity. |
 | `GET` | `/entities/{entity_id}/objects` | `200` | List objects referenced by the entity. |
@@ -259,20 +259,6 @@ Patch body:
 ```
 
 `components` are deep-merged by key. `subtype` and `alias` can be cleared with `null` or an empty string.
-
-Telemetry body:
-
-```json
-{
-  "latitude": 38.8977,
-  "longitude": -77.0365,
-  "altitude_m": 120.5,
-  "speed_m_s": 8.2,
-  "heading_deg": 45
-}
-```
-
-At least one telemetry field is required.
 
 Check-in query parameters:
 
@@ -323,10 +309,6 @@ Core validates and reads the requested task page before committing the heartbeat
 | `GET` | `/tasks/{task_id}` | `200` | Fetch one task. |
 | `PATCH` | `/tasks/{task_id}` | `200` | Update status, entity assignment, components, or extra fields. |
 | `DELETE` | `/tasks/{task_id}` | `204` | Delete a task. |
-| `POST` | `/tasks/{task_id}/acknowledge` | `200` | Set task status to acknowledged. |
-| `POST` | `/tasks/{task_id}/complete` | `200` | Complete a task and optionally attach a result. |
-| `POST` | `/tasks/{task_id}/fail` | `200` | Fail a task and optionally attach error details. |
-| `POST` | `/tasks/{task_id}/status` | `200` | Transition status with optional progress/message. |
 | `GET` | `/tasks/{task_id}/objects` | `200` | List objects referenced by the task. |
 
 Create body:
@@ -374,34 +356,30 @@ Patch body:
 Omitting `entity_id` from a task patch preserves the current assignment, `null`
 unlinks the task, and a non-empty string assigns it to that entity.
 
-Complete body is optional:
+Completion patch:
 
 ```json
 {
-  "result": {
-    "summary": "arrived at target"
+  "status": "completed",
+  "extra": {
+    "result": {
+      "summary": "arrived at target"
+    }
   }
 }
 ```
 
-Fail body is optional:
+Failure patch:
 
 ```json
 {
-  "error": {
-    "code": "NAVIGATION_FAILED",
-    "message": "could not reach target"
+  "status": "failed",
+  "extra": {
+    "error": {
+      "code": "NAVIGATION_FAILED",
+      "message": "could not reach target"
+    }
   }
-}
-```
-
-Status transition body:
-
-```json
-{
-  "status": "acknowledged",
-  "progress": 40,
-  "message": "en route"
 }
 ```
 
@@ -707,10 +685,10 @@ curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/checkin?fields=min
 Complete the task:
 
 ```bash
-curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks/task-1/complete" \
+curl -sS -b "$COOKIE_JAR" -X PATCH "$CORE_URL/tasks/task-1" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"result":{"summary":"done"}}'
+  -d '{"status":"completed","extra":{"result":{"summary":"done"}}}'
 ```
 
 Poll changes since version zero:

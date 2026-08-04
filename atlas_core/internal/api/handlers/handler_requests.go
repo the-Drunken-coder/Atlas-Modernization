@@ -50,18 +50,6 @@ func (r updateEntityRequest) actionParams(expectedVersion *int64) actions.Update
 	}
 }
 
-type updateEntityTelemetryRequest struct {
-	Latitude   *float64 `json:"latitude,omitempty"`
-	Longitude  *float64 `json:"longitude,omitempty"`
-	AltitudeM  *float64 `json:"altitude_m,omitempty"`
-	SpeedMS    *float64 `json:"speed_m_s,omitempty"`
-	HeadingDeg *float64 `json:"heading_deg,omitempty"`
-}
-
-func (r updateEntityTelemetryRequest) telemetryComponent(lastUpdate *string) map[string]interface{} {
-	return buildTelemetryComponent(r.Latitude, r.Longitude, r.AltitudeM, r.SpeedMS, r.HeadingDeg, lastUpdate)
-}
-
 type entityCheckinRequest struct {
 	Status     *string                `json:"status,omitempty"`
 	Latitude   *float64               `json:"latitude,omitempty"`
@@ -136,20 +124,6 @@ func (r updateTaskRequest) actionParams(expectedVersion *int64) actions.UpdateTa
 		RemoveExtraKeys: r.RemoveExtraKeys,
 		ExpectedVersion: expectedVersion,
 	}
-}
-
-type completeTaskRequest struct {
-	Result map[string]interface{} `json:"result,omitempty"`
-}
-
-type failTaskRequest struct {
-	Error map[string]interface{} `json:"error,omitempty"`
-}
-
-type taskStatusRequest struct {
-	Status   string   `json:"status"`
-	Progress *float64 `json:"progress,omitempty"`
-	Message  *string  `json:"message,omitempty"`
 }
 
 type createObjectRequest struct {

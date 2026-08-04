@@ -183,6 +183,9 @@ func TestRootReturnsCurrentAPIContract(t *testing.T) {
 	if endpoints["readiness"] != "/readiness" {
 		t.Fatalf("expected readiness endpoint to be exposed, got %v", endpoints["readiness"])
 	}
+	if endpoints["command_catalog"] != "/command-catalog" {
+		t.Fatalf("expected command catalog endpoint to be exposed, got %v", endpoints["command_catalog"])
+	}
 	if endpoints["resources"] != "/resources" {
 		t.Fatalf("expected resources endpoint, got %v", endpoints["resources"])
 	}

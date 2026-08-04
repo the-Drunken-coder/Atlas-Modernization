@@ -303,11 +303,11 @@ func TestTaskStatusTransitions(t *testing.T) {
 	drainClose(resp)
 
 	// Acknowledge task
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/acknowledge", nil)
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, map[string]interface{}{"status": "acknowledged"})
 	if err != nil {
 		t.Fatalf("Failed to acknowledge task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/acknowledge")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (acknowledge)")
 
 	var startResult map[string]interface{}
 	if err := ParseResponse(resp, &startResult); err != nil {
@@ -347,17 +347,20 @@ func TestTaskComplete(t *testing.T) {
 
 	// Complete task with result
 	completePayload := map[string]interface{}{
-		"result": map[string]interface{}{
-			"success":     true,
-			"description": "Task completed by integration test",
+		"status": "completed",
+		"extra": map[string]interface{}{
+			"result": map[string]interface{}{
+				"success":     true,
+				"description": "Task completed by integration test",
+			},
 		},
 	}
 
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/complete", completePayload)
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, completePayload)
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (complete)")
 
 	var result map[string]interface{}
 	if err := ParseResponse(resp, &result); err != nil {
@@ -397,17 +400,20 @@ func TestTaskFail(t *testing.T) {
 
 	// Fail task with error
 	failPayload := map[string]interface{}{
-		"error": map[string]interface{}{
-			"code":    "TEST_ERROR",
-			"message": "Task failed by integration test",
+		"status": "failed",
+		"extra": map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    "TEST_ERROR",
+				"message": "Task failed by integration test",
+			},
 		},
 	}
 
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/fail", failPayload)
+	resp, err = client.Patch(ctx, "/tasks/"+taskID, failPayload)
 	if err != nil {
 		t.Fatalf("Failed to fail task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/fail")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (fail)")
 
 	var result map[string]interface{}
 	if err := ParseResponse(resp, &result); err != nil {

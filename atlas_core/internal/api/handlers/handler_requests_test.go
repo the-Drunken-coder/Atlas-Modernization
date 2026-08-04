@@ -191,26 +191,6 @@ func TestCRUDRequestBodiesEnforceCanonicalProtocolBeforeActions(t *testing.T) {
 	}
 }
 
-func TestUpdateEntityTelemetryRequiresAtLeastOneField(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := withURLParam(routeRequest(http.MethodPatch, "/entities/entity-1/telemetry", `{}`), "entity_id", "entity-1")
-
-	handler.UpdateEntityTelemetry(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-	if !strings.Contains(body["message"].(string), "At least one telemetry field") {
-		t.Fatalf("expected telemetry validation message, got %v", body["message"])
-	}
-}
-
 func TestNullablePatchStringDistinguishesAbsentNullAndValue(t *testing.T) {
 	var req struct {
 		Absent nullablePatchString `json:"absent,omitempty"`

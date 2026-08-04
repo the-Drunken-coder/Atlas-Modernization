@@ -55,7 +55,7 @@ wait_for_catalog() {
     return 1
 }
 
-# Fresh development startup must publish the catalog before readiness succeeds.
+# Fresh development startup must serve the embedded catalog.
 wait_for_catalog
 
 # Restarting only Core reruns the scratch reset without rerunning atlas.py.

@@ -131,49 +131,27 @@ export class AtlasClient {
       ),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
     acknowledge: (id: string, options?: TaskLifecycleOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/acknowledge`,
-        {},
-        "task",
-        id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
-      ),
+      this.tasks.update(id, { status: "acknowledged" }, options),
     complete: (id: string, options?: TaskCompleteOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/complete`,
-        options?.result === undefined ? {} : { result: options.result },
-        "task",
+      this.tasks.update(
         id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
+        {
+          status: "completed",
+          ...(options?.result === undefined ? {} : { extra: { result: options.result } })
+        },
+        options
       ),
     fail: (id: string, options?: TaskFailOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/fail`,
-        options?.error === undefined ? {} : { error: options.error },
-        "task",
+      this.tasks.update(
         id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
+        {
+          status: "failed",
+          ...(options?.error === undefined ? {} : { extra: { error: options.error } })
+        },
+        options
       ),
     setStatus: (id: string, status: TaskStatus, options?: TaskStatusOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/status`,
-        taskStatusBody(status, options),
-        "task",
-        id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
-      ),
+      this.tasks.update(id, taskStatusPatch(status, options), options),
     cancel: (id: string, options?: TaskLifecycleOptions) => this.tasks.setStatus(id, "cancelled", options),
     watch: (id: string, callback: WatchCallback<TaskResource>) =>
       this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
@@ -317,14 +295,14 @@ export class AtlasClient {
   }
 }
 
-function taskStatusBody(
-  status: TaskStatus,
-  options?: TaskStatusOptions
-): { status: TaskStatus; progress?: number; message?: string } {
+function taskStatusPatch(status: TaskStatus, options?: TaskStatusOptions): TaskUpdateRequest {
+  const components = {
+    ...(options?.progress === undefined ? {} : { progress: { percent: options.progress } }),
+    ...(options?.message === undefined ? {} : { status_message: options.message })
+  };
   return {
     status,
-    ...(options?.progress === undefined ? {} : { progress: options.progress }),
-    ...(options?.message === undefined ? {} : { message: options.message })
+    ...(Object.keys(components).length === 0 ? {} : { components })
   };
 }
 

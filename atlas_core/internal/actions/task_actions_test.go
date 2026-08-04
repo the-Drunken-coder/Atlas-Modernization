@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -143,7 +142,7 @@ func TestTaskDeleteRecordsDurableRoutingContext(t *testing.T) {
 	}
 }
 
-func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
+func TestStatusOnlyTaskUpdateIsIdempotent(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -157,7 +156,8 @@ func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 
-	acknowledged, err := taskActions.Acknowledge(ctx, taskID, &created.Version)
+	status := "acknowledged"
+	acknowledged, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: &created.Version})
 	if err != nil {
 		t.Fatalf("acknowledge pending task: %v", err)
 	}
@@ -173,19 +173,19 @@ func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
 		t.Fatalf("read version before idempotent acknowledgements: %v", err)
 	}
 
-	repeated, err := taskActions.Acknowledge(ctx, taskID, nil)
+	repeated, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status})
 	if err != nil {
 		t.Fatalf("repeat acknowledgement: %v", err)
 	}
 	assertSameTaskVersionAndTimestamp(t, repeated, acknowledged)
 
-	repeated, err = taskActions.Acknowledge(ctx, taskID, &acknowledged.Version)
+	repeated, err = taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: &acknowledged.Version})
 	if err != nil {
 		t.Fatalf("repeat acknowledgement with current version: %v", err)
 	}
 	assertSameTaskVersionAndTimestamp(t, repeated, acknowledged)
 
-	_, err = taskActions.Acknowledge(ctx, taskID, &created.Version)
+	_, err = taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: &created.Version})
 	var preconditionErr *PreconditionFailedError
 	if !errors.As(err, &preconditionErr) {
 		t.Fatalf("repeat acknowledgement with stale version error = %T %v, want PreconditionFailedError", err, err)
@@ -198,18 +198,6 @@ func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
 		t.Fatalf("idempotent acknowledgements advanced change version from %d to %d", beforeIdempotentVersion, afterIdempotentVersion)
 	}
 
-	status := "acknowledged"
-	updated, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status})
-	if err != nil {
-		t.Fatalf("generic same-status update: %v", err)
-	}
-	if updated.Version <= acknowledged.Version {
-		t.Fatalf("generic same-status update version = %d, want after %d", updated.Version, acknowledged.Version)
-	}
-	change = readChangeEvent(t, ctx, pool, updated.Version)
-	if change.Version != updated.Version {
-		t.Fatalf("generic same-status change version = %d, want %d", change.Version, updated.Version)
-	}
 }
 
 func assertSameTaskVersionAndTimestamp(t *testing.T, got, want *models.Task) {
@@ -264,63 +252,6 @@ func readChangeEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, vers
 		t.Fatalf("decode change event %d: %v", version, err)
 	}
 	return event
-}
-
-func TestNormalizeTaskProgressPercent(t *testing.T) {
-	tests := []struct {
-		name string
-		in   float64
-		want float64
-	}{
-		{name: "one percent", in: 1, want: 1},
-		{name: "full percent", in: 100, want: 100},
-		{name: "mid range", in: 65.5, want: 65.5},
-		{name: "clamp low", in: -5, want: 0},
-		{name: "clamp high", in: 150, want: 100},
-		{name: "nan", in: math.NaN(), want: 0},
-		{name: "positive infinity", in: math.Inf(1), want: 0},
-		{name: "negative infinity", in: math.Inf(-1), want: 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := normalizeTaskProgressPercent(tt.in); got != tt.want {
-				t.Fatalf("normalizeTaskProgressPercent(%v) = %v, want %v", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestTaskStatusTransitionUpdateUsesCanonicalComponents(t *testing.T) {
-	progress := 62.5
-	message := "survey running"
-
-	params := taskStatusTransitionUpdate("acknowledged", &progress, &message)
-	if params.Status == nil || *params.Status != "acknowledged" {
-		t.Fatalf("Status = %v, want acknowledged", params.Status)
-	}
-	if len(params.RemoveExtraKeys) != 0 {
-		t.Fatalf("RemoveExtraKeys = %v, want no compatibility cleanup", params.RemoveExtraKeys)
-	}
-
-	components := params.Components
-	progressComponent, ok := components["progress"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("progress component = %T, want map[string]interface{}", components["progress"])
-	}
-	if got := progressComponent["percent"]; got != 62.5 {
-		t.Fatalf("progress percent = %v, want 62.5", got)
-	}
-	if got := components["status_message"]; got != "survey running" {
-		t.Fatalf("status_message = %v, want survey running", got)
-	}
-
-	nilParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
-	if nilParams.Components != nil {
-		t.Fatalf("Components = %#v, want nil for nil progress/message", nilParams.Components)
-	}
-	if len(nilParams.RemoveExtraKeys) != 0 {
-		t.Fatalf("nil RemoveExtraKeys = %v, want no compatibility cleanup", nilParams.RemoveExtraKeys)
-	}
 }
 
 func TestMergeTaskComponentsRevalidatesMergedShape(t *testing.T) {

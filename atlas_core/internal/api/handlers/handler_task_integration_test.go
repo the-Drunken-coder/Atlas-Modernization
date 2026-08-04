@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 )
 
-func TestAcknowledgeTaskHandlerIsIdempotent(t *testing.T) {
+func TestTaskStatusPatchHandlerIsIdempotent(t *testing.T) {
 	pool := openFeedIntegrationPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -33,36 +34,37 @@ func TestAcknowledgeTaskHandlerIsIdempotent(t *testing.T) {
 	taskActions := actions.NewTaskActions(pool)
 	handler := &Handler{taskActions: taskActions, logger: zerolog.Nop(), config: &config.Config{}}
 	router := chi.NewRouter()
-	router.Post("/tasks/{task_id}/acknowledge", handler.AcknowledgeTask)
+	router.Patch("/tasks/{task_id}", handler.UpdateTask)
 
 	created, err := taskActions.Create(ctx, actions.CreateTaskParams{TaskID: taskID})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 
-	acknowledged := acknowledgeTaskHandler(t, router, taskID, serializers.StrongETag(created.Version), http.StatusOK)
+	acknowledged := patchTaskStatus(t, router, taskID, serializers.StrongETag(created.Version), http.StatusOK)
 	if acknowledged.Status != "acknowledged" || acknowledged.Metadata.Version <= created.Version {
 		t.Fatalf("acknowledged task = %#v, want acknowledged after version %d", acknowledged, created.Version)
 	}
-	repeated := acknowledgeTaskHandler(t, router, taskID, serializers.StrongETag(acknowledged.Metadata.Version), http.StatusOK)
+	repeated := patchTaskStatus(t, router, taskID, serializers.StrongETag(acknowledged.Metadata.Version), http.StatusOK)
 	assertSameTaskResponseVersionAndTimestamp(t, repeated, acknowledged)
 
-	repeated = acknowledgeTaskHandler(t, router, taskID, "", http.StatusOK)
+	repeated = patchTaskStatus(t, router, taskID, "", http.StatusOK)
 	assertSameTaskResponseVersionAndTimestamp(t, repeated, acknowledged)
 
-	acknowledgeTaskHandler(t, router, taskID, serializers.StrongETag(created.Version), http.StatusPreconditionFailed)
+	patchTaskStatus(t, router, taskID, serializers.StrongETag(created.Version), http.StatusPreconditionFailed)
 }
 
-func acknowledgeTaskHandler(t *testing.T, router http.Handler, taskID, ifMatch string, wantStatus int) *serializers.TaskResponse {
+func patchTaskStatus(t *testing.T, router http.Handler, taskID, ifMatch string, wantStatus int) *serializers.TaskResponse {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/acknowledge", nil)
+	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID, strings.NewReader(`{"status":"acknowledged"}`))
+	req.Header.Set("Content-Type", "application/json")
 	if ifMatch != "" {
 		req.Header.Set("If-Match", ifMatch)
 	}
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != wantStatus {
-		t.Fatalf("POST /tasks/%s/acknowledge status = %d, want %d, body=%s", taskID, rec.Code, wantStatus, rec.Body.String())
+		t.Fatalf("PATCH /tasks/%s status = %d, want %d, body=%s", taskID, rec.Code, wantStatus, rec.Body.String())
 	}
 	if wantStatus != http.StatusOK {
 		return nil

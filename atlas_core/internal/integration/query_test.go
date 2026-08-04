@@ -702,7 +702,7 @@ func TestComplexScenario(t *testing.T) {
 
 	// Acknowledge all tasks
 	for _, taskID := range taskIDs {
-		resp, err := client.Post(ctx, "/tasks/"+taskID+"/acknowledge", nil)
+		resp, err := client.Patch(ctx, "/tasks/"+taskID, map[string]interface{}{"status": "acknowledged"})
 		if err != nil {
 			t.Fatalf("Failed to acknowledge task %s: %v", taskID, err)
 		}
@@ -717,15 +717,18 @@ func TestComplexScenario(t *testing.T) {
 
 	// Complete first task, fail second, leave third acknowledged
 	completePayload := map[string]interface{}{
-		"result": map[string]interface{}{
-			"success":    true,
-			"waypoint":   1,
-			"photos":     5,
-			"duration_s": 120,
+		"status": "completed",
+		"extra": map[string]interface{}{
+			"result": map[string]interface{}{
+				"success":    true,
+				"waypoint":   1,
+				"photos":     5,
+				"duration_s": 120,
+			},
 		},
 	}
 
-	resp, err := client.Post(ctx, "/tasks/"+taskIDs[0]+"/complete", completePayload)
+	resp, err := client.Patch(ctx, "/tasks/"+taskIDs[0], completePayload)
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}
@@ -736,13 +739,16 @@ func TestComplexScenario(t *testing.T) {
 	resp.Body.Close()
 
 	failPayload := map[string]interface{}{
-		"error": map[string]interface{}{
-			"code":    "LOW_BATTERY",
-			"message": "Battery level critical, returning to base",
+		"status": "failed",
+		"extra": map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    "LOW_BATTERY",
+				"message": "Battery level critical, returning to base",
+			},
 		},
 	}
 
-	resp, err = client.Post(ctx, "/tasks/"+taskIDs[1]+"/fail", failPayload)
+	resp, err = client.Patch(ctx, "/tasks/"+taskIDs[1], failPayload)
 	if err != nil {
 		t.Fatalf("Failed to fail task: %v", err)
 	}

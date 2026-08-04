@@ -401,7 +401,6 @@ describe("AtlasClient HTTP", () => {
       ["PATCH", "/entities/asset-wildcard", { alias: "updated" }],
       ["POST", "/entities/asset-wildcard/checkin", {}],
       ["PATCH", "/tasks/task-wildcard", { status: "acknowledged" }],
-      ["POST", "/tasks/task-wildcard/acknowledge", {}],
       ["PATCH", "/objects/object-wildcard", { type: "log" }]
     ] as const;
 
@@ -425,7 +424,7 @@ describe("AtlasClient HTTP", () => {
       ["PATCH", "/entities/route-entity/extra", { alias: "changed" }],
       ["POST", "/entities/route-entity/checkin/extra", {}],
       ["PATCH", "/tasks/route-task/extra", { status: "acknowledged" }],
-      ["POST", "/tasks/route-task/acknowledge/extra", {}],
+      ["POST", "/tasks/route-task/extra/more", {}],
       ["PATCH", "/objects/route-object/extra", { type: "log" }],
       ["GET", "/objects/route-object/extra/download", undefined]
     ] as const;
@@ -520,7 +519,7 @@ describe("AtlasClient HTTP", () => {
     const acknowledged = await client.tasks.acknowledge("task-ack", { ifMatchVersion: ackBase.metadata.version });
     const completed = await client.tasks.complete("task-complete", { result: { ok: true } });
     const failed = await client.tasks.fail("task-fail", { error: { code: "boom" } });
-    const status = await client.tasks.setStatus("task-status", "acknowledged", { progress: 125, message: "moving" });
+    const status = await client.tasks.setStatus("task-status", "acknowledged", { progress: 62.5, message: "moving" });
     const cancelled = await client.tasks.cancel("task-cancel");
 
     expect(acknowledged.status).toBe("acknowledged");
@@ -528,13 +527,18 @@ describe("AtlasClient HTTP", () => {
     expect(failed).toMatchObject({ status: "failed", extra: { error: { code: "boom" } } });
     expect(status).toMatchObject({
       status: "acknowledged",
-      components: { progress: { percent: 100 }, status_message: "moving" }
+      components: { progress: { percent: 62.5 }, status_message: "moving" }
     });
     expect(cancelled.status).toBe("cancelled");
     await expect(client.tasks.get("task-ack")).resolves.toEqual(acknowledged);
-    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack/acknowledge")?.ifMatch).toBe(
+    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack")?.ifMatch).toBe(
       `"v${ackBase.metadata.version}"`
     );
+    expect(
+      core.requests
+        .filter((request) => request.startsWith("/tasks/"))
+        .every((request) => request.split("/").length === 3)
+    ).toBe(true);
     expect(watch).toHaveBeenCalledWith(
       expect.objectContaining({ status: "acknowledged" }),
       expect.objectContaining({ event: "update", id: "task-ack" })

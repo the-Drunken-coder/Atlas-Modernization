@@ -95,11 +95,17 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create task: %v", err)
 	}
-	acknowledged, err := taskActions.Acknowledge(ctx, taskID, &task.Version)
+	acknowledgedStatus := "acknowledged"
+	acknowledged, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &acknowledgedStatus, ExpectedVersion: &task.Version})
 	if err != nil {
 		t.Fatalf("Acknowledge task: %v", err)
 	}
-	completed, err := taskActions.Complete(ctx, taskID, map[string]interface{}{"ok": true}, &acknowledged.Version)
+	completedStatus := "completed"
+	completed, err := taskActions.Update(ctx, taskID, UpdateTaskParams{
+		Status:          &completedStatus,
+		Extra:           map[string]interface{}{"result": map[string]interface{}{"ok": true}},
+		ExpectedVersion: &acknowledged.Version,
+	})
 	if err != nil {
 		t.Fatalf("Complete task: %v", err)
 	}

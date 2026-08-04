@@ -206,11 +206,8 @@ export class FakeCore {
       }
       return json(this.createTask(body), 201);
     }
-    const [, id, action] = segments;
+    const [, id] = segments;
     if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
-    if (segments.length === 3 && action && method === "POST") {
-      return this.taskLifecycleResponse(id, action, init, ifMatch);
-    }
     if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
     if (method === "GET") return jsonOrNotFound(this.tasks.get(id), "task not found");
     if (method === "PATCH") {
@@ -339,69 +336,6 @@ export class FakeCore {
       delete next.extra;
     }
     return this.upsertTask(next);
-  }
-
-  private async taskLifecycleResponse(
-    id: string,
-    action: string,
-    init: RequestInit | undefined,
-    ifMatch: string | null
-  ): Promise<Response> {
-    const current = this.tasks.get(id);
-    if (!current) return protocolError("task not found", "TASK_NOT_FOUND", 404);
-    const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
-    if (conflict) return conflict;
-    if (action === "acknowledge") {
-      return json(this.updateTask(id, { status: "acknowledged" }));
-    }
-    if (action === "complete") {
-      const body = await readRecord(init);
-      if (body instanceof Response) return body;
-      if (body.result !== undefined && !isRecord(body.result)) {
-        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-      }
-      return json(
-        this.updateTask(id, {
-          status: "completed",
-          ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } })
-        })
-      );
-    }
-    if (action === "fail") {
-      const body = await readRecord(init);
-      if (body instanceof Response) return body;
-      if (body.error !== undefined && !isRecord(body.error)) {
-        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-      }
-      return json(
-        this.updateTask(id, {
-          status: "failed",
-          ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } })
-        })
-      );
-    }
-    if (action === "status") {
-      const body = await readRecord(init);
-      if (body instanceof Response) return body;
-      if (
-        !isNonEmptyString(body.status) ||
-        (body.progress !== undefined && !isFiniteNumber(body.progress)) ||
-        (body.message !== undefined && typeof body.message !== "string")
-      ) {
-        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-      }
-      const components: TaskUpdateRequest["components"] = {};
-      if (body.progress !== undefined) components.progress = { percent: clampPercent(body.progress) };
-      if (body.message !== undefined) components.status_message = body.message;
-      return json(
-        this.updateTask(id, {
-          status: body.status,
-          ...(Object.keys(components).length === 0 ? {} : { components }),
-          remove_extra_keys: ["progress", "status_message", "message"]
-        })
-      );
-    }
-    return protocolError("not found", "VALIDATION_ERROR", 404);
   }
 
   private async checkInEntityResponse(
@@ -722,10 +656,4 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function clampPercent(value: number): number {
-  if (!Number.isFinite(value) || value < 0) return 0;
-  if (value > 100) return 100;
-  return value;
 }

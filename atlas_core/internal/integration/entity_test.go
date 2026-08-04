@@ -331,8 +331,8 @@ func TestTrackEntitySignalSubtype(t *testing.T) {
 	}
 }
 
-// TestEntityTelemetryUpdate tests updating entity telemetry
-func TestEntityTelemetryUpdate(t *testing.T) {
+// TestEntityTelemetryCheckIn tests updating entity telemetry through the asset check-in API.
+func TestEntityTelemetryCheckIn(t *testing.T) {
 	SkipIfSystemNotAvailable(t)
 
 	client := NewAPIClient()
@@ -368,9 +368,9 @@ func TestEntityTelemetryUpdate(t *testing.T) {
 		"heading_deg": 45.0,
 	}
 
-	resp, err = client.Patch(ctx, "/entities/"+entityID+"/telemetry", telemetryPayload)
+	resp, err = client.Post(ctx, "/entities/"+entityID+"/checkin", telemetryPayload)
 	if err != nil {
-		t.Fatalf("Failed to update telemetry: %v", err)
+		t.Fatalf("Failed to check in telemetry: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -381,7 +381,7 @@ func TestEntityTelemetryUpdate(t *testing.T) {
 
 	resp, err = client.Get(ctx, "/entities/"+entityID)
 	if err != nil {
-		t.Fatalf("Failed to get entity after telemetry patch: %v", err)
+		t.Fatalf("Failed to get entity after telemetry check-in: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
@@ -498,11 +498,11 @@ func TestEntityCheckin(t *testing.T) {
 		t.Fatalf("Expected 201 creating completed task, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	resp, err = client.Post(ctx, "/tasks/"+completedTaskID+"/complete", nil)
+	resp, err = client.Patch(ctx, "/tasks/"+completedTaskID, map[string]interface{}{"status": "completed"})
 	if err != nil {
 		t.Fatalf("Failed to complete checkin task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete (checkin fixture)")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (complete checkin fixture)")
 	resp.Body.Close()
 
 	otherEntityID := fmt.Sprintf("%s-checkin-other", prefix)

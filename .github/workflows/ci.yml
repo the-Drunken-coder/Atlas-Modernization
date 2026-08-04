@@ -413,9 +413,6 @@ jobs:
       - name: Test Go coverage checker
         run: python3 scripts/test_check_coverage.py
 
-      - name: Test seed command catalog
-        run: python3 scripts/test_seed_command_catalog.py
-
       - name: Run ShellCheck
         run: |
           if compgen -G "scripts/*.sh" > /dev/null; then

@@ -208,13 +208,12 @@ func (a *TaskActions) GetByEntity(ctx context.Context, entityID string, limit in
 
 // UpdateTaskParams holds parameters for updating a task.
 type UpdateTaskParams struct {
-	Status           *string
-	EntityID         *string
-	Components       map[string]interface{}
-	Extra            map[string]interface{}
-	RemoveExtraKeys  []string
-	ExpectedVersion  *int64
-	idempotentStatus bool
+	Status          *string
+	EntityID        *string
+	Components      map[string]interface{}
+	Extra           map[string]interface{}
+	RemoveExtraKeys []string
+	ExpectedVersion *int64
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -288,7 +287,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		if err := validateTaskStatusTransition(task.Status, normalized); err != nil {
 			return nil, err
 		}
-		if params.idempotentStatus && task.Status == normalized {
+		if task.Status == normalized && params.EntityID == nil && len(params.Components) == 0 && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
 			if err := tx.Commit(ctx); err != nil {
 				return nil, fmt.Errorf("failed to commit idempotent task update: %w", err)
 			}
