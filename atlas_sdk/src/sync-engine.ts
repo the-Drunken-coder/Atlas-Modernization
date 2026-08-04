@@ -4,6 +4,7 @@ import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import type { HttpTransport, ResponseValidator } from "./http.js";
 import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
 import {
+  assertResourceMatchesSubscription,
   covers,
   localDeleteEvent,
   matchesSubscription,
@@ -25,6 +26,7 @@ import type {
   FullDatasetCursors,
   FullDatasetResponse,
   ReadOptions,
+  ResourceForSubscription,
   ResourceOf,
   ResourceValue,
   SyncSnapshot,
@@ -184,7 +186,10 @@ export class SyncEngine {
     this.feed.sendSubscription("unsubscribe", filter);
   }
 
-  watch<T extends ResourceValue>(filter: AtlasSubscription, callback: WatchCallback<T>): () => void {
+  watch<TFilter extends AtlasSubscription>(
+    filter: TFilter,
+    callback: WatchCallback<ResourceForSubscription<TFilter>>
+  ): () => void {
     const key = subscriptionKey(filter);
     let callbacks = this.watchers.get(key);
     if (!callbacks) {
@@ -192,7 +197,10 @@ export class SyncEngine {
       this.watchers.set(key, callbacks);
     }
     const wrapped: WatchCallback<ResourceValue> = (resource, event) => {
-      callback(resource as T | undefined, event);
+      if (resource !== undefined) {
+        assertResourceMatchesSubscription(filter, resource);
+      }
+      callback(resource, event);
     };
     callbacks.add(wrapped);
     return () => {
@@ -599,6 +607,10 @@ export class SyncEngine {
     const current = this.cache.entry(event.resource_type, event.id);
     const pendingDelete = this.cache.pendingDeletes.has(key);
     const previous = current?.value;
+    if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
+      this.advanceCursor(event, advanceCursor);
+      return;
+    }
     if (pendingDelete && event.event === "delete") {
       this.cache.pendingDeletes.delete(key);
       this.cache.markRemoteDelete(event.resource_type, event.id, event.version);
@@ -610,10 +622,6 @@ export class SyncEngine {
       return;
     }
     if ((pendingDelete || current?.deleted) && event.event === "update") {
-      this.advanceCursor(event, advanceCursor);
-      return;
-    }
-    if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
       this.advanceCursor(event, advanceCursor);
       return;
     }

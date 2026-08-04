@@ -57,6 +57,15 @@ describe("Cloudflare Pages security headers", () => {
     expect(cspDirective("script-src", customHeaders)).toEqual(["'self'"]);
     expect(cspDirective("frame-ancestors", customHeaders)).toEqual(["'none'"]);
   });
+
+  it("uses self without inventing an origin for a root-relative Core base path", () => {
+    const relativeHeaders = renderSecurityHeaders({ VITE_ATLAS_CORE_BASE_URL: "/atlas" });
+    const connectSources = cspDirective("connect-src", relativeHeaders);
+
+    expect(connectSources).toContain("'self'");
+    expect(connectSources).not.toContain("http://localhost");
+    expect(connectSources).not.toContain("ws://localhost");
+  });
 });
 
 function headerValue(name: string, source = headers): string {

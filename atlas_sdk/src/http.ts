@@ -1,5 +1,6 @@
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import type { FetchLike } from "./types.js";
+import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
 
 export type ResponseValidator<T> = (value: unknown) => value is T;
 
@@ -41,7 +42,7 @@ export class HttpTransport {
   private readonly requestTimeoutMs: number;
 
   constructor(options: HttpTransportOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = normalizeAtlasBaseUrl(options.baseUrl);
     this.apiKey = options.apiKey;
     this.credentials = options.credentials;
     this.fetchImpl = options.fetchImpl;
@@ -85,7 +86,7 @@ export class HttpTransport {
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (this.apiKey) headers.set("X-API-Key", this.apiKey);
     if (ifMatchVersion !== undefined) headers.set("If-Match", `"v${ifMatchVersion}"`);
-    const response = await this.fetchWithTimeout(this.baseUrl + path, {
+    const response = await this.fetchWithTimeout(joinAtlasUrl(this.baseUrl, path), {
       method,
       headers,
       credentials: this.credentials,

@@ -3,6 +3,7 @@ import type {
   AtlasLocalDeleteWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
+  ResourceForSubscription,
   ResourceOf,
   ResourceValue
 } from "./types.js";
@@ -165,6 +166,22 @@ export function resourceMatchesType<TType extends ResourceType>(
       return "task_id" in resource;
     case "object":
       return "object_id" in resource;
+  }
+}
+
+export function assertResourceMatchesSubscription<TFilter extends AtlasSubscription>(
+  filter: TFilter,
+  resource: ResourceValue
+): asserts resource is ResourceForSubscription<TFilter> {
+  switch (filter.filter) {
+    case "all":
+      return;
+    case "tasks_for_entity":
+      assertResourceMatchesType("task", resource);
+      return;
+    case "id":
+    case "type":
+      assertResourceMatchesType(filter.resource_type, resource);
   }
 }
 

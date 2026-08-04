@@ -156,6 +156,33 @@ describe("appConfigFromEnv", () => {
     ).toBe("https://core.test");
   });
 
+  it.each([
+    ["https://core.test/atlas/", "https://core.test/atlas"],
+    ["http://localhost:8000/atlas", "http://localhost:8000/atlas"],
+    ["http://127.12.34.56:8000/atlas", "http://127.12.34.56:8000/atlas"],
+    ["http://[::1]:8000/atlas", "http://[::1]:8000/atlas"],
+    ["/atlas/", "/atlas"],
+    ["/", "/"]
+  ])("accepts safe Core base URL %s", (value, expected) => {
+    expect(appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: value }).atlasBaseUrl).toBe(
+      expected
+    );
+  });
+
+  it.each([
+    "http://core.example.test",
+    "ftp://core.example.test",
+    "javascript:alert(1)",
+    "//core.example.test",
+    "https://user:secret@core.example.test",
+    "https://core.example.test?token=secret",
+    "https://core.example.test#fragment"
+  ])("rejects unsafe Core base URL %s", (value) => {
+    expect(() => appConfigFromEnv({ DEV: false, MODE: "production", VITE_ATLAS_CORE_BASE_URL: value })).toThrow(
+      "Atlas interface config has invalid atlasBaseUrl"
+    );
+  });
+
   it("falls back to the default Core URL when the explicit env value is blank", () => {
     expect(appConfigFromEnv({ DEV: true, MODE: "development", VITE_ATLAS_CORE_BASE_URL: " " }).atlasBaseUrl).toBe(
       "http://127.0.0.1:8000"

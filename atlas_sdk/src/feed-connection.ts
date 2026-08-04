@@ -7,6 +7,7 @@ import type {
   WebSocketLike,
   WebSocketListener
 } from "./types.js";
+import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
 import { isInboundFeedEvent, isInboundFeedHandshake } from "./validation.js";
 
 const WS_OPEN = 1;
@@ -48,7 +49,7 @@ export class FeedConnectionManager {
     WebSocketImpl?: WebSocketCtor;
     feedHandshakeTimeoutMs: number;
   }) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = normalizeAtlasBaseUrl(options.baseUrl);
     this.apiKey = options.apiKey;
     this.WebSocketImpl = options.WebSocketImpl;
     this.feedHandshakeTimeoutMs = options.feedHandshakeTimeoutMs;
@@ -280,5 +281,7 @@ function shouldWarnForSocketCleanup(): boolean {
 }
 
 function feedUrl(baseUrl: string): string {
-  return baseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/feed";
+  return joinAtlasUrl(baseUrl, "/feed")
+    .replace(/^http:/, "ws:")
+    .replace(/^https:/, "wss:");
 }
