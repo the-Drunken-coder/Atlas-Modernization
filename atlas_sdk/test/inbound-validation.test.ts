@@ -151,6 +151,25 @@ describe("AtlasClient inbound response validation", () => {
     await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
   });
 
+  it("accepts a depth-3000 object detail extra value through normal response validation", async () => {
+    let nested: Record<string, unknown> = { leaf: true };
+    for (let depth = 0; depth < 3_000; depth++) nested = { nested };
+    const response = { ...validObject("object-http-deep-extra", 1), extra: nested };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => ({ ok: true, status: 200, json: async () => response }) as Response
+    });
+
+    await expect(client.objects.get(response.object_id, { fresh: true })).resolves.toEqual(response);
+  });
+
+  it("rejects object detail sizes above JavaScript's safe integer limit", async () => {
+    const response = { ...validObject("object-http-unsafe-size", 1), size_bytes: 9_007_199_254_740_992, extra: {} };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
+
+    await expect(client.objects.get(response.object_id, { fresh: true })).rejects.toThrow("response failed validation");
+  });
+
   it("rejects the old payload field on HTTP object detail values", async () => {
     const response = {
       ...validObject("object-http-payload", 1),

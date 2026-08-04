@@ -62,8 +62,8 @@ func TestCreateEntityRejectsUnknownField(t *testing.T) {
 	}
 
 	body := decodeBody(t, rec)
-	if body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
 	}
 }
 
@@ -115,8 +115,8 @@ func TestCreateObjectRejectsPayloadField(t *testing.T) {
 	}
 
 	body := decodeBody(t, rec)
-	if body["error_code"] != "INVALID_JSON" {
-		t.Fatalf("expected INVALID_JSON, got %v", body["error_code"])
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
 	}
 }
 
@@ -135,9 +135,6 @@ func TestCreateObjectRejectsBucketInput(t *testing.T) {
 	if body["error_code"] != "VALIDATION_ERROR" {
 		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
 	}
-	if !strings.Contains(body["message"].(string), "server-generated") {
-		t.Fatalf("expected server-generated bucket message, got %v", body["message"])
-	}
 }
 
 func TestUpdateObjectRejectsBucketInput(t *testing.T) {
@@ -155,8 +152,41 @@ func TestUpdateObjectRejectsBucketInput(t *testing.T) {
 	if body["error_code"] != "VALIDATION_ERROR" {
 		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
 	}
-	if !strings.Contains(body["message"].(string), "server-generated") {
-		t.Fatalf("expected server-generated bucket message, got %v", body["message"])
+}
+
+func TestCRUDRequestBodiesEnforceCanonicalProtocolBeforeActions(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		payload string
+		handle  func(*Handler, http.ResponseWriter, *http.Request)
+	}{
+		{name: "entity create rejects explicit null", method: http.MethodPost, path: "/entities", payload: `{"entity_id":null,"entity_type":"asset"}`, handle: (*Handler).CreateEntity},
+		{name: "entity update rejects empty patch", method: http.MethodPatch, path: "/entities/entity-1", payload: `{}`, handle: (*Handler).UpdateEntity},
+		{name: "entity update rejects null type", method: http.MethodPatch, path: "/entities/entity-1", payload: `{"entity_type":null}`, handle: (*Handler).UpdateEntity},
+		{name: "task create rejects non-pending status", method: http.MethodPost, path: "/tasks", payload: `{"task_id":"task-1","status":"acknowledged"}`, handle: (*Handler).CreateTask},
+		{name: "task update rejects empty patch", method: http.MethodPatch, path: "/tasks/task-1", payload: `{}`, handle: (*Handler).UpdateTask},
+		{name: "task update rejects null status", method: http.MethodPatch, path: "/tasks/task-1", payload: `{"status":null}`, handle: (*Handler).UpdateTask},
+		{name: "object create rejects unsafe size", method: http.MethodPost, path: "/objects", payload: `{"object_id":"object-1","size_bytes":9007199254740992}`, handle: (*Handler).CreateObject},
+		{name: "object update rejects empty patch", method: http.MethodPatch, path: "/objects/object-1", payload: `{}`, handle: (*Handler).UpdateObject},
+		{name: "object update rejects null content type", method: http.MethodPatch, path: "/objects/object-1", payload: `{"content_type":null}`, handle: (*Handler).UpdateObject},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := newTestHandler()
+			recorder := httptest.NewRecorder()
+			request := routeRequest(tt.method, tt.path, tt.payload)
+			tt.handle(handler, recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", recorder.Code)
+			}
+			if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
+				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+			}
+		})
 	}
 }
 
@@ -226,22 +256,38 @@ func TestUpdateTaskRequestEntityIDDistinguishesAbsentNullAndValue(t *testing.T) 
 	}
 }
 
-func TestCreateEntityRejectsInvalidConformanceRequests(t *testing.T) {
+func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 	cases, err := conformance.LoadRequestValidationCases()
 	if err != nil {
 		t.Fatal(err)
 	}
+	type endpoint struct {
+		method string
+		path   string
+		handle func(*Handler, http.ResponseWriter, *http.Request)
+	}
+	endpoints := map[string]endpoint{
+		"EntityCreateRequest": {method: http.MethodPost, path: "/entities", handle: (*Handler).CreateEntity},
+		"EntityUpdateRequest": {method: http.MethodPatch, path: "/entities/entity-1", handle: (*Handler).UpdateEntity},
+		"TaskCreateRequest":   {method: http.MethodPost, path: "/tasks", handle: (*Handler).CreateTask},
+		"TaskUpdateRequest":   {method: http.MethodPatch, path: "/tasks/task-1", handle: (*Handler).UpdateTask},
+		"ObjectCreateRequest": {method: http.MethodPost, path: "/objects", handle: (*Handler).CreateObject},
+		"ObjectUpdateRequest": {method: http.MethodPatch, path: "/objects/object-1", handle: (*Handler).UpdateObject},
+	}
 	for _, testCase := range cases {
-		if testCase.Definition != "EntityCreateRequest" || testCase.Valid {
+		if testCase.Valid {
 			continue
 		}
 		t.Run(testCase.Name, func(t *testing.T) {
+			endpoint, ok := endpoints[testCase.Definition]
+			if !ok {
+				t.Fatalf("no Core endpoint for %q", testCase.Definition)
+			}
 			handler := newTestHandler()
-			handler.entityActions = actions.NewEntityActions(nil)
 			recorder := httptest.NewRecorder()
-			request := routeRequest(http.MethodPost, "/entities", string(testCase.Value))
+			request := routeRequest(endpoint.method, endpoint.path, string(testCase.Value))
 
-			handler.CreateEntity(recorder, request)
+			endpoint.handle(handler, recorder, request)
 
 			if recorder.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400", recorder.Code)

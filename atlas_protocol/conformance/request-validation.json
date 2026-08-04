@@ -137,6 +137,118 @@
           "note": "updated by conformance"
         }
       }
+    },
+    {
+      "name": "entity create accepts nullable alias",
+      "definition": "EntityCreateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "entity_id": "entity-null-alias", "entity_type": "asset", "alias": null }
+    },
+    {
+      "name": "entity create rejects null entity_type",
+      "definition": "EntityCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "entity_id": "entity-null-type", "entity_type": null }
+    },
+    {
+      "name": "entity update rejects an empty patch",
+      "definition": "EntityUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": {}
+    },
+    {
+      "name": "entity update accepts nullable alias and subtype",
+      "definition": "EntityUpdateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "alias": null, "subtype": null }
+    },
+    {
+      "name": "entity update rejects null entity_type",
+      "definition": "EntityUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "entity_type": null }
+    },
+    {
+      "name": "task create accepts explicit pending status",
+      "definition": "TaskCreateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "task_id": "task-pending", "status": "pending" }
+    },
+    {
+      "name": "task create rejects non-pending initial status",
+      "definition": "TaskCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "task_id": "task-acknowledged", "status": "acknowledged" }
+    },
+    {
+      "name": "task create rejects null status",
+      "definition": "TaskCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "task_id": "task-null-status", "status": null }
+    },
+    {
+      "name": "task update rejects an empty patch",
+      "definition": "TaskUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": {}
+    },
+    {
+      "name": "task update rejects null status",
+      "definition": "TaskUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "status": null }
+    },
+    {
+      "name": "object create accepts maximum safe size_bytes",
+      "definition": "ObjectCreateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "object_id": "object-safe-size", "size_bytes": 9007199254740991 }
+    },
+    {
+      "name": "object create rejects unsafe size_bytes",
+      "definition": "ObjectCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "object_id": "object-unsafe-size", "size_bytes": 9007199254740992 }
+    },
+    {
+      "name": "object create rejects null content_type",
+      "definition": "ObjectCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "object_id": "object-null-content-type", "content_type": null }
+    },
+    {
+      "name": "object update rejects an empty patch",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": {}
+    },
+    {
+      "name": "object update accepts zero size_bytes",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "size_bytes": 0 }
+    },
+    {
+      "name": "object update rejects unsafe size_bytes",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "size_bytes": 9007199254740992 }
     }
   ]
 }

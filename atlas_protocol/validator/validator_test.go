@@ -438,6 +438,42 @@ func TestRequestValidationConformance(t *testing.T) {
 	}
 }
 
+func TestObjectSizeBytesUsesJavaScriptSafeIntegerRange(t *testing.T) {
+	metadata := map[string]any{
+		"created_at": "2026-08-03T00:00:00Z",
+		"updated_at": "2026-08-03T00:00:00Z",
+		"version":    1,
+	}
+	tests := []struct {
+		name     string
+		value    func(int64) any
+		validate func(any) []string
+	}{
+		{name: "blob", value: func(size int64) any { return map[string]any{"size_bytes": size} }, validate: ValidateObjectBlob},
+		{name: "create", value: func(size int64) any { return map[string]any{"object_id": "object-1", "size_bytes": size} }, validate: ValidateObjectCreateRequest},
+		{name: "resource", value: func(size int64) any {
+			return map[string]any{"object_id": "object-1", "path": nil, "content_type": nil, "type": nil, "bucket": nil, "size_bytes": size, "usage_hints": []any{}, "referenced_by": []any{}, "metadata": metadata}
+		}, validate: ValidateObjectResource},
+		{name: "detail", value: func(size int64) any {
+			return map[string]any{"object_id": "object-1", "path": nil, "content_type": nil, "type": nil, "bucket": nil, "size_bytes": size, "usage_hints": []any{}, "referenced_by": []any{}, "metadata": metadata, "extra": map[string]any{}}
+		}, validate: ValidateObjectDetailResource},
+		{name: "update", value: func(size int64) any { return map[string]any{"size_bytes": size} }, validate: ValidateObjectUpdateRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, accepted := range []int64{0, 9007199254740991} {
+				if errors := tt.validate(tt.value(accepted)); len(errors) > 0 {
+					t.Fatalf("size_bytes %d rejected: %v", accepted, errors)
+				}
+			}
+			if errors := tt.validate(tt.value(9007199254740992)); len(errors) == 0 {
+				t.Fatal("unsafe size_bytes was accepted")
+			}
+		})
+	}
+}
+
 func TestNormalizeForJSONSchemaAllowsSharedAcyclicValues(t *testing.T) {
 	shared := map[string]any{"value": 1}
 	if _, err := normalizeForJSONSchema(map[string]any{"first": shared, "second": shared}); err != nil {

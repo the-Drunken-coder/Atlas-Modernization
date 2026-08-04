@@ -38,6 +38,18 @@ async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
 }
 
 describe("AtlasClient HTTP", () => {
+  it("rejects unsafe object size_bytes before serialization", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    await expect(
+      client.objects.create({ object_id: "object-unsafe", size_bytes: 9_007_199_254_740_992 })
+    ).rejects.toThrow("size_bytes must be a safe integer");
+    await expect(client.objects.update("object-unsafe", { size_bytes: 9_007_199_254_740_992 })).rejects.toThrow(
+      "size_bytes must be a safe integer"
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it("sanitizes untrusted HTTP errors while preserving status and error code", async () => {
     const secret = "http-canary-secret";
     const client = new AtlasClient({

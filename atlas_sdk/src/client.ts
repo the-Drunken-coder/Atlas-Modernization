@@ -180,13 +180,20 @@ export class AtlasClient {
 
   readonly objects = {
     get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
-    create: (object: ObjectCreateRequest) =>
-      this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectDetailResource),
-    update: (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
+    create: async (object: ObjectCreateRequest) =>
+      this.engine.writeResource(
+        "POST",
+        "/objects",
+        validatedObjectRequest(object),
+        "object",
+        object.object_id,
+        isObjectDetailResource
+      ),
+    update: async (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
       this.engine.writeResource(
         "PATCH",
         `/objects/${encodeURIComponent(id)}`,
-        patch,
+        validatedObjectRequest(patch),
         "object",
         id,
         isObjectDetailResource,
@@ -382,4 +389,11 @@ function encodeTimestamp(value: string | Date | undefined): string | undefined {
     return undefined;
   }
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function validatedObjectRequest<T extends ObjectCreateRequest | ObjectUpdateRequest>(request: T): T {
+  if (typeof request.size_bytes === "number" && !Number.isSafeInteger(request.size_bytes)) {
+    throw new TypeError("Atlas object request size_bytes must be a safe integer");
+  }
+  return request;
 }

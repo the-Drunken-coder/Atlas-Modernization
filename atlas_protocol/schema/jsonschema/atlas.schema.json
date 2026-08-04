@@ -807,6 +807,7 @@
           "type": "array"
         },
         "size_bytes": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
@@ -878,6 +879,7 @@
           "type": "array"
         },
         "size_bytes": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
@@ -997,6 +999,7 @@
               "type": "null"
             },
             {
+              "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
             }
@@ -1088,6 +1091,7 @@
               "type": "null"
             },
             {
+              "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
             }
@@ -1178,6 +1182,7 @@
           "type": "array"
         },
         "size_bytes": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
@@ -1435,7 +1440,7 @@
               "type": "object"
             },
             "status": {
-              "$ref": "#/$defs/NonEmptyString"
+              "const": "pending"
             },
             "task_id": {
               "$ref": "#/$defs/NonEmptyString"
@@ -1462,7 +1467,7 @@
               "type": "object"
             },
             "status": {
-              "$ref": "#/$defs/NonEmptyString"
+              "const": "pending"
             }
           },
           "required": [

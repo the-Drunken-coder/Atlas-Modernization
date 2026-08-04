@@ -222,11 +222,61 @@ function snapshotFromRecords(records: SnapshotRecords): SyncSnapshot {
 }
 
 function immutableClone<T>(value: T): T {
-  return deepFreeze(structuredClone(value));
+  if (typeof value !== "object" || value === null) return value;
+  const root: object = Array.isArray(value) ? [] : {};
+  const clones = new Map<object, object>([[value, root]]);
+  const work: Array<{ source: object; target: object }> = [{ source: value, target: root }];
+  while (work.length > 0) {
+    const { source, target } = work.pop()!;
+    for (const [key, child] of Object.entries(source)) {
+      if (typeof child === "function" || typeof child === "symbol") {
+        throw new TypeError("Atlas cache values must be structured-cloneable");
+      }
+      if (typeof child !== "object" || child === null) {
+        Object.defineProperty(target, key, {
+          value: child,
+          enumerable: true,
+          writable: true,
+          configurable: true
+        });
+        continue;
+      }
+      if (
+        !Array.isArray(child) &&
+        Object.getPrototypeOf(child) !== Object.prototype &&
+        Object.getPrototypeOf(child) !== null
+      ) {
+        throw new TypeError("Atlas cache values must contain only plain objects and arrays");
+      }
+      let clonedChild = clones.get(child);
+      if (!clonedChild) {
+        clonedChild = Array.isArray(child) ? [] : {};
+        clones.set(child, clonedChild);
+        work.push({ source: child, target: clonedChild });
+      }
+      Object.defineProperty(target, key, {
+        value: clonedChild,
+        enumerable: true,
+        writable: true,
+        configurable: true
+      });
+    }
+  }
+  return deepFreeze(root as T);
 }
 
 function deepFreeze<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const key of Object.keys(value)) deepFreeze(Reflect.get(value, key));
-  return Object.freeze(value);
+  if (typeof value !== "object" || value === null) return value;
+  const seen = new WeakSet<object>();
+  const work: object[] = [value];
+  while (work.length > 0) {
+    const current = work.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    for (const child of Object.values(current)) {
+      if (typeof child === "object" && child !== null) work.push(child);
+    }
+    Object.freeze(current);
+  }
+  return value;
 }

@@ -544,6 +544,20 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(cache.snapshot().entities[source.entity_id].alias).toBe("server value");
   });
 
+  it("preserves own __proto__ data properties while cloning cached resources", () => {
+    const cache = new ResourceCache();
+    const extra = JSON.parse('{"__proto__":{"sentinel":true}}') as Record<string, { sentinel: boolean }>;
+    const detail = { ...object("object-proto-key"), extra, metadata: metadata(1) };
+
+    expect(cache.cacheResource("object", detail.object_id, detail, { detail: true })).toBe(true);
+    const cached = cache.objectDetail(detail.object_id);
+
+    expect(cached).toBeDefined();
+    expect(Object.getPrototypeOf(cached?.extra)).toBe(Object.prototype);
+    expect(Object.hasOwn(cached?.extra ?? {}, "__proto__")).toBe(true);
+    expect(Reflect.get(cached?.extra ?? {}, "__proto__")).toEqual({ sentinel: true });
+  });
+
   it("preserves snapshot references and version guards across object detail upgrades", () => {
     const cache = new ResourceCache();
     const cachedEntity = { ...entity("asset-detail-reference"), metadata: metadata(1) };
