@@ -13,13 +13,13 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from atlas import (
-    ADMIN_PASSWORD_PLACEHOLDER,
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
     compose_down_command,
     compose_up_command,
     database_recreate_on_startup_enabled,
+    ensure_api_auth,
     ensure_local_auth,
     main,
     print_storage_notice,
@@ -45,6 +45,66 @@ class FakeHTTPResponse:
 
 
 class AtlasScriptHelpersTest(unittest.TestCase):
+    def test_public_auth_requires_direct_admin_password(self) -> None:
+        base = {"API_AUTH_KEY": "configured-machine-key"}
+        with patch.dict("os.environ", base, clear=True), patch("builtins.print") as output:
+            self.assertFalse(ensure_api_auth("Production mode"))
+            self.assertIn("requires ATLAS_ADMIN_PASSWORD", output.call_args.args[0])
+
+        with (
+            patch.dict("os.environ", {**base, "ATLAS_ADMIN_PASSWORD_FILE": "/run/secrets/admin"}, clear=True),
+            patch("builtins.print") as output,
+        ):
+            self.assertFalse(ensure_api_auth("Production mode"))
+            self.assertIn("mounts no password file", output.call_args.args[0])
+
+        with patch.dict("os.environ", {**base, "ATLAS_ADMIN_PASSWORD": "configured-admin-password"}, clear=True):
+            self.assertTrue(ensure_api_auth("Production mode"))
+            self.assertEqual(os.environ["ENABLE_API_AUTH"], "true")
+
+    def test_public_auth_rejects_admin_password_defaults_and_examples(self) -> None:
+        for admin_password in (
+            "password",
+            " PASSWORD ",
+            "REPLACE_WITH_SECURE_ADMIN_PASSWORD",
+            "replace-with-secure-admin-password",
+            "your-secure-admin-password",
+        ):
+            with (
+                self.subTest(admin_password=admin_password),
+                patch.dict(
+                    "os.environ",
+                    {"API_AUTH_KEY": "configured-machine-key", "ATLAS_ADMIN_PASSWORD": admin_password},
+                    clear=True,
+                ),
+                patch("builtins.print") as output,
+            ):
+                self.assertFalse(ensure_api_auth("Production mode"))
+                self.assertIn("development default or example", output.call_args.args[0])
+
+    def test_production_file_only_auth_stops_before_docker(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {"API_AUTH_KEY": "configured-machine-key", "ATLAS_ADMIN_PASSWORD_FILE": "/run/secrets/admin"},
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.ensure_minio_secrets", return_value={}),
+            patch("atlas.ensure_postgres_password", return_value={}),
+            patch("atlas.persist_compose_env_values"),
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run") as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        cleanup.assert_not_called()
+        run.assert_not_called()
+
     def test_reset_volumes_help_warns_about_production_data_loss(self) -> None:
         output = StringIO()
         with patch.object(sys, "argv", ["atlas.py", "--help"]), redirect_stdout(output):
@@ -197,7 +257,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 "os.environ",
                 {
                     "API_AUTH_KEY": API_AUTH_KEY_PLACEHOLDER,
-                    "ATLAS_ADMIN_PASSWORD": ADMIN_PASSWORD_PLACEHOLDER,
+                    "ATLAS_ADMIN_PASSWORD": "REPLACE_WITH_SECURE_ADMIN_PASSWORD",
                 },
                 clear=True,
             ),

@@ -4,6 +4,7 @@ import {
   canRemoveVertex,
   displayGeometry,
   geometryVertices,
+  midpointPosition,
   moveVertex,
   removeVertex,
   representativePoint,
@@ -147,7 +148,7 @@ describe("vertex editing", () => {
   });
 
   it("adds and removes line vertices keeping at least two points", () => {
-    const added = addVertexAfter(line, { kind: "LineString", index: 0 }, -74.15, 40.15);
+    const added = addVertexAfter(line, { kind: "LineString", index: 0 }, [-74.15, 40.15]);
     expect(added).toEqual({
       type: "LineString",
       coordinates: [
@@ -178,7 +179,7 @@ describe("vertex editing", () => {
   });
 
   it("adds a polygon vertex and preserves the closed ring", () => {
-    const added = addVertexAfter(polygon, { kind: "Polygon", ring: 0, index: 1 }, -74.05, 40.15) as Extract<
+    const added = addVertexAfter(polygon, { kind: "Polygon", ring: 0, index: 1 }, [-74.05, 40.15]) as Extract<
       UiGeometry,
       { type: "Polygon" }
     >;
@@ -186,6 +187,47 @@ describe("vertex editing", () => {
     expect(ring).toHaveLength(6);
     expect(ring[0]).toEqual(ring[ring.length - 1]);
     expect(validateGeometry(added)).toEqual({ valid: true });
+  });
+
+  it("inserts complete positions into lines and polygon rings", () => {
+    const elevatedLine: UiGeometry = {
+      type: "LineString",
+      coordinates: [
+        [170, 10, 100, 2],
+        [-170, 20, 200, 4]
+      ]
+    };
+    expect(addVertexAfter(elevatedLine, { kind: "LineString", index: 0 }, [-180, 15, 150, 3])).toEqual({
+      type: "LineString",
+      coordinates: [
+        [170, 10, 100, 2],
+        [-180, 15, 150, 3],
+        [-170, 20, 200, 4]
+      ]
+    });
+
+    const elevatedPolygon: UiGeometry = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [170, 10, 100],
+          [-170, 10, 200],
+          [-170, 20, 300],
+          [170, 10, 100]
+        ]
+      ]
+    };
+    const added = addVertexAfter(elevatedPolygon, { kind: "Polygon", ring: 0, index: 0 }, [-180, 10, 150]) as Extract<
+      UiGeometry,
+      { type: "Polygon" }
+    >;
+    expect(added.coordinates[0]).toEqual([
+      [170, 10, 100],
+      [-180, 10, 150],
+      [-170, 10, 200],
+      [-170, 20, 300],
+      [170, 10, 100]
+    ]);
   });
 
   it("removes a polygon vertex only while the ring stays valid", () => {
@@ -201,6 +243,26 @@ describe("vertex editing", () => {
     // A triangle (3 distinct vertices) cannot lose another vertex.
     expect(canRemoveVertex(removed, { kind: "Polygon", ring: 0, index: 0 })).toBe(false);
     expect(removeVertex(removed, { kind: "Polygon", ring: 0, index: 0 })).toBeUndefined();
+  });
+});
+
+describe("midpoint positions", () => {
+  it("uses the ordinary midpoint away from the antimeridian", () => {
+    const midpoint = midpointPosition([-74.2, 40.1], [-74.1, 40.2]);
+    expect(midpoint[0]).toBeCloseTo(-74.15);
+    expect(midpoint[1]).toBeCloseTo(40.15);
+  });
+
+  it("takes the shortest antimeridian path in either direction", () => {
+    expect(midpointPosition([170, 10], [-170, 20])).toEqual([-180, 15]);
+    expect(midpointPosition([-170, 10], [170, 20])).toEqual([-180, 15]);
+    expect(midpointPosition([179, 0], [-179, 0])).toEqual([-180, 0]);
+  });
+
+  it("interpolates every shared dimension and uses the minimum common arity", () => {
+    expect(midpointPosition([170, 10, 100, 2], [-170, 20, 200, 4])).toEqual([-180, 15, 150, 3]);
+    expect(midpointPosition([10, 20, 30, 40], [20, 40, 50])).toEqual([15, 30, 40]);
+    expect(midpointPosition([10, 20], [20, 40, 50])).toEqual([15, 30]);
   });
 });
 

@@ -69,11 +69,17 @@ The Compose stack builds the development image and bind-mounts
 `atlas_core.settings.json.example`. Raw Compose uses the values in
 `atlas_core/docker/.env`; copy `.env.example` and set `ENABLE_API_AUTH=true`
 plus a strong `API_AUTH_KEY` when machine clients need access. The production
-Docker target does not ship that settings file and refuses to start unless `ENABLE_API_AUTH=true`,
-`API_AUTH_KEY` is set to a strong, non-placeholder bootstrap secret, and
-`ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` replaces the development
-admin password, and `DATABASE_RECREATE_ON_STARTUP` is not enabled. Browser admins
+Docker target does not ship that settings file. The bundled production Compose
+stack refuses to start unless `ENABLE_API_AUTH=true`,
+`API_AUTH_KEY` is set to a strong, non-placeholder bootstrap secret,
+`ATLAS_ADMIN_PASSWORD` replaces the development admin password, and
+`DATABASE_RECREATE_ON_STARTUP` is not enabled. Browser admins
 can create additional managed machine keys after sign-in.
+
+The bundled production Compose stack accepts only `ATLAS_ADMIN_PASSWORD`
+because it does not mount an operator password file. Direct Core processes and
+custom raw-container deployments may still use `ATLAS_ADMIN_PASSWORD_FILE`
+when that path is explicitly mounted and readable inside the process.
 
 For the production-image single-host stack:
 

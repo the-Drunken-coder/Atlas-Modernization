@@ -34,7 +34,13 @@ Start the production stack:
 python3 atlas_core/scripts/atlas.py --production
 ```
 
-Production Compose sets `DATABASE_RECREATE_ON_STARTUP=false`. The production image refuses to start if destructive mode is enabled, API auth is disabled, the bootstrap API key is missing/placeholder, or neither admin password source is set.
+Production Compose sets `DATABASE_RECREATE_ON_STARTUP=false`. The bundled
+launcher requires `ATLAS_ADMIN_PASSWORD` and refuses to invoke Docker when only
+`ATLAS_ADMIN_PASSWORD_FILE` is configured because the Compose stack mounts no
+password file. The production image also refuses to start if destructive mode
+is enabled, API auth is disabled, or the bootstrap API key is
+missing/placeholder. Direct Core processes and custom raw-container deployments
+may retain `ATLAS_ADMIN_PASSWORD_FILE` when they explicitly mount that path.
 
 This uses `atlas_core/docker/docker-compose.production.yml`, builds the
 Dockerfile `production` target, omits development bind mounts and settings

@@ -4,6 +4,7 @@ import {
   addVertexAfter,
   displayGeometry,
   geometryVertices,
+  midpointPosition,
   moveVertex,
   type Position,
   removeVertex,
@@ -18,7 +19,7 @@ export type MapEditing = {
   onChange: (geometry: UiGeometry) => void;
 };
 
-type Midpoint = { lng: number; lat: number; afterRef: VertexRef };
+type Midpoint = { position: Position; afterRef: VertexRef };
 
 export function createEditingMarkers(
   map: MlMap,
@@ -59,10 +60,12 @@ export function createEditingMarkers(
     const element = document.createElement("div");
     element.className = "vertex-handle vertex-handle--mid";
     element.title = "Click to add a vertex";
-    const marker = new MarkerConstructor({ element, draggable: false }).setLngLat([mid.lng, mid.lat]).addTo(map);
+    const marker = new MarkerConstructor({ element, draggable: false })
+      .setLngLat([mid.position[0], mid.position[1]])
+      .addTo(map);
     element.addEventListener("click", (event) => {
       event.stopPropagation();
-      onChange(addVertexAfter(geometry, mid.afterRef, mid.lng, mid.lat));
+      onChange(addVertexAfter(geometry, mid.afterRef, mid.position));
     });
     markers.push(marker);
   }
@@ -92,7 +95,7 @@ function midpoints(geometry: UiGeometry): Midpoint[] {
 }
 
 function midpoint(current: Position, next: Position, afterRef: VertexRef): Midpoint {
-  return { lng: (current[0] + next[0]) / 2, lat: (current[1] + next[1]) / 2, afterRef };
+  return { position: midpointPosition(current, next), afterRef };
 }
 
 function openRing(ring: Position[]): Position[] {

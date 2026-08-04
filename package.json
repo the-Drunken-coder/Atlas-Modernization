@@ -25,5 +25,8 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.10"
+  },
+  "overrides": {
+    "undici@7.28.0": "7.29.0"
   }
 }
