@@ -4,9 +4,65 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestRootDockerignoreAllowsOnlyDockerfileInputs(t *testing.T) {
+	data, err := os.ReadFile("../../.dockerignore")
+	if err != nil {
+		t.Fatalf("read root .dockerignore: %v", err)
+	}
+
+	var patterns []string
+	var included []string
+	for _, line := range strings.Split(string(data), "\n") {
+		pattern := strings.TrimSpace(line)
+		if pattern == "" || strings.HasPrefix(pattern, "#") {
+			continue
+		}
+		patterns = append(patterns, pattern)
+		if strings.HasPrefix(pattern, "!") {
+			included = append(included, pattern)
+		}
+	}
+
+	if len(patterns) == 0 || patterns[0] != "*" {
+		t.Fatal("root .dockerignore must exclude the build context before adding required inputs")
+	}
+	wantIncluded := []string{
+		"!atlas_core/",
+		"!atlas_core/go.mod",
+		"!atlas_core/go.sum",
+		"!atlas_core/cmd/",
+		"!atlas_core/cmd/**",
+		"!atlas_core/command_catalog/",
+		"!atlas_core/command_catalog/**",
+		"!atlas_core/internal/",
+		"!atlas_core/internal/**",
+		"!atlas_core/atlas_core.settings.json.example",
+		"!atlas_core/docker/",
+		"!atlas_core/docker/Dockerfile",
+		"!atlas_core/docker/production-entrypoint.sh",
+		"!atlas_protocol/",
+		"!atlas_protocol/go.mod",
+		"!atlas_protocol/go.sum",
+		"!atlas_protocol/generated/",
+		"!atlas_protocol/generated/go/",
+		"!atlas_protocol/generated/go/atlasprotocol/",
+		"!atlas_protocol/generated/go/atlasprotocol/*.go",
+		"!atlas_protocol/schema/",
+		"!atlas_protocol/schema/embed.go",
+		"!atlas_protocol/schema/jsonschema/",
+		"!atlas_protocol/schema/jsonschema/*.json",
+		"!atlas_protocol/validator/",
+		"!atlas_protocol/validator/*.go",
+	}
+	if !slices.Equal(included, wantIncluded) {
+		t.Fatalf("root .dockerignore includes = %v, want only Dockerfile inputs %v", included, wantIncluded)
+	}
+}
 
 func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 	data, err := os.ReadFile("Dockerfile")

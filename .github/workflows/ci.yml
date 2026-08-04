@@ -170,6 +170,9 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
+      - name: Verify generated Atlas SDK package metadata is checked in
+        run: git diff --exit-code -- atlas_sdk/src/package-metadata.ts
+
       - name: Audit JavaScript workspace dependencies
         run: npm audit --audit-level=high
 
