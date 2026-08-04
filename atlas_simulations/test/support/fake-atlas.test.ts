@@ -53,7 +53,7 @@ describe("fake Atlas core", () => {
     });
     expect(watch).toHaveBeenCalledWith(
       expect.objectContaining({ entity_id: "asset-1" }),
-      expect.objectContaining({ event: "recovered", id: "asset-1" })
+      expect.objectContaining({ event: "create", id: "asset-1" })
     );
   });
 

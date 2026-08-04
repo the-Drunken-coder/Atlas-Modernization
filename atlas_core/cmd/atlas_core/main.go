@@ -248,7 +248,6 @@ func main() {
 	r.Patch("/entities/{entity_id}", handler.UpdateEntity)
 	r.Delete("/entities/{entity_id}", handler.DeleteEntity)
 	r.Get("/entities/alias/{alias}", handler.GetEntityByAlias)
-	r.Patch("/entities/{entity_id}/telemetry", handler.UpdateEntityTelemetry)
 	r.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
 	r.Get("/entities/{entity_id}/tasks", handler.GetTasksByEntity)
 	r.Get("/entities/{entity_id}/objects", handler.GetObjectsByEntity)
@@ -259,10 +258,6 @@ func main() {
 	r.Get("/tasks/{task_id}", handler.GetTask)
 	r.Patch("/tasks/{task_id}", handler.UpdateTask)
 	r.Delete("/tasks/{task_id}", handler.DeleteTask)
-	r.Post("/tasks/{task_id}/acknowledge", handler.AcknowledgeTask)
-	r.Post("/tasks/{task_id}/complete", handler.CompleteTask)
-	r.Post("/tasks/{task_id}/fail", handler.FailTask)
-	r.Post("/tasks/{task_id}/status", handler.TaskStatus)
 	r.Get("/tasks/{task_id}/objects", handler.GetObjectsByTask)
 
 	// Object routes

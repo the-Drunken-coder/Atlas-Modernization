@@ -383,21 +383,37 @@ function emitResourceChanges<T extends WatchableResource>(
   toVersion: number
 ): void {
   for (const history of values.values()) {
-    for (const value of history) {
+    for (const [index, value] of history.entries()) {
       if (value.metadata.version <= fromVersion || value.metadata.version > toVersion) continue;
       const id = resourceId(value, type);
       if (isDeletedAt(state, type, id, toVersion, value.metadata.version)) continue;
       const resource = cloneValue(value);
-      const event = {
-        event: "recovered",
-        resource_type: type,
-        id,
-        version: value.metadata.version,
-        resource
-      } as AtlasWatchEvent;
+      const event = resourceChangeEvent(type, index === 0 ? "create" : "update", id, resource);
       emitWatchEvent(clientState, resource, event);
     }
   }
+}
+
+function resourceChangeEvent(
+  type: ResourceType,
+  event: "create" | "update",
+  id: string,
+  resource: WatchableResource
+): AtlasWatchEvent {
+  const version = resource.metadata.version;
+  if (type === "entity") {
+    return event === "create"
+      ? { event: "create", resource_type: "entity", id, version, resource: resource as EntityResource }
+      : { event: "update", resource_type: "entity", id, version, resource: resource as EntityResource };
+  }
+  if (type === "task") {
+    return event === "create"
+      ? { event: "create", resource_type: "task", id, version, resource: resource as TaskResource }
+      : { event: "update", resource_type: "task", id, version, resource: resource as TaskResource };
+  }
+  return event === "create"
+    ? { event: "create", resource_type: "object", id, version, resource: resource as ObjectResource }
+    : { event: "update", resource_type: "object", id, version, resource: resource as ObjectResource };
 }
 
 function emitWatchEvent(clientState: FakeClientState, resource: WatchableResource, event: AtlasWatchEvent): void {
