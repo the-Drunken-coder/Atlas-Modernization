@@ -128,10 +128,8 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 			}
 
 			if opts.cursor != nil {
-				cursorUpperBound := effectiveCursorUpperBound(opts.cursor, opts.snapshotUpperBound)
-				if !cursorUpperBound.IsZero() {
-					where.addClause(fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, where.addArg(cursorUpperBound)))
-				}
+				cursorUpperBound := clampCursorUpperBound(opts.cursor.upperBound, opts.snapshotUpperBound)
+				where.addClause(fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, where.addArg(cursorUpperBound)))
 				where.addClause(fmt.Sprintf("(%s, %s) < (%s::timestamptz, %s::varchar)",
 					opts.timeColumn, opts.idColumn,
 					where.addArg(opts.cursor.timestamp), where.addArg(opts.cursor.id),

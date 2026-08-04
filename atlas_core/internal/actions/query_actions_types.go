@@ -124,7 +124,10 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 		}
 		continuation = true
 		if cursor.upperBound.IsZero() {
-			continue
+			return time.Time{}, false, NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{"query cursors must include a snapshot time"},
+			)
 		}
 		if sharedUpperBound.IsZero() {
 			sharedUpperBound = cursor.upperBound
@@ -139,9 +142,6 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 	}
 	if !continuation {
 		return currentSnapshot, false, nil
-	}
-	if sharedUpperBound.IsZero() {
-		return currentSnapshot, true, nil
 	}
 	return clampCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
 }
@@ -189,9 +189,6 @@ func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound tim
 }
 
 func clampCursorUpperBound(candidate, ceiling time.Time) time.Time {
-	if candidate.IsZero() {
-		return ceiling
-	}
 	if ceiling.IsZero() || candidate.Before(ceiling) || candidate.Equal(ceiling) {
 		return candidate
 	}

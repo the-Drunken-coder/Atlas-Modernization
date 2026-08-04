@@ -75,11 +75,9 @@ func queryTasksByEntityFiltered(
 	}
 
 	if parsedCursor != nil {
-		cursorUpperBound := effectiveCursorUpperBound(parsedCursor, snapshotUpperBound)
-		if !cursorUpperBound.IsZero() {
-			whereClauses = append(whereClauses, fmt.Sprintf("updated_at <= $%d::timestamptz", len(args)+1))
-			args = append(args, cursorUpperBound)
-		}
+		cursorUpperBound := clampCursorUpperBound(parsedCursor.upperBound, snapshotUpperBound)
+		whereClauses = append(whereClauses, fmt.Sprintf("updated_at <= $%d::timestamptz", len(args)+1))
+		args = append(args, cursorUpperBound)
 		whereClauses = append(whereClauses, fmt.Sprintf("(updated_at, task_id) < ($%d::timestamptz, $%d::varchar)", len(args)+1, len(args)+2))
 		args = append(args, parsedCursor.timestamp, parsedCursor.id)
 	} else {

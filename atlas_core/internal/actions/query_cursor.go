@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// rowCursor is an opaque pagination token: last row's sort key (time + id), optional
+// rowCursor is an opaque pagination token: last row's sort key (time + id),
 // snapshot time upper bound, and optional full-dataset change-version watermark.
 type rowCursor struct {
 	TS string `json:"ts"` // RFC3339Nano UTC
 	ID string `json:"id"`
-	UB string `json:"ub,omitempty"` // upper bound snapshot time (RFC3339Nano UTC)
+	UB string `json:"ub"`           // upper bound snapshot time (RFC3339Nano UTC)
 	UV int64  `json:"uv,omitempty"` // full-dataset change-version watermark
 }
 
@@ -23,9 +23,12 @@ type versionCursor struct {
 }
 
 // encodeRowCursor returns a URL-safe opaque string for (t, id) using descending sort
-// (created_at/updated_at/deleted_at, resource id). When upperBound is non-zero it is
-// embedded so later pages cap rows to the same snapshot.
+// (created_at/updated_at/deleted_at, resource id). The upper bound caps later pages
+// to the same snapshot.
 func encodeRowCursor(t time.Time, id string, upperBound time.Time) (string, error) {
+	if upperBound.IsZero() {
+		return "", fmt.Errorf("marshal row cursor: snapshot time must be present")
+	}
 	return encodeRowCursorPayload(t, id, upperBound, 0)
 }
 
@@ -46,10 +49,8 @@ func encodeRowCursorPayload(t time.Time, id string, upperBound time.Time, upperV
 	p := rowCursor{
 		TS: t.UTC().Format(time.RFC3339Nano),
 		ID: id,
+		UB: upperBound.UTC().Format(time.RFC3339Nano),
 		UV: upperVersion,
-	}
-	if !upperBound.IsZero() {
-		p.UB = upperBound.UTC().Format(time.RFC3339Nano)
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -73,7 +74,7 @@ func parseRFC3339WithNanoOrFallback(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// decodeRowCursor parses encodeRowCursor output. upperBound is zero when absent (legacy cursors).
+// decodeRowCursor parses encodeRowCursor output.
 func decodeRowCursor(s string) (time.Time, string, time.Time, error) {
 	p, timestamp, upperBound, err := decodeRowCursorPayload(s)
 	if err != nil {
@@ -86,9 +87,6 @@ func decodeFullDatasetCursor(s string) (time.Time, string, time.Time, int64, err
 	p, timestamp, upperBound, err := decodeRowCursorPayload(s)
 	if err != nil {
 		return time.Time{}, "", time.Time{}, 0, err
-	}
-	if upperBound.IsZero() {
-		return time.Time{}, "", time.Time{}, 0, fmt.Errorf("cursor missing snapshot time")
 	}
 	if p.UV <= 0 {
 		return time.Time{}, "", time.Time{}, 0, fmt.Errorf("cursor missing snapshot version")
@@ -115,12 +113,12 @@ func decodeRowCursorPayload(s string) (rowCursor, time.Time, time.Time, error) {
 	if err != nil {
 		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("parse cursor time: %w", err)
 	}
-	var upperBound time.Time
-	if p.UB != "" {
-		upperBound, err = parseRFC3339WithNanoOrFallback(p.UB)
-		if err != nil {
-			return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("parse cursor upper bound: %w", err)
-		}
+	if p.UB == "" {
+		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("cursor missing snapshot time")
+	}
+	upperBound, err := parseRFC3339WithNanoOrFallback(p.UB)
+	if err != nil {
+		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("parse cursor upper bound: %w", err)
 	}
 	if p.UV < 0 {
 		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("cursor snapshot version must be non-negative")

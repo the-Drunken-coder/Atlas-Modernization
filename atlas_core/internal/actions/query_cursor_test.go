@@ -36,8 +36,15 @@ func TestEncodeDecodeRowCursor_roundTrip(t *testing.T) {
 
 func TestEncodeRowCursorRejectsEmptyID(t *testing.T) {
 	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	if cursor, err := encodeRowCursor(ts, "", time.Time{}); err == nil || cursor != "" {
+	if cursor, err := encodeRowCursor(ts, "", ts.Add(time.Minute)); err == nil || cursor != "" {
 		t.Fatalf("encodeRowCursor empty id = %q, %v; want empty cursor and error", cursor, err)
+	}
+}
+
+func TestEncodeRowCursorRejectsMissingSnapshotTime(t *testing.T) {
+	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	if cursor, err := encodeRowCursor(ts, "entity-abc", time.Time{}); err == nil || cursor != "" {
+		t.Fatalf("encodeRowCursor missing snapshot time = %q, %v; want empty cursor and error", cursor, err)
 	}
 }
 
@@ -45,6 +52,21 @@ func TestDecodeRowCursor_rejectsEmpty(t *testing.T) {
 	_, _, _, err := decodeRowCursor("")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDecodeRowCursorRejectsMissingSnapshotTime(t *testing.T) {
+	payload, err := json.Marshal(map[string]string{
+		"ts": "2026-03-20T12:00:00Z",
+		"id": "entity-abc",
+	})
+	if err != nil {
+		t.Fatalf("marshal cursor payload: %v", err)
+	}
+	cursor := base64.RawURLEncoding.EncodeToString(payload)
+
+	if _, _, _, err := decodeRowCursor(cursor); err == nil || !strings.Contains(err.Error(), "snapshot time") {
+		t.Fatalf("decodeRowCursor missing snapshot time error = %v, want snapshot time error", err)
 	}
 }
 
@@ -207,30 +229,6 @@ func TestContinuationUpperBoundClampsFutureCursorSnapshot(t *testing.T) {
 	}
 	if !got.Equal(current) {
 		t.Fatalf("expected future upper bound to clamp to %v, got %v", current, got)
-	}
-}
-
-func TestEffectiveCursorUpperBoundClampsAndDefaults(t *testing.T) {
-	snapshot := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-
-	if got := effectiveCursorUpperBound(nil, snapshot); !got.Equal(snapshot) {
-		t.Fatalf("expected nil cursor to use snapshot %v, got %v", snapshot, got)
-	}
-
-	legacy := &parsedQueryCursor{timestamp: snapshot.Add(-time.Minute), id: "task-1"}
-	if got := effectiveCursorUpperBound(legacy, snapshot); !got.Equal(snapshot) {
-		t.Fatalf("expected legacy cursor to use snapshot %v, got %v", snapshot, got)
-	}
-
-	older := snapshot.Add(-time.Hour)
-	oldCursor := &parsedQueryCursor{timestamp: snapshot.Add(-time.Minute), id: "task-1", upperBound: older}
-	if got := effectiveCursorUpperBound(oldCursor, snapshot); !got.Equal(older) {
-		t.Fatalf("expected older cursor upper bound %v, got %v", older, got)
-	}
-
-	futureCursor := &parsedQueryCursor{timestamp: snapshot.Add(-time.Minute), id: "task-1", upperBound: snapshot.Add(time.Hour)}
-	if got := effectiveCursorUpperBound(futureCursor, snapshot); !got.Equal(snapshot) {
-		t.Fatalf("expected future cursor upper bound to clamp to %v, got %v", snapshot, got)
 	}
 }
 
