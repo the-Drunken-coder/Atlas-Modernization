@@ -124,7 +124,7 @@ describe("AtlasClient HTTP", () => {
     }
   });
 
-  it("rejects non-positive request timeouts", () => {
+  it("rejects request timeouts outside the supported timer range", () => {
     const core = new FakeCore();
 
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow(
@@ -140,6 +140,12 @@ describe("AtlasClient HTTP", () => {
       () =>
         new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.POSITIVE_INFINITY })
     ).toThrow("positive finite");
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 2_147_483_648 })
+    ).toThrow("no greater than 2147483647");
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 2_147_483_647 })
+    ).not.toThrow();
   });
 
   it("passes browser credentials through resource requests without adding admin methods", async () => {

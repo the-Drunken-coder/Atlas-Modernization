@@ -1,9 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent, type TaskResource } from "../src";
-import { ResourceCache } from "../src/cache.js";
+import { ObjectContentCache, ResourceCache } from "../src/cache.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: cache projection and reads", () => {
+  it("enforces a positive safe-integer object content cache capacity", () => {
+    const core = new FakeCore();
+    for (const objectContentCacheEntries of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, objectContentCacheEntries })
+      ).toThrow("objectContentCacheEntries must be a positive safe integer");
+    }
+  });
+
+  it("evicts the least recently used object content at the configured capacity", () => {
+    const cache = new ObjectContentCache(2);
+    cache.set("first", Uint8Array.of(1).buffer);
+    cache.set("second", Uint8Array.of(2).buffer);
+
+    expect(Array.from(new Uint8Array(cache.get("first")!))).toEqual([1]);
+    cache.set("third", Uint8Array.of(3).buffer);
+
+    expect(cache.get("second")).toBeUndefined();
+    expect(Array.from(new Uint8Array(cache.get("first")!))).toEqual([1]);
+    expect(Array.from(new Uint8Array(cache.get("third")!))).toEqual([3]);
+  });
+
   it("does not advance the global change cursor from point reads", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-read"));

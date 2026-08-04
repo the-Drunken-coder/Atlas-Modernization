@@ -1,5 +1,6 @@
 import { ATLAS_PROTOCOL_REVISION, type FeedEvent } from "./protocol.js";
 import { subscriptionMessage } from "./subscriptions.js";
+import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
   AtlasSubscription,
   WebSocketCtor,
@@ -49,6 +50,11 @@ export class FeedConnectionManager {
     WebSocketImpl?: WebSocketCtor;
     feedHandshakeTimeoutMs: number;
   }) {
+    if (!isTimerDelayInRange(options.feedHandshakeTimeoutMs)) {
+      throw new Error(
+        `Atlas feed handshake timeout must be a positive finite number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}`
+      );
+    }
     this.baseUrl = normalizeAtlasBaseUrl(options.baseUrl);
     this.apiKey = options.apiKey;
     this.WebSocketImpl = options.WebSocketImpl;

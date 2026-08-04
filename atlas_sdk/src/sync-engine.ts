@@ -17,6 +17,7 @@ import {
 import { SyncLifecycle } from "./sync-engine-lifecycle.js";
 import { ReconnectTimer } from "./sync-engine-reconnect.js";
 import { RecoveryCoordinator, RecoveryRunner } from "./sync-engine-recovery.js";
+import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
   AtlasSubscription,
   AtlasWatchEvent,
@@ -106,6 +107,11 @@ export class SyncEngine {
     pollIntervalMs: number;
     initialSync?: false | "all";
   }) {
+    if (!isTimerDelayInRange(options.pollIntervalMs, true)) {
+      throw new Error(
+        `Atlas polling interval must be zero or a positive finite number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}`
+      );
+    }
     this.transport = options.transport;
     this.feed = options.feed;
     this.cache = options.cache;

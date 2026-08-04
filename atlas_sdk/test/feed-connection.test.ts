@@ -5,6 +5,17 @@ import { FeedConnectionManager } from "../src/feed-connection.js";
 import { entity, FakeCore, metadata, task } from "./support/fake-core.js";
 
 describe("AtlasClient feed connection", () => {
+  it("rejects handshake timeouts outside the supported timer range", () => {
+    for (const feedHandshakeTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      expect(() => new FeedConnectionManager({ baseUrl: "http://atlas.test", feedHandshakeTimeoutMs })).toThrow(
+        "Atlas feed handshake timeout"
+      );
+    }
+    expect(
+      () => new FeedConnectionManager({ baseUrl: "http://atlas.test", feedHandshakeTimeoutMs: 2_147_483_647 })
+    ).not.toThrow();
+  });
+
   it("does not reconnect after an intentional sync.stop feed close", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({

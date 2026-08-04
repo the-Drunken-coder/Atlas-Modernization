@@ -6,6 +6,19 @@ import { type ResourceValue } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
+  it("rejects polling intervals outside the supported timer range while allowing zero", () => {
+    const core = new FakeCore();
+    for (const pollIntervalMs of [-1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, pollIntervalMs })).toThrow(
+        "Atlas polling interval"
+      );
+    }
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, pollIntervalMs: 0 })).not.toThrow();
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, pollIntervalMs: 2_147_483_647 })
+    ).not.toThrow();
+  });
+
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
     vi.useFakeTimers();
     const core = new FakeCore();

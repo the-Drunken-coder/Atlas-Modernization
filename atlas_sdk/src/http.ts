@@ -1,4 +1,5 @@
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
+import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type { FetchLike } from "./types.js";
 import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
 
@@ -46,8 +47,10 @@ export class HttpTransport {
     this.apiKey = options.apiKey;
     this.credentials = options.credentials;
     this.fetchImpl = options.fetchImpl;
-    if (!Number.isFinite(options.requestTimeoutMs) || options.requestTimeoutMs <= 0) {
-      throw new Error("Atlas request timeout must be a positive finite number of milliseconds");
+    if (!isTimerDelayInRange(options.requestTimeoutMs)) {
+      throw new Error(
+        `Atlas request timeout must be a positive finite number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}`
+      );
     }
     this.requestTimeoutMs = options.requestTimeoutMs;
   }

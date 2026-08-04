@@ -53,7 +53,10 @@ export class ObjectContentCache {
   private readonly entries = new Map<string, ArrayBuffer>();
 
   constructor(maxEntries: number) {
-    this.maxEntries = Math.max(1, maxEntries);
+    if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+      throw new TypeError("objectContentCacheEntries must be a positive safe integer");
+    }
+    this.maxEntries = maxEntries;
   }
 
   get(key: string): ArrayBuffer | undefined {
