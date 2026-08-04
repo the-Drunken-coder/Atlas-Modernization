@@ -28,7 +28,6 @@ import (
 const (
 	CookieName    = "atlas_session"
 	defaultUser   = "admin"
-	defaultRole   = "admin"
 	defaultPass   = "password"
 	sessionTTL    = 7 * 24 * time.Hour
 	loginWindow   = 15 * time.Minute
@@ -68,15 +67,11 @@ type PasswordHash struct {
 type AccountRecord struct {
 	Username string       `json:"username"`
 	Password PasswordHash `json:"password"`
-	Role     string       `json:"role"`
-	Disabled bool         `json:"disabled"`
 }
 
 type SessionRecord struct {
 	AccountID string    `json:"account_id"`
 	Username  string    `json:"username"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
@@ -88,7 +83,6 @@ type LoginFailureRecord struct {
 type AuthenticatedSession struct {
 	AccountID string
 	Username  string
-	Role      string
 	ExpiresAt time.Time
 }
 
@@ -119,8 +113,6 @@ func (s *Service) SeedDevelopmentAdmin(ctx context.Context) error {
 	account := AccountRecord{
 		Username: defaultUser,
 		Password: hash,
-		Role:     defaultRole,
-		Disabled: false,
 	}
 	if UsesDefaultDevelopmentPassword() {
 		return s.createAccountIfMissing(ctx, "account:"+defaultUser, account)
@@ -187,10 +179,9 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	accountID := "account:" + username
 	account, accountErr := getAccount(ctx, s.pool, accountID)
 	passwordHash := dummyPasswordHash
-	accountEnabled := false
+	accountExists := accountErr == nil
 	if accountErr == nil {
 		passwordHash = account.Password
-		accountEnabled = !account.Disabled
 	}
 	releaseSlot, err := acquireLoginSlot(ctx, loginArgon2Slots)
 	if err != nil {
@@ -217,7 +208,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	} else if throttled {
 		return "", SessionRecord{}, ErrTooManyAttempts
 	}
-	if !passwordMatches || !accountEnabled {
+	if !passwordMatches || !accountExists {
 		if err := recordLoginFailure(ctx, tx, username, ip, now); err != nil {
 			return "", SessionRecord{}, err
 		}
@@ -240,8 +231,6 @@ func (s *Service) Login(ctx context.Context, username, password, ip string, now 
 	session := SessionRecord{
 		AccountID: accountID,
 		Username:  account.Username,
-		Role:      account.Role,
-		CreatedAt: now.UTC(),
 		ExpiresAt: now.Add(sessionTTL).UTC(),
 	}
 	if err := s.storeSession(ctx, token, session); err != nil {
@@ -263,14 +252,12 @@ func (s *Service) AuthenticateRequest(ctx context.Context, r *http.Request) (Aut
 		_ = s.deleteSession(ctx, cookie.Value)
 		return AuthenticatedSession{}, ErrInvalidSession
 	}
-	account, err := s.GetAccount(ctx, session.AccountID)
-	if err != nil || account.Disabled {
+	if _, err := s.GetAccount(ctx, session.AccountID); err != nil {
 		return AuthenticatedSession{}, ErrInvalidSession
 	}
 	return AuthenticatedSession{
 		AccountID: session.AccountID,
 		Username:  session.Username,
-		Role:      session.Role,
 		ExpiresAt: session.ExpiresAt,
 	}, nil
 }

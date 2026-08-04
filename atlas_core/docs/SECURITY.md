@@ -105,7 +105,6 @@ Raw development startup seeds a development-only default admin credential:
 
 - username: `admin`
 - password: `password`
-- role: `admin`
 
 This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `atlas_core/docker/.env.local` so it can safely enable machine auth. The bundled production Compose launcher requires `ATLAS_ADMIN_PASSWORD`; direct Core processes and explicitly mounted custom containers may instead use `ATLAS_ADMIN_PASSWORD_FILE`. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 

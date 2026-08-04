@@ -10,7 +10,6 @@ export type AtlasAdminClientOptions = {
 
 export type AdminUser = {
   username: string;
-  role: "admin" | "operator" | string;
   expires_at?: string;
 };
 
@@ -74,7 +73,6 @@ function isAdminMeResponse(value: unknown): value is AdminMeResponse {
     isRecord(value) &&
     isRecord(value.user) &&
     isNonEmptyString(value.user.username) &&
-    isNonEmptyString(value.user.role) &&
     (value.user.expires_at === undefined || isNonEmptyString(value.user.expires_at))
   );
 }

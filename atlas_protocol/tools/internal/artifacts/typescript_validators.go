@@ -109,14 +109,13 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 		}
 		return "(" + refExpression + " && " + siblingExpression + ")", nil
 	}
-	if oneOf, ok := schema["oneOf"].([]any); ok {
-		return g.runtimeOneOfValidatorExpression(valueExpr, oneOf, seenRefs)
+	for _, keyword := range []string{"allOf", "dependentRequired", "minLength", "oneOf"} {
+		if _, ok := schema[keyword]; ok {
+			return "", fmt.Errorf("unsupported runtime validator keyword %q", keyword)
+		}
 	}
 	if anyOf, ok := schema["anyOf"].([]any); ok {
 		return g.runtimeUnionValidatorExpression(valueExpr, anyOf, seenRefs)
-	}
-	if allOf, ok := schema["allOf"].([]any); ok {
-		return g.runtimeAllOfValidatorExpression(valueExpr, allOf, seenRefs)
 	}
 	if value, ok := schema["const"]; ok {
 		return valueExpr + " === " + literalValue(value), nil
@@ -207,9 +206,6 @@ func runtimeStringValidatorExpression(valueExpr string, schema typeScriptSchema)
 	}
 	if pattern, ok := schema["pattern"].(string); ok {
 		checks = append(checks, "atlasProtocolStringMatches("+valueExpr+", "+jsonString(pattern)+")")
-	}
-	if minLength, ok := schema["minLength"].(float64); ok {
-		checks = append(checks, "Array.from("+valueExpr+").length >= "+jsonNumber(minLength))
 	}
 	if maxLength, ok := schema["maxLength"].(float64); ok {
 		checks = append(checks, "Array.from("+valueExpr+").length <= "+jsonNumber(maxLength))
@@ -305,12 +301,6 @@ func (g *typeScriptGenerator) runtimeObjectValidatorExpression(valueExpr string,
 			checks = append(checks, "(!atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+") || "+check+")")
 		}
 	}
-	dependencies, err := runtimeDependentRequiredExpressions(valueExpr, schema)
-	if err != nil {
-		return "", err
-	}
-	checks = append(checks, dependencies...)
-
 	entriesCheck, err := g.runtimeObjectEntriesValidatorExpression(valueExpr, keys, patterns, schema["additionalProperties"], seenRefs)
 	if err != nil {
 		return "", err
@@ -319,44 +309,6 @@ func (g *typeScriptGenerator) runtimeObjectValidatorExpression(valueExpr string,
 		checks = append(checks, entriesCheck)
 	}
 	return "(" + strings.Join(checks, " && ") + ")", nil
-}
-
-func runtimeDependentRequiredExpressions(valueExpr string, schema typeScriptSchema) ([]string, error) {
-	raw, ok := schema["dependentRequired"].(map[string]any)
-	if !ok {
-		return nil, nil
-	}
-	keys := make([]string, 0, len(raw))
-	for key := range raw {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	checks := make([]string, 0, len(keys))
-	for _, key := range keys {
-		rawDependencies, ok := raw[key].([]any)
-		if !ok {
-			return nil, fmt.Errorf("dependentRequired[%s] is not an array", key)
-		}
-		dependencies := make([]string, 0, len(rawDependencies))
-		for _, rawDependency := range rawDependencies {
-			dependency, ok := rawDependency.(string)
-			if !ok {
-				return nil, fmt.Errorf("dependentRequired[%s] contains non-string dependency", key)
-			}
-			dependencies = append(dependencies, dependency)
-		}
-		sort.Strings(dependencies)
-		if len(dependencies) == 0 {
-			continue
-		}
-		dependencyChecks := make([]string, 0, len(dependencies))
-		for _, dependency := range dependencies {
-			dependencyChecks = append(dependencyChecks, "atlasProtocolHasOwn("+valueExpr+", "+jsonString(dependency)+")")
-		}
-		checks = append(checks, "(!atlasProtocolHasOwn("+valueExpr+", "+jsonString(key)+") || ("+strings.Join(dependencyChecks, " && ")+"))")
-	}
-	return checks, nil
 }
 
 func (g *typeScriptGenerator) runtimeObjectEntriesValidatorExpression(valueExpr string, propKeys []string, patterns map[string]any, additional any, seenRefs map[string]bool) (string, error) {
@@ -443,42 +395,4 @@ func (g *typeScriptGenerator) runtimeUnionValidatorExpression(valueExpr string, 
 		return "", fmt.Errorf("runtime union has no schema branches")
 	}
 	return "(" + strings.Join(uniqueStrings(parts), " || ") + ")", nil
-}
-
-func (g *typeScriptGenerator) runtimeOneOfValidatorExpression(valueExpr string, items []any, seenRefs map[string]bool) (string, error) {
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		schema, ok := item.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("unsupported runtime oneOf item %T", item)
-		}
-		expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, schema, seenRefs)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, expression)
-	}
-	if len(parts) == 0 {
-		return "", fmt.Errorf("runtime oneOf has no schema branches")
-	}
-	return "([" + strings.Join(parts, ", ") + "].filter((valid) => valid).length === 1)", nil
-}
-
-func (g *typeScriptGenerator) runtimeAllOfValidatorExpression(valueExpr string, items []any, seenRefs map[string]bool) (string, error) {
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		schema, ok := item.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("unsupported runtime allOf item %T", item)
-		}
-		expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, schema, seenRefs)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, expression)
-	}
-	if len(parts) == 0 {
-		return "", fmt.Errorf("runtime allOf has no schema branches")
-	}
-	return "(" + strings.Join(uniqueStrings(parts), " && ") + ")", nil
 }

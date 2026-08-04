@@ -530,7 +530,6 @@ override uses:
 
 - username: `admin`
 - password: `password`
-- role: `admin`
 
 This credential is development-only scratch state. The default `atlas.py --dev` launcher instead generates `ATLAS_ADMIN_PASSWORD` in the owner-only `atlas_core/docker/.env.local`. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 

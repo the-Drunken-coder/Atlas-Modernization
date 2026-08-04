@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -191,7 +192,7 @@ func TestTypeScriptSourceGeneratesTaskCreateValidatorFromSchema(t *testing.T) {
 				"required": ["task_id"],
 				"$defs": {
 					"#JSONValue": {
-						"oneOf": [
+						"anyOf": [
 							{ "type": "null" },
 							{ "type": "boolean" },
 							{ "type": "string" },
@@ -439,41 +440,39 @@ func TestTypeScriptSourceGeneratesArrayBoundsAndStrictRFC3339Validators(t *testi
 	}
 }
 
-func TestTypeScriptSourceGeneratesExactOneOfValidators(t *testing.T) {
-	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
-		"TaskCreateRequest": []byte(`{
-			"type": "object",
-			"additionalProperties": false,
-			"properties": {
-				"choice": {
-					"oneOf": [
-						{ "type": "string" },
-						{ "type": "string", "minLength": 2 }
-					]
-				},
-				"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
-			},
-			"required": ["choice", "task_id"],
-			"$defs": {
-				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
-			}
-		}`),
-	})
-	if err != nil {
-		t.Fatalf("typeScriptSource: %v", err)
-	}
-	text := string(source)
-	for _, want := range []string{
-		`[typeof value["choice"] === "string", typeof value["choice"] === "string" && Array.from(value["choice"]).length >= 2].filter((valid) => valid).length === 1`,
-		`function atlasProtocolStringMatches(value: string, pattern: string): boolean`,
+func TestTypeScriptSourceRejectsUnsupportedRuntimeValidatorKeywords(t *testing.T) {
+	for _, test := range []struct {
+		keyword string
+		schema  string
+	}{
+		{keyword: "allOf", schema: `{"allOf":[{"type":"string"}]}`},
+		{keyword: "dependentRequired", schema: `{"type":"object","dependentRequired":{"url":["label"]}}`},
+		{keyword: "minLength", schema: `{"type":"string","minLength":2}`},
+		{keyword: "oneOf", schema: `{"oneOf":[{"type":"string"},{"type":"number"}]}`},
 	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
-		}
+		t.Run(test.keyword, func(t *testing.T) {
+			_, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+				"TaskCreateRequest": []byte(fmt.Sprintf(`{
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"choice": %s,
+						"task_id": { "$ref": "#/$defs/%%23NonEmptyString" }
+					},
+					"required": ["choice", "task_id"],
+					"$defs": {
+						"#NonEmptyString": { "type": "string", "pattern": "\\S" }
+					}
+				}`, test.schema)),
+			})
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("unsupported runtime validator keyword %q", test.keyword)) {
+				t.Fatalf("typeScriptSource error = %v, want unsupported %s error", err, test.keyword)
+			}
+		})
 	}
 }
 
-func TestTypeScriptSourceGeneratesStringPatternAndLengthValidators(t *testing.T) {
+func TestTypeScriptSourceGeneratesStringPatternAndMaxLengthValidators(t *testing.T) {
 	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
 		"TaskCreateRequest": []byte(`{
 			"type": "object",
@@ -482,7 +481,6 @@ func TestTypeScriptSourceGeneratesStringPatternAndLengthValidators(t *testing.T)
 				"code": {
 					"type": "string",
 					"pattern": "^[A-Z]+$",
-					"minLength": 2,
 					"maxLength": 4
 				},
 				"task_id": { "$ref": "#/$defs/%23NonEmptyString" }
@@ -500,7 +498,6 @@ func TestTypeScriptSourceGeneratesStringPatternAndLengthValidators(t *testing.T)
 	for _, want := range []string{
 		`typeof value["code"] === "string"`,
 		`atlasProtocolStringMatches(value["code"], "^[A-Z]+$")`,
-		`Array.from(value["code"]).length >= 2`,
 		`Array.from(value["code"]).length <= 4`,
 	} {
 		if !strings.Contains(text, want) {
@@ -512,7 +509,7 @@ func TestTypeScriptSourceGeneratesStringPatternAndLengthValidators(t *testing.T)
 	}
 }
 
-func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *testing.T) {
+func TestTypeScriptSourceGeneratesPatternOnlyValidators(t *testing.T) {
 	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
 		"EntityCreateRequest": []byte(`{
 			"type": "object",
@@ -526,9 +523,6 @@ func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *t
 					"properties": {
 						"url": { "type": "string" },
 						"label": { "type": "string" }
-					},
-					"dependentRequired": {
-						"url": ["label"]
 					}
 				},
 				"labels": {
@@ -551,7 +545,6 @@ func TestTypeScriptSourceGeneratesDependentRequiredAndPatternOnlyValidators(t *t
 	for _, want := range []string{
 		`"labels"?: {`,
 		"[key: `custom_${string}`]: string;",
-		`(!atlasProtocolHasOwn(value["reference"], "url") || (atlasProtocolHasOwn(value["reference"], "label")))`,
 		`Object.entries(value["labels"]).every(([key, item]) => atlasProtocolKnownKeys([], key) || ((atlasProtocolKeyMatches(key, "^custom_")) ? ((!atlasProtocolKeyMatches(key, "^custom_") || (typeof item === "string"))) : false))`,
 	} {
 		if !strings.Contains(text, want) {

@@ -77,7 +77,7 @@ describe("AtlasClient HTTP", () => {
     const fetchImpl: typeof fetch = async function (this: unknown, url) {
       receivers.push(this);
       const body = String(url).includes("/admin/")
-        ? { user: { username: "admin", role: "admin" } }
+        ? { user: { username: "admin" } }
         : {
             entities: [],
             tasks: [],
@@ -179,7 +179,7 @@ describe("AtlasClient HTTP", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ user: { username: "admin", role: "admin" } }), {
+      return new Response(JSON.stringify({ user: { username: "admin" } }), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });

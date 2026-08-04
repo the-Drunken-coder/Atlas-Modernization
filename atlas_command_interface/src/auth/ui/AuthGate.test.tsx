@@ -116,7 +116,7 @@ describe("AuthGate", () => {
       .fn()
       .mockRejectedValueOnce(new Error("Core is unavailable"))
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+        new Response(JSON.stringify({ user: { username: "operator" } }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         })
@@ -167,7 +167,7 @@ describe("AuthGate", () => {
     const user = userEvent.setup();
     const fetchStub = stubFetch([
       { status: 401, body: { success: false, error_code: "UNAUTHORIZED", message: "unauthorized" } },
-      { status: 200, body: { user: { username: "operator", role: "admin" } } }
+      { status: 200, body: { user: { username: "operator" } } }
     ]);
 
     render(
@@ -232,7 +232,7 @@ describe("AuthGate", () => {
   });
 
   it("keeps account controls available without a sidebar child", async () => {
-    stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
+    stubFetch([{ status: 200, body: { user: { username: "operator" } } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -246,7 +246,7 @@ describe("AuthGate", () => {
 
   it("dismisses the account menu with Escape or an outside click", async () => {
     const user = userEvent.setup();
-    stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
+    stubFetch([{ status: 200, body: { user: { username: "operator" } } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -269,9 +269,7 @@ describe("AuthGate", () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), { status: 200 })
-      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { username: "operator" } }), { status: 200 }))
       .mockImplementationOnce(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -291,10 +289,7 @@ describe("AuthGate", () => {
 
   it("logs out through Core and returns focus to the login form", async () => {
     const user = userEvent.setup();
-    const fetchStub = stubFetch([
-      { status: 200, body: { user: { username: "operator", role: "admin" } } },
-      { status: 204 }
-    ]);
+    const fetchStub = stubFetch([{ status: 200, body: { user: { username: "operator" } } }, { status: 204 }]);
 
     render(
       <AuthGate baseUrl="https://core.test">
@@ -319,7 +314,7 @@ describe("AuthGate", () => {
   it("keeps the workspace mounted when logout fails", async () => {
     const user = userEvent.setup();
     stubFetch([
-      { status: 200, body: { user: { username: "operator", role: "admin" } } },
+      { status: 200, body: { user: { username: "operator" } } },
       { status: 503, body: { message: "logout unavailable" } }
     ]);
 
@@ -338,7 +333,7 @@ describe("AuthGate", () => {
   });
 
   it("returns to logged-out state when Atlas auth expires", async () => {
-    stubFetch([{ status: 200, body: { user: { username: "operator", role: "admin" } } }]);
+    stubFetch([{ status: 200, body: { user: { username: "operator" } } }]);
 
     render(
       <AuthGate baseUrl="https://core.test">

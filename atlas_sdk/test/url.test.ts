@@ -62,7 +62,7 @@ describe("Atlas URL handling", () => {
     const fetchImpl: typeof fetch = async (input) => {
       calls.push(String(input));
       if (String(input).endsWith("/admin/auth/me")) {
-        return Response.json({ user: { username: "admin", role: "admin" } });
+        return Response.json({ user: { username: "admin" } });
       }
       return Response.json({
         entities: [],

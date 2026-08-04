@@ -194,14 +194,10 @@ func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
 	sessionID := feedIntegrationSessionID(token)
 	account := admin.AccountRecord{
 		Username: username,
-		Role:     "admin",
-		Disabled: false,
 	}
 	session := admin.SessionRecord{
 		AccountID: accountID,
 		Username:  username,
-		Role:      "admin",
-		CreatedAt: now,
 		ExpiresAt: now.Add(time.Hour),
 	}
 	if err := storeFeedIntegrationAdminRecord(ctx, pool, accountID, "account", account); err != nil {
