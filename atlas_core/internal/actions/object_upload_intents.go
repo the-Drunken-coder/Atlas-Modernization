@@ -165,10 +165,6 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 		return 0, fmt.Errorf("begin storage upload intent recovery: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockChangeVersion(ctx, tx); err != nil {
-		return 0, fmt.Errorf("lock storage upload intent recovery against object writes: %w", err)
-	}
-
 	rows, err := tx.Query(ctx, `
 		SELECT bucket, path, object_id
 		FROM storage_upload_intents
@@ -199,6 +195,9 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 
 	recovered := 0
 	for _, item := range intents {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, objectUploadLockKey(item.objectID)); err != nil {
+			return 0, fmt.Errorf("lock object upload intent recovery: %w", err)
+		}
 		var live bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
 			return 0, fmt.Errorf("check storage upload intent live reference: %w", err)

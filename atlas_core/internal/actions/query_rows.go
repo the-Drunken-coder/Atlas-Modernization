@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	entitySelectSQL    = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version FROM entities`
-	taskSelectSQL      = `SELECT task_id, status, entity_id, json, created_at, updated_at, version FROM tasks`
-	objectSelectSQL    = `SELECT object_id, path, content_type, type, json, created_at, updated_at, version FROM objects`
-	deletionsSelectSQL = `SELECT resource_id, deleted_at, version, CASE WHEN resource_type = 'task' THEN context->>'entity_id' ELSE NULL END AS entity_id FROM deletions`
+	entitySelectSQL = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version FROM entities`
+	taskSelectSQL   = `SELECT task_id, status, entity_id, json, created_at, updated_at, version FROM tasks`
+	objectSelectSQL = `SELECT object_id, path, content_type, type, json, created_at, updated_at, version FROM objects`
 )
 
 // Allowlists for the identifiers interpolated into cursor-paged SQL. Every value
@@ -21,21 +20,16 @@ const (
 // set keeps the dynamic SQL safe even if a future caller is added carelessly.
 var (
 	allowedSelectFrom = map[string]struct{}{
-		entitySelectSQL:    {},
-		taskSelectSQL:      {},
-		objectSelectSQL:    {},
-		deletionsSelectSQL: {},
+		entitySelectSQL: {},
+		taskSelectSQL:   {},
+		objectSelectSQL: {},
 	}
 	allowedColumns = map[string]struct{}{
-		"entity_id":     {},
-		"task_id":       {},
-		"object_id":     {},
-		"resource_id":   {},
-		"created_at":    {},
-		"updated_at":    {},
-		"deleted_at":    {},
-		"version":       {},
-		"resource_type": {},
+		"entity_id":  {},
+		"task_id":    {},
+		"object_id":  {},
+		"created_at": {},
+		"updated_at": {},
 	}
 )
 
@@ -54,17 +48,6 @@ type cursorPageOpts struct {
 type cursorPageEqFilter struct {
 	column string
 	value  string
-}
-
-type versionCursorPageOpts struct {
-	selectFrom           string
-	idColumn             string
-	sinceVersion         int64
-	snapshotUpperVersion int64
-	continuation         bool
-	cursor               *parsedVersionCursor
-	fetchLimit           int
-	eqFilter             *cursorPageEqFilter
 }
 
 type orderedCursorPageOpts struct {
@@ -155,38 +138,6 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 				))
 			} else {
 				where.addClause(fmt.Sprintf("%s <= %s::timestamptz", opts.timeColumn, where.addArg(opts.snapshotUpperBound)))
-			}
-		},
-	})
-}
-
-func openVersionCursorPagedRows(ctx context.Context, tx pgx.Tx, opts versionCursorPageOpts) (pgx.Rows, error) {
-	if opts.continuation && opts.cursor == nil {
-		return nil, fmt.Errorf("version cursor pagination continuation requires a cursor")
-	}
-
-	return openOrderedCursorPagedRows(ctx, tx, orderedCursorPageOpts{
-		selectFrom:  opts.selectFrom,
-		idColumn:    opts.idColumn,
-		orderColumn: "version",
-		fetchLimit:  opts.fetchLimit,
-		eqFilter:    opts.eqFilter,
-		addBounds: func(where *cursorPageWhere) {
-			if opts.sinceVersion > 0 {
-				where.addClause(fmt.Sprintf("version > %s::bigint", where.addArg(opts.sinceVersion)))
-			}
-
-			if opts.cursor != nil {
-				cursorUpperBound := effectiveVersionCursorUpperBound(opts.cursor, opts.snapshotUpperVersion)
-				if cursorUpperBound > 0 {
-					where.addClause(fmt.Sprintf("version <= %s::bigint", where.addArg(cursorUpperBound)))
-				}
-				where.addClause(fmt.Sprintf("(version, %s) < (%s::bigint, %s::varchar)",
-					opts.idColumn,
-					where.addArg(opts.cursor.version), where.addArg(opts.cursor.id),
-				))
-			} else if opts.snapshotUpperVersion > 0 {
-				where.addClause(fmt.Sprintf("version <= %s::bigint", where.addArg(opts.snapshotUpperVersion)))
 			}
 		},
 	})

@@ -2,17 +2,13 @@ import { AtlasClient, type EntityResource, type JSONValue, type TaskResource } f
 import type { AppConfig } from "../app/config.js";
 import {
   buildCommandTaskRequest,
-  COMMAND_CATALOG_OBJECT_ID,
   type CommandCatalog,
   type CommandDefinition,
-  catalogFromObject,
   coerceParameters
 } from "./command-model.js";
 import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
-
-const CATALOG_REFRESH_RETRY_DELAYS_MS = [1_000, 5_000, 15_000] as const;
 
 export type CommandSubmission = {
   entityId: string;
@@ -24,16 +20,10 @@ export type CommandSubmission = {
 export type ConnectionError = { source: "startup" | "live-sync"; message: string };
 export type ConnectionHealth = { running: boolean; healthy: boolean; degraded: boolean; error?: ConnectionError };
 
-export type CatalogUpdate =
-  | { status: "pending" }
-  | { status: "loaded"; catalog: CommandCatalog }
-  | { status: "failed" }
-  | { status: "deleted" };
-
 export interface AtlasDataSource {
   snapshot(): AtlasSnapshot;
   loadCommandCatalog(): Promise<CommandCatalog>;
-  watch(onSnapshot: (snapshot: AtlasSnapshot) => void, onCatalog?: (update: CatalogUpdate) => void): () => void;
+  watch(onSnapshot: (snapshot: AtlasSnapshot) => void): () => void;
   start(): Promise<void>;
   submitCommand(submission: CommandSubmission): Promise<TaskResource>;
   updateGeometry(entityId: string, geometry: UiGeometry, ifMatchVersion?: number): Promise<EntityResource>;
@@ -54,67 +44,19 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     const { entities, tasks } = client.sync.snapshot();
     return { entities, tasks };
   };
-  let catalogGeneration = 0;
   let startupGeneration = 0;
   let startupError: ConnectionError | undefined;
-  const fetchCommandCatalog = async (): Promise<CommandCatalog> => {
-    const object = await client.objects.get(COMMAND_CATALOG_OBJECT_ID, { fresh: true });
-    return catalogFromObject(object);
-  };
-  const loadCommandCatalog = async (): Promise<CommandCatalog> => {
-    catalogGeneration++;
-    return fetchCommandCatalog();
-  };
 
   return {
     snapshot,
 
-    loadCommandCatalog,
+    loadCommandCatalog: () => client.commandCatalog(),
 
-    watch(onSnapshot, onCatalog) {
-      let active = true;
-      let catalogRetryTimer: ReturnType<typeof setTimeout> | undefined;
-      const clearCatalogRetry = () => {
-        if (catalogRetryTimer === undefined) return;
-        clearTimeout(catalogRetryTimer);
-        catalogRetryTimer = undefined;
-      };
-      const refreshCatalog = async (refresh: number, attempt: number): Promise<void> => {
-        if (!active || refresh !== catalogGeneration) return;
-        try {
-          const catalog = await fetchCommandCatalog();
-          if (active && refresh === catalogGeneration) onCatalog?.({ status: "loaded", catalog });
-        } catch {
-          if (!active || refresh !== catalogGeneration) return;
-          const delay = CATALOG_REFRESH_RETRY_DELAYS_MS[attempt];
-          if (delay === undefined) {
-            onCatalog?.({ status: "failed" });
-            return;
-          }
-          catalogRetryTimer = setTimeout(() => {
-            catalogRetryTimer = undefined;
-            void refreshCatalog(refresh, attempt + 1);
-          }, delay);
-        }
-      };
+    watch(onSnapshot) {
       const unsubscribe = client.watch({ filter: "all" }, (_value, event) => {
         if (event.resource_type === "entity" || event.resource_type === "task") onSnapshot(snapshot());
-        if (!onCatalog || event.resource_type !== "object" || event.id !== COMMAND_CATALOG_OBJECT_ID) return;
-
-        const refresh = ++catalogGeneration;
-        clearCatalogRetry();
-        if (event.event === "delete" || event.event === "local_delete") onCatalog({ status: "deleted" });
-        else {
-          onCatalog({ status: "pending" });
-          void refreshCatalog(refresh, 0);
-        }
       });
-      return () => {
-        active = false;
-        catalogGeneration++;
-        clearCatalogRetry();
-        unsubscribe();
-      };
+      return unsubscribe;
     },
 
     async start() {

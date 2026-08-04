@@ -7,7 +7,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 ## What Lives Here
 
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
-- `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, command catalog parsing, and command targeting.
+- `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, typed command-catalog consumption, and command targeting.
 - `src/ui/` - the local design system.
 - `src/features/` - feature screens and panels.
 - `src/app/` - config loading, providers, routing, and the Vite entry point.
@@ -56,7 +56,7 @@ Use Node 24 LTS from the repository root `.nvmrc`.
    python3 atlas_core/scripts/atlas.py --dev
    ```
 
-   `atlas.py` starts Docker Compose and waits for PostgreSQL, MinIO, and the API. Atlas Core publishes the embedded command catalog through the object API before serving requests, so an API-only restart also restores or refreshes it. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `atlas_core/docker/.env.local`.
+   `atlas.py` starts Docker Compose and waits for PostgreSQL, MinIO, and the API. Atlas Core serves the embedded command catalog directly at `/command-catalog`, independent of the object store. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `atlas_core/docker/.env.local`.
    If an old local Postgres volume has stale credentials, run `python3 atlas_core/scripts/atlas.py --dev --reset-volumes`.
 
 3. Build the local SDK package and run the Vite app:

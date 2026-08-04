@@ -1,5 +1,6 @@
 import {
   ATLAS_PROTOCOL_REVISION,
+  type CommandCatalog,
   type EntityComponents,
   type EntityCreateRequest,
   type EntityResource,
@@ -15,7 +16,7 @@ import {
   type TaskUpdateRequest
 } from "../../src";
 import type { WebSocketCtor } from "../../src/types.js";
-import { deleted, isDelete, isEntityUpsert, isObjectUpsert, isTaskUpsert, recordLedgerEvent } from "./event-ledger.js";
+import { recordLedgerEvent } from "./event-ledger.js";
 import { FakeWebSocket } from "./fake-websocket.js";
 import { metadata, taskFromCreateRequest } from "./fixtures.js";
 import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError, readBody } from "./http.js";
@@ -30,7 +31,7 @@ export class FakeCore {
   tasks = new Map<string, TaskResource>();
   objects = new Map<string, ObjectResource>();
   objectExtras = new Map<string, Record<string, unknown>>();
-  deletions: FeedEvent[] = [];
+  deleteEvents: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
   feedConnections = 0;
@@ -39,12 +40,25 @@ export class FakeCore {
   feedAuthFrames: Array<{ apiKey?: string }> = [];
   expectedFeedApiKey: string | undefined;
   fullLimitPerType = 0;
-  changedSinceLimitPerType = 0;
+  changedSinceLimit = 0;
   readonly recordedVersions = new Set<number>();
   rejectFeedAuth = false;
   failChangedSince = false;
   objectDownloadCount = 0;
   onObjectDownload: ((id: string) => void) | undefined;
+  readonly commandCatalog: CommandCatalog = {
+    type: "command_catalog",
+    name: "Atlas Command Catalog",
+    description: "Fake Core catalog",
+    commands: [
+      {
+        id: "hold_position",
+        name: "Hold Position",
+        description: "Hold here.",
+        parameters_schema: {}
+      }
+    ]
+  };
 
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
@@ -62,6 +76,7 @@ export class FakeCore {
       return protocolError("Invalid URL path", "VALIDATION_ERROR", 400);
     }
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
+    if (path === "/command-catalog" && method === "GET") return json(this.commandCatalog);
     if (path === "/queries/full" || path === "/queries/changed-since") return this.queryResponse(parsed, method);
     if (segments[0] === "entities") {
       return this.entityResponse(parsed, segments, method, init, ifMatch);
@@ -134,55 +149,11 @@ export class FakeCore {
       return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
     }
     const changed = this.events.filter((event) => event.version > since);
-    const entityPage = pageValues(
-      changed.filter(isEntityUpsert).map((event) => event.resource),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("entity_cursor")
-    );
-    const taskPage = pageValues(
-      changed.filter(isTaskUpsert).map((event) => event.resource),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("task_cursor")
-    );
-    const objectPage = pageValues(
-      changed.filter(isObjectUpsert).map((event) => this.objectDetail(event.resource)),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("object_cursor")
-    );
-    const deletedEntityPage = pageValues(
-      changed.filter(isDelete("entity")).map(deleted),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("deleted_entity_cursor")
-    );
-    const deletedTaskPage = pageValues(
-      changed.filter(isDelete("task")).map(deleted),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("deleted_task_cursor")
-    );
-    const deletedObjectPage = pageValues(
-      changed.filter(isDelete("object")).map(deleted),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("deleted_object_cursor")
-    );
+    const page = pageValues(changed, this.changedSinceLimit, parsed.searchParams.get("cursor"));
     return json({
-      entities: entityPage.items,
-      tasks: taskPage.items,
-      objects: objectPage.items,
-      deleted_entities: deletedEntityPage.items,
-      deleted_tasks: deletedTaskPage.items,
-      deleted_objects: deletedObjectPage.items,
-      has_more_entities: entityPage.hasMore,
-      has_more_tasks: taskPage.hasMore,
-      has_more_objects: objectPage.hasMore,
-      has_more_deleted_entities: deletedEntityPage.hasMore,
-      has_more_deleted_tasks: deletedTaskPage.hasMore,
-      has_more_deleted_objects: deletedObjectPage.hasMore,
-      next_entity_cursor: entityPage.nextCursor,
-      next_task_cursor: taskPage.nextCursor,
-      next_object_cursor: objectPage.nextCursor,
-      next_deleted_entity_cursor: deletedEntityPage.nextCursor,
-      next_deleted_task_cursor: deletedTaskPage.nextCursor,
-      next_deleted_object_cursor: deletedObjectPage.nextCursor,
+      events: page.items,
+      has_more: page.hasMore,
+      next_cursor: page.nextCursor,
       version: this.version
     });
   }

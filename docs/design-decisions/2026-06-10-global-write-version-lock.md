@@ -1,10 +1,10 @@
 # Global Write Version Lock
 
-1. **Time & Date:** 2026-06-10 America/New_York
-2. **Name:** Global advisory lock for write versions
-3. **Context:** Atlas Core exposes `GET /queries/changed-since` as a sync cursor over entity, task, object, and tombstone `version` values. Those versions come from one PostgreSQL sequence, but sequence values alone do not serialize concurrent transactions or guarantee that commit visibility follows version order.
-4. **Decision:** Keep the transaction-scoped advisory lock in `actions/write_version.go` for resource write transactions. The lock serializes writes before row versions are allocated and committed, making `version` a safe global changed-since cursor.
-5. **Alternatives considered:** Per-table cursors were rejected because clients would need to track multiple independent positions. `updated_at` cursors were rejected because clock precision and equal timestamps make stable pagination harder. Removing the lock without a replacement ordering mechanism was rejected because clients could miss writes that commit out of version order.
-6. **Consequences:** Writes are intentionally serialized through one advisory lock, which trades write throughput for a simple and reliable sync contract. If Atlas later needs higher write throughput, the changed-since cursor design should change with it rather than quietly removing this lock.
-7. **Location:** `atlas_core/internal/actions/write_version.go`, `atlas_core/internal/actions/query_actions.go`, `atlas_core/internal/database/db.go`
-8. **Notes:** Related to `docs/design-decisions/2026-06-10-resource-write-concurrency.md`.
+1. **Time & Date:** 2026-06-10 America/New_York (superseded 2026-08-04)
+2. **Name:** Transactional counter row for global write versions
+3. **Context:** Atlas Core exposes one global version cursor through the feed and `GET /queries/changed-since`. The original implementation combined a PostgreSQL sequence with an advisory lock, but sequence increments survive rollback and forced feed/recovery code to compensate for burned versions.
+4. **Decision:** Migration v4 supersedes the sequence/advisory-lock mechanism. Resource writes lock and increment the singleton `atlas_change_clock` row and append their complete `atlas_change_events` row in the same transaction as the resource mutation. Rollback restores the counter and removes the event. The counter row naturally serializes commits, and changed-since reads the event log in that order.
+5. **Alternatives considered:** Per-table cursors were rejected because clients would need multiple independent positions. Timestamp cursors were rejected because equal timestamps complicate stable ordering. Keeping the sequence plus skip bookkeeping was rejected once the transactional counter provided a smaller complete design.
+6. **Consequences:** Writes remain intentionally serialized at version allocation, but committed versions are contiguous and one durable log drives both push and recovery. Higher write throughput would require changing the cursor design rather than quietly bypassing the counter row.
+7. **Location:** `atlas_core/internal/actions/write_version.go`, `atlas_core/internal/actions/change_hook.go`, `atlas_core/internal/actions/query_actions.go`, `atlas_core/internal/database/migrations.go`
+8. **Notes:** Related to `docs/design-decisions/2026-06-10-resource-write-concurrency.md` and the updated websocket feed decision.

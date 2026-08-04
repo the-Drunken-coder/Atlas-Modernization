@@ -22,7 +22,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 ## Event contract
 
 - Events are fat: each frame carries event type, resource type, global `version`, resource ID, and the full serialized resource when present.
-- Deletes are tombstones. Task delete tombstones may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
+- Deletes are versioned events without a `resource` payload. Task delete events may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
 - Object metadata flows over the feed; object content is never pushed.
 - Shapes are authored in JSON Schema, structurally checked against the authored Go API, and generated into TypeScript and Go validators.
 - The envelope is flat:
@@ -35,10 +35,10 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 ## How Core emits events
 
-- Write paths publish only after transaction commit.
-- The hub buffers out-of-order post-commit arrivals and fanouts in global version order.
-- A write transaction that rolls back after consuming sequence values reports those known-missing versions after rollback, so the hub can skip them immediately. The short gap timeout remains the fallback for gaps Core cannot prove missing.
-- Clients treat any version gap as a recovery trigger, so skipped versions preserve liveness without hiding the gap.
+- Every write transaction locks and increments `atlas_change_clock`, writes the resource mutation, and appends the complete validated event to `atlas_change_events` before commit.
+- A rollback removes both the resource mutation and its version increment, so committed versions are contiguous and there are no burned-version gaps to compensate for.
+- PostgreSQL `NOTIFY` only wakes the dispatcher. The dispatcher reads committed rows from the durable log in version order and publishes them through the in-memory subscription hub.
+- `GET /queries/changed-since` pages over that same durable log with one global cursor, so websocket delivery and recovery share one source of truth.
 
 ## Subscriptions
 
@@ -53,7 +53,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 The feed only delivers correctness to cooperating clients. Any consumer — the SDK, the CLI's watch mode, a future Python port — must:
 
 - On initialization, consume every `GET /queries/full` continuation page while retaining the response's repeated `version` as the pre-hydration baseline. Do not advance the global cursor from hydrated resources' individual versions; drain `changed-since` from the baseline before declaring synchronization current.
-- Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Tombstones count as versioned state, so a stale resource payload can never resurrect a newer delete.
+- Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Delete events count as versioned state, so a stale resource payload can never resurrect a newer delete.
 - On a version gap in the stream: call `GET /queries/changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
 - On reconnect: one `changed-since` call from the last known version restores consistency.
 
@@ -65,6 +65,6 @@ The feed is validated by simulation against ground truth, not just unit tests. T
 
 Three layers implement this philosophy:
 
-- `atlas_core/internal/feed/simulation_test.go` — a faked Core ledger driving the real feed hub: realistic entity/task/object traffic, deliberately out-of-order publishes, dropped connections, forced gaps, ledger audits. Fast and deterministic.
-- `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → post-commit hook → hub → websocket client, including the burned-version regression (a real 409 burning a sequence value, with the feed expected to keep flowing).
+- `atlas_core/internal/feed/simulation_test.go` — focused subscription-routing and slow-consumer tests for the fanout hub.
+- `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → transactional event row → durable dispatcher → websocket client, including proof that rejected writes do not advance the change clock.
 - `atlas_sdk/test/` — a sibling ledger-style harness around the TypeScript client with a fake Core/feed transport, running identically in Node and browser.

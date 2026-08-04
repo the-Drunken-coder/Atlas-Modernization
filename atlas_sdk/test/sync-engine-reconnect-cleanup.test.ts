@@ -68,18 +68,8 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       expect(pollRequests).toBe(1);
       releaseRecovery(
         Response.json({
-          entities: [],
-          tasks: [],
-          objects: [],
-          deleted_entities: [],
-          deleted_tasks: [],
-          deleted_objects: [],
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false,
-          has_more_deleted_entities: false,
-          has_more_deleted_tasks: false,
-          has_more_deleted_objects: false,
+          events: [],
+          has_more: false,
           version: core.version
         })
       );
@@ -417,7 +407,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     client.watch({ filter: "id", resource_type: "entity", id: "asset-delete-uncached" }, watch);
 
     await client.entities.delete("asset-delete-uncached");
-    const deleteEvent = core.deletions.at(-1);
+    const deleteEvent = core.deleteEvents.at(-1);
     if (!deleteEvent) throw new Error("fake core did not record delete event");
     core.emit(deleteEvent, { record: false });
 
@@ -431,7 +421,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     expect(watch.mock.calls[0][1]).not.toHaveProperty("version");
   });
 
-  it("keeps local delete tombstones ahead of stale feed updates", async () => {
+  it("keeps local delete markers ahead of stale feed updates", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-stale"));
     const client = new AtlasClient({
@@ -856,12 +846,12 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
     expect(beforeWatch).toHaveBeenCalledWith(
       beforeEntity,
-      expect.objectContaining({ event: "recovered", id: "asset-watch-before" })
+      expect.objectContaining({ event: "update", id: "asset-watch-before" })
     );
     expect(removedWatch).not.toHaveBeenCalled();
     expect(afterWatch).toHaveBeenCalledWith(
       afterEntity,
-      expect.objectContaining({ event: "recovered", id: "asset-watch-after" })
+      expect.objectContaining({ event: "update", id: "asset-watch-after" })
     );
   });
 

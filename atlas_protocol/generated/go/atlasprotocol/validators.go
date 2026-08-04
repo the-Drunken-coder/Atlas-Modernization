@@ -96,6 +96,10 @@ func ValidateCommandComponent(value any) []string {
 	return validator.ValidateCommandComponent(value)
 }
 
+func ValidateCommandCatalog(value any) []string {
+	return validator.ValidateCommandCatalog(value)
+}
+
 func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {
 	return validator.ValidateTaskParametersComponent(value, fieldPrefix)
 }

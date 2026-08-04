@@ -20,22 +20,14 @@ import (
 type ObjectActions struct {
 	pool                  *pgxpool.Pool
 	storage               objectStorage
-	changeSink            ChangeSink
 	uploadHeartbeatPeriod time.Duration
 }
 
 // NewObjectActions creates a new ObjectActions instance.
 func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectActions {
-	return NewObjectActionsWithChangeSink(pool, storageClient, nil)
-}
-
-// NewObjectActionsWithChangeSink creates a new ObjectActions instance that
-// emits committed changes to sink.
-func NewObjectActionsWithChangeSink(pool *pgxpool.Pool, storageClient objectStorage, sink ChangeSink) *ObjectActions {
 	return &ObjectActions{
 		pool:                  pool,
 		storage:               storageClient,
-		changeSink:            sink,
 		uploadHeartbeatPeriod: storageUploadHeartbeatPeriod,
 	}
 }
@@ -99,7 +91,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, err
 	}
 
-	tx, err := beginChangeTx(ctx, a.pool, "object create", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "object create")
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +102,16 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		}
 	}
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
-		INSERT INTO objects (object_id, path, content_type, type, json)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO objects (object_id, path, content_type, type, json, version)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, params.Path, params.ContentType, normalizedType, jsonBytes).Scan(
+	`, objectID, params.Path, params.ContentType, normalizedType, jsonBytes, version).Scan(
 		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
 		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
 	)
@@ -135,17 +131,18 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		}
 		return nil, fmt.Errorf("failed to create object: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit object create transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventCreate,
 		ResourceType: ChangeResourceObject,
 		ID:           obj.ObjectID,
 		Version:      obj.Version,
 		AfterObject:  cloneObjectModel(&obj),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit object create transaction: %w", err)
+	}
 
 	return &obj, nil
 }
@@ -258,7 +255,7 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 
 	// Begin transaction for atomic read-modify-write.
-	tx, err := beginChangeTx(ctx, a.pool, "object update", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "object update")
 	if err != nil {
 		return nil, err
 	}
@@ -312,15 +309,19 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var out models.MediaObject
 	err = tx.QueryRow(ctx, `
 		UPDATE objects
 		SET path = $1, content_type = $2, type = $3, json = $4,
 			updated_at = clock_timestamp(),
-			version = nextval('atlas_change_version_seq')
-		WHERE object_id = $5
+			version = $5
+		WHERE object_id = $6
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, newPath, newContentType, newType, jsonBytes, objectID).Scan(
+	`, newPath, newContentType, newType, jsonBytes, version, objectID).Scan(
 		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
 		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
@@ -342,18 +343,19 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, fmt.Errorf("failed to update object: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventUpdate,
 		ResourceType: ChangeResourceObject,
 		ID:           out.ObjectID,
 		Version:      out.Version,
 		BeforeObject: before,
 		AfterObject:  cloneObjectModel(&out),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
 	return &out, nil
 }
@@ -368,8 +370,7 @@ func beginObjectPreconditionTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx,
 
 func (a *ObjectActions) lockObjectAndCheckExpectedVersion(ctx context.Context, objectID string, expectedVersion *int64) (*models.MediaObject, error) {
 	// This no-op update path only verifies the current row version. It locks the
-	// row but does not allocate a change version, so the global write-version
-	// advisory lock is unnecessary here.
+	// row but does not allocate or record a change version.
 	tx, err := beginObjectPreconditionTx(ctx, a.pool)
 	if err != nil {
 		return nil, err
@@ -430,15 +431,6 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		return fmt.Errorf("failed to delete object: %w", err)
 	}
 
-	// Record tombstone so changed-since can notify clients.
-	var tombstoneVersion int64
-	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, '{}'::jsonb) RETURNING version",
-		ChangeResourceObject, objectID,
-	).Scan(&tombstoneVersion); err != nil {
-		return fmt.Errorf("failed to record object deletion tombstone: %w", err)
-	}
-
 	var queuedBucket, queuedPath string
 	if a.storage != nil && object.Path != nil && strings.TrimSpace(*object.Path) != "" {
 		queuedBucket = strings.TrimSpace(a.storage.Bucket())
@@ -448,17 +440,22 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit delete transaction: %w", err)
+	deleteVersion, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return err
 	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventDelete,
 		ResourceType: ChangeResourceObject,
 		ID:           object.ObjectID,
-		Version:      tombstoneVersion,
+		Version:      deleteVersion,
 		BeforeObject: cloneObjectModel(&object),
-	})
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit delete transaction: %w", err)
+	}
 
 	if queuedPath != "" {
 		if err := a.storage.DeleteObjectPath(ctx, queuedPath); err != nil {

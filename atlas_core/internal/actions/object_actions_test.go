@@ -18,6 +18,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func TestNormalizeOptionalObjectString(t *testing.T) {
@@ -201,22 +202,14 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
-	var beforeObject models.MediaObject
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO objects (object_id, path, json)
-		VALUES ($1, $2, '{}'::jsonb)
-		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, objectPath).Scan(
-		&beforeObject.ObjectID, &beforeObject.Path, &beforeObject.ContentType, &beforeObject.Type,
-		&beforeObject.JSON, &beforeObject.CreatedAt, &beforeObject.UpdatedAt, &beforeObject.Version,
-	); err != nil {
-		t.Fatalf("insert object row: %v", err)
+	beforeObject, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &objectPath})
+	if err != nil {
+		t.Fatalf("create object row: %v", err)
 	}
 
 	storageClient := newPausingDeleteObjectStorage()
 	defer storageClient.releaseDelete()
-	sink := &channelChangeSink{changes: make(chan ResourceChange, 4)}
-	actions := NewObjectActionsWithChangeSink(pool, storageClient, sink)
+	actions := NewObjectActions(pool, storageClient)
 	deleteResult := make(chan error, 1)
 	go func() {
 		deleteResult <- actions.Delete(ctx, objectID)
@@ -226,31 +219,20 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 		t.Fatalf("storage delete path = %q, want %q", got, objectPath)
 	}
 
-	select {
-	case change := <-sink.changes:
-		if change.Event != ChangeEventDelete || change.ResourceType != ChangeResourceObject || change.ID != objectID {
-			t.Fatalf("published change = %#v, want object delete for %s", change, objectID)
-		}
-		if change.BeforeObject == nil {
-			t.Fatal("published delete change BeforeObject is nil")
-		}
-		assertMediaObjectEqual(t, change.BeforeObject, &beforeObject)
-		if change.AfterObject != nil {
-			t.Fatalf("published delete change AfterObject = %#v, want nil", change.AfterObject)
-		}
-		var tombstoneVersion int64
-		if err := pool.QueryRow(ctx, `
-				SELECT version
-				FROM deletions
-				WHERE resource_type = 'object' AND resource_id = $1
-			`, objectID).Scan(&tombstoneVersion); err != nil {
-			t.Fatalf("query deletion tombstone: %v", err)
-		}
-		if change.Version != tombstoneVersion {
-			t.Fatalf("published change version = %d, want tombstone version %d", change.Version, tombstoneVersion)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("delete change was not published while storage cleanup was blocked")
+	var payload []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT event FROM atlas_change_events
+		WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete' AND event->>'id' = $1
+		ORDER BY version DESC LIMIT 1
+	`, objectID).Scan(&payload); err != nil {
+		t.Fatalf("query durable delete event while storage cleanup is blocked: %v", err)
+	}
+	var event protocol.FeedEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("decode durable delete event: %v", err)
+	}
+	if event.Event != ChangeEventDelete || event.ResourceType != ChangeResourceObject || event.ID != objectID || event.Version <= beforeObject.Version {
+		t.Fatalf("durable delete event = %#v, want object delete after version %d", event, beforeObject.Version)
 	}
 
 	storageClient.releaseDelete()
@@ -305,26 +287,26 @@ func TestObjectDeletedAfterUploadPreflight(t *testing.T) {
 	}{
 		{
 			name:      "existing object deleted after preflight",
-			preflight: objectUploadState{rowExists: true, maxDeletionID: 7},
-			current:   objectUploadState{maxDeletionID: 8},
+			preflight: objectUploadState{rowExists: true, maxDeletionVersion: 7},
+			current:   objectUploadState{maxDeletionVersion: 8},
 			want:      true,
 		},
 		{
 			name:      "missing object deleted after preflight",
-			preflight: objectUploadState{rowExists: false, maxDeletionID: 7},
-			current:   objectUploadState{maxDeletionID: 8},
+			preflight: objectUploadState{rowExists: false, maxDeletionVersion: 7},
+			current:   objectUploadState{maxDeletionVersion: 8},
 			want:      true,
 		},
 		{
 			name:      "new object create is allowed when prior tombstone was visible",
-			preflight: objectUploadState{rowExists: false, maxDeletionID: 7},
-			current:   objectUploadState{maxDeletionID: 7},
+			preflight: objectUploadState{rowExists: false, maxDeletionVersion: 7},
+			current:   objectUploadState{maxDeletionVersion: 7},
 			want:      false,
 		},
 		{
 			name:      "existing object unchanged",
-			preflight: objectUploadState{rowExists: true, maxDeletionID: 7},
-			current:   objectUploadState{rowExists: true, maxDeletionID: 7},
+			preflight: objectUploadState{rowExists: true, maxDeletionVersion: 7},
+			current:   objectUploadState{rowExists: true, maxDeletionVersion: 7},
 			want:      false,
 		},
 	}
@@ -559,35 +541,20 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	if rowExists {
 		t.Fatal("object row was resurrected after delete won the upload race")
 	}
-	var resourceType, resourceID string
-	var contextJSON []byte
-	var tombstoneVersion int64
+	var deleteVersion int64
 	if err := pool.QueryRow(ctx, `
-		SELECT resource_type, resource_id, context, version
-		FROM deletions
-		WHERE resource_type = 'object' AND resource_id = $1
-	`, objectID).Scan(&resourceType, &resourceID, &contextJSON, &tombstoneVersion); err != nil {
-		t.Fatalf("query object tombstone: %v", err)
-	}
-	if resourceType != "object" || resourceID != objectID {
-		t.Fatalf("tombstone identity = %s/%s, want object/%s", resourceType, resourceID, objectID)
-	}
-	var gotContext map[string]any
-	if err := json.Unmarshal(contextJSON, &gotContext); err != nil {
-		t.Fatalf("decode object tombstone context: %v", err)
-	}
-	if len(gotContext) != 0 {
-		t.Fatalf("object tombstone context = %#v, want empty", gotContext)
-	}
-	if tombstoneVersion <= 0 {
-		t.Fatalf("object tombstone version = %d, want positive", tombstoneVersion)
+		SELECT version FROM atlas_change_events
+		WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete' AND event->>'id' = $1
+		ORDER BY version DESC LIMIT 1
+	`, objectID).Scan(&deleteVersion); err != nil {
+		t.Fatalf("query object delete event: %v", err)
 	}
 	currentVersion, err := CurrentChangeVersion(ctx, pool)
 	if err != nil {
 		t.Fatalf("CurrentChangeVersion: %v", err)
 	}
-	if currentVersion < tombstoneVersion {
-		t.Fatalf("CurrentChangeVersion = %d, want at least tombstone version %d", currentVersion, tombstoneVersion)
+	if currentVersion < deleteVersion {
+		t.Fatalf("CurrentChangeVersion = %d, want at least delete version %d", currentVersion, deleteVersion)
 	}
 	if !storageClient.deletedPath(initialPath) {
 		t.Fatalf("delete did not remove initial path %q; deleted paths = %#v", initialPath, storageClient.deletedPathsSnapshot())
@@ -605,14 +572,6 @@ type recordingObjectStorage struct {
 	deletedPaths []string
 	deleteErr    error
 	pathCounter  atomic.Int64
-}
-
-type channelChangeSink struct {
-	changes chan ResourceChange
-}
-
-func (s *channelChangeSink) PublishResourceChange(change ResourceChange) {
-	s.changes <- change
 }
 
 func (s *recordingObjectStorage) Bucket() string {
@@ -813,7 +772,8 @@ func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool
 	var ok bool
 	err := pool.QueryRow(ctx, `
 		SELECT to_regclass('public.objects') IS NOT NULL
-			AND to_regclass('public.deletions') IS NOT NULL
+			AND to_regclass('public.atlas_change_events') IS NOT NULL
+			AND to_regclass('public.atlas_change_clock') IS NOT NULL
 			AND to_regclass('public.storage_deletion_outbox') IS NOT NULL
 			AND to_regclass('public.storage_upload_intents') IS NOT NULL
 	`).Scan(&ok)
@@ -824,9 +784,6 @@ func cleanupObjectRaceTestRows(ctx context.Context, t *testing.T, pool *pgxpool.
 	t.Helper()
 	if _, err := pool.Exec(ctx, `DELETE FROM objects WHERE object_id = $1`, objectID); err != nil {
 		t.Errorf("cleanup object row %q: %v", objectID, err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'object' AND resource_id = $1`, objectID); err != nil {
-		t.Errorf("cleanup object deletion rows %q: %v", objectID, err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE object_id = $1`, objectID); err != nil {
 		t.Errorf("cleanup object storage deletion rows %q: %v", objectID, err)

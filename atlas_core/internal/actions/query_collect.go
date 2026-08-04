@@ -2,7 +2,6 @@ package actions
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -178,35 +177,6 @@ func collectObjects(rows pgx.Rows) ([]*models.MediaObject, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating object rows: %w", err)
-	}
-	return out, nil
-}
-
-func collectDeletedResources(rows pgx.Rows, resourceType string) ([]DeletedResource, error) {
-	if rows == nil {
-		return nil, nil
-	}
-	defer rows.Close()
-
-	var out []DeletedResource
-	for rows.Next() {
-		var resourceID string
-		var deletedAt time.Time
-		var version int64
-		var entityID *string
-		if err := rows.Scan(&resourceID, &deletedAt, &version, &entityID); err != nil {
-			return nil, fmt.Errorf("failed to scan deleted resource: %w", err)
-		}
-		out = append(out, DeletedResource{
-			ID:        resourceID,
-			Type:      resourceType,
-			EntityID:  entityID,
-			DeletedAt: deletedAt.UTC().Format(time.RFC3339Nano),
-			Version:   version,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating deleted resource rows: %w", err)
 	}
 	return out, nil
 }

@@ -38,7 +38,7 @@ func TestFeedWithoutHubReturnsServiceUnavailable(t *testing.T) {
 }
 
 func TestFeedConfigNilReturnsServiceUnavailable(t *testing.T) {
-	hub := feed.NewHub(1, feed.Options{})
+	hub := feed.NewHub(feed.Options{})
 	defer hub.Close()
 	handler := &Handler{feedHub: hub, config: nil}
 	rec := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestFeedConfigNilReturnsServiceUnavailable(t *testing.T) {
 }
 
 func TestFeedAuthEnabledWithEmptyKeyReturnsServiceUnavailable(t *testing.T) {
-	hub := feed.NewHub(1, feed.Options{})
+	hub := feed.NewHub(feed.Options{})
 	defer hub.Close()
 	handler := &Handler{
 		feedHub: hub,
@@ -98,7 +98,7 @@ func TestFeedAuthEnabledWithEmptyKeyReturnsServiceUnavailable(t *testing.T) {
 }
 
 func TestFeedRejectsUnauthenticatedWhenAPIAuthDisabled(t *testing.T) {
-	hub := feed.NewHub(1, feed.Options{})
+	hub := feed.NewHub(feed.Options{})
 	defer hub.Close()
 	handler := &Handler{
 		feedHub: hub,

@@ -18,7 +18,6 @@ import { SyncLifecycle } from "./sync-engine-lifecycle.js";
 import { ReconnectTimer } from "./sync-engine-reconnect.js";
 import { RecoveryCoordinator, RecoveryRunner } from "./sync-engine-recovery.js";
 import type {
-  AtlasRecoveredWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
   EntityCheckInBody,
@@ -277,12 +276,7 @@ export class SyncEngine {
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
       if (!isCurrentOperation()) return false;
-      const result = await this.recoveryRunner.run(
-        sinceVersion,
-        isCurrentOperation,
-        (event) => this.applyEvent(event),
-        (event) => this.applyRecoveredEvent(event)
-      );
+      const result = await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyEvent(event));
       if (!isCurrentOperation() || result.superseded) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
@@ -621,7 +615,7 @@ export class SyncEngine {
       }
       return;
     }
-    if ((pendingDelete || current?.deleted) && event.event === "update") {
+    if (pendingDelete && event.event === "update") {
       this.advanceCursor(event, advanceCursor);
       return;
     }
@@ -637,29 +631,6 @@ export class SyncEngine {
     }
     this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
     this.advanceCursor(event, advanceCursor);
-    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
-  }
-
-  private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
-    const key = resourceCacheKey(event.resource_type, event.id);
-    const current = this.cache.entry(event.resource_type, event.id);
-    const previous = current?.value;
-    if (this.cache.pendingDeletes.has(key)) {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
-      return;
-    }
-    if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
-      return;
-    }
-    this.cache.pendingDeletes.delete(key);
-    this.cache.locallyNotifiedDeletes.delete(key);
-    this.cache.cacheResource(
-      event.resource_type,
-      event.id,
-      event.resource,
-      event.resource_type === "object" ? { detail: true } : undefined
-    );
     this.notify(event, this.cache.value(event.resource_type, event.id), previous);
   }
 

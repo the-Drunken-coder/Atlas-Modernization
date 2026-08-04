@@ -3,7 +3,6 @@ export {
   AtlasClient,
   type AtlasClientOptions,
   type AtlasLocalDeleteWatchEvent,
-  type AtlasRecoveredWatchEvent,
   type AtlasSubscription,
   type AtlasWatchEvent,
   type ChangedSinceQueryOptions,
@@ -30,6 +29,9 @@ export {
 } from "./client.js";
 export { type ErrorMessageSanitizerOptions, sanitizeErrorMessage } from "./error-sanitizer.js";
 export type {
+  CommandCatalog,
+  CommandDefinition,
+  CommandParameterSchema,
   EntityComponents,
   EntityCreateRequest,
   EntityResource,
@@ -49,6 +51,7 @@ export type {
 } from "./protocol.js";
 export {
   ATLAS_PROTOCOL_REVISION,
+  isCommandCatalog,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,

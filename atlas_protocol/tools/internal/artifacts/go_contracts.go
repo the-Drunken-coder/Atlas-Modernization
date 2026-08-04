@@ -35,6 +35,12 @@ type goTypeOverride struct {
 var goStructContracts = []goStructContract{
 	{goType: "ErrorResponse"},
 	{goType: "MetadataBlock"},
+	{goType: "CommandParameterSchema", typeOverrides: map[string]goTypeOverride{
+		"minimum": {schemaType: "float64", goType: "*float64"},
+		"maximum": {schemaType: "float64", goType: "*float64"},
+	}},
+	{goType: "CommandDefinition"},
+	{goType: "CommandCatalog"},
 	{goType: "EntityResource"},
 	{goType: "TaskResource"},
 	{goType: "ObjectReference", typeOverrides: map[string]goTypeOverride{

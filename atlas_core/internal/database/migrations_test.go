@@ -50,6 +50,24 @@ func TestPathTombstoneMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestTransactionalChangeStreamMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[3]
+	if actual := migrationChecksum(migration); actual != changeStreamMigrationChecksum {
+		t.Fatalf("transactional change-stream migration checksum = %s, want %s", actual, changeStreamMigrationChecksum)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"CREATE TABLE atlas_change_clock",
+		"CREATE TABLE atlas_change_events",
+		"DROP TABLE deletions",
+		"DROP SEQUENCE atlas_change_version_seq",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("transactional change-stream migration is missing %q", required)
+		}
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
@@ -113,7 +131,10 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 
 	var entityVersion int64
 	if err := db.Pool.QueryRow(ctx, `
-		INSERT INTO entities (entity_id, type) VALUES ('durable-entity', 'asset')
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+		)
+		INSERT INTO entities (entity_id, type, version) SELECT 'durable-entity', 'asset', version FROM next
 		RETURNING version`).Scan(&entityVersion); err != nil {
 		t.Fatalf("insert durable entity: %v", err)
 	}
@@ -251,7 +272,7 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	defer cancel()
 	migrations := coreSchemaMigrations()
 	searchPathMigration := schemaMigration{
-		version:            4,
+		version:            5,
 		name:               "verify_search_path_restoration",
 		fingerprintVersion: fingerprintVersionV1,
 		statements: []string{`DO $$
@@ -270,8 +291,8 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("migration version = %d, want 4", version)
+	if version != 5 {
+		t.Fatalf("migration version = %d, want 5", version)
 	}
 }
 
@@ -306,15 +327,22 @@ func TestProductionSchemaAdoptsExactUnversionedBaseline(t *testing.T) {
 	}
 	assertCurrentMigration(ctx, t, db)
 
-	var sequenceAfter, persistedVersion int64
-	if err := db.Pool.QueryRow(ctx, `SELECT last_value FROM atlas_change_version_seq`).Scan(&sequenceAfter); err != nil {
-		t.Fatalf("read adopted change sequence: %v", err)
+	var clockAfter, persistedVersion int64
+	if err := db.Pool.QueryRow(ctx, `SELECT version FROM atlas_change_clock WHERE singleton`).Scan(&clockAfter); err != nil {
+		t.Fatalf("read adopted change clock: %v", err)
 	}
 	if err := db.Pool.QueryRow(ctx, `SELECT version FROM entities WHERE entity_id = 'legacy-entity'`).Scan(&persistedVersion); err != nil {
 		t.Fatalf("read adopted entity: %v", err)
 	}
-	if sequenceAfter != sequenceBefore || persistedVersion != entityVersion {
-		t.Fatalf("baseline adoption rewrote versions: sequence %d -> %d, entity %d -> %d", sequenceBefore, sequenceAfter, entityVersion, persistedVersion)
+	if clockAfter != sequenceBefore || persistedVersion != entityVersion {
+		t.Fatalf("baseline adoption rewrote versions: sequence %d -> clock %d, entity %d -> %d", sequenceBefore, clockAfter, entityVersion, persistedVersion)
+	}
+	var legacySequenceExists bool
+	if err := db.Pool.QueryRow(ctx, `SELECT to_regclass('atlas_change_version_seq') IS NOT NULL`).Scan(&legacySequenceExists); err != nil {
+		t.Fatalf("check legacy change sequence: %v", err)
+	}
+	if legacySequenceExists {
+		t.Fatal("legacy change sequence still exists after transactional stream migration")
 	}
 	var adminCount int
 	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_records WHERE id = 'legacy-admin'`).Scan(&adminCount); err != nil || adminCount != 1 {
@@ -454,20 +482,23 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("install schema: %v", err)
 	}
-	if _, err := db.Pool.Exec(ctx, `INSERT INTO entities (entity_id, type) VALUES ('rollback-entity', 'asset')`); err != nil {
+	if _, err := db.Pool.Exec(ctx, `
+		WITH next AS (UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version)
+		INSERT INTO entities (entity_id, type, version) SELECT 'rollback-entity', 'asset', version FROM next
+	`); err != nil {
 		t.Fatalf("insert rollback sentinel: %v", err)
 	}
 
 	migrations := coreSchemaMigrations()
 	failing := schemaMigration{
-		version:            4,
+		version:            5,
 		name:               "deliberate_rollback_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE entities ADD COLUMN rollback_probe TEXT`, `THIS IS NOT VALID SQL`},
 	}
 	failing.checksum = migrationChecksum(failing)
 	migrations = append(migrations, failing)
-	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 4") {
+	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 5") {
 		t.Fatalf("failing migration error = %v", err)
 	}
 
@@ -500,7 +531,10 @@ func TestScratchSchemaRestartDropsResourcesButPreservesAdminRecords(t *testing.T
 	if err := db.EnsureTables(ctx); err != nil {
 		t.Fatalf("install scratch schema: %v", err)
 	}
-	if _, err := db.Pool.Exec(ctx, `INSERT INTO entities (entity_id, type) VALUES ('scratch-entity', 'asset')`); err != nil {
+	if _, err := db.Pool.Exec(ctx, `
+		WITH next AS (UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version)
+		INSERT INTO entities (entity_id, type, version) SELECT 'scratch-entity', 'asset', version FROM next
+	`); err != nil {
 		t.Fatalf("insert scratch entity: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `INSERT INTO admin_records (id, type, json) VALUES ('scratch-admin', 'test', '{}')`); err != nil {
@@ -530,7 +564,8 @@ func TestScratchSchemaRestartDropsResourcesButPreservesAdminRecords(t *testing.T
 	}
 	var resetVersion int64
 	if err := db.Pool.QueryRow(ctx, `
-		INSERT INTO entities (entity_id, type) VALUES ('scratch-after-reset', 'asset')
+		WITH next AS (UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version)
+		INSERT INTO entities (entity_id, type, version) SELECT 'scratch-after-reset', 'asset', version FROM next
 		RETURNING version`).Scan(&resetVersion); err != nil {
 		t.Fatalf("insert resource after scratch reset: %v", err)
 	}

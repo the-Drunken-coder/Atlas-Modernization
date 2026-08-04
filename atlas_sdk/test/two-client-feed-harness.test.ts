@@ -89,7 +89,7 @@ describe("two-client feed harness", () => {
         core.requests = [];
 
         await deleteResource(writer, scenario.resource_type, scenario.id);
-        const deletion = core.deletions.at(-1);
+        const deletion = core.deleteEvents.at(-1);
         expect(deletion).toEqual(expect.objectContaining({ id: scenario.id, resource_type: scenario.resource_type }));
 
         await vi.waitFor(

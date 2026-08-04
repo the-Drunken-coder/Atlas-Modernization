@@ -2,6 +2,7 @@ import { ObjectContentCache, ResourceCache } from "./cache.js";
 import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport } from "./http.js";
 import type {
+  CommandCatalog,
   EntityCreateRequest,
   EntityResource,
   EntityUpdateRequest,
@@ -36,6 +37,7 @@ import type {
 } from "./types.js";
 import {
   changedSinceResponseValidator,
+  isCommandCatalog,
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
@@ -46,7 +48,6 @@ export { ProtocolMismatchError } from "./feed-connection.js";
 export { AtlasAPIError, ConflictError } from "./http.js";
 export type {
   AtlasLocalDeleteWatchEvent,
-  AtlasRecoveredWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
   ChangedSinceQueryOptions,
@@ -216,6 +217,9 @@ export class AtlasClient {
       )
   };
 
+  readonly commandCatalog = (): Promise<CommandCatalog> =>
+    this.transport.json("GET", "/command-catalog", isCommandCatalog);
+
   sync = {
     start: async () => {
       await this.engine.start();
@@ -363,13 +367,8 @@ function fullDatasetQueryPath(options?: FullDatasetQueryOptions): string {
 function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQueryOptions): string {
   return pathWithQuery("/queries/changed-since", {
     since_version: String(sinceVersion),
-    limit_per_type: options?.limitPerType === undefined ? undefined : String(options.limitPerType),
-    entity_cursor: options?.entityCursor,
-    task_cursor: options?.taskCursor,
-    object_cursor: options?.objectCursor,
-    deleted_entity_cursor: options?.deletedEntityCursor,
-    deleted_task_cursor: options?.deletedTaskCursor,
-    deleted_object_cursor: options?.deletedObjectCursor
+    limit: options?.limit === undefined ? undefined : String(options.limit),
+    cursor: options?.cursor
   });
 }
 

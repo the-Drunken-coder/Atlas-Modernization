@@ -31,7 +31,7 @@ import (
 
 const feedIntegrationAPIKey = "feed-integration-key"
 
-func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
+func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
 	ctx := context.Background()
 	currentVersion, err := actions.CurrentChangeVersion(ctx, pool)
@@ -39,10 +39,11 @@ func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
 		t.Fatalf("read current change version: %v", err)
 	}
 
-	// A one-hour fallback makes the test depend on explicit rejected-write gap
-	// reporting rather than eventually passing through the timeout path.
-	hub := feed.NewHub(currentVersion, feed.Options{MissingVersionTimeout: time.Hour})
+	hub := feed.NewHub(feed.Options{})
 	defer hub.Close()
+	dispatchCtx, stopDispatcher := context.WithCancel(ctx)
+	defer stopDispatcher()
+	go feed.NewDispatcher(pool, hub, currentVersion).Run(dispatchCtx)
 	handler := NewHandlerWithFeed(
 		&atlasdb.DB{Pool: pool},
 		nil,
@@ -91,8 +92,8 @@ func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read version after duplicate create: %v", err)
 	}
-	if duplicateVersion != first.Metadata.Version+1 {
-		t.Fatalf("duplicate create sequence version = %d, want %d", duplicateVersion, first.Metadata.Version+1)
+	if duplicateVersion != first.Metadata.Version {
+		t.Fatalf("duplicate create advanced version to %d, want %d", duplicateVersion, first.Metadata.Version)
 	}
 
 	postTaskIntegration(t, server.URL, prefix+"-missing-entity-task", missingEntityID, http.StatusNotFound)
@@ -100,8 +101,8 @@ func TestFeedSkipsRejectedWriteVersionsWithoutGapTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read version after missing-entity task: %v", err)
 	}
-	if missingTaskVersion != duplicateVersion+1 {
-		t.Fatalf("missing-entity task sequence version = %d, want %d", missingTaskVersion, duplicateVersion+1)
+	if missingTaskVersion != duplicateVersion {
+		t.Fatalf("missing-entity task advanced version to %d, want %d", missingTaskVersion, duplicateVersion)
 	}
 
 	second := postEntityIntegration(t, server.URL, secondID, http.StatusCreated)
@@ -217,7 +218,7 @@ func TestFeedAPIKeyTakesPrecedenceOverSessionOrigin(t *testing.T) {
 		}
 	})
 
-	hub := feed.NewHub(0, feed.Options{})
+	hub := feed.NewHub(feed.Options{})
 	defer hub.Close()
 	handler := NewHandlerWithFeed(
 		&atlasdb.DB{Pool: pool},
@@ -327,16 +328,9 @@ func feedIntegrationCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (
 		SELECT to_regclass('public.entities') IS NOT NULL
 			AND to_regclass('public.tasks') IS NOT NULL
 			AND to_regclass('public.objects') IS NOT NULL
-			AND to_regclass('public.deletions') IS NOT NULL
-			AND EXISTS (
-				SELECT 1
-				FROM information_schema.columns
-				WHERE table_schema = 'public'
-					AND table_name = 'deletions'
-					AND column_name = 'context'
-			)
+			AND to_regclass('public.atlas_change_clock') IS NOT NULL
+			AND to_regclass('public.atlas_change_events') IS NOT NULL
 			AND to_regclass('public.admin_records') IS NOT NULL
-			AND to_regclass('public.atlas_change_version_seq') IS NOT NULL
 	`).Scan(&ok)
 	return ok, err
 }

@@ -1,16 +1,15 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { parseCommandCatalog } from "../../atlas/command-model.js";
 import { commandsForTargeting, formParameters } from "../../atlas/command-targeting.js";
 import { CommandForm } from "./CommandForm.js";
 import { CommandList } from "./CommandList.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-const catalog = parseCommandCatalog({
+const catalog: CommandCatalog = {
   type: "command_catalog",
   name: "Catalog",
   description: "Test",
@@ -27,8 +26,8 @@ const catalog = parseCommandCatalog({
         altitude_m: { type: "number", description: "Altitude", minimum: 0, maximum: 500, required: true }
       }
     }
-  ] as JSONValue[]
-} as unknown);
+  ]
+};
 
 function asset(supported: string[]): EntityResource {
   return {

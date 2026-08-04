@@ -108,14 +108,3 @@ func parseFullDatasetLimits(r *http.Request) (*actions.FullDatasetLimits, string
 		ObjectCursor: optionalQueryString(q, "object_cursor"),
 	}, "", nil
 }
-
-func changedSinceCursorsFromQuery(q url.Values) actions.ChangedSinceCursors {
-	return actions.ChangedSinceCursors{
-		EntityCursor:        optionalQueryString(q, "entity_cursor"),
-		TaskCursor:          optionalQueryString(q, "task_cursor"),
-		ObjectCursor:        optionalQueryString(q, "object_cursor"),
-		DeletedEntityCursor: optionalQueryString(q, "deleted_entity_cursor"),
-		DeletedTaskCursor:   optionalQueryString(q, "deleted_task_cursor"),
-		DeletedObjectCursor: optionalQueryString(q, "deleted_object_cursor"),
-	}
-}

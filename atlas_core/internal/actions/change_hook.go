@@ -1,7 +1,13 @@
 package actions
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
@@ -18,7 +24,9 @@ const (
 	ChangeResourceObject ChangeResource = protocol.ResourceTypeObject
 )
 
-// ResourceChange is emitted only after a write transaction commits.
+// ResourceChange describes one resource mutation before it is recorded in the
+// durable change stream. The resource version must already be allocated from
+// atlas_change_clock in the same transaction.
 type ResourceChange struct {
 	Event        ChangeEvent
 	ResourceType ChangeResource
@@ -33,11 +41,12 @@ type ResourceChange struct {
 	AfterObject  *models.MediaObject
 }
 
-// ChangeSink receives committed resource changes. PublishResourceChange should
-// complete within 10ms under normal load; delegate slower work to a buffered
-// queue or worker and return immediately.
-type ChangeSink interface {
-	PublishResourceChange(ResourceChange)
+// ChangeRecord is the durable event plus task routing context used by feed
+// subscriptions. Event is the canonical recovery payload.
+type ChangeRecord struct {
+	Event              protocol.FeedEvent
+	BeforeTaskEntityID string
+	AfterTaskEntityID  string
 }
 
 func cloneRawMessage(raw []byte) []byte {
@@ -102,15 +111,123 @@ func cloneObjectModel(object *models.MediaObject) *models.MediaObject {
 	}
 }
 
-func publishChange(sink ChangeSink, change ResourceChange) {
-	if sink == nil {
-		return
+func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
+	event := protocol.FeedEvent{
+		Event:        change.Event,
+		ResourceType: change.ResourceType,
+		ID:           change.ID,
+		Version:      change.Version,
 	}
-	change.BeforeEntity = cloneEntityModel(change.BeforeEntity)
-	change.AfterEntity = cloneEntityModel(change.AfterEntity)
-	change.BeforeTask = cloneTaskModel(change.BeforeTask)
-	change.AfterTask = cloneTaskModel(change.AfterTask)
-	change.BeforeObject = cloneObjectModel(change.BeforeObject)
-	change.AfterObject = cloneObjectModel(change.AfterObject)
-	sink.PublishResourceChange(change)
+	record := ChangeRecord{Event: event}
+	switch change.ResourceType {
+	case ChangeResourceEntity:
+		if change.Event != ChangeEventDelete {
+			if change.AfterEntity == nil {
+				return ChangeRecord{}, fmt.Errorf("entity %s event missing after state", change.Event)
+			}
+			event.Resource = serializers.SerializeEntity(change.AfterEntity)
+		}
+	case ChangeResourceTask:
+		record.BeforeTaskEntityID = taskEntityID(change.BeforeTask)
+		record.AfterTaskEntityID = taskEntityID(change.AfterTask)
+		if change.Event == ChangeEventUpdate {
+			event.PreviousEntityID = taskEntityIDPointer(change.BeforeTask)
+		}
+		if change.Event == ChangeEventDelete {
+			event.EntityID = taskEntityIDPointer(change.BeforeTask)
+		} else {
+			if change.AfterTask == nil {
+				return ChangeRecord{}, fmt.Errorf("task %s event missing after state", change.Event)
+			}
+			event.Resource = serializers.SerializeTask(change.AfterTask)
+		}
+	case ChangeResourceObject:
+		if change.Event != ChangeEventDelete {
+			if change.AfterObject == nil {
+				return ChangeRecord{}, fmt.Errorf("object %s event missing after state", change.Event)
+			}
+			event.Resource = serializers.SerializeObjectForFeed(change.AfterObject)
+		}
+	default:
+		return ChangeRecord{}, fmt.Errorf("unknown resource type %q", change.ResourceType)
+	}
+	record.Event = event
+	return record, nil
+}
+
+func taskEntityID(task *models.Task) string {
+	if task == nil || task.EntityID == nil {
+		return ""
+	}
+	return *task.EntityID
+}
+
+func taskEntityIDPointer(task *models.Task) *string {
+	if task == nil {
+		return nil
+	}
+	return cloneStringPointer(task.EntityID)
+}
+
+// RecordResourceChange inserts the complete protocol event before its resource
+// transaction commits. PostgreSQL delivers the notification only on commit;
+// consumers always read the durable row rather than trusting the notification.
+func RecordResourceChange(ctx context.Context, tx pgx.Tx, change ResourceChange) error {
+	record, err := resourceChangeRecord(change)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(record.Event)
+	if err != nil {
+		return fmt.Errorf("marshal change event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO atlas_change_events (version, event, before_task_entity_id, after_task_entity_id)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''))
+	`, change.Version, payload, record.BeforeTaskEntityID, record.AfterTaskEntityID); err != nil {
+		return fmt.Errorf("record change event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_notify('atlas_change_events', $1)`, fmt.Sprint(change.Version)); err != nil {
+		return fmt.Errorf("notify change event: %w", err)
+	}
+	return nil
+}
+
+type changeRecordQuerier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+// ReadChangeRecords returns one globally ordered page from the durable log.
+func ReadChangeRecords(ctx context.Context, db changeRecordQuerier, afterVersion, throughVersion int64, limit int) ([]ChangeRecord, bool, error) {
+	rows, err := db.Query(ctx, `
+		SELECT event, COALESCE(before_task_entity_id, ''), COALESCE(after_task_entity_id, '')
+		FROM atlas_change_events
+		WHERE version > $1 AND version <= $2
+		ORDER BY version ASC
+		LIMIT $3
+	`, afterVersion, throughVersion, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("query change events: %w", err)
+	}
+	defer rows.Close()
+	records := make([]ChangeRecord, 0, limit)
+	for rows.Next() {
+		var payload []byte
+		var record ChangeRecord
+		if err := rows.Scan(&payload, &record.BeforeTaskEntityID, &record.AfterTaskEntityID); err != nil {
+			return nil, false, fmt.Errorf("scan change event: %w", err)
+		}
+		if err := json.Unmarshal(payload, &record.Event); err != nil {
+			return nil, false, fmt.Errorf("decode change event: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("query change events: %w", err)
+	}
+	hasMore := len(records) > limit
+	if hasMore {
+		records = records[:limit]
+	}
+	return records, hasMore, nil
 }

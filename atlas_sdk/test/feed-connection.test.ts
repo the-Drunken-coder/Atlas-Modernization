@@ -396,11 +396,11 @@ describe("AtlasClient feed connection", () => {
     await vi.waitFor(() => {
       expect(watch).toHaveBeenCalledWith(
         dropped,
-        expect.objectContaining({ event: "recovered", id: "task-explicit-dropped" })
+        expect.objectContaining({ event: "update", id: "task-explicit-dropped" })
       );
       expect(watch).toHaveBeenCalledWith(
         delivered,
-        expect.objectContaining({ event: "recovered", id: "task-explicit-delivered" })
+        expect.objectContaining({ event: "update", id: "task-explicit-delivered" })
       );
     });
     expect(core.requests.some((request) => request.startsWith("/queries/changed-since?"))).toBe(true);

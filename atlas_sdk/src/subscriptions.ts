@@ -202,7 +202,7 @@ function taskEventEntityIDs(
     ids.push(event.entity_id);
   } else if (event.event === "update") {
     ids.push(event.resource.entity_id, event.previous_entity_id);
-  } else if (event.event === "create" || event.event === "recovered") {
+  } else if (event.event === "create") {
     ids.push(event.resource.entity_id);
   }
   if (previous && resourceMatchesType("task", previous)) {

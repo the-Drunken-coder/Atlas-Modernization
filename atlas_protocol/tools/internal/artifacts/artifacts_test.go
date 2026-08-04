@@ -344,6 +344,29 @@ func TestRuntimeValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 	}
 }
 
+func TestTypeScriptCommandCatalogValidatorIncludesSemanticValidation(t *testing.T) {
+	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
+		"CommandCatalog": {
+			"type": "object",
+			"properties": map[string]any{
+				"commands": map[string]any{"type": "array"},
+			},
+		},
+	}}
+	source, err := runtimeValidatorSource(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(source, "atlasProtocolHasValidCommandCatalogSemantics(value)") {
+		t.Fatalf("command catalog validator missing semantic check:\n%s", source)
+	}
+	for _, want := range []string{"commandIDs.has", `parameter["type"] !== "number"`, `parameter["minimum"] as number`} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("command catalog validator helpers missing %q", want)
+		}
+	}
+}
+
 func TestTypeScriptRuntimePolygonRefIncludesSemanticValidation(t *testing.T) {
 	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
 		"GeoJSONPolygon": {

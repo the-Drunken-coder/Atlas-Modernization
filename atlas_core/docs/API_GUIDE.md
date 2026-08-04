@@ -492,10 +492,7 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `task_cursor` | Continue tasks from `next_task_cursor`. |
 | `object_cursor` | Continue objects from `next_object_cursor`. |
 
-Full-query resource streams return at most 1000 rows; changed-since resource streams return at
-most 5000. Both retain at most 8 MiB of estimated serialized response data per resource type per
-page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as
-count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging.
+Full-query resource streams return at most 1000 rows per type and retain at most 8 MiB of estimated serialized response data per type per page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging. Changed-since returns at most 5000 globally ordered events per page.
 
 The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
 
@@ -521,34 +518,30 @@ Response:
 | Query | Notes |
 | --- | --- |
 | `since_version` | Required non-negative global version. |
-| `limit_per_type` | Optional per-type limit. Default/zero returns up to `5000`. |
-| `entity_cursor` | Continue entities from `next_entity_cursor`. |
-| `task_cursor` | Continue tasks from `next_task_cursor`. |
-| `object_cursor` | Continue objects from `next_object_cursor`. |
-| `deleted_entity_cursor` | Continue deleted entities. |
-| `deleted_task_cursor` | Continue deleted tasks. |
-| `deleted_object_cursor` | Continue deleted objects. |
+| `limit` | Optional event limit. Default/zero returns up to `5000`. |
+| `cursor` | Continue from the opaque `next_cursor`. |
 
-Response includes changed resources, tombstones, per-stream `has_more_*` booleans, next cursors, and a monotonic `version` watermark. Keep the same `since_version` while following cursors for one response window. After all pages are consumed, pass the returned `version` as the next poll's `since_version`.
+Response includes complete feed events in global version order plus one `has_more`/`next_cursor` continuation and a stable `version` watermark. Keep the same `since_version` while following cursors for one response window. After all pages are consumed, pass the returned `version` as the next poll's `since_version`.
 
 ```json
 {
-  "entities": [],
-  "tasks": [],
-  "objects": [],
-  "deleted_entities": [],
-  "deleted_tasks": [],
-  "deleted_objects": [],
-  "has_more_entities": false,
-  "has_more_tasks": false,
-  "has_more_objects": false,
-  "has_more_deleted_entities": false,
-  "has_more_deleted_tasks": false,
-  "has_more_deleted_objects": false,
-  "version": 42,
-  "timestamp": "2026-06-21T12:00:00Z"
+  "events": [
+    {
+      "event": "update",
+      "resource_type": "task",
+      "id": "task-7",
+      "version": 41,
+      "resource": { "task_id": "task-7", "status": "pending", "components": {}, "metadata": { "created_at": "2026-06-21T12:00:00Z", "updated_at": "2026-06-21T12:00:00Z", "version": 41 } }
+    }
+  ],
+  "has_more": false,
+  "version": 42
 }
 ```
+
+## Command catalog
+
+`GET /command-catalog` returns the Protocol-defined catalog embedded in the running Core binary. The response includes a strong `ETag` and supports `If-None-Match`. It does not read or create an Atlas object and does not depend on MinIO.
 
 ## Browser Admin Auth And Command Interface
 

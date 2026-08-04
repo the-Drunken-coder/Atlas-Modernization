@@ -138,6 +138,7 @@ func appendFeedEventContextErrors(errors []string, value any) []string {
 			}
 		}
 	}
+	sort.Strings(errors)
 	return errors
 }
 
@@ -176,6 +177,47 @@ func ValidateTaskComponents(value any) []string {
 
 func ValidateCommandComponent(value any) []string {
 	return validate("CommandComponent", value)
+}
+
+func ValidateCommandCatalog(value any) []string {
+	errors := validate("CommandCatalog", value)
+	payload, ok := valueAsMap(value)
+	if !ok {
+		return errors
+	}
+	commands, ok := payload["commands"].([]any)
+	if !ok {
+		return errors
+	}
+	seen := make(map[string]struct{}, len(commands))
+	for _, raw := range commands {
+		command, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := command["id"].(string)
+		if _, duplicate := seen[id]; duplicate && id != "" {
+			errors = append(errors, fmt.Sprintf("command id %q is duplicated", id))
+		}
+		seen[id] = struct{}{}
+		parameters, _ := command["parameters_schema"].(map[string]any)
+		for name, rawParameter := range parameters {
+			parameter, _ := rawParameter.(map[string]any)
+			parameterType, _ := parameter["type"].(string)
+			_, hasMinimum := parameter["minimum"]
+			_, hasMaximum := parameter["maximum"]
+			if parameterType != "number" && (hasMinimum || hasMaximum) {
+				errors = append(errors, fmt.Sprintf("command %q parameter %q bounds require number type", id, name))
+			}
+			minimum, minimumOK := numberAsFloat(parameter["minimum"])
+			maximum, maximumOK := numberAsFloat(parameter["maximum"])
+			if minimumOK && maximumOK && minimum > maximum {
+				errors = append(errors, fmt.Sprintf("command %q parameter %q minimum exceeds maximum", id, name))
+			}
+		}
+	}
+	sort.Strings(errors)
+	return errors
 }
 
 func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {

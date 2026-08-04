@@ -127,6 +127,28 @@ type MetadataBlock struct {
 	Version   int64  `json:"version"`
 }
 
+type CommandParameterSchema struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Minimum     *float64 `json:"minimum,omitempty"`
+	Maximum     *float64 `json:"maximum,omitempty"`
+}
+
+type CommandDefinition struct {
+	ID               string                            `json:"id"`
+	Name             string                            `json:"name"`
+	Description      string                            `json:"description"`
+	ParametersSchema map[string]CommandParameterSchema `json:"parameters_schema"`
+}
+
+type CommandCatalog struct {
+	Type        string              `json:"type"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Commands    []CommandDefinition `json:"commands"`
+}
+
 type EntityResource struct {
 	EntityID   string               `json:"entity_id"`
 	EntityType string               `json:"entity_type"`

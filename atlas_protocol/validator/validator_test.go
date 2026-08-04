@@ -24,6 +24,47 @@ func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
 	}
 }
 
+func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
+	valid := map[string]any{
+		"type":        "command_catalog",
+		"name":        "Commands",
+		"description": "Test catalog",
+		"commands": []any{
+			map[string]any{
+				"id":          "set_speed",
+				"name":        "Set Speed",
+				"description": "Set speed.",
+				"parameters_schema": map[string]any{
+					"speed": map[string]any{"type": "number", "description": "Speed", "required": true, "minimum": 0.0, "maximum": 10.0},
+				},
+			},
+		},
+	}
+	if errors := ValidateCommandCatalog(valid); len(errors) != 0 {
+		t.Fatalf("ValidateCommandCatalog(valid) errors = %v", errors)
+	}
+
+	invalid := map[string]any{
+		"type":        "command_catalog",
+		"name":        "Commands",
+		"description": "Test catalog",
+		"commands": []any{
+			map[string]any{
+				"id": "duplicate", "name": "First", "description": "First.",
+				"parameters_schema": map[string]any{"count": map[string]any{"type": "number", "description": "Count", "required": false, "minimum": 2, "maximum": 1}},
+			},
+			map[string]any{"id": "duplicate", "name": "Second", "description": "Second.", "parameters_schema": map[string]any{}},
+		},
+	}
+	errors := ValidateCommandCatalog(invalid)
+	joined := strings.Join(errors, "\n")
+	for _, want := range []string{"duplicate", "minimum exceeds maximum"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("ValidateCommandCatalog(invalid) errors = %v, want %q", errors, want)
+		}
+	}
+}
+
 func TestConcurrentValidationIsSafe(t *testing.T) {
 	const goroutines = 16
 	results := make(chan []string, goroutines)
@@ -199,7 +240,7 @@ func TestObjectBlobAcceptsTypedUsageHints(t *testing.T) {
 	blob := map[string]any{
 		"bucket":      "atlas-media",
 		"size_bytes":  int64(7966),
-		"usage_hints": []string{"command_catalog"},
+		"usage_hints": []string{"mission_plan"},
 	}
 	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
 		t.Fatalf("ValidateObjectBlob(typed usage_hints) errors = %v", errors)
@@ -211,7 +252,7 @@ func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
 		"bucket":     "atlas-media",
 		"size_bytes": json.Number("7966"),
 		"usage_hints": []any{
-			"command_catalog",
+			"mission_plan",
 		},
 	}
 	if errors := ValidateObjectBlob(blob); len(errors) > 0 {

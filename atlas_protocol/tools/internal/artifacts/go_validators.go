@@ -41,6 +41,7 @@ var goValidatorFunctions = []goValidatorFunction{
 	{name: "ValidateEntityComponents", params: "value any", args: "value", validate: protocolvalidator.ValidateEntityComponents},
 	{name: "ValidateTaskComponents", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskComponents},
 	{name: "ValidateCommandComponent", params: "value any", args: "value", validate: protocolvalidator.ValidateCommandComponent},
+	{name: "ValidateCommandCatalog", params: "value any", args: "value", validate: protocolvalidator.ValidateCommandCatalog},
 	{name: "ValidateTaskParametersComponent", params: "value any, fieldPrefix string", args: "value, fieldPrefix", validateWithPrefix: protocolvalidator.ValidateTaskParametersComponent},
 	{name: "ValidateTaskProgressComponent", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskProgressComponent},
 	{name: "ValidateTaskCatalogComponent", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskCatalogComponent},

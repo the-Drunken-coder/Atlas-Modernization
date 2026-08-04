@@ -11,7 +11,7 @@ Atlas Core has two explicit startup modes:
 
 Durable mode is the application default and the only mode accepted by the production image. Development Compose explicitly selects scratch mode so the normal local workflow stays simple.
 
-PostgreSQL and the configured MinIO bucket form one logical durable store in production. Resource rows, object metadata, blobs, tombstones, deletion retries, and admin state must be backed up and restored together. See [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md).
+PostgreSQL and the configured MinIO bucket form one logical durable store in production. Resource rows, object metadata, blobs, the ordered change log, deletion retries, and admin state must be backed up and restored together. See [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md).
 
 ## Schema ownership
 
@@ -25,11 +25,10 @@ PostgreSQL and the configured MinIO bucket form one logical durable store in pro
 The managed schema contains:
 
 - `entities`, `tasks`, and `objects`
-- `deletions` change-feed tombstones
+- `atlas_change_clock` and `atlas_change_events`, the transactional ordered change stream
 - `storage_deletion_outbox` durable blob-deletion retries
 - `storage_upload_intents` leased upload ownership and crash recovery
 - `admin_records` accounts, sessions, login throttles, and managed API-key metadata
-- `atlas_change_version_seq`
 - `atlas_schema_migrations`
 
 ## Durable startup
@@ -49,7 +48,7 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. The production Compose API service waits for the `minio-init` verifier to succeed, so a missing bucket prevents the Core process from starting. Operators must provision the bucket explicitly for a clean deployment or restore it from the backup paired with PostgreSQL. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. The production Compose API service waits for the `minio-init` verifier to succeed, so a missing bucket prevents the Core process from starting. Operators must provision the bucket explicitly for a clean deployment or restore it from the backup paired with PostgreSQL. The embedded command catalog is independent of object storage and is served directly at `GET /command-catalog`.
 
 ## Baseline migration v1
 
@@ -67,6 +66,8 @@ path tombstones so deleted generated paths cannot be reused by later metadata.
 Migration v3 adds the path-leading index used to reject those tombstones without
 scanning the append-only outbox. Retention is deliberate: each generated path
 adds at most one compact row, and removing it would reopen the reuse race.
+
+Migration v4 replaces the legacy sequence and resource-deletion table with `atlas_change_clock` and `atlas_change_events`. Every resource mutation allocates its version, writes the resource state, and appends the complete feed event in one transaction. PostgreSQL notifications only wake the feed dispatcher; the durable event row is the source of truth.
 
 Inspect the current production version with:
 
@@ -92,7 +93,7 @@ Example shape:
 
 ```go
 {
-    version: 4,
+    version: 5,
     name: "add_entity_priority",
     checksum: "<frozen sha256>",
     fingerprintVersion: fingerprintVersionV1,
@@ -116,7 +117,7 @@ The database integration tests use isolated PostgreSQL schemas. With `ATLAS_CORE
 
 ## Development scratch workflow
 
-The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then clears disposable resource rows and the `atlas-media` bucket while retaining local `admin_records` and the migration ledger. Before serving HTTP, Core republishes its embedded `command_catalog`, so the resulting scratch dataset contains that Core-owned discovery object even when only the API container was restarted.
+The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then clears disposable resource rows and the durable change log, resets `atlas_change_clock`, and empties the `atlas-media` bucket while retaining local `admin_records` and the migration ledger. The embedded catalog remains available through `GET /command-catalog` without seeding storage.
 
 ```bash
 python3 atlas_core/scripts/atlas.py --dev

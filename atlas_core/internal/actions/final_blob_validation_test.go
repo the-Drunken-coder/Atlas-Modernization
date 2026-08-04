@@ -150,8 +150,8 @@ func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgx
 		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
 			t.Errorf("cleanup task row %q: %v", taskID, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'task' AND resource_id = $1`, taskID); err != nil {
-			t.Errorf("cleanup task deletion rows %q: %v", taskID, err)
+		if _, err := pool.Exec(ctx, `DELETE FROM atlas_change_events WHERE event->>'resource_type' = 'task' AND event->>'id' = $1`, taskID); err != nil {
+			t.Errorf("cleanup task change rows %q: %v", taskID, err)
 		}
 	}
 	if entityID != "" {
@@ -161,8 +161,13 @@ func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgx
 		if _, err := pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID); err != nil {
 			t.Errorf("cleanup entity row %q: %v", entityID, err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = 'entity' AND resource_id = $1`, entityID); err != nil {
-			t.Errorf("cleanup entity deletion rows %q: %v", entityID, err)
+		if _, err := pool.Exec(ctx, `
+			DELETE FROM atlas_change_events
+			WHERE (event->>'resource_type' = 'entity' AND event->>'id' = $1)
+				OR before_task_entity_id = $1
+				OR after_task_entity_id = $1
+		`, entityID); err != nil {
+			t.Errorf("cleanup entity change rows %q: %v", entityID, err)
 		}
 	}
 }

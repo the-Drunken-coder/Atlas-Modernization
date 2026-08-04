@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient } from "../src";
-import { type ChangedSinceResponse, changedSinceToEvents } from "../src/types.js";
-import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
+import { entity, FakeCore, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: recovery and hydration", () => {
   it("hydrates, polls changed-since, updates cache, and serves covered reads from cache", async () => {
@@ -40,7 +39,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     expect(core.requests).toEqual([]);
   });
 
-  it("serves recovered object details from the changed-since cache", async () => {
+  it("recovers object summaries and refreshes details on demand", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -56,10 +55,10 @@ describe("AtlasClient sync: recovery and hydration", () => {
     core.requests = [];
 
     await expect(client.objects.get(recovered.object_id)).resolves.toEqual(recovered);
-    expect(core.requests).toEqual([]);
+    expect(core.requests).toEqual([`/objects/${recovered.object_id}`]);
   });
 
-  it("emits recovered events for changed-since upserts", async () => {
+  it("emits the original feed event for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
@@ -73,36 +72,13 @@ describe("AtlasClient sync: recovery and hydration", () => {
     await expect(client.tasks.get("task-polled")).resolves.toEqual(updated);
     expect(watch).toHaveBeenCalledWith(
       updated,
-      expect.objectContaining({ event: "recovered", resource_type: "task", id: "task-polled" })
+      expect.objectContaining({ event: "update", resource_type: "task", id: "task-polled" })
     );
-  });
-
-  it("emits changed-since recovery events in global version order", () => {
-    const entityVersion5 = { ...entity("entity-v5"), metadata: metadata(5) };
-    const taskVersion2 = { ...task("task-v2", null), metadata: metadata(2) };
-    const objectVersion4 = { ...object("object-v4"), metadata: metadata(4) };
-    const response: ChangedSinceResponse = {
-      entities: [entityVersion5],
-      tasks: [taskVersion2],
-      objects: [objectVersion4],
-      deleted_entities: [{ id: "entity-v1", type: "entity", version: 1 }],
-      deleted_tasks: [{ id: "task-v3", type: "task", version: 3, entity_id: null }],
-      deleted_objects: [],
-      has_more_entities: false,
-      has_more_tasks: false,
-      has_more_objects: false,
-      has_more_deleted_entities: false,
-      has_more_deleted_tasks: false,
-      has_more_deleted_objects: false,
-      version: 5
-    };
-
-    expect(changedSinceToEvents(response).map((event) => event.version)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("drains paginated changed-since responses before advancing the high-water mark", async () => {
     const core = new FakeCore();
-    core.changedSinceLimitPerType = 1;
+    core.changedSinceLimit = 1;
     let releaseSecondPage!: () => void;
     let secondPageStarted = false;
     const secondPage = new Promise<void>((resolve) => {
@@ -110,7 +86,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     });
     const fetchImpl: typeof fetch = async (url, init) => {
       const requestUrl = new URL(String(url));
-      if (requestUrl.pathname === "/queries/changed-since" && requestUrl.searchParams.has("task_cursor")) {
+      if (requestUrl.pathname === "/queries/changed-since" && requestUrl.searchParams.has("cursor")) {
         secondPageStarted = true;
         await secondPage;
       }
@@ -131,7 +107,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     await recovery;
 
     expect(
-      core.requests.some((request) => request.startsWith("/queries/changed-since?") && request.includes("task_cursor="))
+      core.requests.some((request) => request.startsWith("/queries/changed-since?") && request.includes("cursor="))
     ).toBe(true);
     expect(watch).toHaveBeenCalledWith(
       first,
@@ -146,32 +122,23 @@ describe("AtlasClient sync: recovery and hydration", () => {
 
   it("rejects repeated changed-since cursor states", async () => {
     const core = new FakeCore();
+    core.upsertEntity(entity("asset-page-1"));
+    core.upsertEntity(entity("asset-page-2"));
     let changedSinceRequests = 0;
     const fetchImpl: typeof fetch = async (url, init) => {
       if (new URL(String(url)).pathname !== "/queries/changed-since") return core.fetch(String(url), init);
       changedSinceRequests += 1;
       if (changedSinceRequests > 4) throw new Error("test stopped repeated changed-since pagination");
       return Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: true,
-        next_entity_cursor: "same-cursor",
-        has_more_tasks: true,
-        next_task_cursor: `task-cursor-${changedSinceRequests}`,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
-        version: 0
+        events: [core.events[changedSinceRequests - 1]],
+        has_more: true,
+        next_cursor: "same-cursor",
+        version: core.version
       });
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: false, pollIntervalMs: 0 });
 
-    await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated entity_cursor");
+    await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated cursor");
     expect(changedSinceRequests).toBe(2);
   });
 });

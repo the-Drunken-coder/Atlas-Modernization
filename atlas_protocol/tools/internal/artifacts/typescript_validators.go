@@ -8,6 +8,7 @@ import (
 )
 
 var runtimeValidatorTypeNames = []string{
+	"CommandCatalog",
 	"EntityCreateRequest",
 	"EntityUpdateRequest",
 	"ObjectCreateRequest",
@@ -42,6 +43,9 @@ func runtimeValidatorSource(g *typeScriptGenerator) (string, error) {
 		}
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", name, err)
+		}
+		if name == "CommandCatalog" {
+			check = "(" + check + " && atlasProtocolHasValidCommandCatalogSemantics(value))"
 		}
 		builder.WriteString("export function ")
 		builder.WriteString(validatorFunctionName(name))

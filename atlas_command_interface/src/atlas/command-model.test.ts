@@ -1,15 +1,13 @@
-import type { EntityResource, JSONValue, ObjectDetailResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
 import {
   assertEntitySupportsCommand,
   buildCommandTaskRequest,
   CommandModelError,
-  catalogFromObject,
   coerceParameters,
   commandById,
   commandLabel,
-  commandsForEntity,
-  parseCommandCatalog
+  commandsForEntity
 } from "./command-model.js";
 
 const metadata = {
@@ -18,7 +16,7 @@ const metadata = {
   version: 1
 };
 
-const catalogPayload: Record<string, JSONValue> = {
+const catalogPayload: CommandCatalog = {
   type: "command_catalog",
   name: "Atlas Command Catalog",
   description: "Test catalog",
@@ -64,121 +62,8 @@ function track(supportedTasks?: string[]): EntityResource {
 }
 
 describe("command model", () => {
-  it("normalizes Core object metadata plus extra catalog fields", () => {
-    const extra = { ...catalogPayload };
-    delete extra.type;
-    const catalog = catalogFromObject({
-      object_id: "command_catalog",
-      path: "objects/command_catalog/1",
-      content_type: "application/json",
-      type: "command_catalog",
-      size_bytes: 1,
-      usage_hints: ["command_catalog"],
-      bucket: "atlas-media",
-      metadata,
-      extra
-    });
-
-    expect(catalog.name).toBe("Atlas Command Catalog");
-    expect(catalog.commands.map((command) => command.id)).toEqual(["move_to_location", "hold_position"]);
-  });
-
-  it("prefers extra type when parsing catalog objects", () => {
-    const catalog = catalogFromObject({
-      object_id: "command_catalog",
-      path: "objects/command_catalog/1",
-      content_type: "application/json",
-      type: "not_a_catalog",
-      size_bytes: 1,
-      usage_hints: ["command_catalog"],
-      bucket: "atlas-media",
-      metadata,
-      extra: catalogPayload
-    });
-
-    expect(catalog.type).toBe("command_catalog");
-  });
-
-  it("rejects catalog objects without extra", () => {
-    expect(() =>
-      catalogFromObject({
-        object_id: "command_catalog",
-        path: "objects/command_catalog/1",
-        content_type: "application/json",
-        type: "command_catalog",
-        size_bytes: 1,
-        usage_hints: ["command_catalog"],
-        bucket: "atlas-media",
-        metadata
-      } as unknown as ObjectDetailResource)
-    ).toThrow("$.extra must be an object");
-  });
-
-  it("rejects malformed command catalogs", () => {
-    expect(() => parseCommandCatalog({ ...catalogPayload, type: "other" })).toThrow("$.type must be command_catalog");
-    expect(() => parseCommandCatalog({ ...catalogPayload, commands: [] })).toThrow(
-      "$.commands must be a non-empty array"
-    );
-    expect(() =>
-      parseCommandCatalog({
-        ...catalogPayload,
-        commands: [(catalogPayload.commands as unknown[])[0], (catalogPayload.commands as unknown[])[0]]
-      })
-    ).toThrow("$.commands[1].id is duplicated");
-    expect(() =>
-      parseCommandCatalog({
-        ...catalogPayload,
-        commands: [
-          {
-            id: "bad_schema",
-            name: "Bad Schema",
-            description: "Bad.",
-            parameters_schema: { flag: { type: "boolean", description: "Flag", required: false, minimum: 1 } }
-          }
-        ]
-      })
-    ).toThrow("minimum is only valid for number parameters");
-    expect(() =>
-      parseCommandCatalog({
-        ...catalogPayload,
-        commands: [
-          {
-            id: "bad_bounds",
-            name: "Bad Bounds",
-            description: "Bad.",
-            parameters_schema: {
-              speed: { type: "number", description: "Speed", required: false, minimum: 10, maximum: 1 }
-            }
-          }
-        ]
-      })
-    ).toThrow("minimum must be <= maximum");
-  });
-
-  it("trims catalog string fields while parsing", () => {
-    const catalog = parseCommandCatalog({
-      type: "command_catalog",
-      name: "  Trimmed Catalog  ",
-      description: "  Trimmed description  ",
-      commands: [
-        {
-          id: "hold_position",
-          name: "  Hold Position  ",
-          description: "  Hold the current position.  ",
-          parameters_schema: {}
-        }
-      ]
-    });
-
-    expect(catalog).toMatchObject({
-      name: "Trimmed Catalog",
-      description: "Trimmed description",
-      commands: [{ name: "Hold Position", description: "Hold the current position." }]
-    });
-  });
-
   it("coerces form values and validates numeric bounds", () => {
-    const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
+    const command = commandById(catalogPayload, "move_to_location");
 
     expect(coerceParameters(command, { latitude: "40.1", longitude: -74.2, mode: "manual", verify: "true" })).toEqual({
       latitude: 40.1,
@@ -210,7 +95,7 @@ describe("command model", () => {
   });
 
   it("rejects malformed parameter containers as invalid parameters", () => {
-    const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
+    const command = commandById(catalogPayload, "move_to_location");
 
     for (const value of [[], "latitude=40.1"]) {
       try {
@@ -224,7 +109,7 @@ describe("command model", () => {
   });
 
   it("rejects unknown parameters even when their values are empty", () => {
-    const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
+    const command = commandById(catalogPayload, "move_to_location");
 
     expect(() => coerceParameters(command, { latitude: 40.1, longitude: -74.2, typo: "" })).toThrow(
       "Unknown parameter typo"
@@ -232,7 +117,7 @@ describe("command model", () => {
   });
 
   it("filters commands through explicit supported task declarations", () => {
-    const catalog = parseCommandCatalog(catalogPayload);
+    const catalog = catalogPayload;
 
     expect(commandsForEntity(catalog, asset())).toEqual([]);
     expect(commandsForEntity(catalog, asset(["hold_position"])).map((command) => command.id)).toEqual([
@@ -252,7 +137,7 @@ describe("command model", () => {
   });
 
   it("builds command task payloads without client-supplied task IDs", () => {
-    const command = commandById(parseCommandCatalog(catalogPayload), "move_to_location");
+    const command = commandById(catalogPayload, "move_to_location");
 
     expect(
       buildCommandTaskRequest({ entityId: "asset-1", command, parameters: { latitude: 40.1, longitude: -74.2 } })
@@ -267,11 +152,10 @@ describe("command model", () => {
   });
 
   it("looks up and labels commands", () => {
-    const catalog = parseCommandCatalog(catalogPayload);
-    const command = commandById(catalog, "hold_position");
+    const command = commandById(catalogPayload, "hold_position");
 
     expect(commandLabel(command)).toBe("Hold Position (hold_position)");
-    expect(() => commandById(catalog, "missing_command")).toThrow("Unknown command missing_command");
+    expect(() => commandById(catalogPayload, "missing_command")).toThrow("Unknown command missing_command");
   });
 
   it("enforces entity command support declarations", () => {

@@ -1,6 +1,6 @@
 {
   "content_type": "application/json",
-  "usage_hints": ["command_catalog"],
+  "usage_hints": ["mission_plan"],
   "referenced_by": [
     {
       "entity_id": "asset-001"

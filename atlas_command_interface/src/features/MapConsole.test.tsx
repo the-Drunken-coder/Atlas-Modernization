@@ -1,11 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../app/config.js";
-import { parseCommandCatalog } from "../atlas/command-model.js";
-import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
+import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { type AtlasContextValue, AtlasProvider, AtlasStaticProvider } from "../state/atlas-context.js";
@@ -61,7 +60,7 @@ vi.mock("../ui/map/view/MapView.js", async () => {
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-const catalog = parseCommandCatalog({
+const catalog: CommandCatalog = {
   type: "command_catalog",
   name: "Catalog",
   description: "Test",
@@ -84,7 +83,7 @@ const catalog = parseCommandCatalog({
     },
     { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
   ]
-});
+};
 
 const rover: EntityResource = {
   entity_id: "asset-1",
@@ -138,7 +137,6 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
   };
   let currentHealth = health;
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
-  let notifyCatalog: ((update: CatalogUpdate) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
@@ -148,12 +146,10 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     async loadCommandCatalog() {
       return catalog;
     },
-    watch(onSnapshot, onCatalog) {
+    watch(onSnapshot) {
       notify = onSnapshot;
-      notifyCatalog = onCatalog;
       return () => {
         notify = undefined;
-        notifyCatalog = undefined;
       };
     },
     async start() {},
@@ -197,7 +193,6 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       current = snapshot;
       notify?.(snapshot);
     },
-    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update),
     setHealth: (next: ConnectionHealth) => {
       currentHealth = next;
     }
@@ -300,54 +295,6 @@ describe("MapConsole command flow", () => {
     expect(document.body.textContent).not.toContain(secret);
     expect(document.body.textContent).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/);
     expect(document.body.textContent).toContain("[redacted]");
-  });
-
-  it("closes an open command form when the live catalog becomes unavailable", async () => {
-    const user = userEvent.setup();
-    const { fake, emitCatalog, submissions } = makeFakeDataSource();
-    renderConsole(fake);
-
-    await user.click(await screen.findByText("Rover"));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
-
-    act(() => emitCatalog({ status: "failed" }));
-
-    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
-    expect(submissions).toHaveLength(0);
-  });
-
-  it("keeps a hidden command pending until Core responds", async () => {
-    const user = userEvent.setup();
-    const { fake, emitCatalog } = makeFakeDataSource();
-    const reject: Array<(reason?: unknown) => void> = [];
-    fake.submitCommand = async () => {
-      await new Promise((_, rejectSubmission) => reject.push(rejectSubmission));
-      throw new Error("unreachable");
-    };
-    renderConsole(fake);
-
-    await user.click(await screen.findByText("Rover"));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
-    await user.click(screen.getByRole("button", { name: "Send command" }));
-
-    act(() => emitCatalog({ status: "failed" }));
-    expect(await screen.findByText("Command submission pending…")).toBeInTheDocument();
-
-    act(() => emitCatalog({ status: "loaded", catalog }));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
-
-    await act(async () => {
-      reject[0](new Error("Core response failed"));
-      await Promise.resolve();
-    });
-    expect(screen.queryByText("Core response failed")).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
-
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
   });
 
   it("does not change the map reticle target when sidebar rows are hovered", async () => {

@@ -32,9 +32,9 @@ login_admin_session() {
 
 get_catalog() {
     if [ -n "$api_key" ]; then
-        curl -fsS -H "X-API-Key: $api_key" "$api_url/objects/command_catalog"
+        curl -fsS -H "X-API-Key: $api_key" "$api_url/command-catalog"
     else
-        curl -fsS -b "$session_cookies" "$api_url/objects/command_catalog"
+        curl -fsS -b "$session_cookies" "$api_url/command-catalog"
     fi
 }
 

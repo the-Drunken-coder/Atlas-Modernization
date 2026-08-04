@@ -21,20 +21,17 @@ const fullPage = (overrides: Record<string, unknown> = {}) => ({
   ...overrides
 });
 const changedPage = (overrides: Record<string, unknown> = {}) => ({
-  entities: [],
-  tasks: [],
-  objects: [],
-  deleted_entities: [],
-  deleted_tasks: [],
-  deleted_objects: [],
-  has_more_entities: false,
-  has_more_tasks: false,
-  has_more_objects: false,
-  has_more_deleted_entities: false,
-  has_more_deleted_tasks: false,
-  has_more_deleted_objects: false,
+  events: [],
+  has_more: false,
   version: 4,
   ...overrides
+});
+const changedEntityEvent = (id: string, version: number) => ({
+  event: "update",
+  resource_type: "entity",
+  id,
+  version,
+  resource: validEntity(id, version)
 });
 
 describe("AtlasClient inbound response validation", () => {
@@ -66,25 +63,26 @@ describe("AtlasClient inbound response validation", () => {
     ["missing its high-water version", changedPage({ version: undefined })],
     ["with a fractional high-water version", changedPage({ version: 4.5 })],
     ["whose high-water version precedes since_version", changedPage({ version: 3 })],
-    ["containing a stale resource version", changedPage({ entities: [validEntity("asset-stale", 4)], version: 5 })],
+    ["containing a stale event version", changedPage({ events: [changedEntityEvent("asset-stale", 4)], version: 5 })],
     [
-      "containing a resource beyond its high-water version",
-      changedPage({ entities: [validEntity("asset-future", 6)], version: 5 })
+      "containing an event beyond its high-water version",
+      changedPage({ events: [changedEntityEvent("asset-future", 6)], version: 5 })
     ],
     [
-      "containing malformed resource metadata",
-      changedPage({ tasks: [validTask("task-zero-version", null, 0)], version: 5 })
+      "containing mismatched event resource metadata",
+      changedPage({
+        events: [{ ...changedEntityEvent("asset-mismatch", 5), resource: validEntity("other", 5) }],
+        version: 5
+      })
     ],
     [
-      "containing a tombstone in the wrong bucket",
-      changedPage({ deleted_entities: [{ id: "asset-deleted", type: "task", version: 5 }], version: 5 })
+      "containing events out of order",
+      changedPage({ events: [changedEntityEvent("asset-6", 6), changedEntityEvent("asset-5", 5)], version: 6 })
     ],
-    [
-      "containing a malformed tombstone version",
-      changedPage({ deleted_tasks: [{ id: "task-deleted", type: "task", version: 0 }], version: 5 })
-    ],
-    ["omitting a pagination flag", changedPage({ has_more_deleted_objects: undefined })],
-    ["sending a cursor without another page", changedPage({ next_deleted_object_cursor: "orphan" })]
+    ["omitting its pagination flag", changedPage({ has_more: undefined })],
+    ["declaring another page without a cursor", changedPage({ has_more: true })],
+    ["declaring another page without making progress", changedPage({ has_more: true, next_cursor: "next" })],
+    ["sending a cursor without another page", changedPage({ next_cursor: "orphan" })]
   ])("rejects a malformed changed-since envelope %s", async (_name, payload) => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });
 
@@ -93,36 +91,51 @@ describe("AtlasClient inbound response validation", () => {
     );
   });
 
-  it.each([
-    ["entity without entity_id", "deleted_entities", { id: "asset-deleted", type: "entity", version: 5 }],
-    ["task without entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5 }],
-    ["task with null entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5, entity_id: null }],
-    ["task with entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5, entity_id: "asset-1" }],
-    ["object without entity_id", "deleted_objects", { id: "object-deleted", type: "object", version: 5 }]
-  ] as const)("accepts a valid %s tombstone", async (_name, bucket, tombstone) => {
+  it("accepts a canonical delete event", async () => {
+    const event = { event: "delete", resource_type: "task", id: "task-deleted", version: 5, entity_id: null };
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
-      fetch: async () => Response.json(changedPage({ [bucket]: [tombstone], version: 5 }))
+      fetch: async () => Response.json(changedPage({ events: [event], version: 5 }))
     });
 
-    await expect(client.queries.changedSince(4)).resolves.toMatchObject({ [bucket]: [tombstone] });
+    await expect(client.queries.changedSince(4)).resolves.toMatchObject({ events: [event] });
   });
 
-  it.each([
+  it.each<[string, unknown]>([
     [
-      "entity with entity_id",
-      "deleted_entities",
-      { id: "asset-deleted", type: "entity", version: 5, entity_id: "asset-1" }
+      "duplicate command IDs",
+      {
+        type: "command_catalog",
+        name: "Catalog",
+        description: "Commands",
+        commands: [
+          { id: "hold", name: "Hold", description: "Hold.", parameters_schema: {} },
+          { id: "hold", name: "Hold Again", description: "Still hold.", parameters_schema: {} }
+        ]
+      }
     ],
-    ["task with empty entity_id", "deleted_tasks", { id: "task-deleted", type: "task", version: 5, entity_id: "" }],
-    ["object with entity_id", "deleted_objects", { id: "object-deleted", type: "object", version: 5, entity_id: null }]
-  ] as const)("rejects an invalid %s tombstone", async (_name, bucket, tombstone) => {
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: async () => Response.json(changedPage({ [bucket]: [tombstone], version: 5 }))
-    });
+    [
+      "inverted parameter bounds",
+      {
+        type: "command_catalog",
+        name: "Catalog",
+        description: "Commands",
+        commands: [
+          {
+            id: "move",
+            name: "Move",
+            description: "Move.",
+            parameters_schema: {
+              speed: { type: "number", description: "Speed.", required: true, minimum: 10, maximum: 1 }
+            }
+          }
+        ]
+      }
+    ]
+  ])("rejects a command catalog with %s", async (_name, payload) => {
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });
 
-    await expect(client.queries.changedSince(4)).rejects.toThrow("Atlas response failed validation");
+    await expect(client.commandCatalog()).rejects.toThrow("Atlas response failed validation for GET /command-catalog");
   });
 
   it("rejects point responses for a different resource id without poisoning the cache", async () => {
@@ -227,9 +240,11 @@ describe("AtlasClient inbound response validation", () => {
         return core.fetch(String(url), init);
       return Response.json(
         changedPage({
-          entities: [validEntity("asset-uncommitted-recovery", existing.metadata.version + 1)],
-          deleted_entities: [{ id: "", type: "entity", version: existing.metadata.version + 1 }],
-          version: existing.metadata.version + 1
+          events: [
+            changedEntityEvent("asset-uncommitted-recovery", existing.metadata.version + 1),
+            { event: "delete", resource_type: "entity", id: "", version: existing.metadata.version + 2 }
+          ],
+          version: existing.metadata.version + 2
         })
       );
     };
@@ -283,9 +298,9 @@ describe("AtlasClient inbound response validation", () => {
       if (page === 1) {
         return Response.json(
           changedPage({
-            entities: [validEntity("asset-uncommitted-watermark", existing.metadata.version + 1)],
-            has_more_entities: true,
-            next_entity_cursor: "next",
+            events: [changedEntityEvent("asset-uncommitted-watermark", existing.metadata.version + 1)],
+            has_more: true,
+            next_cursor: "next",
             version: existing.metadata.version + 1
           })
         );

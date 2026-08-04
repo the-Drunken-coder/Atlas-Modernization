@@ -20,18 +20,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     await client.connectFeed();
     releaseRecovery(
       Response.json({
-        entities: [recovered],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [entityUpdateEvent(recovered)],
+        has_more: false,
         version: recovered.metadata.version
       })
     );
@@ -58,18 +48,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     await expect(client.connectFeed()).rejects.toThrow("connect-only failure");
     releaseRecovery(
       Response.json({
-        entities: [recovered],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [entityUpdateEvent(recovered)],
+        has_more: false,
         version: recovered.metadata.version
       })
     );
@@ -111,18 +91,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     await client.connectFeed();
     releaseRecovery(
       Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [],
+        has_more: false,
         version: 1
       })
     );
@@ -397,36 +367,16 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     await vi.waitFor(() => expect(newRecoveryStarted).toBe(true));
     releaseNewRecovery(
       Response.json({
-        entities: [{ ...entity("asset-new-lifecycle"), metadata: metadata(1) }],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [entityUpdateEvent({ ...entity("asset-new-lifecycle"), metadata: metadata(1) })],
+        has_more: false,
         version: 1
       })
     );
     await restart;
     releaseOldRecovery(
       Response.json({
-        entities: [{ ...entity("asset-old-lifecycle"), metadata: metadata(2) }],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [entityUpdateEvent({ ...entity("asset-old-lifecycle"), metadata: metadata(2) })],
+        has_more: false,
         version: 2
       })
     );
@@ -500,18 +450,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
         changedSinceVersions.push(sinceVersion);
         if (sinceVersion === "0") return pendingEarlyRecovery;
         return Response.json({
-          entities: [],
-          tasks: [],
-          objects: [],
-          deleted_entities: [],
-          deleted_tasks: [],
-          deleted_objects: [],
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false,
-          has_more_deleted_entities: false,
-          has_more_deleted_tasks: false,
-          has_more_deleted_objects: false,
+          events: [],
+          has_more: false,
           version: 5
         });
       }
@@ -538,18 +478,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
       await vi.waitFor(() => expect(changedSinceVersions).toContain("5"));
       releaseEarlyRecovery(
         Response.json({
-          entities: [],
-          tasks: [],
-          objects: [],
-          deleted_entities: [],
-          deleted_tasks: [],
-          deleted_objects: [],
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false,
-          has_more_deleted_entities: false,
-          has_more_deleted_tasks: false,
-          has_more_deleted_objects: false,
+          events: [],
+          has_more: false,
           version: 0
         })
       );
@@ -576,18 +506,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     releaseRecovery(
       Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [],
+        has_more: false,
         version: 0
       })
     );
@@ -655,18 +575,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
       unsubscribe = client.entities.watch("asset-after-gap", () => resolveFollowUp());
       releaseGapRecovery(
         Response.json({
-          entities: [],
-          tasks: [],
-          objects: [],
-          deleted_entities: [],
-          deleted_tasks: [],
-          deleted_objects: [],
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false,
-          has_more_deleted_entities: false,
-          has_more_deleted_tasks: false,
-          has_more_deleted_objects: false,
+          events: [],
+          has_more: false,
           version: 0
         })
       );
@@ -894,18 +804,8 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     await expect(engine.changedSinceForGeneration(engine.lifecycleGeneration, 1)).rejects.toThrow("503");
     releaseOlder(
       Response.json({
-        entities: [],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [],
+        has_more: false,
         version: 0
       })
     );
@@ -914,3 +814,13 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
     expect(client.sync.status()).toHaveProperty("error", "Atlas Core recovery request failed");
   });
 });
+
+function entityUpdateEvent(resource: ReturnType<typeof entity>) {
+  return {
+    event: "update",
+    resource_type: "entity",
+    id: resource.entity_id,
+    version: resource.metadata.version,
+    resource
+  } as const;
+}

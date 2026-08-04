@@ -46,13 +46,13 @@ export function createTwoClientFeedHarness(): TwoClientFeedHarness {
 function writerFetch(core: FakeCore): FetchLike {
   return async (url, init) => {
     const route = writeRoute(url, init);
-    const deletionCount = core.deletions.length;
+    const deletionCount = core.deleteEvents.length;
     const response = await core.fetch(String(url), init);
     if (!response.ok || !route) {
       return response;
     }
     if (route.kind === "delete") {
-      const event = core.deletions
+      const event = core.deleteEvents
         .slice(deletionCount)
         .find((value) => value.resource_type === route.resource_type && value.id === route.id);
       if (event) {

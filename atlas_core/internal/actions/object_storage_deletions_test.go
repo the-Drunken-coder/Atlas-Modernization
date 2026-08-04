@@ -12,6 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func lockChangeVersion(ctx context.Context, tx pgx.Tx) error {
+	var version int64
+	return tx.QueryRow(ctx, `SELECT version FROM atlas_change_clock WHERE singleton FOR UPDATE`).Scan(&version)
+}
+
 func TestQueueStorageDeletionRequeueResetsRetryState(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

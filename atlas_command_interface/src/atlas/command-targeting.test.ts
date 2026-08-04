@@ -1,11 +1,10 @@
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
-import { parseCommandCatalog } from "./command-model.js";
 import { commandsForTargeting, commandTargeting, evaluateCommand, formParameters } from "./command-targeting.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-const catalogPayload: Record<string, JSONValue> = {
+const catalog: CommandCatalog = {
   type: "command_catalog",
   name: "Atlas Command Catalog",
   description: "Test catalog",
@@ -57,7 +56,6 @@ const catalogPayload: Record<string, JSONValue> = {
   ]
 };
 
-const catalog = parseCommandCatalog(catalogPayload);
 const command = (id: string) => {
   const found = catalog.commands.find((entry) => entry.id === id);
   if (!found) throw new Error(`missing ${id}`);

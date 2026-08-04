@@ -26,18 +26,8 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     resolveChangedSince(
       new Response(
         JSON.stringify({
-          entities: [{ ...entity("asset-after-stop"), metadata: metadata(1) }],
-          tasks: [],
-          objects: [],
-          deleted_entities: [],
-          deleted_tasks: [],
-          deleted_objects: [],
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false,
-          has_more_deleted_entities: false,
-          has_more_deleted_tasks: false,
-          has_more_deleted_objects: false,
+          events: [entityUpdateEvent({ ...entity("asset-after-stop"), metadata: metadata(1) })],
+          has_more: false,
           version: 1
         }),
         { headers: { "Content-Type": "application/json" } }
@@ -98,18 +88,8 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     expect(engine.activeRecoveryPromise).toBe(currentRecovery);
     releaseSecondStartRecovery(
       Response.json({
-        entities: [{ ...entity("asset-after-restart"), metadata: metadata(1) }],
-        tasks: [],
-        objects: [],
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: [],
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: [entityUpdateEvent({ ...entity("asset-after-restart"), metadata: metadata(1) })],
+        has_more: false,
         version: 1
       })
     );
@@ -365,3 +345,13 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
     expect(engine.activeRecoveryPromise).toBeUndefined();
   });
 });
+
+function entityUpdateEvent(resource: ReturnType<typeof entity>) {
+  return {
+    event: "update",
+    resource_type: "entity",
+    id: resource.entity_id,
+    version: resource.metadata.version,
+    resource
+  } as const;
+}

@@ -74,31 +74,24 @@ Malformed `task_cursor` values return `400 VALIDATION_ERROR` before the check-in
 
 ## Query endpoints (`/queries/full`, `/queries/changed-since`)
 
-These endpoints use per-type **limits** and opaque cursors. When a stream is truncated, the response includes `has_more_*` booleans and opaque **`next_*_cursor`** strings. Pass them back on the **next request** as query parameters to continue **without skipping rows**:
+`GET /queries/full` uses per-type limits and opaque cursors. When a stream is truncated, the response includes `has_more_*` booleans and opaque `next_*_cursor` strings:
 
 | Response field | Query parameter (next request) |
 | --- | --- |
 | `next_entity_cursor` | `entity_cursor` |
 | `next_task_cursor` | `task_cursor` |
 | `next_object_cursor` | `object_cursor` |
-| `next_deleted_entity_cursor` | `deleted_entity_cursor` |
-| `next_deleted_task_cursor` | `deleted_task_cursor` |
-| `next_deleted_object_cursor` | `deleted_object_cursor` |
-
 For **`GET /queries/full`**, every response includes a **`version`** captured before the first page is read. The opaque continuation cursors carry that hydration baseline, so every page in the same traversal repeats the same `version` even when a later page contains a resource whose `metadata.version` is newer. Clients must not advance their global sync cursor from hydrated resource versions. Consume all full-dataset pages, use the response `version` as the baseline, then drain `GET /queries/changed-since?since_version=<version>` before treating the hydrated state as current.
 
-For **`GET /queries/changed-since`**, use **`since_version`** as the incremental boundary. The response includes a monotonic **`version`** watermark; pass that value as `since_version` on the next poll after all pages for the current response are consumed. While following cursors for a truncated response, keep the same `since_version` and pass back the `next_*_cursor` value unchanged as the matching `*_cursor` query parameter. Treat every cursor as opaque: do not parse or construct it.
+For **`GET /queries/changed-since`**, use `since_version` as the incremental boundary and optional `limit`/`cursor` parameters for pagination. Each page contains one globally ordered `events` array. A truncated page sets `has_more=true` and returns one `next_cursor`; keep the same `since_version` and pass that cursor back unchanged. Once all pages are consumed, pass the stable response `version` as the next poll's `since_version`.
 
-### Per-type caps
+### Query caps
 
 When limit query params are omitted or zero:
 
 - `GET /queries/full` — up to **1000** rows per resource type (`entity_limit`, `task_limit`, `object_limit`)
-- `GET /queries/changed-since` — up to **5000** rows per type when `limit_per_type` is zero
+- `GET /queries/changed-since` — up to **5000** ordered events when `limit` is zero
 
-Both query endpoints retain at most **8 MiB of stored JSON per resource type per page**. If that
-byte budget is reached before the requested row count, the response is a normal short page: the
-matching `has_more_*` field is true and `next_*_cursor` continues from the last returned row. Every
-stored resource JSON blob is capped at 1 MiB, so each stream can always make progress.
+The full query retains at most **8 MiB of stored JSON per resource type per page**. If that byte budget is reached before the requested row count, the response is a normal short page with the matching `has_more_*` field and `next_*_cursor`. Every stored resource JSON blob is capped at 1 MiB, so each stream can always make progress. Changed-since events are already validated and stored as complete feed envelopes in the durable log.
 
 Invalid limit query params on these endpoints return **400** `VALIDATION_ERROR`.

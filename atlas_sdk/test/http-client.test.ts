@@ -663,22 +663,28 @@ describe("AtlasClient HTTP", () => {
   it("exposes one-page query helpers without mutating sync state", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
-    core.changedSinceLimitPerType = 1;
+    core.changedSinceLimit = 1;
     core.upsertEntity(entity("asset-query"));
     core.upsertTask(task("task-query", "asset-query"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     const full = await client.queries.full({ entityLimit: 1, taskLimit: 1, objectLimit: 1, entityCursor: "1" });
-    const changed = await client.queries.changedSince(0, { limitPerType: 1, taskCursor: "1", deletedTaskCursor: "1" });
+    const changed = await client.queries.changedSince(0, { limit: 1, cursor: "1" });
 
     expect(full.entities).toEqual([]);
     expect(full.version).toBe(core.version);
-    expect(changed.tasks).toEqual([]);
+    expect(changed.events).toHaveLength(1);
     expect(core.requests).toContain("/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor=1");
-    expect(core.requests).toContain(
-      "/queries/changed-since?since_version=0&limit_per_type=1&task_cursor=1&deleted_task_cursor=1"
-    );
+    expect(core.requests).toContain("/queries/changed-since?since_version=0&limit=1&cursor=1");
     expect(client.sync.status().lastVersion).toBe(0);
+  });
+
+  it("loads the typed command catalog directly from Core", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await expect(client.commandCatalog()).resolves.toEqual(core.commandCatalog);
+    expect(core.requests).toContain("/command-catalog");
   });
 
   it("matches Core duplicate-create conflicts in the fake transport", async () => {
@@ -879,7 +885,7 @@ describe("AtlasClient HTTP", () => {
   it("returns protocol errors for invalid fake Core pagination cursors", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
-    core.changedSinceLimitPerType = 1;
+    core.changedSinceLimit = 1;
 
     const fullResponse = await core.fetch("http://atlas.test/queries/full?entity_cursor=abc");
     await expect(fullResponse.json()).resolves.toMatchObject({
@@ -888,9 +894,7 @@ describe("AtlasClient HTTP", () => {
     });
     expect(fullResponse.status).toBe(400);
 
-    const changedSinceResponse = await core.fetch(
-      "http://atlas.test/queries/changed-since?since_version=0&task_cursor=-1"
-    );
+    const changedSinceResponse = await core.fetch("http://atlas.test/queries/changed-since?since_version=0&cursor=-1");
     await expect(changedSinceResponse.json()).resolves.toMatchObject({
       success: false,
       error_code: "VALIDATION_ERROR"

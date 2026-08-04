@@ -16,6 +16,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
@@ -224,17 +225,17 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDataChangedSince: %v", err)
 	}
-	if !deletedResourcesContain(changed.DeletedEntities, entityID) {
-		t.Fatalf("deleted entities = %#v, want %s", changed.DeletedEntities, entityID)
+	if !changeEventsContainDelete(changed.Events, ChangeResourceEntity, entityID) {
+		t.Fatalf("changed events = %#v, want entity delete %s", changed.Events, entityID)
 	}
-	if !deletedResourcesContain(changed.DeletedTasks, taskID) {
-		t.Fatalf("deleted tasks = %#v, want %s", changed.DeletedTasks, taskID)
+	if !changeEventsContainDelete(changed.Events, ChangeResourceTask, taskID) {
+		t.Fatalf("changed events = %#v, want task delete %s", changed.Events, taskID)
 	}
-	if !deletedResourcesContain(changed.DeletedTasks, commandTask.TaskID) {
-		t.Fatalf("deleted tasks = %#v, want %s", changed.DeletedTasks, commandTask.TaskID)
+	if !changeEventsContainDelete(changed.Events, ChangeResourceTask, commandTask.TaskID) {
+		t.Fatalf("changed events = %#v, want task delete %s", changed.Events, commandTask.TaskID)
 	}
-	if !deletedResourcesContain(changed.DeletedObjects, objectID) {
-		t.Fatalf("deleted objects = %#v, want %s", changed.DeletedObjects, objectID)
+	if !changeEventsContainDelete(changed.Events, ChangeResourceObject, objectID) {
+		t.Fatalf("changed events = %#v, want object delete %s", changed.Events, objectID)
 	}
 	if changed.Version <= baselineVersion {
 		t.Fatalf("changed-since version = %d, want > baseline %d", changed.Version, baselineVersion)
@@ -272,9 +273,8 @@ func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
 	}
 	closedPool.Close()
 
-	sink := &recordingChangeSink{}
 	checkins := NewEntityCheckinActions(
-		NewEntityActionsWithChangeSink(pool, sink),
+		NewEntityActions(pool),
 		NewTaskActions(closedPool),
 	)
 	if _, err := checkins.CheckIn(ctx, EntityCheckinParams{EntityID: prefix + "missing", TaskLimit: 10}); err == nil {
@@ -307,6 +307,10 @@ func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
 		}
 	}
 
+	beforeFailedVersion, err := CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("read version before failed check-in: %v", err)
+	}
 	if _, err := checkins.CheckIn(ctx, params); err == nil {
 		t.Fatal("CheckIn with closed task pool succeeded, want task read failure")
 	}
@@ -317,11 +321,15 @@ func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
 	if unchanged.Version != created.Version || !bytes.Equal(unchanged.JSON, created.JSON) {
 		t.Fatalf("failed check-in changed entity: before version/json=%d/%s after=%d/%s", created.Version, created.JSON, unchanged.Version, unchanged.JSON)
 	}
-	if sink.called {
-		t.Fatalf("failed check-in published change: %#v", sink.change)
+	afterFailedVersion, err := CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("read version after failed check-in: %v", err)
+	}
+	if afterFailedVersion != beforeFailedVersion {
+		t.Fatalf("failed check-in advanced change version from %d to %d", beforeFailedVersion, afterFailedVersion)
 	}
 
-	retry := NewEntityCheckinActions(NewEntityActionsWithChangeSink(pool, sink), NewTaskActions(pool))
+	retry := NewEntityCheckinActions(NewEntityActions(pool), NewTaskActions(pool))
 	result, err := retry.CheckIn(ctx, params)
 	if err != nil {
 		t.Fatalf("retry check-in with original version: %v", err)
@@ -365,16 +373,12 @@ func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Poo
 	t.Helper()
 	pattern := prefix + "%"
 	for _, taskID := range taskIDs {
-		if _, err := pool.Exec(ctx, `DELETE FROM deletions WHERE resource_type = $1 AND resource_id = $2`, ChangeResourceTask, taskID); err != nil {
-			t.Fatalf("cleanup live action generated task tombstone %q: %v", taskID, err)
-		}
 		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
 			t.Fatalf("cleanup live action generated task %q: %v", taskID, err)
 		}
 	}
 	statements := []string{
 		`DELETE FROM storage_deletion_outbox WHERE object_id LIKE $1 OR path LIKE $1`,
-		`DELETE FROM deletions WHERE resource_id LIKE $1`,
 		`DELETE FROM objects WHERE object_id LIKE $1`,
 		`DELETE FROM tasks WHERE task_id LIKE $1`,
 		`DELETE FROM entities WHERE entity_id LIKE $1`,
@@ -404,9 +408,9 @@ func objectPageContains(page *ListPage[*models.MediaObject], id string) bool {
 	return false
 }
 
-func deletedResourcesContain(items []DeletedResource, id string) bool {
+func changeEventsContainDelete(items []protocol.FeedEvent, resourceType ChangeResource, id string) bool {
 	for _, item := range items {
-		if item.ID == id {
+		if item.Event == ChangeEventDelete && item.ResourceType == resourceType && item.ID == id {
 			return true
 		}
 	}

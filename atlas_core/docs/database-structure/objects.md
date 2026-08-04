@@ -63,7 +63,7 @@ stored object path, so the server generates `bucket` metadata from that configur
 
 When `DELETE /objects/{object_id}` removes metadata for an object with a stored
 blob path, Atlas Core also records that blob path in `storage_deletion_outbox`
-inside the same database transaction as the object tombstone. The service then
+inside the same database transaction as the object row deletion and its durable change event. The service then
 attempts immediate blob deletion. If storage deletion fails, the queued row
 remains and the background reconciler retries until the path is deleted.
 

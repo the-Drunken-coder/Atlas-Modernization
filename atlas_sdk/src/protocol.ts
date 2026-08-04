@@ -1,4 +1,7 @@
 export type {
+  CommandCatalog,
+  CommandDefinition,
+  CommandParameterSchema,
   EntityComponents,
   EntityCreateRequest,
   EntityResource,
@@ -22,6 +25,7 @@ export type {
 } from "../../atlas_protocol/generated/typescript/index.js";
 export {
   ATLAS_PROTOCOL_REVISION,
+  isCommandCatalog,
   isEntityCreateRequest,
   isEntityResource,
   isEntityUpdateRequest,

@@ -12,7 +12,7 @@ From the repository root:
 python3 atlas_core/scripts/atlas.py --dev
 ```
 
-Development Compose explicitly sets `DATABASE_RECREATE_ON_STARTUP=true`: each API startup migrates/verifies the schema, clears disposable resource rows and the configured bucket, resets change versions, preserves local `admin_records` plus migration history, and republishes Core's embedded `command_catalog` before serving HTTP.
+Development Compose explicitly sets `DATABASE_RECREATE_ON_STARTUP=true`: each API startup migrates/verifies the schema, clears disposable resource rows and the durable change log, empties the configured bucket, resets the change clock, and preserves local `admin_records` plus migration history. Core serves its embedded catalog directly at `GET /command-catalog`; no catalog object is seeded.
 
 ## Production configuration
 
@@ -178,7 +178,7 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgr
   >"${BACKUP_DIR}/postgres.contents.txt"
 ```
 
-Every full dump must contain resource tables, `deletions`, `storage_deletion_outbox`, `storage_upload_intents`, `atlas_change_version_seq`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata). After durable v1 adoption it must also contain `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to be unversioned and is marked `unversioned-v1-candidate` instead.
+Every current full dump must contain resource tables, `atlas_change_clock`, `atlas_change_events`, `storage_deletion_outbox`, `storage_upload_intents`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata), plus `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to use the legacy v1 schema and is marked `unversioned-v1-candidate` instead.
 
 4. Mirror the entire configured bucket into the same backup set:
 

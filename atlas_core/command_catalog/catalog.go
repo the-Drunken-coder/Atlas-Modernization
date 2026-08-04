@@ -2,57 +2,49 @@
 package commandcatalog
 
 import (
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
+
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 //go:embed command_catalog.json
 var catalogFS embed.FS
 
-type Catalog struct {
-	Type        string    `json:"type"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Commands    []Command `json:"commands"`
-}
-
-type Command struct {
-	ID               string                     `json:"id"`
-	Name             string                     `json:"name"`
-	Description      string                     `json:"description"`
-	ParametersSchema map[string]ParameterSchema `json:"parameters_schema"`
-}
-
-type ParameterSchema struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Required    bool     `json:"required"`
-	Minimum     *float64 `json:"minimum,omitempty"`
-	Maximum     *float64 `json:"maximum,omitempty"`
-}
-
 var (
-	defaultCatalog Catalog
+	defaultCatalog protocol.CommandCatalog
 	defaultErr     error
 	defaultOnce    sync.Once
 )
-
-const ObjectID = "command_catalog"
 
 // JSON returns the command catalog embedded in the Core binary.
 func JSON() ([]byte, error) {
 	return catalogFS.ReadFile("command_catalog.json")
 }
 
-func Default() (Catalog, error) {
+func ETag() (string, error) {
+	data, err := JSON()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`"%x"`, sha256.Sum256(data)), nil
+}
+
+func Default() (protocol.CommandCatalog, error) {
 	defaultOnce.Do(func() {
 		data, err := JSON()
 		if err != nil {
 			defaultErr = err
+			return
+		}
+		if errors := protocol.ValidateCommandCatalog(json.RawMessage(data)); len(errors) > 0 {
+			defaultErr = fmt.Errorf("invalid embedded command catalog: %s", strings.Join(errors, "; "))
 			return
 		}
 		defaultErr = json.Unmarshal(data, &defaultCatalog)
@@ -60,16 +52,16 @@ func Default() (Catalog, error) {
 	return defaultCatalog, defaultErr
 }
 
-func (c Catalog) Command(id string) (Command, bool) {
-	for _, command := range c.Commands {
+func Command(catalog protocol.CommandCatalog, id string) (protocol.CommandDefinition, bool) {
+	for _, command := range catalog.Commands {
 		if command.ID == id {
 			return command, true
 		}
 	}
-	return Command{}, false
+	return protocol.CommandDefinition{}, false
 }
 
-func (c Command) CoerceParameters(raw any) (map[string]any, error) {
+func CoerceParameters(command protocol.CommandDefinition, raw any) (map[string]any, error) {
 	params, ok := raw.(map[string]any)
 	if raw == nil {
 		params = map[string]any{}
@@ -78,8 +70,8 @@ func (c Command) CoerceParameters(raw any) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("parameters must be an object")
 	}
-	known := make(map[string]struct{}, len(c.ParametersSchema))
-	for name := range c.ParametersSchema {
+	known := make(map[string]struct{}, len(command.ParametersSchema))
+	for name := range command.ParametersSchema {
 		known[name] = struct{}{}
 	}
 	for name := range params {
@@ -88,7 +80,7 @@ func (c Command) CoerceParameters(raw any) (map[string]any, error) {
 		}
 	}
 	out := make(map[string]any, len(params))
-	for name, schema := range c.ParametersSchema {
+	for name, schema := range command.ParametersSchema {
 		value, exists := params[name]
 		if emptyOptional(value, exists) {
 			if schema.Required {
@@ -105,7 +97,7 @@ func (c Command) CoerceParameters(raw any) (map[string]any, error) {
 	return out, nil
 }
 
-func coerceParameter(name string, schema ParameterSchema, value any) (any, error) {
+func coerceParameter(name string, schema protocol.CommandParameterSchema, value any) (any, error) {
 	switch schema.Type {
 	case "string":
 		text, ok := value.(string)
