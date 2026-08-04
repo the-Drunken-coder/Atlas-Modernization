@@ -248,7 +248,7 @@ export function App() {
         </section>
         <section className="panel">
           <h2>Recent Runs</h2>
-          <RunTable runs={runs} onSelect={runSession.selectRun} />
+          <RunTable runs={runs} selectedId={currentRun?.id} onSelect={runSession.selectRun} />
         </section>
       </section>
     </main>

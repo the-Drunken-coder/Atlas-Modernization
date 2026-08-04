@@ -35,6 +35,8 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
             type="button"
             className="entity-row"
             data-selected={entity.entity_id === selectedId}
+            aria-current={entity.entity_id === selectedId ? "true" : undefined}
+            autoFocus={entity.entity_id === selectedId}
             onBlur={() => onPreview?.(null)}
             onClick={() => {
               onPreview?.(null);

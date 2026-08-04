@@ -84,7 +84,9 @@ describe("CommandForm", () => {
     const send = screen.getByRole("button", { name: "Send command" });
     expect(send).toBeDisabled();
 
-    await user.type(screen.getByRole("spinbutton"), "120");
+    expect(screen.getByRole("spinbutton", { name: /latitude/i })).toHaveValue(40.1);
+    expect(screen.getByRole("spinbutton", { name: /longitude/i })).toHaveValue(-74.2);
+    await user.type(screen.getByRole("spinbutton", { name: /altitude_m/i }), "120");
     expect(send).toBeEnabled();
     await user.click(send);
 
@@ -93,6 +95,11 @@ describe("CommandForm", () => {
 
   it("traps modal focus, closes on Escape, and restores trigger focus", async () => {
     const user = userEvent.setup();
+    const mapEscape = vi.fn();
+    const mapKeyListener = (event: KeyboardEvent) => {
+      if (event.key === "Escape") mapEscape();
+    };
+    window.addEventListener("keydown", mapKeyListener);
 
     function Harness() {
       const [open, setOpen] = useState(false);
@@ -127,7 +134,6 @@ describe("CommandForm", () => {
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
 
     trigger.focus();
-    await user.tab();
     expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
 
     trigger.focus();
@@ -135,6 +141,8 @@ describe("CommandForm", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+    expect(mapEscape).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", mapKeyListener);
   });
 
   it("can hide a pending submission without offering a duplicate send", async () => {
@@ -177,7 +185,7 @@ describe("CommandForm", () => {
     );
 
     const send = screen.getByRole("button", { name: "Send command" });
-    const altitude = screen.getByRole("spinbutton");
+    const altitude = screen.getByRole("spinbutton", { name: /altitude_m/i });
     await user.type(altitude, "120");
     expect(send).toBeEnabled();
 
@@ -201,8 +209,33 @@ describe("CommandForm", () => {
       />
     );
 
-    await user.type(screen.getByRole("spinbutton"), "120");
+    await user.type(screen.getByRole("spinbutton", { name: /altitude_m/i }), "120");
     expect(screen.getByRole("button", { name: "Send command" })).toBeDisabled();
+
+    await user.type(screen.getByRole("spinbutton", { name: /latitude/i }), "40.1");
+    expect(screen.getByRole("button", { name: "Send command" })).toBeEnabled();
+  });
+
+  it("accepts position coordinates without a map pointer", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <CommandForm
+        command={command}
+        targeting="map_point"
+        formParameters={params}
+        submitting={false}
+        onCancel={() => {}}
+        onSubmit={onSubmit}
+      />
+    );
+
+    await user.type(screen.getByRole("spinbutton", { name: /latitude/i }), "40.1");
+    await user.type(screen.getByRole("spinbutton", { name: /longitude/i }), "-74.2");
+    await user.type(screen.getByRole("spinbutton", { name: /altitude_m/i }), "120");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({ latitude: 40.1, longitude: -74.2, altitude_m: 120 });
   });
 
   it("submits optional boolean parameters when explicitly set to false", async () => {

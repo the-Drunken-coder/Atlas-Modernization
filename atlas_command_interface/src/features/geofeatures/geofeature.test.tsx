@@ -85,6 +85,63 @@ describe("GeofeatureInspector", () => {
     expect(next.coordinates[0][0]).toEqual(next.coordinates[0][3]);
   });
 
+  it("moves a vertex from keyboard-editable coordinate fields", async () => {
+    const user = userEvent.setup();
+    const onChangeDraft = vi.fn();
+    function StatefulInspector() {
+      const [draft, setDraft] = useState(polygon);
+      return (
+        <GeofeatureInspector
+          entity={geofeature(polygon)}
+          editing
+          draft={draft}
+          saving={false}
+          onStartEdit={noop}
+          onChangeDraft={(next) => {
+            setDraft(next as typeof polygon);
+            onChangeDraft(next);
+          }}
+          onSave={noop}
+          onCancel={noop}
+        />
+      );
+    }
+
+    render(<StatefulInspector />);
+    const longitude = screen.getByRole("spinbutton", { name: "Vertex 1 longitude" });
+    await user.clear(longitude);
+    await user.type(longitude, "-75");
+    await user.keyboard("{Enter}");
+
+    const next = onChangeDraft.mock.lastCall?.[0] as Extract<UiGeometry, { type: "Polygon" }>;
+    expect(next.coordinates[0][0]).toEqual([-75, 40.1]);
+    expect(next.coordinates[0][4]).toEqual([-75, 40.1]);
+  });
+
+  it("adds a midpoint vertex from the inspector", async () => {
+    const user = userEvent.setup();
+    const onChangeDraft = vi.fn();
+    render(
+      <GeofeatureInspector
+        entity={geofeature(polygon)}
+        editing
+        draft={polygon}
+        saving={false}
+        onStartEdit={noop}
+        onChangeDraft={onChangeDraft}
+        onSave={noop}
+        onCancel={noop}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add vertex after 1" }));
+
+    const next = onChangeDraft.mock.lastCall?.[0] as Extract<UiGeometry, { type: "Polygon" }>;
+    expect(next.coordinates[0]).toHaveLength(6);
+    expect(next.coordinates[0][1][0]).toBeCloseTo(-74.15);
+    expect(next.coordinates[0][1][1]).toBeCloseTo(40.1);
+  });
+
   it("saves and cancels through the provided handlers", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();

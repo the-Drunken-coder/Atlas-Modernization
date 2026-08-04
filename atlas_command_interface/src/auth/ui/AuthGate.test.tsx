@@ -246,6 +246,11 @@ describe("AuthGate", () => {
 
   it("dismisses the account menu with Escape or an outside click", async () => {
     const user = userEvent.setup();
+    const mapEscape = vi.fn();
+    const mapKeyListener = (event: KeyboardEvent) => {
+      if (event.key === "Escape") mapEscape();
+    };
+    window.addEventListener("keydown", mapKeyListener);
     stubFetch([{ status: 200, body: { user: { username: "operator" } } }]);
 
     render(
@@ -259,10 +264,12 @@ describe("AuthGate", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
     expect(account).toHaveFocus();
+    expect(mapEscape).not.toHaveBeenCalled();
 
     await user.click(account);
     await user.click(screen.getByText("map console"));
     expect(screen.queryByRole("group", { name: "Account menu" })).not.toBeInTheDocument();
+    window.removeEventListener("keydown", mapKeyListener);
   });
 
   it("keeps the menu open and disables logout while the request is pending", async () => {

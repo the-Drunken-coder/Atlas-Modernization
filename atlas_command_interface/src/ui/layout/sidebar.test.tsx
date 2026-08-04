@@ -90,10 +90,14 @@ describe("sidebar rail + panel", () => {
     render(<Harness />);
     await user.click(screen.getByText("Rover One"));
     expect(screen.getByText("inspector asset-1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
 
     // Back returns to the previous list.
     await user.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByText("Rover One")).toBeInTheDocument();
+    const selectedRow = screen.getByRole("button", { name: /Rover One/ });
+    expect(selectedRow).toHaveFocus();
+    expect(selectedRow).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("button", { name: /Rover Two/ })).not.toHaveAttribute("aria-current");
   });
 
   it("does not repeat preview callbacks on row pointer movement", () => {

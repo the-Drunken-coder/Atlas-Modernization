@@ -14,7 +14,7 @@ export function SidebarPanel({ title, onBack, onCollapse, children }: SidebarPan
     <div className="panel">
       <div className="panel__header">
         {onBack ? (
-          <IconButton label="Back" onClick={onBack}>
+          <IconButton label="Back" autoFocus onClick={onBack}>
             <BackIcon size={18} />
           </IconButton>
         ) : null}

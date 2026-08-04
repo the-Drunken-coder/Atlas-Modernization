@@ -80,7 +80,7 @@ export function useCommandFlow({
   const pickSidebarCommand = useCallback(
     (availability: CommandAvailability) => {
       if (submitting || availability.disabled) return;
-      if (availability.requiresForm) {
+      if (availability.requiresForm || availability.targeting === "map_point") {
         setSubmitError(undefined);
         setCommandForm({ availability });
         return;

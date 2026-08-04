@@ -1,14 +1,20 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { useEffect, useState } from "react";
 import { entityClassification, entityDisplayName, entityGeometry } from "../../atlas/entities.js";
 import {
+  addVertexAfter,
   canRemoveVertex,
   formatCoordinate,
   geometrySummary,
   geometryVertices,
   isCircleFeature,
+  midpointPosition,
+  moveVertex,
+  type Position,
   removeVertex,
   type UiGeometry,
   updateCircleRadius,
+  type VertexRef,
   validateGeometry
 } from "../../atlas/geometry.js";
 import { Button, IconButton, TextField } from "../../ui/primitives/controls.js";
@@ -135,30 +141,134 @@ function VertexEditor({
       {!validity?.valid && validity?.reason ? <div className="banner banner--error">{validity.reason}</div> : null}
       {vertices.map((vertex, index) => {
         const removable = canRemoveVertex(geometry, vertex.ref);
+        const title = isCircle ? "Center" : `Vertex ${index + 1}`;
+        const segment = segmentAfter(geometry, vertex.ref);
         return (
-          <div key={index} className="task-row" style={{ border: "1px solid var(--border)", borderRadius: 6 }}>
-            <span className="task-row__main">
-              <span className="task-row__title">{isCircle ? "Center" : `Vertex ${index + 1}`}</span>
-              <span className="task-row__sub">{formatCoordinate([vertex.lng, vertex.lat])}</span>
-            </span>
-            <IconButton
-              label={`Remove vertex ${index + 1}`}
-              disabled={!removable}
-              onClick={() => {
-                const next = removeVertex(geometry, vertex.ref);
-                if (next) onChange(next);
-              }}
-            >
-              <TrashIcon size={15} />
-            </IconButton>
+          <div key={vertexKey(vertex.ref)} className="geometry-vertex">
+            <div className="task-row">
+              <span className="task-row__main">
+                <span className="task-row__title">{title}</span>
+                <span className="task-row__sub">{formatCoordinate([vertex.lng, vertex.lat])}</span>
+              </span>
+              <IconButton
+                label={`Remove vertex ${index + 1}`}
+                disabled={!removable}
+                onClick={() => {
+                  const next = removeVertex(geometry, vertex.ref);
+                  if (next) onChange(next);
+                }}
+              >
+                <TrashIcon size={15} />
+              </IconButton>
+            </div>
+            <div className="geometry-coordinate-fields">
+              <CoordinateField
+                label={`${title} longitude`}
+                value={vertex.lng}
+                min={-180}
+                max={180}
+                onCommit={(lng) => onChange(moveVertex(geometry, vertex.ref, lng, vertex.lat))}
+              />
+              <CoordinateField
+                label={`${title} latitude`}
+                value={vertex.lat}
+                min={-90}
+                max={90}
+                onCommit={(lat) => onChange(moveVertex(geometry, vertex.ref, vertex.lng, lat))}
+              />
+            </div>
+            {segment ? (
+              <Button
+                variant="ghost"
+                onClick={() => onChange(addVertexAfter(geometry, vertex.ref, midpointPosition(...segment)))}
+              >
+                Add vertex after {index + 1}
+              </Button>
+            ) : null}
           </div>
         );
       })}
       <p className="field__hint">
         {isCircle
-          ? "Drag the center point on the map to move the circle."
-          : "Drag vertices on the map to reshape. Click a mid-point handle to add one."}
+          ? "Enter center coordinates here or drag the center point on the map."
+          : "Enter coordinates and add vertices here, or use the map handles."}
       </p>
     </div>
   );
+}
+
+function CoordinateField({
+  label,
+  value,
+  min,
+  max,
+  onCommit
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+
+  const commit = () => {
+    const next = Number(draft);
+    if (!Number.isFinite(next) || next < min || next > max) {
+      setDraft(String(value));
+      return;
+    }
+    if (next !== value) onCommit(next);
+  };
+
+  return (
+    <TextField
+      label={label}
+      type="number"
+      min={min}
+      max={max}
+      step="any"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          setDraft(String(value));
+        }
+      }}
+    />
+  );
+}
+
+function segmentAfter(geometry: UiGeometry, ref: VertexRef): [Position, Position] | undefined {
+  if (geometry.type === "LineString" && ref.kind === "LineString") {
+    const current = geometry.coordinates[ref.index];
+    const next = geometry.coordinates[ref.index + 1];
+    return current && next ? [current, next] : undefined;
+  }
+  if (geometry.type === "Polygon" && ref.kind === "Polygon") {
+    const ring = geometry.coordinates[ref.ring];
+    if (!ring || ring.length < 2) return undefined;
+    const openLength = positionsEqual(ring[0], ring[ring.length - 1]) ? ring.length - 1 : ring.length;
+    const current = ring[ref.index];
+    const next = ring[(ref.index + 1) % openLength];
+    return current && next ? [current, next] : undefined;
+  }
+  return undefined;
+}
+
+function positionsEqual(a: Position | undefined, b: Position | undefined): boolean {
+  return !!a && !!b && Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+}
+
+function vertexKey(ref: VertexRef): string {
+  if (ref.kind === "Polygon") return `${ref.kind}-${ref.ring}-${ref.index}`;
+  if (ref.kind === "LineString") return `${ref.kind}-${ref.index}`;
+  return ref.kind;
 }

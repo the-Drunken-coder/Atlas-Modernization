@@ -490,6 +490,11 @@ describe("MapConsole command flow", () => {
 
   it("opens error details by keyboard and restores focus safely on close", async () => {
     const user = userEvent.setup();
+    const mapEscape = vi.fn();
+    const mapKeyListener = (event: KeyboardEvent) => {
+      if (event.key === "Escape") mapEscape();
+    };
+    window.addEventListener("keydown", mapKeyListener);
     const { fake } = makeFakeDataSource(area, {
       running: true,
       healthy: false,
@@ -516,6 +521,8 @@ describe("MapConsole command flow", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(badge);
+    expect(mapEscape).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", mapKeyListener);
   });
 
   it("closes details and preserves a focus target when recovery clears the error", async () => {
@@ -626,6 +633,25 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByText("Rover"));
     fireEvent.contextMenu(screen.getByTestId("map"));
     await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({
+      entityId: "asset-1",
+      command: { id: "goto" },
+      parameters: { latitude: 47.61, longitude: -122.33 }
+    });
+  });
+
+  it("offers position commands in the inspector and accepts keyboard-entered coordinates", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(await screen.findByRole("button", { name: /Goto/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /latitude/i }), "47.61");
+    await user.type(screen.getByRole("spinbutton", { name: /longitude/i }), "-122.33");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({

@@ -57,9 +57,11 @@ export function createEditingMarkers(
   }
 
   for (const mid of midpoints(geometry)) {
-    const element = document.createElement("div");
+    const element = document.createElement("button");
+    element.type = "button";
     element.className = "vertex-handle vertex-handle--mid";
     element.title = "Click to add a vertex";
+    element.setAttribute("aria-label", "Add vertex");
     const marker = new MarkerConstructor({ element, draggable: false })
       .setLngLat([mid.position[0], mid.position[1]])
       .addTo(map);

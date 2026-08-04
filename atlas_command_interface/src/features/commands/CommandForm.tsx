@@ -18,50 +18,44 @@ export type CommandFormProps = {
 
 export function CommandForm(props: CommandFormProps) {
   const { command, targeting, formParameters, mapPoint, submitting, error, onCancel, onSubmit } = props;
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() => ({
+    ...(Number.isFinite(mapPoint?.lat) ? { latitude: String(mapPoint?.lat) } : {}),
+    ...(Number.isFinite(mapPoint?.lng) ? { longitude: String(mapPoint?.lng) } : {})
+  }));
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null
   );
 
-  useEffect(
-    () => () => {
-      if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
-    },
-    []
-  );
-
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onCancel();
-      } else if (event.key === "Tab") {
-        keepFocusInDialog(event, dialogRef.current);
-      }
+    const restoreDialogFocus = (event: FocusEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog || dialog.contains(event.target as Node | null)) return;
+      firstDialogControl(dialog)?.focus();
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onCancel, submitting]);
+    document.addEventListener("focusin", restoreDialogFocus);
+    return () => {
+      document.removeEventListener("focusin", restoreDialogFocus);
+      if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+    };
+  }, []);
 
   const setValue = (name: string, value: string) => setValues((current) => ({ ...current, [name]: value }));
 
-  const hasValidMapPoint = targeting !== "map_point" || isFiniteMapPoint(mapPoint);
-  const missingRequired = formParameters.some(
+  const displayedParameters =
+    targeting === "map_point" ? [...coordinateParameters(command), ...formParameters] : formParameters;
+  const missingRequired = displayedParameters.some(
     ([name, schema]) => schema.required && schema.type !== "boolean" && !values[name]?.trim()
   );
-  const invalidParameter = formParameters.some(([name, schema]) => parameterError(schema, values[name]) !== undefined);
-  const canSubmit = !submitting && hasValidMapPoint && !missingRequired && !invalidParameter;
+  const invalidParameter = displayedParameters.some(
+    ([name, schema]) => parameterError(schema, values[name]) !== undefined
+  );
+  const canSubmit = !submitting && !missingRequired && !invalidParameter;
 
   const submit = () => {
     const parameters: Record<string, JSONValue> = {};
-    if (targeting === "map_point" && isFiniteMapPoint(mapPoint)) {
-      parameters.latitude = mapPoint.lat;
-      parameters.longitude = mapPoint.lng;
-    }
-    for (const [name, schema] of formParameters) {
+    for (const [name, schema] of displayedParameters) {
       const raw = values[name];
       if (schema.type === "boolean") {
         if (raw === "true") parameters[name] = true;
@@ -76,7 +70,22 @@ export function CommandForm(props: CommandFormProps) {
   };
 
   return (
-    <div ref={dialogRef} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+    <div
+      ref={dialogRef}
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onCancel();
+        } else if (event.key === "Tab") {
+          keepFocusInDialog(event, dialogRef.current);
+        }
+      }}
+    >
       <div className="modal">
         <div className="modal__header">
           <span className="modal__title" id={titleId}>
@@ -91,11 +100,11 @@ export function CommandForm(props: CommandFormProps) {
 
           {targeting === "map_point" && mapPoint ? (
             <div className="banner banner--info">
-              Target: {mapPoint.lat.toFixed(5)}, {mapPoint.lng.toFixed(5)}
+              Position filled from the map. Review the coordinates before sending.
             </div>
           ) : null}
 
-          {formParameters.map(([name, schema]) => {
+          {displayedParameters.map(([name, schema]) => {
             const value = values[name] ?? "";
             return (
               <ParameterField
@@ -124,13 +133,9 @@ export function CommandForm(props: CommandFormProps) {
   );
 }
 
-function keepFocusInDialog(event: KeyboardEvent, dialog: HTMLElement | null): void {
+function keepFocusInDialog(event: { preventDefault(): void; shiftKey: boolean }, dialog: HTMLElement | null): void {
   if (!dialog) return;
-  const controls = Array.from(
-    dialog.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-  );
+  const controls = dialogControls(dialog);
   if (controls.length === 0) {
     event.preventDefault();
     return;
@@ -143,6 +148,18 @@ function keepFocusInDialog(event: KeyboardEvent, dialog: HTMLElement | null): vo
     event.preventDefault();
     (event.shiftKey ? last : first).focus();
   }
+}
+
+function firstDialogControl(dialog: HTMLElement): HTMLElement | undefined {
+  return dialogControls(dialog)[0];
+}
+
+function dialogControls(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(
+    dialog.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  );
 }
 
 function ParameterField({
@@ -204,6 +221,12 @@ function parameterError(schema: CommandParameterSchema, raw: string | undefined)
   return undefined;
 }
 
-function isFiniteMapPoint(value: { lat: number; lng: number } | undefined): value is { lat: number; lng: number } {
-  return value !== undefined && Number.isFinite(value.lat) && Number.isFinite(value.lng);
+function coordinateParameters(command: CommandDefinition): Array<[string, CommandParameterSchema]> {
+  const latitude = command.parameters_schema.latitude;
+  const longitude = command.parameters_schema.longitude;
+  if (!latitude || !longitude) return [];
+  return [
+    ["latitude", { ...latitude, minimum: latitude.minimum ?? -90, maximum: latitude.maximum ?? 90 }],
+    ["longitude", { ...longitude, minimum: longitude.minimum ?? -180, maximum: longitude.maximum ?? 180 }]
+  ];
 }

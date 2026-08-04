@@ -22,21 +22,24 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
     const closeOnOutsideClick = (event: PointerEvent) => {
       if (!loggingOut && !containerRef.current?.contains(event.target as Node)) setOpen(false);
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || loggingOut) return;
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
     document.addEventListener("pointerdown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("pointerdown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
     };
   }, [loggingOut, open]);
 
   return (
-    <div className="account-menu" ref={containerRef}>
+    <div
+      className="account-menu"
+      ref={containerRef}
+      onKeyDown={(event) => {
+        if (!open || event.key !== "Escape" || loggingOut) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"

@@ -21,15 +21,25 @@ type ContextMenuProps = {
 /** A docked, position-fixed context menu. Closes on outside click or Escape. */
 export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement ? document.activeElement : null
+  );
+  const [activeKey, setActiveKey] = useState(() => items.find((item) => !item.disabled)?.key);
   const [position, setPosition] = useState({ x, y });
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+    const menu = menuRef.current;
+    const firstItem = menu?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
+    (firstItem ?? menu)?.focus();
+    return () => {
+      if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
+
+  useEffect(() => {
+    if (items.some((item) => item.key === activeKey && !item.disabled)) return;
+    setActiveKey(items.find((item) => !item.disabled)?.key);
+  }, [activeKey, items]);
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -52,7 +62,41 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
         onClick={onClose}
         onContextMenu={(event) => event.preventDefault()}
       />
-      <div ref={menuRef} className="context-menu" style={{ left: position.x, top: position.y }} role="menu">
+      <div
+        ref={menuRef}
+        className="context-menu"
+        style={{ left: position.x, top: position.y }}
+        role="menu"
+        aria-label="Position commands"
+        tabIndex={items.some((item) => !item.disabled) ? -1 : 0}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+            return;
+          }
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const enabledItems = Array.from(
+            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
+          );
+          if (enabledItems.length === 0) return;
+          const currentIndex = enabledItems.indexOf(document.activeElement as HTMLButtonElement);
+          const nextIndex =
+            event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? enabledItems.length - 1
+                : event.key === "ArrowDown"
+                  ? (Math.max(currentIndex, -1) + 1) % enabledItems.length
+                  : (currentIndex <= 0 ? enabledItems.length : currentIndex) - 1;
+          const next = enabledItems[nextIndex];
+          setActiveKey(next.dataset.menuKey);
+          next.focus();
+        }}
+      >
         {header ? <div className="context-menu__header">{header}</div> : null}
         {items.length === 0 ? (
           <div className="menu-item" aria-disabled>
@@ -66,7 +110,10 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
             role="menuitem"
             className="menu-item"
             disabled={item.disabled}
+            data-menu-key={item.key}
+            tabIndex={item.disabled ? -1 : item.key === activeKey ? 0 : -1}
             title={item.disabled ? item.disabledReason : undefined}
+            onFocus={() => setActiveKey(item.key)}
             onClick={() => {
               if (item.disabled) return;
               item.onSelect?.();

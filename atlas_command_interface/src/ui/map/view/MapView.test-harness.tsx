@@ -4,6 +4,7 @@ import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { MapCameraCommand } from "../interaction/map-camera.js";
 import type { MapReticleTarget } from "../interaction/map-targets.js";
+import type { MapEditing } from "../rendering/map-editing.js";
 import { buildMapSources, type MapSources } from "../rendering/map-sources.js";
 import { MapView } from "./MapView.js";
 
@@ -241,6 +242,7 @@ afterEach(() => {
 
 type RenderMapViewProps = {
   cameraCommand?: MapCameraCommand | null;
+  editing?: MapEditing;
   focusTarget?: MapReticleTarget | null;
   onStyleSwitchError?: (error: { failedStyleId: string; activeStyleId: string }) => void;
   selectedId?: string;
@@ -265,6 +267,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
       styleId={renderProps.styleId}
       style={renderProps.style}
       selectedId={renderProps.selectedId}
+      editing={renderProps.editing}
       focusTarget={renderProps.focusTarget}
       cameraCommand={renderProps.cameraCommand}
       onBackgroundClick={onBackgroundClick}
@@ -284,6 +287,7 @@ export function renderMapView(props: RenderMapViewProps = {}) {
         styleId={renderProps.styleId}
         style={renderProps.style}
         selectedId={renderProps.selectedId}
+        editing={renderProps.editing}
         focusTarget={renderProps.focusTarget}
         cameraCommand={renderProps.cameraCommand}
         onBackgroundClick={onBackgroundClick}
