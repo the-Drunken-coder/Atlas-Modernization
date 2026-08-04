@@ -23,11 +23,6 @@
     "deploy:command-interface": "npm run build:sdk && npm run deploy:pages --workspace @the-drunken-coder/atlas-command-interface",
     "test:clean-workspace": "node scripts/clean-workspace-smoke.mjs"
   },
-  "overrides": {
-    "miniflare": {
-      "undici": "7.29.0"
-    }
-  },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.10"
   },
