@@ -11,6 +11,7 @@ API_URL="http://127.0.0.1:8000"
 ENTITY_ID="durable-restart-entity"
 OBJECT_ID="durable-restart-object"
 ADMIN_ID="durable-restart-admin"
+EXPECTED_SCHEMA_VERSION="3"
 MARKER_DIR="$(mktemp -d)"
 MARKER_FILE="${MARKER_DIR}/marker.txt"
 DOWNLOADED_FILE="${MARKER_DIR}/downloaded.txt"
@@ -87,11 +88,20 @@ verify_sentinels() {
     schema_version="$(compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
         psql -At -U atlas -d atlas_core -c 'SELECT max(version) FROM atlas_schema_migrations')"
     test "${admin_count}" = "1"
-    test "${schema_version}" = "1"
+    test "${schema_version}" = "${EXPECTED_SCHEMA_VERSION}"
 }
 
 printf '%s' 'atlas durable restart marker' >"${MARKER_FILE}"
 
+# Provision the bucket explicitly for this clean production deployment. The
+# normal production startup only verifies durable storage and must not create a
+# missing bucket that could indicate an incomplete restore.
+compose up -d minio
+if compose run --rm minio-init; then
+    printf 'Production storage verification accepted a missing bucket\n' >&2
+    exit 1
+fi
+mc mb atlas/atlas-media
 compose up -d --build
 wait_for_api
 
@@ -113,7 +123,7 @@ compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
 
 initial_version="$(compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     psql -At -U atlas -d atlas_core -c 'SELECT max(version) FROM atlas_schema_migrations')"
-test "${initial_version}" = "1"
+test "${initial_version}" = "${EXPECTED_SCHEMA_VERSION}"
 
 compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
@@ -135,10 +145,13 @@ compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION atlas;' \
     >/dev/null
 mc rm --recursive --force atlas/atlas-media
+mc rb atlas/atlas-media
 compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
     <"${POSTGRES_DUMP}"
+mc mb atlas/atlas-media
 mc mirror --overwrite /backup/minio atlas/atlas-media
+test -z "$(mc diff /backup/minio atlas/atlas-media)"
 compose start api
 wait_for_api
 verify_sentinels "${RESTORED_FILE}"

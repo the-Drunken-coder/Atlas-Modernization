@@ -1,6 +1,6 @@
 # Objects JSON Guide
 
-_Revision: 2026-02-13_
+_Revision: 2026-08-03_
 
 Atlas Core stores object metadata in `objects`, with selected fields promoted to columns.
 Binary content is served through the storage client when configured.
@@ -66,6 +66,18 @@ blob path, Atlas Core also records that blob path in `storage_deletion_outbox`
 inside the same database transaction as the object tombstone. The service then
 attempts immediate blob deletion. If storage deletion fails, the queued row
 remains and the background reconciler retries until the path is deleted.
+
+Uploads use `storage_upload_intents` to bridge the transaction boundary between
+PostgreSQL and blob storage. An upload owns a renewable lease until its metadata
+commit. If Core stops after writing the blob, the reconciler waits for the lease
+and orphan grace period, then serializes its live-reference decision with object
+metadata writes before queuing the unreferenced blob in
+`storage_deletion_outbox`. Object path writers reject paths reserved by an
+upload intent or deletion outbox row, both before waiting for the database
+write lock and again inside their transaction, so a deletion already in progress
+cannot be outwaited and reused by live metadata. After blob deletion succeeds,
+the outbox row remains with an infinite next-attempt timestamp as a permanent
+path tombstone; generated blob paths are never reused.
 
 ## Heatmap Convention
 

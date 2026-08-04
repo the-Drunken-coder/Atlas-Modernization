@@ -18,9 +18,10 @@ import (
 
 // ObjectActions handles object business logic.
 type ObjectActions struct {
-	pool       *pgxpool.Pool
-	storage    objectStorage
-	changeSink ChangeSink
+	pool                  *pgxpool.Pool
+	storage               objectStorage
+	changeSink            ChangeSink
+	uploadHeartbeatPeriod time.Duration
 }
 
 // NewObjectActions creates a new ObjectActions instance.
@@ -31,7 +32,12 @@ func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectAc
 // NewObjectActionsWithChangeSink creates a new ObjectActions instance that
 // emits committed changes to sink.
 func NewObjectActionsWithChangeSink(pool *pgxpool.Pool, storageClient objectStorage, sink ChangeSink) *ObjectActions {
-	return &ObjectActions{pool: pool, storage: storageClient, changeSink: sink}
+	return &ObjectActions{
+		pool:                  pool,
+		storage:               storageClient,
+		changeSink:            sink,
+		uploadHeartbeatPeriod: storageUploadHeartbeatPeriod,
+	}
 }
 
 // CreateObjectParams holds parameters for creating an object.
@@ -68,6 +74,11 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 			return nil, err
 		}
 	}
+	if params.Path != nil {
+		if err := ensureObjectStoragePathAvailable(ctx, a.pool, *params.Path, objectID); err != nil {
+			return nil, err
+		}
+	}
 
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
@@ -93,6 +104,11 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if params.Path != nil {
+		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
+			return nil, err
+		}
+	}
 
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
@@ -223,6 +239,11 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		}
 	}
 	normalizedType := normalizeOptionalObjectString(params.Type)
+	if params.Path != nil {
+		if err := ensureObjectStoragePathAvailable(ctx, a.pool, *params.Path, objectID); err != nil {
+			return nil, err
+		}
+	}
 
 	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
 		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
@@ -242,6 +263,11 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if params.Path != nil {
+		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
+			return nil, err
+		}
+	}
 
 	// Fetch existing object with row lock
 	var obj models.MediaObject
@@ -440,8 +466,8 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 				log.Error().Err(recordErr).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion failed and retry metadata could not be updated")
 			}
 			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Object deleted from database but storage delete failed; queued retry")
-		} else if err := a.clearQueuedStorageDeletion(ctx, queuedBucket, queuedPath); err != nil {
-			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but queued retry could not be cleared")
+		} else if err := a.completeQueuedStorageDeletion(ctx, queuedBucket, queuedPath); err != nil {
+			log.Error().Err(err).Str("object_id", objectID).Str("path", queuedPath).Msg("Storage deletion succeeded but path tombstone could not be completed")
 		}
 	}
 

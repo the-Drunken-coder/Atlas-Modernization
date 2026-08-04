@@ -28,7 +28,24 @@ export ATLAS_ADMIN_PASSWORD='replace-with-secure-admin-password'
 
 External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
-Start the production stack:
+For the first deployment onto a new MinIO volume, start MinIO and explicitly
+provision the durable bucket with a host-installed MinIO client:
+
+```bash
+docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+mc alias set atlas-production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+mc mb atlas-production/atlas-media
+```
+
+For a restore onto a replacement volume, follow [Restore a backup
+set](#restore-a-backup-set): create the bucket only as the mirror target, restore
+the MinIO backup paired with PostgreSQL, and verify it before starting Core.
+Never start Core with a merely provisioned empty bucket against a restored
+database. Production startup only verifies the bucket so a missing blob store
+cannot be silently replaced with an empty one.
+
+Then start the production stack:
 
 ```bash
 python3 atlas_core/scripts/atlas.py --production
@@ -161,7 +178,7 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgr
   >"${BACKUP_DIR}/postgres.contents.txt"
 ```
 
-Every full dump must contain resource tables, `deletions`, `storage_deletion_outbox`, `atlas_change_version_seq`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata). After durable v1 adoption it must also contain `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to be unversioned and is marked `unversioned-v1-candidate` instead.
+Every full dump must contain resource tables, `deletions`, `storage_deletion_outbox`, `storage_upload_intents`, `atlas_change_version_seq`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata). After durable v1 adoption it must also contain `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to be unversioned and is marked `unversioned-v1-candidate` instead.
 
 4. Mirror the entire configured bucket into the same backup set:
 
@@ -239,11 +256,14 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
 3. Replace the configured bucket with the matching mirror:
 
 ```bash
+docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 mc alias set atlas-production http://127.0.0.1:9000 \
   "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+mc mb --ignore-existing atlas-production/atlas-media
 mc rm --recursive --force atlas-production/atlas-media
 mc mirror --overwrite --remove "${BACKUP_DIR}/minio/atlas-media" \
   atlas-production/atlas-media
+test -z "$(mc diff "${BACKUP_DIR}/minio/atlas-media" atlas-production/atlas-media)"
 mc alias remove atlas-production
 ```
 

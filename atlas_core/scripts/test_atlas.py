@@ -21,6 +21,7 @@ from atlas import (
     database_recreate_on_startup_enabled,
     ensure_api_auth,
     ensure_local_auth,
+    ensure_minio_bucket_docker,
     main,
     print_storage_notice,
     public_base_url_from_hostname,
@@ -104,6 +105,18 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         cleanup.assert_not_called()
         run.assert_not_called()
+
+    def test_production_bucket_verification_rejects_missing_bucket(self) -> None:
+        with patch("atlas.subprocess.run", return_value=CompletedProcess([], 1)):
+            with self.assertRaisesRegex(RuntimeError, "provision it.*or restore"):
+                ensure_minio_bucket_docker(production=True)
+
+    def test_development_bucket_verification_delegates_creation(self) -> None:
+        output = StringIO()
+        with patch("atlas.subprocess.run", return_value=CompletedProcess([], 1)), redirect_stdout(output):
+            ensure_minio_bucket_docker()
+
+        self.assertIn("Development bucket initialization delegated", output.getvalue())
 
     def test_reset_volumes_help_warns_about_production_data_loss(self) -> None:
         output = StringIO()

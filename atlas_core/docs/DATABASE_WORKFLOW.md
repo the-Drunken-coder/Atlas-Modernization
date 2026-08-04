@@ -6,7 +6,7 @@ Atlas Core has two explicit startup modes:
 
 | Mode | Setting | PostgreSQL | MinIO | Intended use |
 | --- | --- | --- | --- | --- |
-| Durable | `DATABASE_RECREATE_ON_STARTUP=false` | Applies ordered migrations and verifies schema drift; preserves all rows | Ensures the bucket exists and preserves every object | Production and any environment whose data matters |
+| Durable | `DATABASE_RECREATE_ON_STARTUP=false` | Applies ordered migrations and verifies schema drift; preserves all rows | Requires the bucket to exist and preserves every object | Production and any environment whose data matters |
 | Scratch | `DATABASE_RECREATE_ON_STARTUP=true` | Migrates/verifies the schema, truncates resource rows, and resets change versions; preserves `admin_records` and migration history | Empties the configured bucket | Local development and disposable integration tests |
 
 Durable mode is the application default and the only mode accepted by the production image. Development Compose explicitly selects scratch mode so the normal local workflow stays simple.
@@ -27,6 +27,7 @@ The managed schema contains:
 - `entities`, `tasks`, and `objects`
 - `deletions` change-feed tombstones
 - `storage_deletion_outbox` durable blob-deletion retries
+- `storage_upload_intents` leased upload ownership and crash recovery
 - `admin_records` accounts, sessions, login throttles, and managed API-key metadata
 - `atlas_change_version_seq`
 - `atlas_schema_migrations`
@@ -48,13 +49,24 @@ The managed schema contains:
 
 Unknown/future versions, missing versions, edited migration definitions, dropped indexes, changed columns/defaults/constraints, or other Atlas-owned catalog drift are startup-fatal. A failed migration rolls back its DDL and version record together.
 
-After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. Production Compose waits for `minio-init` to provision the bucket on a clean deployment. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
+After PostgreSQL succeeds, durable startup verifies that the configured MinIO bucket already exists. It never creates or empties that bucket. A missing or unreachable bucket is startup-fatal so a restored database cannot become ready without its paired blob store. The production Compose API service waits for the `minio-init` verifier to succeed, so a missing bucket prevents the Core process from starting. Operators must provision the bucket explicitly for a clean deployment or restore it from the backup paired with PostgreSQL. Core then ensures its own embedded `command_catalog` object exists and refreshes it only when the published catalog differs, without clearing any other rows or blobs.
 
 ## Baseline migration v1
 
 Migration v1 represents the exact schema that predated durable production storage. Its checksum is frozen. Do not edit v1 to make a new binary fit an old database; add the next migration instead.
 
 The baseline adoption path exists only for the exact unversioned v1 catalog. It deliberately does not add missing columns or indexes and does not stamp a partial schema as current.
+
+Migration v2 adds `storage_upload_intents`. Core records an intent before each
+blob write, renews its lease while the upload is active, and removes it in the
+same transaction that commits object metadata. The storage reconciler marks
+expired intents orphaned, waits through a safety grace period, verifies that no
+object references the path, and then transfers deletion to the durable outbox.
+Successful deletion rows remain with `next_attempt_at = 'infinity'` as permanent
+path tombstones so deleted generated paths cannot be reused by later metadata.
+Migration v3 adds the path-leading index used to reject those tombstones without
+scanning the append-only outbox. Retention is deliberate: each generated path
+adds at most one compact row, and removing it would reopen the reuse race.
 
 Inspect the current production version with:
 
@@ -80,7 +92,7 @@ Example shape:
 
 ```go
 {
-    version: 2,
+    version: 4,
     name: "add_entity_priority",
     checksum: "<frozen sha256>",
     fingerprintVersion: fingerprintVersionV1,

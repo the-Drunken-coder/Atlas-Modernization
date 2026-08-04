@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -82,7 +84,7 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 }
 
 func objectDeletedAfterUploadPreflight(preflight, current *objectUploadState) bool {
-	return preflight.rowExists && current.maxDeletionID > preflight.maxDeletionID
+	return current.maxDeletionID > preflight.maxDeletionID
 }
 
 func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {
@@ -180,6 +182,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	if err := validateStringMaxLength("path", objectPath, objectPathMaxLength); err != nil {
 		return nil, err
 	}
+	if err := ensureObjectStoragePathAvailable(ctx, a.pool, objectPath, objectID); err != nil {
+		return nil, err
+	}
 
 	var usageHints []string
 	if usageHint != nil && *usageHint != "" {
@@ -187,6 +192,7 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	}
 
 	bucket := a.storage.Bucket()
+	ownerID := uuid.NewString()
 	var typePtr *string
 	if objType != "" {
 		typePtr = &objType
@@ -202,23 +208,51 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		_ = tx.Rollback(ctx)
 		return nil, err
 	}
+	if err := a.createStorageUploadIntentTx(ctx, tx, bucket, objectPath, objectID, ownerID); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit upload preflight transaction: %w", err)
 	}
 
-	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(ctx, objectID, objectPath, reader, size, contentType)
+	uploadCtx, cancelUpload := context.WithCancel(ctx)
+	var heartbeatOnce sync.Once
+	heartbeatFailure := make(chan error, 1)
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		a.runStorageUploadHeartbeat(uploadCtx, bucket, objectPath, ownerID, a.uploadHeartbeatPeriod, func(err error) {
+			heartbeatOnce.Do(func() {
+				heartbeatFailure <- err
+				cancelUpload()
+			})
+		})
+	}()
+
+	uploadedInfo, err := a.storage.UploadObjectFromReaderToPath(uploadCtx, objectID, objectPath, reader, size, contentType)
+	cancelUpload()
+	<-heartbeatDone
+	select {
+	case heartbeatErr := <-heartbeatFailure:
+		err = heartbeatErr
+	default:
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload to storage: %w", err)
+		return nil, a.abandonStorageUpload(ctx, bucket, objectPath, objectID, ownerID, fmt.Errorf("failed to upload to storage: %w", err))
 	}
 
 	tx, err = a.beginLockedObjectTx(ctx, objectID, "upload metadata")
 	if err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, err)
+		return nil, a.abandonStorageUpload(ctx, bucket, objectPath, objectID, ownerID, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	cleanupMetadataFailure := func(cause error) (*models.MediaObject, error) {
 		_ = tx.Rollback(ctx)
-		return nil, a.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, cause)
+		return nil, a.abandonStorageUpload(ctx, bucket, objectPath, objectID, ownerID, cause)
+	}
+	if err := a.lockOwnedStorageUploadIntentTx(ctx, tx, bucket, objectPath, ownerID); err != nil {
+		return cleanupMetadataFailure(err)
 	}
 
 	currentState, err := currentObjectStateForUpload(ctx, tx, objectID)
@@ -238,14 +272,19 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	if err != nil {
 		return cleanupMetadataFailure(err)
 	}
+	var oldPath string
+	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
+		oldPath = strings.TrimSpace(*currentState.path)
+		if err := a.queueStorageDeletionTx(ctx, tx, bucket, oldPath, objectID); err != nil {
+			return cleanupMetadataFailure(err)
+		}
+	}
+	if err := a.deleteStorageUploadIntentTx(ctx, tx, bucket, objectPath, ownerID); err != nil {
+		return cleanupMetadataFailure(err)
+	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, a.cleanupUploadedPathAfterFailure(
-			ctx,
-			objectID,
-			objectPath,
-			fmt.Errorf("failed to commit upload metadata transaction: %w", err),
-		)
+		return nil, a.abandonStorageUpload(ctx, bucket, objectPath, objectID, ownerID, fmt.Errorf("failed to commit upload metadata transaction: %w", err))
 	}
 
 	event := ChangeEventCreate
@@ -261,9 +300,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		AfterObject:  cloneObjectModel(out),
 	})
 
-	if currentState.path != nil && strings.TrimSpace(*currentState.path) != "" && *currentState.path != objectPath {
-		if err := a.deleteObjectPathOrQueueRetry(ctx, objectID, *currentState.path); err != nil {
-			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", *currentState.path).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
+	if oldPath != "" {
+		if err := a.deleteQueuedStoragePathNow(ctx, bucket, oldPath); err != nil {
+			log.Warn().Err(err).Str("object_id", objectID).Str("old_path", oldPath).Msg("Uploaded object metadata now points to a new blob, but old blob cleanup failed")
 		}
 	}
 

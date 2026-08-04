@@ -11,10 +11,14 @@ import (
 )
 
 const (
-	migrationTableName        = "atlas_schema_migrations"
-	baselineMigrationName     = "baseline_current_schema"
-	baselineMigrationChecksum = "ef8c1f811a672ee5c1394f494e9b3d8b196aea564242437ed6fae55b00d72f23"
-	fingerprintVersionV1      = 1
+	migrationTableName              = "atlas_schema_migrations"
+	baselineMigrationName           = "baseline_current_schema"
+	baselineMigrationChecksum       = "ef8c1f811a672ee5c1394f494e9b3d8b196aea564242437ed6fae55b00d72f23"
+	uploadIntentsMigrationName      = "durable_storage_upload_intents"
+	uploadIntentsMigrationChecksum  = "397e1731dbc7b9f0a5258d8084e7086ad1d674a164db8118ed58cc928189345c"
+	pathTombstonesMigrationName     = "index_storage_path_tombstones"
+	pathTombstonesMigrationChecksum = "fc9d12136384e8f4bdcd15d96c6ec8a1b802092a66a8b6b78f33c5548241d19f"
+	fingerprintVersionV1            = 1
 )
 
 var (
@@ -43,13 +47,44 @@ type appliedMigration struct {
 }
 
 func coreSchemaMigrations() []schemaMigration {
-	return []schemaMigration{{
-		version:            1,
-		name:               baselineMigrationName,
-		checksum:           baselineMigrationChecksum,
-		fingerprintVersion: fingerprintVersionV1,
-		statements:         baselineSchemaDDL(),
-	}}
+	return []schemaMigration{
+		{
+			version:            1,
+			name:               baselineMigrationName,
+			checksum:           baselineMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements:         baselineSchemaDDL(),
+		},
+		{
+			version:            2,
+			name:               uploadIntentsMigrationName,
+			checksum:           uploadIntentsMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`CREATE TABLE storage_upload_intents (
+					bucket VARCHAR(255) NOT NULL,
+					path VARCHAR(500) NOT NULL,
+					object_id VARCHAR(50) NOT NULL,
+					owner_id UUID NOT NULL,
+					expires_at TIMESTAMPTZ NOT NULL,
+					orphaned_at TIMESTAMPTZ,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+					PRIMARY KEY (bucket, path)
+				)`,
+				`CREATE INDEX idx_storage_upload_intents_recovery ON storage_upload_intents(orphaned_at, expires_at, path)`,
+			},
+		},
+		{
+			version:            3,
+			name:               pathTombstonesMigrationName,
+			checksum:           pathTombstonesMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`CREATE INDEX idx_storage_deletion_outbox_path ON storage_deletion_outbox(path)`,
+			},
+		},
+	}
 }
 
 func migrationChecksum(migration schemaMigration) string {

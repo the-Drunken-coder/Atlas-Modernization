@@ -310,9 +310,15 @@ func TestObjectDeletedAfterUploadPreflight(t *testing.T) {
 			want:      true,
 		},
 		{
-			name:      "new object create is allowed despite prior tombstone",
+			name:      "missing object deleted after preflight",
 			preflight: objectUploadState{rowExists: false, maxDeletionID: 7},
 			current:   objectUploadState{maxDeletionID: 8},
+			want:      true,
+		},
+		{
+			name:      "new object create is allowed when prior tombstone was visible",
+			preflight: objectUploadState{rowExists: false, maxDeletionID: 7},
+			current:   objectUploadState{maxDeletionID: 7},
 			want:      false,
 		},
 		{
@@ -457,17 +463,18 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 		t.Fatalf("deleted paths = %#v, want %q", storageClient.deletedPaths, path)
 	}
 
-	var rowExists bool
+	var pathTombstoned bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM storage_deletion_outbox
 			WHERE bucket = 'atlas-media' AND path = $1
+				AND next_attempt_at = 'infinity'::timestamptz
 		)
-	`, path).Scan(&rowExists); err != nil {
+	`, path).Scan(&pathTombstoned); err != nil {
 		t.Fatalf("check outbox row: %v", err)
 	}
-	if rowExists {
-		t.Fatal("outbox row still exists after successful reconciliation")
+	if !pathTombstoned {
+		t.Fatal("successful reconciliation did not retain a path tombstone")
 	}
 }
 
@@ -808,6 +815,7 @@ func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool
 		SELECT to_regclass('public.objects') IS NOT NULL
 			AND to_regclass('public.deletions') IS NOT NULL
 			AND to_regclass('public.storage_deletion_outbox') IS NOT NULL
+			AND to_regclass('public.storage_upload_intents') IS NOT NULL
 	`).Scan(&ok)
 	return ok, err
 }
@@ -822,6 +830,9 @@ func cleanupObjectRaceTestRows(ctx context.Context, t *testing.T, pool *pgxpool.
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM storage_deletion_outbox WHERE object_id = $1`, objectID); err != nil {
 		t.Errorf("cleanup object storage deletion rows %q: %v", objectID, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM storage_upload_intents WHERE object_id = $1`, objectID); err != nil {
+		t.Errorf("cleanup object upload intent rows %q: %v", objectID, err)
 	}
 }
 
