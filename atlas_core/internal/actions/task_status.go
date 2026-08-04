@@ -92,8 +92,6 @@ func (a *TaskActions) Fail(ctx context.Context, taskID string, errorDetails map[
 	return a.Update(ctx, taskID, UpdateTaskParams{Status: &status, Extra: extra, ExpectedVersion: expectedVersion})
 }
 
-var legacyTaskTransitionExtraKeys = []string{"progress", "status_message", "message"}
-
 func taskStatusTransitionUpdate(status string, progress *float64, message *string) UpdateTaskParams {
 	var components map[string]interface{}
 	if progress != nil || message != nil {
@@ -108,9 +106,8 @@ func taskStatusTransitionUpdate(status string, progress *float64, message *strin
 	}
 
 	return UpdateTaskParams{
-		Status:          &status,
-		Components:      components,
-		RemoveExtraKeys: append([]string(nil), legacyTaskTransitionExtraKeys...),
+		Status:     &status,
+		Components: components,
 	}
 }
 
