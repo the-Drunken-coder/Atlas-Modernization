@@ -28,9 +28,9 @@ describe("Atlas client factory", () => {
       })
     );
     const client = createAtlasClientFactory({
-      atlasBaseUrl: "http://127.0.0.1:8000",
-      port: 0,
-      packageRoot: process.cwd()
+      id: "local",
+      label: "Local Core",
+      baseUrl: "http://127.0.0.1:8000"
     })();
 
     const request = expect(client.queries.full()).rejects.toThrow("Atlas request timed out after 10000ms");
