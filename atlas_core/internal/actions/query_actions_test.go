@@ -32,8 +32,11 @@ func TestGetFullDatasetByteBudgetPreservesCursorContinuation(t *testing.T) {
 	payload := strings.Repeat("x", 950*1024)
 	for _, id := range ids {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO entities (entity_id, type, json)
-			VALUES ($1, 'asset', jsonb_build_object('payload', $2::text))
+			WITH next AS (
+				UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+			)
+			INSERT INTO entities (entity_id, type, json, version)
+			SELECT $1, 'asset', jsonb_build_object('payload', $2::text), version FROM next
 		`, id, payload); err != nil {
 			t.Fatalf("insert byte-budget entity %q: %v", id, err)
 		}
@@ -176,10 +179,13 @@ func TestFullDatasetKeepsInitialVersionAcrossInterleavedContinuationUpdates(t *t
 		t.Fatalf("read fixture timestamp: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO entities (entity_id, type, json, created_at, updated_at)
-		VALUES
-			($1, 'asset', '{}'::jsonb, $3, $3),
-			($2, 'asset', '{}'::jsonb, $3, $3)
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 2 WHERE singleton RETURNING version
+		)
+		INSERT INTO entities (entity_id, type, json, created_at, updated_at, version)
+		SELECT $1, 'asset', '{}'::jsonb, $3::timestamptz, $3::timestamptz, version - 1 FROM next
+		UNION ALL
+		SELECT $2, 'asset', '{}'::jsonb, $3::timestamptz, $3::timestamptz, version FROM next
 	`, firstID, secondID, createdAt); err != nil {
 		t.Fatalf("insert full dataset watermark fixtures: %v", err)
 	}

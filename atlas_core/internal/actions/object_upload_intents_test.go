@@ -441,7 +441,7 @@ func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	if _, err := pool.Exec(ctx, `INSERT INTO objects (object_id, path) VALUES ($1, $2)`, objectID, path); err != nil {
+	if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &path}); err != nil {
 		t.Fatalf("insert live object: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

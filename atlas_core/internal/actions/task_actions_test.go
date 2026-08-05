@@ -164,7 +164,7 @@ func TestStatusOnlyTaskUpdateIsIdempotent(t *testing.T) {
 	if acknowledged.Status != "acknowledged" || acknowledged.Version <= created.Version {
 		t.Fatalf("acknowledged task = %#v, want acknowledged with version after %d", acknowledged, created.Version)
 	}
-	change := readChangeEvent(t, ctx, pool, acknowledged.Version)
+	change := readChangeEvent(ctx, t, pool, acknowledged.Version)
 	if change.Event != ChangeEventUpdate || change.ID != taskID || change.Version != acknowledged.Version {
 		t.Fatalf("acknowledgement event = %#v, want task update at version %d", change, acknowledged.Version)
 	}
@@ -241,7 +241,7 @@ func assertTaskDeleteEvent(ctx context.Context, t *testing.T, pool *pgxpool.Pool
 	}
 }
 
-func readChangeEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, version int64) protocol.FeedEvent {
+func readChangeEvent(ctx context.Context, t *testing.T, pool *pgxpool.Pool, version int64) protocol.FeedEvent {
 	t.Helper()
 	var payload []byte
 	if err := pool.QueryRow(ctx, `SELECT event FROM atlas_change_events WHERE version = $1`, version).Scan(&payload); err != nil {

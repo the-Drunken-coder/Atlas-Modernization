@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -244,30 +243,6 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("delete did not finish after storage cleanup was released")
 	}
-}
-
-func assertMediaObjectEqual(t *testing.T, got, want *models.MediaObject) {
-	t.Helper()
-	if got == nil || want == nil {
-		t.Fatalf("media object nil mismatch: got nil=%t want nil=%t", got == nil, want == nil)
-	}
-	if got.ObjectID != want.ObjectID ||
-		!stringPointersEqual(got.Path, want.Path) ||
-		!stringPointersEqual(got.ContentType, want.ContentType) ||
-		!stringPointersEqual(got.Type, want.Type) ||
-		string(got.JSON) != string(want.JSON) ||
-		!got.CreatedAt.Equal(want.CreatedAt) ||
-		!got.UpdatedAt.Equal(want.UpdatedAt) ||
-		got.Version != want.Version {
-		t.Fatalf("media object fields did not match for %q", got.ObjectID)
-	}
-}
-
-func stringPointersEqual(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	return *left == *right
 }
 
 func TestObjectUploadLockKey(t *testing.T) {

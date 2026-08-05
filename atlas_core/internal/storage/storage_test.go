@@ -49,6 +49,16 @@ func TestBucketNotFoundError(t *testing.T) {
 	}
 }
 
+func TestNewClientRejectsNilConfig(t *testing.T) {
+	client, err := NewClient(nil)
+	if err == nil {
+		t.Fatalf("expected nil config to fail, got client %#v", client)
+	}
+	if !strings.Contains(err.Error(), "storage config is nil") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNewClientRequiresAccessKey(t *testing.T) {
 	cfg := &config.Config{
 		MinIOEndpoint:  "localhost:9000",

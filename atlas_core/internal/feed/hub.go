@@ -28,7 +28,6 @@ type Hub struct {
 	clients      map[*Client]struct{}
 	clientBuffer int
 	closed       bool
-	done         chan struct{}
 }
 
 func NewHub(opts Options) *Hub {
@@ -39,7 +38,6 @@ func NewHub(opts Options) *Hub {
 	return &Hub{
 		clients:      make(map[*Client]struct{}),
 		clientBuffer: buffer,
-		done:         make(chan struct{}),
 	}
 }
 
@@ -50,14 +48,9 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
-	close(h.done)
 	for client := range h.clients {
 		h.closeClientLocked(client)
 	}
-}
-
-func (h *Hub) Done() <-chan struct{} {
-	return h.done
 }
 
 func (h *Hub) NewClient() *Client {

@@ -255,11 +255,7 @@ func (s *Service) AuthenticateRequest(ctx context.Context, r *http.Request) (Aut
 	if _, err := s.GetAccount(ctx, session.AccountID); err != nil {
 		return AuthenticatedSession{}, ErrInvalidSession
 	}
-	return AuthenticatedSession{
-		AccountID: session.AccountID,
-		Username:  session.Username,
-		ExpiresAt: session.ExpiresAt,
-	}, nil
+	return AuthenticatedSession(session), nil
 }
 
 func (s *Service) SetSessionCookie(w http.ResponseWriter, token string, expires time.Time) {

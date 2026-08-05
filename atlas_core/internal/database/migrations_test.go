@@ -590,7 +590,7 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	adminMigration := schemaMigration{
-		version:            4,
+		version:            5,
 		name:               "add_admin_migration_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE admin_records ADD COLUMN migration_probe TEXT`},
@@ -610,8 +610,8 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&migrationVersion); err != nil {
 		t.Fatalf("read scratch migration version: %v", err)
 	}
-	if adminCount != 1 || migrationVersion != 4 {
-		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 4", adminCount, migrationVersion)
+	if adminCount != 1 || migrationVersion != 5 {
+		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 5", adminCount, migrationVersion)
 	}
 }
 
@@ -680,6 +680,8 @@ func openMigrationTestDB(t *testing.T, dbURL string, recreate bool) *DB {
 
 func assertCurrentMigration(ctx context.Context, t *testing.T, db *DB) {
 	t.Helper()
+	migrations := coreSchemaMigrations()
+	expected := migrations[len(migrations)-1]
 	var version int
 	var name, checksum, fingerprint string
 	var fingerprintVersion int
@@ -690,7 +692,7 @@ func assertCurrentMigration(ctx context.Context, t *testing.T, db *DB) {
 		LIMIT 1`).Scan(&version, &name, &checksum, &fingerprintVersion, &fingerprint); err != nil {
 		t.Fatalf("read current schema migration: %v", err)
 	}
-	if version != 3 || name != pathTombstonesMigrationName || checksum != pathTombstonesMigrationChecksum || fingerprintVersion != fingerprintVersionV1 || strings.TrimSpace(fingerprint) == "" {
+	if version != expected.version || name != expected.name || checksum != expected.checksum || fingerprintVersion != expected.fingerprintVersion || strings.TrimSpace(fingerprint) == "" {
 		t.Fatalf("migration row = %d/%s/%s/fingerprint-v%d/%s", version, name, checksum, fingerprintVersion, fingerprint)
 	}
 }

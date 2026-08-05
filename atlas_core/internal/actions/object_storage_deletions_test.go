@@ -203,7 +203,7 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	if _, err := pool.Exec(ctx, `INSERT INTO objects (object_id, path) VALUES ($1, $2)`, objectID, path); err != nil {
+	if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &path}); err != nil {
 		t.Fatalf("insert live object: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -381,17 +381,9 @@ func TestCreateRejectsDeletedPathAfterPassingPreflight(t *testing.T) {
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM pg_locks waiting
-				JOIN pg_locks held
-					ON waiting.locktype = held.locktype
-					AND waiting.database IS NOT DISTINCT FROM held.database
-					AND waiting.classid IS NOT DISTINCT FROM held.classid
-					AND waiting.objid IS NOT DISTINCT FROM held.objid
-					AND waiting.objsubid IS NOT DISTINCT FROM held.objsubid
-				WHERE waiting.locktype = 'advisory'
-					AND NOT waiting.granted
-					AND held.granted
-					AND held.pid = $1
+				FROM pg_stat_activity
+				WHERE $1 = ANY(pg_blocking_pids(pid))
+					AND wait_event_type = 'Lock'
 			)
 		`, blockerPID).Scan(&blocked); err != nil {
 			t.Fatalf("check blocked Create: %v", err)

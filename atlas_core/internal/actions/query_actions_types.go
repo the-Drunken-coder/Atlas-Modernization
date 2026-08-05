@@ -181,13 +181,6 @@ func fullDatasetSnapshotVersion(currentSnapshot int64, cursors ...*parsedQueryCu
 	return sharedVersion, nil
 }
 
-func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound time.Time) time.Time {
-	if cursor == nil {
-		return snapshotUpperBound
-	}
-	return clampCursorUpperBound(cursor.upperBound, snapshotUpperBound)
-}
-
 func clampCursorUpperBound(candidate, ceiling time.Time) time.Time {
 	if ceiling.IsZero() || candidate.Before(ceiling) || candidate.Equal(ceiling) {
 		return candidate
