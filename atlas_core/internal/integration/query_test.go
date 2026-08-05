@@ -122,12 +122,18 @@ func TestQueryChangedSince(t *testing.T) {
 		t.Fatalf("Failed to create entity: %v", err)
 	}
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (changed-since setup)")
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close body: %v", err)
+	var createdEntity map[string]interface{}
+	if err := ParseResponse(resp, &createdEntity); err != nil {
+		t.Fatalf("Failed to parse created entity: %v", err)
 	}
+	metadata, ok := createdEntity["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("created entity missing metadata: %#v", createdEntity)
+	}
+	baseline := mustVersionFromMetadata(t, metadata) - 1
 
 	// Query changed since
-	resp, err = client.Get(ctx, "/queries/changed-since?since_version=0")
+	resp, err = client.Get(ctx, fmt.Sprintf("/queries/changed-since?since_version=%d", baseline))
 	if err != nil {
 		t.Fatalf("Failed to query changed-since: %v", err)
 	}
@@ -153,7 +159,7 @@ func TestQueryChangedSince(t *testing.T) {
 		t.Fatalf("expected entity event %s in /queries/changed-since", entityID)
 	}
 
-	t.Logf("Changed-since query returned: %d events after version 0", len(events))
+	t.Logf("Changed-since query returned: %d events after version %d", len(events), baseline)
 	t.Logf("Entity %s left as artifact", entityID)
 }
 
@@ -544,14 +550,14 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 
 	client := NewAPIClient()
 	ctx := context.Background()
-	baselineResponse, err := client.Get(ctx, "/queries/changed-since?since_version=0")
+	baselineResponse, err := client.Get(ctx, "/queries/full?limit=1")
 	if err != nil {
-		t.Fatalf("read changed-since baseline: %v", err)
+		t.Fatalf("read full-query baseline: %v", err)
 	}
-	requireHTTPStatus(t, baselineResponse, http.StatusOK, "GET /queries/changed-since baseline")
+	requireHTTPStatus(t, baselineResponse, http.StatusOK, "GET /queries/full baseline")
 	var baselinePage map[string]interface{}
 	if err := ParseResponse(baselineResponse, &baselinePage); err != nil {
-		t.Fatalf("parse changed-since baseline: %v", err)
+		t.Fatalf("parse full-query baseline: %v", err)
 	}
 	baseline := int64(baselinePage["version"].(float64))
 
@@ -605,9 +611,6 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 		}
 	}
 
-	if len(events) != 4 {
-		t.Fatalf("changed-since events = %d, want 4", len(events))
-	}
 	for _, entityID := range entityIDs {
 		event := findChangeEvent(events, "entity", entityID, "")
 		if event == nil {

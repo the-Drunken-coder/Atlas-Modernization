@@ -215,7 +215,7 @@ func TestVersionedMutationsWaitForClockBeforeResourceRows(t *testing.T) {
 			for _, mutation := range testCase.mutations {
 				go func() { results <- mutation() }()
 			}
-			waitForClockWaiters(t, ctx, pool, len(testCase.mutations))
+			waitForClockWaiters(ctx, t, pool, len(testCase.mutations))
 
 			checker, err := pool.Begin(ctx)
 			if err != nil {
@@ -248,7 +248,7 @@ func TestVersionedMutationsWaitForClockBeforeResourceRows(t *testing.T) {
 	}
 }
 
-func waitForClockWaiters(t *testing.T, ctx context.Context, pool *pgxpool.Pool, want int) {
+func waitForClockWaiters(ctx context.Context, t *testing.T, pool *pgxpool.Pool, want int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {

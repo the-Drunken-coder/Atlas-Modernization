@@ -518,14 +518,14 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	failing := schemaMigration{
-		version:            5,
+		version:            len(migrations) + 1,
 		name:               "deliberate_rollback_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE entities ADD COLUMN rollback_probe TEXT`, `THIS IS NOT VALID SQL`},
 	}
 	failing.checksum = migrationChecksum(failing)
 	migrations = append(migrations, failing)
-	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), "failed to apply schema migration 5") {
+	if err := db.ensureTables(ctx, migrations); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("failed to apply schema migration %d", failing.version)) {
 		t.Fatalf("failing migration error = %v", err)
 	}
 
@@ -617,7 +617,7 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 
 	migrations := coreSchemaMigrations()
 	adminMigration := schemaMigration{
-		version:            5,
+		version:            len(migrations) + 1,
 		name:               "add_admin_migration_probe",
 		fingerprintVersion: fingerprintVersionV1,
 		statements:         []string{`ALTER TABLE admin_records ADD COLUMN migration_probe TEXT`},
@@ -637,8 +637,8 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&migrationVersion); err != nil {
 		t.Fatalf("read scratch migration version: %v", err)
 	}
-	if adminCount != 1 || migrationVersion != 5 {
-		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and 5", adminCount, migrationVersion)
+	if adminCount != 1 || migrationVersion != adminMigration.version {
+		t.Fatalf("scratch migration state = admin:%d version:%d, want 1 and %d", adminCount, migrationVersion, adminMigration.version)
 	}
 }
 
