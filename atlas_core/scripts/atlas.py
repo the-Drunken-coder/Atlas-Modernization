@@ -511,7 +511,10 @@ def ensure_api_auth(mode):
         print(f"[ERROR] {mode} requires a real ATLAS_ADMIN_PASSWORD, not a development default or example.")
         return False
     if len(admin_password) < MIN_PRODUCTION_ADMIN_PASSWORD_LENGTH:
-        print(f"[ERROR] {mode} requires ATLAS_ADMIN_PASSWORD to be at least {MIN_PRODUCTION_ADMIN_PASSWORD_LENGTH} characters.")
+        print(
+            f"[ERROR] {mode} requires the admin credential to contain at least "
+            f"{MIN_PRODUCTION_ADMIN_PASSWORD_LENGTH} characters."
+        )
         return False
 
     os.environ["ENABLE_API_AUTH"] = "true"

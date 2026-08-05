@@ -91,14 +91,14 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	if params.Path != nil {
 		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
 			return nil, err
 		}
-	}
-	version, err := nextChangeVersion(ctx, tx)
-	if err != nil {
-		return nil, err
 	}
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
@@ -292,14 +292,14 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	if params.Path != nil {
 		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
 			return nil, err
 		}
-	}
-	version, err := nextChangeVersion(ctx, tx)
-	if err != nil {
-		return nil, err
 	}
 	var out models.MediaObject
 	err = tx.QueryRow(ctx, `
