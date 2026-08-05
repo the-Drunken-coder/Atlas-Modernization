@@ -35,11 +35,13 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 ## How Core emits events
 
-- Every write transaction locks and increments `atlas_change_clock`, writes the resource mutation, and appends the complete validated event to `atlas_change_events` before commit.
-- Object delete events also serve as permanent upload tombstones. Do not prune them unless a replacement durable tombstone is introduced in the same change.
+- Every versioned write transaction locks `atlas_change_clock` before any per-object advisory lock, upload-intent row, or resource row. It later increments the already-locked clock, writes the resource mutation, and appends the complete validated event to `atlas_change_events` before commit.
+- Object deletion fences live separately in the compact `object_deletion_fences` table, one row per object ID. Feed history is never used as permanent storage-integrity state.
 - A rollback removes both the resource mutation and its version increment, so committed versions are contiguous and there are no burned-version gaps to compensate for.
 - PostgreSQL `NOTIFY` only wakes the dispatcher. The dispatcher reads committed rows from the durable log in version order and publishes them through the in-memory subscription hub.
 - `GET /queries/changed-since` pages over that same durable log with one global cursor, so websocket delivery and recovery share one source of truth.
+- Recovery events are retained for seven days. Core prunes older rows hourly and stores the earliest accepted cursor in `atlas_change_clock.min_retained_version`. An older cursor receives HTTP `410` with `CURSOR_EXPIRED`; clients must perform paginated full hydration and resume recovery from that snapshot version.
+- Changed-since pages default to 100 events and are always bounded by both event count and 8 MiB of serialized event JSON. A single event is still returned when it exceeds the byte budget so the cursor can make progress.
 
 ## Subscriptions
 
@@ -56,7 +58,9 @@ The feed only delivers correctness to cooperating clients. Any consumer — the 
 - On initialization, consume every `GET /queries/full` continuation page while retaining the response's repeated `version` as the pre-hydration baseline. Do not advance the global cursor from hydrated resources' individual versions; drain `changed-since` from the baseline before declaring synchronization current.
 - Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Delete events count as versioned state, so a stale resource payload can never resurrect a newer delete.
 - On a version gap in the stream: call `GET /queries/changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
-- On reconnect: one `changed-since` call from the last known version restores consistency.
+- On reconnect: drain `changed-since` from the last known version. Apply and persist each page before requesting the next; remain degraded until the final page succeeds. If Core returns `CURSOR_EXPIRED`, perform full hydration and resume from its version watermark.
+
+The current subscription protocol has no server acknowledgment. A client that disables safety polling can therefore miss an event in the narrow connect/subscribe/recover window. This is tracked in [`../problems/2026-08-05-feed-subscription-readiness.md`](../problems/2026-08-05-feed-subscription-readiness.md); until it is resolved, reconnect recovery is eventually consistent only when safety polling remains enabled.
 
 These rules are the language-neutral half of the contract that makes a non-TypeScript client a port rather than a redesign; the shapes are authored in the protocol, and this document is the normative home of the behavioral rules.
 

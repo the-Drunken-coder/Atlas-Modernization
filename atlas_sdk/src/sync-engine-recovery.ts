@@ -67,7 +67,6 @@ export class RecoveryRunner {
     let snapshotVersion: number | undefined;
     let cursor: string | undefined;
     let lastEventVersion = sinceVersion;
-    const events: FeedEvent[] = [];
     const seenCursors = new Set<string>();
     do {
       if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
@@ -81,21 +80,22 @@ export class RecoveryRunner {
         throw new TypeError("Atlas changed-since pagination changed response version");
       }
       snapshotVersion = response.version;
+      let pageLastEventVersion = lastEventVersion;
       for (const event of response.events) {
-        if (event.version <= lastEventVersion) {
+        if (event.version <= pageLastEventVersion) {
           throw new TypeError("Atlas changed-since events are not globally ordered");
         }
-        lastEventVersion = event.version;
-        events.push(event);
+        pageLastEventVersion = event.version;
       }
+      for (const event of response.events) {
+        if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
+        applyEvent(event);
+      }
+      lastEventVersion = pageLastEventVersion;
       cursor = response.has_more ? requireCursor(response.next_cursor) : undefined;
       if (cursor && seenCursors.has(cursor)) throw new Error("Atlas changed-since pagination repeated cursor");
       if (cursor) seenCursors.add(cursor);
     } while (cursor);
-    for (const event of events) {
-      if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
-      applyEvent(event);
-    }
     return { snapshotVersion, superseded: false };
   }
 }

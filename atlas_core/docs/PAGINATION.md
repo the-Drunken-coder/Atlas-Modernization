@@ -91,7 +91,7 @@ For **`GET /queries/changed-since`**, use `since_version` as the incremental bou
 When limit query params are omitted or zero:
 
 - `GET /queries/full` — up to **1000** rows per resource type (`entity_limit`, `task_limit`, `object_limit`)
-- `GET /queries/changed-since` — up to **5000** ordered events when `limit` is zero
+- `GET /queries/changed-since` — **100** ordered events when `limit` is zero; explicit limits are capped at **5000**, and every page is also capped at 8 MiB of serialized event JSON
 
 The full query retains at most **8 MiB of stored JSON per resource type per page**. If that byte budget is reached before the requested row count, the response is a normal short page with the matching `has_more_*` field and `next_*_cursor`. Every stored resource JSON blob is capped at 1 MiB, so each stream can always make progress. Changed-since events are already validated and stored as complete feed envelopes in the durable log.
 

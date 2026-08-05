@@ -41,6 +41,7 @@ export class FakeCore {
   expectedFeedApiKey: string | undefined;
   fullLimitPerType = 0;
   changedSinceLimit = 0;
+  minRetainedVersion = 0;
   readonly recordedVersions = new Set<number>();
   rejectFeedAuth = false;
   failChangedSince = false;
@@ -147,6 +148,9 @@ export class FakeCore {
     const since = rawSince === null ? 0 : Number(rawSince);
     if (!Number.isInteger(since) || since < 0 || String(since) !== rawSince) {
       return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
+    }
+    if (since < this.minRetainedVersion) {
+      return protocolError("Changed-since cursor has expired; perform a full hydration", "CURSOR_EXPIRED", 410);
     }
     const cursor = changedSinceCursor(parsed.searchParams.get("cursor"), since, this.version);
     const changed = this.events.filter((event) => event.version > since && event.version <= cursor.snapshotVersion);

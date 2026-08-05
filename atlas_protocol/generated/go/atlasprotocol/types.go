@@ -55,6 +55,7 @@ const (
 	ErrorCodeTaskAlreadyExists      ErrorCode = "TASK_ALREADY_EXISTS"
 	ErrorCodeObjectAlreadyExists    ErrorCode = "OBJECT_ALREADY_EXISTS"
 	ErrorCodeObjectPathConflict     ErrorCode = "OBJECT_PATH_CONFLICT"
+	ErrorCodeCursorExpired          ErrorCode = "CURSOR_EXPIRED"
 	ErrorCodePreconditionFailed     ErrorCode = "PRECONDITION_FAILED"
 )
 

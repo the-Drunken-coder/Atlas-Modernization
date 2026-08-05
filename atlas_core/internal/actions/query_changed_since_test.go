@@ -2,11 +2,92 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestChangedSinceDefaultsToSmallPages(t *testing.T) {
+	if got := changedSinceLimit(0); got != DefaultChangedSinceLimit {
+		t.Fatalf("default changed-since limit = %d, want %d", got, DefaultChangedSinceLimit)
+	}
+	if got := changedSinceLimit(MaxChangedSinceLimit + 1); got != MaxChangedSinceLimit {
+		t.Fatalf("capped changed-since limit = %d, want %d", got, MaxChangedSinceLimit)
+	}
+}
+
+func TestChangedSincePagesNearMaximumResourcesByBytes(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	baseline, err := CurrentChangeVersion(ctx, pool)
+	if err != nil {
+		t.Fatalf("read baseline version: %v", err)
+	}
+	entityActions := NewEntityActions(pool)
+	const eventCount = 10
+	ids := make([]string, 0, eventCount)
+	for index := 0; index < eventCount; index++ {
+		id := fmt.Sprintf("changed-byte-%d-%02d", time.Now().UTC().UnixNano(), index)
+		if _, err := entityActions.Create(ctx, CreateEntityParams{
+			EntityID:   id,
+			EntityType: "asset",
+			Extra: map[string]interface{}{
+				"payload": strings.Repeat("x", maxStoredJSONBlobBytes-32*1024),
+			},
+		}); err != nil {
+			t.Fatalf("create near-maximum entity %d: %v", index, err)
+		}
+		ids = append(ids, id)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, ids)
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'resource_type' = 'entity' AND event->>'id' = ANY($1)`, ids)
+	})
+
+	var cursor *string
+	seen := 0
+	pageCount := 0
+	for {
+		page, err := NewQueryActions(pool).GetDataChangedSince(ctx, baseline, MaxChangedSinceLimit, cursor)
+		if err != nil {
+			t.Fatalf("read byte-bounded changed-since page: %v", err)
+		}
+		pageCount++
+		pageBytes := 0
+		for _, event := range page.Events {
+			payload, err := json.Marshal(event)
+			if err != nil {
+				t.Fatalf("marshal returned event: %v", err)
+			}
+			pageBytes += len(payload)
+			for _, id := range ids {
+				if event.ID == id {
+					seen++
+				}
+			}
+		}
+		if len(page.Events) > 1 && pageBytes > maxChangedSinceJSONBytes {
+			t.Fatalf("changed-since page retained %d bytes, budget %d", pageBytes, maxChangedSinceJSONBytes)
+		}
+		if !page.HasMore {
+			break
+		}
+		if page.NextCursor == "" {
+			t.Fatal("byte-bounded page has_more without next_cursor")
+		}
+		cursor = &page.NextCursor
+	}
+	if pageCount < 2 || seen != eventCount {
+		t.Fatalf("byte-bounded recovery used %d pages and returned %d/%d target events", pageCount, seen, eventCount)
+	}
+}
 
 func TestChangedSincePagesOneOrderedDurableStream(t *testing.T) {
 	pool := openActionsTestPool(t)

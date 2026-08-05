@@ -77,6 +77,24 @@ func TestTransactionalChangeStreamMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestBoundedRecoveryLogMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[4]
+	if actual := migrationChecksum(migration); actual != recoveryLogMigrationChecksum {
+		t.Fatalf("bounded recovery-log migration checksum = %s, want %s", actual, recoveryLogMigrationChecksum)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"ADD COLUMN min_retained_version",
+		"CREATE TABLE object_deletion_fences",
+		"INSERT INTO object_deletion_fences",
+		"DROP INDEX idx_atlas_change_events_object_deletes",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("bounded recovery-log migration is missing %q", required)
+		}
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
@@ -281,7 +299,7 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	defer cancel()
 	migrations := coreSchemaMigrations()
 	searchPathMigration := schemaMigration{
-		version:            5,
+		version:            len(migrations) + 1,
 		name:               "verify_search_path_restoration",
 		fingerprintVersion: fingerprintVersionV1,
 		statements: []string{`DO $$
@@ -300,8 +318,8 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&version); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("migration version = %d, want 5", version)
+	if version != searchPathMigration.version {
+		t.Fatalf("migration version = %d, want %d", version, searchPathMigration.version)
 	}
 }
 

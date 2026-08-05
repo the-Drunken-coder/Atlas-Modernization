@@ -20,6 +20,8 @@ const (
 	pathTombstonesMigrationChecksum = "fc9d12136384e8f4bdcd15d96c6ec8a1b802092a66a8b6b78f33c5548241d19f"
 	changeStreamMigrationName       = "transactional_change_stream"
 	changeStreamMigrationChecksum   = "362d2f71c1d51c7d172e0818b68a7eec725104aeec91002558ebac7d74a978eb"
+	recoveryLogMigrationName        = "bounded_recovery_log"
+	recoveryLogMigrationChecksum    = "7ae3a729125b872f1dc3a4265196dde2473ccc61ca3b5b820120d81278f917d8"
 	fingerprintVersionV1            = 1
 )
 
@@ -119,6 +121,28 @@ func coreSchemaMigrations() []schemaMigration {
 				`ALTER TABLE objects ALTER COLUMN version DROP DEFAULT`,
 				`DROP TABLE deletions`,
 				`DROP SEQUENCE atlas_change_version_seq`,
+			},
+		},
+		{
+			version:            5,
+			name:               recoveryLogMigrationName,
+			checksum:           recoveryLogMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`ALTER TABLE atlas_change_clock
+				 ADD COLUMN min_retained_version BIGINT NOT NULL DEFAULT 0
+				 CHECK (min_retained_version >= 0 AND min_retained_version <= version)`,
+				`CREATE TABLE object_deletion_fences (
+					object_id VARCHAR(50) PRIMARY KEY,
+					version BIGINT NOT NULL CHECK (version > 0),
+					deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+				)`,
+				`INSERT INTO object_deletion_fences (object_id, version, deleted_at)
+				 SELECT event->>'id', MAX(version), MAX(created_at)
+				 FROM atlas_change_events
+				 WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete'
+				 GROUP BY event->>'id'`,
+				`DROP INDEX idx_atlas_change_events_object_deletes`,
 			},
 		},
 	}

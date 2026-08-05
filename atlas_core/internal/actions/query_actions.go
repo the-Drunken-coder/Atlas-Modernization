@@ -150,7 +150,7 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 
 // GetDataChangedSince retrieves one globally ordered page of committed events.
 func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int64, limit int, cursor *string) (*ChangedSinceResult, error) {
-	limit = effectiveLimit(limit, MaxChangedSinceLimit)
+	limit = changedSinceLimit(limit)
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -161,9 +161,12 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	snapshotVersion, err := readSnapshotVersion(ctx, tx)
+	snapshotVersion, minRetainedVersion, err := readChangeSnapshotState(ctx, tx)
 	if err != nil {
 		return nil, err
+	}
+	if sinceVersion < minRetainedVersion {
+		return nil, NewCursorExpiredError(minRetainedVersion)
 	}
 	if sinceVersion > snapshotVersion {
 		return nil, NewValidationErrorWithDetails("Invalid since_version", []string{fmt.Sprintf("since_version %d is newer than the current change version %d", sinceVersion, snapshotVersion)})
@@ -211,6 +214,24 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 		}
 	}
 	return result, nil
+}
+
+func readChangeSnapshotState(ctx context.Context, tx pgx.Tx) (int64, int64, error) {
+	var version, minRetainedVersion int64
+	if err := tx.QueryRow(ctx, `SELECT version, min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&version, &minRetainedVersion); err != nil {
+		return 0, 0, fmt.Errorf("read change snapshot state: %w", err)
+	}
+	return version, minRetainedVersion, nil
+}
+
+func changedSinceLimit(requested int) int {
+	if requested <= 0 {
+		return DefaultChangedSinceLimit
+	}
+	if requested > MaxChangedSinceLimit {
+		return MaxChangedSinceLimit
+	}
+	return requested
 }
 
 func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {

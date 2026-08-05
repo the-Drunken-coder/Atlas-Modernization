@@ -76,7 +76,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     );
   });
 
-  it("drains paginated changed-since responses before advancing the high-water mark", async () => {
+  it("applies each changed-since page before requesting the next page", async () => {
     const core = new FakeCore();
     core.changedSinceLimit = 1;
     let releaseSecondPage!: () => void;
@@ -94,7 +94,6 @@ describe("AtlasClient sync: recovery and hydration", () => {
     };
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
-    const initialVersion = client.sync.status().lastVersion;
     const watch = vi.fn();
     client.watch({ filter: "type", resource_type: "task" }, watch);
 
@@ -102,7 +101,8 @@ describe("AtlasClient sync: recovery and hydration", () => {
     const second = core.upsertTask(task("task-page-2", "asset-1"));
     const recovery = client.changedSince();
     await vi.waitFor(() => expect(secondPageStarted).toBe(true));
-    expect(client.sync.status().lastVersion).toBe(initialVersion);
+    expect(client.sync.status().lastVersion).toBe(first.metadata.version);
+    expect(client.sync.status().healthy).toBe(false);
     const later = core.upsertTask(task("task-after-snapshot", "asset-1"));
     releaseSecondPage();
     await recovery;
@@ -149,5 +149,34 @@ describe("AtlasClient sync: recovery and hydration", () => {
 
     await expect(client.changedSince()).rejects.toThrow("Atlas changed-since pagination repeated cursor");
     expect(changedSinceRequests).toBe(2);
+  });
+
+  it("rehydrates automatically when the recovery cursor has expired", async () => {
+    const core = new FakeCore();
+    core.upsertEntity(entity("asset-retention"));
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    const first = core.upsertTask(task("task-retained-1", "asset-retention"));
+    const second = core.upsertTask(task("task-retained-2", "asset-retention"));
+    core.minRetainedVersion = first.metadata.version;
+    core.requests = [];
+
+    await client.changedSince();
+
+    expect(core.requests.filter((request) => request.startsWith("/queries/full"))).toHaveLength(1);
+    await expect(client.tasks.get(first.task_id)).resolves.toEqual(first);
+    await expect(client.tasks.get(second.task_id)).resolves.toEqual(second);
+    expect(client.sync.status()).toMatchObject({
+      healthy: true,
+      degraded: false,
+      lastVersion: second.metadata.version
+    });
   });
 });

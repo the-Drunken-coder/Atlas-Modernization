@@ -160,19 +160,13 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 		return 0, fmt.Errorf("mark expired storage upload intents: %w", err)
 	}
 
-	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("begin storage upload intent recovery: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
+	rows, err := a.pool.Query(ctx, `
 		SELECT bucket, path, object_id
 		FROM storage_upload_intents
 		WHERE orphaned_at IS NOT NULL
 			AND orphaned_at <= clock_timestamp() - make_interval(secs => $2)
 		ORDER BY orphaned_at, path
 		LIMIT $1
-		FOR UPDATE SKIP LOCKED
 	`, limit, int(storageUploadOrphanGrace/time.Second))
 	if err != nil {
 		return 0, fmt.Errorf("query recoverable storage upload intents: %w", err)
@@ -195,26 +189,52 @@ func (a *ObjectActions) recoverStorageUploadIntents(ctx context.Context, limit i
 
 	recovered := 0
 	for _, item := range intents {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, objectUploadLockKey(item.objectID)); err != nil {
-			return 0, fmt.Errorf("lock object upload intent recovery: %w", err)
-		}
-		var live bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
-			return 0, fmt.Errorf("check storage upload intent live reference: %w", err)
-		}
-		if !live {
-			if err := a.queueStorageDeletionTx(ctx, tx, item.bucket, item.path, item.objectID); err != nil {
-				return 0, err
+		recoveredIntent, err := func() (bool, error) {
+			tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+			if err != nil {
+				return false, fmt.Errorf("begin storage upload intent recovery: %w", err)
 			}
+			defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, objectUploadLockKey(item.objectID)); err != nil {
+				return false, fmt.Errorf("lock object upload intent recovery: %w", err)
+			}
+			var locked int
+			err = tx.QueryRow(ctx, `
+			SELECT 1 FROM storage_upload_intents
+			WHERE bucket = $1 AND path = $2 AND object_id = $3
+				AND orphaned_at IS NOT NULL
+				AND orphaned_at <= clock_timestamp() - make_interval(secs => $4)
+			FOR UPDATE
+		`, item.bucket, item.path, item.objectID, int(storageUploadOrphanGrace/time.Second)).Scan(&locked)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, nil
+			}
+			if err != nil {
+				return false, fmt.Errorf("lock storage upload intent for recovery: %w", err)
+			}
+			var live bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM objects WHERE path = $1)`, item.path).Scan(&live); err != nil {
+				return false, fmt.Errorf("check storage upload intent live reference: %w", err)
+			}
+			if !live {
+				if err := a.queueStorageDeletionTx(ctx, tx, item.bucket, item.path, item.objectID); err != nil {
+					return false, err
+				}
+			}
+			if _, err := tx.Exec(ctx, `DELETE FROM storage_upload_intents WHERE bucket = $1 AND path = $2`, item.bucket, item.path); err != nil {
+				return false, fmt.Errorf("clear recovered storage upload intent: %w", err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return false, fmt.Errorf("commit storage upload intent recovery: %w", err)
+			}
+			return true, nil
+		}()
+		if err != nil {
+			return recovered, err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM storage_upload_intents WHERE bucket = $1 AND path = $2`, item.bucket, item.path); err != nil {
-			return 0, fmt.Errorf("clear recovered storage upload intent: %w", err)
+		if recoveredIntent {
+			recovered++
 		}
-		recovered++
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit storage upload intent recovery: %w", err)
 	}
 	return recovered, nil
 }

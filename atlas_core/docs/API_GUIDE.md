@@ -472,7 +472,7 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `task_cursor` | Continue tasks from `next_task_cursor`. |
 | `object_cursor` | Continue objects from `next_object_cursor`. |
 
-Full-query resource streams return at most 1000 rows per type and retain at most 8 MiB of stored resource JSON per type per page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging. Changed-since returns at most 5000 globally ordered events per page.
+Full-query resource streams return at most 1000 rows per type and retain at most 8 MiB of stored resource JSON per type per page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging. Changed-since defaults to 100 globally ordered events, accepts an explicit limit up to 5000, and always applies an 8 MiB serialized-event byte budget.
 
 The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
 
@@ -498,10 +498,10 @@ Response:
 | Query | Notes |
 | --- | --- |
 | `since_version` | Required non-negative global version. |
-| `limit` | Optional event limit. Default/zero returns up to `5000`. |
+| `limit` | Optional event limit. Default/zero returns up to `100`; explicit values are capped at `5000`. |
 | `cursor` | Continue from the opaque `next_cursor`. |
 
-Response includes complete feed events in global version order plus one `has_more`/`next_cursor` continuation and a stable `version` watermark. Keep the same `since_version` while following cursors for one response window. After all pages are consumed, pass the returned `version` as the next poll's `since_version`.
+Response includes complete feed events in global version order plus one `has_more`/`next_cursor` continuation and a stable `version` watermark. Pages stop at either the event count or 8 MiB of serialized event JSON, while always returning one event for cursor progress. Keep the same `since_version` while following cursors for one response window. After all pages are consumed, pass the returned `version` as the next poll's `since_version`. A cursor older than the seven-day recovery window receives HTTP `410` with `CURSOR_EXPIRED`; perform full hydration and resume from its version watermark.
 
 ```json
 {

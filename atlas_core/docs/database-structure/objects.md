@@ -79,6 +79,8 @@ cannot be outwaited and reused by live metadata. After blob deletion succeeds,
 the outbox row remains with an infinite next-attempt timestamp as a permanent
 path tombstone; generated blob paths are never reused.
 
+`object_deletion_fences` independently stores the latest delete version for each object ID. Upload finalization compares this compact fence before and after blob transfer so a delete that occurred during the upload cannot be overwritten. These fences do not depend on the bounded `atlas_change_events` recovery history.
+
 ## Heatmap Convention
 
 Heatmap data is modeled as a standard media object convention:

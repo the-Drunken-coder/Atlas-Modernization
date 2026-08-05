@@ -14,6 +14,19 @@ func beginChangeTx(ctx context.Context, pool *pgxpool.Pool, label string) (pgx.T
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin %s transaction: %w", label, err)
 	}
+	// Every versioned mutation takes locks in this order:
+	// change clock -> per-object advisory lock (when used) -> intent/resource rows.
+	// Reserving versions later in the transaction is safe because this lock is
+	// already held. Keeping the hierarchy here prevents individual actions from
+	// accidentally acquiring resource rows before the singleton clock.
+	var version int64
+	if err := tx.QueryRow(ctx, `SELECT version FROM atlas_change_clock WHERE singleton FOR UPDATE`).Scan(&version); err != nil {
+		_ = tx.Rollback(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("atlas_change_clock singleton row is missing; database is not initialized")
+		}
+		return nil, fmt.Errorf("lock change clock for %s: %w", label, err)
+	}
 	return tx, nil
 }
 

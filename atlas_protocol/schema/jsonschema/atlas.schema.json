@@ -478,6 +478,7 @@
         "TASK_ALREADY_EXISTS",
         "OBJECT_ALREADY_EXISTS",
         "OBJECT_PATH_CONFLICT",
+        "CURSOR_EXPIRED",
         "PRECONDITION_FAILED"
       ]
     },

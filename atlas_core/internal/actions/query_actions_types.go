@@ -42,8 +42,18 @@ const MaxFullQueryLimit = 1000
 // cursorable when another stream contains larger records.
 const maxQueryJSONBytesPerType = 8 * maxStoredJSONBlobBytes
 
-// MaxChangedSinceLimit is the default safety cap for changed-since queries.
+// DefaultChangedSinceLimit keeps ordinary recovery pages small enough to apply
+// incrementally. Clients may request more events, but the byte budget below is
+// always authoritative.
+const DefaultChangedSinceLimit = 100
+
+// MaxChangedSinceLimit caps an explicit changed-since event count.
 const MaxChangedSinceLimit = 5000
+
+// A changed-since page stops before retaining more than this much serialized
+// event JSON. The first event is always returned so an oversized event cannot
+// prevent cursor progress.
+const maxChangedSinceJSONBytes = 8 * maxStoredJSONBlobBytes
 
 // FullDatasetLimits holds per-type limits for GetFullDataset.
 // Optional cursors continue pagination in created_at DESC, id DESC order (from a prior next_*_cursor).

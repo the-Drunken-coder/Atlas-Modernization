@@ -432,6 +432,9 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 	if err != nil {
 		return err
 	}
+	if err := recordObjectDeletionFenceTx(ctx, tx, object.ObjectID, deleteVersion); err != nil {
+		return err
+	}
 	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventDelete,
 		ResourceType: ChangeResourceObject,

@@ -72,19 +72,29 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 		state.json = decoded
 	}
 
-	// Object delete events are also upload tombstones. They must remain durable
-	// unless a future schema replaces this lookup with another permanent record.
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(MAX(version), 0)
-		FROM atlas_change_events
-		WHERE event->>'resource_type' = 'object'
-		  AND event->>'event' = 'delete'
-		  AND event->>'id' = $1
+		SELECT COALESCE((SELECT version FROM object_deletion_fences WHERE object_id = $1), 0)
 	`, objectID).Scan(&state.maxDeletionVersion); err != nil {
 		return nil, fmt.Errorf("failed to read object deletion state: %w", err)
 	}
 
 	return state, nil
+}
+
+func recordObjectDeletionFenceTx(ctx context.Context, tx pgx.Tx, objectID string, version int64) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO object_deletion_fences (object_id, version)
+		VALUES ($1, $2)
+		ON CONFLICT (object_id) DO UPDATE SET
+			version = GREATEST(object_deletion_fences.version, EXCLUDED.version),
+			deleted_at = CASE
+				WHEN EXCLUDED.version > object_deletion_fences.version THEN clock_timestamp()
+				ELSE object_deletion_fences.deleted_at
+			END
+	`, objectID, version); err != nil {
+		return fmt.Errorf("record object deletion fence: %w", err)
+	}
+	return nil
 }
 
 func objectDeletedAfterUploadPreflight(preflight, current *objectUploadState) bool {

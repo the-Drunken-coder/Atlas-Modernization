@@ -16,13 +16,15 @@ const changeDispatchBatchSize = 32
 const changeDispatchReadTimeout = 30 * time.Second
 const changeDispatchInitialRetry = time.Second
 const changeDispatchMaxRetry = 30 * time.Second
+const changePruneInterval = time.Hour
 
 // Dispatcher tails the durable change log in commit order. LISTEN/NOTIFY is
 // only a wake-up mechanism; every delivered payload comes from PostgreSQL.
 type Dispatcher struct {
-	pool   *pgxpool.Pool
-	hub    *Hub
-	cursor int64
+	pool       *pgxpool.Pool
+	hub        *Hub
+	cursor     int64
+	lastPruned time.Time
 }
 
 func NewDispatcher(pool *pgxpool.Pool, hub *Hub, startAfterVersion int64) *Dispatcher {
@@ -75,6 +77,12 @@ func (d *Dispatcher) runConnection(ctx context.Context) error {
 	for {
 		if err := d.drain(ctx, conn); err != nil {
 			return err
+		}
+		if d.lastPruned.IsZero() || time.Since(d.lastPruned) >= changePruneInterval {
+			if _, err := actions.PruneChangeRecords(ctx, d.pool, time.Now().Add(-actions.ChangeRecordRetention)); err != nil {
+				return err
+			}
+			d.lastPruned = time.Now()
 		}
 		waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		_, err := conn.WaitForNotification(waitCtx)

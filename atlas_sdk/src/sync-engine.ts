@@ -1,7 +1,7 @@
 import { type CacheResourceOptions, ResourceCache } from "./cache.js";
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
-import type { HttpTransport, ResponseValidator } from "./http.js";
+import { AtlasAPIError, type HttpTransport, type ResponseValidator } from "./http.js";
 import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
 import {
   assertResourceMatchesSubscription,
@@ -282,7 +282,8 @@ export class SyncEngine {
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
       if (!isCurrentOperation()) return false;
-      const result = await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyEvent(event));
+      if (this.syncRunning) this.health = "degraded";
+      const result = await this.runRecoveryWithHydrationFallback(generation, sinceVersion, isCurrentOperation);
       if (!isCurrentOperation() || result.superseded) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
@@ -297,6 +298,23 @@ export class SyncEngine {
         }
       }
       throw error;
+    }
+  }
+
+  private async runRecoveryWithHydrationFallback(
+    generation: number,
+    sinceVersion: number,
+    isCurrentOperation: () => boolean
+  ): ReturnType<RecoveryRunner["run"]> {
+    try {
+      return await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyEvent(event));
+    } catch (error) {
+      if (!(error instanceof AtlasAPIError) || error.errorCode !== "CURSOR_EXPIRED") throw error;
+      const hydratedVersion = await this.loadHydratedSnapshot(generation, isCurrentOperation);
+      if (!isCurrentOperation() || hydratedVersion === undefined) {
+        return { snapshotVersion: hydratedVersion, superseded: true };
+      }
+      return this.recoveryRunner.run(hydratedVersion, isCurrentOperation, (event) => this.applyEvent(event));
     }
   }
 
@@ -494,6 +512,16 @@ export class SyncEngine {
   }
 
   private async hydrate(generation: number): Promise<void> {
+    const snapshotVersion = await this.loadHydratedSnapshot(generation);
+    if (snapshotVersion === undefined) return;
+    const recovered = await this.changedSinceForGeneration(generation, snapshotVersion);
+    if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
+  }
+
+  private async loadHydratedSnapshot(
+    generation: number,
+    isCurrentHydration = () => this.isCurrent(generation)
+  ): Promise<number | undefined> {
     let cursors: FullDatasetCursors = {};
     let snapshotVersion: number | undefined;
     const seenCursors = new Map<string, Set<string>>();
@@ -501,9 +529,9 @@ export class SyncEngine {
     const tasks: TaskResource[] = [];
     const objects: ObjectDetailResource[] = [];
     do {
-      if (!this.isCurrent(generation)) return;
+      if (!isCurrentHydration()) return undefined;
       const response = await this.transport.json("GET", fullDatasetPath(cursors), isFullDatasetResponse);
-      if (!this.isCurrent(generation)) return;
+      if (!isCurrentHydration()) return undefined;
       const responseVersion = requireFullDatasetVersion(response.version);
       if (snapshotVersion !== undefined && responseVersion !== snapshotVersion) {
         throw new Error(
@@ -517,11 +545,10 @@ export class SyncEngine {
       cursors = nextFullDatasetCursors(response);
       assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
-    if (!this.isCurrent(generation)) return;
+    if (!isCurrentHydration()) return undefined;
     if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
     this.cache.replaceHydratedResources({ entities, tasks, objects });
-    const recovered = await this.changedSinceForGeneration(generation, snapshotVersion);
-    if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
+    return snapshotVersion;
   }
 
   private async consumeFeedEvent(event: FeedEvent, generation: number, attempt: number): Promise<void> {

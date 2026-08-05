@@ -286,9 +286,10 @@ describe("AtlasClient inbound response validation", () => {
     }
   });
 
-  it("rejects changed-since watermark drift across pages without committing the first page", async () => {
+  it("keeps an applied first page when a later changed-since watermark drifts", async () => {
     const core = new FakeCore();
     const existing = core.upsertEntity(entity("asset-watermark-baseline"));
+    const firstPageVersion = existing.metadata.version + 1;
     let driftWatermark = false;
     let page = 0;
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -298,10 +299,10 @@ describe("AtlasClient inbound response validation", () => {
       if (page === 1) {
         return Response.json(
           changedPage({
-            events: [changedEntityEvent("asset-uncommitted-watermark", existing.metadata.version + 1)],
+            events: [changedEntityEvent("asset-uncommitted-watermark", firstPageVersion)],
             has_more: true,
             next_cursor: "next",
-            version: existing.metadata.version + 1
+            version: firstPageVersion
           })
         );
       }
@@ -317,18 +318,17 @@ describe("AtlasClient inbound response validation", () => {
     try {
       await client.sync.start();
       const snapshot = client.sync.snapshot();
-      const cursor = client.sync.status().lastVersion;
       driftWatermark = true;
 
       await expect(client.changedSince()).rejects.toThrow();
       expect(page).toBe(2);
-      expect(client.sync.snapshot()).toBe(snapshot);
-      expect(client.sync.snapshot().entities).not.toHaveProperty("asset-uncommitted-watermark");
+      expect(client.sync.snapshot()).not.toBe(snapshot);
+      expect(client.sync.snapshot().entities["asset-uncommitted-watermark"]?.metadata.version).toBe(firstPageVersion);
       expect(client.sync.status()).toMatchObject({
         running: true,
         healthy: false,
         degraded: true,
-        lastVersion: cursor
+        lastVersion: firstPageVersion
       });
     } finally {
       client.sync.stop();

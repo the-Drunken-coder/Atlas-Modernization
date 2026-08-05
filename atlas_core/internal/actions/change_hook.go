@@ -214,23 +214,26 @@ func ReadChangeRecords(ctx context.Context, db changeRecordQuerier, afterVersion
 	}
 	defer rows.Close()
 	records := make([]ChangeRecord, 0, limit)
+	totalBytes := 0
+	hasMore := false
 	for rows.Next() {
 		var payload []byte
 		var record ChangeRecord
 		if err := rows.Scan(&payload, &record.BeforeTaskEntityID, &record.AfterTaskEntityID); err != nil {
 			return nil, false, fmt.Errorf("scan change event: %w", err)
 		}
+		if len(records) >= limit || (len(records) > 0 && totalBytes+len(payload) > maxChangedSinceJSONBytes) {
+			hasMore = true
+			break
+		}
 		if err := json.Unmarshal(payload, &record.Event); err != nil {
 			return nil, false, fmt.Errorf("decode change event: %w", err)
 		}
 		records = append(records, record)
+		totalBytes += len(payload)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("query change events: %w", err)
-	}
-	hasMore := len(records) > limit
-	if hasMore {
-		records = records[:limit]
 	}
 	return records, hasMore, nil
 }

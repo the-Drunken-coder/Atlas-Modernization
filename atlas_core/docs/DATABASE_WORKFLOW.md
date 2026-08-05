@@ -69,6 +69,8 @@ adds at most one compact row, and removing it would reopen the reuse race.
 
 Migration v4 replaces the legacy sequence and resource-deletion table with `atlas_change_clock` and `atlas_change_events`. Every resource mutation allocates its version, writes the resource state, and appends the complete feed event in one transaction. PostgreSQL notifications only wake the feed dispatcher; the durable event row is the source of truth.
 
+Migration v5 bounds that recovery log without coupling retention to object-storage correctness. `atlas_change_clock.min_retained_version` records the oldest accepted cursor, and `object_deletion_fences` keeps one permanent version fence per deleted object ID. Core retains seven days of change events and prunes hourly. Clients behind the retained window receive `CURSOR_EXPIRED` and must hydrate from the live resource tables before resuming changed-since recovery.
+
 Inspect the current production version with:
 
 ```bash

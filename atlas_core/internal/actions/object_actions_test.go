@@ -755,6 +755,7 @@ func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool
 		SELECT to_regclass('public.objects') IS NOT NULL
 			AND to_regclass('public.atlas_change_events') IS NOT NULL
 			AND to_regclass('public.atlas_change_clock') IS NOT NULL
+			AND to_regclass('public.object_deletion_fences') IS NOT NULL
 			AND to_regclass('public.storage_deletion_outbox') IS NOT NULL
 			AND to_regclass('public.storage_upload_intents') IS NOT NULL
 	`).Scan(&ok)
