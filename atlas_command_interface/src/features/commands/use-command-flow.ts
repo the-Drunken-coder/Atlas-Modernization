@@ -23,14 +23,16 @@ export function useCommandFlow({
 }) {
   const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
-  const commandDismissedRef = useRef(false);
+  const nextSubmitIdRef = useRef(1);
+  const activeSubmitIdRef = useRef<number | undefined>(undefined);
+  const dismissedSubmitIdRef = useRef<number | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const selectedEntityId = selectedEntity?.entity_id;
 
   const closeMapMenu = useCallback(() => setMapMenu(null), []);
   const dismissCommandForm = useCallback(() => {
-    commandDismissedRef.current = true;
+    dismissedSubmitIdRef.current = activeSubmitIdRef.current;
     setCommandForm(null);
     setSubmitError(undefined);
   }, []);
@@ -42,8 +44,11 @@ export function useCommandFlow({
 
   useEffect(() => {
     closeMapMenu();
-    dismissCommandForm();
-  }, [catalog, closeMapMenu, dismissCommandForm]);
+    if (activeSubmitIdRef.current === undefined) {
+      setCommandForm(null);
+      setSubmitError(undefined);
+    }
+  }, [catalog, closeMapMenu]);
 
   useEffect(() => {
     if (!selectedId || selectedEntityId) return;
@@ -58,20 +63,25 @@ export function useCommandFlow({
       errorFormState?: CommandFormState
     ) => {
       if (!selectedEntity) return;
-      commandDismissedRef.current = false;
+      const submitId = nextSubmitIdRef.current++;
+      activeSubmitIdRef.current = submitId;
+      dismissedSubmitIdRef.current = undefined;
       setSubmitting(true);
       setSubmitError(undefined);
       try {
         await submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
         setCommandForm(null);
       } catch (cause) {
-        if (!commandDismissedRef.current) {
+        if (dismissedSubmitIdRef.current !== submitId) {
           setSubmitError(sanitizeConnectionError(cause));
           setCommandForm((current) => current ?? errorFormState ?? null);
         }
       } finally {
-        commandDismissedRef.current = false;
-        setSubmitting(false);
+        if (activeSubmitIdRef.current === submitId) {
+          activeSubmitIdRef.current = undefined;
+          dismissedSubmitIdRef.current = undefined;
+          setSubmitting(false);
+        }
       }
     },
     [selectedEntity, submitCommand]

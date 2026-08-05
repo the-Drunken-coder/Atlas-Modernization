@@ -148,13 +148,16 @@ export class FakeCore {
     if (!Number.isInteger(since) || since < 0 || String(since) !== rawSince) {
       return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
     }
-    const changed = this.events.filter((event) => event.version > since);
-    const page = pageValues(changed, this.changedSinceLimit, parsed.searchParams.get("cursor"));
+    const cursor = changedSinceCursor(parsed.searchParams.get("cursor"), since, this.version);
+    const changed = this.events.filter((event) => event.version > since && event.version <= cursor.snapshotVersion);
+    const page = pageValues(changed, this.changedSinceLimit, String(cursor.offset));
     return json({
       events: page.items,
       has_more: page.hasMore,
-      next_cursor: page.nextCursor,
-      version: this.version
+      next_cursor: page.hasMore
+        ? encodeChangedSinceCursor(since, cursor.snapshotVersion, cursor.offset + page.items.length)
+        : undefined,
+      version: cursor.snapshotVersion
     });
   }
 
@@ -556,6 +559,28 @@ export class FakeCore {
       this.objectExtras.delete(id);
     }
   }
+}
+
+function changedSinceCursor(
+  rawCursor: string | null,
+  sinceVersion: number,
+  currentVersion: number
+): { snapshotVersion: number; offset: number } {
+  if (rawCursor === null) {
+    return { snapshotVersion: currentVersion, offset: 0 };
+  }
+  const match = /^changed:(\d+):(\d+):(\d+)$/.exec(rawCursor);
+  if (!match) throw new InvalidCursorError(rawCursor);
+  const [, rawSince, rawSnapshot, rawOffset] = match;
+  const values = [rawSince, rawSnapshot, rawOffset].map(Number);
+  if (values.some((value) => !Number.isSafeInteger(value)) || values[0] !== sinceVersion) {
+    throw new InvalidCursorError(rawCursor);
+  }
+  return { snapshotVersion: values[1], offset: values[2] };
+}
+
+function encodeChangedSinceCursor(sinceVersion: number, snapshotVersion: number, offset: number): string {
+  return `changed:${sinceVersion}:${snapshotVersion}:${offset}`;
 }
 
 const promotedObjectExtraKeys = new Set([

@@ -267,6 +267,12 @@ func TestObjectDeletedAfterUploadPreflight(t *testing.T) {
 			want:      true,
 		},
 		{
+			name:      "existing row disappearance is treated as deletion",
+			preflight: objectUploadState{rowExists: true, maxDeletionVersion: 7},
+			current:   objectUploadState{rowExists: false, maxDeletionVersion: 7},
+			want:      true,
+		},
+		{
 			name:      "missing object deleted after preflight",
 			preflight: objectUploadState{rowExists: false, maxDeletionVersion: 7},
 			current:   objectUploadState{maxDeletionVersion: 8},

@@ -191,19 +191,21 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
     eventStream.connect(runId, {
       onEvent(event) {
-        const nextEvents = appendRunEvent(eventsByRunIdRef.current.get(runId) ?? [], event);
-        if (!nextEvents) return false;
-        eventsByRunIdRef.current.set(runId, nextEvents);
-        if (currentRunIdRef.current === runId) setEvents(nextEvents);
-        setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
-        setRuns((current) => {
-          const next = current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run));
-          runsRef.current = next;
-          return next;
-        });
         const terminalStatus =
           event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId;
-        if (event.type === "cleanup" && !event.resource) {
+        const cleanupComplete = event.type === "cleanup" && !event.resource;
+        const nextEvents = appendRunEvent(eventsByRunIdRef.current.get(runId) ?? [], event);
+        if (nextEvents) {
+          eventsByRunIdRef.current.set(runId, nextEvents);
+          if (currentRunIdRef.current === runId) setEvents(nextEvents);
+          setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
+          setRuns((current) => {
+            const next = current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run));
+            runsRef.current = next;
+            return next;
+          });
+        }
+        if (cleanupComplete) {
           cleanupStreamRunIdRef.current = undefined;
           setCleanupRunId((current) => (current === runId ? undefined : current));
           return true;
@@ -286,8 +288,8 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
   }
 
   function closeActiveEventSource(options: { preserveCleanup?: boolean } = {}) {
-    if (!eventStream.runId) return;
     if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
+    if (!eventStream.runId) return;
     eventStream.close();
   }
 

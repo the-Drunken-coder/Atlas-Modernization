@@ -112,6 +112,10 @@ func TestLiveActionsResourceLifecycleAndQueries(t *testing.T) {
 	if completed.Status != "completed" {
 		t.Fatalf("completed task status = %q, want completed", completed.Status)
 	}
+	result, ok := completed.GetExtra()["result"].(map[string]interface{})
+	if !ok || result["ok"] != true {
+		t.Fatalf("completed task result = %#v, want ok=true", completed.GetExtra()["result"])
+	}
 
 	commandTask, err := taskActions.Create(ctx, CreateTaskParams{
 		EntityID: &entityID,

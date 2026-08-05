@@ -357,6 +357,7 @@ func TestEntityTelemetryCheckIn(t *testing.T) {
 		_ = resp.Body.Close()
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
+	entityETag := requireETag(t, resp)
 	resp.Body.Close()
 
 	// Update telemetry
@@ -368,7 +369,14 @@ func TestEntityTelemetryCheckIn(t *testing.T) {
 		"heading_deg": 45.0,
 	}
 
-	resp, err = client.Post(ctx, "/entities/"+entityID+"/checkin", telemetryPayload)
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPost,
+		"/entities/"+entityID+"/checkin",
+		telemetryPayload,
+		map[string]string{"If-Match": entityETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to check in telemetry: %v", err)
 	}
@@ -497,8 +505,16 @@ func TestEntityCheckin(t *testing.T) {
 		_ = resp.Body.Close()
 		t.Fatalf("Expected 201 creating completed task, got %d", resp.StatusCode)
 	}
+	completedTaskETag := requireETag(t, resp)
 	resp.Body.Close()
-	resp, err = client.Patch(ctx, "/tasks/"+completedTaskID, map[string]interface{}{"status": "completed"})
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPatch,
+		"/tasks/"+completedTaskID,
+		map[string]interface{}{"status": "completed"},
+		map[string]string{"If-Match": completedTaskETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to complete checkin task: %v", err)
 	}

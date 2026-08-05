@@ -430,15 +430,18 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return err
 	}
 
-	for _, task := range beforeTasks {
-		version, err := nextChangeVersion(ctx, tx)
+	if len(beforeTasks) > 0 {
+		lastVersion, err := reserveChangeVersions(ctx, tx, len(beforeTasks))
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
+		firstVersion := lastVersion - int64(len(beforeTasks)) + 1
+		for index, task := range beforeTasks {
+			if _, err := tx.Exec(ctx, `
 			UPDATE tasks SET updated_at = clock_timestamp(), version = $1 WHERE task_id = $2
-		`, version, task.TaskID); err != nil {
-			return fmt.Errorf("failed to mark entity task changed before deletion: %w", err)
+		`, firstVersion+int64(index), task.TaskID); err != nil {
+				return fmt.Errorf("failed to mark entity task changed before deletion: %w", err)
+			}
 		}
 	}
 
@@ -459,7 +462,7 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 	for _, beforeTask := range beforeTasks {
 		afterTask := afterTasks[beforeTask.TaskID]
 		if afterTask == nil {
-			continue
+			return fmt.Errorf("task %s disappeared during entity deletion after its change version was allocated", beforeTask.TaskID)
 		}
 		if err := RecordResourceChange(ctx, tx, ResourceChange{
 			Event:        ChangeEventUpdate,

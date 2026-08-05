@@ -30,6 +30,7 @@ const fullPaginationFields = [
   ["has_more_tasks", "next_task_cursor"],
   ["has_more_objects", "next_object_cursor"]
 ] as const;
+const changedPaginationFields = [["has_more", "next_cursor"]] as const;
 
 export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
@@ -69,10 +70,8 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
       !isArrayOf(value.events, isInboundFeedEvent) ||
       !isSafeNonNegativeInteger(value.version) ||
       value.version < sinceVersion ||
-      typeof value.has_more !== "boolean" ||
-      (value.has_more
-        ? value.events.length === 0 || !hasOwn(value, "next_cursor") || !isNonEmptyString(value.next_cursor)
-        : hasOwn(value, "next_cursor"))
+      !hasValidPagination(value, changedPaginationFields) ||
+      (value.has_more && value.events.length === 0)
     ) {
       return false;
     }

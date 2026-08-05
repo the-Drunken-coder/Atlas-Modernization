@@ -51,17 +51,53 @@ func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
 		"commands": []any{
 			map[string]any{
 				"id": "duplicate", "name": "First", "description": "First.",
-				"parameters_schema": map[string]any{"count": map[string]any{"type": "number", "description": "Count", "required": false, "minimum": 2, "maximum": 1}},
+				"parameters_schema": map[string]any{
+					"count": map[string]any{"type": "number", "description": "Count", "required": false, "minimum": 2, "maximum": 1},
+					"label": map[string]any{"type": "string", "description": "Label", "required": false, "minimum": 1},
+				},
 			},
 			map[string]any{"id": "duplicate", "name": "Second", "description": "Second.", "parameters_schema": map[string]any{}},
 		},
 	}
 	errors := ValidateCommandCatalog(invalid)
 	joined := strings.Join(errors, "\n")
-	for _, want := range []string{"duplicate", "minimum exceeds maximum"} {
+	for _, want := range []string{"duplicate", "minimum exceeds maximum", "bounds require number type"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("ValidateCommandCatalog(invalid) errors = %v, want %q", errors, want)
 		}
+	}
+}
+
+func TestValidateCommandCatalogRejectsNonNumericBounds(t *testing.T) {
+	invalid := map[string]any{
+		"type": "command_catalog", "name": "Commands", "description": "Test catalog",
+		"commands": []any{map[string]any{
+			"id": "set_speed", "name": "Set Speed", "description": "Set speed.",
+			"parameters_schema": map[string]any{
+				"speed": map[string]any{"type": "number", "description": "Speed", "required": true, "minimum": "fast"},
+			},
+		}},
+	}
+	if errors := ValidateCommandCatalog(invalid); len(errors) == 0 {
+		t.Fatal("expected a non-numeric minimum to be rejected")
+	}
+}
+
+func TestValidateCommandCatalogComparesJSONNumberBounds(t *testing.T) {
+	invalid := map[string]any{
+		"type": "command_catalog", "name": "Commands", "description": "Test catalog",
+		"commands": []any{map[string]any{
+			"id": "set_speed", "name": "Set Speed", "description": "Set speed.",
+			"parameters_schema": map[string]any{
+				"speed": map[string]any{
+					"type": "number", "description": "Speed", "required": true,
+					"minimum": json.Number("10"), "maximum": json.Number("1"),
+				},
+			},
+		}},
+	}
+	if errors := ValidateCommandCatalog(invalid); !strings.Contains(strings.Join(errors, "\n"), "minimum exceeds maximum") {
+		t.Fatalf("ValidateCommandCatalog errors = %v, want reversed-bound error", errors)
 	}
 }
 

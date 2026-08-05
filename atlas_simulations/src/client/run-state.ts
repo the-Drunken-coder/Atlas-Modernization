@@ -97,8 +97,12 @@ export function buildStartRunRequest(
   scenario: ScenarioDescriptor,
   target: AtlasTargetSummary,
   values: FieldValues,
-  jsonInput: string
+  jsonInput: string,
+  deployedMutationConfirmed: boolean
 ): StartRunRequest {
+  if (target.deployed && !deployedMutationConfirmed) {
+    throw new Error("Confirm the deployed mutation before starting the run");
+  }
   const normalizedJsonInput = scenario.acceptsJson && jsonInput.trim() !== "" ? jsonInput : undefined;
   if (normalizedJsonInput !== undefined) {
     try {
@@ -110,7 +114,7 @@ export function buildStartRunRequest(
   return {
     scenarioId: scenario.id,
     targetId: target.id,
-    ...(target.deployed ? { confirmDeployedMutation: true } : {}),
+    ...(target.deployed ? { confirmDeployedMutation: true as const } : {}),
     inputs: submissionInputs(scenario, values),
     ...(normalizedJsonInput ? { jsonInput: normalizedJsonInput } : {})
   };

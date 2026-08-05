@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -26,12 +27,13 @@ import (
 )
 
 const (
-	CookieName    = "atlas_session"
-	defaultUser   = "admin"
-	defaultPass   = "password"
-	sessionTTL    = 7 * 24 * time.Hour
-	loginWindow   = 15 * time.Minute
-	loginMaxFails = 8
+	CookieName                       = "atlas_session"
+	defaultUser                      = "admin"
+	defaultPass                      = "password"
+	minProductionAdminPasswordLength = 12
+	sessionTTL                       = 7 * 24 * time.Hour
+	loginWindow                      = 15 * time.Minute
+	loginMaxFails                    = 8
 	// Four concurrent Argon2 verifications cap the login path at roughly 76 MiB
 	// with hashes created by HashPassword.
 	loginArgon2Concurrency = 4
@@ -627,7 +629,9 @@ func ValidateProductionAdminPassword() error {
 	switch strings.ToLower(strings.TrimSpace(password)) {
 	case defaultPass, "replace_with_secure_admin_password", "replace-with-secure-admin-password", "your-secure-admin-password":
 		return errors.New("configured admin password is a development default or example placeholder")
-	default:
-		return nil
 	}
+	if utf8.RuneCountInString(strings.TrimSpace(password)) < minProductionAdminPasswordLength {
+		return fmt.Errorf("configured admin password must be at least %d characters", minProductionAdminPasswordLength)
+	}
+	return nil
 }

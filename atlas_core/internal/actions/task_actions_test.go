@@ -165,14 +165,9 @@ func TestStatusOnlyTaskUpdateIsIdempotent(t *testing.T) {
 		t.Fatalf("acknowledged task = %#v, want acknowledged with version after %d", acknowledged, created.Version)
 	}
 	change := readChangeEvent(ctx, t, pool, acknowledged.Version)
-	if change.Event != ChangeEventUpdate || change.ID != taskID || change.Version != acknowledged.Version {
+	if change.Event != ChangeEventUpdate || change.ResourceType != ChangeResourceTask || change.ID != taskID || change.Version != acknowledged.Version {
 		t.Fatalf("acknowledgement event = %#v, want task update at version %d", change, acknowledged.Version)
 	}
-	beforeIdempotentVersion, err := CurrentChangeVersion(ctx, pool)
-	if err != nil {
-		t.Fatalf("read version before idempotent acknowledgements: %v", err)
-	}
-
 	repeated, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status})
 	if err != nil {
 		t.Fatalf("repeat acknowledgement: %v", err)
@@ -190,14 +185,17 @@ func TestStatusOnlyTaskUpdateIsIdempotent(t *testing.T) {
 	if !errors.As(err, &preconditionErr) {
 		t.Fatalf("repeat acknowledgement with stale version error = %T %v, want PreconditionFailedError", err, err)
 	}
-	afterIdempotentVersion, err := CurrentChangeVersion(ctx, pool)
-	if err != nil {
-		t.Fatalf("read version after idempotent acknowledgements: %v", err)
+	var laterTaskEvents int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM atlas_change_events
+		WHERE event->>'resource_type' = 'task' AND event->>'id' = $1 AND version > $2
+	`, taskID, acknowledged.Version).Scan(&laterTaskEvents); err != nil {
+		t.Fatalf("count later task events: %v", err)
 	}
-	if afterIdempotentVersion != beforeIdempotentVersion {
-		t.Fatalf("idempotent acknowledgements advanced change version from %d to %d", beforeIdempotentVersion, afterIdempotentVersion)
+	if laterTaskEvents != 0 {
+		t.Fatalf("idempotent acknowledgements emitted %d later task events", laterTaskEvents)
 	}
-
 }
 
 func assertSameTaskVersionAndTimestamp(t *testing.T, got, want *models.Task) {

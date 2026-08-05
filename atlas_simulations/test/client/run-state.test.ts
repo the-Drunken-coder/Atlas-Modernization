@@ -23,7 +23,9 @@ const target: AtlasTargetSummary = {
 
 describe("buildStartRunRequest", () => {
   it("builds the complete request after validating inputs", () => {
-    expect(buildStartRunRequest(scenario, target, { entityId: "entity-2", attempts: "3" }, '{"mode":"fast"}')).toEqual({
+    expect(
+      buildStartRunRequest(scenario, target, { entityId: "entity-2", attempts: "3" }, '{"mode":"fast"}', true)
+    ).toEqual({
       scenarioId: "sync-entity",
       targetId: "deployed-core",
       confirmDeployedMutation: true,
@@ -32,7 +34,13 @@ describe("buildStartRunRequest", () => {
     });
   });
 
+  it("requires explicit confirmation for a deployed mutation", () => {
+    expect(() => buildStartRunRequest(scenario, target, {}, "", false)).toThrow(
+      "Confirm the deployed mutation before starting the run"
+    );
+  });
+
   it("rejects invalid JSON before a run is submitted", () => {
-    expect(() => buildStartRunRequest(scenario, target, {}, "{")).toThrow("JSON input must be valid JSON");
+    expect(() => buildStartRunRequest(scenario, target, {}, "{", true)).toThrow("JSON input must be valid JSON");
   });
 });

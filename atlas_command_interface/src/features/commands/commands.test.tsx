@@ -101,48 +101,51 @@ describe("CommandForm", () => {
     };
     window.addEventListener("keydown", mapKeyListener);
 
-    function Harness() {
-      const [open, setOpen] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => setOpen(true)}>
-            Open command
-          </button>
-          {open ? (
-            <CommandForm
-              command={command}
-              targeting="map_point"
-              formParameters={params}
-              mapPoint={{ lat: 40.1, lng: -74.2 }}
-              submitting={false}
-              onCancel={() => setOpen(false)}
-              onSubmit={() => {}}
-            />
-          ) : null}
-        </>
-      );
+    try {
+      function Harness() {
+        const [open, setOpen] = useState(false);
+        return (
+          <>
+            <button type="button" onClick={() => setOpen(true)}>
+              Open command
+            </button>
+            {open ? (
+              <CommandForm
+                command={command}
+                targeting="map_point"
+                formParameters={params}
+                mapPoint={{ lat: 40.1, lng: -74.2 }}
+                submitting={false}
+                onCancel={() => setOpen(false)}
+                onSubmit={() => {}}
+              />
+            ) : null}
+          </>
+        );
+      }
+
+      render(<Harness />);
+      const trigger = screen.getByRole("button", { name: "Open command" });
+      await user.click(trigger);
+
+      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+      await user.tab();
+      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+
+      trigger.focus();
+      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+
+      trigger.focus();
+      await user.keyboard("{Escape}");
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+      expect(mapEscape).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("keydown", mapKeyListener);
     }
-
-    render(<Harness />);
-    const trigger = screen.getByRole("button", { name: "Open command" });
-    await user.click(trigger);
-
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
-    await user.tab({ shift: true });
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-    await user.tab();
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
-
-    trigger.focus();
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
-
-    trigger.focus();
-    await user.keyboard("{Escape}");
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
-    expect(mapEscape).not.toHaveBeenCalled();
-    window.removeEventListener("keydown", mapKeyListener);
   });
 
   it("can hide a pending submission without offering a duplicate send", async () => {

@@ -60,3 +60,16 @@ func TestOpenCursorPagedRowsRequiresCursorForContinuation(t *testing.T) {
 		t.Fatalf("expected cursor error, got %v", err)
 	}
 }
+
+func TestOpenCursorPagedRowsRejectsCursorWithoutUpperBound(t *testing.T) {
+	rows, err := openCursorPagedRows(context.Background(), nil, cursorPageOpts{cursor: &parsedQueryCursor{}})
+	if err == nil {
+		t.Fatal("expected cursor without upper bound to fail")
+	}
+	if rows != nil {
+		t.Fatalf("expected no rows, got %v", rows)
+	}
+	if !strings.Contains(err.Error(), "upper bound") {
+		t.Fatalf("expected upper-bound error, got %v", err)
+	}
+}

@@ -174,6 +174,7 @@ export function MapConsole() {
           <SidebarPanel
             title={panelTitle(sidebar, selection?.kind)}
             onBack={sidebar.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
+            autoFocusBack={sidebar.focusRequest?.id === selection?.id}
             onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
           >
             <PanelBody
@@ -379,6 +380,7 @@ function PanelBody(props: PanelBodyProps) {
 function ListBody({
   list,
   snapshot,
+  sidebar,
   selectedEntity,
   catalog,
   onSelectEntity,
@@ -407,6 +409,7 @@ function ListBody({
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
+      restoreFocusId={sidebar.focusRequest?.id}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
       onSelect={onSelectEntity}
     />

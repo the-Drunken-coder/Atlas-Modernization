@@ -250,8 +250,9 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var attempts int64
+		var sequenceCalled bool
 		var renewed bool
-		if err := pool.QueryRow(ctx, `SELECT last_value FROM `+sequenceIdentifier).Scan(&attempts); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT last_value, is_called FROM `+sequenceIdentifier).Scan(&attempts, &sequenceCalled); err != nil {
 			t.Fatalf("read heartbeat retry attempts: %v", err)
 		}
 		if err := pool.QueryRow(ctx, `
@@ -260,7 +261,7 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 		`, path, originalExpiry).Scan(&renewed); err != nil {
 			t.Fatalf("check renewed upload intent: %v", err)
 		}
-		if attempts >= 2 && renewed {
+		if sequenceCalled && attempts >= 2 && renewed {
 			break
 		}
 		select {

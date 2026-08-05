@@ -300,6 +300,7 @@ waitForCreate:
 				FROM pg_stat_activity
 				WHERE $1 = ANY(pg_blocking_pids(pid))
 					AND wait_event_type = 'Lock'
+					AND query ILIKE '%UPDATE atlas_change_clock%'
 			)
 		`, blockerPID).Scan(&blocked); err != nil {
 			t.Fatalf("check blocked Create: %v", err)
@@ -384,6 +385,7 @@ func TestCreateRejectsDeletedPathAfterPassingPreflight(t *testing.T) {
 				FROM pg_stat_activity
 				WHERE $1 = ANY(pg_blocking_pids(pid))
 					AND wait_event_type = 'Lock'
+					AND query ILIKE '%UPDATE atlas_change_clock%'
 			)
 		`, blockerPID).Scan(&blocked); err != nil {
 			t.Fatalf("check blocked Create: %v", err)

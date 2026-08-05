@@ -9,6 +9,13 @@ import { cloneRun, deferred, deployedTarget, type HealthResponse, localTarget, s
 vi.mock("../../src/client/api.js");
 
 describe("App safety and cleanup", () => {
+  it("disables API-key entry until a target exists", async () => {
+    vi.mocked(loadTargets).mockResolvedValueOnce({ targets: [], defaultTargetId: "" });
+    render(<App />);
+
+    expect(await screen.findByLabelText("API key")).toBeDisabled();
+  });
+
   it("requires a fresh acknowledgement before each deployed start", async () => {
     const user = userEvent.setup();
     render(<App />);

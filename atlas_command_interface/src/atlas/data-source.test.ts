@@ -282,6 +282,23 @@ describe("sdk data source", () => {
     expect(core.requests).toEqual(["/command-catalog"]);
   });
 
+  it("rejects an invalid command catalog from Core", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          type: "command_catalog",
+          name: "Invalid catalog",
+          description: "Missing command fields",
+          commands: [{ id: "broken" }]
+        })
+      )
+    );
+    const dataSource = createSdkDataSource(config);
+
+    await expect(dataSource.loadCommandCatalog()).rejects.toThrow("Atlas response failed validation");
+  });
+
   it("routes command and geometry writes through SDK cache notifications", async () => {
     const calls: Array<{ input: unknown; init: RequestInit }> = [];
     const createdTask = task("task-created", "asset-1", 2);

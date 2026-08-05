@@ -118,7 +118,7 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 		ID:           change.ID,
 		Version:      change.Version,
 	}
-	record := ChangeRecord{Event: event}
+	var record ChangeRecord
 	switch change.ResourceType {
 	case ChangeResourceEntity:
 		if change.Event != ChangeEventDelete {
@@ -199,6 +199,9 @@ type changeRecordQuerier interface {
 
 // ReadChangeRecords returns one globally ordered page from the durable log.
 func ReadChangeRecords(ctx context.Context, db changeRecordQuerier, afterVersion, throughVersion int64, limit int) ([]ChangeRecord, bool, error) {
+	if limit < 1 {
+		return nil, false, fmt.Errorf("change record limit must be positive")
+	}
 	rows, err := db.Query(ctx, `
 		SELECT event, COALESCE(before_task_entity_id, ''), COALESCE(after_task_entity_id, '')
 		FROM atlas_change_events

@@ -295,8 +295,13 @@ export class AtlasClient {
   }
 }
 
+type TaskStatusComponents = {
+  progress?: { percent: number };
+  status_message?: string;
+};
+
 function taskStatusPatch(status: TaskStatus, options?: TaskStatusOptions): TaskUpdateRequest {
-  const components = {
+  const components: TaskStatusComponents = {
     ...(options?.progress === undefined ? {} : { progress: { percent: options.progress } }),
     ...(options?.message === undefined ? {} : { status_message: options.message })
   };

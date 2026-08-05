@@ -679,13 +679,18 @@ describe("AtlasClient HTTP", () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     const full = await client.queries.full({ entityLimit: 1, taskLimit: 1, objectLimit: 1, entityCursor: "1" });
-    const changed = await client.queries.changedSince(0, { limit: 1, cursor: "1" });
+    const firstChanged = await client.queries.changedSince(0, { limit: 1 });
+    const changed = await client.queries.changedSince(0, { limit: 1, cursor: firstChanged.next_cursor });
 
     expect(full.entities).toEqual([]);
     expect(full.version).toBe(core.version);
+    expect(firstChanged.events).toHaveLength(1);
     expect(changed.events).toHaveLength(1);
     expect(core.requests).toContain("/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor=1");
-    expect(core.requests).toContain("/queries/changed-since?since_version=0&limit=1&cursor=1");
+    expect(core.requests).toContain("/queries/changed-since?since_version=0&limit=1");
+    expect(core.requests).toContain(
+      `/queries/changed-since?since_version=0&limit=1&cursor=${encodeURIComponent(firstChanged.next_cursor ?? "")}`
+    );
     expect(client.sync.status().lastVersion).toBe(0);
   });
 

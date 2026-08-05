@@ -79,6 +79,10 @@ func (h *Handler) GetFullDataset(w http.ResponseWriter, r *http.Request) {
 
 // GetChangedSince handles GET /queries/changed-since.
 func (h *Handler) GetChangedSince(w http.ResponseWriter, r *http.Request) {
+	if _, present := r.URL.Query()["offset"]; present {
+		h.writeError(w, r, http.StatusBadRequest, "offset is not supported for changed-since queries", protocol.ErrorCodeValidationError)
+		return
+	}
 	if strings.TrimSpace(r.URL.Query().Get("since_version")) == "" {
 		h.writeError(w, r, http.StatusBadRequest, "since_version parameter is required", protocol.ErrorCodeValidationError)
 		return

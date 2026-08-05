@@ -117,11 +117,11 @@ export function LogList({ events }: { events: RunEvent[] }) {
 
 export function RunTable({
   runs,
-  selectedId,
+  selectedRunId,
   onSelect
 }: {
   runs: RunSummary[];
-  selectedId?: string;
+  selectedRunId?: string;
   onSelect(run: RunSummary): void;
 }) {
   if (!runs.length) return <div className="empty">No runs</div>;
@@ -147,7 +147,7 @@ export function RunTable({
               <button
                 className="run-select-button"
                 type="button"
-                aria-current={run.id === selectedId ? "true" : undefined}
+                aria-current={run.id === selectedRunId ? "true" : undefined}
                 onClick={() => onSelect(run)}
               >
                 {run.scenarioName}

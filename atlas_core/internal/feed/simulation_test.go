@@ -34,8 +34,24 @@ func TestTasksForEntityMatchesBeforeAndAfterRoutingContext(t *testing.T) {
 		BeforeTaskEntityID: "entity-1",
 		AfterTaskEntityID:  "entity-2",
 	})
-	if got := <-client.Events(); got.Event.ID != "task-1" {
-		t.Fatalf("event id = %q, want task-1", got.Event.ID)
+	hub.Publish(RoutedEvent{
+		Event:             testRoutedEvent(2, protocol.ResourceTypeTask, "task-2").Event,
+		AfterTaskEntityID: "entity-1",
+	})
+	hub.Publish(RoutedEvent{
+		Event:              testRoutedEvent(3, protocol.ResourceTypeTask, "task-unrelated").Event,
+		BeforeTaskEntityID: "entity-9",
+		AfterTaskEntityID:  "entity-9",
+	})
+	for _, want := range []string{"task-1", "task-2"} {
+		if got := <-client.Events(); got.Event.ID != want {
+			t.Fatalf("event id = %q, want %s", got.Event.ID, want)
+		}
+	}
+	select {
+	case event := <-client.Events():
+		t.Fatalf("received unrelated task event %q", event.Event.ID)
+	default:
 	}
 }
 
@@ -53,6 +69,17 @@ func TestHubDisconnectsSlowClients(t *testing.T) {
 	}
 	if _, ok := <-client.Events(); ok {
 		t.Fatal("slow client channel remained open")
+	}
+}
+
+func TestHubDropsPublishesAndReturnsClosedClientsAfterClose(t *testing.T) {
+	hub := NewHub(Options{})
+	hub.Close()
+	hub.Publish(testRoutedEvent(1, protocol.ResourceTypeEntity, "entity-1"))
+
+	client := hub.NewClient()
+	if _, ok := <-client.Events(); ok {
+		t.Fatal("client created after hub shutdown was not closed")
 	}
 }
 

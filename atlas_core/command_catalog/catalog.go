@@ -18,6 +18,8 @@ import (
 var catalogFS embed.FS
 
 var (
+	catalogData    []byte
+	catalogETag    string
 	defaultCatalog protocol.CommandCatalog
 	defaultErr     error
 	defaultOnce    sync.Once
@@ -25,20 +27,23 @@ var (
 
 // JSON returns the command catalog embedded in the Core binary.
 func JSON() ([]byte, error) {
-	return catalogFS.ReadFile("command_catalog.json")
+	loadDefault()
+	return append([]byte(nil), catalogData...), defaultErr
 }
 
 func ETag() (string, error) {
-	data, err := JSON()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(`"%x"`, sha256.Sum256(data)), nil
+	loadDefault()
+	return catalogETag, defaultErr
 }
 
 func Default() (protocol.CommandCatalog, error) {
+	loadDefault()
+	return defaultCatalog, defaultErr
+}
+
+func loadDefault() {
 	defaultOnce.Do(func() {
-		data, err := JSON()
+		data, err := catalogFS.ReadFile("command_catalog.json")
 		if err != nil {
 			defaultErr = err
 			return
@@ -47,9 +52,13 @@ func Default() (protocol.CommandCatalog, error) {
 			defaultErr = fmt.Errorf("invalid embedded command catalog: %s", strings.Join(errors, "; "))
 			return
 		}
-		defaultErr = json.Unmarshal(data, &defaultCatalog)
+		if err := json.Unmarshal(data, &defaultCatalog); err != nil {
+			defaultErr = err
+			return
+		}
+		catalogData = data
+		catalogETag = fmt.Sprintf(`"%x"`, sha256.Sum256(data))
 	})
-	return defaultCatalog, defaultErr
 }
 
 func Command(catalog protocol.CommandCatalog, id string) (protocol.CommandDefinition, bool) {

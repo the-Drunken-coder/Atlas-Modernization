@@ -388,7 +388,13 @@ function emitResourceChanges<T extends WatchableResource>(
       const id = resourceId(value, type);
       if (isDeletedAt(state, type, id, toVersion, value.metadata.version)) continue;
       const resource = cloneValue(value);
-      const event = resourceChangeEvent(type, index === 0 ? "create" : "update", id, resource);
+      const previousVersion = history[index - 1]?.metadata.version;
+      const followsDeletion =
+        previousVersion !== undefined &&
+        (state.tombstones.get(resourceKey(type, id)) ?? []).some(
+          (deletedVersion) => deletedVersion > previousVersion && deletedVersion < value.metadata.version
+        );
+      const event = resourceChangeEvent(type, index === 0 || followsDeletion ? "create" : "update", id, resource);
       emitWatchEvent(clientState, resource, event);
     }
   }

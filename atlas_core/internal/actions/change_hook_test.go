@@ -2,6 +2,7 @@ package actions
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -161,6 +162,48 @@ func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
 	}
 	if record.Event.Resource == nil {
 		t.Fatal("task update resource is nil")
+	}
+}
+
+func TestResourceChangeRecordBuildsEntityDelete(t *testing.T) {
+	record, err := resourceChangeRecord(ResourceChange{
+		Event: ChangeEventDelete, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 8,
+	})
+	if err != nil {
+		t.Fatalf("resourceChangeRecord: %v", err)
+	}
+	if record.Event.Event != ChangeEventDelete || record.Event.ID != "entity-1" || record.Event.Resource != nil {
+		t.Fatalf("entity delete event = %#v", record.Event)
+	}
+}
+
+func TestResourceChangeRecordRejectsMissingStateAndUnknownType(t *testing.T) {
+	for _, change := range []ResourceChange{
+		{Event: ChangeEventCreate, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 1},
+		{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: "task-1", Version: 1},
+		{Event: ChangeEventCreate, ResourceType: ChangeResourceObject, ID: "object-1", Version: 1},
+		{Event: ChangeEventCreate, ResourceType: ChangeResource("unknown"), ID: "unknown-1", Version: 1},
+	} {
+		if _, err := resourceChangeRecord(change); err == nil {
+			t.Fatalf("expected invalid change %#v to fail", change)
+		}
+	}
+}
+
+func TestReadChangeRecordsRejectsNonPositiveLimit(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		records, hasMore, err := ReadChangeRecords(context.Background(), nil, 0, 1, limit)
+		if err == nil || records != nil || hasMore {
+			t.Fatalf("ReadChangeRecords limit %d = (%#v, %v, %v), want early error", limit, records, hasMore, err)
+		}
+	}
+}
+
+func TestReserveChangeVersionsRejectsNonPositiveCount(t *testing.T) {
+	for _, count := range []int{0, -1} {
+		if _, err := reserveChangeVersions(context.Background(), nil, count); err == nil {
+			t.Fatalf("reserveChangeVersions count %d succeeded", count)
+		}
 	}
 }
 

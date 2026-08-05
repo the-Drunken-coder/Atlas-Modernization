@@ -1,5 +1,5 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
 import { entityGeometry } from "../../atlas/entities.js";
 import type { UiGeometry } from "../../atlas/geometry.js";
@@ -19,10 +19,13 @@ export function useGeometryEdit({
   const [edit, setEdit] = useState<GeometryEditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const saveIdRef = useRef(0);
   const selectedEntityId = selectedEntity?.entity_id;
 
   const cancelEdit = useCallback(() => {
+    saveIdRef.current += 1;
     setEdit(null);
+    setSaving(false);
     setSaveError(undefined);
   }, []);
 
@@ -35,6 +38,8 @@ export function useGeometryEdit({
     if (!selectedEntity) return;
     const geometry = entityGeometry(selectedEntity);
     if (!geometry) return;
+    saveIdRef.current += 1;
+    setSaving(false);
     setSaveError(undefined);
     setEdit({ entityId: selectedEntity.entity_id, version: selectedEntity.metadata.version, draft: geometry });
   }, [selectedEntity]);
@@ -44,16 +49,17 @@ export function useGeometryEdit({
   }, []);
 
   const saveEdit = useCallback(async () => {
-    if (!edit || !selectedEntity) return;
+    if (!edit || edit.entityId !== selectedEntity?.entity_id) return;
+    const saveId = ++saveIdRef.current;
     setSaving(true);
     setSaveError(undefined);
     try {
       await updateGeometry(edit.entityId, edit.draft, edit.version);
-      setEdit(null);
+      if (saveId === saveIdRef.current) setEdit(null);
     } catch (cause) {
-      setSaveError(sanitizeConnectionError(cause));
+      if (saveId === saveIdRef.current) setSaveError(sanitizeConnectionError(cause));
     } finally {
-      setSaving(false);
+      if (saveId === saveIdRef.current) setSaving(false);
     }
   }, [edit, selectedEntity, updateGeometry]);
 

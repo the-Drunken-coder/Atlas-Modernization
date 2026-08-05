@@ -24,7 +24,7 @@ The SDK is the preferred client path for UI code, asset-side services, and tools
 
 Two components, not three modes:
 
-1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Standalone telemetry patching and object upload are still direct API calls until they are added to the SDK.
+1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Object upload remains a direct API call for now; use entity check-in for telemetry and status reporting.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
 The constructor can optionally seed the all-resources subscription:
@@ -116,7 +116,7 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 ## Task lifecycle, check-in, and queries
 
-Task lifecycle helpers wrap the existing Core lifecycle endpoints: `client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
+Task lifecycle helpers—`client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`—are conveniences over `client.tasks.update` and Core's `PATCH /tasks/{task_id}` endpoint. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
 
 `client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full task pages are merged into the SDK cache; `fields: "minimal"` returns compact command-oriented task entries.
 

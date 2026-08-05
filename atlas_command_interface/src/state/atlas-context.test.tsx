@@ -361,6 +361,27 @@ describe("AtlasProvider", () => {
     expect(screen.getByTestId("catalog-name")).toHaveTextContent("Startup");
   });
 
+  it("treats an unavailable command catalog as a fatal setup error", async () => {
+    const dispose = vi.fn();
+    const unsubscribe = vi.fn();
+    const fake = catalogDataSource(async () => {
+      throw new Error("catalog unavailable");
+    }).dataSource;
+    fake.dispose = dispose;
+    fake.watch = () => unsubscribe;
+
+    render(
+      <AtlasProvider loadConfig={async () => config} createDataSource={() => fake}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("error")).toBeInTheDocument();
+    expect(screen.getByText("catalog unavailable")).toBeInTheDocument();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps newer watch data when an action resolves with a stale resource version", async () => {
     let current: AtlasSnapshot = { entities: { "asset-1": entity("Initial", 1) }, tasks: {} };
     let emit: ((snapshot: AtlasSnapshot) => void) | undefined;

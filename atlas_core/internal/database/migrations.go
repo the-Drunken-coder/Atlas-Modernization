@@ -19,7 +19,7 @@ const (
 	pathTombstonesMigrationName     = "index_storage_path_tombstones"
 	pathTombstonesMigrationChecksum = "fc9d12136384e8f4bdcd15d96c6ec8a1b802092a66a8b6b78f33c5548241d19f"
 	changeStreamMigrationName       = "transactional_change_stream"
-	changeStreamMigrationChecksum   = "5e0b09f2736972c3605e2281cfb5090a402f01514327dffadbc44a3599f37993"
+	changeStreamMigrationChecksum   = "362d2f71c1d51c7d172e0818b68a7eec725104aeec91002558ebac7d74a978eb"
 	fingerprintVersionV1            = 1
 )
 
@@ -111,6 +111,9 @@ func coreSchemaMigrations() []schemaMigration {
 					after_task_entity_id VARCHAR(50),
 					created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 				)`,
+				`CREATE INDEX idx_atlas_change_events_object_deletes
+				 ON atlas_change_events ((event->>'id'), version DESC)
+				 WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete'`,
 				`ALTER TABLE entities ALTER COLUMN version DROP DEFAULT`,
 				`ALTER TABLE tasks ALTER COLUMN version DROP DEFAULT`,
 				`ALTER TABLE objects ALTER COLUMN version DROP DEFAULT`,

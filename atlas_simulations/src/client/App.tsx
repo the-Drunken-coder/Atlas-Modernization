@@ -50,7 +50,7 @@ export function App() {
     const deployedStart = selectedTarget.deployed;
     runSession.clearError();
     try {
-      const request = buildStartRunRequest(selected, selectedTarget, inputs, jsonInput);
+      const request = buildStartRunRequest(selected, selectedTarget, inputs, jsonInput, deployedMutationConfirmed);
       const apiKey = apiKeyForTarget(selectedTarget.id);
       await runSession.start(request, apiKey);
     } catch (errorValue) {
@@ -248,7 +248,7 @@ export function App() {
         </section>
         <section className="panel">
           <h2>Recent Runs</h2>
-          <RunTable runs={runs} selectedId={currentRun?.id} onSelect={runSession.selectRun} />
+          <RunTable runs={runs} selectedRunId={currentRun?.id} onSelect={runSession.selectRun} />
         </section>
       </section>
     </main>

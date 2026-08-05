@@ -103,6 +103,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     const recovery = client.changedSince();
     await vi.waitFor(() => expect(secondPageStarted).toBe(true));
     expect(client.sync.status().lastVersion).toBe(initialVersion);
+    const later = core.upsertTask(task("task-after-snapshot", "asset-1"));
     releaseSecondPage();
     await recovery;
 
@@ -117,7 +118,15 @@ describe("AtlasClient sync: recovery and hydration", () => {
       second,
       expect.objectContaining({ id: "task-page-2", version: second.metadata.version })
     );
-    expect(client.sync.status().lastVersion).toBe(core.version);
+    expect(watch).not.toHaveBeenCalledWith(later, expect.anything());
+    expect(client.sync.status().lastVersion).toBe(second.metadata.version);
+
+    await client.changedSince();
+    expect(watch).toHaveBeenCalledWith(
+      later,
+      expect.objectContaining({ id: "task-after-snapshot", version: later.metadata.version })
+    );
+    expect(client.sync.status().lastVersion).toBe(later.metadata.version);
   });
 
   it("rejects repeated changed-since cursor states", async () => {

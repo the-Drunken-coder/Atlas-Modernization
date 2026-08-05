@@ -76,7 +76,9 @@ For concurrency-sensitive writes, send the latest version back with:
 If-Match: "v12"
 ```
 
-`PATCH` and check-in accept this header. If the header is omitted, the server applies the write without a version precondition.
+`PATCH /entities/{entity_id}`, `PATCH /tasks/{task_id}`, `PATCH /objects/{object_id}`,
+and `POST /entities/{entity_id}/checkin` accept this header. If the header is
+omitted, the server applies the write without a version precondition.
 
 ### Pagination
 
@@ -174,7 +176,7 @@ Object detail responses:
 | `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
 | `GET` | `/resources` | `200` | Returns operator CPU, memory, disk, and Go process diagnostics. Requires protected-route auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
-| `GET` | `/command-catalog` | `200` | Returns Core's authoritative embedded command definitions. |
+| `GET` | `/command-catalog` | `200` or `304` | Returns Core's authoritative embedded command definitions. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
 Readiness is HTTP `503` with `status: "unhealthy"` when the database is unavailable or configured storage cannot be initialized, reached, or verified. A missing configured bucket is also unhealthy. With a healthy database, deliberately omitting storage credentials keeps DB-only/local Core available as HTTP `200` with `status: "degraded"` and the storage check marked `unconfigured`; use `/health` when only process liveness matters.
@@ -470,7 +472,7 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `task_cursor` | Continue tasks from `next_task_cursor`. |
 | `object_cursor` | Continue objects from `next_object_cursor`. |
 
-Full-query resource streams return at most 1000 rows per type and retain at most 8 MiB of estimated serialized response data per type per page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging. Changed-since returns at most 5000 globally ordered events per page.
+Full-query resource streams return at most 1000 rows per type and retain at most 8 MiB of stored resource JSON per type per page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging. Changed-since returns at most 5000 globally ordered events per page.
 
 The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
 

@@ -40,6 +40,32 @@ func TestDefaultCatalogLoadsCommandAndCoercesParameters(t *testing.T) {
 	}
 }
 
+func TestEmbeddedCatalogJSONAndETagAreStable(t *testing.T) {
+	first, err := JSON()
+	if err != nil {
+		t.Fatalf("JSON() returned error: %v", err)
+	}
+	firstETag, err := ETag()
+	if err != nil {
+		t.Fatalf("ETag() returned error: %v", err)
+	}
+	first[0] = 'x'
+	second, err := JSON()
+	if err != nil {
+		t.Fatalf("second JSON() returned error: %v", err)
+	}
+	secondETag, err := ETag()
+	if err != nil {
+		t.Fatalf("second ETag() returned error: %v", err)
+	}
+	if second[0] == 'x' {
+		t.Fatal("JSON() exposed mutable cached bytes")
+	}
+	if firstETag == "" || secondETag != firstETag {
+		t.Fatalf("ETags = %q then %q, want one stable digest", firstETag, secondETag)
+	}
+}
+
 func TestMoveToLocationUsesProtocolAltitudeParameter(t *testing.T) {
 	data, err := os.ReadFile("command_catalog.json")
 	if err != nil {

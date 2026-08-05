@@ -38,7 +38,15 @@ export function ContextMenu({ x, y, header, items, emptyLabel, onClose }: Contex
 
   useEffect(() => {
     if (items.some((item) => item.key === activeKey && !item.disabled)) return;
-    setActiveKey(items.find((item) => !item.disabled)?.key);
+    const nextKey = items.find((item) => !item.disabled)?.key;
+    setActiveKey(nextKey);
+    const menu = menuRef.current;
+    const nextItem = nextKey
+      ? Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []).find(
+          (item) => item.dataset.menuKey === nextKey
+        )
+      : undefined;
+    (nextItem ?? menu)?.focus();
   }, [activeKey, items]);
 
   useLayoutEffect(() => {

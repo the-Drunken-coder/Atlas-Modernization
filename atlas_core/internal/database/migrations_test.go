@@ -58,7 +58,16 @@ func TestTransactionalChangeStreamMigrationDefinitionIsFrozen(t *testing.T) {
 	ddl := strings.Join(migration.statements, "\n")
 	for _, required := range []string{
 		"CREATE TABLE atlas_change_clock",
+		"COALESCE((SELECT MAX(version) FROM entities), 0)",
+		"COALESCE((SELECT MAX(version) FROM tasks), 0)",
+		"COALESCE((SELECT MAX(version) FROM objects), 0)",
+		"COALESCE((SELECT MAX(version) FROM deletions), 0)",
+		"CASE WHEN is_called THEN last_value ELSE 0 END FROM atlas_change_version_seq",
 		"CREATE TABLE atlas_change_events",
+		"CREATE INDEX idx_atlas_change_events_object_deletes",
+		"ALTER TABLE entities ALTER COLUMN version DROP DEFAULT",
+		"ALTER TABLE tasks ALTER COLUMN version DROP DEFAULT",
+		"ALTER TABLE objects ALTER COLUMN version DROP DEFAULT",
 		"DROP TABLE deletions",
 		"DROP SEQUENCE atlas_change_version_seq",
 	} {

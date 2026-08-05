@@ -567,6 +567,7 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 	createQueryTestTask(ctx, t, client, taskID, entityIDs[0])
 	objectID := fmt.Sprintf("%s-changed-page-object", prefix)
 	createQueryTestObject(ctx, t, client, objectID, entityIDs[0], taskID)
+	lateEntityID := fmt.Sprintf("%s-changed-page-late-entity", prefix)
 
 	var events []interface{}
 	var cursor string
@@ -590,6 +591,7 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 		version := int64(page["version"].(float64))
 		if pageNumber == 0 {
 			snapshotVersion = version
+			createQueryTestEntity(ctx, t, client, lateEntityID)
 		} else if version != snapshotVersion {
 			t.Fatalf("continuation version = %d, want %d", version, snapshotVersion)
 		}
@@ -607,9 +609,17 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 		t.Fatalf("changed-since events = %d, want 4", len(events))
 	}
 	for _, entityID := range entityIDs {
-		if findChangeEvent(events, "entity", entityID, "") == nil {
+		event := findChangeEvent(events, "entity", entityID, "")
+		if event == nil {
 			t.Fatalf("missing entity event %s", entityID)
 		}
+		resource, ok := event["resource"].(map[string]interface{})
+		if !ok || resource["entity_id"] != entityID {
+			t.Fatalf("entity create event resource = %#v, want %s", event["resource"], entityID)
+		}
+	}
+	if findChangeEvent(events, "entity", lateEntityID, "") != nil {
+		t.Fatalf("snapshot pagination included late entity %s", lateEntityID)
 	}
 	if findChangeEvent(events, "task", taskID, "") == nil || findChangeEvent(events, "object", objectID, "") == nil {
 		t.Fatal("changed-since continuation omitted task or object event")
@@ -620,6 +630,19 @@ func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T)
 		if current <= previous {
 			t.Fatalf("events are not globally ordered: %v then %v", previous, current)
 		}
+	}
+
+	resp, err := client.Get(ctx, fmt.Sprintf("/queries/changed-since?since_version=%d", snapshotVersion))
+	if err != nil {
+		t.Fatalf("query changed-since after snapshot: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after snapshot")
+	var nextPage map[string]interface{}
+	if err := ParseResponse(resp, &nextPage); err != nil {
+		t.Fatalf("parse changed-since after snapshot: %v", err)
+	}
+	if findChangeEvent(mustInterfaceSlice(t, nextPage["events"], "events"), "entity", lateEntityID, "") == nil {
+		t.Fatalf("next changed-since query omitted late entity %s", lateEntityID)
 	}
 }
 

@@ -42,7 +42,7 @@ Each active entry under `docs/problems/` is a short-lived note for agent-to-agen
 6. **Expected:** `GET /queries/changed-since` returns globally ordered events after `since_version` with stable cursor continuation
 7. **Actual:** Repeating the first request repeats events when `next_cursor` is not passed back as `cursor`
 8. **Reproduction:**
-   1. Seed several entities with staggered `updated_at`
+   1. Create or update several entities through successive committed writes so the change clock assigns increasing versions
    2. Call `GET /queries/changed-since?since_version=...&limit=1`
    3. Request the next page without `cursor=<next_cursor>` from the first response body
 9. **Notes:** See `atlas_core/docs/PAGINATION.md`; compare handler validation vs `query_actions.go` cursor assembly.

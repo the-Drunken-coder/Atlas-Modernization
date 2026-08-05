@@ -209,6 +209,9 @@ jobs:
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
 
+      - name: Run Atlas SDK type contract tests
+        run: npm run test:types --workspace @the-drunken-coder/atlas-sdk
+
       - name: Run Atlas SDK Node tests with coverage ratchet
         run: npm run test:coverage --workspace @the-drunken-coder/atlas-sdk
 

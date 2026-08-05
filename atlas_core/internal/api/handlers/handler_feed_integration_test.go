@@ -40,10 +40,17 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	}
 
 	hub := feed.NewHub(feed.Options{})
-	defer hub.Close()
 	dispatchCtx, stopDispatcher := context.WithCancel(ctx)
-	defer stopDispatcher()
-	go feed.NewDispatcher(pool, hub, currentVersion).Run(dispatchCtx)
+	dispatcherDone := make(chan struct{})
+	go func() {
+		defer close(dispatcherDone)
+		feed.NewDispatcher(pool, hub, currentVersion).Run(dispatchCtx)
+	}()
+	t.Cleanup(func() {
+		stopDispatcher()
+		<-dispatcherDone
+		hub.Close()
+	})
 	handler := NewHandlerWithFeed(
 		&atlasdb.DB{Pool: pool},
 		nil,

@@ -51,11 +51,8 @@ func TestBucketNotFoundError(t *testing.T) {
 
 func TestNewClientRejectsNilConfig(t *testing.T) {
 	client, err := NewClient(nil)
-	if err == nil {
-		t.Fatalf("expected nil config to fail, got client %#v", client)
-	}
-	if !strings.Contains(err.Error(), "storage config is nil") {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil || client != nil {
+		t.Fatalf("NewClient(nil) = (%#v, %v), want nil client and error", client, err)
 	}
 }
 

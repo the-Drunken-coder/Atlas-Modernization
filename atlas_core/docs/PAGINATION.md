@@ -81,6 +81,7 @@ Malformed `task_cursor` values return `400 VALIDATION_ERROR` before the check-in
 | `next_entity_cursor` | `entity_cursor` |
 | `next_task_cursor` | `task_cursor` |
 | `next_object_cursor` | `object_cursor` |
+
 For **`GET /queries/full`**, every response includes a **`version`** captured before the first page is read. The opaque continuation cursors carry that hydration baseline, so every page in the same traversal repeats the same `version` even when a later page contains a resource whose `metadata.version` is newer. Clients must not advance their global sync cursor from hydrated resource versions. Consume all full-dataset pages, use the response `version` as the baseline, then drain `GET /queries/changed-since?since_version=<version>` before treating the hydrated state as current.
 
 For **`GET /queries/changed-since`**, use `since_version` as the incremental boundary and optional `limit`/`cursor` parameters for pagination. Each page contains one globally ordered `events` array. A truncated page sets `has_more=true` and returns one `next_cursor`; keep the same `since_version` and pass that cursor back unchanged. Once all pages are consumed, pass the stable response `version` as the next poll's `since_version`.

@@ -176,6 +176,9 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 		if err != nil {
 			return nil, err
 		}
+		if parsed == nil {
+			return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{"cursor must not be empty"})
+		}
 		if parsed.sinceVersion != sinceVersion {
 			return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{fmt.Sprintf("cursor was created for since_version %d, got %d", parsed.sinceVersion, sinceVersion)})
 		}

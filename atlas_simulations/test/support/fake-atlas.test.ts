@@ -72,4 +72,27 @@ describe("fake Atlas core", () => {
 
     await expect(client.entities.get("asset-1")).resolves.toMatchObject({ entity_id: "asset-1" });
   });
+
+  it("emits a re-created resource as a create event", async () => {
+    const core = createFakeAtlasCore();
+    const writer = core.factory();
+    const reader = core.factory({ sync: "all" });
+    const watch = vi.fn();
+    reader.watch({ filter: "type", resource_type: "entity" }, watch);
+    await reader.sync.start();
+
+    await writer.entities.create({ entity_id: "asset-recreated", entity_type: "asset" });
+    await reader.sync.status();
+    await writer.entities.delete("asset-recreated");
+    await reader.sync.status();
+    watch.mockClear();
+    await writer.entities.create({ entity_id: "asset-recreated", entity_type: "asset" });
+    await reader.sync.status();
+
+    expect(watch).toHaveBeenCalledOnce();
+    expect(watch).toHaveBeenCalledWith(
+      expect.objectContaining({ entity_id: "asset-recreated" }),
+      expect.objectContaining({ event: "create", id: "asset-recreated" })
+    );
+  });
 });

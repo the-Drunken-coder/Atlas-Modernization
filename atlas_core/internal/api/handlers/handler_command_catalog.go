@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	commandcatalog "github.com/the-drunken-coder/atlas/atlas_core/command_catalog"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -22,8 +23,9 @@ func (h *Handler) GetCommandCatalog(w http.ResponseWriter, r *http.Request) {
 		h.writeErrorWithCause(w, r, http.StatusInternalServerError, "hash command catalog failed", protocol.ErrorCodeInternalServerError, err)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("ETag", etag)
-	if r.Header.Get("If-None-Match") == etag {
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -32,4 +34,14 @@ func (h *Handler) GetCommandCatalog(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(data); err != nil {
 		h.logger.Error().Err(err).Msg("write embedded command catalog")
 	}
+}
+
+func etagMatches(header, etag string) bool {
+	for candidate := range strings.SplitSeq(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == etag {
+			return true
+		}
+	}
+	return false
 }

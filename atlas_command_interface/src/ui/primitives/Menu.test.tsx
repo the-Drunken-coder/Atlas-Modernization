@@ -57,4 +57,24 @@ describe("ContextMenu", () => {
       window.removeEventListener("keydown", mapKeyListener);
     }
   });
+
+  it("moves focus when the active item becomes disabled", () => {
+    const items = [
+      { key: "first", title: "First" },
+      { key: "last", title: "Last" }
+    ];
+    const { rerender } = render(<ContextMenu x={10} y={20} items={items} onClose={() => {}} />);
+
+    expect(screen.getByRole("menuitem", { name: "First" })).toHaveFocus();
+    rerender(
+      <ContextMenu
+        x={10}
+        y={20}
+        items={[{ key: "first", title: "First", disabled: true }, items[1]]}
+        onClose={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("menuitem", { name: "Last" })).toHaveFocus();
+  });
 });

@@ -84,8 +84,26 @@ when that path is explicitly mounted and readable inside the process.
 For the production-image single-host stack:
 
 ```bash
-export API_AUTH_KEY='your-secure-api-key'
-export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
+umask 077
+set -a
+. /secure/path/atlas-production.env
+set +a
+```
+
+The owner-readable environment file must define `POSTGRES_PASSWORD`,
+`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and
+`ATLAS_ADMIN_PASSWORD`; the admin password must contain at least 12 characters.
+Before the first production start on a new MinIO volume, provision the configured
+durable bucket and verify it exists; production startup deliberately will not create it.
+`atlas-media` below is the default; replace it with the configured `MINIO_BUCKET`
+value if you changed it.
+
+```bash
+docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
+mc mb atlas_production/atlas-media
+mc stat atlas_production/atlas-media
+unset MC_HOST_atlas_production
 python3 atlas_core/scripts/atlas.py --production
 ```
 

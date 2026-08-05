@@ -115,6 +115,9 @@ func openCursorPagedRows(ctx context.Context, tx pgx.Tx, opts cursorPageOpts) (p
 	if opts.continuation && opts.cursor == nil {
 		return nil, fmt.Errorf("cursor pagination continuation requires a cursor")
 	}
+	if opts.cursor != nil && opts.cursor.upperBound.IsZero() {
+		return nil, fmt.Errorf("cursor pagination requires a snapshot upper bound")
+	}
 
 	return openOrderedCursorPagedRows(ctx, tx, orderedCursorPageOpts{
 		selectFrom:  opts.selectFrom,

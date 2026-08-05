@@ -66,12 +66,6 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 			return nil, err
 		}
 	}
-	if params.Path != nil {
-		if err := ensureObjectStoragePathAvailable(ctx, a.pool, *params.Path, objectID); err != nil {
-			return nil, err
-		}
-	}
-
 	// Build JSON payload
 	jsonData := make(map[string]interface{})
 	if params.SizeBytes != nil {
@@ -97,14 +91,14 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	version, err := nextChangeVersion(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
 	if params.Path != nil {
 		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
 			return nil, err
 		}
+	}
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
@@ -236,12 +230,6 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		}
 	}
 	normalizedType := normalizeOptionalObjectString(params.Type)
-	if params.Path != nil {
-		if err := ensureObjectStoragePathAvailable(ctx, a.pool, *params.Path, objectID); err != nil {
-			return nil, err
-		}
-	}
-
 	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
 		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
 		if params.ExpectedVersion != nil {
@@ -304,14 +292,14 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 
-	version, err := nextChangeVersion(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
 	if params.Path != nil {
 		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
 			return nil, err
 		}
+	}
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
 	var out models.MediaObject
 	err = tx.QueryRow(ctx, `

@@ -21,33 +21,45 @@ function Harness() {
     state.view.mode === "list" ? state.view.list : state.selection ? listForKind(state.selection.kind) : null;
 
   return (
-    <div className="sidebar" data-collapsed={state.collapsed} data-testid="sidebar">
-      <SidebarRail
-        collapsed={state.collapsed}
-        activeList={activeList}
-        counts={{ asset: ASSETS.length, track: 0, geofeature: 0 }}
-        onSelectList={(list) => dispatch({ type: "openList", list })}
-        onToggleCollapsed={() => dispatch({ type: "toggleCollapsed" })}
-      />
-      <SidebarPanel
-        title={state.view.mode === "list" ? `LIST:${state.view.list}` : `INSPECTOR:${state.selection?.id}`}
-        onBack={state.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
-        onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
+    <>
+      <button
+        type="button"
+        onClick={() => dispatch({ type: "selectEntity", kind: "asset", id: "asset-1", origin: "map" })}
       >
-        {state.view.mode === "list" && state.view.list === "assets" ? (
-          <EntityList
-            entities={ASSETS}
-            selectedId={state.selection?.id}
-            emptyLabel="none"
-            onSelect={(entity) =>
-              dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })
-            }
-          />
-        ) : (
-          <div>{state.view.mode === "inspector" ? `inspector ${state.selection?.id}` : `list ${state.view.list}`}</div>
-        )}
-      </SidebarPanel>
-    </div>
+        Map
+      </button>
+      <div className="sidebar" data-collapsed={state.collapsed} data-testid="sidebar">
+        <SidebarRail
+          collapsed={state.collapsed}
+          activeList={activeList}
+          counts={{ asset: ASSETS.length, track: 0, geofeature: 0 }}
+          onSelectList={(list) => dispatch({ type: "openList", list })}
+          onToggleCollapsed={() => dispatch({ type: "toggleCollapsed" })}
+        />
+        <SidebarPanel
+          title={state.view.mode === "list" ? `LIST:${state.view.list}` : `INSPECTOR:${state.selection?.id}`}
+          onBack={state.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
+          autoFocusBack={state.focusRequest?.id === state.selection?.id}
+          onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
+        >
+          {state.view.mode === "list" && state.view.list === "assets" ? (
+            <EntityList
+              entities={ASSETS}
+              selectedId={state.selection?.id}
+              restoreFocusId={state.focusRequest?.id}
+              emptyLabel="none"
+              onSelect={(entity) =>
+                dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })
+              }
+            />
+          ) : (
+            <div>
+              {state.view.mode === "inspector" ? `inspector ${state.selection?.id}` : `list ${state.view.list}`}
+            </div>
+          )}
+        </SidebarPanel>
+      </div>
+    </>
   );
 }
 
@@ -119,5 +131,16 @@ describe("sidebar rail + panel", () => {
 
     expect(onPreview).toHaveBeenCalledTimes(1);
     expect(onPreview).toHaveBeenCalledWith(ASSETS[0]);
+  });
+
+  it("does not move focus for a map-origin selection", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    const map = screen.getByRole("button", { name: "Map" });
+    await user.click(map);
+
+    expect(map).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Back" })).not.toHaveFocus();
   });
 });

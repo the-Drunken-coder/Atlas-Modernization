@@ -17,12 +17,13 @@ import { useHeartbeatClock } from "./useHeartbeatClock.js";
 type EntityListProps = {
   entities: EntityResource[];
   selectedId?: string;
+  restoreFocusId?: string;
   emptyLabel: string;
   onSelect: (entity: EntityResource) => void;
   onPreview?: (entity: EntityResource | null) => void;
 };
 
-export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPreview }: EntityListProps) {
+export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, onSelect, onPreview }: EntityListProps) {
   const now = useHeartbeatClock();
   if (entities.length === 0) {
     return <div className="panel__empty">{emptyLabel}</div>;
@@ -36,7 +37,7 @@ export function EntityList({ entities, selectedId, emptyLabel, onSelect, onPrevi
             className="entity-row"
             data-selected={entity.entity_id === selectedId}
             aria-current={entity.entity_id === selectedId ? "true" : undefined}
-            autoFocus={entity.entity_id === selectedId}
+            autoFocus={entity.entity_id === selectedId && entity.entity_id === restoreFocusId}
             onBlur={() => onPreview?.(null)}
             onClick={() => {
               onPreview?.(null);

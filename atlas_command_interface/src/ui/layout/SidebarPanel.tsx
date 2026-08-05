@@ -5,16 +5,17 @@ import { BackIcon, CollapseIcon } from "../primitives/icons.js";
 type SidebarPanelProps = {
   title: string;
   onBack?: () => void;
+  autoFocusBack?: boolean;
   onCollapse: () => void;
   children: ReactNode;
 };
 
-export function SidebarPanel({ title, onBack, onCollapse, children }: SidebarPanelProps) {
+export function SidebarPanel({ title, onBack, autoFocusBack, onCollapse, children }: SidebarPanelProps) {
   return (
     <div className="panel">
       <div className="panel__header">
         {onBack ? (
-          <IconButton label="Back" autoFocus onClick={onBack}>
+          <IconButton label="Back" autoFocus={autoFocusBack} onClick={onBack}>
             <BackIcon size={18} />
           </IconButton>
         ) : null}

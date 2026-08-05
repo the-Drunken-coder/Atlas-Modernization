@@ -306,8 +306,16 @@ func TestObjectsByTask(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("Expected 201 creating task, got %d", resp.StatusCode)
 	}
+	taskETag := requireETag(t, resp)
 	resp.Body.Close()
-	resp, err = client.Patch(ctx, "/tasks/"+taskID, map[string]interface{}{"status": "completed"})
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPatch,
+		"/tasks/"+taskID,
+		map[string]interface{}{"status": "completed"},
+		map[string]string{"If-Match": taskETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}

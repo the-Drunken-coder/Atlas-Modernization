@@ -731,6 +731,8 @@ func TestValidateProductionAdminPassword(t *testing.T) {
 	for _, password := range []string{
 		"password",
 		" PASSWORD ",
+		"x",
+		"short-pass",
 		"REPLACE_WITH_SECURE_ADMIN_PASSWORD",
 		"replace-with-secure-admin-password",
 		"your-secure-admin-password",
@@ -743,6 +745,14 @@ func TestValidateProductionAdminPassword(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("counts characters rather than bytes", func(t *testing.T) {
+		t.Setenv("ATLAS_ADMIN_PASSWORD", "åß∂ƒ©˙∆˚¬…æ")
+		t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+		if err := ValidateProductionAdminPassword(); err == nil {
+			t.Fatal("expected eleven-character password to be rejected")
+		}
+	})
 
 	t.Run("password file placeholder", func(t *testing.T) {
 		path := t.TempDir() + "/admin-password"

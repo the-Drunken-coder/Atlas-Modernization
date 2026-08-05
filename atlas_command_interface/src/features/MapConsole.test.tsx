@@ -297,6 +297,48 @@ describe("MapConsole command flow", () => {
     expect(document.body.textContent).toContain("[redacted]");
   });
 
+  it("surfaces an in-flight submission failure across a catalog refresh", async () => {
+    const user = userEvent.setup();
+    let rejectSubmission!: (cause: Error) => void;
+    const submitCommand = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSubmission = reject;
+        })
+    );
+    const snapshot = makeFakeDataSource().fake.snapshot();
+    const value = (nextCatalog: CommandCatalog): AtlasContextValue => ({
+      status: "ready",
+      config: appConfig(),
+      snapshot,
+      catalog: nextCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      submitCommand,
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    });
+    const view = (nextCatalog: CommandCatalog) => (
+      <AtlasStaticProvider value={value(nextCatalog)}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    const { rerender } = render(view(catalog));
+
+    await user.click(screen.getByRole("button", { name: /Rover/ }));
+    await user.click(screen.getByRole("button", { name: /Set Speed/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
+    await waitFor(() => expect(submitCommand).toHaveBeenCalledTimes(1));
+
+    rerender(view({ ...catalog, name: "Updated catalog" }));
+    await act(async () => rejectSubmission(new Error("submission rejected")));
+
+    expect(await screen.findByText("submission rejected")).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: /speed/ })).toBeInTheDocument();
+  });
+
   it("does not change the map reticle target when sidebar rows are hovered", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();
@@ -608,6 +650,30 @@ describe("MapConsole command flow", () => {
 
     await waitFor(() => expect(geometryUpdates).toHaveLength(1));
     expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", geometry: area.components.geometry, ifMatchVersion: 1 });
+  });
+
+  it("ignores a geometry save that settles after selection changes", async () => {
+    const user = userEvent.setup();
+    let rejectUpdate!: (cause: Error) => void;
+    const { fake } = makeFakeDataSource();
+    fake.updateGeometry = () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectUpdate = reject;
+      });
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("button", { name: "Saving…" });
+
+    await user.click(screen.getByTestId("map-marker-select"));
+    rejectUpdate(new Error("late geometry failure"));
+
+    await waitFor(() => expect(screen.queryByText("late geometry failure")).not.toBeInTheDocument());
+    expect(screen.getByText("Asset")).toBeInTheDocument();
   });
 
   it("saves circle Feature drafts without replacing them with display polygons", async () => {

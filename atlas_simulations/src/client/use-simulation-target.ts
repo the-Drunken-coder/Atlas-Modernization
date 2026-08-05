@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { HealthResponse } from "../shared/types.js";
+import type { AtlasTargetSummary, HealthResponse } from "../shared/types.js";
 import { loadHealth, loadTargets } from "./api.js";
 import { errorMessage } from "./run-state.js";
 
@@ -11,7 +11,7 @@ export function useSimulationTarget({
   reportError: (error: unknown) => void;
 }) {
   const [health, setHealth] = useState<HealthResponse | undefined>();
-  const [targets, setTargets] = useState<Awaited<ReturnType<typeof loadTargets>>["targets"]>([]);
+  const [targets, setTargets] = useState<AtlasTargetSummary[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState("");
   const [deployedMutationConfirmed, setDeployedMutationConfirmed] = useState(false);
   const [apiKeysByTargetId, setApiKeysByTargetId] = useState<Record<string, string>>({});

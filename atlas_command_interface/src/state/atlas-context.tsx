@@ -127,7 +127,7 @@ export function AtlasProvider({
 
         setSnapshot(dataSource.snapshot());
 
-        const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
+        const loadedCatalog = await dataSource.loadCommandCatalog();
         if (cancelled) return;
         setCatalog(loadedCatalog);
 

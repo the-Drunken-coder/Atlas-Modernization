@@ -18,7 +18,7 @@ export type CommandAvailability = {
   disabled: boolean;
   /** Tooltip-ready explanation when {@link disabled} is true. */
   disabledReason?: string;
-  /** Non-coordinate schema entries the operator must fill in before submit. */
+  /** Non-coordinate schema entries shown in the command form. */
   formParameters: Array<[string, CommandParameterSchema]>;
   /** True when {@link formParameters} is non-empty, i.e. a compact form should be shown before submit. */
   requiresForm: boolean;
@@ -34,7 +34,7 @@ export function commandTargeting(command: CommandDefinition): CommandTargeting {
     : "none";
 }
 
-/** Non-coordinate parameters the operator still has to provide for the given targeting. */
+/** Non-coordinate schema entries shown for the given targeting. */
 export function formParameters(
   command: CommandDefinition,
   targeting: CommandTargeting

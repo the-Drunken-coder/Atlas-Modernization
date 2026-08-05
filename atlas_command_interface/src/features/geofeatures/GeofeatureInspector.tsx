@@ -211,14 +211,19 @@ function CoordinateField({
   onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    setDraft(String(value));
+    setError(undefined);
+  }, [value]);
 
   const commit = () => {
     const next = Number(draft);
-    if (!Number.isFinite(next) || next < min || next > max) {
-      setDraft(String(value));
+    if (draft.trim() === "" || !Number.isFinite(next) || next < min || next > max) {
+      setError(`Enter a number from ${min} to ${max}.`);
       return;
     }
+    setError(undefined);
     if (next !== value) onCommit(next);
   };
 
@@ -230,7 +235,12 @@ function CoordinateField({
       max={max}
       step="any"
       value={draft}
-      onChange={(event) => setDraft(event.target.value)}
+      hint={error}
+      aria-invalid={error ? true : undefined}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        setError(undefined);
+      }}
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
@@ -240,6 +250,7 @@ function CoordinateField({
           event.preventDefault();
           event.stopPropagation();
           setDraft(String(value));
+          setError(undefined);
         }
       }}
     />

@@ -3,6 +3,7 @@ package actions
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -116,7 +117,8 @@ func TestParseQueryCursorReturnsValidationError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid cursor to fail")
 	}
-	if validationErr, ok := err.(*ValidationError); !ok || validationErr.Code != "VALIDATION_ERROR" {
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || validationErr.Code != "VALIDATION_ERROR" {
 		t.Fatalf("expected validation error, got %T %v", err, err)
 	}
 }

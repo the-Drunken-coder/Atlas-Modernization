@@ -36,6 +36,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 ## How Core emits events
 
 - Every write transaction locks and increments `atlas_change_clock`, writes the resource mutation, and appends the complete validated event to `atlas_change_events` before commit.
+- Object delete events also serve as permanent upload tombstones. Do not prune them unless a replacement durable tombstone is introduced in the same change.
 - A rollback removes both the resource mutation and its version increment, so committed versions are contiguous and there are no burned-version gaps to compensate for.
 - PostgreSQL `NOTIFY` only wakes the dispatcher. The dispatcher reads committed rows from the durable log in version order and publishes them through the in-memory subscription hub.
 - `GET /queries/changed-since` pages over that same durable log with one global cursor, so websocket delivery and recovery share one source of truth.
@@ -61,9 +62,7 @@ These rules are the language-neutral half of the contract that makes a non-TypeS
 
 ## Testing
 
-The feed is validated by simulation against ground truth, not just unit tests. The harness keeps a ledger of every write and audits that subscribers receive every entitled event in version order. Fault injection covers dropped connections, forced gaps, reconnects, and convergence through `changed-since`.
-
-Three layers implement this philosophy:
+Three layers cover the feed from routing through end-to-end recovery:
 
 - `atlas_core/internal/feed/simulation_test.go` — focused subscription-routing and slow-consumer tests for the fanout hub.
 - `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → transactional event row → durable dispatcher → websocket client, including proof that rejected writes do not advance the change clock.

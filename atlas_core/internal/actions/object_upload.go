@@ -72,6 +72,8 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 		state.json = decoded
 	}
 
+	// Object delete events are also upload tombstones. They must remain durable
+	// unless a future schema replaces this lookup with another permanent record.
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(MAX(version), 0)
 		FROM atlas_change_events
@@ -86,7 +88,7 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 }
 
 func objectDeletedAfterUploadPreflight(preflight, current *objectUploadState) bool {
-	return current.maxDeletionVersion > preflight.maxDeletionVersion
+	return current.maxDeletionVersion > preflight.maxDeletionVersion || (preflight.rowExists && !current.rowExists)
 }
 
 func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {

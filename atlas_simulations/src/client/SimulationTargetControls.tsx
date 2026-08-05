@@ -40,6 +40,7 @@ export function SimulationTargetControls({ target }: { target: SimulationTargetC
             <input
               type="password"
               value={selectedApiKey}
+              disabled={!selectedTargetId}
               onChange={(event) => target.setSelectedApiKey(event.target.value)}
               autoComplete="off"
               spellCheck={false}

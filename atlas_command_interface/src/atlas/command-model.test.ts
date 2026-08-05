@@ -117,23 +117,23 @@ describe("command model", () => {
   });
 
   it("filters commands through explicit supported task declarations", () => {
-    const catalog = catalogPayload;
-
-    expect(commandsForEntity(catalog, asset())).toEqual([]);
-    expect(commandsForEntity(catalog, asset(["hold_position"])).map((command) => command.id)).toEqual([
+    expect(commandsForEntity(catalogPayload, asset())).toEqual([]);
+    expect(commandsForEntity(catalogPayload, asset(["hold_position"])).map((command) => command.id)).toEqual([
       "hold_position"
     ]);
-    expect(commandsForEntity(catalog, asset([]))).toEqual([]);
+    expect(commandsForEntity(catalogPayload, asset([]))).toEqual([]);
     expect(
-      commandsForEntity(catalog, {
+      commandsForEntity(catalogPayload, {
         ...asset(),
         components: { task_catalog: { supported_tasks: "hold_position" } }
       } as unknown as EntityResource).map((command) => command.id)
     ).toEqual([]);
     expect(
-      commandsForEntity(catalog, asset(["", "hold_position", 42 as unknown as string])).map((command) => command.id)
+      commandsForEntity(catalogPayload, asset(["", "hold_position", 42 as unknown as string])).map(
+        (command) => command.id
+      )
     ).toEqual(["hold_position"]);
-    expect(commandsForEntity(catalog, track(["hold_position"]))).toEqual([]);
+    expect(commandsForEntity(catalogPayload, track(["hold_position"]))).toEqual([]);
   });
 
   it("builds command task payloads without client-supplied task IDs", () => {
