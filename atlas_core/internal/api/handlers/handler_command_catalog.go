@@ -37,9 +37,10 @@ func (h *Handler) GetCommandCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func etagMatches(header, etag string) bool {
+	etag = strings.TrimPrefix(etag, "W/")
 	for candidate := range strings.SplitSeq(header, ",") {
 		candidate = strings.TrimSpace(candidate)
-		if candidate == "*" || candidate == etag {
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
 			return true
 		}
 	}

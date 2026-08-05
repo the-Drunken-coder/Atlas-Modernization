@@ -48,6 +48,14 @@ func TestGetCommandCatalogServesValidatedCatalogWithETag(t *testing.T) {
 		t.Fatalf("cached ETag = %q, want %q", got, etag)
 	}
 
+	weak := httptest.NewRecorder()
+	weakRequest := httptest.NewRequest(http.MethodGet, "/command-catalog", nil)
+	weakRequest.Header.Set("If-None-Match", "W/"+etag)
+	handler.GetCommandCatalog(weak, weakRequest)
+	if weak.Code != http.StatusNotModified {
+		t.Fatalf("weak ETag status = %d, want %d", weak.Code, http.StatusNotModified)
+	}
+
 	wildcard := httptest.NewRecorder()
 	wildcardRequest := httptest.NewRequest(http.MethodGet, "/command-catalog", nil)
 	wildcardRequest.Header.Set("If-None-Match", "*")
