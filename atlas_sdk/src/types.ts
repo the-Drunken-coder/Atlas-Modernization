@@ -143,6 +143,8 @@ export type SyncSnapshot = {
   readonly objects: Readonly<Record<string, ObjectResource>>;
 };
 
+export type SyncSnapshotCallback = (snapshot: SyncSnapshot) => void;
+
 export type ChangedSinceResponse = {
   events: FeedEvent[];
   version: number;

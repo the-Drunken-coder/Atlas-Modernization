@@ -1,4 +1,4 @@
-import type { AtlasClient, EntityResource, ObjectResource, TaskResource } from "../../src/index.js";
+import type { AtlasClient, EntityResource, ObjectResource, SyncSnapshot, TaskResource } from "../../src/index.js";
 
 declare const client: AtlasClient;
 
@@ -13,6 +13,7 @@ client.watch(
   (resource: ObjectResource | undefined) => resource
 );
 client.watch({ filter: "tasks_for_entity", entity_id: "entity-1" }, (resource: TaskResource | undefined) => resource);
+client.sync.watchSnapshot((snapshot: SyncSnapshot) => snapshot.entities);
 
 // @ts-expect-error entity subscriptions cannot produce objects
 client.watch({ filter: "type", resource_type: "entity" }, (resource: ObjectResource | undefined) => resource);

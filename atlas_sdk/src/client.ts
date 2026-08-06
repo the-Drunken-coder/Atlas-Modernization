@@ -26,6 +26,7 @@ import type {
   ReadOptions,
   ResourceForSubscription,
   SyncSnapshot,
+  SyncSnapshotCallback,
   SyncStatus,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -63,6 +64,7 @@ export type {
   ReadOptions,
   ResourceForSubscription,
   SyncSnapshot,
+  SyncSnapshotCallback,
   SyncStatus,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -204,6 +206,7 @@ export class AtlasClient {
     },
     stop: () => this.engine.stop(),
     snapshot: (): SyncSnapshot => this.engine.snapshot(),
+    watchSnapshot: (callback: SyncSnapshotCallback) => this.engine.watchSnapshot(callback),
     status: (): SyncStatus => this.engine.status()
   };
 

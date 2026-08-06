@@ -20,6 +20,7 @@ export {
   type ReadOptions,
   type ResourceForSubscription,
   type SyncSnapshot,
+  type SyncSnapshotCallback,
   type SyncStatus,
   type TaskCompleteOptions,
   type TaskFailOptions,

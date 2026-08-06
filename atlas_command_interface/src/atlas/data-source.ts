@@ -53,10 +53,12 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
     loadCommandCatalog: () => client.commandCatalog(),
 
     watch(onSnapshot) {
-      const unsubscribe = client.watch({ filter: "all" }, (_value, event) => {
-        if (event.resource_type === "entity" || event.resource_type === "task") onSnapshot(snapshot());
+      let previous = client.sync.snapshot();
+      return client.sync.watchSnapshot((next) => {
+        if (next.entities === previous.entities && next.tasks === previous.tasks) return;
+        previous = next;
+        onSnapshot({ entities: next.entities, tasks: next.tasks });
       });
-      return unsubscribe;
     },
 
     async start() {

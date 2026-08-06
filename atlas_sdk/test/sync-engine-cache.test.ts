@@ -4,6 +4,25 @@ import { ObjectContentCache, ResourceCache } from "../src/cache.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: cache projection and reads", () => {
+  it("unsubscribes duplicate snapshot watcher registrations independently", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const watcher = vi.fn();
+    const unsubscribeFirst = client.sync.watchSnapshot(watcher);
+    const unsubscribeSecond = client.sync.watchSnapshot(watcher);
+
+    await client.entities.create({ entity_id: "asset-first", entity_type: "asset" });
+    expect(watcher).toHaveBeenCalledTimes(2);
+
+    unsubscribeFirst();
+    await client.entities.create({ entity_id: "asset-second", entity_type: "asset" });
+    expect(watcher).toHaveBeenCalledTimes(3);
+
+    unsubscribeSecond();
+    await client.entities.create({ entity_id: "asset-third", entity_type: "asset" });
+    expect(watcher).toHaveBeenCalledTimes(3);
+  });
+
   it("enforces a positive safe-integer object content cache capacity", () => {
     const core = new FakeCore();
     for (const objectContentCacheEntries of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {

@@ -232,6 +232,41 @@ describe("sdk data source", () => {
     expect(core.requests).toHaveLength(0);
   });
 
+  it("publishes a replacement snapshot when polling recovers an expired cursor", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", BlockedWebSocket);
+    const core = new TestCore();
+    const retained = core.upsertEntity(entity("asset-retained"));
+    const deleted = core.upsertEntity(entity("asset-deleted"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
+    const dataSource = createSdkDataSource(config);
+    const snapshots = vi.fn();
+    dataSource.watch(snapshots);
+
+    const start = dataSource.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await start;
+    snapshots.mockClear();
+
+    const updated = core.upsertEntity({ ...retained, alias: "Recovered after cursor expiry" });
+    core.deleteEntity(deleted.entity_id);
+    core.minRetainedVersion = updated.metadata.version;
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.waitFor(() =>
+      expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} })
+    );
+
+    expect(core.requests).toContain(`/queries/changed-since?since_version=${deleted.metadata.version}`);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(dataSource.snapshot()).toEqual({ entities: { [updated.entity_id]: updated }, tasks: {} });
+    expect(dataSource.health?.()).toMatchObject({ running: true, degraded: true });
+    dataSource.dispose();
+  });
+
   it("recovers missed changes through changed-since after the feed reconnects", async () => {
     vi.useFakeTimers();
     const core = new TestCore();
@@ -408,6 +443,7 @@ describe("sdk data source", () => {
 
 class TestCore {
   version = 0;
+  minRetainedVersion = 0;
   feedConnections = 0;
   readonly catalog = {
     type: "command_catalog" as const,
@@ -439,6 +475,12 @@ class TestCore {
     }
     if (path === "/queries/changed-since") {
       const since = Number(url.searchParams.get("since_version"));
+      if (since < this.minRetainedVersion) {
+        return Response.json(
+          { error_code: "CURSOR_EXPIRED", message: "Changed-since cursor has expired; perform a full hydration" },
+          { status: 410 }
+        );
+      }
       const changed = this.events.filter((event) => event.version > since);
       return Response.json({
         events: changed,
@@ -464,6 +506,12 @@ class TestCore {
     this.entities.set(updated.entity_id, updated);
     this.events.push({ event: "update", resource_type: "entity", id: updated.entity_id, version, resource: updated });
     return updated;
+  }
+
+  deleteEntity(id: string): void {
+    if (!this.entities.delete(id)) return;
+    const version = ++this.version;
+    this.events.push({ event: "delete", resource_type: "entity", id, version });
   }
 
   private emit(event: FeedEvent): void {

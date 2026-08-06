@@ -30,6 +30,7 @@ import type {
   ResourceOf,
   ResourceValue,
   SyncSnapshot,
+  SyncSnapshotCallback,
   SyncStatus,
   WatchCallback
 } from "./types.js";
@@ -44,6 +45,12 @@ import {
 
 type AutomaticReconnectOwnership = {
   recoveryOperation?: number;
+};
+
+type ActiveHydration = {
+  generation: number;
+  operation?: number;
+  promise: Promise<number | undefined>;
 };
 
 /**
@@ -94,6 +101,8 @@ export class SyncEngine {
   private readonly reconnectTimer = new ReconnectTimer();
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
+  private readonly snapshotWatchers = new Set<SyncSnapshotCallback>();
+  private activeHydration: ActiveHydration | undefined;
   private syncRunning = false;
   private health: SyncHealth = "idle";
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -173,6 +182,12 @@ export class SyncEngine {
 
   snapshot(): SyncSnapshot {
     return this.cache.snapshot();
+  }
+
+  watchSnapshot(callback: SyncSnapshotCallback): () => void {
+    const wrapped: SyncSnapshotCallback = (snapshot) => callback(snapshot);
+    this.snapshotWatchers.add(wrapped);
+    return () => this.snapshotWatchers.delete(wrapped);
   }
 
   async subscribe(filter: AtlasSubscription): Promise<void> {
@@ -283,7 +298,12 @@ export class SyncEngine {
     try {
       if (!isCurrentOperation()) return false;
       if (this.syncRunning) this.health = "degraded";
-      const result = await this.runRecoveryWithHydrationFallback(generation, sinceVersion, isCurrentOperation);
+      const result = await this.runRecoveryWithHydrationFallback(
+        generation,
+        sinceVersion,
+        operation,
+        isCurrentOperation
+      );
       if (!isCurrentOperation() || result.superseded) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
       this.markSynchronized();
@@ -304,13 +324,14 @@ export class SyncEngine {
   private async runRecoveryWithHydrationFallback(
     generation: number,
     sinceVersion: number,
+    operation: number,
     isCurrentOperation: () => boolean
   ): ReturnType<RecoveryRunner["run"]> {
     try {
       return await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyEvent(event));
     } catch (error) {
       if (!(error instanceof AtlasAPIError) || error.errorCode !== "CURSOR_EXPIRED") throw error;
-      const hydratedVersion = await this.loadHydratedSnapshot(generation, isCurrentOperation);
+      const hydratedVersion = await this.loadHydratedSnapshot(generation, isCurrentOperation, operation);
       if (!isCurrentOperation() || hydratedVersion === undefined) {
         return { snapshotVersion: hydratedVersion, superseded: true };
       }
@@ -334,7 +355,7 @@ export class SyncEngine {
     }
     const entity = await this.transport.json("GET", `/entities/${encodeURIComponent(id)}`, isEntityResource);
     assertExpectedResourceID("entity", id, entity);
-    this.cache.cacheResource("entity", id, entity, { advanceCursor: false });
+    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false })) this.notifySnapshot();
     return entity;
   }
 
@@ -350,7 +371,7 @@ export class SyncEngine {
     }
     const task = await this.transport.json("GET", `/tasks/${encodeURIComponent(id)}`, isTaskResource);
     assertExpectedResourceID("task", id, task);
-    this.cache.cacheResource("task", id, task, { advanceCursor: false });
+    if (this.cache.cacheResource("task", id, task, { advanceCursor: false })) this.notifySnapshot();
     return task;
   }
 
@@ -361,7 +382,7 @@ export class SyncEngine {
     }
     const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectDetailResource);
     assertExpectedResourceID("object", id, object);
-    this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false });
+    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false })) this.notifySnapshot();
     return object;
   }
 
@@ -428,6 +449,7 @@ export class SyncEngine {
     await this.transport.empty("DELETE", path);
     const { previousVersion, previous } = this.cache.markLocalDelete(type, id);
     this.notify(localDeleteEvent(type, id, previousVersion), undefined, previous);
+    this.notifySnapshot();
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
@@ -518,10 +540,26 @@ export class SyncEngine {
     if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
   }
 
-  private async loadHydratedSnapshot(
+  private loadHydratedSnapshot(
     generation: number,
-    isCurrentHydration = () => this.isCurrent(generation)
+    isCurrentHydration = () => this.isCurrent(generation),
+    operation?: number
   ): Promise<number | undefined> {
+    const active = this.activeHydration;
+    if (active?.generation === generation && (active.operation === undefined || active.operation === operation)) {
+      return active.promise;
+    }
+    const promise = this.fetchAndInstallHydratedSnapshot(isCurrentHydration);
+    const hydration = { generation, operation, promise };
+    this.activeHydration = hydration;
+    const clear = () => {
+      if (this.activeHydration === hydration) this.activeHydration = undefined;
+    };
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  private async fetchAndInstallHydratedSnapshot(isCurrentHydration: () => boolean): Promise<number | undefined> {
     let cursors: FullDatasetCursors = {};
     let snapshotVersion: number | undefined;
     const seenCursors = new Map<string, Set<string>>();
@@ -548,11 +586,15 @@ export class SyncEngine {
     if (!isCurrentHydration()) return undefined;
     if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
     this.cache.replaceHydratedResources({ entities, tasks, objects });
+    this.cache.lastVersion = snapshotVersion;
+    this.notifySnapshot();
     return snapshotVersion;
   }
 
   private async consumeFeedEvent(event: FeedEvent, generation: number, attempt: number): Promise<void> {
+    await this.activeHydration?.promise;
     if (!this.isCurrentFeedConnection(generation, attempt)) return;
+    if (event.version <= this.cache.lastVersion) return;
     if (event.version > this.cache.lastVersion + 1) {
       this.health = "degraded";
       const recovered = await this.changedSinceForGeneration(generation);
@@ -645,6 +687,7 @@ export class SyncEngine {
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
         this.notify(event, undefined, previous);
+        this.notifySnapshot();
       }
       return;
     }
@@ -659,12 +702,14 @@ export class SyncEngine {
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
         this.notify(event, undefined, previous);
+        this.notifySnapshot();
       }
       return;
     }
     this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
     this.advanceCursor(event, advanceCursor);
     this.notify(event, this.cache.value(event.resource_type, event.id), previous);
+    this.notifySnapshot();
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
@@ -700,6 +745,18 @@ export class SyncEngine {
         } catch (error) {
           reportWatchCallbackError(error);
         }
+      }
+    }
+  }
+
+  private notifySnapshot(): void {
+    if (this.snapshotWatchers.size === 0) return;
+    const snapshot = this.cache.snapshot();
+    for (const callback of this.snapshotWatchers) {
+      try {
+        callback(snapshot);
+      } catch (error) {
+        reportWatchCallbackError(error);
       }
     }
   }

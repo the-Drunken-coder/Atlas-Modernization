@@ -151,9 +151,10 @@ describe("AtlasClient sync: recovery and hydration", () => {
     expect(changedSinceRequests).toBe(2);
   });
 
-  it("rehydrates automatically when the recovery cursor has expired", async () => {
+  it("publishes updated and deleted resources when an expired cursor requires rehydration", async () => {
     const core = new FakeCore();
-    core.upsertEntity(entity("asset-retention"));
+    const retained = core.upsertEntity(entity("asset-retention"));
+    const deleted = core.upsertEntity(entity("asset-deleted"));
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
       fetch: core.fetch,
@@ -162,21 +163,124 @@ describe("AtlasClient sync: recovery and hydration", () => {
       pollIntervalMs: 0
     });
     await client.sync.start();
+    const snapshots = vi.fn();
+    client.sync.watchSnapshot(snapshots);
 
-    const first = core.upsertTask(task("task-retained-1", "asset-retention"));
-    const second = core.upsertTask(task("task-retained-2", "asset-retention"));
-    core.minRetainedVersion = first.metadata.version;
+    const updated = core.upsertEntity({ ...retained, alias: "Recovered by hydration" });
+    core.deleteEntity(deleted.entity_id);
+    core.minRetainedVersion = updated.metadata.version;
     core.requests = [];
 
     await client.changedSince();
 
     expect(core.requests.filter((request) => request.startsWith("/queries/full"))).toHaveLength(1);
-    await expect(client.tasks.get(first.task_id)).resolves.toEqual(first);
-    await expect(client.tasks.get(second.task_id)).resolves.toEqual(second);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(snapshots).toHaveBeenCalledWith({
+      entities: { [updated.entity_id]: updated },
+      tasks: {},
+      objects: {}
+    });
     expect(client.sync.status()).toMatchObject({
       healthy: true,
       degraded: false,
-      lastVersion: second.metadata.version
+      lastVersion: core.version
     });
+  });
+
+  it("does not announce a feed event twice when it arrives during expired-cursor hydration", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-race"));
+    let delayFallbackHydration = false;
+    let hydrationStarted!: () => void;
+    let releaseHydration!: () => void;
+    const started = new Promise<void>((resolve) => {
+      hydrationStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (delayFallbackHydration && new URL(String(url)).pathname === "/queries/full") {
+        delayFallbackHydration = false;
+        core.upsertEntity({ ...original, alias: "Included in hydration" });
+        const response = await core.fetch(String(url), init);
+        core.emit(core.events.at(-1)!, { record: false });
+        hydrationStarted();
+        await release;
+        return response;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const resourceEvents = vi.fn();
+    const snapshots = vi.fn();
+    client.entities.watch(original.entity_id, resourceEvents);
+    client.sync.watchSnapshot(snapshots);
+
+    core.upsertTask(task("retention-boundary", original.entity_id));
+    core.minRetainedVersion = core.version;
+    delayFallbackHydration = true;
+    const recovery = client.changedSince();
+    await started;
+    releaseHydration();
+    await recovery;
+
+    const updated = core.entities.get(original.entity_id)!;
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(updated);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(resourceEvents).not.toHaveBeenCalled();
+    expect(client.sync.status().lastVersion).toBe(updated.metadata.version);
+  });
+
+  it("shares startup hydration with a concurrent expired-cursor recovery", async () => {
+    const core = new FakeCore();
+    const original = core.upsertEntity(entity("asset-shared-hydration"));
+    let fullRequests = 0;
+    let releaseFull!: (response: Response) => void;
+    const pendingFull = new Promise<Response>((resolve) => {
+      releaseFull = resolve;
+    });
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (new URL(String(url)).pathname === "/queries/full") {
+        fullRequests++;
+        return pendingFull;
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl, sync: "all", pollIntervalMs: 0 });
+
+    const startup = client.sync.start();
+    await vi.waitFor(() => expect(fullRequests).toBe(1));
+    const updated = core.upsertEntity({ ...original, alias: "Recovered after shared hydration" });
+    core.minRetainedVersion = original.metadata.version;
+    const concurrentRecovery = client.changedSince();
+    await vi.waitFor(() =>
+      expect(core.requests.some((request) => request === "/queries/changed-since?since_version=0")).toBe(true)
+    );
+    expect(fullRequests).toBe(1);
+
+    releaseFull(
+      Response.json({
+        entities: [original],
+        tasks: [],
+        objects: [],
+        version: original.metadata.version,
+        has_more_entities: false,
+        has_more_tasks: false,
+        has_more_objects: false
+      })
+    );
+    await Promise.all([startup, concurrentRecovery]);
+
+    expect(fullRequests).toBe(1);
+    expect(client.sync.snapshot().entities[original.entity_id]).toEqual(updated);
+    expect(client.sync.status().lastVersion).toBe(updated.metadata.version);
   });
 });
