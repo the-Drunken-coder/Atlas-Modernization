@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@the-drunken-coder/atlas-sdk": "0.1.0",
-    "maplibre-gl": "^5.6.0",
+    "maplibre-gl": "^6.1.0",
     "milsymbol": "3.0.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
