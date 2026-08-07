@@ -284,7 +284,7 @@ func (s Server) handleClientFrame(ctx context.Context, client *Client, data []by
 			var err error
 			version, err = s.CurrentVersion(ctx)
 			if err != nil {
-				return fmt.Errorf("%w: %v", errSubscriptionWatermark, err)
+				return fmt.Errorf("%w: %w", errSubscriptionWatermark, err)
 			}
 		}
 		if !client.SubscriptionsReady(version) {
