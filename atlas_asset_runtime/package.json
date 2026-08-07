@@ -52,7 +52,7 @@
     "@the-drunken-coder/atlas-sdk": "0.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.5",
+    "@biomejs/biome": "2.5.6",
     "@types/node": "24.13.3",
     "typescript": "^7.0.2",
     "vitest": "4.1.10"
