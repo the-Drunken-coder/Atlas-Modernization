@@ -57,13 +57,15 @@ func (h *Hub) NewClient() *Client {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	client := &Client{
-		hub:  h,
-		subs: make(map[string]Subscription),
-		send: make(chan RoutedEvent, h.clientBuffer),
+		hub:     h,
+		subs:    make(map[string]Subscription),
+		send:    make(chan RoutedEvent, h.clientBuffer),
+		control: make(chan protocol.FeedSubscriptionsReadyMessage, 1),
 	}
 	if h.closed {
 		client.closed = true
 		close(client.send)
+		close(client.control)
 		return client
 	}
 	h.clients[client] = struct{}{}
@@ -100,6 +102,7 @@ func (h *Hub) closeClientLocked(client *Client) {
 	}
 	client.closed = true
 	close(client.send)
+	close(client.control)
 }
 
 // Publish delivers one event read from the durable log. Slow clients are
@@ -178,10 +181,11 @@ func SubscriptionFromMessage(msg protocol.FeedSubscriptionMessage) (Subscription
 type Client struct {
 	hub *Hub
 
-	mu     sync.Mutex
-	subs   map[string]Subscription
-	send   chan RoutedEvent
-	closed bool
+	mu      sync.Mutex
+	subs    map[string]Subscription
+	send    chan RoutedEvent
+	control chan protocol.FeedSubscriptionsReadyMessage
+	closed  bool
 }
 
 func (c *Client) Subscribe(sub Subscription) {
@@ -200,6 +204,24 @@ func (c *Client) Unsubscribe(sub Subscription) {
 
 func (c *Client) Events() <-chan RoutedEvent {
 	return c.send
+}
+
+func (c *Client) Controls() <-chan protocol.FeedSubscriptionsReadyMessage {
+	return c.control
+}
+
+func (c *Client) SubscriptionsReady(version int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return false
+	}
+	select {
+	case c.control <- protocol.FeedSubscriptionsReadyMessage{Version: version}:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) Close() {

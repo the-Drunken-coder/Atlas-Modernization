@@ -95,6 +95,24 @@ func TestBoundedRecoveryLogMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestRecoveryLogFloorMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[5]
+	if actual := migrationChecksum(migration); actual != recoveryFloorMigrationChecksum {
+		t.Fatalf("recovery-log floor migration checksum = %s, want %s", actual, recoveryFloorMigrationChecksum)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"SET min_retained_version = COALESCE",
+		"SELECT MIN(event.version) - 1",
+		"clock.version",
+		"CREATE INDEX idx_atlas_change_events_retention ON atlas_change_events(created_at, version)",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("recovery-log floor migration is missing %q", required)
+		}
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
@@ -280,6 +298,132 @@ func TestProductionSchemaUpgradesFromVersionOne(t *testing.T) {
 	}
 	if applied[0].schemaFingerprint != fingerprint {
 		t.Fatalf("version-one fingerprint changed from %s to %s", fingerprint, applied[0].schemaFingerprint)
+	}
+}
+
+func TestRecoveryLogFloorInitializesForUnrepresentedLegacyHistory(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:1]); err != nil {
+		t.Fatalf("install legacy schema: %v", err)
+	}
+	var legacyVersion int64
+	if err := db.Pool.QueryRow(ctx, `
+		INSERT INTO entities (entity_id, type) VALUES ('legacy-recovery-entity', 'asset')
+		RETURNING version
+	`).Scan(&legacyVersion); err != nil {
+		t.Fatalf("insert legacy resource: %v", err)
+	}
+	if err := db.ensureTables(ctx, migrations[:5]); err != nil {
+		t.Fatalf("upgrade through bounded recovery log: %v", err)
+	}
+
+	var clockVersion, floor int64
+	var eventCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT version, min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&clockVersion, &floor); err != nil {
+		t.Fatalf("read pre-correction recovery state: %v", err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM atlas_change_events`).Scan(&eventCount); err != nil {
+		t.Fatalf("count pre-correction events: %v", err)
+	}
+	if clockVersion != legacyVersion || floor != 0 || eventCount != 0 {
+		t.Fatalf("pre-correction recovery state = clock:%d floor:%d events:%d, want %d/0/0", clockVersion, floor, eventCount, legacyVersion)
+	}
+
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("apply recovery-floor correction: %v", err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT version, min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&clockVersion, &floor); err != nil {
+		t.Fatalf("read corrected recovery state: %v", err)
+	}
+	if floor != clockVersion || floor != legacyVersion {
+		t.Fatalf("corrected recovery floor = %d at clock %d, want legacy version %d", floor, clockVersion, legacyVersion)
+	}
+	var postMigrationVersion int64
+	if err := db.Pool.QueryRow(ctx, `
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+		), inserted AS (
+			INSERT INTO atlas_change_events (version, event)
+			SELECT version, jsonb_build_object(
+				'event', 'delete',
+				'resource_type', 'entity',
+				'id', 'post-migration-entity',
+				'version', version
+			) FROM next
+			RETURNING version
+		)
+		SELECT version FROM inserted
+	`).Scan(&postMigrationVersion); err != nil {
+		t.Fatalf("append post-migration event: %v", err)
+	}
+	if postMigrationVersion != floor+1 {
+		t.Fatalf("post-migration event version = %d, want %d", postMigrationVersion, floor+1)
+	}
+	var recovered int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM atlas_change_events WHERE version > $1`, floor).Scan(&recovered); err != nil {
+		t.Fatalf("recover post-migration event: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("post-migration events after corrected floor = %d, want 1", recovered)
+	}
+}
+
+func TestRecoveryLogFloorStartsBeforeEarliestRetainedEvent(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:1]); err != nil {
+		t.Fatalf("install legacy schema: %v", err)
+	}
+	var legacyVersion int64
+	if err := db.Pool.QueryRow(ctx, `
+		INSERT INTO entities (entity_id, type) VALUES ('legacy-before-retained-event', 'asset')
+		RETURNING version
+	`).Scan(&legacyVersion); err != nil {
+		t.Fatalf("insert legacy resource: %v", err)
+	}
+	if err := db.ensureTables(ctx, migrations[:5]); err != nil {
+		t.Fatalf("upgrade through bounded recovery log: %v", err)
+	}
+
+	var retainedVersion int64
+	if err := db.Pool.QueryRow(ctx, `
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+		), inserted AS (
+			INSERT INTO atlas_change_events (version, event)
+			SELECT version, jsonb_build_object(
+				'event', 'delete',
+				'resource_type', 'entity',
+				'id', 'retained-after-upgrade',
+				'version', version
+			) FROM next
+			RETURNING version
+		)
+		SELECT version FROM inserted
+	`).Scan(&retainedVersion); err != nil {
+		t.Fatalf("append retained event: %v", err)
+	}
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("apply recovery-floor correction: %v", err)
+	}
+
+	var floor int64
+	if err := db.Pool.QueryRow(ctx, `SELECT min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&floor); err != nil {
+		t.Fatalf("read corrected recovery floor: %v", err)
+	}
+	if floor != retainedVersion-1 || floor != legacyVersion {
+		t.Fatalf("corrected recovery floor = %d, want retained version %d minus one and legacy version %d", floor, retainedVersion, legacyVersion)
 	}
 }
 

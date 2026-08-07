@@ -115,6 +115,14 @@ func ValidateFeedHandshakeMessage(value any) []string {
 	return validate("FeedHandshakeMessage", value)
 }
 
+func ValidateFeedSubscriptionBarrierMessage(value any) []string {
+	return validate("FeedSubscriptionBarrierMessage", value)
+}
+
+func ValidateFeedSubscriptionsReadyMessage(value any) []string {
+	return validate("FeedSubscriptionsReadyMessage", value)
+}
+
 func appendFeedEventContextErrors(errors []string, value any) []string {
 	payload, ok := valueAsMap(value)
 	if !ok || payload["resource_type"] != "task" {

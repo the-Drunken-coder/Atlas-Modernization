@@ -84,6 +84,14 @@ func ValidateFeedHandshakeMessage(value any) []string {
 	return validator.ValidateFeedHandshakeMessage(value)
 }
 
+func ValidateFeedSubscriptionBarrierMessage(value any) []string {
+	return validator.ValidateFeedSubscriptionBarrierMessage(value)
+}
+
+func ValidateFeedSubscriptionsReadyMessage(value any) []string {
+	return validator.ValidateFeedSubscriptionsReadyMessage(value)
+}
+
 func ValidateEntityComponents(value any) []string {
 	return validator.ValidateEntityComponents(value)
 }

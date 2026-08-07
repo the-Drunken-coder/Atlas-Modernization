@@ -73,3 +73,90 @@ func TestPruneChangeRecordsExpiresCursorAndPreservesObjectFence(t *testing.T) {
 		t.Fatalf("object deletion fence = %d, want %d", state.maxDeletionVersion, deleteVersion)
 	}
 }
+
+func TestPruneChangeRecordsReleasesChangeClockBetweenBatches(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	prefix := fmt.Sprintf("retention-batch-%d", time.Now().UTC().UnixNano())
+	firstID := prefix + "-first"
+	secondID := prefix + "-second"
+	concurrentID := prefix + "-concurrent"
+	var originalMin int64
+	if err := pool.QueryRow(ctx, `SELECT min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&originalMin); err != nil {
+		t.Fatalf("read original recovery floor: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, concurrentID})
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, []string{firstID, secondID, concurrentID})
+		_, _ = pool.Exec(cleanupCtx, `UPDATE atlas_change_clock SET min_retained_version = $1 WHERE singleton`, originalMin)
+	})
+
+	entityActions := NewEntityActions(pool)
+	for _, id := range []string{firstID, secondID} {
+		if _, err := entityActions.Create(ctx, CreateEntityParams{EntityID: id, EntityType: "asset"}); err != nil {
+			t.Fatalf("create retention fixture %s: %v", id, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE atlas_change_events
+		SET created_at = clock_timestamp() - interval '8 days'
+		WHERE event->>'id' = ANY($1)
+	`, []string{firstID, secondID}); err != nil {
+		t.Fatalf("age retention fixtures: %v", err)
+	}
+
+	firstBatchCommitted := make(chan struct{})
+	continuePruning := make(chan struct{})
+	defer func() {
+		select {
+		case <-continuePruning:
+		default:
+			close(continuePruning)
+		}
+	}()
+	pruneDone := make(chan error, 1)
+	firstBatch := true
+	go func() {
+		deleted, err := pruneChangeRecords(ctx, pool, time.Now().Add(-ChangeRecordRetention), 1, func(int64) {
+			if firstBatch {
+				firstBatch = false
+				close(firstBatchCommitted)
+				<-continuePruning
+			}
+		})
+		if err == nil && deleted != 2 {
+			err = fmt.Errorf("pruned records = %d, want 2", deleted)
+		}
+		pruneDone <- err
+	}()
+
+	select {
+	case <-firstBatchCommitted:
+	case err := <-pruneDone:
+		t.Fatalf("pruning stopped before first batch committed: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for first prune batch")
+	}
+
+	mutationDone := make(chan error, 1)
+	go func() {
+		_, err := entityActions.Create(ctx, CreateEntityParams{EntityID: concurrentID, EntityType: "asset"})
+		mutationDone <- err
+	}()
+	select {
+	case err := <-mutationDone:
+		if err != nil {
+			t.Fatalf("concurrent mutation between prune batches: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("concurrent mutation remained blocked after the first prune batch committed")
+	}
+	close(continuePruning)
+	if err := <-pruneDone; err != nil {
+		t.Fatalf("finish batched pruning: %v", err)
+	}
+}

@@ -21,6 +21,7 @@ var runtimeValidatorTypeNames = []string{
 	"ObjectResource",
 	"FeedEvent",
 	"FeedHandshakeMessage",
+	"FeedSubscriptionsReadyMessage",
 	"JSONValue",
 	"ProtocolRevision",
 	"ResourceType",

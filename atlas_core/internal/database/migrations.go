@@ -22,6 +22,8 @@ const (
 	changeStreamMigrationChecksum   = "362d2f71c1d51c7d172e0818b68a7eec725104aeec91002558ebac7d74a978eb"
 	recoveryLogMigrationName        = "bounded_recovery_log"
 	recoveryLogMigrationChecksum    = "7ae3a729125b872f1dc3a4265196dde2473ccc61ca3b5b820120d81278f917d8"
+	recoveryFloorMigrationName      = "recovery_log_floor_and_retention_index"
+	recoveryFloorMigrationChecksum  = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
 	fingerprintVersionV1            = 1
 )
 
@@ -143,6 +145,21 @@ func coreSchemaMigrations() []schemaMigration {
 				 WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete'
 				 GROUP BY event->>'id'`,
 				`DROP INDEX idx_atlas_change_events_object_deletes`,
+			},
+		},
+		{
+			version:            6,
+			name:               recoveryFloorMigrationName,
+			checksum:           recoveryFloorMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`UPDATE atlas_change_clock AS clock
+				 SET min_retained_version = COALESCE(
+					(SELECT MIN(event.version) - 1 FROM atlas_change_events AS event),
+					clock.version
+				 )
+				 WHERE clock.singleton`,
+				`CREATE INDEX idx_atlas_change_events_retention ON atlas_change_events(created_at, version)`,
 			},
 		},
 	}

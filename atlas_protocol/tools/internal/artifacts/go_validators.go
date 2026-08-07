@@ -38,6 +38,8 @@ var goValidatorFunctions = []goValidatorFunction{
 	{name: "ValidateFeedUnsubscribeMessage", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedUnsubscribeMessage},
 	{name: "ValidateFeedClientMessage", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedClientMessage},
 	{name: "ValidateFeedHandshakeMessage", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedHandshakeMessage},
+	{name: "ValidateFeedSubscriptionBarrierMessage", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedSubscriptionBarrierMessage},
+	{name: "ValidateFeedSubscriptionsReadyMessage", params: "value any", args: "value", validate: protocolvalidator.ValidateFeedSubscriptionsReadyMessage},
 	{name: "ValidateEntityComponents", params: "value any", args: "value", validate: protocolvalidator.ValidateEntityComponents},
 	{name: "ValidateTaskComponents", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskComponents},
 	{name: "ValidateCommandComponent", params: "value any", args: "value", validate: protocolvalidator.ValidateCommandComponent},

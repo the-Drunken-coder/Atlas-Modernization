@@ -126,7 +126,12 @@ function recordingSocket(urls: string[]) {
         });
       });
     }
-    send() {}
+    send(data: string) {
+      const message = JSON.parse(data) as { action?: string };
+      if (message.action === "subscription_barrier") {
+        this.dispatch("message", { data: JSON.stringify({ type: "subscriptions_ready", version: 0 }) });
+      }
+    }
     close() {
       this.dispatch("close", {});
     }

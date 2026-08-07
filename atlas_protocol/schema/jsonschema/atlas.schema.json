@@ -540,6 +540,9 @@
           "$ref": "#/$defs/FeedAuthMessage"
         },
         {
+          "$ref": "#/$defs/FeedSubscriptionBarrierMessage"
+        },
+        {
           "$ref": "#/$defs/FeedSubscribeMessage"
         },
         {
@@ -591,6 +594,28 @@
       "required": [
         "protocol_revision",
         "type"
+      ],
+      "type": "object"
+    },
+    "FeedSubscriptionBarrierMessage": {
+      "const": {
+        "action": "subscription_barrier"
+      }
+    },
+    "FeedSubscriptionsReadyMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "subscriptions_ready"
+        },
+        "version": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "version"
       ],
       "type": "object"
     },

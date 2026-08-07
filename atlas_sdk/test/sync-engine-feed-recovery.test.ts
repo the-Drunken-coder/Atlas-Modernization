@@ -3,6 +3,131 @@ import { AtlasClient, type FeedEvent } from "../src";
 import { entity, FakeCore, metadata } from "./support/fake-core.js";
 
 describe("AtlasClient sync: feed connections and recovery handoff", () => {
+  it("drops and recovers when sustained reconnect traffic exceeds the bounded handoff queue", async () => {
+    const core = new FakeCore();
+    let holdRecovery = false;
+    let releaseRecovery: ((response: Response) => void) | undefined;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (holdRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        holdRecovery = false;
+        return new Promise<Response>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+
+    holdRecovery = true;
+    const reconnect = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(releaseRecovery).toBeTypeOf("function"));
+    let latest = entity("buffer-overflow-0");
+    for (let index = 0; index <= 100; index++) {
+      latest = core.upsertEntity(entity(`buffer-overflow-${index}`));
+      core.emit(entityUpdateEvent(latest), { record: false });
+    }
+
+    await vi.waitFor(() => expect(core.sockets.size).toBe(0));
+
+    releaseRecovery?.(
+      Response.json({
+        events: [],
+        has_more: false,
+        version: 0
+      })
+    );
+    await reconnect;
+    await vi.waitFor(() => expect(core.feedConnections).toBeGreaterThanOrEqual(3), { timeout: 3_000 });
+    await vi.waitFor(() => expect(client.sync.status().lastVersion).toBe(latest.metadata.version), { timeout: 3_000 });
+
+    expect(client.sync.snapshot().entities[latest.entity_id]).toEqual(latest);
+    const live = core.upsertEntity(entity("after-buffer-recovery"));
+    core.emit(entityUpdateEvent(live), { record: false });
+    await vi.waitFor(() => expect(client.sync.snapshot().entities[live.entity_id]).toEqual(live));
+    client.sync.stop();
+  }, 10_000);
+
+  it("buffers and deduplicates a live mutation received before subscriptions are acknowledged", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: core.fetch,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch("asset-before-subscriptions-ready", watch);
+
+    let activateAndAcknowledge: (() => void) | undefined;
+    core.onFeedSubscriptionBarrier = (release) => {
+      core.onFeedSubscriptionBarrier = undefined;
+      activateAndAcknowledge = release;
+    };
+    const reconnect = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(activateAndAcknowledge).toBeTypeOf("function"));
+
+    const value = core.upsertEntity(entity("asset-before-subscriptions-ready"));
+    const event = entityUpdateEvent(value);
+    expect(Array.from(core.sockets)[0].subscribedTo(event)).toBe(true);
+    core.emit(event, { record: false });
+    activateAndAcknowledge?.();
+    await reconnect;
+
+    expect(client.sync.status()).toMatchObject({ healthy: true, lastVersion: value.metadata.version });
+    expect(client.sync.snapshot().entities[value.entity_id]).toEqual(value);
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch).toHaveBeenCalledWith(value, expect.objectContaining({ version: value.metadata.version }));
+    client.sync.stop();
+  });
+
+  it("deduplicates a live event buffered behind reconnect recovery", async () => {
+    const core = new FakeCore();
+    let holdRecovery = false;
+    let releaseRecovery: ((response: Response) => void) | undefined;
+    let heldResponse: Promise<Response> | undefined;
+    const fetchImpl: typeof fetch = (url, init) => {
+      if (holdRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
+        holdRecovery = false;
+        heldResponse = core.fetch(String(url), init);
+        return new Promise<Response>((resolve) => {
+          releaseRecovery = resolve;
+        });
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: fetchImpl,
+      WebSocket: core.attachWebSocketGlobal(),
+      sync: "all",
+      pollIntervalMs: 0
+    });
+    await client.sync.start();
+    const watch = vi.fn();
+    client.entities.watch("asset-overlapping-recovery", watch);
+    const value = core.upsertEntity(entity("asset-overlapping-recovery"));
+
+    holdRecovery = true;
+    const reconnect = client.connectAndRecoverFeed();
+    await vi.waitFor(() => expect(releaseRecovery).toBeTypeOf("function"));
+    core.emit(entityUpdateEvent(value), { record: false });
+    releaseRecovery?.(await heldResponse!);
+    await reconnect;
+
+    expect(client.sync.snapshot().entities[value.entity_id]).toEqual(value);
+    expect(watch).toHaveBeenCalledTimes(1);
+    client.sync.stop();
+  });
+
   it("keeps changed-since recovery active during a connect-only attempt", async () => {
     const core = new FakeCore();
     const recovered = core.upsertEntity(entity("asset-recovered-during-connect"));

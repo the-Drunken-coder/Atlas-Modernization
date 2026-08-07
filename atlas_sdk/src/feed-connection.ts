@@ -1,18 +1,27 @@
-import { ATLAS_PROTOCOL_REVISION, type FeedEvent } from "./protocol.js";
+import {
+  ATLAS_PROTOCOL_REVISION,
+  type FeedAuthMessage,
+  type FeedEvent,
+  type FeedSubscriptionBarrierMessage
+} from "./protocol.js";
 import { subscriptionMessage } from "./subscriptions.js";
 import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
   AtlasSubscription,
   WebSocketCtor,
+  WebSocketEvent,
   WebSocketEventType,
   WebSocketLike,
   WebSocketListener
 } from "./types.js";
 import { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";
-import { isInboundFeedEvent, isInboundFeedHandshake } from "./validation.js";
+import { isInboundFeedEvent, isInboundFeedHandshake, isInboundFeedSubscriptionsReady } from "./validation.js";
 
 const WS_OPEN = 1;
 const WS_CLOSED = 3;
+const MAX_PENDING_FEED_EVENTS = 100;
+const MAX_PENDING_FEED_BYTES = 8 * 1024 * 1024;
+const feedTextEncoder = new TextEncoder();
 
 type ActiveFeedConnection = {
   socket: WebSocketLike;
@@ -21,7 +30,7 @@ type ActiveFeedConnection = {
 
 export type FeedConnectOptions = {
   subscriptions: AtlasSubscription[];
-  onEvent(event: FeedEvent): void | Promise<void>;
+  onEvent(event: FeedEvent, serializedBytes: number): void | Promise<void>;
   onEventError(): void;
   onClose(): void;
 };
@@ -172,7 +181,8 @@ export class FeedConnectionManager {
       });
       ensureCurrent();
       if (this.apiKey) {
-        socket.send(JSON.stringify({ action: "auth", api_key: this.apiKey }));
+        const auth: FeedAuthMessage = { action: "auth", api_key: this.apiKey };
+        socket.send(JSON.stringify(auth));
       }
       await hello;
       ensureCurrent();
@@ -195,34 +205,75 @@ export class FeedConnectionManager {
         // The feed manager should not let an error callback poison ordered delivery.
       }
     };
-    for (const filter of options.subscriptions) {
-      socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
-    }
+    let readyAcknowledged = false;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    void ready.catch(() => undefined);
+    const readyTimer = setTimeout(
+      () => rejectReady(new Error("feed subscription acknowledgement timed out")),
+      this.feedHandshakeTimeoutMs
+    );
+    const acknowledgeSubscriptions = (data: unknown): boolean => {
+      if (!isInboundFeedSubscriptionsReady(data)) return false;
+      if (readyAcknowledged) throw new TypeError("feed sent a duplicate subscription acknowledgement");
+      readyAcknowledged = true;
+      clearTimeout(readyTimer);
+      resolveReady();
+      return true;
+    };
     let eventChain = Promise.resolve();
+    let pendingEventCount = 0;
+    let pendingEventBytes = 0;
+    const enqueueEvent = (event: FeedEvent, serializedBytes: number) => {
+      if (
+        pendingEventCount >= MAX_PENDING_FEED_EVENTS ||
+        (pendingEventCount > 0 && pendingEventBytes + serializedBytes > MAX_PENDING_FEED_BYTES)
+      ) {
+        throw new Error("feed event delivery queue exceeded its recovery budget");
+      }
+      pendingEventCount++;
+      pendingEventBytes += serializedBytes;
+      eventChain = eventChain.then(async () => {
+        try {
+          await options.onEvent(event, serializedBytes);
+        } catch {
+          reportEventError();
+          socket.close();
+        } finally {
+          pendingEventCount--;
+          pendingEventBytes -= serializedBytes;
+        }
+      });
+    };
+    const handleMessage = (message: WebSocketEvent) => {
+      const serialized = String(message.data);
+      const data: unknown = JSON.parse(serialized);
+      if (isInboundFeedHandshake(data)) {
+        assertRevision(data.protocol_revision);
+        return;
+      }
+      if (acknowledgeSubscriptions(data)) return;
+      if (!isInboundFeedEvent(data)) throw new TypeError("feed sent an invalid event");
+      enqueueEvent(data, feedTextEncoder.encode(serialized).byteLength);
+    };
     socket.addEventListener("message", (message) => {
       if (this.connection !== connection || this.socket !== socket) {
         return;
       }
       try {
-        const data: unknown = JSON.parse(String(message.data));
-        if (isInboundFeedHandshake(data)) {
-          assertRevision(data.protocol_revision);
-          return;
-        }
-        if (!isInboundFeedEvent(data)) {
-          throw new TypeError("feed sent an invalid event");
-        }
-        eventChain = eventChain.then(async () => {
-          try {
-            await options.onEvent(data);
-          } catch {
-            reportEventError();
-          }
-        });
+        handleMessage(message);
       } catch {
+        if (!readyAcknowledged) rejectReady(new TypeError("feed did not send a valid subscription acknowledgement"));
         reportEventError();
         socket.close();
       }
+    });
+    socket.addEventListener("error", () => {
+      if (!readyAcknowledged) rejectReady(new Error("feed websocket failed before subscriptions were ready"));
     });
     socket.addEventListener("close", () => {
       if (this.connection !== connection) {
@@ -233,12 +284,32 @@ export class FeedConnectionManager {
         return;
       }
       this.socket = undefined;
+      if (!readyAcknowledged) {
+        clearTimeout(readyTimer);
+        rejectReady(new Error("feed websocket closed before subscriptions were ready"));
+        return;
+      }
       try {
         options.onClose();
       } catch {
         // Close notifications should not make the underlying socket dispatch throw.
       }
     });
+    for (const filter of options.subscriptions) {
+      socket.send(JSON.stringify(subscriptionMessage("subscribe", filter)));
+    }
+    const barrier: FeedSubscriptionBarrierMessage = { action: "subscription_barrier" };
+    socket.send(JSON.stringify(barrier));
+    try {
+      await ready;
+      ensureCurrent();
+    } catch (error) {
+      clearTimeout(readyTimer);
+      if (this.connection === connection) this.connection = undefined;
+      if (this.socket === socket) this.socket = undefined;
+      socket.close();
+      throw error;
+    }
   }
 
   sendSubscription(action: "subscribe" | "unsubscribe", filter: AtlasSubscription): void {

@@ -1,0 +1,135 @@
+package database_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/database"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/testenv"
+)
+
+func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
+	dbURL, explicitDBURL := recoveryFloorTestURL()
+	if dbURL == "" {
+		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run migration integration tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	admin, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		if explicitDBURL {
+			t.Fatalf("connect migration test database: %v", err)
+		}
+		testenv.SkipOrFatal(t, "migration test database unavailable: %v", err)
+	}
+	schema := fmt.Sprintf("atlas_recovery_floor_test_%d", time.Now().UTC().UnixNano())
+	identifier := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
+		_ = admin.Close(context.Background())
+		t.Fatalf("create migration test schema: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := admin.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+identifier+" CASCADE"); err != nil {
+			t.Errorf("drop migration test schema: %v", err)
+		}
+		if err := admin.Close(cleanupCtx); err != nil {
+			t.Errorf("close migration test connection: %v", err)
+		}
+	})
+
+	parsed, err := url.Parse(dbURL)
+	if err != nil {
+		t.Fatalf("parse migration test database URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	db, err := database.New(&config.Config{
+		DatabaseURL:               parsed.String(),
+		DatabasePoolSize:          2,
+		DatabaseMaxOverflow:       1,
+		DatabasePoolRecycle:       3600,
+		DatabasePoolTimeout:       10,
+		DatabasePoolIdleTimeout:   30,
+		DatabasePoolPrePing:       false,
+		DatabaseRecreateOnStartup: false,
+	})
+	if err != nil {
+		t.Fatalf("open migration test database: %v", err)
+	}
+	defer db.Close()
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("install current schema: %v", err)
+	}
+
+	const legacyVersion int64 = 42
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO entities (entity_id, type, version) VALUES ('legacy-recovery-entity', 'asset', $1)`, []any{legacyVersion}},
+		{`TRUNCATE atlas_change_events`, nil},
+		{`UPDATE atlas_change_clock SET version = $1, min_retained_version = 0 WHERE singleton`, []any{legacyVersion}},
+		{`DROP INDEX idx_atlas_change_events_retention`, nil},
+		{`DELETE FROM atlas_schema_migrations WHERE name = 'recovery_log_floor_and_retention_index'`, nil},
+	}
+	for _, statement := range statements {
+		if _, err := db.Pool.Exec(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("prepare pre-correction schema with %q: %v", statement.query, err)
+		}
+	}
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("apply recovery-floor correction: %v", err)
+	}
+
+	_, err = actions.NewQueryActions(db.Pool).GetDataChangedSince(ctx, 0, 1, nil)
+	var expired *actions.CursorExpiredError
+	if !errors.As(err, &expired) || expired.MinRetainedVersion != legacyVersion {
+		t.Fatalf("changed-since error = %#v, want cursor expired at %d", err, legacyVersion)
+	}
+
+	created, err := actions.NewEntityActions(db.Pool).Create(ctx, actions.CreateEntityParams{
+		EntityID:   "post-migration-recovery-entity",
+		EntityType: "asset",
+	})
+	if err != nil {
+		t.Fatalf("create post-migration entity: %v", err)
+	}
+	recovered, err := actions.NewQueryActions(db.Pool).GetDataChangedSince(ctx, legacyVersion, 10, nil)
+	if err != nil {
+		t.Fatalf("recover post-migration event: %v", err)
+	}
+	if len(recovered.Events) != 1 || recovered.Events[0].ID != created.EntityID || recovered.Events[0].Version != created.Version {
+		t.Fatalf("post-migration recovery = %+v, want entity %s at version %d", recovered.Events, created.EntityID, created.Version)
+	}
+}
+
+func recoveryFloorTestURL() (string, bool) {
+	if dbURL := os.Getenv("ATLAS_DATABASE_TEST_URL"); dbURL != "" {
+		return dbURL, true
+	}
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		return dbURL, true
+	}
+	password := os.Getenv("POSTGRES_PASSWORD")
+	if password == "" {
+		return "", false
+	}
+	return (&url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("atlas", password),
+		Host:   "localhost:5432",
+		Path:   "/atlas_core",
+	}).String(), false
+}

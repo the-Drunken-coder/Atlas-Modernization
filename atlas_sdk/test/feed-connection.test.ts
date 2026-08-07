@@ -5,6 +5,70 @@ import { FeedConnectionManager } from "../src/feed-connection.js";
 import { entity, FakeCore, metadata, task } from "./support/fake-core.js";
 
 describe("AtlasClient feed connection", () => {
+  it("waits for Core to acknowledge the installed initial subscriptions", async () => {
+    const core = new FakeCore();
+    let activateAndAcknowledge: (() => void) | undefined;
+    core.onFeedSubscriptionBarrier = (release) => {
+      activateAndAcknowledge = release;
+    };
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: core.attachWebSocketGlobal(),
+      feedHandshakeTimeoutMs: 1_000
+    });
+
+    let connected = false;
+    const onEvent = vi.fn();
+    const connecting = manager
+      .connect({
+        subscriptions: [{ filter: "all" }],
+        onEvent,
+        onEventError: () => undefined,
+        onClose: () => undefined
+      })
+      .then(() => {
+        connected = true;
+      });
+
+    await vi.waitFor(() => expect(activateAndAcknowledge).toBeTypeOf("function"));
+    expect(connected).toBe(false);
+    const socket = Array.from(core.sockets)[0];
+    expect(socket.sentMessages).toEqual([{ action: "subscribe", filter: "all" }, { action: "subscription_barrier" }]);
+    manager.sendSubscription("subscribe", { filter: "type", resource_type: "task" });
+    manager.sendSubscription("unsubscribe", { filter: "all" });
+
+    core.onFeedSubscriptionBarrier = undefined;
+    activateAndAcknowledge?.();
+    await connecting;
+    expect(connected).toBe(true);
+
+    const ignoredEntity = { ...entity("post-barrier-entity"), metadata: metadata(1) };
+    const deliveredTask = { ...task("post-barrier-task", "asset-1"), metadata: metadata(2) };
+    core.emit(
+      {
+        event: "update",
+        resource_type: "entity",
+        id: ignoredEntity.entity_id,
+        version: 1,
+        resource: ignoredEntity
+      },
+      { record: false }
+    );
+    core.emit(
+      {
+        event: "update",
+        resource_type: "task",
+        id: deliveredTask.task_id,
+        version: 2,
+        resource: deliveredTask
+      },
+      { record: false }
+    );
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(1));
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ id: deliveredTask.task_id }), expect.any(Number));
+    manager.close();
+  });
+
   it("rejects handshake timeouts outside the supported timer range", () => {
     for (const feedHandshakeTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
       expect(() => new FeedConnectionManager({ baseUrl: "http://atlas.test", feedHandshakeTimeoutMs })).toThrow(
@@ -100,6 +164,114 @@ describe("AtlasClient feed connection", () => {
         "done:entity-ordered-2"
       ])
     );
+    manager.close();
+  });
+
+  it("closes a feed whose asynchronous delivery queue exceeds its recovery budget", async () => {
+    const core = new FakeCore();
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: core.attachWebSocketGlobal(),
+      feedHandshakeTimeoutMs: 1_000
+    });
+    const onEventError = vi.fn();
+    await manager.connect({
+      subscriptions: [{ filter: "all" }],
+      onEvent: () => new Promise<void>(() => undefined),
+      onEventError,
+      onClose: () => undefined
+    });
+
+    for (let version = 1; version <= 101; version++) {
+      const value = { ...entity(`delivery-overflow-${version}`), metadata: metadata(version) };
+      core.emit(
+        {
+          event: "update",
+          resource_type: "entity",
+          id: value.entity_id,
+          version,
+          resource: value
+        },
+        { record: false }
+      );
+    }
+
+    await vi.waitFor(() => expect(core.sockets.size).toBe(0));
+    expect(onEventError).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a feed whose asynchronous delivery queue exceeds its byte budget", async () => {
+    const core = new FakeCore();
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: core.attachWebSocketGlobal(),
+      feedHandshakeTimeoutMs: 1_000
+    });
+    const onEventError = vi.fn();
+    await manager.connect({
+      subscriptions: [{ filter: "all" }],
+      onEvent: () => new Promise<void>(() => undefined),
+      onEventError,
+      onClose: () => undefined
+    });
+
+    for (let version = 1; version <= 9; version++) {
+      const value = {
+        ...entity(`delivery-byte-overflow-${version}`),
+        extra: { payload: "x".repeat(1_000_000) },
+        metadata: metadata(version)
+      };
+      core.emit(
+        {
+          event: "update",
+          resource_type: "entity",
+          id: value.entity_id,
+          version,
+          resource: value
+        },
+        { record: false }
+      );
+    }
+
+    await vi.waitFor(() => expect(core.sockets.size).toBe(0));
+    expect(onEventError).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers one oversized event so the consumer can advance", async () => {
+    const core = new FakeCore();
+    const manager = new FeedConnectionManager({
+      baseUrl: "http://atlas.test",
+      WebSocketImpl: core.attachWebSocketGlobal(),
+      feedHandshakeTimeoutMs: 1_000
+    });
+    const onEvent = vi.fn();
+    const onEventError = vi.fn();
+    await manager.connect({
+      subscriptions: [{ filter: "all" }],
+      onEvent,
+      onEventError,
+      onClose: () => undefined
+    });
+
+    const value = {
+      ...entity("oversized-single-delivery"),
+      extra: { payload: "x".repeat(8 * 1024 * 1024) },
+      metadata: metadata(1)
+    };
+    core.emit(
+      {
+        event: "update",
+        resource_type: "entity",
+        id: value.entity_id,
+        version: 1,
+        resource: value
+      },
+      { record: false }
+    );
+
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(1));
+    expect(onEventError).not.toHaveBeenCalled();
+    expect(core.sockets.size).toBe(1);
     manager.close();
   });
 

@@ -71,6 +71,8 @@ Migration v4 replaces the legacy sequence and resource-deletion table with `atla
 
 Migration v5 bounds that recovery log without coupling retention to object-storage correctness. `atlas_change_clock.min_retained_version` records the oldest accepted cursor, and `object_deletion_fences` keeps one permanent version fence per deleted object ID. Core retains seven days of change events and prunes hourly. Clients behind the retained window receive `CURSOR_EXPIRED` and must hydrate from the live resource tables before resuming changed-since recovery.
 
+Migration v6 corrects upgraded databases whose pre-change-stream resource versions have no corresponding recovery events. It advances `min_retained_version` to the earliest complete recovery cursor, so those clients receive `CURSOR_EXPIRED` instead of an empty response that falsely advances them across missing history. It also adds the `(created_at, version)` retention index. Pruning deletes bounded batches and commits each batch separately so resource mutations can acquire the change-clock lock between batches.
+
 Inspect the current production version with:
 
 ```bash

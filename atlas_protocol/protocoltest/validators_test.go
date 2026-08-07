@@ -80,6 +80,17 @@ func TestHandshakeProtocolRevisionMatchesProtocolRevision(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsReadyExampleValidates(t *testing.T) {
+	root := moduleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "examples", "feed", "server-ready", "subscriptions-ready.json"))
+	if err != nil {
+		t.Fatalf("read subscriptions-ready example: %v", err)
+	}
+	if errors := protocol.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(data)); len(errors) > 0 {
+		t.Fatalf("subscriptions-ready example did not validate: %v", errors)
+	}
+}
+
 func TestFeedControlMessageMarshalingPinsAndValidatesDiscriminators(t *testing.T) {
 	auth, err := json.Marshal(protocol.FeedAuthMessage{Action: protocol.FeedActionSubscribe, APIKey: "secret"})
 	if err != nil {
@@ -104,6 +115,71 @@ func TestFeedControlMessageMarshalingPinsAndValidatesDiscriminators(t *testing.T
 	}
 	if _, err := json.Marshal(protocol.FeedSubscriptionMessage{Action: protocol.FeedActionAuth, Filter: protocol.FeedFilterAll}); err == nil {
 		t.Fatal("expected auth action in subscription message to fail validation")
+	}
+
+	barrier, err := json.Marshal(protocol.FeedSubscriptionBarrierMessage{Action: protocol.FeedActionAuth})
+	if err != nil {
+		t.Fatalf("marshal subscription barrier: %v", err)
+	}
+	if errors := protocol.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(barrier)); len(errors) > 0 {
+		t.Fatalf("subscription barrier did not validate: %v", errors)
+	}
+	var barrierPayload map[string]any
+	if err := json.Unmarshal(barrier, &barrierPayload); err != nil {
+		t.Fatalf("decode subscription barrier: %v", err)
+	}
+	if barrierPayload["action"] != string(protocol.FeedActionSubscriptionBarrier) {
+		t.Fatalf("subscription barrier action = %v, want %q", barrierPayload["action"], protocol.FeedActionSubscriptionBarrier)
+	}
+	for _, invalid := range []string{
+		`{"action":"ready"}`,
+		`{"action":"subscriptions_ready"}`,
+		`{"action":"subscription_barrier","filter":"all"}`,
+		`{"action":"subscription_barrier"} trailing`,
+	} {
+		if errors := protocol.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(invalid)); len(errors) == 0 {
+			t.Fatalf("invalid subscription barrier passed validation: %s", invalid)
+		}
+	}
+	if errors := protocol.ValidateFeedClientMessage(barrierPayload); len(errors) > 0 {
+		t.Fatalf("subscription barrier is not an accepted client message: %v", errors)
+	}
+	invalidBarrierPayload := map[string]any{"action": "subscription_barrier", "filter": "all"}
+	if errors := protocol.ValidateFeedClientMessage(invalidBarrierPayload); len(errors) == 0 {
+		t.Fatal("subscription barrier with an extra property passed client-message validation")
+	}
+
+	ready, err := json.Marshal(protocol.FeedSubscriptionsReadyMessage{Type: "not-ready", Version: 42})
+	if err != nil {
+		t.Fatalf("marshal subscription acknowledgement: %v", err)
+	}
+	if errors := protocol.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(ready)); len(errors) > 0 {
+		t.Fatalf("subscription acknowledgement did not validate: %v", errors)
+	}
+	var readyPayload map[string]any
+	if err := json.Unmarshal(ready, &readyPayload); err != nil {
+		t.Fatalf("decode subscription acknowledgement: %v", err)
+	}
+	if readyPayload["type"] != "subscriptions_ready" {
+		t.Fatalf("subscription acknowledgement type = %v, want subscriptions_ready", readyPayload["type"])
+	}
+	if _, err := json.Marshal(protocol.FeedSubscriptionsReadyMessage{Version: -1}); err == nil {
+		t.Fatal("expected negative subscription acknowledgement version to fail validation")
+	}
+	for _, invalid := range []string{
+		`{"type":"ready","version":42}`,
+		`{"type":"subscriptions-ready","version":42}`,
+		`{"type":"subscriptions_ready","version":-1}`,
+		`{"type":"subscriptions_ready"}`,
+		`{"type":"subscriptions_ready","version":1.5}`,
+		`{"type":"subscriptions_ready","version":42} trailing`,
+	} {
+		if errors := protocol.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(invalid)); len(errors) == 0 {
+			t.Fatalf("invalid subscription acknowledgement passed validation: %s", invalid)
+		}
+	}
+	if errors := protocol.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(`{"type":"subscriptions_ready","version":1.0}`)); len(errors) > 0 {
+		t.Fatalf("mathematically integral JSON number did not validate: %v", errors)
 	}
 
 	hello, err := json.Marshal(protocol.FeedHandshakeMessage{Type: "not-hello", ProtocolRevision: protocol.ProtocolRevision})

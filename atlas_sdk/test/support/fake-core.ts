@@ -44,6 +44,7 @@ export class FakeCore {
   minRetainedVersion = 0;
   readonly recordedVersions = new Set<number>();
   rejectFeedAuth = false;
+  onFeedSubscriptionBarrier: ((activateAndAcknowledge: () => void) => void) | undefined;
   failChangedSince = false;
   objectDownloadCount = 0;
   onObjectDownload: ((id: string) => void) | undefined;

@@ -35,6 +35,7 @@ var exampleSets = []exampleSet{
 	{pattern: "feed/events/*.json", definition: "FeedEvent", semanticValidation: protocolvalidator.ValidateFeedEvent},
 	{pattern: "feed/messages/*.json", definition: "FeedClientMessage", semanticValidation: protocolvalidator.ValidateFeedClientMessage},
 	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage", semanticValidation: protocolvalidator.ValidateFeedHandshakeMessage},
+	{pattern: "feed/server-ready/*.json", definition: "FeedSubscriptionsReadyMessage", semanticValidation: protocolvalidator.ValidateFeedSubscriptionsReadyMessage},
 	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest", semanticValidation: protocolvalidator.ValidateEntityCreateRequest},
 	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest", semanticValidation: protocolvalidator.ValidateEntityUpdateRequest},
 	{pattern: "requests/task-create.json", definition: "TaskCreateRequest", semanticValidation: protocolvalidator.ValidateTaskCreateRequest},

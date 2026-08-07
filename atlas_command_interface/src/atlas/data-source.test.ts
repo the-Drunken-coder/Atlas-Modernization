@@ -537,7 +537,12 @@ class TestWebSocket {
     });
   }
 
-  send(): void {}
+  send(data: string): void {
+    const message = JSON.parse(data) as { action?: string };
+    if (message.action === "subscription_barrier") {
+      this.receive({ type: "subscriptions_ready", version: this.core.version });
+    }
+  }
 
   close(): void {
     if (this.readyState === 3) return;

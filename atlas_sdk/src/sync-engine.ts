@@ -53,6 +53,16 @@ type ActiveHydration = {
   promise: Promise<number | undefined>;
 };
 
+type FeedRecoveryBuffer = {
+  generation: number;
+  attempt: number;
+  events: Array<{ event: FeedEvent; serializedBytes: number }>;
+  bytes: number;
+};
+
+const MAX_BUFFERED_FEED_EVENTS = 100;
+const MAX_BUFFERED_FEED_BYTES = 8 * 1024 * 1024;
+
 /**
  * Internal identity of the engine's last failure. Reconnect and recovery
  * decisions branch on these codes, never on the display text: the strings in
@@ -103,6 +113,7 @@ export class SyncEngine {
   private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
   private readonly snapshotWatchers = new Set<SyncSnapshotCallback>();
   private activeHydration: ActiveHydration | undefined;
+  private feedRecoveryBuffer: FeedRecoveryBuffer | undefined;
   private syncRunning = false;
   private health: SyncHealth = "idle";
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -245,8 +256,20 @@ export class SyncEngine {
     try {
       await this.feed.connect({
         subscriptions: this.subscriptions,
-        onEvent: (event) => {
+        onEvent: (event, serializedBytes) => {
           if (!isCurrentAttempt()) return;
+          const buffer = this.feedRecoveryBuffer;
+          if (buffer?.generation === generation && buffer.attempt === attempt) {
+            if (
+              buffer.events.length >= MAX_BUFFERED_FEED_EVENTS ||
+              (buffer.events.length > 0 && buffer.bytes + serializedBytes > MAX_BUFFERED_FEED_BYTES)
+            ) {
+              throw new Error("feed recovery buffer exceeded its budget");
+            }
+            buffer.events.push({ event, serializedBytes });
+            buffer.bytes += serializedBytes;
+            return;
+          }
           return this.consumeFeedEvent(event, generation, attempt);
         },
         onEventError: () => {
@@ -493,6 +516,7 @@ export class SyncEngine {
     this.syncRunning = false;
     this.invalidateRecovery();
     this.lastErrorCode = undefined;
+    this.feedRecoveryBuffer = undefined;
     this.feed.close();
     this.health = "idle";
   }
@@ -619,28 +643,87 @@ export class SyncEngine {
     this.reconnectAfterRecovery = false;
     this.clearReconnectTimer();
     const attempt = this.beginFeedConnectionAttempt();
+    const buffer: FeedRecoveryBuffer = {
+      generation,
+      attempt,
+      events: [],
+      bytes: 0
+    };
+    const sinceVersion = this.cache.lastVersion;
+    this.feedRecoveryBuffer = buffer;
+    let recoveryCompleted = false;
     try {
-      try {
-        await this.connectFeedForGeneration(generation, attempt);
-      } catch (error) {
-        if (this.isCurrentFeedConnection(generation, attempt)) this.invalidateRecovery();
-        throw error;
-      }
-      if (!this.isCurrentFeedConnection(generation, attempt)) return;
-      const recovery = this.changedSinceForGeneration(generation);
-      if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
-      const recovered = await recovery;
-      if (recovered && this.isCurrentFeedConnection(generation, attempt) && isFeedErrorCode(this.lastErrorCode))
-        this.lastErrorCode = undefined;
+      await this.connectFeedForRecovery(generation, attempt);
+      recoveryCompleted = await this.recoverConnectedFeed(
+        generation,
+        attempt,
+        sinceVersion,
+        buffer,
+        automaticOwnership
+      );
     } finally {
-      if (this.isCurrent(generation)) {
-        this.reconnecting = false;
-        if (this.reconnectAfterRecovery) {
-          this.reconnectAfterRecovery = false;
-          this.scheduleReconnect();
-        }
+      this.finishFeedRecoveryAttempt(generation, attempt, buffer, recoveryCompleted);
+    }
+  }
+
+  private async connectFeedForRecovery(generation: number, attempt: number): Promise<void> {
+    try {
+      await this.connectFeedForGeneration(generation, attempt);
+    } catch (error) {
+      if (this.isCurrentFeedConnection(generation, attempt)) this.invalidateRecovery();
+      throw error;
+    }
+  }
+
+  private async recoverConnectedFeed(
+    generation: number,
+    attempt: number,
+    sinceVersion: number,
+    buffer: FeedRecoveryBuffer,
+    automaticOwnership?: AutomaticReconnectOwnership
+  ): Promise<boolean> {
+    if (!this.isCurrentFeedConnection(generation, attempt)) return false;
+    const recovery = this.changedSinceForGeneration(generation, sinceVersion);
+    if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
+    const recovered = await recovery;
+    if (!recovered || !this.isCurrentFeedConnection(generation, attempt)) return false;
+
+    this.health = "degraded";
+    while (buffer.events.length > 0 && this.isCurrentFeedConnection(generation, attempt)) {
+      const buffered = buffer.events.shift();
+      if (buffered) {
+        buffer.bytes -= buffered.serializedBytes;
+        await this.consumeFeedEvent(buffered.event, generation, attempt);
       }
     }
+    if (!this.isCurrentFeedConnection(generation, attempt)) return false;
+    if (this.feedRecoveryBuffer === buffer) this.feedRecoveryBuffer = undefined;
+    this.markSynchronized();
+    if (isFeedErrorCode(this.lastErrorCode)) this.lastErrorCode = undefined;
+    return true;
+  }
+
+  private finishFeedRecoveryAttempt(
+    generation: number,
+    attempt: number,
+    buffer: FeedRecoveryBuffer,
+    recoveryCompleted: boolean
+  ): void {
+    if (this.feedRecoveryBuffer === buffer && !this.syncRunning && !recoveryCompleted) {
+      this.feedRecoveryBuffer = undefined;
+      this.feed.close();
+    }
+    if (
+      this.feedRecoveryBuffer === buffer &&
+      (recoveryCompleted || !this.isCurrentFeedConnection(generation, attempt))
+    ) {
+      this.feedRecoveryBuffer = undefined;
+    }
+    if (!this.isCurrent(generation)) return;
+    this.reconnecting = false;
+    if (!this.reconnectAfterRecovery) return;
+    this.reconnectAfterRecovery = false;
+    this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {

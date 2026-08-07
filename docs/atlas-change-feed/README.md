@@ -48,7 +48,8 @@ If those product requirements go away, a poll-only `changed-since` client is the
 - Supported filters: `all`, resource `id`, resource `type`, and `tasks_for_entity`.
 - Initial subscription state is empty; clients must subscribe before receiving events.
 - Subscribe/unsubscribe messages are live commands over the existing connection.
-- Valid commands change filters silently; malformed frames or invalid filters close the websocket with policy violation.
+- After sending its initial subscriptions, a client sends `{"action":"subscription_barrier"}`. Core processes websocket frames in order and replies with `{"type":"subscriptions_ready","version":N}` only after those subscriptions are active. The version is the current database watermark at acknowledgement time.
+- Ordinary subscribe/unsubscribe commands change filters silently; malformed frames or invalid filters close the websocket with policy violation.
 - A `tasks_for_entity` subscriber receives task events when the task matched the entity before or after the change. Reassignment therefore notifies both the losing and gaining entity subscriptions.
 
 ## What clients must do (consumption contract)
@@ -58,9 +59,7 @@ The feed only delivers correctness to cooperating clients. Any consumer — the 
 - On initialization, consume every `GET /queries/full` continuation page while retaining the response's repeated `version` as the pre-hydration baseline. Do not advance the global cursor from hydrated resources' individual versions; drain `changed-since` from the baseline before declaring synchronization current.
 - Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Delete events count as versioned state, so a stale resource payload can never resurrect a newer delete.
 - On a version gap in the stream: call `GET /queries/changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
-- On reconnect: drain `changed-since` from the last known version. Apply and persist each page before requesting the next; remain degraded until the final page succeeds. If Core returns `CURSOR_EXPIRED`, perform full hydration and resume from its version watermark.
-
-The current subscription protocol has no server acknowledgment. A client that disables safety polling can therefore miss an event in the narrow connect/subscribe/recover window. This is tracked in [`../problems/2026-08-05-feed-subscription-readiness.md`](../problems/2026-08-05-feed-subscription-readiness.md); until it is resolved, reconnect recovery is eventually consistent only when safety polling remains enabled.
+- On reconnect: retain the pre-connect cursor, install the normal event listener, send the initial subscriptions and barrier, and wait for `subscriptions_ready`. Buffer live events until `changed-since` has drained from the retained cursor, then apply the buffer in version order while discarding versions already covered by recovery. Bound both the transport's pending-consumer queue and the recovery handoff buffer; each permits at most 100 events or 8 MiB in aggregate and reconnects through durable recovery if its backlog exceeds either budget. As with Core recovery pages, an otherwise-empty queue accepts one event larger than the byte budget so the cursor can advance. Remain degraded until both recovery and the buffer are complete. If Core returns `CURSOR_EXPIRED`, perform full hydration and resume from its version watermark.
 
 These rules are the language-neutral half of the contract that makes a non-TypeScript client a port rather than a redesign; the shapes are authored in the protocol, and this document is the normative home of the behavioral rules.
 

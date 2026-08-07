@@ -56,6 +56,8 @@ var goStructContracts = []goStructContract{
 	{goType: "FeedAuthMessage"},
 	{goType: "FeedSubscriptionMessage", definitions: []string{"FeedSubscribeMessage", "FeedUnsubscribeMessage"}},
 	{goType: "FeedHandshakeMessage"},
+	{goType: "FeedSubscriptionBarrierMessage"},
+	{goType: "FeedSubscriptionsReadyMessage"},
 }
 
 type goEnumContract struct {

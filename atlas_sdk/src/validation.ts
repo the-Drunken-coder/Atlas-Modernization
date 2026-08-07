@@ -4,7 +4,9 @@ import {
   type EntityResource,
   type FeedEvent,
   type FeedHandshakeMessage,
+  type FeedSubscriptionsReadyMessage,
   isFeedHandshakeMessage,
+  isFeedSubscriptionsReadyMessage,
   isCommandCatalog as isGeneratedCommandCatalog,
   isEntityResource as isGeneratedEntityResource,
   isFeedEvent as isGeneratedFeedEvent,
@@ -117,6 +119,10 @@ export function entityCheckInResponseValidator(
 
 export function isInboundFeedHandshake(value: unknown): value is FeedHandshakeMessage {
   return isFeedHandshakeMessage(value);
+}
+
+export function isInboundFeedSubscriptionsReady(value: unknown): value is FeedSubscriptionsReadyMessage {
+  return isFeedSubscriptionsReadyMessage(value);
 }
 
 export function isInboundFeedEvent(value: unknown): value is FeedEvent {

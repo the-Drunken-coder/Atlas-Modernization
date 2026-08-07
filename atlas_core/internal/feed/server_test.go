@@ -41,6 +41,69 @@ func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
 	}
 }
 
+func TestWebsocketFeedAcknowledgesInstalledInitialSubscriptions(t *testing.T) {
+	hub := NewHub(Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		CurrentVersion: func(context.Context) (int64, error) {
+			return 17, nil
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe all: %v", err)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscription_barrier"}`)); err != nil {
+		t.Fatalf("send subscription barrier: %v", err)
+	}
+
+	var ready protocol.FeedSubscriptionsReadyMessage
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	messageType, data, err := conn.Read(readCtx)
+	if err != nil {
+		t.Fatalf("read subscription acknowledgement: %v", err)
+	}
+	if messageType != websocket.MessageText {
+		t.Fatalf("subscription acknowledgement message type = %v", messageType)
+	}
+	if err := json.Unmarshal(data, &ready); err != nil {
+		t.Fatalf("decode subscription acknowledgement: %v", err)
+	}
+	if ready.Type != "subscriptions_ready" || ready.Version != 17 {
+		t.Fatalf("subscription acknowledgement = %+v", ready)
+	}
+	if !hub.HasSubscription(Subscription{Filter: FilterAll}) {
+		t.Fatal("subscription acknowledgement arrived before the subscription was installed")
+	}
+}
+
+func TestWebsocketFeedClosesWithInternalErrorWhenSubscriptionWatermarkFails(t *testing.T) {
+	hub := NewHub(Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		CurrentVersion: func(context.Context) (int64, error) {
+			return 0, errors.New("database unavailable")
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscription_barrier"}`)); err != nil {
+		t.Fatalf("send subscription barrier: %v", err)
+	}
+
+	expectFeedClosedWithStatus(t, conn, websocket.StatusInternalError)
+}
+
 func TestWebsocketFeedUnsubscribeStopsDelivery(t *testing.T) {
 	hub := NewHub(Options{})
 	defer hub.Close()
