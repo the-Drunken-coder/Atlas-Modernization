@@ -761,7 +761,7 @@ func TestComponentValidationUnknownKeysAreSorted(t *testing.T) {
 		"a_unknown":   true,
 		"custom_free": true,
 	})
-	wantEntityErrors := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	wantEntityErrors := []string{`Unknown component "a_unknown"`, `Unknown component "z_unknown"`}
 	if !reflect.DeepEqual(entityErrors, wantEntityErrors) {
 		t.Fatalf("ValidateEntityComponents unknown errors = %v, want %v", entityErrors, wantEntityErrors)
 	}
@@ -771,7 +771,7 @@ func TestComponentValidationUnknownKeysAreSorted(t *testing.T) {
 		"a_unknown":   true,
 		"custom_free": true,
 	})
-	wantTaskErrors := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	wantTaskErrors := []string{`Unknown component "a_unknown"`, `Unknown component "z_unknown"`}
 	if !reflect.DeepEqual(taskErrors, wantTaskErrors) {
 		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", taskErrors, wantTaskErrors)
 	}
@@ -1037,7 +1037,7 @@ func TestTaskValidation(t *testing.T) {
 		contains   []string
 	}{
 		{name: "legacy command string rejected", components: map[string]any{"command": "legacy"}, contains: []string{"command"}},
-		{name: "unknown key", components: map[string]any{"unknown": true}, contains: []string{"Unknown component 'unknown'"}},
+		{name: "unknown key", components: map[string]any{"unknown": true}, contains: []string{`Unknown component "unknown"`}},
 		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: []string{"command.type"}},
 		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: []string{"command.type"}},
 		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: []string{"parameters.latitude"}},

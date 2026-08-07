@@ -147,7 +147,7 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 		"a_unknown": true,
 		"command":   map[string]any{"type": "move_to_location"},
 	})
-	want := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	want := []string{`Unknown component "a_unknown"`, `Unknown component "z_unknown"`}
 	if !reflect.DeepEqual(errors, want) {
 		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", errors, want)
 	}
@@ -593,7 +593,7 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errors := tt.validate(json.RawMessage(tt.payload))
-			assertAnyContains(t, errors, "Unknown component 'typo'")
+			assertAnyContains(t, errors, `Unknown component "typo"`)
 		})
 	}
 }

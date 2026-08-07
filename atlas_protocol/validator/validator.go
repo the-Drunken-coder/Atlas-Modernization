@@ -361,7 +361,7 @@ func componentUnknowns(value any, known map[string]struct{}) []string {
 		if _, ok := known[key]; ok || strings.HasPrefix(key, "custom_") {
 			continue
 		}
-		errors = append(errors, fmt.Sprintf("Unknown component '%s'", key))
+		errors = append(errors, fmt.Sprintf("Unknown component %q", key))
 	}
 	sort.Strings(errors)
 	return errors
