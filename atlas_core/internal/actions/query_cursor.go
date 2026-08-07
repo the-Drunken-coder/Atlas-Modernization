@@ -7,26 +7,28 @@ import (
 	"time"
 )
 
-// rowCursor is an opaque pagination token: last row's sort key (time + id), optional
+// rowCursor is an opaque pagination token: last row's sort key (time + id),
 // snapshot time upper bound, and optional full-dataset change-version watermark.
 type rowCursor struct {
 	TS string `json:"ts"` // RFC3339Nano UTC
 	ID string `json:"id"`
-	UB string `json:"ub,omitempty"` // upper bound snapshot time (RFC3339Nano UTC)
+	UB string `json:"ub"`           // upper bound snapshot time (RFC3339Nano UTC)
 	UV int64  `json:"uv,omitempty"` // full-dataset change-version watermark
 }
 
 type versionCursor struct {
 	V  int64  `json:"v"`
-	ID string `json:"id"`
 	UV int64  `json:"uv"` // upper bound snapshot version
 	SV *int64 `json:"sv"` // original since_version; pointer distinguishes missing from valid zero
 }
 
 // encodeRowCursor returns a URL-safe opaque string for (t, id) using descending sort
-// (created_at/updated_at/deleted_at, resource id). When upperBound is non-zero it is
-// embedded so later pages cap rows to the same snapshot.
+// (created_at/updated_at/deleted_at, resource id). The upper bound caps later pages
+// to the same snapshot.
 func encodeRowCursor(t time.Time, id string, upperBound time.Time) (string, error) {
+	if upperBound.IsZero() {
+		return "", fmt.Errorf("marshal row cursor: snapshot time must be present")
+	}
 	return encodeRowCursorPayload(t, id, upperBound, 0)
 }
 
@@ -47,10 +49,8 @@ func encodeRowCursorPayload(t time.Time, id string, upperBound time.Time, upperV
 	p := rowCursor{
 		TS: t.UTC().Format(time.RFC3339Nano),
 		ID: id,
+		UB: upperBound.UTC().Format(time.RFC3339Nano),
 		UV: upperVersion,
-	}
-	if !upperBound.IsZero() {
-		p.UB = upperBound.UTC().Format(time.RFC3339Nano)
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -74,7 +74,7 @@ func parseRFC3339WithNanoOrFallback(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// decodeRowCursor parses encodeRowCursor output. upperBound is zero when absent (legacy cursors).
+// decodeRowCursor parses encodeRowCursor output.
 func decodeRowCursor(s string) (time.Time, string, time.Time, error) {
 	p, timestamp, upperBound, err := decodeRowCursorPayload(s)
 	if err != nil {
@@ -87,9 +87,6 @@ func decodeFullDatasetCursor(s string) (time.Time, string, time.Time, int64, err
 	p, timestamp, upperBound, err := decodeRowCursorPayload(s)
 	if err != nil {
 		return time.Time{}, "", time.Time{}, 0, err
-	}
-	if upperBound.IsZero() {
-		return time.Time{}, "", time.Time{}, 0, fmt.Errorf("cursor missing snapshot time")
 	}
 	if p.UV <= 0 {
 		return time.Time{}, "", time.Time{}, 0, fmt.Errorf("cursor missing snapshot version")
@@ -116,12 +113,12 @@ func decodeRowCursorPayload(s string) (rowCursor, time.Time, time.Time, error) {
 	if err != nil {
 		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("parse cursor time: %w", err)
 	}
-	var upperBound time.Time
-	if p.UB != "" {
-		upperBound, err = parseRFC3339WithNanoOrFallback(p.UB)
-		if err != nil {
-			return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("parse cursor upper bound: %w", err)
-		}
+	if p.UB == "" {
+		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("cursor missing snapshot time")
+	}
+	upperBound, err := parseRFC3339WithNanoOrFallback(p.UB)
+	if err != nil {
+		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("parse cursor upper bound: %w", err)
 	}
 	if p.UV < 0 {
 		return rowCursor{}, time.Time{}, time.Time{}, fmt.Errorf("cursor snapshot version must be non-negative")
@@ -129,12 +126,9 @@ func decodeRowCursorPayload(s string) (rowCursor, time.Time, time.Time, error) {
 	return p, tt, upperBound, nil
 }
 
-func encodeVersionCursor(version int64, id string, upperBound int64, sinceVersion int64) (string, error) {
+func encodeVersionCursor(version, upperBound, sinceVersion int64) (string, error) {
 	if version <= 0 {
 		return "", fmt.Errorf("marshal version cursor: version must be positive")
-	}
-	if id == "" {
-		return "", fmt.Errorf("marshal version cursor: empty id")
 	}
 	if upperBound <= 0 {
 		return "", fmt.Errorf("marshal version cursor: upper bound version must be positive")
@@ -142,10 +136,12 @@ func encodeVersionCursor(version int64, id string, upperBound int64, sinceVersio
 	if sinceVersion < 0 {
 		return "", fmt.Errorf("marshal version cursor: since_version must be non-negative")
 	}
+	if version <= sinceVersion || version > upperBound {
+		return "", fmt.Errorf("marshal version cursor: version must be after since_version and at or before the upper bound")
+	}
 	cursorSinceVersion := sinceVersion
 	p := versionCursor{
 		V:  version,
-		ID: id,
 		UV: upperBound,
 		SV: &cursorSinceVersion,
 	}
@@ -156,32 +152,32 @@ func encodeVersionCursor(version int64, id string, upperBound int64, sinceVersio
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func decodeVersionCursor(s string) (int64, string, int64, int64, error) {
+func decodeVersionCursor(s string) (int64, int64, int64, error) {
 	if s == "" {
-		return 0, "", 0, 0, fmt.Errorf("empty cursor")
+		return 0, 0, 0, fmt.Errorf("empty cursor")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return 0, "", 0, 0, fmt.Errorf("decode cursor: %w", err)
+		return 0, 0, 0, fmt.Errorf("decode cursor: %w", err)
 	}
 	var p versionCursor
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return 0, "", 0, 0, fmt.Errorf("parse cursor json: %w", err)
-	}
-	if p.ID == "" {
-		return 0, "", 0, 0, fmt.Errorf("cursor missing id")
+		return 0, 0, 0, fmt.Errorf("parse cursor json: %w", err)
 	}
 	if p.V <= 0 {
-		return 0, "", 0, 0, fmt.Errorf("cursor version must be positive")
+		return 0, 0, 0, fmt.Errorf("cursor version must be positive")
 	}
 	if p.UV <= 0 {
-		return 0, "", 0, 0, fmt.Errorf("cursor upper bound version must be positive")
+		return 0, 0, 0, fmt.Errorf("cursor upper bound version must be positive")
 	}
 	if p.SV == nil {
-		return 0, "", 0, 0, fmt.Errorf("cursor missing since_version")
+		return 0, 0, 0, fmt.Errorf("cursor missing since_version")
 	}
 	if *p.SV < 0 {
-		return 0, "", 0, 0, fmt.Errorf("cursor since_version must be non-negative")
+		return 0, 0, 0, fmt.Errorf("cursor since_version must be non-negative")
 	}
-	return p.V, p.ID, p.UV, *p.SV, nil
+	if p.V <= *p.SV || p.V > p.UV {
+		return 0, 0, 0, fmt.Errorf("cursor version must be after since_version and at or before the upper bound")
+	}
+	return p.V, p.UV, *p.SV, nil
 }

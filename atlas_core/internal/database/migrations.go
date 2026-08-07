@@ -18,6 +18,12 @@ const (
 	uploadIntentsMigrationChecksum  = "397e1731dbc7b9f0a5258d8084e7086ad1d674a164db8118ed58cc928189345c"
 	pathTombstonesMigrationName     = "index_storage_path_tombstones"
 	pathTombstonesMigrationChecksum = "fc9d12136384e8f4bdcd15d96c6ec8a1b802092a66a8b6b78f33c5548241d19f"
+	changeStreamMigrationName       = "transactional_change_stream"
+	changeStreamMigrationChecksum   = "362d2f71c1d51c7d172e0818b68a7eec725104aeec91002558ebac7d74a978eb"
+	recoveryLogMigrationName        = "bounded_recovery_log"
+	recoveryLogMigrationChecksum    = "7ae3a729125b872f1dc3a4265196dde2473ccc61ca3b5b820120d81278f917d8"
+	recoveryFloorMigrationName      = "recovery_log_floor_and_retention_index"
+	recoveryFloorMigrationChecksum  = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
 	fingerprintVersionV1            = 1
 )
 
@@ -82,6 +88,78 @@ func coreSchemaMigrations() []schemaMigration {
 			fingerprintVersion: fingerprintVersionV1,
 			statements: []string{
 				`CREATE INDEX idx_storage_deletion_outbox_path ON storage_deletion_outbox(path)`,
+			},
+		},
+		{
+			version:            4,
+			name:               changeStreamMigrationName,
+			checksum:           changeStreamMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`CREATE TABLE atlas_change_clock (
+					singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+					version BIGINT NOT NULL CHECK (version >= 0)
+				)`,
+				`INSERT INTO atlas_change_clock (singleton, version)
+				 SELECT TRUE, GREATEST(
+					COALESCE((SELECT MAX(version) FROM entities), 0),
+					COALESCE((SELECT MAX(version) FROM tasks), 0),
+					COALESCE((SELECT MAX(version) FROM objects), 0),
+					COALESCE((SELECT MAX(version) FROM deletions), 0),
+					COALESCE((SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM atlas_change_version_seq), 0)
+				 )`,
+				`CREATE TABLE atlas_change_events (
+					version BIGINT PRIMARY KEY CHECK (version > 0),
+					event JSONB NOT NULL,
+					before_task_entity_id VARCHAR(50),
+					after_task_entity_id VARCHAR(50),
+					created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+				)`,
+				`CREATE INDEX idx_atlas_change_events_object_deletes
+				 ON atlas_change_events ((event->>'id'), version DESC)
+				 WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete'`,
+				`ALTER TABLE entities ALTER COLUMN version DROP DEFAULT`,
+				`ALTER TABLE tasks ALTER COLUMN version DROP DEFAULT`,
+				`ALTER TABLE objects ALTER COLUMN version DROP DEFAULT`,
+				`DROP TABLE deletions`,
+				`DROP SEQUENCE atlas_change_version_seq`,
+			},
+		},
+		{
+			version:            5,
+			name:               recoveryLogMigrationName,
+			checksum:           recoveryLogMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`ALTER TABLE atlas_change_clock
+				 ADD COLUMN min_retained_version BIGINT NOT NULL DEFAULT 0
+				 CHECK (min_retained_version >= 0 AND min_retained_version <= version)`,
+				`CREATE TABLE object_deletion_fences (
+					object_id VARCHAR(50) PRIMARY KEY,
+					version BIGINT NOT NULL CHECK (version > 0),
+					deleted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+				)`,
+				`INSERT INTO object_deletion_fences (object_id, version, deleted_at)
+				 SELECT event->>'id', MAX(version), MAX(created_at)
+				 FROM atlas_change_events
+				 WHERE event->>'resource_type' = 'object' AND event->>'event' = 'delete'
+				 GROUP BY event->>'id'`,
+				`DROP INDEX idx_atlas_change_events_object_deletes`,
+			},
+		},
+		{
+			version:            6,
+			name:               recoveryFloorMigrationName,
+			checksum:           recoveryFloorMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV1,
+			statements: []string{
+				`UPDATE atlas_change_clock AS clock
+				 SET min_retained_version = COALESCE(
+					(SELECT MIN(event.version) - 1 FROM atlas_change_events AS event),
+					clock.version
+				 )
+				 WHERE clock.singleton`,
+				`CREATE INDEX idx_atlas_change_events_retention ON atlas_change_events(created_at, version)`,
 			},
 		},
 	}
@@ -232,8 +310,7 @@ func relationExists(ctx context.Context, tx pgx.Tx, schema, name string) (bool, 
 }
 
 func legacyResourceSchemaPresent(ctx context.Context, tx pgx.Tx, schema string) (bool, error) {
-	resourceNames := append([]string(nil), coreSchemaTables[:len(coreSchemaTables)-1]...)
-	resourceNames = append(resourceNames, "atlas_change_version_seq")
+	resourceNames := []string{"entities", "tasks", "objects", "deletions", "storage_deletion_outbox", "atlas_change_version_seq"}
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (

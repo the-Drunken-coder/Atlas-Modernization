@@ -87,24 +87,9 @@ Content-Type: application/json
 }
 ```
 
-### Update Telemetry
-
-```bash
-PATCH /entities/{entity_id}/telemetry
-Content-Type: application/json
-
-{
-  "latitude": 40.7128,
-  "longitude": -74.0060,
-  "altitude_m": 120,
-  "speed_m_s": 8.2,
-  "heading_deg": 165
-}
-```
-
 ### Entity Check-in
 
-The check-in endpoint is the preferred way for agents/assets to regularly report in. It accepts telemetry, optional component updates, and an optional operational status string simultaneously, updates the heartbeat, and returns pending and acknowledged tasks for the asset (configurable via `status_filter`).
+The check-in endpoint is how agents/assets regularly report in. It accepts telemetry, optional component updates, and an optional operational status string simultaneously, updates the heartbeat, and returns pending and acknowledged tasks for the asset (configurable via `status_filter`).
 
 ```bash
 POST /entities/{entity_id}/checkin
@@ -170,8 +155,7 @@ The `telemetry` component in the JSON blob tracks position and motion:
 ## Operational Guidance
 
 - Create entities via `POST /entities` with required `entity_type` and optional `subtype`
-- Update telemetry via `PATCH /entities/{entity_id}/telemetry` to refresh position data
-- Use `POST /entities/{entity_id}/checkin` for regular asset reporting to update telemetry and status and fetch pending tasks in one request
+- Use `POST /entities/{entity_id}/checkin` for asset reporting to update telemetry and status and fetch pending tasks in one request
 - The `updated_at` timestamp is automatically updated on any entity modification
 - Use the `communications.link_state` component to track connection status
 

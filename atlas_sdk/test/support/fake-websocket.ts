@@ -3,8 +3,10 @@ import type { WebSocketEvent, WebSocketEventType, WebSocketListener } from "../.
 
 export type FakeWebSocketOwner = {
   revision: string;
+  version: number;
   rejectFeedAuth: boolean;
   expectedFeedApiKey?: string;
+  onFeedSubscriptionBarrier?: (activateAndAcknowledge: () => void) => void;
   feedAuthFrames: Array<{ apiKey?: string }>;
   feedConnections: number;
   sockets: Set<FakeWebSocket>;
@@ -15,6 +17,10 @@ export class FakeWebSocket {
   sentMessages: unknown[] = [];
   private listeners = new Map<WebSocketEventType, Set<WebSocketListener>>();
   private subscriptions: AtlasSubscription[] = [];
+  private pendingSubscriptions: AtlasSubscription[] = [];
+  private postBarrierChanges: Array<{ action: "subscribe" | "unsubscribe"; subscription: AtlasSubscription }> = [];
+  private barrierReceived = false;
+  private subscriptionsReady = false;
 
   constructor(
     readonly url: string,
@@ -47,11 +53,49 @@ export class FakeWebSocket {
       this.close();
       return;
     }
-    if (parsed.action === "subscribe") this.subscriptions.push(parsed);
-    if (parsed.action === "unsubscribe") {
-      const key = subscriptionKey(parsed);
-      this.subscriptions = this.subscriptions.filter((subscription) => subscriptionKey(subscription) !== key);
+    if (parsed.action === "subscribe") {
+      if (this.barrierReceived && !this.subscriptionsReady) {
+        this.postBarrierChanges.push({ action: "subscribe", subscription: parsed });
+      } else if (this.core.onFeedSubscriptionBarrier && !this.subscriptionsReady) {
+        this.pendingSubscriptions.push(parsed);
+      } else {
+        this.applySubscriptionChange("subscribe", parsed);
+      }
     }
+    if (parsed.action === "unsubscribe") {
+      if (this.barrierReceived && !this.subscriptionsReady) {
+        this.postBarrierChanges.push({ action: "unsubscribe", subscription: parsed });
+      } else {
+        const key = subscriptionKey(parsed);
+        this.pendingSubscriptions = this.pendingSubscriptions.filter(
+          (subscription) => subscriptionKey(subscription) !== key
+        );
+        this.applySubscriptionChange("unsubscribe", parsed);
+      }
+    }
+    if (parsed.action === "subscription_barrier") {
+      const initialSubscriptions = this.pendingSubscriptions;
+      this.pendingSubscriptions = [];
+      this.barrierReceived = true;
+      for (const subscription of initialSubscriptions) this.applySubscriptionChange("subscribe", subscription);
+      const activateAndAcknowledge = () => {
+        this.subscriptionsReady = true;
+        this.receive({ type: "subscriptions_ready", version: this.core.version });
+        for (const change of this.postBarrierChanges) {
+          this.applySubscriptionChange(change.action, change.subscription);
+        }
+        this.postBarrierChanges = [];
+      };
+      const barrier = this.core.onFeedSubscriptionBarrier;
+      if (barrier) barrier(activateAndAcknowledge);
+      else activateAndAcknowledge();
+    }
+  }
+
+  private applySubscriptionChange(action: "subscribe" | "unsubscribe", subscription: AtlasSubscription): void {
+    const key = subscriptionKey(subscription);
+    this.subscriptions = this.subscriptions.filter((existing) => subscriptionKey(existing) !== key);
+    if (action === "subscribe") this.subscriptions.push(subscription);
   }
 
   close(): void {

@@ -6,6 +6,19 @@ import { type ResourceValue } from "../src/types.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
+  it("rejects polling intervals outside the supported timer range while allowing zero", () => {
+    const core = new FakeCore();
+    for (const pollIntervalMs of [-1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+      expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, pollIntervalMs })).toThrow(
+        "Atlas polling interval"
+      );
+    }
+    expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, pollIntervalMs: 0 })).not.toThrow();
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, pollIntervalMs: 2_147_483_647 })
+    ).not.toThrow();
+  });
+
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
     vi.useFakeTimers();
     const core = new FakeCore();
@@ -68,18 +81,8 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       expect(pollRequests).toBe(1);
       releaseRecovery(
         Response.json({
-          entities: [],
-          tasks: [],
-          objects: [],
-          deleted_entities: [],
-          deleted_tasks: [],
-          deleted_objects: [],
-          has_more_entities: false,
-          has_more_tasks: false,
-          has_more_objects: false,
-          has_more_deleted_entities: false,
-          has_more_deleted_tasks: false,
-          has_more_deleted_objects: false,
+          events: [],
+          has_more: false,
           version: core.version
         })
       );
@@ -223,13 +226,13 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     }
   });
 
-  it("ignores an automatic reconnect recovery superseded within the current feed attempt", async () => {
+  it("buffers live events until automatic reconnect recovery completes", async () => {
     const core = new FakeCore();
     let holdAutomaticRecovery = false;
     let automaticRecoveryStarted = false;
-    let rejectAutomaticRecovery!: (reason: unknown) => void;
-    const automaticRecovery = new Promise<Response>((_resolve, reject) => {
-      rejectAutomaticRecovery = reject;
+    let resolveAutomaticRecovery!: (response: Response) => void;
+    const automaticRecovery = new Promise<Response>((resolve) => {
+      resolveAutomaticRecovery = resolve;
     });
     const fetchImpl: typeof fetch = (url, init) => {
       if (holdAutomaticRecovery && new URL(String(url)).pathname === "/queries/changed-since") {
@@ -263,38 +266,33 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
       });
 
       const update = core.upsertEntity(entity("asset-during-automatic-recovery"));
-      core.emit(
-        {
-          event: "update",
-          resource_type: "entity",
-          id: update.entity_id,
-          version: update.metadata.version,
-          resource: update
-        },
-        { record: false }
+      const event = {
+        event: "update" as const,
+        resource_type: "entity" as const,
+        id: update.entity_id,
+        version: update.metadata.version,
+        resource: update
+      };
+      core.emit(event, { record: false });
+      expect(client.sync.snapshot().entities).not.toHaveProperty(update.entity_id);
+
+      resolveAutomaticRecovery(
+        Response.json({
+          events: [],
+          has_more: false,
+          version: update.metadata.version - 1
+        })
       );
       await vi.waitFor(() => {
         expect(client.sync.snapshot().entities).toHaveProperty(update.entity_id);
         expect(client.sync.status().lastVersion).toBe(update.metadata.version);
       });
-
-      await client.changedSince();
       expect(client.sync.status()).toMatchObject({
         running: true,
         healthy: true,
-        degraded: false,
-        error: "Atlas Core feed connection closed"
+        degraded: false
       });
-
-      rejectAutomaticRecovery(new Error("superseded automatic recovery failed"));
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(client.sync.status()).toMatchObject({
-        running: true,
-        healthy: true,
-        degraded: false,
-        error: "Atlas Core feed connection closed"
-      });
+      expect(client.sync.status()).not.toHaveProperty("error");
       await vi.advanceTimersByTimeAsync(1_000);
       expect(core.feedConnections).toBe(2);
     } finally {
@@ -417,7 +415,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     client.watch({ filter: "id", resource_type: "entity", id: "asset-delete-uncached" }, watch);
 
     await client.entities.delete("asset-delete-uncached");
-    const deleteEvent = core.deletions.at(-1);
+    const deleteEvent = core.deleteEvents.at(-1);
     if (!deleteEvent) throw new Error("fake core did not record delete event");
     core.emit(deleteEvent, { record: false });
 
@@ -431,7 +429,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     expect(watch.mock.calls[0][1]).not.toHaveProperty("version");
   });
 
-  it("keeps local delete tombstones ahead of stale feed updates", async () => {
+  it("keeps local delete markers ahead of stale feed updates", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-stale"));
     const client = new AtlasClient({
@@ -856,12 +854,12 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
     expect(beforeWatch).toHaveBeenCalledWith(
       beforeEntity,
-      expect.objectContaining({ event: "recovered", id: "asset-watch-before" })
+      expect.objectContaining({ event: "update", id: "asset-watch-before" })
     );
     expect(removedWatch).not.toHaveBeenCalled();
     expect(afterWatch).toHaveBeenCalledWith(
       afterEntity,
-      expect.objectContaining({ event: "recovered", id: "asset-watch-after" })
+      expect.objectContaining({ event: "update", id: "asset-watch-after" })
     );
   });
 

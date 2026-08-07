@@ -16,19 +16,12 @@ import (
 
 // EntityActions handles entity business logic.
 type EntityActions struct {
-	pool       *pgxpool.Pool
-	changeSink ChangeSink
+	pool *pgxpool.Pool
 }
 
 // NewEntityActions creates a new EntityActions instance.
 func NewEntityActions(pool *pgxpool.Pool) *EntityActions {
-	return NewEntityActionsWithChangeSink(pool, nil)
-}
-
-// NewEntityActionsWithChangeSink creates a new EntityActions instance that
-// emits committed changes to sink.
-func NewEntityActionsWithChangeSink(pool *pgxpool.Pool, sink ChangeSink) *EntityActions {
-	return &EntityActions{pool: pool, changeSink: sink}
+	return &EntityActions{pool: pool}
 }
 
 // CreateEntityParams holds parameters for creating an entity.
@@ -104,18 +97,22 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		alias = &trimmed
 	}
 
-	tx, err := beginChangeTx(ctx, a.pool, "entity create", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "entity create")
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var entity models.Entity
 	err = tx.QueryRow(ctx, `
-		INSERT INTO entities (entity_id, type, subtype, alias, json)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO entities (entity_id, type, subtype, alias, json, version)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
-	`, entityID, entityType, subtype, alias, jsonBytes).Scan(
+	`, entityID, entityType, subtype, alias, jsonBytes, version).Scan(
 		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
 		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 	)
@@ -129,17 +126,18 @@ func (a *EntityActions) Create(ctx context.Context, params CreateEntityParams) (
 		}
 		return nil, fmt.Errorf("failed to create entity: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit entity create transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventCreate,
 		ResourceType: ChangeResourceEntity,
 		ID:           entity.EntityID,
 		Version:      entity.Version,
 		AfterEntity:  cloneEntityModel(&entity),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit entity create transaction: %w", err)
+	}
 
 	return &entity, nil
 }
@@ -274,7 +272,7 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	}
 
 	// Begin transaction for atomic read-modify-write.
-	tx, err := beginChangeTx(ctx, a.pool, "entity update", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "entity update")
 	if err != nil {
 		return nil, err
 	}
@@ -356,15 +354,19 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, err
 	}
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var out models.Entity
 	err = tx.QueryRow(ctx, `
 		UPDATE entities
 		SET type = $1, subtype = $2, alias = $3, json = $4,
 			updated_at = clock_timestamp(),
-			version = nextval('atlas_change_version_seq')
-		WHERE entity_id = $5
+			version = $5
+		WHERE entity_id = $6
 		RETURNING entity_id, type, subtype, alias, json, created_at, updated_at, version
-	`, newType, newSubtype, newAlias, jsonBytes, entityID).Scan(
+	`, newType, newSubtype, newAlias, jsonBytes, version, entityID).Scan(
 		&out.EntityID, &out.Type, &out.Subtype, &out.Alias,
 		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
@@ -375,18 +377,19 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		return nil, fmt.Errorf("failed to update entity: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventUpdate,
 		ResourceType: ChangeResourceEntity,
 		ID:           out.EntityID,
 		Version:      out.Version,
 		BeforeEntity: before,
 		AfterEntity:  cloneEntityModel(&out),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
 	return &out, nil
 }
@@ -398,7 +401,7 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 	}
 	entityID = SanitizeID(entityID)
 
-	tx, err := beginChangeTx(ctx, a.pool, "entity delete", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "entity delete")
 	if err != nil {
 		return err
 	}
@@ -427,13 +430,19 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		UPDATE tasks
-		SET updated_at = clock_timestamp(),
-			version = nextval('atlas_change_version_seq')
-		WHERE entity_id = $1
-	`, entityID); err != nil {
-		return fmt.Errorf("failed to mark entity tasks changed before deletion: %w", err)
+	if len(beforeTasks) > 0 {
+		lastVersion, err := reserveChangeVersions(ctx, tx, len(beforeTasks))
+		if err != nil {
+			return err
+		}
+		firstVersion := lastVersion - int64(len(beforeTasks)) + 1
+		for index, task := range beforeTasks {
+			if _, err := tx.Exec(ctx, `
+			UPDATE tasks SET updated_at = clock_timestamp(), version = $1 WHERE task_id = $2
+		`, firstVersion+int64(index), task.TaskID); err != nil {
+				return fmt.Errorf("failed to mark entity task changed before deletion: %w", err)
+			}
+		}
 	}
 
 	result, err := tx.Exec(ctx, "DELETE FROM entities WHERE entity_id = $1", entityID)
@@ -445,44 +454,43 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return NewEntityNotFoundError(entityID)
 	}
 
-	var tombstoneVersion int64
-	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, '{}'::jsonb) RETURNING version",
-		ChangeResourceEntity, entityID,
-	).Scan(&tombstoneVersion); err != nil {
-		return fmt.Errorf("failed to record entity deletion tombstone: %w", err)
-	}
-
 	afterTasks, err := queryTasksByIDs(ctx, tx, taskIDs(beforeTasks))
 	if err != nil {
 		return err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit delete transaction: %w", err)
-	}
-
 	for _, beforeTask := range beforeTasks {
 		afterTask := afterTasks[beforeTask.TaskID]
 		if afterTask == nil {
-			continue
+			return fmt.Errorf("task %s disappeared during entity deletion after its change version was allocated", beforeTask.TaskID)
 		}
-		publishChange(a.changeSink, ResourceChange{
+		if err := RecordResourceChange(ctx, tx, ResourceChange{
 			Event:        ChangeEventUpdate,
 			ResourceType: ChangeResourceTask,
 			ID:           afterTask.TaskID,
 			Version:      afterTask.Version,
 			BeforeTask:   cloneTaskModel(beforeTask),
 			AfterTask:    cloneTaskModel(afterTask),
-		})
+		}); err != nil {
+			return err
+		}
 	}
-	publishChange(a.changeSink, ResourceChange{
+	deleteVersion, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventDelete,
 		ResourceType: ChangeResourceEntity,
 		ID:           entity.EntityID,
-		Version:      tombstoneVersion,
+		Version:      deleteVersion,
 		BeforeEntity: cloneEntityModel(&entity),
-	})
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit delete transaction: %w", err)
+	}
 
 	return nil
 }

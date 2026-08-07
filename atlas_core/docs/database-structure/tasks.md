@@ -85,8 +85,7 @@ Common statuses used by API helpers are:
 - `failed`
 - `cancelled`
 
-`Create`, `Update`, and `/tasks/{task_id}/status` trim and lowercase status values,
-then reject anything outside the list above.
+Task create and update trim and lowercase status values, then reject anything outside the list above.
 
 Allowed transitions:
 
@@ -105,10 +104,6 @@ Sending the current status again is treated as a no-op status transition.
 | `/tasks/{task_id}` | `GET` | Fetch task |
 | `/tasks/{task_id}` | `PATCH` | Merge task update |
 | `/tasks/{task_id}` | `DELETE` | Delete task |
-| `/tasks/{task_id}/acknowledge` | `POST` | Set status to `acknowledged` |
-| `/tasks/{task_id}/complete` | `POST` | Set status to `completed`; optional top-level `result` request field is stored in task `extra.result` |
-| `/tasks/{task_id}/fail` | `POST` | Set status to `failed`; optional top-level `error` request field is stored in task `extra.error` |
-| `/tasks/{task_id}/status` | `POST` | Update status; optional `progress` (percent, 0–100; clamped) → `components.progress.percent`; optional `message` → `components.status_message` |
 | `/entities/{entity_id}/tasks` | `GET` | List tasks for entity (paginated) |
 
 `PATCH /tasks/{task_id}` accepts `status`, `entity_id`, `components`, `extra`,
@@ -123,5 +118,5 @@ removed. Protected task fields such as `components`, `status`, `entity_id`, and
 
 ## Limits
 
-- Task create/update/status/complete/fail handler bodies are capped at `512 KB`.
+- Task create/update handler bodies are capped at `512 KB`.
 - Pagination defaults to `limit=100`; `cursor` continues keyset pages; limit is clamped to max `500`.

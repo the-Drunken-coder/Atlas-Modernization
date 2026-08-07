@@ -80,6 +80,25 @@ type PreconditionFailedError struct {
 	ActionError
 }
 
+// CursorExpiredError is returned when changed-since history no longer covers a
+// client's cursor and the client must perform a full hydration.
+type CursorExpiredError struct {
+	ActionError
+	MinRetainedVersion int64
+}
+
+// NewCursorExpiredError reports the earliest changed-since cursor still
+// covered by the bounded recovery log.
+func NewCursorExpiredError(minRetainedVersion int64) *CursorExpiredError {
+	return &CursorExpiredError{
+		ActionError: ActionError{
+			Message: "Changed-since cursor has expired; perform a full hydration",
+			Code:    protocol.ErrorCodeCursorExpired,
+		},
+		MinRetainedVersion: minRetainedVersion,
+	}
+}
+
 // NewPreconditionFailedError indicates a write was rejected due to stale If-Match.
 func NewPreconditionFailedError(resourceType string) *PreconditionFailedError {
 	resourceType = strings.TrimSpace(resourceType)

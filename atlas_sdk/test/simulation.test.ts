@@ -59,12 +59,12 @@ describe("AtlasClient simulation", () => {
           const event = core.deleteTask("task-sim-2");
           if (event) core.emit(event, { dropForSockets: true, record: false });
         }
-        // Entity delete follows later so the ledger sees a live tombstone after recovery.
+        // Entity delete follows later so the ledger sees a live delete event after recovery.
         if (i === 14) {
           const event = core.deleteEntity("asset-sim-2");
           if (event) core.emit(event, { record: false });
         }
-        // Object delete lands near the tail to cover all resource tombstone types.
+        // Object delete lands near the tail to cover every resource delete-event type.
         if (i === 18) {
           const event = core.deleteObject("object-sim-1");
           if (event) core.emit(event, { record: false });
@@ -94,7 +94,7 @@ async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): P
         extra: { ...(core.objectExtras.get(objectValue.object_id) ?? {}) }
       });
     }
-    for (const deletion of core.deletions) {
+    for (const deletion of core.deleteEvents) {
       if (deletion.resource_type === "entity" && !core.entities.has(deletion.id)) {
         await expect(client.entities.get(deletion.id)).rejects.toMatchObject({
           status: 404,

@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/feed"
@@ -59,6 +61,9 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	server := feed.Server{
 		Hub:    h.feedHub,
 		Config: serverConfig,
+		CurrentVersion: func(ctx context.Context) (int64, error) {
+			return actions.CurrentChangeVersion(ctx, h.db.Pool)
+		},
 	}
 	server.ServeHTTP(w, r)
 }

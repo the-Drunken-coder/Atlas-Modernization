@@ -20,7 +20,7 @@ func objectUploadLockKey(objectID string) string {
 }
 
 func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, operation string) (pgx.Tx, error) {
-	tx, err := beginChangeTx(ctx, a.pool, operation, a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, operation)
 	if err != nil {
 		return nil, err
 	}
@@ -35,11 +35,11 @@ func (a *ObjectActions) beginLockedObjectTx(ctx context.Context, objectID, opera
 }
 
 type objectUploadState struct {
-	path          *string
-	json          map[string]interface{}
-	resource      *models.MediaObject
-	rowExists     bool
-	maxDeletionID int64
+	path               *string
+	json               map[string]interface{}
+	resource           *models.MediaObject
+	rowExists          bool
+	maxDeletionVersion int64
 }
 
 func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string) (*objectUploadState, error) {
@@ -73,18 +73,32 @@ func currentObjectStateForUpload(ctx context.Context, tx pgx.Tx, objectID string
 	}
 
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(MAX(id), 0)
-		FROM deletions
-		WHERE resource_type = 'object' AND resource_id = $1
-	`, objectID).Scan(&state.maxDeletionID); err != nil {
+		SELECT COALESCE((SELECT version FROM object_deletion_fences WHERE object_id = $1), 0)
+	`, objectID).Scan(&state.maxDeletionVersion); err != nil {
 		return nil, fmt.Errorf("failed to read object deletion state: %w", err)
 	}
 
 	return state, nil
 }
 
+func recordObjectDeletionFenceTx(ctx context.Context, tx pgx.Tx, objectID string, version int64) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO object_deletion_fences (object_id, version)
+		VALUES ($1, $2)
+		ON CONFLICT (object_id) DO UPDATE SET
+			version = GREATEST(object_deletion_fences.version, EXCLUDED.version),
+			deleted_at = CASE
+				WHEN EXCLUDED.version > object_deletion_fences.version THEN clock_timestamp()
+				ELSE object_deletion_fences.deleted_at
+			END
+	`, objectID, version); err != nil {
+		return fmt.Errorf("record object deletion fence: %w", err)
+	}
+	return nil
+}
+
 func objectDeletedAfterUploadPreflight(preflight, current *objectUploadState) bool {
-	return current.maxDeletionID > preflight.maxDeletionID
+	return current.maxDeletionVersion > preflight.maxDeletionVersion || (preflight.rowExists && !current.rowExists)
 }
 
 func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBytes int64, usageHints []string) ([]byte, error) {
@@ -107,20 +121,21 @@ func upsertUploadedObjectMetadata(
 	objectID, objectPath, contentType string,
 	objType *string,
 	jsonBytes []byte,
+	version int64,
 ) (*models.MediaObject, error) {
 	var out models.MediaObject
 	err := tx.QueryRow(ctx, `
-		INSERT INTO objects (object_id, path, content_type, type, json)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO objects (object_id, path, content_type, type, json, version)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (object_id) DO UPDATE SET
 			path = EXCLUDED.path,
 			content_type = EXCLUDED.content_type,
 			type = EXCLUDED.type,
 			json = EXCLUDED.json,
 			updated_at = clock_timestamp(),
-			version = nextval('atlas_change_version_seq')
+			version = EXCLUDED.version
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, objectPath, contentType, objType, jsonBytes).Scan(
+	`, objectID, objectPath, contentType, objType, jsonBytes, version).Scan(
 		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
 		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
@@ -268,7 +283,11 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return cleanupMetadataFailure(fmt.Errorf("failed to marshal object metadata JSON: %w", err))
 	}
 
-	out, err := upsertUploadedObjectMetadata(ctx, tx, objectID, objectPath, contentType, typePtr, jsonBytes)
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return cleanupMetadataFailure(err)
+	}
+	out, err := upsertUploadedObjectMetadata(ctx, tx, objectID, objectPath, contentType, typePtr, jsonBytes, version)
 	if err != nil {
 		return cleanupMetadataFailure(err)
 	}
@@ -283,22 +302,23 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		return cleanupMetadataFailure(err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, a.abandonStorageUpload(ctx, bucket, objectPath, objectID, ownerID, fmt.Errorf("failed to commit upload metadata transaction: %w", err))
-	}
-
 	event := ChangeEventCreate
 	if currentState.rowExists {
 		event = ChangeEventUpdate
 	}
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        event,
 		ResourceType: ChangeResourceObject,
 		ID:           out.ObjectID,
 		Version:      out.Version,
 		BeforeObject: cloneObjectModel(currentState.resource),
 		AfterObject:  cloneObjectModel(out),
-	})
+	}); err != nil {
+		return cleanupMetadataFailure(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, a.abandonStorageUpload(ctx, bucket, objectPath, objectID, ownerID, fmt.Errorf("failed to commit upload metadata transaction: %w", err))
+	}
 
 	if oldPath != "" {
 		if err := a.deleteQueuedStoragePathNow(ctx, bucket, oldPath); err != nil {

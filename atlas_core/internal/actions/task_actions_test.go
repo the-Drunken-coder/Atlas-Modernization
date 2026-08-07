@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func TestNormalizeTaskStatus(t *testing.T) {
@@ -92,7 +91,7 @@ func TestNormalizeInitialTaskStatus(t *testing.T) {
 	}
 }
 
-func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
+func TestTaskDeleteRecordsDurableRoutingContext(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -129,12 +128,12 @@ func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
 	if err := taskActions.Delete(ctx, taskWithEntityID); err != nil {
 		t.Fatalf("delete linked task: %v", err)
 	}
-	assertTaskTombstone(ctx, t, pool, taskWithEntityID, map[string]any{"entity_id": entityID})
+	assertTaskDeleteEvent(ctx, t, pool, taskWithEntityID, &entityID)
 
 	if err := taskActions.Delete(ctx, taskWithoutEntityID); err != nil {
 		t.Fatalf("delete unlinked task: %v", err)
 	}
-	assertTaskTombstone(ctx, t, pool, taskWithoutEntityID, map[string]any{})
+	assertTaskDeleteEvent(ctx, t, pool, taskWithoutEntityID, nil)
 
 	err := taskActions.Delete(ctx, fmt.Sprintf("missing-task-%d", suffix))
 	var notFound *NotFoundError
@@ -143,7 +142,7 @@ func TestTaskDeleteRecordsTombstoneContext(t *testing.T) {
 	}
 }
 
-func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
+func TestStatusOnlyTaskUpdateIsIdempotent(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -151,58 +150,51 @@ func TestAcknowledgeTaskIsIdempotent(t *testing.T) {
 	taskID := fmt.Sprintf("task-ack-idempotent-%d", time.Now().UTC().UnixNano())
 	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, "", taskID)
 
-	sink := &channelChangeSink{changes: make(chan ResourceChange, 4)}
-	taskActions := NewTaskActionsWithChangeSink(pool, sink)
+	taskActions := NewTaskActions(pool)
 	created, err := taskActions.Create(ctx, CreateTaskParams{TaskID: taskID})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	receiveTaskChange(t, sink.changes)
 
-	acknowledged, err := taskActions.Acknowledge(ctx, taskID, &created.Version)
+	status := "acknowledged"
+	acknowledged, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: &created.Version})
 	if err != nil {
 		t.Fatalf("acknowledge pending task: %v", err)
 	}
 	if acknowledged.Status != "acknowledged" || acknowledged.Version <= created.Version {
 		t.Fatalf("acknowledged task = %#v, want acknowledged with version after %d", acknowledged, created.Version)
 	}
-	change := receiveTaskChange(t, sink.changes)
-	if change.Event != ChangeEventUpdate || change.ID != taskID || change.Version != acknowledged.Version {
-		t.Fatalf("acknowledgement change = %#v, want task update at version %d", change, acknowledged.Version)
+	change := readChangeEvent(ctx, t, pool, acknowledged.Version)
+	if change.Event != ChangeEventUpdate || change.ResourceType != ChangeResourceTask || change.ID != taskID || change.Version != acknowledged.Version {
+		t.Fatalf("acknowledgement event = %#v, want task update at version %d", change, acknowledged.Version)
 	}
-
-	repeated, err := taskActions.Acknowledge(ctx, taskID, nil)
+	repeated, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status})
 	if err != nil {
 		t.Fatalf("repeat acknowledgement: %v", err)
 	}
 	assertSameTaskVersionAndTimestamp(t, repeated, acknowledged)
-	assertNoTaskChange(t, sink.changes)
 
-	repeated, err = taskActions.Acknowledge(ctx, taskID, &acknowledged.Version)
+	repeated, err = taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: &acknowledged.Version})
 	if err != nil {
 		t.Fatalf("repeat acknowledgement with current version: %v", err)
 	}
 	assertSameTaskVersionAndTimestamp(t, repeated, acknowledged)
-	assertNoTaskChange(t, sink.changes)
 
-	_, err = taskActions.Acknowledge(ctx, taskID, &created.Version)
+	_, err = taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status, ExpectedVersion: &created.Version})
 	var preconditionErr *PreconditionFailedError
 	if !errors.As(err, &preconditionErr) {
 		t.Fatalf("repeat acknowledgement with stale version error = %T %v, want PreconditionFailedError", err, err)
 	}
-	assertNoTaskChange(t, sink.changes)
-
-	status := "acknowledged"
-	updated, err := taskActions.Update(ctx, taskID, UpdateTaskParams{Status: &status})
-	if err != nil {
-		t.Fatalf("generic same-status update: %v", err)
+	var laterTaskEvents int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM atlas_change_events
+		WHERE event->>'resource_type' = 'task' AND event->>'id' = $1 AND version > $2
+	`, taskID, acknowledged.Version).Scan(&laterTaskEvents); err != nil {
+		t.Fatalf("count later task events: %v", err)
 	}
-	if updated.Version <= acknowledged.Version {
-		t.Fatalf("generic same-status update version = %d, want after %d", updated.Version, acknowledged.Version)
-	}
-	change = receiveTaskChange(t, sink.changes)
-	if change.Version != updated.Version {
-		t.Fatalf("generic same-status change version = %d, want %d", change.Version, updated.Version)
+	if laterTaskEvents != 0 {
+		t.Fatalf("idempotent acknowledgements emitted %d later task events", laterTaskEvents)
 	}
 }
 
@@ -213,174 +205,51 @@ func assertSameTaskVersionAndTimestamp(t *testing.T, got, want *models.Task) {
 	}
 }
 
-func assertNoTaskChange(t *testing.T, changes <-chan ResourceChange) {
+func assertTaskDeleteEvent(ctx context.Context, t *testing.T, pool *pgxpool.Pool, taskID string, wantEntityID *string) {
 	t.Helper()
-	select {
-	case change := <-changes:
-		t.Fatalf("unexpected task change: %#v", change)
-	default:
-	}
-}
-
-func receiveTaskChange(t *testing.T, changes <-chan ResourceChange) ResourceChange {
-	t.Helper()
-	select {
-	case change := <-changes:
-		return change
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for task change")
-		return ResourceChange{}
-	}
-}
-
-func assertTaskTombstone(ctx context.Context, t *testing.T, pool *pgxpool.Pool, taskID string, wantContext map[string]any) {
-	t.Helper()
-	var resourceType, resourceID string
-	var contextJSON []byte
-	var tombstoneVersion int64
+	var payload []byte
+	var beforeEntityID *string
 	if err := pool.QueryRow(ctx, `
-		SELECT resource_type, resource_id, context, version
-		FROM deletions
-		WHERE resource_type = 'task' AND resource_id = $1
-	`, taskID).Scan(&resourceType, &resourceID, &contextJSON, &tombstoneVersion); err != nil {
-		t.Fatalf("query task tombstone %q: %v", taskID, err)
+		SELECT event, before_task_entity_id
+		FROM atlas_change_events
+		WHERE event->>'resource_type' = 'task' AND event->>'event' = 'delete' AND event->>'id' = $1
+		ORDER BY version DESC LIMIT 1
+	`, taskID).Scan(&payload, &beforeEntityID); err != nil {
+		t.Fatalf("query task delete event %q: %v", taskID, err)
 	}
-	if resourceType != "task" || resourceID != taskID {
-		t.Fatalf("tombstone identity = %s/%s, want task/%s", resourceType, resourceID, taskID)
+	var event protocol.FeedEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("decode task delete event %q: %v", taskID, err)
 	}
-	var gotContext map[string]any
-	if err := json.Unmarshal(contextJSON, &gotContext); err != nil {
-		t.Fatalf("decode task tombstone context %q: %v", taskID, err)
+	if event.ResourceType != ChangeResourceTask || event.Event != ChangeEventDelete || event.ID != taskID {
+		t.Fatalf("delete event identity = %#v, want task/%s", event, taskID)
 	}
-	if !reflect.DeepEqual(gotContext, wantContext) {
-		t.Fatalf("task tombstone context = %#v, want %#v", gotContext, wantContext)
+	if !reflect.DeepEqual(event.EntityID, wantEntityID) || !reflect.DeepEqual(beforeEntityID, wantEntityID) {
+		t.Fatalf("task delete routing = event:%#v stored:%#v, want %#v", event.EntityID, beforeEntityID, wantEntityID)
 	}
-	if tombstoneVersion <= 0 {
-		t.Fatalf("task tombstone version = %d, want positive", tombstoneVersion)
+	if event.Version <= 0 {
+		t.Fatalf("task delete version = %d, want positive", event.Version)
 	}
 	currentVersion, err := CurrentChangeVersion(ctx, pool)
 	if err != nil {
 		t.Fatalf("CurrentChangeVersion: %v", err)
 	}
-	if currentVersion < tombstoneVersion {
-		t.Fatalf("CurrentChangeVersion = %d, want at least tombstone version %d", currentVersion, tombstoneVersion)
+	if currentVersion < event.Version {
+		t.Fatalf("CurrentChangeVersion = %d, want at least delete version %d", currentVersion, event.Version)
 	}
 }
 
-func TestNormalizeTaskProgressPercent(t *testing.T) {
-	tests := []struct {
-		name string
-		in   float64
-		want float64
-	}{
-		{name: "one percent", in: 1, want: 1},
-		{name: "full percent", in: 100, want: 100},
-		{name: "mid range", in: 65.5, want: 65.5},
-		{name: "clamp low", in: -5, want: 0},
-		{name: "clamp high", in: 150, want: 100},
-		{name: "nan", in: math.NaN(), want: 0},
-		{name: "positive infinity", in: math.Inf(1), want: 0},
-		{name: "negative infinity", in: math.Inf(-1), want: 0},
+func readChangeEvent(ctx context.Context, t *testing.T, pool *pgxpool.Pool, version int64) protocol.FeedEvent {
+	t.Helper()
+	var payload []byte
+	if err := pool.QueryRow(ctx, `SELECT event FROM atlas_change_events WHERE version = $1`, version).Scan(&payload); err != nil {
+		t.Fatalf("read change event %d: %v", version, err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := normalizeTaskProgressPercent(tt.in); got != tt.want {
-				t.Fatalf("normalizeTaskProgressPercent(%v) = %v, want %v", tt.in, got, tt.want)
-			}
-		})
+	var event protocol.FeedEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("decode change event %d: %v", version, err)
 	}
-}
-
-func TestTaskStatusTransitionUpdateRemovesLegacyExtra(t *testing.T) {
-	progress := 62.5
-	message := "survey running"
-
-	params := taskStatusTransitionUpdate("acknowledged", &progress, &message)
-	if params.Status == nil || *params.Status != "acknowledged" {
-		t.Fatalf("Status = %v, want acknowledged", params.Status)
-	}
-	gotRemoveKeys := append([]string(nil), params.RemoveExtraKeys...)
-	wantRemoveKeys := append([]string(nil), legacyTaskTransitionExtraKeys...)
-	sort.Strings(gotRemoveKeys)
-	sort.Strings(wantRemoveKeys)
-	if !reflect.DeepEqual(gotRemoveKeys, wantRemoveKeys) {
-		t.Fatalf("RemoveExtraKeys (sorted) = %v, want %v", gotRemoveKeys, wantRemoveKeys)
-	}
-	aliasParams := taskStatusTransitionUpdate("acknowledged", &progress, &message)
-	aliasParams.RemoveExtraKeys[0] = "mutated"
-	if legacyTaskTransitionExtraKeys[0] == "mutated" {
-		t.Fatal("RemoveExtraKeys aliases legacyTaskTransitionExtraKeys")
-	}
-
-	components := params.Components
-	progressComponent, ok := components["progress"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("progress component = %T, want map[string]interface{}", components["progress"])
-	}
-	if got := progressComponent["percent"]; got != 62.5 {
-		t.Fatalf("progress percent = %v, want 62.5", got)
-	}
-	if got := components["status_message"]; got != "survey running" {
-		t.Fatalf("status_message = %v, want survey running", got)
-	}
-
-	existing := map[string]interface{}{
-		"components":     map[string]interface{}{},
-		"status":         "pending",
-		"progress":       0.5,
-		"status_message": "legacy",
-		"message":        "legacy message",
-		"result":         map[string]interface{}{"ok": true},
-	}
-	removeBlobExtraKeys(existing, taskPromotedBlobFields, params.RemoveExtraKeys...)
-	for _, key := range legacyTaskTransitionExtraKeys {
-		if _, ok := existing[key]; ok {
-			t.Fatalf("legacy extra key %q was not removed: %#v", key, existing)
-		}
-	}
-	if _, ok := existing["components"]; !ok {
-		t.Fatal("components should not be removed")
-	}
-	if _, ok := existing["status"]; !ok {
-		t.Fatal("status should not be removed")
-	}
-	if _, ok := existing["result"]; !ok {
-		t.Fatal("unrelated extra should not be removed")
-	}
-
-	nilParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
-	if nilParams.Components != nil {
-		t.Fatalf("Components = %#v, want nil for nil progress/message", nilParams.Components)
-	}
-	gotNilRemoveKeys := append([]string(nil), nilParams.RemoveExtraKeys...)
-	sort.Strings(gotNilRemoveKeys)
-	if !reflect.DeepEqual(gotNilRemoveKeys, wantRemoveKeys) {
-		t.Fatalf("nil RemoveExtraKeys (sorted) = %v, want %v", gotNilRemoveKeys, wantRemoveKeys)
-	}
-	nilExisting := map[string]interface{}{
-		"components":     map[string]interface{}{},
-		"status":         "pending",
-		"progress":       0.5,
-		"status_message": "legacy",
-		"message":        "legacy message",
-		"result":         map[string]interface{}{"ok": true},
-	}
-	removeBlobExtraKeys(nilExisting, taskPromotedBlobFields, nilParams.RemoveExtraKeys...)
-	for _, key := range legacyTaskTransitionExtraKeys {
-		if _, ok := nilExisting[key]; ok {
-			t.Fatalf("legacy extra key %q was not removed for nil progress/message: %#v", key, nilExisting)
-		}
-	}
-	for _, key := range []string{"components", "status", "result"} {
-		if _, ok := nilExisting[key]; !ok {
-			t.Fatalf("%s should not be removed for nil progress/message", key)
-		}
-	}
-	nilAliasParams := taskStatusTransitionUpdate("acknowledged", nil, nil)
-	nilAliasParams.RemoveExtraKeys[0] = "mutated"
-	if legacyTaskTransitionExtraKeys[0] == "mutated" {
-		t.Fatal("nil RemoveExtraKeys aliases legacyTaskTransitionExtraKeys")
-	}
+	return event
 }
 
 func TestMergeTaskComponentsRevalidatesMergedShape(t *testing.T) {

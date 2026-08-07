@@ -15,7 +15,7 @@ import (
 )
 
 func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
 	defer server.Close()
@@ -41,8 +41,71 @@ func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
 	}
 }
 
+func TestWebsocketFeedAcknowledgesInstalledInitialSubscriptions(t *testing.T) {
+	hub := NewHub(Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		CurrentVersion: func(context.Context) (int64, error) {
+			return 17, nil
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
+		t.Fatalf("subscribe all: %v", err)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscription_barrier"}`)); err != nil {
+		t.Fatalf("send subscription barrier: %v", err)
+	}
+
+	var ready protocol.FeedSubscriptionsReadyMessage
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	messageType, data, err := conn.Read(readCtx)
+	if err != nil {
+		t.Fatalf("read subscription acknowledgement: %v", err)
+	}
+	if messageType != websocket.MessageText {
+		t.Fatalf("subscription acknowledgement message type = %v", messageType)
+	}
+	if err := json.Unmarshal(data, &ready); err != nil {
+		t.Fatalf("decode subscription acknowledgement: %v", err)
+	}
+	if ready.Type != "subscriptions_ready" || ready.Version != 17 {
+		t.Fatalf("subscription acknowledgement = %+v", ready)
+	}
+	if !hub.HasSubscription(Subscription{Filter: FilterAll}) {
+		t.Fatal("subscription acknowledgement arrived before the subscription was installed")
+	}
+}
+
+func TestWebsocketFeedClosesWithInternalErrorWhenSubscriptionWatermarkFails(t *testing.T) {
+	hub := NewHub(Options{})
+	defer hub.Close()
+	server := httptest.NewServer(http.HandlerFunc(Server{
+		Hub: hub,
+		CurrentVersion: func(context.Context) (int64, error) {
+			return 0, errors.New("database unavailable")
+		},
+	}.ServeHTTP))
+	defer server.Close()
+
+	conn := dialFeed(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	readHandshake(t, conn)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscription_barrier"}`)); err != nil {
+		t.Fatalf("send subscription barrier: %v", err)
+	}
+
+	expectFeedClosedWithStatus(t, conn, websocket.StatusInternalError)
+}
+
 func TestWebsocketFeedUnsubscribeStopsDelivery(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
 	defer server.Close()
@@ -73,7 +136,7 @@ func TestWebsocketFeedUnsubscribeStopsDelivery(t *testing.T) {
 }
 
 func TestWebsocketFeedAllowsMultipleSubscriptions(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
 	defer server.Close()
@@ -107,7 +170,7 @@ func TestWebsocketFeedAllowsMultipleSubscriptions(t *testing.T) {
 }
 
 func TestWebsocketFeedDuplicateSubscriptionsAreIdempotent(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{Hub: hub}.ServeHTTP))
 	defer server.Close()
@@ -134,7 +197,7 @@ func TestWebsocketFeedDuplicateSubscriptionsAreIdempotent(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{
 		Hub: hub,
@@ -171,7 +234,7 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{
 		Hub: hub,
@@ -210,7 +273,7 @@ func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthClosesWhenAPIKeyValidatorErrors(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{
 		Hub: hub,
@@ -236,7 +299,7 @@ func TestWebsocketFeedFirstMessageAuthClosesWhenAPIKeyValidatorErrors(t *testing
 }
 
 func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := httptest.NewServer(http.HandlerFunc(Server{
 		Hub: hub,
@@ -270,7 +333,7 @@ func TestWebsocketFeedRejectsDeniedCrossOriginBeforeUpgrade(t *testing.T) {
 }
 
 func TestWebsocketFeedRejectsAuthEnabledWithoutAPIKey(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
@@ -286,7 +349,7 @@ func TestWebsocketFeedRejectsAuthEnabledWithoutAPIKey(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsMissingFirstFrame(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -300,7 +363,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsMissingFirstFrame(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsMalformedJSON(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -317,7 +380,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsWrongKey(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -334,7 +397,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsWrongKey(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsEmptyKey(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -351,7 +414,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsEmptyKey(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsMissingKey(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -368,7 +431,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsMissingKey(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsSubscribe(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -385,7 +448,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsSubscribe(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsBinaryAuthFrame(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -402,7 +465,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsBinaryAuthFrame(t *testing.T) {
 }
 
 func TestWebsocketFeedRejectsAuthEnabledWithWhitespaceAPIKey(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
@@ -428,7 +491,7 @@ func TestWebsocketFeedRejectsMissingHubWithProtocolError(t *testing.T) {
 }
 
 func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -462,7 +525,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
 // auth frame only after a subscribe and event read, proving established sessions
 // still reject auth frames after normal feed traffic.
 func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -493,7 +556,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription(t *testing.T)
 }
 
 func TestWebsocketFeedClosesWhenHubClosesWhileReadSideIdle(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()
@@ -518,7 +581,7 @@ func TestWebsocketFeedClosesWhenHubClosesWhileReadSideIdle(t *testing.T) {
 }
 
 func TestWebsocketFeedRejectsBinaryFrame(t *testing.T) {
-	hub := NewHub(0, Options{})
+	hub := NewHub(Options{})
 	defer hub.Close()
 	server := newAuthFeedServer(t, hub)
 	defer server.Close()

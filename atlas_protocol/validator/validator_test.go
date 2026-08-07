@@ -24,6 +24,83 @@ func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
 	}
 }
 
+func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
+	valid := map[string]any{
+		"type":        "command_catalog",
+		"name":        "Commands",
+		"description": "Test catalog",
+		"commands": []any{
+			map[string]any{
+				"id":          "set_speed",
+				"name":        "Set Speed",
+				"description": "Set speed.",
+				"parameters_schema": map[string]any{
+					"speed": map[string]any{"type": "number", "description": "Speed", "required": true, "minimum": 0.0, "maximum": 10.0},
+				},
+			},
+		},
+	}
+	if errors := ValidateCommandCatalog(valid); len(errors) != 0 {
+		t.Fatalf("ValidateCommandCatalog(valid) errors = %v", errors)
+	}
+
+	invalid := map[string]any{
+		"type":        "command_catalog",
+		"name":        "Commands",
+		"description": "Test catalog",
+		"commands": []any{
+			map[string]any{
+				"id": "duplicate", "name": "First", "description": "First.",
+				"parameters_schema": map[string]any{
+					"count": map[string]any{"type": "number", "description": "Count", "required": false, "minimum": 2, "maximum": 1},
+					"label": map[string]any{"type": "string", "description": "Label", "required": false, "minimum": 1},
+				},
+			},
+			map[string]any{"id": "duplicate", "name": "Second", "description": "Second.", "parameters_schema": map[string]any{}},
+		},
+	}
+	errors := ValidateCommandCatalog(invalid)
+	joined := strings.Join(errors, "\n")
+	for _, want := range []string{"duplicate", "minimum exceeds maximum", "bounds require number type"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("ValidateCommandCatalog(invalid) errors = %v, want %q", errors, want)
+		}
+	}
+}
+
+func TestValidateCommandCatalogRejectsNonNumericBounds(t *testing.T) {
+	invalid := map[string]any{
+		"type": "command_catalog", "name": "Commands", "description": "Test catalog",
+		"commands": []any{map[string]any{
+			"id": "set_speed", "name": "Set Speed", "description": "Set speed.",
+			"parameters_schema": map[string]any{
+				"speed": map[string]any{"type": "number", "description": "Speed", "required": true, "minimum": "fast"},
+			},
+		}},
+	}
+	if errors := ValidateCommandCatalog(invalid); len(errors) == 0 {
+		t.Fatal("expected a non-numeric minimum to be rejected")
+	}
+}
+
+func TestValidateCommandCatalogComparesJSONNumberBounds(t *testing.T) {
+	invalid := map[string]any{
+		"type": "command_catalog", "name": "Commands", "description": "Test catalog",
+		"commands": []any{map[string]any{
+			"id": "set_speed", "name": "Set Speed", "description": "Set speed.",
+			"parameters_schema": map[string]any{
+				"speed": map[string]any{
+					"type": "number", "description": "Speed", "required": true,
+					"minimum": json.Number("10"), "maximum": json.Number("1"),
+				},
+			},
+		}},
+	}
+	if errors := ValidateCommandCatalog(invalid); !strings.Contains(strings.Join(errors, "\n"), "minimum exceeds maximum") {
+		t.Fatalf("ValidateCommandCatalog errors = %v, want reversed-bound error", errors)
+	}
+}
+
 func TestConcurrentValidationIsSafe(t *testing.T) {
 	const goroutines = 16
 	results := make(chan []string, goroutines)
@@ -70,7 +147,7 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 		"a_unknown": true,
 		"command":   map[string]any{"type": "move_to_location"},
 	})
-	want := []string{"Unknown component 'a_unknown'", "Unknown component 'z_unknown'"}
+	want := []string{`Unknown component "a_unknown"`, `Unknown component "z_unknown"`}
 	if !reflect.DeepEqual(errors, want) {
 		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", errors, want)
 	}
@@ -199,7 +276,7 @@ func TestObjectBlobAcceptsTypedUsageHints(t *testing.T) {
 	blob := map[string]any{
 		"bucket":      "atlas-media",
 		"size_bytes":  int64(7966),
-		"usage_hints": []string{"command_catalog"},
+		"usage_hints": []string{"mission_plan"},
 	}
 	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
 		t.Fatalf("ValidateObjectBlob(typed usage_hints) errors = %v", errors)
@@ -211,7 +288,7 @@ func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
 		"bucket":     "atlas-media",
 		"size_bytes": json.Number("7966"),
 		"usage_hints": []any{
-			"command_catalog",
+			"mission_plan",
 		},
 	}
 	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
@@ -516,7 +593,7 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errors := tt.validate(json.RawMessage(tt.payload))
-			assertAnyContains(t, errors, "Unknown component 'typo'")
+			assertAnyContains(t, errors, `Unknown component "typo"`)
 		})
 	}
 }

@@ -76,7 +76,9 @@ For concurrency-sensitive writes, send the latest version back with:
 If-Match: "v12"
 ```
 
-`PATCH`, task lifecycle routes, telemetry, and check-in all accept this header. If the header is omitted, the server applies the write without a version precondition.
+`PATCH /entities/{entity_id}`, `PATCH /tasks/{task_id}`, `PATCH /objects/{object_id}`,
+and `POST /entities/{entity_id}/checkin` accept this header. If the header is
+omitted, the server applies the write without a version precondition.
 
 ### Pagination
 
@@ -174,6 +176,7 @@ Object detail responses:
 | `GET` | `/readiness` | `200` or `503` | Checks database and storage readiness. Skips auth. |
 | `GET` | `/resources` | `200` | Returns operator CPU, memory, disk, and Go process diagnostics. Requires protected-route auth. |
 | `GET` | `/protocol/revision` | `200` | Returns `{ "protocol_revision": "..." }`. |
+| `GET` | `/command-catalog` | `200` or `304` | Returns Core's authoritative embedded command definitions. |
 | `GET` | `/feed` | `101` websocket | Change-feed websocket. |
 
 Readiness is HTTP `503` with `status: "unhealthy"` when the database is unavailable or configured storage cannot be initialized, reached, or verified. A missing configured bucket is also unhealthy. With a healthy database, deliberately omitting storage credentials keeps DB-only/local Core available as HTTP `200` with `status: "degraded"` and the storage check marked `unconfigured`; use `/health` when only process liveness matters.
@@ -217,7 +220,6 @@ Subscribe examples:
 | `GET` | `/entities/alias/{alias}` | `200` | Fetch one entity by alias. |
 | `PATCH` | `/entities/{entity_id}` | `200` | Update type, subtype, alias, components, or extra fields. |
 | `DELETE` | `/entities/{entity_id}` | `204` | Delete an entity. |
-| `PATCH` | `/entities/{entity_id}/telemetry` | `200` | Merge telemetry fields into `components.telemetry`. |
 | `POST` | `/entities/{entity_id}/checkin` | `200` | Update heartbeat/status/telemetry and return tasks for that entity. |
 | `GET` | `/entities/{entity_id}/tasks` | `200` | List tasks attached to the entity. |
 | `GET` | `/entities/{entity_id}/objects` | `200` | List objects referenced by the entity. |
@@ -259,20 +261,6 @@ Patch body:
 ```
 
 `components` are deep-merged by key. `subtype` and `alias` can be cleared with `null` or an empty string.
-
-Telemetry body:
-
-```json
-{
-  "latitude": 38.8977,
-  "longitude": -77.0365,
-  "altitude_m": 120.5,
-  "speed_m_s": 8.2,
-  "heading_deg": 45
-}
-```
-
-At least one telemetry field is required.
 
 Check-in query parameters:
 
@@ -323,10 +311,6 @@ Core validates and reads the requested task page before committing the heartbeat
 | `GET` | `/tasks/{task_id}` | `200` | Fetch one task. |
 | `PATCH` | `/tasks/{task_id}` | `200` | Update status, entity assignment, components, or extra fields. |
 | `DELETE` | `/tasks/{task_id}` | `204` | Delete a task. |
-| `POST` | `/tasks/{task_id}/acknowledge` | `200` | Set task status to acknowledged. |
-| `POST` | `/tasks/{task_id}/complete` | `200` | Complete a task and optionally attach a result. |
-| `POST` | `/tasks/{task_id}/fail` | `200` | Fail a task and optionally attach error details. |
-| `POST` | `/tasks/{task_id}/status` | `200` | Transition status with optional progress/message. |
 | `GET` | `/tasks/{task_id}/objects` | `200` | List objects referenced by the task. |
 
 Create body:
@@ -374,34 +358,30 @@ Patch body:
 Omitting `entity_id` from a task patch preserves the current assignment, `null`
 unlinks the task, and a non-empty string assigns it to that entity.
 
-Complete body is optional:
+Completion patch:
 
 ```json
 {
-  "result": {
-    "summary": "arrived at target"
+  "status": "completed",
+  "extra": {
+    "result": {
+      "summary": "arrived at target"
+    }
   }
 }
 ```
 
-Fail body is optional:
+Failure patch:
 
 ```json
 {
-  "error": {
-    "code": "NAVIGATION_FAILED",
-    "message": "could not reach target"
+  "status": "failed",
+  "extra": {
+    "error": {
+      "code": "NAVIGATION_FAILED",
+      "message": "could not reach target"
+    }
   }
-}
-```
-
-Status transition body:
-
-```json
-{
-  "status": "acknowledged",
-  "progress": 40,
-  "message": "en route"
 }
 ```
 
@@ -492,10 +472,7 @@ Upload does not accept `referenced_by`; create or update object references throu
 | `task_cursor` | Continue tasks from `next_task_cursor`. |
 | `object_cursor` | Continue objects from `next_object_cursor`. |
 
-Full-query resource streams return at most 1000 rows; changed-since resource streams return at
-most 5000. Both retain at most 8 MiB of estimated serialized response data per resource type per
-page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as
-count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging.
+Full-query resource streams return at most 1000 rows per type and retain at most 8 MiB of stored resource JSON per type per page. A byte-limited short page uses the same `has_more_*` and `next_*_cursor` fields as count-limited pagination. Stored resource JSON is capped at 1 MiB after create/update merging. Changed-since defaults to 100 globally ordered events, accepts an explicit limit up to 5000, and always applies an 8 MiB serialized-event byte budget.
 
 The response includes a global `version` captured before the first page is read. Every continuation page repeats that same hydration baseline through its opaque cursors. A later page may contain a resource with a newer `metadata.version`; clients must not infer the global sync cursor from returned resources. After consuming every full-dataset page, call `GET /queries/changed-since?since_version=<version>` and drain that response before treating the hydrated data as current.
 
@@ -521,34 +498,30 @@ Response:
 | Query | Notes |
 | --- | --- |
 | `since_version` | Required non-negative global version. |
-| `limit_per_type` | Optional per-type limit. Default/zero returns up to `5000`. |
-| `entity_cursor` | Continue entities from `next_entity_cursor`. |
-| `task_cursor` | Continue tasks from `next_task_cursor`. |
-| `object_cursor` | Continue objects from `next_object_cursor`. |
-| `deleted_entity_cursor` | Continue deleted entities. |
-| `deleted_task_cursor` | Continue deleted tasks. |
-| `deleted_object_cursor` | Continue deleted objects. |
+| `limit` | Optional event limit. Default/zero returns up to `100`; explicit values are capped at `5000`. |
+| `cursor` | Continue from the opaque `next_cursor`. |
 
-Response includes changed resources, tombstones, per-stream `has_more_*` booleans, next cursors, and a monotonic `version` watermark. Keep the same `since_version` while following cursors for one response window. After all pages are consumed, pass the returned `version` as the next poll's `since_version`.
+Response includes complete feed events in global version order plus one `has_more`/`next_cursor` continuation and a stable `version` watermark. Pages stop at either the event count or 8 MiB of serialized event JSON, while always returning one event for cursor progress. Keep the same `since_version` while following cursors for one response window. After all pages are consumed, pass the returned `version` as the next poll's `since_version`. A cursor older than the seven-day recovery window receives HTTP `410` with `CURSOR_EXPIRED`; perform full hydration and resume from its version watermark.
 
 ```json
 {
-  "entities": [],
-  "tasks": [],
-  "objects": [],
-  "deleted_entities": [],
-  "deleted_tasks": [],
-  "deleted_objects": [],
-  "has_more_entities": false,
-  "has_more_tasks": false,
-  "has_more_objects": false,
-  "has_more_deleted_entities": false,
-  "has_more_deleted_tasks": false,
-  "has_more_deleted_objects": false,
-  "version": 42,
-  "timestamp": "2026-06-21T12:00:00Z"
+  "events": [
+    {
+      "event": "update",
+      "resource_type": "task",
+      "id": "task-7",
+      "version": 41,
+      "resource": { "task_id": "task-7", "status": "pending", "components": {}, "metadata": { "created_at": "2026-06-21T12:00:00Z", "updated_at": "2026-06-21T12:00:00Z", "version": 41 } }
+    }
+  ],
+  "has_more": false,
+  "version": 42
 }
 ```
+
+## Command catalog
+
+`GET /command-catalog` returns the Protocol-defined catalog embedded in the running Core binary. The response includes a strong `ETag` and supports `If-None-Match`. It does not read or create an Atlas object and does not depend on MinIO.
 
 ## Browser Admin Auth And Command Interface
 
@@ -559,7 +532,6 @@ override uses:
 
 - username: `admin`
 - password: `password`
-- role: `admin`
 
 This credential is development-only scratch state. The default `atlas.py --dev` launcher instead generates `ATLAS_ADMIN_PASSWORD` in the owner-only `atlas_core/docker/.env.local`. Set `ATLAS_ADMIN_PASSWORD` or `ATLAS_ADMIN_PASSWORD_FILE` explicitly before exposing Core outside local development. When API-key auth is enabled, Core refuses to start with the default `admin` / `password` seed.
 
@@ -714,10 +686,10 @@ curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/entities/asset-1/checkin?fields=min
 Complete the task:
 
 ```bash
-curl -sS -b "$COOKIE_JAR" -X POST "$CORE_URL/tasks/task-1/complete" \
+curl -sS -b "$COOKIE_JAR" -X PATCH "$CORE_URL/tasks/task-1" \
   -H "Origin: $UI_ORIGIN" \
   -H 'Content-Type: application/json' \
-  -d '{"result":{"summary":"done"}}'
+  -d '{"status":"completed","extra":{"result":{"summary":"done"}}}'
 ```
 
 Poll changes since version zero:

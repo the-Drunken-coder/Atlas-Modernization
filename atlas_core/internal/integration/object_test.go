@@ -306,12 +306,20 @@ func TestObjectsByTask(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("Expected 201 creating task, got %d", resp.StatusCode)
 	}
+	taskETag := requireETag(t, resp)
 	resp.Body.Close()
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/complete", nil)
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPatch,
+		"/tasks/"+taskID,
+		map[string]interface{}{"status": "completed"},
+		map[string]string{"If-Match": taskETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete (objects fixture)")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (complete objects fixture)")
 	resp.Body.Close()
 
 	// Create objects referencing the task

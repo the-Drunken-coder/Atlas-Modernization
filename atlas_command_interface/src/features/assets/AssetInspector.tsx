@@ -42,7 +42,9 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
   const active = currentTask(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
   const history = tasksForEntity(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
-  const sidebarCommands = catalog ? commandsForTargeting(catalog, entity, "none") : [];
+  const sidebarCommands = catalog
+    ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
+    : [];
 
   return (
     <div className="inspector">
@@ -94,7 +96,7 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
           emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"}
         />
         <p className="field__hint" style={{ marginTop: 8 }}>
-          Right-click the map to send position commands to this asset.
+          Position commands accept coordinates here. Right-click the map to fill them from a point.
         </p>
       </Section>
 

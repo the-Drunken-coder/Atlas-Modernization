@@ -45,6 +45,12 @@ func TestHandleActionErrorMapsKnownErrorTypes(t *testing.T) {
 			wantCode:   "ENTITY_ALREADY_EXISTS",
 		},
 		{
+			name:       "expired cursor",
+			err:        actions.NewCursorExpiredError(42),
+			wantStatus: http.StatusGone,
+			wantCode:   "CURSOR_EXPIRED",
+		},
+		{
 			name:       "storage error",
 			err:        &storage.StorageError{Message: "storage down"},
 			wantStatus: http.StatusServiceUnavailable,

@@ -17,7 +17,6 @@ type adminLoginRequest struct {
 
 type adminUserResponse struct {
 	Username  string `json:"username"`
-	Role      string `json:"role"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
@@ -54,7 +53,6 @@ func (h *Handler) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	h.adminAuth.SetSessionCookie(w, token, session.ExpiresAt)
 	writeJSON(w, r, http.StatusOK, adminMeResponse{User: adminUserResponse{
 		Username:  session.Username,
-		Role:      session.Role,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 	}})
 }
@@ -86,7 +84,6 @@ func (h *Handler) AdminMe(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, r, http.StatusOK, adminMeResponse{User: adminUserResponse{
 		Username:  session.Username,
-		Role:      session.Role,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 	}})
 }

@@ -102,7 +102,7 @@ Example:
   "path": "/entities",
   "details": {
     "errors": [
-      "Unknown component 'foo'",
+      "Unknown component \"foo\"",
       "telemetry.latitude: 120.000000 is out of range [-90, 90]"
     ]
   }

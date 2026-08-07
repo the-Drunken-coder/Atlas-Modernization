@@ -7,7 +7,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 ## What Lives Here
 
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
-- `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, command catalog parsing, and command targeting.
+- `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, typed command-catalog consumption, and command targeting.
 - `src/ui/` - the local design system.
 - `src/features/` - feature screens and panels.
 - `src/app/` - config loading, providers, routing, and the Vite entry point.
@@ -30,7 +30,7 @@ The committed browser config contains only non-secret values: Core base URL defa
 
 The websocket feed is the low-latency update path. The SDK also runs its default two-minute `changed-since` poll as a low-traffic safety net, so the console still converges when a browser, proxy, or tunnel blocks websockets or reconnect recovery is slow. Polling remains a backstop rather than a replacement for the feed.
 
-If the safety-net request fails, the SDK keeps its degraded/read-through behavior: covered point reads go back to Core instead of trusting a cache that may be stale. Command catalog object events fail closed while a fresh object-detail read runs because feed events contain object metadata, not catalog content; transient detail failures use a small bounded retry budget.
+If the safety-net request fails, the SDK keeps its degraded/read-through behavior: covered point reads go back to Core instead of trusting a cache that may be stale. The command catalog is loaded directly from Core's embedded `/command-catalog` endpoint during setup; failure leaves the command interface unavailable rather than starting with stale command definitions.
 
 Configuration, session-check, and initial SDK connection failures expose one-shot operator retry actions. They do not start an automatic retry loop; each click performs one new attempt, and a failed SDK startup is disposed before the replacement data source starts.
 
@@ -56,7 +56,7 @@ Use Node 24 LTS from the repository root `.nvmrc`.
    python3 atlas_core/scripts/atlas.py --dev
    ```
 
-   `atlas.py` starts Docker Compose and waits for PostgreSQL, MinIO, and the API. Atlas Core publishes the embedded command catalog through the object API before serving requests, so an API-only restart also restores or refreshes it. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `atlas_core/docker/.env.local`.
+   `atlas.py` starts Docker Compose and waits for PostgreSQL, MinIO, and the API. Atlas Core serves the embedded command catalog directly at `/command-catalog`, independent of the object store. Startup seeds the `admin` account with the generated `ATLAS_ADMIN_PASSWORD` stored in the owner-only `atlas_core/docker/.env.local`.
    If an old local Postgres volume has stale credentials, run `python3 atlas_core/scripts/atlas.py --dev --reset-volumes`.
 
 3. Build the local SDK package and run the Vite app:

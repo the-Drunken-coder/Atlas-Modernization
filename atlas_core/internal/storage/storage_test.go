@@ -49,6 +49,13 @@ func TestBucketNotFoundError(t *testing.T) {
 	}
 }
 
+func TestNewClientRejectsNilConfig(t *testing.T) {
+	client, err := NewClient(nil)
+	if err == nil || client != nil {
+		t.Fatalf("NewClient(nil) = (%#v, %v), want nil client and error", client, err)
+	}
+}
+
 func TestNewClientRequiresAccessKey(t *testing.T) {
 	cfg := &config.Config{
 		MinIOEndpoint:  "localhost:9000",

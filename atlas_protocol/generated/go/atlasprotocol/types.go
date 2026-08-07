@@ -55,6 +55,7 @@ const (
 	ErrorCodeTaskAlreadyExists      ErrorCode = "TASK_ALREADY_EXISTS"
 	ErrorCodeObjectAlreadyExists    ErrorCode = "OBJECT_ALREADY_EXISTS"
 	ErrorCodeObjectPathConflict     ErrorCode = "OBJECT_PATH_CONFLICT"
+	ErrorCodeCursorExpired          ErrorCode = "CURSOR_EXPIRED"
 	ErrorCodePreconditionFailed     ErrorCode = "PRECONDITION_FAILED"
 )
 
@@ -107,9 +108,10 @@ func (e ErrorResponse) MarshalJSON() ([]byte, error) {
 type FeedAction string
 
 const (
-	FeedActionAuth        FeedAction = "auth"
-	FeedActionSubscribe   FeedAction = "subscribe"
-	FeedActionUnsubscribe FeedAction = "unsubscribe"
+	FeedActionAuth                FeedAction = "auth"
+	FeedActionSubscribe           FeedAction = "subscribe"
+	FeedActionSubscriptionBarrier FeedAction = "subscription_barrier"
+	FeedActionUnsubscribe         FeedAction = "unsubscribe"
 )
 
 type FeedFilter string
@@ -125,6 +127,28 @@ type MetadataBlock struct {
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 	Version   int64  `json:"version"`
+}
+
+type CommandParameterSchema struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Minimum     *float64 `json:"minimum,omitempty"`
+	Maximum     *float64 `json:"maximum,omitempty"`
+}
+
+type CommandDefinition struct {
+	ID               string                            `json:"id"`
+	Name             string                            `json:"name"`
+	Description      string                            `json:"description"`
+	ParametersSchema map[string]CommandParameterSchema `json:"parameters_schema"`
+}
+
+type CommandCatalog struct {
+	Type        string              `json:"type"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Commands    []CommandDefinition `json:"commands"`
 }
 
 type EntityResource struct {
@@ -394,6 +418,61 @@ func validateFeedSubscriptionMessagePayload(data []byte) []string {
 type FeedHandshakeMessage struct {
 	Type             string `json:"type"`
 	ProtocolRevision string `json:"protocol_revision"`
+}
+
+type FeedSubscriptionBarrierMessage struct {
+	Action FeedAction `json:"action"`
+}
+
+type feedSubscriptionBarrierMessageAlias FeedSubscriptionBarrierMessage
+
+func (m FeedSubscriptionBarrierMessage) Validate() []string {
+	m.Action = FeedActionSubscriptionBarrier
+	data, err := json.Marshal(feedSubscriptionBarrierMessageAlias(m))
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return validator.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(data))
+}
+
+func (m FeedSubscriptionBarrierMessage) MarshalJSON() ([]byte, error) {
+	m.Action = FeedActionSubscriptionBarrier
+	data, err := json.Marshal(feedSubscriptionBarrierMessageAlias(m))
+	if err != nil {
+		return nil, err
+	}
+	if errors := validator.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(data)); len(errors) > 0 {
+		return nil, fmt.Errorf("invalid FeedSubscriptionBarrierMessage: %s", strings.Join(errors, "; "))
+	}
+	return data, nil
+}
+
+type FeedSubscriptionsReadyMessage struct {
+	Type    string `json:"type"`
+	Version int64  `json:"version"`
+}
+
+type feedSubscriptionsReadyMessageAlias FeedSubscriptionsReadyMessage
+
+func (m FeedSubscriptionsReadyMessage) Validate() []string {
+	m.Type = "subscriptions_ready"
+	data, err := json.Marshal(feedSubscriptionsReadyMessageAlias(m))
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return validator.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(data))
+}
+
+func (m FeedSubscriptionsReadyMessage) MarshalJSON() ([]byte, error) {
+	m.Type = "subscriptions_ready"
+	data, err := json.Marshal(feedSubscriptionsReadyMessageAlias(m))
+	if err != nil {
+		return nil, err
+	}
+	if errors := validator.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(data)); len(errors) > 0 {
+		return nil, fmt.Errorf("invalid FeedSubscriptionsReadyMessage: %s", strings.Join(errors, "; "))
+	}
+	return data, nil
 }
 
 type feedHandshakeMessageAlias FeedHandshakeMessage

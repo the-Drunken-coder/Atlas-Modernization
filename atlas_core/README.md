@@ -7,8 +7,8 @@ configured MinIO bucket are durable. Startup applies ordered PostgreSQL
 migrations, rejects migration/catalog drift, and preserves rows and blobs.
 Development Compose explicitly enables scratch mode, which migrates/verifies
 the schema, clears resource rows and the bucket, and preserves local
-`admin_records` plus migration history. Core republishes its embedded command
-catalog before serving HTTP, including after an API-container-only restart.
+`admin_records` plus migration history. Core validates its embedded command
+catalog and serves it directly at `GET /command-catalog` without storing it as an object.
 
 ## Stack
 
@@ -84,8 +84,26 @@ when that path is explicitly mounted and readable inside the process.
 For the production-image single-host stack:
 
 ```bash
-export API_AUTH_KEY='your-secure-api-key'
-export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
+umask 077
+set -a
+. /secure/path/atlas-production.env
+set +a
+```
+
+The owner-readable environment file must define `POSTGRES_PASSWORD`,
+`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and
+`ATLAS_ADMIN_PASSWORD`; the admin password must contain at least 12 characters.
+Before the first production start on a new MinIO volume, provision the configured
+durable bucket and verify it exists; production startup deliberately will not create it.
+`atlas-media` below is the default; replace it with the configured `MINIO_BUCKET`
+value if you changed it.
+
+```bash
+docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
+mc mb atlas_production/atlas-media
+mc stat atlas_production/atlas-media
+unset MC_HOST_atlas_production
 python3 atlas_core/scripts/atlas.py --production
 ```
 
@@ -207,8 +225,9 @@ Key environment variables:
 
 - `GET /queries/full`
 - `GET /queries/changed-since?since_version=<version>`
+- `GET /command-catalog`
 
-Query params (optional): `entity_limit`, `task_limit`, `object_limit`, `limit_per_type` (changed-since), and cursor params `entity_cursor`, `task_cursor`, `object_cursor`, `deleted_*_cursor` for pagination. `full` returns one stable pre-hydration `version` across all continuation pages; after consuming them, drain `changed-since` from that baseline instead of deriving a cursor from resource metadata. `changed-since` returns a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
+`full` accepts per-resource limits and cursors and returns one stable pre-hydration `version` across all continuation pages. After consuming them, drain `changed-since` from that baseline instead of deriving a cursor from resource metadata. `changed-since` accepts `limit` plus one opaque `cursor` and returns globally ordered feed events with a monotonic `version`; pass it back as `since_version` on the next poll. See `docs/PAGINATION.md`.
 
 ### Check-in query params
 

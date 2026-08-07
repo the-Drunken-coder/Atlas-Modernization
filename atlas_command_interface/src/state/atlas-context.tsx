@@ -61,8 +61,6 @@ export function AtlasProvider({
 
   useEffect(() => {
     let cancelled = false;
-    let catalogGeneration = 0;
-    let hasCatalog = false;
     let unsubscribe: (() => void) | undefined;
     let healthTimer: ReturnType<typeof setInterval> | undefined;
     const cleanup = () => {
@@ -105,18 +103,10 @@ export function AtlasProvider({
         const dataSource = createDataSource(resolvedConfig);
         dataSourceRef.current = dataSource;
 
-        unsubscribe = dataSource.watch(
-          (nextSnapshot) => {
-            if (cancelled) return;
-            setSnapshot(nextSnapshot);
-          },
-          (update) => {
-            if (update.status === "pending" || (update.status === "failed" && !hasCatalog)) return;
-            catalogGeneration++;
-            hasCatalog = update.status === "loaded";
-            if (!cancelled) setCatalog(update.status === "loaded" ? update.catalog : undefined);
-          }
-        );
+        unsubscribe = dataSource.watch((nextSnapshot) => {
+          if (cancelled) return;
+          setSnapshot(nextSnapshot);
+        });
 
         // Only a failed connection attempt is recoverable here. Construction,
         // watch registration, and the initial snapshot remain fatal setup errors.
@@ -137,13 +127,9 @@ export function AtlasProvider({
 
         setSnapshot(dataSource.snapshot());
 
-        const catalogRequest = ++catalogGeneration;
-        const loadedCatalog = await dataSource.loadCommandCatalog().catch(() => undefined);
+        const loadedCatalog = await dataSource.loadCommandCatalog();
         if (cancelled) return;
-        if (catalogRequest === catalogGeneration) {
-          hasCatalog = loadedCatalog !== undefined;
-          setCatalog(loadedCatalog);
-        }
+        setCatalog(loadedCatalog);
 
         setStatus("ready");
 
@@ -166,7 +152,6 @@ export function AtlasProvider({
 
     return () => {
       cancelled = true;
-      catalogGeneration++;
       cleanup();
     };
   }, [providedConfig, loadConfig, createDataSource, connectionAttempt]);

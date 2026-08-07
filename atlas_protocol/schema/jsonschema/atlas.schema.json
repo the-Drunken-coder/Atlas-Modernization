@@ -51,6 +51,95 @@
       ],
       "type": "object"
     },
+    "CommandCatalog": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "$ref": "#/$defs/CommandDefinition"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "description": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "type": {
+          "const": "command_catalog"
+        }
+      },
+      "required": [
+        "commands",
+        "description",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "CommandDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "parameters_schema": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CommandParameterSchema"
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "name",
+        "parameters_schema"
+      ],
+      "type": "object"
+    },
+    "CommandParameterSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "maximum": {
+          "$ref": "#/$defs/FiniteNumber"
+        },
+        "minimum": {
+          "$ref": "#/$defs/FiniteNumber"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "boolean",
+            "number",
+            "string"
+          ]
+        }
+      },
+      "required": [
+        "description",
+        "required",
+        "type"
+      ],
+      "type": "object"
+    },
     "CommunicationsComponent": {
       "additionalProperties": false,
       "properties": {
@@ -389,6 +478,7 @@
         "TASK_ALREADY_EXISTS",
         "OBJECT_ALREADY_EXISTS",
         "OBJECT_PATH_CONFLICT",
+        "CURSOR_EXPIRED",
         "PRECONDITION_FAILED"
       ]
     },
@@ -450,6 +540,9 @@
           "$ref": "#/$defs/FeedAuthMessage"
         },
         {
+          "$ref": "#/$defs/FeedSubscriptionBarrierMessage"
+        },
+        {
           "$ref": "#/$defs/FeedSubscribeMessage"
         },
         {
@@ -501,6 +594,28 @@
       "required": [
         "protocol_revision",
         "type"
+      ],
+      "type": "object"
+    },
+    "FeedSubscriptionBarrierMessage": {
+      "const": {
+        "action": "subscription_barrier"
+      }
+    },
+    "FeedSubscriptionsReadyMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "subscriptions_ready"
+        },
+        "version": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "version"
       ],
       "type": "object"
     },

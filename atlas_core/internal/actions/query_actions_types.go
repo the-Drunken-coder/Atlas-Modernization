@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // FullDatasetResult contains all entities, tasks, and objects returned by the action layer.
@@ -25,42 +26,12 @@ type FullDatasetResult struct {
 	NextObjectCursor string
 }
 
-// DeletedResource represents a tombstone for a deleted resource.
-// Type is always "entity", "task", or "object" (redundant with which response array it appears in, but uniform for clients).
-type DeletedResource struct {
-	ID   string
-	Type string
-	// EntityID is populated only for deleted tasks to identify the parent entity.
-	// Nil means "not applicable", including deleted entities/objects and tasks whose parent entity is NULL.
-	EntityID  *string
-	DeletedAt string
-	Version   int64
-}
-
-// ChangedSinceResult contains resources modified after a given change version.
-// If any HasMore* field is true, pass the matching next_*_cursor on the next request (with the same `since_version`)
-// to fetch the remaining rows for that stream without skipping data.
+// ChangedSinceResult is one globally ordered page from the durable change log.
 type ChangedSinceResult struct {
-	Entities                []*models.Entity
-	Tasks                   []*models.Task
-	Objects                 []*models.MediaObject
-	DeletedEntities         []DeletedResource
-	DeletedTasks            []DeletedResource
-	DeletedObjects          []DeletedResource
-	HasMoreEntities         bool
-	HasMoreTasks            bool
-	HasMoreObjects          bool
-	HasMoreDeletedEntities  bool
-	HasMoreDeletedTasks     bool
-	HasMoreDeletedObjects   bool
-	NextEntityCursor        string
-	NextTaskCursor          string
-	NextObjectCursor        string
-	NextDeletedEntityCursor string
-	NextDeletedTaskCursor   string
-	NextDeletedObjectCursor string
-	Version                 int64
-	Timestamp               string
+	Events     []protocol.FeedEvent
+	Version    int64
+	HasMore    bool
+	NextCursor string
 }
 
 // MaxFullQueryLimit is the maximum number of records per type returned by GetFullDataset.
@@ -71,8 +42,18 @@ const MaxFullQueryLimit = 1000
 // cursorable when another stream contains larger records.
 const maxQueryJSONBytesPerType = 8 * maxStoredJSONBlobBytes
 
-// MaxChangedSinceLimit is the default safety cap for changed-since queries.
+// DefaultChangedSinceLimit keeps ordinary recovery pages small enough to apply
+// incrementally. Clients may request more events, but the byte budget below is
+// always authoritative.
+const DefaultChangedSinceLimit = 100
+
+// MaxChangedSinceLimit caps an explicit changed-since event count.
 const MaxChangedSinceLimit = 5000
+
+// A changed-since page stops before retaining more than this much serialized
+// event JSON. The first event is always returned so an oversized event cannot
+// prevent cursor progress.
+const maxChangedSinceJSONBytes = 8 * maxStoredJSONBlobBytes
 
 // FullDatasetLimits holds per-type limits for GetFullDataset.
 // Optional cursors continue pagination in created_at DESC, id DESC order (from a prior next_*_cursor).
@@ -85,16 +66,6 @@ type FullDatasetLimits struct {
 	ObjectCursor *string
 }
 
-// ChangedSinceCursors continues per-type streams for GetDataChangedSince (same `since_version`, version DESC order).
-type ChangedSinceCursors struct {
-	EntityCursor        *string
-	TaskCursor          *string
-	ObjectCursor        *string
-	DeletedEntityCursor *string
-	DeletedTaskCursor   *string
-	DeletedObjectCursor *string
-}
-
 type parsedQueryCursor struct {
 	timestamp    time.Time
 	id           string
@@ -104,14 +75,8 @@ type parsedQueryCursor struct {
 
 type parsedVersionCursor struct {
 	version      int64
-	id           string
 	upperBound   int64
 	sinceVersion int64
-}
-
-type labeledVersionCursor struct {
-	label  string
-	cursor *parsedVersionCursor
 }
 
 func parseQueryCursor(raw, label string) (*parsedQueryCursor, error) {
@@ -149,13 +114,12 @@ func parseVersionQueryCursor(raw, label string) (*parsedVersionCursor, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	version, id, upperBound, sinceVersion, err := decodeVersionCursor(raw)
+	version, upperBound, sinceVersion, err := decodeVersionCursor(raw)
 	if err != nil {
 		return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{fmt.Sprintf("invalid %s: %v", label, err)})
 	}
 	return &parsedVersionCursor{
 		version:      version,
-		id:           id,
 		upperBound:   upperBound,
 		sinceVersion: sinceVersion,
 	}, nil
@@ -170,7 +134,10 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 		}
 		continuation = true
 		if cursor.upperBound.IsZero() {
-			continue
+			return time.Time{}, false, NewValidationErrorWithDetails(
+				"Invalid query cursor",
+				[]string{"query cursors must include a snapshot time"},
+			)
 		}
 		if sharedUpperBound.IsZero() {
 			sharedUpperBound = cursor.upperBound
@@ -185,9 +152,6 @@ func continuationUpperBound(currentSnapshot time.Time, cursors ...*parsedQueryCu
 	}
 	if !continuation {
 		return currentSnapshot, false, nil
-	}
-	if sharedUpperBound.IsZero() {
-		return currentSnapshot, true, nil
 	}
 	return clampCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
 }
@@ -227,80 +191,7 @@ func fullDatasetSnapshotVersion(currentSnapshot int64, cursors ...*parsedQueryCu
 	return sharedVersion, nil
 }
 
-func effectiveCursorUpperBound(cursor *parsedQueryCursor, snapshotUpperBound time.Time) time.Time {
-	if cursor == nil {
-		return snapshotUpperBound
-	}
-	return clampCursorUpperBound(cursor.upperBound, snapshotUpperBound)
-}
-
-func continuationVersionUpperBound(currentSnapshot int64, cursors ...*parsedVersionCursor) (int64, bool, error) {
-	continuation := false
-	var sharedUpperBound int64
-	for _, cursor := range cursors {
-		if cursor == nil {
-			continue
-		}
-		continuation = true
-		if cursor.upperBound == 0 {
-			continue
-		}
-		if sharedUpperBound == 0 {
-			sharedUpperBound = cursor.upperBound
-			continue
-		}
-		if sharedUpperBound != cursor.upperBound {
-			return 0, false, NewValidationErrorWithDetails(
-				"Invalid query cursor",
-				[]string{"query cursors must come from the same snapshot"},
-			)
-		}
-	}
-	if !continuation {
-		return currentSnapshot, false, nil
-	}
-	if sharedUpperBound == 0 {
-		return currentSnapshot, true, nil
-	}
-	return clampVersionCursorUpperBound(sharedUpperBound, currentSnapshot), true, nil
-}
-
-func validateVersionCursorsSinceVersion(sinceVersion int64, cursors ...labeledVersionCursor) error {
-	for _, item := range cursors {
-		if item.cursor == nil {
-			continue
-		}
-		if item.cursor.sinceVersion != sinceVersion {
-			return NewValidationErrorWithDetails(
-				"Invalid query cursor",
-				[]string{fmt.Sprintf("%s was created for since_version %d, got %d", item.label, item.cursor.sinceVersion, sinceVersion)},
-			)
-		}
-	}
-	return nil
-}
-
-func effectiveVersionCursorUpperBound(cursor *parsedVersionCursor, snapshotUpperBound int64) int64 {
-	if cursor == nil {
-		return snapshotUpperBound
-	}
-	return clampVersionCursorUpperBound(cursor.upperBound, snapshotUpperBound)
-}
-
-func clampVersionCursorUpperBound(candidate, ceiling int64) int64 {
-	if candidate <= 0 {
-		return ceiling
-	}
-	if ceiling <= 0 || candidate <= ceiling {
-		return candidate
-	}
-	return ceiling
-}
-
 func clampCursorUpperBound(candidate, ceiling time.Time) time.Time {
-	if candidate.IsZero() {
-		return ceiling
-	}
 	if ceiling.IsZero() || candidate.Before(ceiling) || candidate.Equal(ceiling) {
 		return candidate
 	}

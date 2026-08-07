@@ -22,7 +22,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 ## Event contract
 
 - Events are fat: each frame carries event type, resource type, global `version`, resource ID, and the full serialized resource when present.
-- Deletes are tombstones. Task delete tombstones may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
+- Deletes are versioned events without a `resource` payload. Task delete events may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
 - Object metadata flows over the feed; object content is never pushed.
 - Shapes are authored in JSON Schema, structurally checked against the authored Go API, and generated into TypeScript and Go validators.
 - The envelope is flat:
@@ -35,17 +35,21 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 ## How Core emits events
 
-- Write paths publish only after transaction commit.
-- The hub buffers out-of-order post-commit arrivals and fanouts in global version order.
-- A write transaction that rolls back after consuming sequence values reports those known-missing versions after rollback, so the hub can skip them immediately. The short gap timeout remains the fallback for gaps Core cannot prove missing.
-- Clients treat any version gap as a recovery trigger, so skipped versions preserve liveness without hiding the gap.
+- Every versioned write transaction locks `atlas_change_clock` before any per-object advisory lock, upload-intent row, or resource row. It later increments the already-locked clock, writes the resource mutation, and appends the complete validated event to `atlas_change_events` before commit.
+- Object deletion fences live separately in the compact `object_deletion_fences` table, one row per object ID. Feed history is never used as permanent storage-integrity state.
+- A rollback removes both the resource mutation and its version increment, so committed versions are contiguous and there are no burned-version gaps to compensate for.
+- PostgreSQL `NOTIFY` only wakes the dispatcher. The dispatcher reads committed rows from the durable log in version order and publishes them through the in-memory subscription hub.
+- `GET /queries/changed-since` pages over that same durable log with one global cursor, so websocket delivery and recovery share one source of truth.
+- Recovery events are retained for seven days. Core prunes older rows hourly and stores the earliest accepted cursor in `atlas_change_clock.min_retained_version`. An older cursor receives HTTP `410` with `CURSOR_EXPIRED`; clients must perform paginated full hydration and resume recovery from that snapshot version.
+- Changed-since pages default to 100 events and are always bounded by both event count and 8 MiB of serialized event JSON. A single event is still returned when it exceeds the byte budget so the cursor can make progress.
 
 ## Subscriptions
 
 - Supported filters: `all`, resource `id`, resource `type`, and `tasks_for_entity`.
 - Initial subscription state is empty; clients must subscribe before receiving events.
 - Subscribe/unsubscribe messages are live commands over the existing connection.
-- Valid commands change filters silently; malformed frames or invalid filters close the websocket with policy violation.
+- After sending its initial subscriptions, a client sends `{"action":"subscription_barrier"}`. Core processes websocket frames in order and replies with `{"type":"subscriptions_ready","version":N}` only after those subscriptions are active. The version is the current database watermark at acknowledgement time.
+- Ordinary subscribe/unsubscribe commands change filters silently; malformed frames or invalid filters close the websocket with policy violation.
 - A `tasks_for_entity` subscriber receives task events when the task matched the entity before or after the change. Reassignment therefore notifies both the losing and gaining entity subscriptions.
 
 ## What clients must do (consumption contract)
@@ -53,18 +57,16 @@ If those product requirements go away, a poll-only `changed-since` client is the
 The feed only delivers correctness to cooperating clients. Any consumer — the SDK, the CLI's watch mode, a future Python port — must:
 
 - On initialization, consume every `GET /queries/full` continuation page while retaining the response's repeated `version` as the pre-hydration baseline. Do not advance the global cursor from hydrated resources' individual versions; drain `changed-since` from the baseline before declaring synchronization current.
-- Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Tombstones count as versioned state, so a stale resource payload can never resurrect a newer delete.
+- Track its last applied version and apply events in version order, updating local state only when `event.version` is greater than what it holds. Delete events count as versioned state, so a stale resource payload can never resurrect a newer delete.
 - On a version gap in the stream: call `GET /queries/changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
-- On reconnect: one `changed-since` call from the last known version restores consistency.
+- On reconnect: retain the pre-connect cursor, install the normal event listener, send the initial subscriptions and barrier, and wait for `subscriptions_ready`. Buffer live events until `changed-since` has drained from the retained cursor, then apply the buffer in version order while discarding versions already covered by recovery. Bound both the transport's pending-consumer queue and the recovery handoff buffer; each permits at most 100 events or 8 MiB in aggregate and reconnects through durable recovery if its backlog exceeds either budget. As with Core recovery pages, an otherwise-empty queue accepts one event larger than the byte budget so the cursor can advance. Remain degraded until both recovery and the buffer are complete. If Core returns `CURSOR_EXPIRED`, perform full hydration and resume from its version watermark.
 
 These rules are the language-neutral half of the contract that makes a non-TypeScript client a port rather than a redesign; the shapes are authored in the protocol, and this document is the normative home of the behavioral rules.
 
 ## Testing
 
-The feed is validated by simulation against ground truth, not just unit tests. The harness keeps a ledger of every write and audits that subscribers receive every entitled event in version order. Fault injection covers dropped connections, forced gaps, reconnects, and convergence through `changed-since`.
+Three layers cover the feed from routing through end-to-end recovery:
 
-Three layers implement this philosophy:
-
-- `atlas_core/internal/feed/simulation_test.go` — a faked Core ledger driving the real feed hub: realistic entity/task/object traffic, deliberately out-of-order publishes, dropped connections, forced gaps, ledger audits. Fast and deterministic.
-- `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → post-commit hook → hub → websocket client, including the burned-version regression (a real 409 burning a sequence value, with the feed expected to keep flowing).
+- `atlas_core/internal/feed/simulation_test.go` — focused subscription-routing and slow-consumer tests for the fanout hub.
+- `atlas_core/internal/api/handlers/handler_feed_integration_test.go` — the full chain against real Postgres: HTTP write → transactional event row → durable dispatcher → websocket client, including proof that rejected writes do not advance the change clock.
 - `atlas_sdk/test/` — a sibling ledger-style harness around the TypeScript client with a fake Core/feed transport, running identically in Node and browser.

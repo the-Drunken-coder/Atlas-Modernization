@@ -11,6 +11,7 @@ import (
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_protocol/conformance"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func TestCreateEntityRejectsInvalidJSON(t *testing.T) {
@@ -187,26 +188,6 @@ func TestCRUDRequestBodiesEnforceCanonicalProtocolBeforeActions(t *testing.T) {
 				t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
 			}
 		})
-	}
-}
-
-func TestUpdateEntityTelemetryRequiresAtLeastOneField(t *testing.T) {
-	handler := newTestHandler()
-	rec := httptest.NewRecorder()
-	req := withURLParam(routeRequest(http.MethodPatch, "/entities/entity-1/telemetry", `{}`), "entity_id", "entity-1")
-
-	handler.UpdateEntityTelemetry(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
-	}
-
-	body := decodeBody(t, rec)
-	if body["error_code"] != "VALIDATION_ERROR" {
-		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
-	}
-	if !strings.Contains(body["message"].(string), "At least one telemetry field") {
-		t.Fatalf("expected telemetry validation message, got %v", body["message"])
 	}
 }
 
@@ -508,6 +489,22 @@ func TestGetChangedSinceRejectsMissingParam(t *testing.T) {
 	}
 }
 
+func TestGetChangedSinceRejectsOffset(t *testing.T) {
+	handler := newTestHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/queries/changed-since?since_version=0&offset=0", nil)
+
+	handler.GetChangedSince(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %v", body["error_code"])
+	}
+}
+
 func TestGetChangedSinceRejectsBlankParam(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -567,21 +564,14 @@ func TestFullDatasetVersionJSONPresence(t *testing.T) {
 	}
 }
 
-func TestChangedSinceDeletedTaskEntityIDJSONPresence(t *testing.T) {
+func TestChangedSinceSerializesOrderedFeedEvents(t *testing.T) {
 	entityID := "asset-1"
 	response := serializeChangedSinceResult(&actions.ChangedSinceResult{
-		DeletedEntities: []actions.DeletedResource{
-			{ID: "deleted-entity", Type: string(actions.ChangeResourceEntity), EntityID: &entityID, Version: 1},
+		Events: []protocol.FeedEvent{
+			{Event: protocol.FeedEventDelete, ResourceType: protocol.ResourceTypeTask, ID: "task-with-parent", Version: 2, EntityID: &entityID},
+			{Event: protocol.FeedEventDelete, ResourceType: protocol.ResourceTypeObject, ID: "deleted-object", Version: 3},
 		},
-		DeletedTasks: []actions.DeletedResource{
-			{ID: "task-with-parent", Type: string(actions.ChangeResourceTask), EntityID: &entityID, Version: 2},
-			{ID: "task-without-parent", Type: string(actions.ChangeResourceTask), Version: 3},
-		},
-		DeletedObjects: []actions.DeletedResource{
-			{ID: "deleted-object", Type: string(actions.ChangeResourceObject), EntityID: &entityID, Version: 4},
-		},
-		Version:   3,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Version: 3,
 	})
 
 	data, err := json.Marshal(response)
@@ -589,23 +579,15 @@ func TestChangedSinceDeletedTaskEntityIDJSONPresence(t *testing.T) {
 		t.Fatalf("marshal changed-since response: %v", err)
 	}
 	var decoded struct {
-		DeletedEntities []map[string]any `json:"deleted_entities"`
-		DeletedTasks    []map[string]any `json:"deleted_tasks"`
-		DeletedObjects  []map[string]any `json:"deleted_objects"`
+		Events []map[string]any `json:"events"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("decode changed-since response: %v", err)
 	}
-	if _, exists := decoded.DeletedEntities[0]["entity_id"]; exists {
-		t.Fatalf("deleted entity emitted entity_id: %s", data)
-	}
-	if got := decoded.DeletedTasks[0]["entity_id"]; got != entityID {
+	if got := decoded.Events[0]["entity_id"]; got != entityID {
 		t.Fatalf("deleted task entity_id = %v, want %s", got, entityID)
 	}
-	if _, exists := decoded.DeletedTasks[1]["entity_id"]; exists {
-		t.Fatalf("deleted task without parent emitted entity_id: %s", data)
-	}
-	if _, exists := decoded.DeletedObjects[0]["entity_id"]; exists {
+	if _, exists := decoded.Events[1]["entity_id"]; exists {
 		t.Fatalf("deleted object emitted entity_id: %s", data)
 	}
 }
@@ -623,15 +605,8 @@ func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
 		},
 		{
 			name: "changed since",
-			resp: &changedSinceResponse{Version: 1, Timestamp: "2026-03-20T12:00:00Z"},
-			keys: []string{
-				"has_more_entities",
-				"has_more_tasks",
-				"has_more_objects",
-				"has_more_deleted_entities",
-				"has_more_deleted_tasks",
-				"has_more_deleted_objects",
-			},
+			resp: &changedSinceResponse{Version: 1},
+			keys: []string{"has_more"},
 		},
 	}
 

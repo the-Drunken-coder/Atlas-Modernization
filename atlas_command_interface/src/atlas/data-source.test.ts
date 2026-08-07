@@ -2,14 +2,11 @@ import {
   ATLAS_PROTOCOL_REVISION,
   type EntityResource,
   type FeedEvent,
-  type JSONValue,
-  type ObjectDetailResource,
-  type ObjectResource,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { COMMAND_CATALOG_OBJECT_ID, type CommandDefinition } from "./command-model.js";
+import type { CommandDefinition } from "./command-model.js";
 import { createSdkDataSource } from "./data-source.js";
 import type { UiGeometry } from "./geometry.js";
 
@@ -99,18 +96,16 @@ describe("sdk data source", () => {
         if (url === `https://core.test/queries/changed-since?since_version=${hydrationVersion}`) {
           return Response.json({
             version: secondTask.metadata.version,
-            entities: [],
-            tasks: [secondTask],
-            objects: [],
-            deleted_entities: [],
-            deleted_tasks: [],
-            deleted_objects: [],
-            has_more_entities: false,
-            has_more_tasks: false,
-            has_more_objects: false,
-            has_more_deleted_entities: false,
-            has_more_deleted_tasks: false,
-            has_more_deleted_objects: false
+            events: [
+              {
+                event: "update",
+                resource_type: "task",
+                id: secondTask.task_id,
+                version: secondTask.metadata.version,
+                resource: secondTask
+              }
+            ],
+            has_more: false
           });
         }
         throw new Error(`Unexpected request: ${url}`);
@@ -237,6 +232,41 @@ describe("sdk data source", () => {
     expect(core.requests).toHaveLength(0);
   });
 
+  it("publishes a replacement snapshot when polling recovers an expired cursor", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", BlockedWebSocket);
+    const core = new TestCore();
+    const retained = core.upsertEntity(entity("asset-retained"));
+    const deleted = core.upsertEntity(entity("asset-deleted"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+    );
+    const dataSource = createSdkDataSource(config);
+    const snapshots = vi.fn();
+    dataSource.watch(snapshots);
+
+    const start = dataSource.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await start;
+    snapshots.mockClear();
+
+    const updated = core.upsertEntity({ ...retained, alias: "Recovered after cursor expiry" });
+    core.deleteEntity(deleted.entity_id);
+    core.minRetainedVersion = updated.metadata.version;
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.waitFor(() =>
+      expect(snapshots).toHaveBeenLastCalledWith({ entities: { [updated.entity_id]: updated }, tasks: {} })
+    );
+
+    expect(core.requests).toContain(`/queries/changed-since?since_version=${deleted.metadata.version}`);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(dataSource.snapshot()).toEqual({ entities: { [updated.entity_id]: updated }, tasks: {} });
+    expect(dataSource.health?.()).toMatchObject({ running: true, degraded: true });
+    dataSource.dispose();
+  });
+
   it("recovers missed changes through changed-since after the feed reconnects", async () => {
     vi.useFakeTimers();
     const core = new TestCore();
@@ -275,121 +305,33 @@ describe("sdk data source", () => {
     dataSource.dispose();
   });
 
-  it("fails closed and retries a live command catalog refresh after a transient detail failure", async () => {
-    vi.useFakeTimers();
+  it("loads the Protocol-validated catalog from Core's direct endpoint", async () => {
     const core = new TestCore();
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Original catalog"));
-    core.upsertObject("other-object", "other");
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
     );
-    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
     const dataSource = createSdkDataSource(config);
-    const catalogs = vi.fn();
-    dataSource.watch(() => undefined, catalogs);
 
-    const start = dataSource.start();
-    await vi.advanceTimersByTimeAsync(0);
-    await start;
-    await expect(dataSource.loadCommandCatalog()).resolves.toMatchObject({ name: "Original catalog" });
-    core.requests = [];
-
-    core.upsertObject("other-object", "still-other", {}, true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).not.toHaveBeenCalled();
-
-    core.objectFailures = 1;
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Updated catalog"), true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith({ status: "pending" });
-    expect(core.requests.filter((request) => request === `/objects/${COMMAND_CATALOG_OBJECT_ID}`)).toHaveLength(1);
-    expect(core.requests.some((request) => request.startsWith("/queries/changed-since"))).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(999);
-    expect(catalogs).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    await vi.waitFor(() =>
-      expect(catalogs).toHaveBeenLastCalledWith({
-        status: "loaded",
-        catalog: expect.objectContaining({ name: "Updated catalog" })
-      })
-    );
-    expect(catalogs).toHaveBeenCalledTimes(2);
-    expect(core.requests.filter((request) => request === `/objects/${COMMAND_CATALOG_OBJECT_ID}`)).toHaveLength(2);
-
-    core.deleteObject(COMMAND_CATALOG_OBJECT_ID, true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith({ status: "deleted" });
-    expect(catalogs).toHaveBeenCalledTimes(3);
-
-    dataSource.dispose();
+    await expect(dataSource.loadCommandCatalog()).resolves.toEqual(core.catalog);
+    expect(core.requests).toEqual(["/command-catalog"]);
   });
 
-  it("does not publish a superseded catalog response after a newer initial read", async () => {
-    vi.useFakeTimers();
-    const core = new TestCore();
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Original catalog"));
+  it("rejects an invalid command catalog from Core", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
+      vi.fn(async () =>
+        Response.json({
+          type: "command_catalog",
+          name: "Invalid catalog",
+          description: "Missing command fields",
+          commands: [{ id: "broken" }]
+        })
+      )
     );
-    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
     const dataSource = createSdkDataSource(config);
-    const catalogs = vi.fn();
-    dataSource.watch(() => undefined, catalogs);
 
-    const start = dataSource.start();
-    await vi.advanceTimersByTimeAsync(0);
-    await start;
-
-    const releaseOldResponse = core.delayNextObjectResponse();
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Older event response"), true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenLastCalledWith({ status: "pending" });
-
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Newest initial response"));
-    await expect(dataSource.loadCommandCatalog()).resolves.toMatchObject({ name: "Newest initial response" });
-
-    releaseOldResponse();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(catalogs).toHaveBeenCalledTimes(1);
-
-    dataSource.dispose();
-  });
-
-  it("does not reject an in-flight startup catalog when live detail retries fail", async () => {
-    vi.useFakeTimers();
-    const core = new TestCore();
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Startup catalog"));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => core.fetch(String(input), init))
-    );
-    vi.stubGlobal("WebSocket", core.attachWebSocketGlobal());
-    const dataSource = createSdkDataSource(config);
-    const catalogs = vi.fn();
-    dataSource.watch(() => undefined, catalogs);
-
-    const start = dataSource.start();
-    await vi.advanceTimersByTimeAsync(0);
-    await start;
-
-    const releaseStartup = core.delayNextObjectResponse();
-    const startupCatalog = dataSource.loadCommandCatalog();
-    await vi.advanceTimersByTimeAsync(0);
-    core.objectFailures = 4;
-    core.upsertObject(COMMAND_CATALOG_OBJECT_ID, "command_catalog", catalogFields("Unreachable live catalog"), true);
-
-    await vi.advanceTimersByTimeAsync(21_000);
-    expect(catalogs).toHaveBeenCalledTimes(2);
-    expect(catalogs).toHaveBeenNthCalledWith(1, { status: "pending" });
-    expect(catalogs).toHaveBeenLastCalledWith({ status: "failed" });
-
-    releaseStartup();
-    await expect(startupCatalog).resolves.toMatchObject({ name: "Startup catalog" });
-
-    dataSource.dispose();
+    await expect(dataSource.loadCommandCatalog()).rejects.toThrow("Atlas response failed validation");
   });
 
   it("routes command and geometry writes through SDK cache notifications", async () => {
@@ -499,43 +441,33 @@ describe("sdk data source", () => {
   });
 });
 
-function catalogFields(name: string): Record<string, JSONValue> {
-  return {
-    name,
-    description: "Test catalog",
-    commands: [
-      {
-        id: "hold_position",
-        name: "Hold Position",
-        description: "Hold here.",
-        parameters_schema: {}
-      }
-    ]
-  };
-}
-
 class TestCore {
   version = 0;
+  minRetainedVersion = 0;
   feedConnections = 0;
-  objectFailures = 0;
+  readonly catalog = {
+    type: "command_catalog" as const,
+    name: "Atlas Command Catalog",
+    description: "Test catalog",
+    commands: [holdPositionCommand]
+  };
   requests: string[] = [];
   readonly sockets = new Set<TestWebSocket>();
   private readonly entities = new Map<string, EntityResource>();
-  private readonly objects = new Map<string, ObjectDetailResource>();
   private readonly events: FeedEvent[] = [];
-  private nextObjectDelay: Promise<void> | undefined;
 
   fetch = async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
     const path = url.pathname;
     this.requests.push(path + url.search);
     if (path === "/protocol/revision") return Response.json({ protocol_revision: ATLAS_PROTOCOL_REVISION });
+    if (path === "/command-catalog") return Response.json(this.catalog);
     if (path === "/queries/full") {
       return Response.json({
         version: this.version,
         entities: [...this.entities.values()],
         tasks: [],
-        objects: [...this.objects.values()],
+        objects: [],
         has_more_entities: false,
         has_more_tasks: false,
         has_more_objects: false
@@ -543,40 +475,18 @@ class TestCore {
     }
     if (path === "/queries/changed-since") {
       const since = Number(url.searchParams.get("since_version"));
+      if (since < this.minRetainedVersion) {
+        return Response.json(
+          { error_code: "CURSOR_EXPIRED", message: "Changed-since cursor has expired; perform a full hydration" },
+          { status: 410 }
+        );
+      }
       const changed = this.events.filter((event) => event.version > since);
       return Response.json({
-        entities: changed.filter(isEntityUpsert).map((event) => event.resource),
-        tasks: [],
-        objects: changed.filter(isObjectUpsert).flatMap((event) => {
-          const object = this.objects.get(event.id);
-          return object ? [object] : [];
-        }),
-        deleted_entities: [],
-        deleted_tasks: [],
-        deleted_objects: changed
-          .filter(isObjectDelete)
-          .map((event) => ({ id: event.id, type: "object", version: event.version })),
-        has_more_entities: false,
-        has_more_tasks: false,
-        has_more_objects: false,
-        has_more_deleted_entities: false,
-        has_more_deleted_tasks: false,
-        has_more_deleted_objects: false,
+        events: changed,
+        has_more: false,
         version: this.version
       });
-    }
-    if (path.startsWith("/objects/")) {
-      if (this.objectFailures > 0) {
-        this.objectFailures--;
-        return Response.json({ error_code: "INTERNAL_SERVER_ERROR", message: "object unavailable" }, { status: 503 });
-      }
-      const object = this.objects.get(decodeURIComponent(path.slice("/objects/".length)));
-      const delay = this.nextObjectDelay;
-      this.nextObjectDelay = undefined;
-      if (delay !== undefined) await delay;
-      return object
-        ? Response.json(object)
-        : Response.json({ error_code: "OBJECT_NOT_FOUND", message: "object not found" }, { status: 404 });
     }
     throw new Error(`Unexpected request: ${url}`);
   };
@@ -590,14 +500,6 @@ class TestCore {
     };
   }
 
-  delayNextObjectResponse(): () => void {
-    let release!: () => void;
-    this.nextObjectDelay = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return release;
-  }
-
   upsertEntity(value: EntityResource): EntityResource {
     const version = ++this.version;
     const updated = { ...value, metadata: { ...value.metadata, version } };
@@ -606,32 +508,10 @@ class TestCore {
     return updated;
   }
 
-  upsertObject(id: string, type: string, extra: Record<string, JSONValue> = {}, live = false): ObjectDetailResource {
+  deleteEntity(id: string): void {
+    if (!this.entities.delete(id)) return;
     const version = ++this.version;
-    const resource: ObjectResource = {
-      object_id: id,
-      path: null,
-      content_type: null,
-      type,
-      size_bytes: null,
-      usage_hints: type === "command_catalog" ? ["command_catalog"] : [],
-      bucket: null,
-      metadata: { ...metadata, version }
-    };
-    const response: ObjectDetailResource = { ...resource, extra };
-    this.objects.set(id, response);
-    const event: FeedEvent = { event: "update", resource_type: "object", id, version, resource };
-    this.events.push(event);
-    if (live) this.emit(event);
-    return response;
-  }
-
-  deleteObject(id: string, live = false): void {
-    if (!this.objects.delete(id)) return;
-    const version = ++this.version;
-    const event: FeedEvent = { event: "delete", resource_type: "object", id, version };
-    this.events.push(event);
-    if (live) this.emit(event);
+    this.events.push({ event: "delete", resource_type: "entity", id, version });
   }
 
   private emit(event: FeedEvent): void {
@@ -657,7 +537,12 @@ class TestWebSocket {
     });
   }
 
-  send(): void {}
+  send(data: string): void {
+    const message = JSON.parse(data) as { action?: string };
+    if (message.action === "subscription_barrier") {
+      this.receive({ type: "subscriptions_ready", version: this.core.version });
+    }
+  }
 
   close(): void {
     if (this.readyState === 3) return;
@@ -720,20 +605,4 @@ class BlockedWebSocket {
   private dispatch(type: string, event: { data?: unknown }): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
-}
-
-function isEntityUpsert(
-  event: FeedEvent
-): event is Extract<FeedEvent, { resource_type: "entity"; event: "create" | "update" }> {
-  return event.resource_type === "entity" && event.event !== "delete";
-}
-
-function isObjectUpsert(
-  event: FeedEvent
-): event is Extract<FeedEvent, { resource_type: "object"; event: "create" | "update" }> {
-  return event.resource_type === "object" && event.event !== "delete";
-}
-
-function isObjectDelete(event: FeedEvent): event is Extract<FeedEvent, { resource_type: "object"; event: "delete" }> {
-  return event.resource_type === "object" && event.event === "delete";
 }

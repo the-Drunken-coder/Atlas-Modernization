@@ -1,11 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../app/config.js";
-import { parseCommandCatalog } from "../atlas/command-model.js";
-import type { AtlasDataSource, CatalogUpdate, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
+import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { type AtlasContextValue, AtlasProvider, AtlasStaticProvider } from "../state/atlas-context.js";
@@ -61,7 +60,7 @@ vi.mock("../ui/map/view/MapView.js", async () => {
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-const catalog = parseCommandCatalog({
+const catalog: CommandCatalog = {
   type: "command_catalog",
   name: "Catalog",
   description: "Test",
@@ -84,7 +83,7 @@ const catalog = parseCommandCatalog({
     },
     { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
   ]
-});
+};
 
 const rover: EntityResource = {
   entity_id: "asset-1",
@@ -138,7 +137,6 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
   };
   let currentHealth = health;
   let notify: ((snapshot: AtlasSnapshot) => void) | undefined;
-  let notifyCatalog: ((update: CatalogUpdate) => void) | undefined;
   const submissions: CommandSubmission[] = [];
   const geometryUpdates: Array<{ entityId: string; geometry: UiGeometry; ifMatchVersion?: number }> = [];
   const fake: AtlasDataSource = {
@@ -148,12 +146,10 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     async loadCommandCatalog() {
       return catalog;
     },
-    watch(onSnapshot, onCatalog) {
+    watch(onSnapshot) {
       notify = onSnapshot;
-      notifyCatalog = onCatalog;
       return () => {
         notify = undefined;
-        notifyCatalog = undefined;
       };
     },
     async start() {},
@@ -197,7 +193,6 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
       current = snapshot;
       notify?.(snapshot);
     },
-    emitCatalog: (update: CatalogUpdate) => notifyCatalog?.(update),
     setHealth: (next: ConnectionHealth) => {
       currentHealth = next;
     }
@@ -302,52 +297,46 @@ describe("MapConsole command flow", () => {
     expect(document.body.textContent).toContain("[redacted]");
   });
 
-  it("closes an open command form when the live catalog becomes unavailable", async () => {
+  it("surfaces an in-flight submission failure across a catalog refresh", async () => {
     const user = userEvent.setup();
-    const { fake, emitCatalog, submissions } = makeFakeDataSource();
-    renderConsole(fake);
+    let rejectSubmission!: (cause: Error) => void;
+    const submitCommand = vi.fn(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectSubmission = reject;
+        })
+    );
+    const snapshot = makeFakeDataSource().fake.snapshot();
+    const value = (nextCatalog: CommandCatalog): AtlasContextValue => ({
+      status: "ready",
+      config: appConfig(),
+      snapshot,
+      catalog: nextCatalog,
+      health: healthyConnection,
+      reconnect: vi.fn(),
+      submitCommand,
+      updateGeometry: async () => {
+        throw new Error("not used");
+      }
+    });
+    const view = (nextCatalog: CommandCatalog) => (
+      <AtlasStaticProvider value={value(nextCatalog)}>
+        <MapConsole />
+      </AtlasStaticProvider>
+    );
+    const { rerender } = render(view(catalog));
 
-    await user.click(await screen.findByText("Rover"));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
-
-    act(() => emitCatalog({ status: "failed" }));
-
-    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
-    expect(submissions).toHaveLength(0);
-  });
-
-  it("keeps a hidden command pending until Core responds", async () => {
-    const user = userEvent.setup();
-    const { fake, emitCatalog } = makeFakeDataSource();
-    const reject: Array<(reason?: unknown) => void> = [];
-    fake.submitCommand = async () => {
-      await new Promise((_, rejectSubmission) => reject.push(rejectSubmission));
-      throw new Error("unreachable");
-    };
-    renderConsole(fake);
-
-    await user.click(await screen.findByText("Rover"));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
+    await user.click(screen.getByRole("button", { name: /Rover/ }));
+    await user.click(screen.getByRole("button", { name: /Set Speed/ }));
     await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
     await user.click(screen.getByRole("button", { name: "Send command" }));
+    await waitFor(() => expect(submitCommand).toHaveBeenCalledTimes(1));
 
-    act(() => emitCatalog({ status: "failed" }));
-    expect(await screen.findByText("Command submission pending…")).toBeInTheDocument();
+    rerender(view({ ...catalog, name: "Updated catalog" }));
+    await act(async () => rejectSubmission(new Error("submission rejected")));
 
-    act(() => emitCatalog({ status: "loaded", catalog }));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
-
-    await act(async () => {
-      reject[0](new Error("Core response failed"));
-      await Promise.resolve();
-    });
-    expect(screen.queryByText("Core response failed")).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Send Set Speed" })).not.toBeInTheDocument();
-
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    expect(screen.getByRole("dialog", { name: "Send Set Speed" })).toBeInTheDocument();
+    expect(await screen.findByText("submission rejected")).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: /speed/ })).toBeInTheDocument();
   });
 
   it("does not change the map reticle target when sidebar rows are hovered", async () => {
@@ -543,6 +532,11 @@ describe("MapConsole command flow", () => {
 
   it("opens error details by keyboard and restores focus safely on close", async () => {
     const user = userEvent.setup();
+    const mapEscape = vi.fn();
+    const mapKeyListener = (event: KeyboardEvent) => {
+      if (event.key === "Escape") mapEscape();
+    };
+    window.addEventListener("keydown", mapKeyListener);
     const { fake } = makeFakeDataSource(area, {
       running: true,
       healthy: false,
@@ -569,6 +563,8 @@ describe("MapConsole command flow", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Atlas Core connection error" })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(badge);
+    expect(mapEscape).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", mapKeyListener);
   });
 
   it("closes details and preserves a focus target when recovery clears the error", async () => {
@@ -656,6 +652,30 @@ describe("MapConsole command flow", () => {
     expect(geometryUpdates[0]).toEqual({ entityId: "geo-1", geometry: area.components.geometry, ifMatchVersion: 1 });
   });
 
+  it("ignores a geometry save that settles after selection changes", async () => {
+    const user = userEvent.setup();
+    let rejectUpdate!: (cause: Error) => void;
+    const { fake } = makeFakeDataSource();
+    fake.updateGeometry = () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectUpdate = reject;
+      });
+    renderConsole(fake);
+
+    await screen.findByText("Rover");
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    await user.click(await screen.findByText("Area Alpha"));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("button", { name: "Saving…" });
+
+    await user.click(screen.getByTestId("map-marker-select"));
+    rejectUpdate(new Error("late geometry failure"));
+
+    await waitFor(() => expect(screen.queryByText("late geometry failure")).not.toBeInTheDocument());
+    expect(screen.getByText("Asset")).toBeInTheDocument();
+  });
+
   it("saves circle Feature drafts without replacing them with display polygons", async () => {
     const user = userEvent.setup();
     const { fake, geometryUpdates } = makeFakeDataSource(circleArea);
@@ -679,6 +699,25 @@ describe("MapConsole command flow", () => {
     await user.click(await screen.findByText("Rover"));
     fireEvent.contextMenu(screen.getByTestId("map"));
     await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
+
+    await waitFor(() => expect(submissions).toHaveLength(1));
+    expect(submissions[0]).toMatchObject({
+      entityId: "asset-1",
+      command: { id: "goto" },
+      parameters: { latitude: 47.61, longitude: -122.33 }
+    });
+  });
+
+  it("offers position commands in the inspector and accepts keyboard-entered coordinates", async () => {
+    const user = userEvent.setup();
+    const { fake, submissions } = makeFakeDataSource();
+    renderConsole(fake);
+
+    await user.click(await screen.findByText("Rover"));
+    await user.click(await screen.findByRole("button", { name: /Goto/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /latitude/i }), "47.61");
+    await user.type(screen.getByRole("spinbutton", { name: /longitude/i }), "-122.33");
+    await user.click(screen.getByRole("button", { name: "Send command" }));
 
     await waitFor(() => expect(submissions).toHaveLength(1));
     expect(submissions[0]).toMatchObject({

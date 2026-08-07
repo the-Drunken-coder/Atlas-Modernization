@@ -39,6 +39,15 @@ func TestContinuationUpperBoundRejectsMixedSnapshots(t *testing.T) {
 	}
 }
 
+func TestContinuationUpperBoundRejectsMissingSnapshot(t *testing.T) {
+	now := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	_, _, err := continuationUpperBound(now, &parsedQueryCursor{})
+	validationErr, ok := err.(*ValidationError)
+	if !ok || len(validationErr.Details) != 1 || !strings.Contains(validationErr.Details[0], "snapshot time") {
+		t.Fatalf("continuationUpperBound missing snapshot error = %#v, want snapshot time detail", err)
+	}
+}
+
 func TestOpenCursorPagedRowsRequiresCursorForContinuation(t *testing.T) {
 	rows, err := openCursorPagedRows(context.Background(), nil, cursorPageOpts{continuation: true})
 	if err == nil {
@@ -49,5 +58,18 @@ func TestOpenCursorPagedRowsRequiresCursorForContinuation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "requires a cursor") {
 		t.Fatalf("expected cursor error, got %v", err)
+	}
+}
+
+func TestOpenCursorPagedRowsRejectsCursorWithoutUpperBound(t *testing.T) {
+	rows, err := openCursorPagedRows(context.Background(), nil, cursorPageOpts{cursor: &parsedQueryCursor{}})
+	if err == nil {
+		t.Fatal("expected cursor without upper bound to fail")
+	}
+	if rows != nil {
+		t.Fatalf("expected no rows, got %v", rows)
+	}
+	if !strings.Contains(err.Error(), "upper bound") {
+		t.Fatalf("expected upper-bound error, got %v", err)
 	}
 }

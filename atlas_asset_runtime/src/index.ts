@@ -15,6 +15,7 @@ const DEFAULT_CHECK_IN_INTERVAL_MS = 5_000;
 const TASK_PAGE_SIZE = 20;
 const INITIAL_RETRY_DELAY_MS = 250;
 const MAX_RETRY_DELAY_MS = 10_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export type AtlasAssetClient = Pick<AtlasClient, "handshake"> & {
   entities: {
@@ -82,8 +83,9 @@ export class AtlasAssetRuntime {
       throw new TypeError("handlers must map non-empty command IDs to functions");
     }
     const interval = options.checkInIntervalMs ?? DEFAULT_CHECK_IN_INTERVAL_MS;
-    if (!Number.isFinite(interval) || interval <= 0)
-      throw new TypeError("checkInIntervalMs must be a positive finite number");
+    if (!Number.isFinite(interval) || interval <= 0 || interval > MAX_TIMER_DELAY_MS) {
+      throw new TypeError(`checkInIntervalMs must be a positive finite number no greater than ${MAX_TIMER_DELAY_MS}`);
+    }
 
     this.client = client;
     this.entityId = entityId;

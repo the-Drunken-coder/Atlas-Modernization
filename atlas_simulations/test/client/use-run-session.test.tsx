@@ -159,4 +159,58 @@ describe("useRunSession", () => {
     });
     expect(eventSources[1].closed).toBe(true);
   });
+
+  it("closes replaced event streams and ignores their late callbacks", async () => {
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(vi.mocked(loadRuns)).toHaveBeenCalled());
+    act(() => result.current.selectRun({ ...run, id: "first-run", status: "running" }));
+    act(() => result.current.selectRun({ ...run, id: "second-run", status: "running" }));
+
+    expect(eventSources).toHaveLength(2);
+    expect(eventSources[0].closed).toBe(true);
+
+    act(() => {
+      eventSources[0].onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: "first-run",
+          timestamp: new Date().toISOString(),
+          type: "error",
+          message: "late error"
+        })
+      } as MessageEvent<string>);
+      eventSources[0].onerror?.();
+    });
+
+    expect(result.current.currentRun).toMatchObject({ id: "second-run" });
+    expect(result.current.error).toBeUndefined();
+    expect(vi.mocked(loadRuns)).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors terminal lifecycle semantics for a duplicate event", async () => {
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(vi.mocked(loadRuns)).toHaveBeenCalled());
+    act(() => result.current.selectRun({ ...run, status: "running" }));
+    const source = eventSources[0];
+    const timestamp = new Date().toISOString();
+
+    act(() => {
+      source.onmessage?.({
+        data: JSON.stringify({ sequence: 1, runId: run.id, timestamp, type: "log", message: "recorded" })
+      } as MessageEvent<string>);
+      source.onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: run.id,
+          timestamp,
+          type: "status",
+          status: "completed",
+          message: "duplicate terminal sequence"
+        })
+      } as MessageEvent<string>);
+    });
+
+    expect(source.closed).toBe(true);
+    expect(result.current.events).toHaveLength(1);
+  });
 });

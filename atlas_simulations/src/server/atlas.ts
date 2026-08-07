@@ -1,5 +1,5 @@
 import { AtlasAPIError, AtlasClient, type AtlasClientOptions } from "@the-drunken-coder/atlas-sdk";
-import type { AtlasTargetConfig, SimulationConfig } from "./config.js";
+import type { AtlasTargetConfig } from "./config.js";
 
 export type AtlasClientLike = Pick<AtlasClient, "watch" | "handshake"> & {
   entities: Pick<AtlasClient["entities"], "get" | "create" | "update" | "delete" | "checkIn">;
@@ -19,15 +19,11 @@ export type AtlasClientFactory = (options?: {
 
 const ATLAS_REQUEST_TIMEOUT_MS = 10_000;
 
-type AtlasClientConfig = SimulationConfig | AtlasTargetConfig;
-
-export function createAtlasClientFactory(config: AtlasClientConfig): AtlasClientFactory {
-  const baseUrl = "baseUrl" in config ? config.baseUrl : config.atlasBaseUrl;
-  const apiKey = "baseUrl" in config ? config.apiKey : config.atlasApiKey;
+export function createAtlasClientFactory(config: AtlasTargetConfig): AtlasClientFactory {
   return (options = {}) =>
     new AtlasClient({
-      baseUrl,
-      apiKey,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
       fetch: abortableFetch(options.signal),
       sync: options.sync ?? false,
       pollIntervalMs: options.pollIntervalMs ?? 2_000

@@ -105,9 +105,8 @@ Raw development startup seeds a development-only default admin credential:
 
 - username: `admin`
 - password: `password`
-- role: `admin`
 
-This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `atlas_core/docker/.env.local` so it can safely enable machine auth. The bundled production Compose launcher requires `ATLAS_ADMIN_PASSWORD`; direct Core processes and explicitly mounted custom containers may instead use `ATLAS_ADMIN_PASSWORD_FILE`. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
+This credential is for local development only; its `admin_records` row still survives scratch data resets. The default `atlas.py --dev` launcher replaces the password with a generated value in `atlas_core/docker/.env.local` so it can safely enable machine auth. The bundled production Compose launcher requires `ATLAS_ADMIN_PASSWORD`; direct Core processes and explicitly mounted custom containers may instead use `ATLAS_ADMIN_PASSWORD_FILE`. Production admin passwords must contain at least 12 characters. When API-key auth is enabled, Core refuses to start if the seeded account would use the default `admin` / `password` credential. If an explicit admin password override changes between restarts, Core updates the seeded admin account so password rotation works even when `DATABASE_RECREATE_ON_STARTUP=false`.
 
 Optional API key auth is controlled by:
 
@@ -159,7 +158,7 @@ The process refuses to start when:
 - [ ] Restrict network ingress to trusted operators.
 - [ ] Set explicit `CORS_ORIGINS` for production and constrained `CORS_ORIGIN_PATTERNS` only for trusted preview deployment hostnames.
 - [ ] Set `ENABLE_API_AUTH=true` and a strong `API_AUTH_KEY` for production.
-- [ ] Override the development `admin` / `password` seed with `ATLAS_ADMIN_PASSWORD`; use `ATLAS_ADMIN_PASSWORD_FILE` only for direct Core or a custom container that explicitly mounts it.
+- [ ] Override the development `admin` / `password` seed with an `ATLAS_ADMIN_PASSWORD` of at least 12 characters; use `ATLAS_ADMIN_PASSWORD_FILE` only for direct Core or a custom container that explicitly mounts it.
 - [ ] Keep `ATLAS_ADMIN_COOKIE_SAMESITE=none` for cross-site UI/Core deployments, or set `lax` only for same-site deployments.
 - [ ] Leave `TRUSTED_PROXY_CIDRS` empty for direct deployments; behind a custom proxy, trust only its exact immediate peer `/32` or `/128`.
 - [ ] Audit environment variables and settings file before release.

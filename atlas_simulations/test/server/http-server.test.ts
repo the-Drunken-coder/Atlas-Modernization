@@ -14,6 +14,7 @@ import { ATLAS_PROTOCOL_REVISION } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AtlasClientFactory } from "../../src/server/atlas.js";
 import { CleanupLedger } from "../../src/server/cleanup-ledger.js";
+import type { SimulationConfig } from "../../src/server/config.js";
 import { createSimulationServer, type SimulationServer } from "../../src/server/index.js";
 import { RunStore } from "../../src/server/run-store.js";
 import type { Scenario } from "../../src/server/scenario.js";
@@ -41,7 +42,7 @@ describe("simulation HTTP server", () => {
   it("reports Atlas health success and upstream failures", async () => {
     const coreUrl = await startCoreHealthServer(200, "/api");
     server = createSimulationServer({
-      config: { atlasBaseUrl: coreUrl, port: 0, packageRoot: process.cwd() },
+      config: testConfig(coreUrl),
       store: new RunStore(createFakeAtlasCore().factory)
     });
     const baseUrl = await server.listen();
@@ -55,7 +56,7 @@ describe("simulation HTTP server", () => {
     const failedCoreUrl = await startCoreHealthServer(503, "/api");
     await server.close();
     server = createSimulationServer({
-      config: { atlasBaseUrl: failedCoreUrl, port: 0, packageRoot: process.cwd() },
+      config: testConfig(failedCoreUrl),
       store: new RunStore(createFakeAtlasCore().factory)
     });
     const failedBaseUrl = await server.listen();
@@ -71,7 +72,6 @@ describe("simulation HTTP server", () => {
     const coreUrl = await startCoreHealthServer(200, "/deployed");
     server = createSimulationServer({
       config: {
-        atlasBaseUrl: "http://127.0.0.1:8000",
         atlasTargets: [
           { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000" },
           { id: "deployed", label: "Atlas Command API", baseUrl: coreUrl, apiKey: "remote-key" }
@@ -114,7 +114,6 @@ describe("simulation HTTP server", () => {
     const selectedCore = createFakeAtlasCore();
     server = createSimulationServer({
       config: {
-        atlasBaseUrl: "http://127.0.0.1:8000",
         atlasTargets: [
           { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: defaultCore.factory },
           {
@@ -168,7 +167,6 @@ describe("simulation HTTP server", () => {
     const deployedCore = createFakeAtlasCore();
     server = createSimulationServer({
       config: {
-        atlasBaseUrl: "http://127.0.0.1:8000",
         atlasTargets: [
           { id: "loopback", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: localCore.factory },
           {
@@ -229,7 +227,6 @@ describe("simulation HTTP server", () => {
     const packageRoot = tempPackageRoot();
     const core = createFakeAtlasCore();
     const config = {
-      atlasBaseUrl: "http://127.0.0.1:8000",
       atlasTargets: [
         { id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000", clientFactory: core.factory },
         { id: "deployed", label: "Deployed Core", baseUrl: "https://atlas.example.test", clientFactory: core.factory }
@@ -311,7 +308,6 @@ describe("simulation HTTP server", () => {
     const coreUrl = await startCoreResourceServer();
     server = createSimulationServer({
       config: {
-        atlasBaseUrl: coreUrl,
         atlasTargets: [{ id: "deployed", label: "Atlas Command API", baseUrl: coreUrl }],
         defaultAtlasTargetId: "deployed",
         port: 0,
@@ -356,7 +352,7 @@ describe("simulation HTTP server", () => {
   it("lists scenarios, starts a run, streams replay events, and cleans up", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: testConfig(),
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -418,7 +414,7 @@ describe("simulation HTTP server", () => {
     const started = store.start(scenario, { fields: {} });
     await waitFor(async () => expect(store.get(started.id)?.status).toBe("failed"));
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: testConfig(),
       store
     });
     const baseUrl = await server.listen();
@@ -444,7 +440,7 @@ describe("simulation HTTP server", () => {
   it("stops a live run through the HTTP API", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: testConfig(),
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -475,7 +471,7 @@ describe("simulation HTTP server", () => {
   it("returns 409 when cleanup is requested while a run is still running", async () => {
     const core = createFakeAtlasCore();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: testConfig(),
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -527,7 +523,7 @@ describe("simulation HTTP server", () => {
     const run = store.start(scenario, { fields: {} });
     await waitFor(async () => expect(store.get(run.id)?.status).toBe("completed"));
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: testConfig(),
       store
     });
     const baseUrl = await server.listen();
@@ -563,7 +559,7 @@ describe("simulation HTTP server", () => {
     await waitFor(async () => expect(release).toBeTypeOf("function"));
     store.stop(started.id);
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot: process.cwd() },
+      config: testConfig(),
       store
     });
     const baseUrl = await server.listen();
@@ -583,7 +579,7 @@ describe("simulation HTTP server", () => {
     const core = createFakeAtlasCore();
     const packageRoot = tempPackageRoot();
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot },
+      config: testConfig("http://127.0.0.1:8000", packageRoot),
       store: new RunStore(core.factory)
     });
     const baseUrl = await server.listen();
@@ -653,7 +649,7 @@ describe("simulation HTTP server", () => {
     symlinkSync(path.join(packageRoot, "secret.txt"), path.join(packageRoot, "dist/client/assets/secret.txt"));
 
     server = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot },
+      config: testConfig("http://127.0.0.1:8000", packageRoot),
       store: new RunStore(createFakeAtlasCore().factory)
     });
     const baseUrl = await server.listen();
@@ -674,6 +670,15 @@ describe("simulation HTTP server", () => {
     await expectStatus(`${baseUrl}/assets/secret.txt`, 404);
   });
 });
+
+function testConfig(baseUrl = "http://127.0.0.1:8000", packageRoot = process.cwd()): SimulationConfig {
+  return {
+    atlasTargets: [{ id: "local", label: "Local Core", baseUrl }],
+    defaultAtlasTargetId: "local",
+    port: 0,
+    packageRoot
+  };
+}
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetchWithIntegrationTimeout(url, init);

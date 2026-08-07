@@ -115,7 +115,15 @@ export function LogList({ events }: { events: RunEvent[] }) {
   );
 }
 
-export function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run: RunSummary): void }) {
+export function RunTable({
+  runs,
+  selectedRunId,
+  onSelect
+}: {
+  runs: RunSummary[];
+  selectedRunId?: string;
+  onSelect(run: RunSummary): void;
+}) {
   if (!runs.length) return <div className="empty">No runs</div>;
   return (
     <table>
@@ -136,7 +144,12 @@ export function RunTable({ runs, onSelect }: { runs: RunSummary[]; onSelect(run:
               </span>
             </td>
             <td>
-              <button className="run-select-button" type="button" onClick={() => onSelect(run)}>
+              <button
+                className="run-select-button"
+                type="button"
+                aria-current={run.id === selectedRunId ? "true" : undefined}
+                onClick={() => onSelect(run)}
+              >
                 {run.scenarioName}
               </button>
             </td>

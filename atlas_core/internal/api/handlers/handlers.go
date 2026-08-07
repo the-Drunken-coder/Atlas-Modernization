@@ -31,7 +31,7 @@ func NewHandler(db *database.DB, storageClient *storage.Client, logger zerolog.L
 	return NewHandlerWithFeed(db, storageClient, logger, cfg, nil, nil)
 }
 
-// NewHandlerWithFeed creates a new Handler and wires committed writes into feedHub.
+// NewHandlerWithFeed creates a Handler with the feed endpoint wired to feedHub.
 func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger zerolog.Logger, cfg *config.Config, feedHub *feed.Hub, adminAuth *admin.Service) *Handler {
 	if cfg == nil {
 		panic("handlers.NewHandler: config is required")
@@ -39,9 +39,8 @@ func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger z
 	if db == nil || db.Pool == nil {
 		panic("handlers.NewHandler: db with initialized pool is required")
 	}
-	changeSink := feed.NewAsyncChangeSink(feedHub, feed.AsyncChangeSinkOptions{})
-	entityActions := actions.NewEntityActionsWithChangeSink(db.Pool, changeSink)
-	taskActions := actions.NewTaskActionsWithChangeSink(db.Pool, changeSink)
+	entityActions := actions.NewEntityActions(db.Pool)
+	taskActions := actions.NewTaskActions(db.Pool)
 
 	return &Handler{
 		db:             db,
@@ -50,7 +49,7 @@ func NewHandlerWithFeed(db *database.DB, storageClient *storage.Client, logger z
 		config:         cfg,
 		entityActions:  entityActions,
 		taskActions:    taskActions,
-		objectActions:  actions.NewObjectActionsWithChangeSink(db.Pool, storageClient, changeSink),
+		objectActions:  actions.NewObjectActions(db.Pool, storageClient),
 		checkinActions: actions.NewEntityCheckinActions(entityActions, taskActions),
 		queryActions:   actions.NewQueryActions(db.Pool),
 		feedHub:        feedHub,

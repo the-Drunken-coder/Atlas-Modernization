@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -15,6 +16,8 @@ import (
 	"github.com/rs/zerolog"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+var errSubscriptionWatermark = errors.New("feed subscription watermark unavailable")
 
 const (
 	defaultAuthTimeout       = 5 * time.Second
@@ -34,8 +37,9 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	Hub    *Hub
-	Config ServerConfig
+	Hub            *Hub
+	Config         ServerConfig
+	CurrentVersion func(context.Context) (int64, error)
 }
 
 func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -120,8 +124,12 @@ func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				closeWith(websocket.StatusUnsupportedData, "feed expects text JSON frames")
 				return
 			}
-			if err := s.handleClientFrame(client, result.data); err != nil {
+			if err := s.handleClientFrame(ctx, client, result.data); err != nil {
 				logger.Warn().Err(err).Msg("Atlas feed rejected client frame")
+				if errors.Is(err, errSubscriptionWatermark) {
+					closeWith(websocket.StatusInternalError, "feed subscription watermark failed")
+					return
+				}
 				closeWith(websocket.StatusPolicyViolation, "invalid client frame")
 				return
 			}
@@ -252,7 +260,7 @@ func (s Server) readAuthFrame(ctx context.Context, conn *websocket.Conn) error {
 	return nil
 }
 
-func (s Server) handleClientFrame(client *Client, data []byte) error {
+func (s Server) handleClientFrame(ctx context.Context, client *Client, data []byte) error {
 	var action struct {
 		Action string `json:"action"`
 	}
@@ -267,6 +275,22 @@ func (s Server) handleClientFrame(client *Client, data []byte) error {
 		return nil
 	case string(protocol.FeedActionSubscribe):
 		return handleSubscriptionFrame(client, data, true)
+	case string(protocol.FeedActionSubscriptionBarrier):
+		if errors := protocol.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(data)); len(errors) > 0 {
+			return fmt.Errorf("feed subscription barrier is invalid: %s", strings.Join(errors, "; "))
+		}
+		version := int64(0)
+		if s.CurrentVersion != nil {
+			var err error
+			version, err = s.CurrentVersion(ctx)
+			if err != nil {
+				return fmt.Errorf("%w: %w", errSubscriptionWatermark, err)
+			}
+		}
+		if !client.SubscriptionsReady(version) {
+			return fmt.Errorf("feed subscription barrier could not be acknowledged")
+		}
+		return nil
 	case string(protocol.FeedActionUnsubscribe):
 		return handleSubscriptionFrame(client, data, false)
 	default:
@@ -321,14 +345,14 @@ func (s Server) writeLoop(ctx context.Context, conn *websocket.Conn, client *Cli
 			if !ok {
 				return fmt.Errorf("feed client closed")
 			}
-			data, err := json.Marshal(event.Event)
-			if err != nil {
+			if err := s.writeJSONFrame(ctx, conn, event.Event); err != nil {
 				return err
 			}
-			writeCtx, cancel := context.WithTimeout(ctx, s.writeTimeout())
-			err = conn.Write(writeCtx, websocket.MessageText, data)
-			cancel()
-			if err != nil {
+		case control, ok := <-client.Controls():
+			if !ok {
+				return fmt.Errorf("feed client closed")
+			}
+			if err := s.writeJSONFrame(ctx, conn, control); err != nil {
 				return err
 			}
 		case <-ticker.C:
@@ -340,6 +364,16 @@ func (s Server) writeLoop(ctx context.Context, conn *websocket.Conn, client *Cli
 			}
 		}
 	}
+}
+
+func (s Server) writeJSONFrame(ctx context.Context, conn *websocket.Conn, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, s.writeTimeout())
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }
 
 func (s Server) writeTimeout() time.Duration {

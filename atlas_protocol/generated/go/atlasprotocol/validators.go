@@ -84,6 +84,14 @@ func ValidateFeedHandshakeMessage(value any) []string {
 	return validator.ValidateFeedHandshakeMessage(value)
 }
 
+func ValidateFeedSubscriptionBarrierMessage(value any) []string {
+	return validator.ValidateFeedSubscriptionBarrierMessage(value)
+}
+
+func ValidateFeedSubscriptionsReadyMessage(value any) []string {
+	return validator.ValidateFeedSubscriptionsReadyMessage(value)
+}
+
 func ValidateEntityComponents(value any) []string {
 	return validator.ValidateEntityComponents(value)
 }
@@ -94,6 +102,10 @@ func ValidateTaskComponents(value any) []string {
 
 func ValidateCommandComponent(value any) []string {
 	return validator.ValidateCommandComponent(value)
+}
+
+func ValidateCommandCatalog(value any) []string {
+	return validator.ValidateCommandCatalog(value)
 }
 
 func ValidateTaskParametersComponent(value any, fieldPrefix string) []string {

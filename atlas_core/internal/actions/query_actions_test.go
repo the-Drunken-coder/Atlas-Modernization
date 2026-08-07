@@ -32,8 +32,11 @@ func TestGetFullDatasetByteBudgetPreservesCursorContinuation(t *testing.T) {
 	payload := strings.Repeat("x", 950*1024)
 	for _, id := range ids {
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO entities (entity_id, type, json)
-			VALUES ($1, 'asset', jsonb_build_object('payload', $2::text))
+			WITH next AS (
+				UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+			)
+			INSERT INTO entities (entity_id, type, json, version)
+			SELECT $1, 'asset', jsonb_build_object('payload', $2::text), version FROM next
 		`, id, payload); err != nil {
 			t.Fatalf("insert byte-budget entity %q: %v", id, err)
 		}
@@ -88,25 +91,7 @@ func TestGetFullDatasetByteBudgetPreservesCursorContinuation(t *testing.T) {
 	}
 }
 
-func TestCurrentChangeVersionIncludesBurnedSequenceValues(t *testing.T) {
-	pool := openActionsTestPool(t)
-	ctx := context.Background()
-
-	var burnedVersion int64
-	if err := pool.QueryRow(ctx, `SELECT nextval('atlas_change_version_seq')`).Scan(&burnedVersion); err != nil {
-		t.Fatalf("burn change version: %v", err)
-	}
-
-	currentVersion, err := CurrentChangeVersion(ctx, pool)
-	if err != nil {
-		t.Fatalf("CurrentChangeVersion: %v", err)
-	}
-	if currentVersion < burnedVersion {
-		t.Fatalf("CurrentChangeVersion = %d, want at least burned sequence version %d", currentVersion, burnedVersion)
-	}
-}
-
-func TestReadSnapshotVersionIgnoresUncommittedSequenceAllocations(t *testing.T) {
+func TestReadSnapshotVersionIgnoresUncommittedCounterAllocation(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx := context.Background()
 
@@ -121,14 +106,11 @@ func TestReadSnapshotVersionIgnoresUncommittedSequenceAllocations(t *testing.T) 
 		}
 	})
 
-	var committedVersion int64
-	if err := pool.QueryRow(ctx, `
-		INSERT INTO entities (entity_id, type, json)
-		VALUES ($1, 'asset', '{}'::jsonb)
-		RETURNING version
-	`, committedID).Scan(&committedVersion); err != nil {
-		t.Fatalf("insert committed entity: %v", err)
+	committed, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: committedID, EntityType: "asset"})
+	if err != nil {
+		t.Fatalf("create committed entity: %v", err)
 	}
+	committedVersion := committed.Version
 
 	reader, err := pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -147,18 +129,20 @@ func TestReadSnapshotVersionIgnoresUncommittedSequenceAllocations(t *testing.T) 
 		t.Fatalf("snapshot version = %d, want at least committed entity version %d", snapshotVersion, committedVersion)
 	}
 
-	writer, err := beginChangeTx(ctx, pool, "snapshot version regression", nil)
+	writer, err := beginChangeTx(ctx, pool, "snapshot version regression")
 	if err != nil {
 		t.Fatalf("begin writer transaction: %v", err)
 	}
 	defer func() { _ = writer.Rollback(ctx) }()
 
-	var allocatedVersion int64
-	if err := writer.QueryRow(ctx, `
-		INSERT INTO entities (entity_id, type, json)
-		VALUES ($1, 'asset', '{}'::jsonb)
-		RETURNING version
-	`, uncommittedID).Scan(&allocatedVersion); err != nil {
+	allocatedVersion, err := nextChangeVersion(ctx, writer)
+	if err != nil {
+		t.Fatalf("allocate uncommitted version: %v", err)
+	}
+	if _, err := writer.Exec(ctx, `
+		INSERT INTO entities (entity_id, type, json, version)
+		VALUES ($1, 'asset', '{}'::jsonb, $2)
+	`, uncommittedID, allocatedVersion); err != nil {
 		t.Fatalf("insert uncommitted entity: %v", err)
 	}
 	if allocatedVersion <= snapshotVersion {
@@ -195,10 +179,13 @@ func TestFullDatasetKeepsInitialVersionAcrossInterleavedContinuationUpdates(t *t
 		t.Fatalf("read fixture timestamp: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO entities (entity_id, type, json, created_at, updated_at)
-		VALUES
-			($1, 'asset', '{}'::jsonb, $3, $3),
-			($2, 'asset', '{}'::jsonb, $3, $3)
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 2 WHERE singleton RETURNING version
+		)
+		INSERT INTO entities (entity_id, type, json, created_at, updated_at, version)
+		SELECT $1, 'asset', '{}'::jsonb, $3::timestamptz, $3::timestamptz, version - 1 FROM next
+		UNION ALL
+		SELECT $2, 'asset', '{}'::jsonb, $3::timestamptz, $3::timestamptz, version FROM next
 	`, firstID, secondID, createdAt); err != nil {
 		t.Fatalf("insert full dataset watermark fixtures: %v", err)
 	}
@@ -245,9 +232,11 @@ func TestFullDatasetKeepsInitialVersionAcrossInterleavedContinuationUpdates(t *t
 	if err != nil {
 		t.Fatalf("GetDataChangedSince from hydration baseline: %v", err)
 	}
-	changedVersions := make(map[string]int64, len(changed.Entities))
-	for _, entity := range changed.Entities {
-		changedVersions[entity.EntityID] = entity.Version
+	changedVersions := make(map[string]int64, len(changed.Events))
+	for _, event := range changed.Events {
+		if event.ResourceType == ChangeResourceEntity {
+			changedVersions[event.ID] = event.Version
+		}
 	}
 	if changedVersions[firstID] != updatedFirst.Version || changedVersions[secondID] != updatedSecond.Version {
 		t.Fatalf("changed-since versions = %#v, want %q=%d and %q=%d", changedVersions, firstID, updatedFirst.Version, secondID, updatedSecond.Version)

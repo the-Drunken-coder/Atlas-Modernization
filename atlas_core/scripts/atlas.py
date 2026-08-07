@@ -36,6 +36,7 @@ ADMIN_PASSWORD_PLACEHOLDERS = {
     "replace-with-secure-admin-password",
     "your-secure-admin-password",
 }
+MIN_PRODUCTION_CREDENTIAL_LENGTH = 12
 DEFAULT_TUNNEL_HOSTNAME = "atlascommandapi.org"
 TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 DEV_COMPOSE_FILE = "docker-compose.yml"
@@ -508,6 +509,12 @@ def ensure_api_auth(mode):
         return False
     if admin_password.lower() in ADMIN_PASSWORD_PLACEHOLDERS:
         print(f"[ERROR] {mode} requires a real ATLAS_ADMIN_PASSWORD, not a development default or example.")
+        return False
+    if len(admin_password) < MIN_PRODUCTION_CREDENTIAL_LENGTH:
+        print(
+            f"[ERROR] {mode} requires the admin credential to contain at least "
+            f"{MIN_PRODUCTION_CREDENTIAL_LENGTH} characters."
+        )
         return False
 
     os.environ["ENABLE_API_AUTH"] = "true"

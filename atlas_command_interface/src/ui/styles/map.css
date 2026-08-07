@@ -442,6 +442,7 @@ button.connection-badge:hover:not([disabled]) {
 .vertex-handle {
   width: 12px;
   height: 12px;
+  padding: 0;
   border-radius: 50%;
   background: var(--map-vertex);
   border: 2px solid var(--accent);
@@ -453,4 +454,9 @@ button.connection-badge:hover:not([disabled]) {
   height: 9px;
   background: var(--map-vertex-mid);
   border-color: var(--map-vertex);
+}
+
+.vertex-handle:focus-visible {
+  outline: 2px solid var(--selected);
+  outline-offset: 2px;
 }

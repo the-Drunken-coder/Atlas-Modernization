@@ -448,6 +448,14 @@ tbody tr {
   text-align: left;
 }
 
+.run-select-button[aria-current="true"] {
+  color: #1f5f72;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 .mono {
   font-family: "SFMono-Regular", Consolas, monospace;
   overflow-wrap: anywhere;

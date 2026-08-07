@@ -1,168 +1,17 @@
 package feed
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/rs/zerolog/log"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
-	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-const (
-	defaultClientBuffer          = 256
-	defaultMissingVersionTimeout = 2 * time.Second
-	defaultChangeSinkBuffer      = 1024
-)
+const defaultClientBuffer = 256
 
 type Options struct {
-	ClientBuffer          int
-	MissingVersionTimeout time.Duration
-}
-
-type AsyncChangeSinkOptions struct {
-	Buffer int
-}
-
-type Hub struct {
-	mu                    sync.Mutex
-	nextVersion           int64
-	pending               map[int64]RoutedEvent
-	skipped               map[int64]string
-	clients               map[*Client]struct{}
-	clientBuffer          int
-	missingVersionTimeout time.Duration
-	gapTimer              *time.Timer
-	closed                bool
-	done                  chan struct{}
-}
-
-type AsyncChangeSink interface {
-	actions.ChangeSink
-	SkipVersion(version int64, reason string)
-	DropCommittedVersion(version int64, reason string)
-	Close()
-}
-
-type asyncChangeSink struct {
-	sink      actions.ChangeSink
-	queue     chan actions.ResourceChange
-	done      chan struct{}
-	sinkDone  <-chan struct{}
-	closeOnce sync.Once
-}
-
-type versionSkipper interface {
-	SkipVersion(version int64, reason string)
-}
-
-type committedVersionDropper interface {
-	DropCommittedVersion(version int64, reason string)
-}
-
-type doneSignaler interface {
-	Done() <-chan struct{}
-}
-
-func NewAsyncChangeSink(sink actions.ChangeSink, opts AsyncChangeSinkOptions) AsyncChangeSink {
-	if sink == nil {
-		return nil
-	}
-	buffer := opts.Buffer
-	if buffer <= 0 {
-		buffer = defaultChangeSinkBuffer
-	}
-	async := &asyncChangeSink{
-		sink:  sink,
-		queue: make(chan actions.ResourceChange, buffer),
-		done:  make(chan struct{}),
-	}
-	if signaler, ok := sink.(doneSignaler); ok {
-		async.sinkDone = signaler.Done()
-	}
-	go async.run()
-	return async
-}
-
-func (s *asyncChangeSink) PublishResourceChange(change actions.ResourceChange) {
-	if s.isClosed() {
-		return
-	}
-	select {
-	case s.queue <- change:
-	case <-s.done:
-	case <-s.sinkDone:
-	default:
-		if dropper, ok := s.sink.(committedVersionDropper); ok && change.Version > 0 {
-			dropper.DropCommittedVersion(change.Version, "async_sink_queue_full")
-		} else if skipper, ok := s.sink.(versionSkipper); ok && change.Version > 0 {
-			skipper.SkipVersion(change.Version, "async_sink_queue_full")
-		}
-		log.Warn().
-			Str("event", string(change.Event)).
-			Str("resource_type", string(change.ResourceType)).
-			Str("id", change.ID).
-			Int64("version", change.Version).
-			Msg("Dropping Atlas feed change because async sink queue is full")
-	}
-}
-
-func (s *asyncChangeSink) SkipVersion(version int64, reason string) {
-	if s.isClosed() {
-		return
-	}
-	if skipper, ok := s.sink.(versionSkipper); ok {
-		skipper.SkipVersion(version, reason)
-	}
-}
-
-func (s *asyncChangeSink) DropCommittedVersion(version int64, reason string) {
-	if s.isClosed() {
-		return
-	}
-	if dropper, ok := s.sink.(committedVersionDropper); ok {
-		dropper.DropCommittedVersion(version, reason)
-		return
-	}
-	if skipper, ok := s.sink.(versionSkipper); ok {
-		skipper.SkipVersion(version, reason)
-	}
-}
-
-func (s *asyncChangeSink) Close() {
-	s.closeOnce.Do(func() {
-		close(s.done)
-	})
-}
-
-func (s *asyncChangeSink) run() {
-	for {
-		select {
-		case change := <-s.queue:
-			s.sink.PublishResourceChange(change)
-		case <-s.done:
-			return
-		case <-s.sinkDone:
-			return
-		}
-	}
-}
-
-func (s *asyncChangeSink) isClosed() bool {
-	select {
-	case <-s.done:
-		return true
-	case <-s.sinkDone:
-		return true
-	default:
-		return false
-	}
+	ClientBuffer int
 }
 
 type RoutedEvent struct {
@@ -171,23 +20,24 @@ type RoutedEvent struct {
 	AfterTaskEntityID  string
 }
 
-func NewHub(startAfterVersion int64, opts Options) *Hub {
+// Hub fans already ordered durable events out to active subscriptions. It does
+// not recover, reorder, or invent missing versions; the database log owns those
+// responsibilities.
+type Hub struct {
+	mu           sync.Mutex
+	clients      map[*Client]struct{}
+	clientBuffer int
+	closed       bool
+}
+
+func NewHub(opts Options) *Hub {
 	buffer := opts.ClientBuffer
 	if buffer <= 0 {
 		buffer = defaultClientBuffer
 	}
-	missingVersionTimeout := opts.MissingVersionTimeout
-	if missingVersionTimeout <= 0 {
-		missingVersionTimeout = defaultMissingVersionTimeout
-	}
 	return &Hub{
-		nextVersion:           startAfterVersion + 1,
-		pending:               make(map[int64]RoutedEvent),
-		skipped:               make(map[int64]string),
-		clients:               make(map[*Client]struct{}),
-		clientBuffer:          buffer,
-		missingVersionTimeout: missingVersionTimeout,
-		done:                  make(chan struct{}),
+		clients:      make(map[*Client]struct{}),
+		clientBuffer: buffer,
 	}
 }
 
@@ -198,30 +48,24 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
-	if h.done != nil {
-		close(h.done)
-	}
-	h.stopGapTimerLocked()
 	for client := range h.clients {
 		h.closeClientLocked(client)
 	}
-}
-
-func (h *Hub) Done() <-chan struct{} {
-	return h.done
 }
 
 func (h *Hub) NewClient() *Client {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	client := &Client{
-		hub:  h,
-		subs: make(map[string]Subscription),
-		send: make(chan RoutedEvent, h.clientBuffer),
+		hub:     h,
+		subs:    make(map[string]Subscription),
+		send:    make(chan RoutedEvent, h.clientBuffer),
+		control: make(chan protocol.FeedSubscriptionsReadyMessage, 1),
 	}
 	if h.closed {
 		client.closed = true
 		close(client.send)
+		close(client.control)
 		return client
 	}
 	h.clients[client] = struct{}{}
@@ -234,7 +78,6 @@ func (h *Hub) RemoveClient(client *Client) {
 	h.closeClientLocked(client)
 }
 
-// HasSubscription reports whether any active client currently holds sub.
 func (h *Hub) HasSubscription(sub Subscription) bool {
 	key := sub.Key()
 	h.mu.Lock()
@@ -259,212 +102,17 @@ func (h *Hub) closeClientLocked(client *Client) {
 	}
 	client.closed = true
 	close(client.send)
+	close(client.control)
 }
 
-func (h *Hub) PublishResourceChange(change actions.ResourceChange) {
-	routed, err := RoutedEventFromChange(change)
-	if err != nil {
-		log.Error().
-			Err(err).
-			Str("event", string(change.Event)).
-			Str("resource_type", string(change.ResourceType)).
-			Str("id", change.ID).
-			Int64("version", change.Version).
-			Msg("Atlas feed change could not be converted to a feed event; skipping version")
-		h.DropCommittedVersion(change.Version, "event_conversion_failed")
-		return
-	}
-	if errors := ProtocolValidationErrors(routed.Event); len(errors) > 0 {
-		log.Error().
-			Strs("validation_errors", errors).
-			Str("event", string(change.Event)).
-			Str("resource_type", string(change.ResourceType)).
-			Str("id", change.ID).
-			Int64("version", change.Version).
-			Msg("Atlas feed event failed protocol validation; skipping version")
-		h.DropCommittedVersion(change.Version, "invalid_feed_event")
-		return
-	}
-	h.Publish(routed)
-}
-
+// Publish delivers one event read from the durable log. Slow clients are
+// disconnected and recover from their last applied version through changed-since.
 func (h *Hub) Publish(event RoutedEvent) {
-	if event.Event.Version <= 0 {
-		return
-	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return
 	}
-	if event.Event.Version < h.nextVersion {
-		log.Warn().
-			Int64("event_version", event.Event.Version).
-			Int64("next_version", h.nextVersion).
-			Str("event", string(event.Event.Event)).
-			Str("resource_type", string(event.Event.ResourceType)).
-			Str("id", event.Event.ID).
-			Msg("Dropping stale Atlas feed event")
-		return
-	}
-	if reason, skipped := h.skipped[event.Event.Version]; skipped {
-		log.Warn().
-			Int64("event_version", event.Event.Version).
-			Str("skip_reason", reason).
-			Str("event", string(event.Event.Event)).
-			Str("resource_type", string(event.Event.ResourceType)).
-			Str("id", event.Event.ID).
-			Msg("Dropping invalidated Atlas feed event")
-		return
-	}
-	if _, exists := h.pending[event.Event.Version]; exists {
-		log.Warn().
-			Int64("event_version", event.Event.Version).
-			Str("event", string(event.Event.Event)).
-			Str("resource_type", string(event.Event.ResourceType)).
-			Str("id", event.Event.ID).
-			Msg("Dropping duplicate Atlas feed event version")
-		return
-	}
-	h.pending[event.Event.Version] = event
-	h.advanceLocked()
-}
-
-// SkipVersion marks a known-permanent feed version gap so later versions do not
-// block behind an event that cannot be emitted.
-func (h *Hub) SkipVersion(version int64, reason string) {
-	if version <= 0 {
-		return
-	}
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.closed || version < h.nextVersion {
-		return
-	}
-	if reason == "" {
-		reason = "unknown"
-	}
-	h.skipped[version] = reason
-	h.advanceLocked()
-}
-
-// DropCommittedVersion invalidates current clients before advancing past a
-// committed change that cannot be delivered. Reconnecting clients recover the
-// authoritative state through changed-since.
-func (h *Hub) DropCommittedVersion(version int64, reason string) {
-	if version <= 0 {
-		return
-	}
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.closed || version < h.nextVersion {
-		return
-	}
-	if _, alreadySkipped := h.skipped[version]; alreadySkipped {
-		return
-	}
-	if reason == "" {
-		reason = "unknown"
-	}
-	for client := range h.clients {
-		h.closeClientLocked(client)
-	}
-	delete(h.pending, version)
-	h.skipped[version] = reason
-	h.advanceLocked()
-}
-
-func (h *Hub) advanceLocked() {
-	for {
-		next, ok := h.pending[h.nextVersion]
-		if ok {
-			delete(h.pending, h.nextVersion)
-			delete(h.skipped, h.nextVersion)
-			h.deliverLocked(next)
-			h.nextVersion++
-			continue
-		}
-		if reason, ok := h.skipped[h.nextVersion]; ok {
-			log.Warn().
-				Int64("version", h.nextVersion).
-				Str("reason", reason).
-				Msg("Skipping known-missing Atlas feed version")
-			delete(h.skipped, h.nextVersion)
-			h.nextVersion++
-			continue
-		}
-		break
-	}
-	h.updateGapTimerLocked()
-}
-
-func (h *Hub) updateGapTimerLocked() {
-	if h.closed || h.lowestKnownVersionLocked() == 0 {
-		h.stopGapTimerLocked()
-		return
-	}
-	if h.gapTimer != nil {
-		return
-	}
-	h.gapTimer = time.AfterFunc(h.missingVersionTimeout, h.skipTimedOutMissingVersions)
-}
-
-func (h *Hub) stopGapTimerLocked() {
-	if h.gapTimer == nil {
-		return
-	}
-	h.gapTimer.Stop()
-	h.gapTimer = nil
-}
-
-func (h *Hub) skipTimedOutMissingVersions() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.gapTimer = nil
-	if h.closed {
-		return
-	}
-	target := h.lowestKnownVersionLocked()
-	if target == 0 {
-		return
-	}
-	if target > h.nextVersion {
-		log.Warn().
-			Int64("from_version", h.nextVersion).
-			Int64("to_version", target-1).
-			Int("pending_events", len(h.pending)).
-			Dur("timeout", h.missingVersionTimeout).
-			Msg("Skipping timed-out Atlas feed version gap")
-		h.nextVersion = target
-	}
-	h.advanceLocked()
-}
-
-func (h *Hub) lowestKnownVersionLocked() int64 {
-	var lowest int64
-	for version := range h.pending {
-		if version < h.nextVersion {
-			continue
-		}
-		if lowest == 0 || version < lowest {
-			lowest = version
-		}
-	}
-	for version := range h.skipped {
-		if version < h.nextVersion {
-			continue
-		}
-		if lowest == 0 || version < lowest {
-			lowest = version
-		}
-	}
-	return lowest
-}
-
-func (h *Hub) deliverLocked(event RoutedEvent) {
 	var slow []*Client
 	for client := range h.clients {
 		if !client.deliver(event) {
@@ -533,19 +181,19 @@ func SubscriptionFromMessage(msg protocol.FeedSubscriptionMessage) (Subscription
 type Client struct {
 	hub *Hub
 
-	mu     sync.Mutex
-	subs   map[string]Subscription
-	send   chan RoutedEvent
-	closed bool
+	mu      sync.Mutex
+	subs    map[string]Subscription
+	send    chan RoutedEvent
+	control chan protocol.FeedSubscriptionsReadyMessage
+	closed  bool
 }
 
 func (c *Client) Subscribe(sub Subscription) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
-		return
+	if !c.closed {
+		c.subs[sub.Key()] = sub
 	}
-	c.subs[sub.Key()] = sub
 }
 
 func (c *Client) Unsubscribe(sub Subscription) {
@@ -558,11 +206,28 @@ func (c *Client) Events() <-chan RoutedEvent {
 	return c.send
 }
 
-func (c *Client) Close() {
-	if c.hub == nil {
-		return
+func (c *Client) Controls() <-chan protocol.FeedSubscriptionsReadyMessage {
+	return c.control
+}
+
+func (c *Client) SubscriptionsReady(version int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return false
 	}
-	c.hub.RemoveClient(c)
+	select {
+	case c.control <- protocol.FeedSubscriptionsReadyMessage{Version: version}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) Close() {
+	if c.hub != nil {
+		c.hub.RemoveClient(c)
+	}
 }
 
 func (c *Client) deliver(event RoutedEvent) bool {
@@ -600,92 +265,9 @@ func subscriptionMatches(sub Subscription, event RoutedEvent) bool {
 	case FilterType:
 		return event.Event.ResourceType == sub.ResourceType
 	case FilterTasksForEntity:
-		if event.Event.ResourceType != protocol.ResourceTypeTask {
-			return false
-		}
-		return event.BeforeTaskEntityID == sub.EntityID || event.AfterTaskEntityID == sub.EntityID
+		return event.Event.ResourceType == protocol.ResourceTypeTask &&
+			(event.BeforeTaskEntityID == sub.EntityID || event.AfterTaskEntityID == sub.EntityID)
 	default:
 		return false
 	}
-}
-
-func RoutedEventFromChange(change actions.ResourceChange) (RoutedEvent, error) {
-	event := protocol.FeedEvent{
-		Event:        change.Event,
-		ResourceType: change.ResourceType,
-		ID:           change.ID,
-		Version:      change.Version,
-	}
-
-	routed := RoutedEvent{Event: event}
-	switch change.ResourceType {
-	case actions.ChangeResourceEntity:
-		if change.Event != actions.ChangeEventDelete {
-			if change.AfterEntity == nil {
-				return RoutedEvent{}, fmt.Errorf("entity %s event missing after state", change.Event)
-			}
-			event.Resource = serializers.SerializeEntity(change.AfterEntity)
-		}
-	case actions.ChangeResourceTask:
-		routed.BeforeTaskEntityID = taskEntityID(change.BeforeTask)
-		routed.AfterTaskEntityID = taskEntityID(change.AfterTask)
-		if change.Event == actions.ChangeEventUpdate {
-			event.PreviousEntityID = nullableTaskEntityID(change.BeforeTask)
-		}
-		if change.Event == actions.ChangeEventDelete {
-			event.EntityID = nullableTaskEntityID(change.BeforeTask)
-		}
-		if change.Event != actions.ChangeEventDelete {
-			if change.AfterTask == nil {
-				return RoutedEvent{}, fmt.Errorf("task %s event missing after state", change.Event)
-			}
-			event.Resource = serializers.SerializeTask(change.AfterTask)
-		}
-	case actions.ChangeResourceObject:
-		if change.Event != actions.ChangeEventDelete {
-			if change.AfterObject == nil {
-				return RoutedEvent{}, fmt.Errorf("object %s event missing after state", change.Event)
-			}
-			event.Resource = serializers.SerializeObjectForFeed(change.AfterObject)
-		}
-	default:
-		return RoutedEvent{}, fmt.Errorf("unknown resource type %q", change.ResourceType)
-	}
-	routed.Event = event
-	return routed, nil
-}
-
-func taskEntityID(task *models.Task) string {
-	if task == nil {
-		return ""
-	}
-	if task.EntityID == nil {
-		return ""
-	}
-	return *task.EntityID
-}
-
-func nullableTaskEntityID(task *models.Task) *string {
-	if task == nil {
-		return nil
-	}
-	if task.EntityID == nil {
-		return nil
-	}
-	value := *task.EntityID
-	return &value
-}
-
-func ProtocolValidationErrors(event protocol.FeedEvent) []string {
-	var payload map[string]any
-	raw, err := json.Marshal(event)
-	if err != nil {
-		return []string{err.Error()}
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return []string{err.Error()}
-	}
-	return protocol.ValidateFeedEvent(payload)
 }

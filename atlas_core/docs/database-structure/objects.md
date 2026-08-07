@@ -63,7 +63,7 @@ stored object path, so the server generates `bucket` metadata from that configur
 
 When `DELETE /objects/{object_id}` removes metadata for an object with a stored
 blob path, Atlas Core also records that blob path in `storage_deletion_outbox`
-inside the same database transaction as the object tombstone. The service then
+inside the same database transaction as the object row deletion and its durable change event. The service then
 attempts immediate blob deletion. If storage deletion fails, the queued row
 remains and the background reconciler retries until the path is deleted.
 
@@ -78,6 +78,8 @@ write lock and again inside their transaction, so a deletion already in progress
 cannot be outwaited and reused by live metadata. After blob deletion succeeds,
 the outbox row remains with an infinite next-attempt timestamp as a permanent
 path tombstone; generated blob paths are never reused.
+
+`object_deletion_fences` independently stores the latest delete version for each object ID. Upload finalization compares this compact fence before and after blob transfer so a delete that occurred during the upload cannot be overwritten. These fences do not depend on the bounded `atlas_change_events` recovery history.
 
 ## Heatmap Convention
 

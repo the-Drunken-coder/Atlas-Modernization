@@ -38,8 +38,8 @@ List actions clamp pagination:
 Query resource streams also have upper bounds:
 
 - Full dataset: `MaxFullQueryLimit = 1000` rows per resource type
-- Changed since: `MaxChangedSinceLimit = 5000` rows per resource/tombstone type
-- Both query endpoints retain at most 8 MiB of raw JSON per resource type and page; reaching the byte budget returns a normal short page with `has_more_*` and a continuation cursor
+- Changed since: 100 events by default, at most `MaxChangedSinceLimit = 5000` when explicitly requested, and at most 8 MiB of serialized event JSON per page
+- Full-query resource streams retain at most 8 MiB of raw JSON per type and page; reaching the byte budget returns a normal short page with `has_more_*` and a continuation cursor
 
 Implementation:
 

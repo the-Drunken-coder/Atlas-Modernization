@@ -16,6 +16,8 @@ proxies public HTTPS traffic to the local ATLAS Core API.
 	   export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
 	   ```
 
+   The admin password must contain at least 12 characters.
+
 3. From the **repository root**, start the tunnel stack:
 
    ```bash

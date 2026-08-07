@@ -46,13 +46,13 @@ export function createTwoClientFeedHarness(): TwoClientFeedHarness {
 function writerFetch(core: FakeCore): FetchLike {
   return async (url, init) => {
     const route = writeRoute(url, init);
-    const deletionCount = core.deletions.length;
+    const deletionCount = core.deleteEvents.length;
     const response = await core.fetch(String(url), init);
     if (!response.ok || !route) {
       return response;
     }
     if (route.kind === "delete") {
-      const event = core.deletions
+      const event = core.deleteEvents
         .slice(deletionCount)
         .find((value) => value.resource_type === route.resource_type && value.id === route.id);
       if (event) {
@@ -79,7 +79,6 @@ function writeRoute(url: RequestInfo | URL, init?: RequestInit): WriteRoute | un
     if (parsed.pathname === "/entities") return { kind: "upsert", event: "create", resource_type: "entity" };
     if (parsed.pathname === "/tasks") return { kind: "upsert", event: "create", resource_type: "task" };
     if (parsed.pathname === "/objects") return { kind: "upsert", event: "create", resource_type: "object" };
-    if (taskActionPathPattern.test(parsed.pathname)) return { kind: "upsert", event: "update", resource_type: "task" };
   }
   if (method === "PATCH") {
     if (entityIDPathPattern.test(parsed.pathname)) return { kind: "upsert", event: "update", resource_type: "entity" };
@@ -172,5 +171,4 @@ function pathID(pathname: string, pattern: RegExp): string | undefined {
 
 const entityIDPathPattern = /^\/entities\/[^/]+$/;
 const taskIDPathPattern = /^\/tasks\/[^/]+$/;
-const taskActionPathPattern = /^\/tasks\/[^/]+\/(?:acknowledge|complete|fail|status)$/;
 const objectIDPathPattern = /^\/objects\/[^/]+$/;

@@ -2,22 +2,13 @@ package actions
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
-
-type recordingChangeSink struct {
-	change ResourceChange
-	called bool
-}
-
-func (s *recordingChangeSink) PublishResourceChange(change ResourceChange) {
-	s.called = true
-	s.change = change
-}
 
 func TestCloneRawMessage(t *testing.T) {
 	if cloneRawMessage(nil) != nil {
@@ -135,58 +126,85 @@ func TestCloneObjectModelCopiesPublicFields(t *testing.T) {
 	}
 }
 
-func TestPublishChangeClonesRelevantModelsAndIgnoresNilSink(t *testing.T) {
-	beforeEntityAlias := "before-alias"
-	beforeEntity := &models.Entity{EntityID: "before", Alias: &beforeEntityAlias, JSON: json.RawMessage(`{"before":true}`)}
-	afterEntityAlias := "after-alias"
-	afterEntity := &models.Entity{EntityID: "after", Alias: &afterEntityAlias, JSON: json.RawMessage(`{"after":true}`)}
+func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
 	beforeTaskEntity := "asset-before"
-	beforeTask := &models.Task{TaskID: "task-before", EntityID: &beforeTaskEntity, JSON: json.RawMessage(`{"before_task":true}`)}
+	beforeTask := &models.Task{TaskID: "task-1", EntityID: &beforeTaskEntity, Version: 6}
 	afterTaskEntity := "asset-after"
-	afterTask := &models.Task{TaskID: "task-after", EntityID: &afterTaskEntity, JSON: json.RawMessage(`{"after_task":true}`)}
-	beforeObjectPath := "objects/object-before"
-	beforeObject := &models.MediaObject{ObjectID: "object-before", Path: &beforeObjectPath, JSON: json.RawMessage(`{"before_object":true}`)}
-	afterObjectPath := "objects/object-1"
-	afterObject := &models.MediaObject{ObjectID: "object-1", Path: &afterObjectPath, JSON: json.RawMessage(`{"after_object":true}`)}
+	afterTask := &models.Task{
+		TaskID:    "task-1",
+		Status:    "pending",
+		EntityID:  &afterTaskEntity,
+		JSON:      json.RawMessage(`{}`),
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+		Version:   7,
+	}
 
-	publishChange(nil, ResourceChange{ID: "ignored"})
-
-	sink := &recordingChangeSink{}
-	publishChange(sink, ResourceChange{
+	record, err := resourceChangeRecord(ResourceChange{
 		Event:        ChangeEventUpdate,
 		ResourceType: ChangeResourceTask,
 		ID:           "task-1",
 		Version:      7,
-		BeforeEntity: beforeEntity,
-		AfterEntity:  afterEntity,
 		BeforeTask:   beforeTask,
 		AfterTask:    afterTask,
-		BeforeObject: beforeObject,
-		AfterObject:  afterObject,
 	})
-	if !sink.called {
-		t.Fatal("publishChange did not call sink")
+	if err != nil {
+		t.Fatalf("resourceChangeRecord: %v", err)
 	}
-	if sink.change.BeforeEntity == beforeEntity ||
-		sink.change.AfterEntity == afterEntity ||
-		sink.change.BeforeTask == beforeTask ||
-		sink.change.AfterTask == afterTask ||
-		sink.change.BeforeObject == beforeObject ||
-		sink.change.AfterObject == afterObject {
-		t.Fatalf("publishChange passed aliased models: %#v", sink.change)
+	if record.Event.Version != 7 || record.Event.ResourceType != ChangeResourceTask || record.Event.ID != "task-1" {
+		t.Fatalf("event identity = %#v", record.Event)
 	}
-	assertIndependentJSON(t, beforeEntity.JSON, sink.change.BeforeEntity.JSON)
-	assertIndependentStringPointer(t, "BeforeEntity.Alias", beforeEntity.Alias, sink.change.BeforeEntity.Alias)
-	assertIndependentJSON(t, afterEntity.JSON, sink.change.AfterEntity.JSON)
-	assertIndependentStringPointer(t, "AfterEntity.Alias", afterEntity.Alias, sink.change.AfterEntity.Alias)
-	assertIndependentJSON(t, beforeTask.JSON, sink.change.BeforeTask.JSON)
-	assertIndependentStringPointer(t, "BeforeTask.EntityID", beforeTask.EntityID, sink.change.BeforeTask.EntityID)
-	assertIndependentJSON(t, afterTask.JSON, sink.change.AfterTask.JSON)
-	assertIndependentStringPointer(t, "AfterTask.EntityID", afterTask.EntityID, sink.change.AfterTask.EntityID)
-	assertIndependentJSON(t, beforeObject.JSON, sink.change.BeforeObject.JSON)
-	assertIndependentStringPointer(t, "BeforeObject.Path", beforeObject.Path, sink.change.BeforeObject.Path)
-	assertIndependentJSON(t, afterObject.JSON, sink.change.AfterObject.JSON)
-	assertIndependentStringPointer(t, "AfterObject.Path", afterObject.Path, sink.change.AfterObject.Path)
+	if record.BeforeTaskEntityID != beforeTaskEntity || record.AfterTaskEntityID != afterTaskEntity {
+		t.Fatalf("routing context = %#v", record)
+	}
+	if record.Event.PreviousEntityID == nil || *record.Event.PreviousEntityID != beforeTaskEntity {
+		t.Fatalf("previous_entity_id = %#v", record.Event.PreviousEntityID)
+	}
+	if record.Event.Resource == nil {
+		t.Fatal("task update resource is nil")
+	}
+}
+
+func TestResourceChangeRecordBuildsEntityDelete(t *testing.T) {
+	record, err := resourceChangeRecord(ResourceChange{
+		Event: ChangeEventDelete, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 8,
+	})
+	if err != nil {
+		t.Fatalf("resourceChangeRecord: %v", err)
+	}
+	if record.Event.Event != ChangeEventDelete || record.Event.ID != "entity-1" || record.Event.Resource != nil {
+		t.Fatalf("entity delete event = %#v", record.Event)
+	}
+}
+
+func TestResourceChangeRecordRejectsMissingStateAndUnknownType(t *testing.T) {
+	for _, change := range []ResourceChange{
+		{Event: ChangeEventCreate, ResourceType: ChangeResourceEntity, ID: "entity-1", Version: 1},
+		{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: "task-1", Version: 1},
+		{Event: ChangeEventCreate, ResourceType: ChangeResourceObject, ID: "object-1", Version: 1},
+		{Event: ChangeEventCreate, ResourceType: ChangeResource("unknown"), ID: "unknown-1", Version: 1},
+	} {
+		if _, err := resourceChangeRecord(change); err == nil {
+			t.Fatalf("expected invalid change %#v to fail", change)
+		}
+	}
+}
+
+func TestReadChangeRecordsRejectsNonPositiveLimit(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		records, hasMore, err := ReadChangeRecords(context.Background(), nil, 0, 1, limit)
+		if err == nil || records != nil || hasMore {
+			t.Fatalf("ReadChangeRecords limit %d = (%#v, %v, %v), want early error", limit, records, hasMore, err)
+		}
+	}
+}
+
+func TestReserveChangeVersionsRejectsNonPositiveCount(t *testing.T) {
+	for _, count := range []int{0, -1} {
+		if _, err := reserveChangeVersions(context.Background(), nil, count); err == nil {
+			t.Fatalf("reserveChangeVersions count %d succeeded", count)
+		}
+	}
 }
 
 func assertIndependentStringPointer(t *testing.T, name string, original, cloned *string) {

@@ -50,18 +50,10 @@ export function coreConfigFromEnv(env: RuntimeEnv): CoreConfig {
 
 export function appConfigFromEnv(env: RuntimeEnv): AppConfig {
   const coreConfig = coreConfigFromEnv(env);
-  const mapSources = buildMapSourceConfig(env).map(parseMapSource);
-  if (mapSources.length === 0) {
-    throw new Error("Atlas interface config has no mapSources");
-  }
-  const defaultMapSourceId = selectDefaultMapSourceId(mapSources);
-  if (!defaultMapSourceId || !mapSources.some((source) => source.id === defaultMapSourceId)) {
-    throw new Error("Atlas interface config has an invalid defaultMapSourceId");
-  }
   return {
     ...coreConfig,
-    defaultMapSourceId,
-    mapSources
+    defaultMapSourceId: DEFAULT_MAP_SOURCE_ID,
+    mapSources: buildMapSourceConfig(env)
   };
 }
 
@@ -69,33 +61,8 @@ function defaultCoreBaseUrl(env: RuntimeEnv): string {
   return isDevelopment(env) ? LOCAL_CORE_BASE_URL : REMOTE_CORE_BASE_URL;
 }
 
-function selectDefaultMapSourceId(mapSources: MapSourceConfig[]): string | undefined {
-  return mapSources.some((source) => source.id === DEFAULT_MAP_SOURCE_ID) ? DEFAULT_MAP_SOURCE_ID : undefined;
-}
-
 function isDevelopment(env: RuntimeEnv): boolean {
   return env.DEV === true || env.MODE === "development";
-}
-
-function parseMapSource(value: unknown): MapSourceConfig {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    typeof (value as { id?: unknown }).id !== "string" ||
-    typeof (value as { label?: unknown }).label !== "string"
-  ) {
-    throw new Error("Atlas interface config has invalid mapSources");
-  }
-  const id = (value as { id: string }).id.trim();
-  const label = (value as { label: string }).label.trim();
-  if (!id || !label) {
-    throw new Error("Atlas interface config has invalid mapSources");
-  }
-  const rawStyle = (value as { style?: unknown }).style;
-  const style = isStyleSpecification(rawStyle) ? rawStyle : undefined;
-  const unavailableReason = envValue((value as { unavailableReason?: string }).unavailableReason);
-  if (!style && !unavailableReason) throw new Error("Atlas interface config has invalid mapSources");
-  return { id, label, style, unavailableReason };
 }
 
 function parseConfigUrl(value: string, field: "atlasBaseUrl"): string {
@@ -332,16 +299,6 @@ async function fetchGoogleMapsTileSession(apiKey: string): Promise<string | unde
   const session = typeof payload?.session === "string" ? payload.session.trim() : "";
   if (!session) console.warn("Google Maps satellite session response did not include a session token");
   return session || undefined;
-}
-
-function isStyleSpecification(value: unknown): value is StyleSpecification {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { version?: unknown }).version === 8 &&
-    typeof (value as { sources?: unknown }).sources === "object" &&
-    Array.isArray((value as { layers?: unknown }).layers)
-  );
 }
 
 function envValue(value: string | undefined): string | undefined {

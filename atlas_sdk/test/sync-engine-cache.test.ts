@@ -1,9 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent, type TaskResource } from "../src";
-import { ResourceCache } from "../src/cache.js";
+import { ObjectContentCache, ResourceCache } from "../src/cache.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: cache projection and reads", () => {
+  it("unsubscribes duplicate snapshot watcher registrations independently", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const watcher = vi.fn();
+    const unsubscribeFirst = client.sync.watchSnapshot(watcher);
+    const unsubscribeSecond = client.sync.watchSnapshot(watcher);
+
+    await client.entities.create({ entity_id: "asset-first", entity_type: "asset" });
+    expect(watcher).toHaveBeenCalledTimes(2);
+
+    unsubscribeFirst();
+    await client.entities.create({ entity_id: "asset-second", entity_type: "asset" });
+    expect(watcher).toHaveBeenCalledTimes(3);
+
+    unsubscribeSecond();
+    await client.entities.create({ entity_id: "asset-third", entity_type: "asset" });
+    expect(watcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("enforces a positive safe-integer object content cache capacity", () => {
+    const core = new FakeCore();
+    for (const objectContentCacheEntries of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, objectContentCacheEntries })
+      ).toThrow("objectContentCacheEntries must be a positive safe integer");
+    }
+  });
+
+  it("evicts the least recently used object content at the configured capacity", () => {
+    const cache = new ObjectContentCache(2);
+    cache.set("first", Uint8Array.of(1).buffer);
+    cache.set("second", Uint8Array.of(2).buffer);
+
+    expect(Array.from(new Uint8Array(cache.get("first")!))).toEqual([1]);
+    cache.set("third", Uint8Array.of(3).buffer);
+
+    expect(cache.get("second")).toBeUndefined();
+    expect(Array.from(new Uint8Array(cache.get("first")!))).toEqual([1]);
+    expect(Array.from(new Uint8Array(cache.get("third")!))).toEqual([3]);
+  });
+
   it("does not advance the global change cursor from point reads", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-read"));
@@ -65,7 +106,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     expect(client.sync.status().lastVersion).toBe(core.version);
   });
 
-  it("lets changed-since recovery replace a delete tombstone with a later recreated resource", async () => {
+  it("lets changed-since recovery replace a delete marker with a later recreated resource", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-recreated"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
@@ -79,7 +120,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
     expect(watch).toHaveBeenCalledWith(
       recreated,
-      expect.objectContaining({ event: "recovered", id: "asset-recreated", version: recreated.metadata.version })
+      expect.objectContaining({ event: "update", id: "asset-recreated", version: recreated.metadata.version })
     );
     await expect(client.entities.get("asset-recreated")).resolves.toEqual(recreated);
   });
@@ -93,7 +134,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     client.entities.watch(live.entity_id, watch);
 
     await client.entities.delete(live.entity_id);
-    const deleteEvent = core.deletions.at(-1);
+    const deleteEvent = core.deleteEvents.at(-1);
     if (!deleteEvent) throw new Error("fake core did not record delete event");
     core.events = core.events.filter((event) => event.version < deleteEvent.version);
     core.version = live.metadata.version;
@@ -118,7 +159,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     });
   });
 
-  it("does not acknowledge a pending local delete from a stale feed tombstone", async () => {
+  it("does not acknowledge a pending local delete from a stale feed delete event", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-stale-delete"));
     const client = new AtlasClient({
@@ -135,7 +176,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     client.entities.watch(original.entity_id, watch);
 
     await client.entities.delete(original.entity_id);
-    const authoritativeDelete = core.deletions.at(-1);
+    const authoritativeDelete = core.deleteEvents.at(-1);
     if (!authoritativeDelete) throw new Error("fake core did not record delete event");
     core.events = core.events.filter((event) => event.version !== authoritativeDelete.version);
     const recreated = core.upsertEntity({ ...entity(original.entity_id), alias: "authoritative but suppressed" });

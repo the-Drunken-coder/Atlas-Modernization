@@ -1,7 +1,29 @@
 # Docker builds use the repository root as context so atlas_core can import the
-# sibling atlas_protocol module. Keep the context narrow.
+# sibling atlas_protocol module. Include only files copied by the Dockerfile.
 *
 !atlas_core/
-!atlas_core/**
+!atlas_core/go.mod
+!atlas_core/go.sum
+!atlas_core/cmd/
+!atlas_core/cmd/**
+!atlas_core/command_catalog/
+!atlas_core/command_catalog/**
+!atlas_core/internal/
+!atlas_core/internal/**
+!atlas_core/atlas_core.settings.json.example
+!atlas_core/docker/
+!atlas_core/docker/Dockerfile
+!atlas_core/docker/production-entrypoint.sh
 !atlas_protocol/
-!atlas_protocol/**
+!atlas_protocol/go.mod
+!atlas_protocol/go.sum
+!atlas_protocol/generated/
+!atlas_protocol/generated/go/
+!atlas_protocol/generated/go/atlasprotocol/
+!atlas_protocol/generated/go/atlasprotocol/*.go
+!atlas_protocol/schema/
+!atlas_protocol/schema/embed.go
+!atlas_protocol/schema/jsonschema/
+!atlas_protocol/schema/jsonschema/*.json
+!atlas_protocol/validator/
+!atlas_protocol/validator/*.go

@@ -39,11 +39,11 @@ func (a *TaskActions) prepareCommandTask(params CreateTaskParams) (CreateTaskPar
 	if err != nil {
 		return params, "", fmt.Errorf("failed to load command catalog: %w", err)
 	}
-	command, ok := catalog.Command(commandID)
+	command, ok := commandcatalog.Command(catalog, commandID)
 	if !ok {
 		return params, "", NewValidationError("unsupported command id")
 	}
-	coerced, err := command.CoerceParameters(params.Components["parameters"])
+	coerced, err := commandcatalog.CoerceParameters(command, params.Components["parameters"])
 	if err != nil {
 		return params, "", NewValidationError(err.Error())
 	}
