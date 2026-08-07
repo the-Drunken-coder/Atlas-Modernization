@@ -1,5 +1,6 @@
 import {
   ATLAS_PROTOCOL_REVISION,
+  type CommandCatalog,
   type EntityComponents,
   type EntityCreateRequest,
   type EntityResource,
@@ -15,7 +16,7 @@ import {
   type TaskUpdateRequest
 } from "../../src";
 import type { WebSocketCtor } from "../../src/types.js";
-import { deleted, isDelete, isEntityUpsert, isObjectUpsert, isTaskUpsert, recordLedgerEvent } from "./event-ledger.js";
+import { recordLedgerEvent } from "./event-ledger.js";
 import { FakeWebSocket } from "./fake-websocket.js";
 import { metadata, taskFromCreateRequest } from "./fixtures.js";
 import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError, readBody } from "./http.js";
@@ -30,7 +31,7 @@ export class FakeCore {
   tasks = new Map<string, TaskResource>();
   objects = new Map<string, ObjectResource>();
   objectExtras = new Map<string, Record<string, unknown>>();
-  deletions: FeedEvent[] = [];
+  deleteEvents: FeedEvent[] = [];
   events: FeedEvent[] = [];
   sockets = new Set<FakeWebSocket>();
   feedConnections = 0;
@@ -39,12 +40,27 @@ export class FakeCore {
   feedAuthFrames: Array<{ apiKey?: string }> = [];
   expectedFeedApiKey: string | undefined;
   fullLimitPerType = 0;
-  changedSinceLimitPerType = 0;
+  changedSinceLimit = 0;
+  minRetainedVersion = 0;
   readonly recordedVersions = new Set<number>();
   rejectFeedAuth = false;
+  onFeedSubscriptionBarrier: ((activateAndAcknowledge: () => void) => void) | undefined;
   failChangedSince = false;
   objectDownloadCount = 0;
   onObjectDownload: ((id: string) => void) | undefined;
+  readonly commandCatalog: CommandCatalog = {
+    type: "command_catalog",
+    name: "Atlas Command Catalog",
+    description: "Fake Core catalog",
+    commands: [
+      {
+        id: "hold_position",
+        name: "Hold Position",
+        description: "Hold here.",
+        parameters_schema: {}
+      }
+    ]
+  };
 
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
@@ -62,6 +78,7 @@ export class FakeCore {
       return protocolError("Invalid URL path", "VALIDATION_ERROR", 400);
     }
     if (path === "/protocol/revision" && method === "GET") return json({ protocol_revision: this.revision });
+    if (path === "/command-catalog" && method === "GET") return json(this.commandCatalog);
     if (path === "/queries/full" || path === "/queries/changed-since") return this.queryResponse(parsed, method);
     if (segments[0] === "entities") {
       return this.entityResponse(parsed, segments, method, init, ifMatch);
@@ -133,57 +150,19 @@ export class FakeCore {
     if (!Number.isInteger(since) || since < 0 || String(since) !== rawSince) {
       return protocolError("Invalid since_version parameter", "VALIDATION_ERROR", 400);
     }
-    const changed = this.events.filter((event) => event.version > since);
-    const entityPage = pageValues(
-      changed.filter(isEntityUpsert).map((event) => event.resource),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("entity_cursor")
-    );
-    const taskPage = pageValues(
-      changed.filter(isTaskUpsert).map((event) => event.resource),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("task_cursor")
-    );
-    const objectPage = pageValues(
-      changed.filter(isObjectUpsert).map((event) => this.objectDetail(event.resource)),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("object_cursor")
-    );
-    const deletedEntityPage = pageValues(
-      changed.filter(isDelete("entity")).map(deleted),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("deleted_entity_cursor")
-    );
-    const deletedTaskPage = pageValues(
-      changed.filter(isDelete("task")).map(deleted),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("deleted_task_cursor")
-    );
-    const deletedObjectPage = pageValues(
-      changed.filter(isDelete("object")).map(deleted),
-      this.changedSinceLimitPerType,
-      parsed.searchParams.get("deleted_object_cursor")
-    );
+    if (since < this.minRetainedVersion) {
+      return protocolError("Changed-since cursor has expired; perform a full hydration", "CURSOR_EXPIRED", 410);
+    }
+    const cursor = changedSinceCursor(parsed.searchParams.get("cursor"), since, this.version);
+    const changed = this.events.filter((event) => event.version > since && event.version <= cursor.snapshotVersion);
+    const page = pageValues(changed, this.changedSinceLimit, String(cursor.offset));
     return json({
-      entities: entityPage.items,
-      tasks: taskPage.items,
-      objects: objectPage.items,
-      deleted_entities: deletedEntityPage.items,
-      deleted_tasks: deletedTaskPage.items,
-      deleted_objects: deletedObjectPage.items,
-      has_more_entities: entityPage.hasMore,
-      has_more_tasks: taskPage.hasMore,
-      has_more_objects: objectPage.hasMore,
-      has_more_deleted_entities: deletedEntityPage.hasMore,
-      has_more_deleted_tasks: deletedTaskPage.hasMore,
-      has_more_deleted_objects: deletedObjectPage.hasMore,
-      next_entity_cursor: entityPage.nextCursor,
-      next_task_cursor: taskPage.nextCursor,
-      next_object_cursor: objectPage.nextCursor,
-      next_deleted_entity_cursor: deletedEntityPage.nextCursor,
-      next_deleted_task_cursor: deletedTaskPage.nextCursor,
-      next_deleted_object_cursor: deletedObjectPage.nextCursor,
-      version: this.version
+      events: page.items,
+      has_more: page.hasMore,
+      next_cursor: page.hasMore
+        ? encodeChangedSinceCursor(since, cursor.snapshotVersion, cursor.offset + page.items.length)
+        : undefined,
+      version: cursor.snapshotVersion
     });
   }
 
@@ -235,11 +214,8 @@ export class FakeCore {
       }
       return json(this.createTask(body), 201);
     }
-    const [, id, action] = segments;
+    const [, id] = segments;
     if (!id) return protocolError("not found", "VALIDATION_ERROR", 404);
-    if (segments.length === 3 && action && method === "POST") {
-      return this.taskLifecycleResponse(id, action, init, ifMatch);
-    }
     if (segments.length !== 2) return protocolError("not found", "VALIDATION_ERROR", 404);
     if (method === "GET") return jsonOrNotFound(this.tasks.get(id), "task not found");
     if (method === "PATCH") {
@@ -368,69 +344,6 @@ export class FakeCore {
       delete next.extra;
     }
     return this.upsertTask(next);
-  }
-
-  private async taskLifecycleResponse(
-    id: string,
-    action: string,
-    init: RequestInit | undefined,
-    ifMatch: string | null
-  ): Promise<Response> {
-    const current = this.tasks.get(id);
-    if (!current) return protocolError("task not found", "TASK_NOT_FOUND", 404);
-    const conflict = this.preconditionFailure(ifMatch, current.metadata.version);
-    if (conflict) return conflict;
-    if (action === "acknowledge") {
-      return json(this.updateTask(id, { status: "acknowledged" }));
-    }
-    if (action === "complete") {
-      const body = await readRecord(init);
-      if (body instanceof Response) return body;
-      if (body.result !== undefined && !isRecord(body.result)) {
-        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-      }
-      return json(
-        this.updateTask(id, {
-          status: "completed",
-          ...(body.result === undefined ? {} : { extra: { result: body.result as Record<string, JSONValue> } })
-        })
-      );
-    }
-    if (action === "fail") {
-      const body = await readRecord(init);
-      if (body instanceof Response) return body;
-      if (body.error !== undefined && !isRecord(body.error)) {
-        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-      }
-      return json(
-        this.updateTask(id, {
-          status: "failed",
-          ...(body.error === undefined ? {} : { extra: { error: body.error as Record<string, JSONValue> } })
-        })
-      );
-    }
-    if (action === "status") {
-      const body = await readRecord(init);
-      if (body instanceof Response) return body;
-      if (
-        !isNonEmptyString(body.status) ||
-        (body.progress !== undefined && !isFiniteNumber(body.progress)) ||
-        (body.message !== undefined && typeof body.message !== "string")
-      ) {
-        return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-      }
-      const components: TaskUpdateRequest["components"] = {};
-      if (body.progress !== undefined) components.progress = { percent: clampPercent(body.progress) };
-      if (body.message !== undefined) components.status_message = body.message;
-      return json(
-        this.updateTask(id, {
-          status: body.status,
-          ...(Object.keys(components).length === 0 ? {} : { components }),
-          remove_extra_keys: ["progress", "status_message", "message"]
-        })
-      );
-    }
-    return protocolError("not found", "VALIDATION_ERROR", 404);
   }
 
   private async checkInEntityResponse(
@@ -653,6 +566,28 @@ export class FakeCore {
   }
 }
 
+function changedSinceCursor(
+  rawCursor: string | null,
+  sinceVersion: number,
+  currentVersion: number
+): { snapshotVersion: number; offset: number } {
+  if (rawCursor === null) {
+    return { snapshotVersion: currentVersion, offset: 0 };
+  }
+  const match = /^changed:(\d+):(\d+):(\d+)$/.exec(rawCursor);
+  if (!match) throw new InvalidCursorError(rawCursor);
+  const [, rawSince, rawSnapshot, rawOffset] = match;
+  const values = [rawSince, rawSnapshot, rawOffset].map(Number);
+  if (values.some((value) => !Number.isSafeInteger(value)) || values[0] !== sinceVersion) {
+    throw new InvalidCursorError(rawCursor);
+  }
+  return { snapshotVersion: values[1], offset: values[2] };
+}
+
+function encodeChangedSinceCursor(sinceVersion: number, snapshotVersion: number, offset: number): string {
+  return `changed:${sinceVersion}:${snapshotVersion}:${offset}`;
+}
+
 const promotedObjectExtraKeys = new Set([
   "path",
   "content_type",
@@ -751,10 +686,4 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function clampPercent(value: number): number {
-  if (!Number.isFinite(value) || value < 0) return 0;
-  if (value > 100) return 100;
-  return value;
 }

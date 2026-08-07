@@ -17,17 +17,21 @@ describe("App run lifecycle", () => {
       scenarioName: syncScenario.name,
       status: "completed"
     });
+    const otherRun = cloneRun({ id: "sim-other", scenarioName: "Other run", status: "completed" });
     vi.mocked(loadScenarios).mockResolvedValueOnce([scenario, syncScenario]);
-    vi.mocked(loadRuns).mockResolvedValueOnce([syncRun]).mockResolvedValue([syncRun]);
+    vi.mocked(loadRuns).mockResolvedValueOnce([syncRun, otherRun]).mockResolvedValue([syncRun, otherRun]);
     vi.mocked(cleanupRun).mockResolvedValueOnce({ ...syncRun, cleaned: true });
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: syncScenario.name }));
+    const recentRun = await screen.findByRole("button", { name: syncRun.scenarioName });
+    await user.click(recentRun);
 
     expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute(
       "aria-pressed",
       "true"
     );
+    expect(recentRun).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("button", { name: otherRun.scenarioName })).not.toHaveAttribute("aria-current");
     expect(eventSources).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: /cleanup/i }));
     await waitFor(() => expect(vi.mocked(cleanupRun)).toHaveBeenCalledWith(syncRun.id));

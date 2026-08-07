@@ -34,7 +34,12 @@ afterEach(async () => {
 describe("Vite dev proxy", () => {
   it("forwards /api requests to the simulation HTTP server", async () => {
     app = createSimulationServer({
-      config: { atlasBaseUrl: "http://127.0.0.1:8000", port: 0, packageRoot },
+      config: {
+        atlasTargets: [{ id: "local", label: "Local Core", baseUrl: "http://127.0.0.1:8000" }],
+        defaultAtlasTargetId: "local",
+        port: 0,
+        packageRoot
+      },
       store: new RunStore(createFakeAtlasCore().factory)
     });
     const simulationBaseUrl = await app.listen();

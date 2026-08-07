@@ -284,6 +284,23 @@
   color: var(--text-3);
 }
 
+.geometry-vertex {
+  padding-bottom: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.geometry-vertex .task-row {
+  border-bottom: 0;
+}
+
+.geometry-coordinate-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
 .command-row {
   width: 100%;
   border: 1px solid var(--border);

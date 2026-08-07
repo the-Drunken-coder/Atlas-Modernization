@@ -62,7 +62,7 @@ describe("Atlas URL handling", () => {
     const fetchImpl: typeof fetch = async (input) => {
       calls.push(String(input));
       if (String(input).endsWith("/admin/auth/me")) {
-        return Response.json({ user: { username: "admin", role: "admin" } });
+        return Response.json({ user: { username: "admin" } });
       }
       return Response.json({
         entities: [],
@@ -126,7 +126,12 @@ function recordingSocket(urls: string[]) {
         });
       });
     }
-    send() {}
+    send(data: string) {
+      const message = JSON.parse(data) as { action?: string };
+      if (message.action === "subscription_barrier") {
+        this.dispatch("message", { data: JSON.stringify({ type: "subscriptions_ready", version: 0 }) });
+      }
+    }
     close() {
       this.dispatch("close", {});
     }

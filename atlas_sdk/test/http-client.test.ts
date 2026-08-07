@@ -77,7 +77,7 @@ describe("AtlasClient HTTP", () => {
     const fetchImpl: typeof fetch = async function (this: unknown, url) {
       receivers.push(this);
       const body = String(url).includes("/admin/")
-        ? { user: { username: "admin", role: "admin" } }
+        ? { user: { username: "admin" } }
         : {
             entities: [],
             tasks: [],
@@ -124,7 +124,7 @@ describe("AtlasClient HTTP", () => {
     }
   });
 
-  it("rejects non-positive request timeouts", () => {
+  it("rejects request timeouts outside the supported timer range", () => {
     const core = new FakeCore();
 
     expect(() => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 0 })).toThrow(
@@ -140,6 +140,12 @@ describe("AtlasClient HTTP", () => {
       () =>
         new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: Number.POSITIVE_INFINITY })
     ).toThrow("positive finite");
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 2_147_483_648 })
+    ).toThrow("no greater than 2147483647");
+    expect(
+      () => new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, requestTimeoutMs: 2_147_483_647 })
+    ).not.toThrow();
   });
 
   it("passes browser credentials through resource requests without adding admin methods", async () => {
@@ -179,7 +185,7 @@ describe("AtlasClient HTTP", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {
       calls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ user: { username: "admin", role: "admin" } }), {
+      return new Response(JSON.stringify({ user: { username: "admin" } }), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });
@@ -401,7 +407,6 @@ describe("AtlasClient HTTP", () => {
       ["PATCH", "/entities/asset-wildcard", { alias: "updated" }],
       ["POST", "/entities/asset-wildcard/checkin", {}],
       ["PATCH", "/tasks/task-wildcard", { status: "acknowledged" }],
-      ["POST", "/tasks/task-wildcard/acknowledge", {}],
       ["PATCH", "/objects/object-wildcard", { type: "log" }]
     ] as const;
 
@@ -425,7 +430,7 @@ describe("AtlasClient HTTP", () => {
       ["PATCH", "/entities/route-entity/extra", { alias: "changed" }],
       ["POST", "/entities/route-entity/checkin/extra", {}],
       ["PATCH", "/tasks/route-task/extra", { status: "acknowledged" }],
-      ["POST", "/tasks/route-task/acknowledge/extra", {}],
+      ["POST", "/tasks/route-task/extra/more", {}],
       ["PATCH", "/objects/route-object/extra", { type: "log" }],
       ["GET", "/objects/route-object/extra/download", undefined]
     ] as const;
@@ -520,7 +525,7 @@ describe("AtlasClient HTTP", () => {
     const acknowledged = await client.tasks.acknowledge("task-ack", { ifMatchVersion: ackBase.metadata.version });
     const completed = await client.tasks.complete("task-complete", { result: { ok: true } });
     const failed = await client.tasks.fail("task-fail", { error: { code: "boom" } });
-    const status = await client.tasks.setStatus("task-status", "acknowledged", { progress: 125, message: "moving" });
+    const status = await client.tasks.setStatus("task-status", "acknowledged", { progress: 62.5, message: "moving" });
     const cancelled = await client.tasks.cancel("task-cancel");
 
     expect(acknowledged.status).toBe("acknowledged");
@@ -528,13 +533,18 @@ describe("AtlasClient HTTP", () => {
     expect(failed).toMatchObject({ status: "failed", extra: { error: { code: "boom" } } });
     expect(status).toMatchObject({
       status: "acknowledged",
-      components: { progress: { percent: 100 }, status_message: "moving" }
+      components: { progress: { percent: 62.5 }, status_message: "moving" }
     });
     expect(cancelled.status).toBe("cancelled");
     await expect(client.tasks.get("task-ack")).resolves.toEqual(acknowledged);
-    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack/acknowledge")?.ifMatch).toBe(
+    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack")?.ifMatch).toBe(
       `"v${ackBase.metadata.version}"`
     );
+    expect(
+      core.requests
+        .filter((request) => request.startsWith("/tasks/"))
+        .every((request) => request.split("/").length === 3)
+    ).toBe(true);
     expect(watch).toHaveBeenCalledWith(
       expect.objectContaining({ status: "acknowledged" }),
       expect.objectContaining({ event: "update", id: "task-ack" })
@@ -663,22 +673,33 @@ describe("AtlasClient HTTP", () => {
   it("exposes one-page query helpers without mutating sync state", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
-    core.changedSinceLimitPerType = 1;
+    core.changedSinceLimit = 1;
     core.upsertEntity(entity("asset-query"));
     core.upsertTask(task("task-query", "asset-query"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
     const full = await client.queries.full({ entityLimit: 1, taskLimit: 1, objectLimit: 1, entityCursor: "1" });
-    const changed = await client.queries.changedSince(0, { limitPerType: 1, taskCursor: "1", deletedTaskCursor: "1" });
+    const firstChanged = await client.queries.changedSince(0, { limit: 1 });
+    const changed = await client.queries.changedSince(0, { limit: 1, cursor: firstChanged.next_cursor });
 
     expect(full.entities).toEqual([]);
     expect(full.version).toBe(core.version);
-    expect(changed.tasks).toEqual([]);
+    expect(firstChanged.events).toHaveLength(1);
+    expect(changed.events).toHaveLength(1);
     expect(core.requests).toContain("/queries/full?entity_limit=1&task_limit=1&object_limit=1&entity_cursor=1");
+    expect(core.requests).toContain("/queries/changed-since?since_version=0&limit=1");
     expect(core.requests).toContain(
-      "/queries/changed-since?since_version=0&limit_per_type=1&task_cursor=1&deleted_task_cursor=1"
+      `/queries/changed-since?since_version=0&limit=1&cursor=${encodeURIComponent(firstChanged.next_cursor ?? "")}`
     );
     expect(client.sync.status().lastVersion).toBe(0);
+  });
+
+  it("loads the typed command catalog directly from Core", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await expect(client.commandCatalog()).resolves.toEqual(core.commandCatalog);
+    expect(core.requests).toContain("/command-catalog");
   });
 
   it("matches Core duplicate-create conflicts in the fake transport", async () => {
@@ -879,7 +900,7 @@ describe("AtlasClient HTTP", () => {
   it("returns protocol errors for invalid fake Core pagination cursors", async () => {
     const core = new FakeCore();
     core.fullLimitPerType = 1;
-    core.changedSinceLimitPerType = 1;
+    core.changedSinceLimit = 1;
 
     const fullResponse = await core.fetch("http://atlas.test/queries/full?entity_cursor=abc");
     await expect(fullResponse.json()).resolves.toMatchObject({
@@ -888,9 +909,7 @@ describe("AtlasClient HTTP", () => {
     });
     expect(fullResponse.status).toBe(400);
 
-    const changedSinceResponse = await core.fetch(
-      "http://atlas.test/queries/changed-since?since_version=0&task_cursor=-1"
-    );
+    const changedSinceResponse = await core.fetch("http://atlas.test/queries/changed-since?since_version=0&cursor=-1");
     await expect(changedSinceResponse.json()).resolves.toMatchObject({
       success: false,
       error_code: "VALIDATION_ERROR"

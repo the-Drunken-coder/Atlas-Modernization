@@ -144,6 +144,12 @@ func (h *Handler) handleActionError(w http.ResponseWriter, r *http.Request, err 
 		return
 	}
 
+	var cursorExpiredErr *actions.CursorExpiredError
+	if errors.As(err, &cursorExpiredErr) {
+		h.writeErrorWithCause(w, r, http.StatusGone, cursorExpiredErr.Message, cursorExpiredErr.Code, err)
+		return
+	}
+
 	var actionErr *actions.ActionError
 	if errors.As(err, &actionErr) {
 		h.writeErrorWithCause(w, r, http.StatusInternalServerError, actionErr.Message, actionErr.Code, err)

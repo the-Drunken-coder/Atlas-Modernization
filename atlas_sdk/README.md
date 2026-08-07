@@ -60,6 +60,7 @@ From the repository root:
 npm ci
 npm run build:sdk
 npm run test:package --workspace @the-drunken-coder/atlas-sdk
+npm run test:types --workspace @the-drunken-coder/atlas-sdk
 npm test --workspace @the-drunken-coder/atlas-sdk
 ```
 

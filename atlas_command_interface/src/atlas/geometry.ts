@@ -31,10 +31,6 @@ const COORDINATE_EPSILON = 1e-9;
 const EARTH_RADIUS_M = 6_371_008.8;
 const CIRCLE_DISPLAY_SEGMENTS = 64;
 
-export function isUiGeometry(value: unknown): value is UiGeometry {
-  return geometryFromGeoJSON(value) !== undefined;
-}
-
 /**
  * Normalise an entity geometry component into the shape the UI edits. Returns
  * undefined when the geometry is absent or not a supported geometry.

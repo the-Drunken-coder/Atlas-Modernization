@@ -1,11 +1,8 @@
 import type { HttpTransport } from "./http.js";
 import type { FeedEvent } from "./protocol.js";
-import type { AtlasRecoveredWatchEvent, AtlasWatchEvent, ChangedSinceCursors, ChangedSinceResponse } from "./types.js";
-import { changedSinceToEvents } from "./types.js";
 import { changedSinceResponseValidator } from "./validation.js";
 
 export type RecoveryEventApplier = (event: FeedEvent) => void;
-export type RecoveredEventApplier = (event: AtlasRecoveredWatchEvent) => void;
 
 export class RecoveryCoordinator {
   private operation = 0;
@@ -65,18 +62,17 @@ export class RecoveryRunner {
   async run(
     sinceVersion: number,
     isCurrentOperation: () => boolean,
-    applyEvent: RecoveryEventApplier,
-    applyRecoveredEvent: RecoveredEventApplier
+    applyEvent: RecoveryEventApplier
   ): Promise<{ snapshotVersion: number | undefined; superseded: boolean }> {
     let snapshotVersion: number | undefined;
-    let cursors: ChangedSinceCursors = {};
-    const events: AtlasWatchEvent[] = [];
-    const seenCursors = new Map<string, Set<string>>();
+    let cursor: string | undefined;
+    let lastEventVersion = sinceVersion;
+    const seenCursors = new Set<string>();
     do {
       if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
       const response = await this.transport.json(
         "GET",
-        changedSincePath(sinceVersion, cursors),
+        changedSincePath(sinceVersion, cursor),
         changedSinceResponseValidator(sinceVersion)
       );
       if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
@@ -84,69 +80,33 @@ export class RecoveryRunner {
         throw new TypeError("Atlas changed-since pagination changed response version");
       }
       snapshotVersion = response.version;
-      events.push(...changedSinceToEvents(response));
-      cursors = nextChangedSinceCursors(response);
-      assertPaginationProgress(cursors, seenCursors);
-    } while (hasMoreChangedSince(cursors));
-
-    for (const event of events.sort((a, b) => watchEventVersion(a) - watchEventVersion(b))) {
-      if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
-      if (event.event === "recovered") {
-        applyRecoveredEvent(event);
-      } else if (event.event !== "local_delete") {
+      let pageLastEventVersion = lastEventVersion;
+      for (const event of response.events) {
+        if (event.version <= pageLastEventVersion) {
+          throw new TypeError("Atlas changed-since events are not globally ordered");
+        }
+        pageLastEventVersion = event.version;
+      }
+      for (const event of response.events) {
+        if (!isCurrentOperation()) return { snapshotVersion, superseded: true };
         applyEvent(event);
       }
-    }
+      lastEventVersion = pageLastEventVersion;
+      cursor = response.has_more ? requireCursor(response.next_cursor) : undefined;
+      if (cursor && seenCursors.has(cursor)) throw new Error("Atlas changed-since pagination repeated cursor");
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
     return { snapshotVersion, superseded: false };
   }
 }
 
-function watchEventVersion(event: AtlasWatchEvent): number {
-  return "version" in event ? event.version : 0;
+function changedSincePath(sinceVersion: number, cursor?: string): string {
+  return pathWithQuery("/queries/changed-since", { since_version: String(sinceVersion), cursor });
 }
 
-function changedSincePath(sinceVersion: number, cursors: ChangedSinceCursors): string {
-  return pathWithQuery("/queries/changed-since", { since_version: String(sinceVersion), ...cursors });
-}
-
-function nextChangedSinceCursors(response: ChangedSinceResponse): ChangedSinceCursors {
-  const cursors: ChangedSinceCursors = {};
-  if (response.has_more_entities)
-    cursors.entity_cursor = requireCursor(response.next_entity_cursor, "next_entity_cursor");
-  if (response.has_more_tasks) cursors.task_cursor = requireCursor(response.next_task_cursor, "next_task_cursor");
-  if (response.has_more_objects)
-    cursors.object_cursor = requireCursor(response.next_object_cursor, "next_object_cursor");
-  if (response.has_more_deleted_entities) {
-    cursors.deleted_entity_cursor = requireCursor(response.next_deleted_entity_cursor, "next_deleted_entity_cursor");
-  }
-  if (response.has_more_deleted_tasks) {
-    cursors.deleted_task_cursor = requireCursor(response.next_deleted_task_cursor, "next_deleted_task_cursor");
-  }
-  if (response.has_more_deleted_objects) {
-    cursors.deleted_object_cursor = requireCursor(response.next_deleted_object_cursor, "next_deleted_object_cursor");
-  }
-  return cursors;
-}
-
-function hasMoreChangedSince(cursors: ChangedSinceCursors): boolean {
-  return Object.keys(cursors).length > 0;
-}
-
-function assertPaginationProgress(cursors: ChangedSinceCursors, seen: Map<string, Set<string>>): void {
-  for (const [stream, cursor] of Object.entries(cursors)) {
-    let values = seen.get(stream);
-    if (!values) {
-      values = new Set<string>();
-      seen.set(stream, values);
-    }
-    if (values.has(cursor)) throw new Error(`Atlas changed-since pagination repeated ${stream}`);
-    values.add(cursor);
-  }
-}
-
-function requireCursor(cursor: string | undefined, name: string): string {
+function requireCursor(cursor: string | undefined): string {
   if (!cursor) {
-    throw new Error(`Atlas response set ${name.replace(/^next_/, "has_more_")} without ${name}`);
+    throw new Error("Atlas response set has_more without next_cursor");
   }
   return cursor;
 }

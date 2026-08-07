@@ -152,7 +152,7 @@ func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) 
 	if emptyOpts.AllowOriginFunc(nil, "https://atlasinterface.com") {
 		t.Fatal("expected empty CORS config to reject normal origins")
 	}
-	for _, header := range []string{"Accept", "Authorization", "Content-Type", "If-Match", "X-API-Key", "X-Request-ID"} {
+	for _, header := range []string{"Accept", "Authorization", "Content-Type", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"} {
 		if !slices.Contains(opts.AllowedHeaders, header) {
 			t.Fatalf("expected allowed header %s in %#v", header, opts.AllowedHeaders)
 		}
@@ -195,9 +195,10 @@ func TestAtlasCORSPreflightEchoesAllowedPreviewOrigin(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodOptions, "/admin/auth/me", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/command-catalog", nil)
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	req.Header.Set("Access-Control-Request-Headers", "If-None-Match")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -210,6 +211,9 @@ func TestAtlasCORSPreflightEchoesAllowedPreviewOrigin(t *testing.T) {
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Fatalf("Access-Control-Allow-Credentials = %q, want true", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "if-none-match") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want If-None-Match", got)
 	}
 }
 

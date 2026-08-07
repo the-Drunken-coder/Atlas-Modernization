@@ -6,14 +6,14 @@ import {
   startRun as requestStartRun,
   stopRun as requestStopRun
 } from "./api.js";
+import { RunEventStream } from "./run-event-stream.js";
 import {
   appendRunEvent,
   applyRunEvent,
   errorMessage,
   isTerminalStatus,
   mergeRunLists,
-  mergeRunSummary,
-  parseRunEvent
+  mergeRunSummary
 } from "./run-state.js";
 
 const ACTIVE_RUN_REFRESH_MS = 2_000;
@@ -25,8 +25,9 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
   const [error, setError] = useState<string | undefined>();
   const [mutationPending, setMutationPending] = useState(false);
   const [cleanupRunId, setCleanupRunId] = useState<string | undefined>();
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const activeRunIdRef = useRef<string | undefined>(undefined);
+  const eventStreamRef = useRef<RunEventStream | undefined>(undefined);
+  eventStreamRef.current ??= new RunEventStream();
+  const eventStream = eventStreamRef.current;
   const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
   const currentRunIdRef = useRef<string | undefined>(undefined);
   const refreshRunsRequestRef = useRef(0);
@@ -47,8 +48,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     });
     return () => {
       cancelled = true;
-      activeRunIdRef.current = undefined;
-      eventSourceRef.current?.close();
+      eventStreamRef.current?.close();
     };
   }, []);
 
@@ -89,7 +89,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
       : undefined;
     if (
       refreshedSelection?.status !== "running" &&
-      activeRunIdRef.current === selectedRunAfterLoad &&
+      eventStream.runId === selectedRunAfterLoad &&
       cleanupStreamRunIdRef.current !== selectedRunAfterLoad
     ) {
       closeActiveEventSource();
@@ -104,7 +104,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     if (
       selectedRunAfterLoad &&
       refreshedSelection &&
-      activeRunIdRef.current !== selectedRunAfterLoad &&
+      eventStream.runId !== selectedRunAfterLoad &&
       (refreshedSelection.status === "running" || needsCleanupReconnect)
     ) {
       if (needsCleanupReconnect) cleanupStreamRunIdRef.current = selectedRunAfterLoad;
@@ -164,8 +164,8 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
       if (run.status === "running" || needsCleanupStream || needsReplayStream) {
-        if (activeRunIdRef.current !== run.id) connectEvents(run.id, { preserveCleanup: needsCleanupStream });
-      } else if (activeRunIdRef.current === run.id && cleanupStreamRunIdRef.current !== run.id) {
+        if (eventStream.runId !== run.id) connectEvents(run.id, { preserveCleanup: needsCleanupStream });
+      } else if (eventStream.runId === run.id && cleanupStreamRunIdRef.current !== run.id) {
         closeActiveEventSource({ preserveCleanup: true });
       }
       return;
@@ -188,53 +188,38 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
 
   function connectEvents(runId: string, options: { preserveCleanup?: boolean } = {}) {
     closeActiveEventSource({ preserveCleanup: options.preserveCleanup });
-    activeRunIdRef.current = runId;
     if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
-    const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
-    eventSourceRef.current = source;
-    const closeSource = () => {
-      if (activeRunIdRef.current === runId && eventSourceRef.current === source) {
-        activeRunIdRef.current = undefined;
+    eventStream.connect(runId, {
+      onEvent(event) {
+        const terminalStatus =
+          event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId;
+        const cleanupComplete = event.type === "cleanup" && !event.resource;
+        const nextEvents = appendRunEvent(eventsByRunIdRef.current.get(runId) ?? [], event);
+        if (nextEvents) {
+          eventsByRunIdRef.current.set(runId, nextEvents);
+          if (currentRunIdRef.current === runId) setEvents(nextEvents);
+          setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
+          setRuns((current) => {
+            const next = current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run));
+            runsRef.current = next;
+            return next;
+          });
+        }
+        if (cleanupComplete) {
+          cleanupStreamRunIdRef.current = undefined;
+          setCleanupRunId((current) => (current === runId ? undefined : current));
+          return true;
+        }
+        return terminalStatus;
+      },
+      onInvalidEvent(error) {
         if (cleanupStreamRunIdRef.current === runId) cleanupStreamRunIdRef.current = undefined;
-        eventSourceRef.current = null;
-        source.close();
+        reportError(error);
+      },
+      onConnectionError() {
+        void refreshRunsBestEffort();
       }
-    };
-    source.onmessage = (message) => {
-      if (activeRunIdRef.current !== runId) return;
-      let event: RunEvent;
-      try {
-        event = parseRunEvent(JSON.parse(message.data));
-      } catch {
-        reportError(new Error(`Invalid event payload for run ${runId}`));
-        closeSource();
-        return;
-      }
-      if (event.runId !== runId) {
-        reportError(new Error(`Received event for ${event.runId} on stream for ${runId}`));
-        closeSource();
-        return;
-      }
-      const nextEvents = appendRunEvent(eventsByRunIdRef.current.get(runId) ?? [], event);
-      if (!nextEvents) return;
-      eventsByRunIdRef.current.set(runId, nextEvents);
-      if (currentRunIdRef.current === runId) setEvents(nextEvents);
-      setCurrentRun((current) => (current?.id === runId ? applyRunEvent(current, event) : current));
-      setRuns((current) => {
-        const next = current.map((run) => (run.id === runId ? applyRunEvent(run, event) : run));
-        runsRef.current = next;
-        return next;
-      });
-      if (event.type === "status" && isTerminalStatus(event.status) && cleanupStreamRunIdRef.current !== runId)
-        closeSource();
-      if (event.type === "cleanup" && !event.resource) {
-        setCleanupRunId((current) => (current === runId ? undefined : current));
-        closeSource();
-      }
-    };
-    source.onerror = () => {
-      void refreshRunsBestEffort();
-    };
+    });
   }
 
   async function stopCurrentRun(): Promise<RunSummary | undefined> {
@@ -262,13 +247,13 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     setMutationPending(true);
     try {
       cleanupStreamRunIdRef.current = targetRunId;
-      if (activeRunIdRef.current !== targetRunId) connectEvents(targetRunId, { preserveCleanup: true });
+      if (eventStream.runId !== targetRunId) connectEvents(targetRunId, { preserveCleanup: true });
       setCleanupRunId(targetRunId);
       const updatedRun = apiKey ? await requestCleanupRun(targetRunId, apiKey) : await requestCleanupRun(targetRunId);
       upsertRun(updatedRun);
       if (updatedRun.cleaned && cleanupStreamRunIdRef.current === targetRunId) {
         cleanupStreamRunIdRef.current = undefined;
-        if (activeRunIdRef.current === targetRunId) closeActiveEventSource();
+        if (eventStream.runId === targetRunId) closeActiveEventSource();
       }
       if (updatedRun.cleaned) setCleanupRunId(undefined);
       await refreshRunsBestEffort();
@@ -276,7 +261,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     } catch (errorValue) {
       if (cleanupStreamRunIdRef.current === targetRunId) {
         cleanupStreamRunIdRef.current = undefined;
-        if (activeRunIdRef.current === targetRunId) closeActiveEventSource();
+        if (eventStream.runId === targetRunId) closeActiveEventSource();
       }
       setCleanupRunId(undefined);
       reportError(errorValue);
@@ -303,16 +288,13 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
   }
 
   function closeActiveEventSource(options: { preserveCleanup?: boolean } = {}) {
-    if (!eventSourceRef.current) return;
-    const source = eventSourceRef.current;
-    activeRunIdRef.current = undefined;
     if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
-    eventSourceRef.current = null;
-    source.close();
+    if (!eventStream.runId) return;
+    eventStream.close();
   }
 
   function selectedRunId(): string | undefined {
-    return activeRunIdRef.current ?? currentRunIdRef.current;
+    return eventStream.runId ?? currentRunIdRef.current;
   }
 
   return {

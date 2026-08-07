@@ -64,7 +64,6 @@ describe("appConfigFromEnv", () => {
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
     expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({
       label: "MapTiler OSM Dark",
-      style: undefined,
       unavailableReason: "missing key"
     });
   });
@@ -267,11 +266,9 @@ describe("fetchAppConfig", () => {
     expect(config.defaultMapSourceId).toBe("maptiler-osm-dark");
     expect(config.mapSources.find((source) => source.id === "google-satellite")).toMatchObject({
       id: "google-satellite",
-      style: undefined,
       unavailableReason: "session unavailable"
     });
     expect(config.mapSources.find((source) => source.id === "maptiler-osm-dark")).toMatchObject({
-      style: undefined,
       unavailableReason: "missing key"
     });
     expect(warn).toHaveBeenCalled();

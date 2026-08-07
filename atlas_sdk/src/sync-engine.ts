@@ -1,7 +1,7 @@
 import { type CacheResourceOptions, ResourceCache } from "./cache.js";
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
-import type { HttpTransport, ResponseValidator } from "./http.js";
+import { AtlasAPIError, type HttpTransport, type ResponseValidator } from "./http.js";
 import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
 import {
   assertResourceMatchesSubscription,
@@ -17,8 +17,8 @@ import {
 import { SyncLifecycle } from "./sync-engine-lifecycle.js";
 import { ReconnectTimer } from "./sync-engine-reconnect.js";
 import { RecoveryCoordinator, RecoveryRunner } from "./sync-engine-recovery.js";
+import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
-  AtlasRecoveredWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
   EntityCheckInBody,
@@ -30,6 +30,7 @@ import type {
   ResourceOf,
   ResourceValue,
   SyncSnapshot,
+  SyncSnapshotCallback,
   SyncStatus,
   WatchCallback
 } from "./types.js";
@@ -45,6 +46,22 @@ import {
 type AutomaticReconnectOwnership = {
   recoveryOperation?: number;
 };
+
+type ActiveHydration = {
+  generation: number;
+  operation?: number;
+  promise: Promise<number | undefined>;
+};
+
+type FeedRecoveryBuffer = {
+  generation: number;
+  attempt: number;
+  events: Array<{ event: FeedEvent; serializedBytes: number }>;
+  bytes: number;
+};
+
+const MAX_BUFFERED_FEED_EVENTS = 100;
+const MAX_BUFFERED_FEED_BYTES = 8 * 1024 * 1024;
 
 /**
  * Internal identity of the engine's last failure. Reconnect and recovery
@@ -94,6 +111,9 @@ export class SyncEngine {
   private readonly reconnectTimer = new ReconnectTimer();
   private readonly subscriptions: AtlasSubscription[] = [];
   private readonly watchers = new Map<string, Set<WatchCallback<ResourceValue>>>();
+  private readonly snapshotWatchers = new Set<SyncSnapshotCallback>();
+  private activeHydration: ActiveHydration | undefined;
+  private feedRecoveryBuffer: FeedRecoveryBuffer | undefined;
   private syncRunning = false;
   private health: SyncHealth = "idle";
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -107,6 +127,11 @@ export class SyncEngine {
     pollIntervalMs: number;
     initialSync?: false | "all";
   }) {
+    if (!isTimerDelayInRange(options.pollIntervalMs, true)) {
+      throw new Error(
+        `Atlas polling interval must be zero or a positive finite number of milliseconds no greater than ${MAX_TIMER_DELAY_MS}`
+      );
+    }
     this.transport = options.transport;
     this.feed = options.feed;
     this.cache = options.cache;
@@ -170,6 +195,12 @@ export class SyncEngine {
     return this.cache.snapshot();
   }
 
+  watchSnapshot(callback: SyncSnapshotCallback): () => void {
+    const wrapped: SyncSnapshotCallback = (snapshot) => callback(snapshot);
+    this.snapshotWatchers.add(wrapped);
+    return () => this.snapshotWatchers.delete(wrapped);
+  }
+
   async subscribe(filter: AtlasSubscription): Promise<void> {
     if (!this.subscriptions.some((existing) => subscriptionKey(existing) === subscriptionKey(filter))) {
       this.subscriptions.push(filter);
@@ -225,8 +256,20 @@ export class SyncEngine {
     try {
       await this.feed.connect({
         subscriptions: this.subscriptions,
-        onEvent: (event) => {
+        onEvent: (event, serializedBytes) => {
           if (!isCurrentAttempt()) return;
+          const buffer = this.feedRecoveryBuffer;
+          if (buffer?.generation === generation && buffer.attempt === attempt) {
+            if (
+              buffer.events.length >= MAX_BUFFERED_FEED_EVENTS ||
+              (buffer.events.length > 0 && buffer.bytes + serializedBytes > MAX_BUFFERED_FEED_BYTES)
+            ) {
+              throw new Error("feed recovery buffer exceeded its budget");
+            }
+            buffer.events.push({ event, serializedBytes });
+            buffer.bytes += serializedBytes;
+            return;
+          }
           return this.consumeFeedEvent(event, generation, attempt);
         },
         onEventError: () => {
@@ -277,11 +320,12 @@ export class SyncEngine {
     const isCurrentOperation = () => this.isCurrent(generation) && this.recoveryOperation === operation;
     try {
       if (!isCurrentOperation()) return false;
-      const result = await this.recoveryRunner.run(
+      if (this.syncRunning) this.health = "degraded";
+      const result = await this.runRecoveryWithHydrationFallback(
+        generation,
         sinceVersion,
-        isCurrentOperation,
-        (event) => this.applyEvent(event),
-        (event) => this.applyRecoveredEvent(event)
+        operation,
+        isCurrentOperation
       );
       if (!isCurrentOperation() || result.superseded) return false;
       this.cache.lastVersion = Math.max(this.cache.lastVersion, result.snapshotVersion ?? sinceVersion);
@@ -297,6 +341,24 @@ export class SyncEngine {
         }
       }
       throw error;
+    }
+  }
+
+  private async runRecoveryWithHydrationFallback(
+    generation: number,
+    sinceVersion: number,
+    operation: number,
+    isCurrentOperation: () => boolean
+  ): ReturnType<RecoveryRunner["run"]> {
+    try {
+      return await this.recoveryRunner.run(sinceVersion, isCurrentOperation, (event) => this.applyEvent(event));
+    } catch (error) {
+      if (!(error instanceof AtlasAPIError) || error.errorCode !== "CURSOR_EXPIRED") throw error;
+      const hydratedVersion = await this.loadHydratedSnapshot(generation, isCurrentOperation, operation);
+      if (!isCurrentOperation() || hydratedVersion === undefined) {
+        return { snapshotVersion: hydratedVersion, superseded: true };
+      }
+      return this.recoveryRunner.run(hydratedVersion, isCurrentOperation, (event) => this.applyEvent(event));
     }
   }
 
@@ -316,7 +378,7 @@ export class SyncEngine {
     }
     const entity = await this.transport.json("GET", `/entities/${encodeURIComponent(id)}`, isEntityResource);
     assertExpectedResourceID("entity", id, entity);
-    this.cache.cacheResource("entity", id, entity, { advanceCursor: false });
+    if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false })) this.notifySnapshot();
     return entity;
   }
 
@@ -332,7 +394,7 @@ export class SyncEngine {
     }
     const task = await this.transport.json("GET", `/tasks/${encodeURIComponent(id)}`, isTaskResource);
     assertExpectedResourceID("task", id, task);
-    this.cache.cacheResource("task", id, task, { advanceCursor: false });
+    if (this.cache.cacheResource("task", id, task, { advanceCursor: false })) this.notifySnapshot();
     return task;
   }
 
@@ -343,7 +405,7 @@ export class SyncEngine {
     }
     const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectDetailResource);
     assertExpectedResourceID("object", id, object);
-    this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false });
+    if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false })) this.notifySnapshot();
     return object;
   }
 
@@ -410,6 +472,7 @@ export class SyncEngine {
     await this.transport.empty("DELETE", path);
     const { previousVersion, previous } = this.cache.markLocalDelete(type, id);
     this.notify(localDeleteEvent(type, id, previousVersion), undefined, previous);
+    this.notifySnapshot();
   }
 
   private async startSyncFromStopped(generation: number): Promise<void> {
@@ -453,6 +516,7 @@ export class SyncEngine {
     this.syncRunning = false;
     this.invalidateRecovery();
     this.lastErrorCode = undefined;
+    this.feedRecoveryBuffer = undefined;
     this.feed.close();
     this.health = "idle";
   }
@@ -494,6 +558,32 @@ export class SyncEngine {
   }
 
   private async hydrate(generation: number): Promise<void> {
+    const snapshotVersion = await this.loadHydratedSnapshot(generation);
+    if (snapshotVersion === undefined) return;
+    const recovered = await this.changedSinceForGeneration(generation, snapshotVersion);
+    if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
+  }
+
+  private loadHydratedSnapshot(
+    generation: number,
+    isCurrentHydration = () => this.isCurrent(generation),
+    operation?: number
+  ): Promise<number | undefined> {
+    const active = this.activeHydration;
+    if (active?.generation === generation && (active.operation === undefined || active.operation === operation)) {
+      return active.promise;
+    }
+    const promise = this.fetchAndInstallHydratedSnapshot(isCurrentHydration);
+    const hydration = { generation, operation, promise };
+    this.activeHydration = hydration;
+    const clear = () => {
+      if (this.activeHydration === hydration) this.activeHydration = undefined;
+    };
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  private async fetchAndInstallHydratedSnapshot(isCurrentHydration: () => boolean): Promise<number | undefined> {
     let cursors: FullDatasetCursors = {};
     let snapshotVersion: number | undefined;
     const seenCursors = new Map<string, Set<string>>();
@@ -501,9 +591,9 @@ export class SyncEngine {
     const tasks: TaskResource[] = [];
     const objects: ObjectDetailResource[] = [];
     do {
-      if (!this.isCurrent(generation)) return;
+      if (!isCurrentHydration()) return undefined;
       const response = await this.transport.json("GET", fullDatasetPath(cursors), isFullDatasetResponse);
-      if (!this.isCurrent(generation)) return;
+      if (!isCurrentHydration()) return undefined;
       const responseVersion = requireFullDatasetVersion(response.version);
       if (snapshotVersion !== undefined && responseVersion !== snapshotVersion) {
         throw new Error(
@@ -517,15 +607,18 @@ export class SyncEngine {
       cursors = nextFullDatasetCursors(response);
       assertPaginationProgress("full-dataset", cursors, seenCursors);
     } while (hasMoreFullDataset(cursors));
-    if (!this.isCurrent(generation)) return;
+    if (!isCurrentHydration()) return undefined;
     if (snapshotVersion === undefined) throw new Error("Atlas full-dataset response is missing a version watermark");
     this.cache.replaceHydratedResources({ entities, tasks, objects });
-    const recovered = await this.changedSinceForGeneration(generation, snapshotVersion);
-    if (this.isCurrent(generation) && !recovered) throw new Error("Atlas initial recovery was superseded");
+    this.cache.lastVersion = snapshotVersion;
+    this.notifySnapshot();
+    return snapshotVersion;
   }
 
   private async consumeFeedEvent(event: FeedEvent, generation: number, attempt: number): Promise<void> {
+    await this.activeHydration?.promise;
     if (!this.isCurrentFeedConnection(generation, attempt)) return;
+    if (event.version <= this.cache.lastVersion) return;
     if (event.version > this.cache.lastVersion + 1) {
       this.health = "degraded";
       const recovered = await this.changedSinceForGeneration(generation);
@@ -550,28 +643,87 @@ export class SyncEngine {
     this.reconnectAfterRecovery = false;
     this.clearReconnectTimer();
     const attempt = this.beginFeedConnectionAttempt();
+    const buffer: FeedRecoveryBuffer = {
+      generation,
+      attempt,
+      events: [],
+      bytes: 0
+    };
+    const sinceVersion = this.cache.lastVersion;
+    this.feedRecoveryBuffer = buffer;
+    let recoveryCompleted = false;
     try {
-      try {
-        await this.connectFeedForGeneration(generation, attempt);
-      } catch (error) {
-        if (this.isCurrentFeedConnection(generation, attempt)) this.invalidateRecovery();
-        throw error;
-      }
-      if (!this.isCurrentFeedConnection(generation, attempt)) return;
-      const recovery = this.changedSinceForGeneration(generation);
-      if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
-      const recovered = await recovery;
-      if (recovered && this.isCurrentFeedConnection(generation, attempt) && isFeedErrorCode(this.lastErrorCode))
-        this.lastErrorCode = undefined;
+      await this.connectFeedForRecovery(generation, attempt);
+      recoveryCompleted = await this.recoverConnectedFeed(
+        generation,
+        attempt,
+        sinceVersion,
+        buffer,
+        automaticOwnership
+      );
     } finally {
-      if (this.isCurrent(generation)) {
-        this.reconnecting = false;
-        if (this.reconnectAfterRecovery) {
-          this.reconnectAfterRecovery = false;
-          this.scheduleReconnect();
-        }
+      this.finishFeedRecoveryAttempt(generation, attempt, buffer, recoveryCompleted);
+    }
+  }
+
+  private async connectFeedForRecovery(generation: number, attempt: number): Promise<void> {
+    try {
+      await this.connectFeedForGeneration(generation, attempt);
+    } catch (error) {
+      if (this.isCurrentFeedConnection(generation, attempt)) this.invalidateRecovery();
+      throw error;
+    }
+  }
+
+  private async recoverConnectedFeed(
+    generation: number,
+    attempt: number,
+    sinceVersion: number,
+    buffer: FeedRecoveryBuffer,
+    automaticOwnership?: AutomaticReconnectOwnership
+  ): Promise<boolean> {
+    if (!this.isCurrentFeedConnection(generation, attempt)) return false;
+    const recovery = this.changedSinceForGeneration(generation, sinceVersion);
+    if (automaticOwnership) automaticOwnership.recoveryOperation = this.recoveryOperation;
+    const recovered = await recovery;
+    if (!recovered || !this.isCurrentFeedConnection(generation, attempt)) return false;
+
+    this.health = "degraded";
+    while (buffer.events.length > 0 && this.isCurrentFeedConnection(generation, attempt)) {
+      const buffered = buffer.events.shift();
+      if (buffered) {
+        buffer.bytes -= buffered.serializedBytes;
+        await this.consumeFeedEvent(buffered.event, generation, attempt);
       }
     }
+    if (!this.isCurrentFeedConnection(generation, attempt)) return false;
+    if (this.feedRecoveryBuffer === buffer) this.feedRecoveryBuffer = undefined;
+    this.markSynchronized();
+    if (isFeedErrorCode(this.lastErrorCode)) this.lastErrorCode = undefined;
+    return true;
+  }
+
+  private finishFeedRecoveryAttempt(
+    generation: number,
+    attempt: number,
+    buffer: FeedRecoveryBuffer,
+    recoveryCompleted: boolean
+  ): void {
+    if (this.feedRecoveryBuffer === buffer && !this.syncRunning && !recoveryCompleted) {
+      this.feedRecoveryBuffer = undefined;
+      this.feed.close();
+    }
+    if (
+      this.feedRecoveryBuffer === buffer &&
+      (recoveryCompleted || !this.isCurrentFeedConnection(generation, attempt))
+    ) {
+      this.feedRecoveryBuffer = undefined;
+    }
+    if (!this.isCurrent(generation)) return;
+    this.reconnecting = false;
+    if (!this.reconnectAfterRecovery) return;
+    this.reconnectAfterRecovery = false;
+    this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {
@@ -618,10 +770,11 @@ export class SyncEngine {
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
         this.notify(event, undefined, previous);
+        this.notifySnapshot();
       }
       return;
     }
-    if ((pendingDelete || current?.deleted) && event.event === "update") {
+    if (pendingDelete && event.event === "update") {
       this.advanceCursor(event, advanceCursor);
       return;
     }
@@ -632,35 +785,14 @@ export class SyncEngine {
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
         this.notify(event, undefined, previous);
+        this.notifySnapshot();
       }
       return;
     }
     this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
     this.advanceCursor(event, advanceCursor);
     this.notify(event, this.cache.value(event.resource_type, event.id), previous);
-  }
-
-  private applyRecoveredEvent(event: AtlasRecoveredWatchEvent): void {
-    const key = resourceCacheKey(event.resource_type, event.id);
-    const current = this.cache.entry(event.resource_type, event.id);
-    const previous = current?.value;
-    if (this.cache.pendingDeletes.has(key)) {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
-      return;
-    }
-    if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
-      this.cache.lastVersion = Math.max(this.cache.lastVersion, event.version);
-      return;
-    }
-    this.cache.pendingDeletes.delete(key);
-    this.cache.locallyNotifiedDeletes.delete(key);
-    this.cache.cacheResource(
-      event.resource_type,
-      event.id,
-      event.resource,
-      event.resource_type === "object" ? { detail: true } : undefined
-    );
-    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
+    this.notifySnapshot();
   }
 
   private canServeFromCache(filter: AtlasSubscription): boolean {
@@ -696,6 +828,18 @@ export class SyncEngine {
         } catch (error) {
           reportWatchCallbackError(error);
         }
+      }
+    }
+  }
+
+  private notifySnapshot(): void {
+    if (this.snapshotWatchers.size === 0) return;
+    const snapshot = this.cache.snapshot();
+    for (const callback of this.snapshotWatchers) {
+      try {
+        callback(snapshot);
+      } catch (error) {
+        reportWatchCallbackError(error);
       }
     }
   }

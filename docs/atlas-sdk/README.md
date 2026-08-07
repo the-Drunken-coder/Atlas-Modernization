@@ -24,7 +24,7 @@ The SDK is the preferred client path for UI code, asset-side services, and tools
 
 Two components, not three modes:
 
-1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. Standalone telemetry patching and object upload are still direct API calls until they are added to the SDK.
+1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Object upload remains a direct API call for now; use entity check-in for telemetry and status reporting.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
 The constructor can optionally seed the all-resources subscription:
@@ -37,7 +37,7 @@ new AtlasClient({ baseUrl, apiKey, sync: "all" }); // seed the all-resources sub
 
 Omitted `sync` and `sync: false` start with no subscription; `sync: "all"` seeds an all-resources subscription. Call `client.subscribe(filter)` and `client.unsubscribe(filter)` to manage explicit filters (the subscription primitives are defined in the [change feed doc](../atlas-change-feed/README.md)). `await client.sync.start()` still performs the existing full-dataset hydration from `GET /queries/full` before it connects the websocket feed and begins the changed-since safety-net poll, regardless of the initial subscription setting.
 
-`client.sync.snapshot()` synchronously projects the live cache into frozen records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition and omits cache tombstones and other internal bookkeeping. Snapshot references stay stable until the cache changes; each accepted change creates one canonical frozen resource shared by cache reads, snapshots, and watcher values, replaces only its resource-type record, and preserves the other records by reference. Mutating an API or write response cannot mutate that owned cache value.
+`client.sync.snapshot()` synchronously projects the live cache into frozen records keyed by resource ID for entities, tasks, and objects. It performs no request or sync transition and omits deleted-entry markers and other internal bookkeeping. Snapshot references stay stable until the cache changes; each accepted change creates one canonical frozen resource shared by cache reads, snapshots, and watcher values, replaces only its resource-type record, and preserves the other records by reference. Mutating an API or write response cannot mutate that owned cache value.
 
 ### Unified read surface
 
@@ -57,9 +57,11 @@ Rules that make this safe:
 
 ### Watch API
 
-`client.entities.watch(id, callback)` (and equivalents per resource type) fires when the cached resource changes. Collection-level watches use the generic `client.watch(filter, callback)` surface, such as `client.watch({ filter: "type", resource_type: "entity" }, callback)` or `client.watch({ filter: "all" }, callback)`. This is the real-time path for UIs: the change-feed event arrives and the UI reacts immediately, with no polling loop. It is the same cache and the same surface — not a separate layer.
+`client.entities.watch(id, callback)` (and equivalents per resource type) reports accepted resource events. Collection-level event watches use the generic `client.watch(filter, callback)` surface, such as `client.watch({ filter: "type", resource_type: "entity" }, callback)` or `client.watch({ filter: "all" }, callback)`.
 
-Watcher callbacks receive protocol feed events for server-published changes. They can also receive SDK-local events that are not wire feed frames: `recovered` when `changed-since` reconciliation applies a live resource row, and `local_delete` when a successful local DELETE removes a resource from the cache before Core's versioned tombstone arrives.
+Watcher callbacks receive the same Protocol feed events whether they arrive over the websocket or through changed-since recovery. They can also receive the SDK-local `local_delete` event when a successful local DELETE removes a resource from the cache before Core's versioned delete event arrives.
+
+Snapshot consumers such as UIs use `client.sync.watchSnapshot(callback)`. It fires with the current immutable snapshot after cache changes and after an expired-cursor recovery atomically replaces the cache through full hydration. This keeps snapshot-driven views observable even when no individual recovery event exists for the replacement.
 
 ### Writes and read-your-writes
 
@@ -69,18 +71,18 @@ The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `
 
 ## Change feed consumption
 
-The websocket change feed — event shapes, tombstones, subscription primitives, task-routing rules, delivery mechanics, and its testing approach — is documented in the [change feed doc](../atlas-change-feed/README.md). The feed was built and simulation-tested before the SDK, so the sync engine's websocket transport consumes a finished, demonstrated endpoint.
+The websocket change feed — event shapes, delete events, subscription primitives, task-routing rules, delivery mechanics, and its testing approach — is documented in the [change feed doc](../atlas-change-feed/README.md). The sync engine's websocket transport and recovery path consume the same Protocol events.
 
-What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, tombstone events for deletes, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, tasks-for-entity).
+What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, versioned delete events, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, tasks-for-entity).
 
 ## Reconciliation (replaces the original 20-second hard refresh)
 
-The consistency mechanism is `GET /queries/changed-since` with the global version cursor, not periodic full re-pulls. The endpoint returns creates, updates, and delete tombstones after the requested version. The gap-detection and reconnect rules below are the SDK's implementation of the consumption contract in the change feed doc.
+The consistency mechanism is `GET /queries/changed-since` with one global version cursor, not periodic full re-pulls. The endpoint returns the same ordered create, update, and delete events used by the websocket after the requested version. The gap-detection and reconnect rules below are the SDK's implementation of the consumption contract in the change feed doc.
 
 - **Gap detection:** the cache tracks its last applied version N. If an event arrives with a version that skips past expected values, the SDK immediately calls `changed-since?since_version=N` to catch up. Recovery is event-driven, not timer-driven.
-- **Reconnect:** after any websocket reconnect, one `changed-since` call from the last known version restores consistency; the engine is degraded (reads fall through to the API) until it completes.
-- **Version-guarded application:** reconciliation applies returned events in ascending version order and updates cache entries only when `event.version > cachedVersion`. A tombstone is a versioned cache entry, so an older resource payload cannot restore a resource after a newer delete has been applied.
-- **Safety-net poll:** a lazy periodic `changed-since` call (interval on the order of minutes, configurable) as a backstop; a no-change response is nearly free. This is a backstop, not the mechanism.
+- **Reconnect:** the SDK captures its cursor before connecting, installs the event listener, sends its initial subscriptions plus a barrier, and waits for Core's `subscriptions_ready` acknowledgement before starting recovery. It drains `changed-since` from that captured cursor one page at a time and buffers live events until recovery completes; buffered versions already covered by recovery are discarded, and later versions are applied in order. The transport's pending-consumer queue and the separate recovery handoff buffer are each limited to 100 events or 8 MiB in aggregate; exceeding either backlog budget drops the connection so durable recovery can resume from the last safely applied cursor. An otherwise-empty queue accepts one event larger than the byte budget so the cursor can advance. The engine remains degraded (reads fall through to the API) until both recovery and the buffer complete. If the cursor has expired, the SDK automatically performs paginated full hydration, publishes the replacement snapshot, and resumes from that watermark.
+- **Version-guarded application:** reconciliation applies returned events in ascending version order and updates cache entries only when `event.version > cachedVersion`. A delete is a versioned cache entry, so an older resource payload cannot restore a resource after a newer delete has been applied.
+- **Safety-net poll:** a lazy periodic `changed-since` call (interval on the order of minutes, configurable) is an optional backstop for operational resilience; a no-change response is nearly free. The acknowledged reconnect handoff remains correct when polling is disabled.
 - **Hydration:** `GET /queries/full` on engine start. The engine retains the response's stable `version` across every continuation page, caches hydrated resources without advancing the global cursor from their individual versions, then drains `changed-since` from that pre-hydration baseline before synchronization is current. A later full-dataset page may legitimately contain a resource newer than the baseline; reconciliation still starts from the baseline so an earlier-page concurrent update cannot be skipped. At expected scale (10–20 assets, low hundreds of tracks from ADS-B ingest, never thousands) hydration is one or a few pages and subscribe-`all` in a browser tab is trivially fine.
 
 ## Objects
@@ -116,7 +118,7 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 ## Task lifecycle, check-in, and queries
 
-Task lifecycle helpers wrap the existing Core lifecycle endpoints: `client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
+Task lifecycle helpers—`client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`—are conveniences over `client.tasks.update` and Core's `PATCH /tasks/{task_id}` endpoint. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
 
 `client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full task pages are merged into the SDK cache; `fields: "minimal"` returns compact command-oriented task entries.
 

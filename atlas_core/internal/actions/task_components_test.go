@@ -133,7 +133,7 @@ func TestValidateTaskComponents(t *testing.T) {
 				"unknown_key": "value",
 			},
 			wantError: true,
-			errMsg:    []string{"Unknown component 'unknown_key'"},
+			errMsg:    []string{`Unknown component "unknown_key"`},
 		},
 		{
 			name: "custom task component key",

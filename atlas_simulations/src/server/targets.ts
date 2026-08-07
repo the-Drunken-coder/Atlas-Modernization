@@ -11,18 +11,10 @@ export type TargetRegistry = {
 };
 
 export function createTargetRegistry(config: SimulationConfig): TargetRegistry {
-  const configuredTargets = config.atlasTargets ?? [
-    {
-      id: "configured",
-      label: "Atlas Core",
-      baseUrl: config.atlasBaseUrl,
-      ...(config.atlasApiKey ? { apiKey: config.atlasApiKey } : {})
-    }
-  ];
+  const configuredTargets = config.atlasTargets;
   const targets = new Map(configuredTargets.map((target) => [target.id, target]));
-  const defaultTarget =
-    (config.defaultAtlasTargetId ? targets.get(config.defaultAtlasTargetId) : undefined) ?? configuredTargets[0];
-  if (!defaultTarget) throw new Error("At least one Atlas target is required");
+  const defaultTarget = targets.get(config.defaultAtlasTargetId);
+  if (!defaultTarget) throw new Error(`Default Atlas target ${config.defaultAtlasTargetId} is not configured`);
   return {
     targets,
     summaries: configuredTargets.map(targetSummary),

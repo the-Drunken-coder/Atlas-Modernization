@@ -46,8 +46,8 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
   }, [mapCanvasRef]);
 
   useEffect(() => {
-    window.addEventListener("keydown", navigateWithArrow, true);
-    return () => window.removeEventListener("keydown", navigateWithArrow, true);
+    window.addEventListener("keydown", navigateWithArrow);
+    return () => window.removeEventListener("keydown", navigateWithArrow);
   }, [navigateWithArrow]);
 
   // Marker screen boxes only change with the camera or an entity snapshot, so
@@ -107,8 +107,8 @@ export function useMapReticleEffects({ options, stateStore, pointer, zooming, re
       if (optionsRef.current.selectedEntityId) optionsRef.current.onBackgroundClick?.();
       else clearPointer();
     };
-    window.addEventListener("keydown", releaseOnEscape, true);
-    return () => window.removeEventListener("keydown", releaseOnEscape, true);
+    window.addEventListener("keydown", releaseOnEscape);
+    return () => window.removeEventListener("keydown", releaseOnEscape);
   }, [clearPointer, optionsRef, reticleVisible, selectedEntityId, stateRef]);
 
   useEffect(() => {

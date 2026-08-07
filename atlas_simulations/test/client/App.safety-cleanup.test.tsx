@@ -9,6 +9,13 @@ import { cloneRun, deferred, deployedTarget, type HealthResponse, localTarget, s
 vi.mock("../../src/client/api.js");
 
 describe("App safety and cleanup", () => {
+  it("disables API-key entry until a target exists", async () => {
+    vi.mocked(loadTargets).mockResolvedValueOnce({ targets: [], defaultTargetId: "" });
+    render(<App />);
+
+    expect(await screen.findByLabelText("API key")).toBeDisabled();
+  });
+
   it("requires a fresh acknowledgement before each deployed start", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -107,7 +114,9 @@ describe("App safety and cleanup", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.type(await screen.findByLabelText("API key"), "secret-key");
+    const apiKeyInput = await screen.findByLabelText("API key");
+    await waitFor(() => expect(apiKeyInput).toBeEnabled());
+    await user.type(apiKeyInput, "secret-key");
     await user.click(screen.getByRole("button", { name: "Refresh Core status" }));
     await waitFor(() => expect(vi.mocked(loadHealth)).toHaveBeenCalledWith(localTarget.id, "secret-key"));
 

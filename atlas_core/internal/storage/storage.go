@@ -168,13 +168,9 @@ func (c *Client) Bucket() string {
 	return c.bucket
 }
 
-func (c *Client) buildVersionedPath(objectID string) string {
-	return fmt.Sprintf("objects/%s/%d", objectID, time.Now().UTC().UnixNano())
-}
-
 // NewObjectPath returns a durable unique storage path for a new object blob version.
 func (c *Client) NewObjectPath(objectID string) string {
-	return c.buildVersionedPath(objectID)
+	return fmt.Sprintf("objects/%s/%d", objectID, time.Now().UTC().UnixNano())
 }
 
 func (c *Client) putObject(ctx context.Context, objectID, path string, reader io.Reader, size int64, contentType string) (*ObjectInfo, error) {

@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // QueryActions handles query operations across multiple resource types.
@@ -147,10 +148,9 @@ func (a *QueryActions) GetFullDataset(ctx context.Context, limits *FullDatasetLi
 	return resp, nil
 }
 
-// GetDataChangedSince retrieves resources modified after the given change version.
-// Optional cursors continue pagination for each stream (same since_version, version DESC, id DESC).
-func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int64, limitPerType int, cursors *ChangedSinceCursors) (*ChangedSinceResult, error) {
-	limit := effectiveLimit(limitPerType, MaxChangedSinceLimit)
+// GetDataChangedSince retrieves one globally ordered page of committed events.
+func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int64, limit int, cursor *string) (*ChangedSinceResult, error) {
+	limit = changedSinceLimit(limit)
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -161,25 +161,38 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var responseTimestamp time.Time
-	if err := tx.QueryRow(ctx, `SELECT statement_timestamp()`).Scan(&responseTimestamp); err != nil {
-		return nil, fmt.Errorf("read snapshot timestamp: %w", err)
-	}
-	snapshotVersion, err := readSnapshotVersion(ctx, tx)
+	snapshotVersion, minRetainedVersion, err := readChangeSnapshotState(ctx, tx)
 	if err != nil {
 		return nil, err
+	}
+	if sinceVersion < minRetainedVersion {
+		return nil, NewCursorExpiredError(minRetainedVersion)
+	}
+	if sinceVersion > snapshotVersion {
+		return nil, NewValidationErrorWithDetails("Invalid since_version", []string{fmt.Sprintf("since_version %d is newer than the current change version %d", sinceVersion, snapshotVersion)})
 	}
 
-	parsedCursors, err := parseChangedSinceCursors(cursors)
-	if err != nil {
-		return nil, err
-	}
-	snapshotUpperVersion, continuation, err := parsedCursors.snapshot(sinceVersion, snapshotVersion)
-	if err != nil {
-		return nil, err
+	afterVersion := sinceVersion
+	snapshotUpperVersion := snapshotVersion
+	if cursor != nil {
+		parsed, err := parseVersionQueryCursor(*cursor, "cursor")
+		if err != nil {
+			return nil, err
+		}
+		if parsed == nil {
+			return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{"cursor must not be empty"})
+		}
+		if parsed.sinceVersion != sinceVersion {
+			return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{fmt.Sprintf("cursor was created for since_version %d, got %d", parsed.sinceVersion, sinceVersion)})
+		}
+		if parsed.upperBound > snapshotVersion {
+			return nil, NewValidationErrorWithDetails("Invalid query cursor", []string{"cursor snapshot is newer than the current change version"})
+		}
+		afterVersion = parsed.version
+		snapshotUpperVersion = parsed.upperBound
 	}
 
-	page, err := a.queryChangedSinceStreams(ctx, tx, sinceVersion, snapshotUpperVersion, limit, continuation, parsedCursors)
+	records, hasMore, err := ReadChangeRecords(ctx, tx, afterVersion, snapshotUpperVersion, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -188,195 +201,37 @@ func (a *QueryActions) GetDataChangedSince(ctx context.Context, sinceVersion int
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
-	return assembleChangedSinceResult(page, responseTimestamp, snapshotUpperVersion, sinceVersion)
-}
-
-type changedSinceCursors struct {
-	entity        *parsedVersionCursor
-	task          *parsedVersionCursor
-	object        *parsedVersionCursor
-	deletedEntity *parsedVersionCursor
-	deletedTask   *parsedVersionCursor
-	deletedObject *parsedVersionCursor
-}
-
-func parseChangedSinceCursors(cursors *ChangedSinceCursors) (*changedSinceCursors, error) {
-	if cursors == nil {
-		return &changedSinceCursors{}, nil
+	events := make([]protocol.FeedEvent, len(records))
+	for index := range records {
+		events[index] = records[index].Event
 	}
-
-	parsed := &changedSinceCursors{}
-	var err error
-	parsed.entity, err = parseChangedSinceCursor(cursors.EntityCursor, "entity_cursor")
-	if err != nil {
-		return nil, err
-	}
-	parsed.task, err = parseChangedSinceCursor(cursors.TaskCursor, "task_cursor")
-	if err != nil {
-		return nil, err
-	}
-	parsed.object, err = parseChangedSinceCursor(cursors.ObjectCursor, "object_cursor")
-	if err != nil {
-		return nil, err
-	}
-	parsed.deletedEntity, err = parseChangedSinceCursor(cursors.DeletedEntityCursor, "deleted_entity_cursor")
-	if err != nil {
-		return nil, err
-	}
-	parsed.deletedTask, err = parseChangedSinceCursor(cursors.DeletedTaskCursor, "deleted_task_cursor")
-	if err != nil {
-		return nil, err
-	}
-	parsed.deletedObject, err = parseChangedSinceCursor(cursors.DeletedObjectCursor, "deleted_object_cursor")
-	if err != nil {
-		return nil, err
-	}
-	return parsed, nil
-}
-
-func parseChangedSinceCursor(raw *string, label string) (*parsedVersionCursor, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	return parseVersionQueryCursor(*raw, label)
-}
-
-func (c *changedSinceCursors) snapshot(sinceVersion, snapshotVersion int64) (int64, bool, error) {
-	if err := validateVersionCursorsSinceVersion(sinceVersion, c.labeled()...); err != nil {
-		return 0, false, err
-	}
-	return continuationVersionUpperBound(snapshotVersion, c.all()...)
-}
-
-func (c *changedSinceCursors) labeled() []labeledVersionCursor {
-	return []labeledVersionCursor{
-		{label: "entity_cursor", cursor: c.entity},
-		{label: "task_cursor", cursor: c.task},
-		{label: "object_cursor", cursor: c.object},
-		{label: "deleted_entity_cursor", cursor: c.deletedEntity},
-		{label: "deleted_task_cursor", cursor: c.deletedTask},
-		{label: "deleted_object_cursor", cursor: c.deletedObject},
-	}
-}
-
-func (c *changedSinceCursors) all() []*parsedVersionCursor {
-	return []*parsedVersionCursor{c.entity, c.task, c.object, c.deletedEntity, c.deletedTask, c.deletedObject}
-}
-
-type changedSincePage struct {
-	entities               []*models.Entity
-	tasks                  []*models.Task
-	objects                []*models.MediaObject
-	deletedEntities        []DeletedResource
-	deletedTasks           []DeletedResource
-	deletedObjects         []DeletedResource
-	hasMoreEntities        bool
-	hasMoreTasks           bool
-	hasMoreObjects         bool
-	hasMoreDeletedEntities bool
-	hasMoreDeletedTasks    bool
-	hasMoreDeletedObjects  bool
-}
-
-func (a *QueryActions) queryChangedSinceStreams(ctx context.Context, tx pgx.Tx, sinceVersion, snapshotUpperVersion int64, limit int, continuation bool, cursors *changedSinceCursors) (*changedSincePage, error) {
-	page := &changedSincePage{}
-	var err error
-	if !skipCursorStream(continuation, cursors.entity) {
-		page.entities, page.hasMoreEntities, err = queryEntitiesByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, cursors.entity != nil, cursors.entity, limit, maxQueryJSONBytesPerType)
+	result := &ChangedSinceResult{Events: events, Version: snapshotUpperVersion, HasMore: hasMore}
+	if hasMore {
+		lastVersion := events[len(events)-1].Version
+		result.NextCursor, err = encodeVersionCursor(lastVersion, snapshotUpperVersion, sinceVersion)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("encode change cursor: %w", err)
 		}
 	}
-	if !skipCursorStream(continuation, cursors.task) {
-		page.tasks, page.hasMoreTasks, err = queryTasksByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, cursors.task != nil, cursors.task, limit, maxQueryJSONBytesPerType)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if !skipCursorStream(continuation, cursors.object) {
-		page.objects, page.hasMoreObjects, err = queryObjectsByVersion(ctx, tx, sinceVersion, snapshotUpperVersion, cursors.object != nil, cursors.object, limit, maxQueryJSONBytesPerType)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	page.deletedEntities, page.deletedTasks, page.deletedObjects, page.hasMoreDeletedEntities, page.hasMoreDeletedTasks, page.hasMoreDeletedObjects, err = a.getDeletionsSince(
-		ctx, tx, sinceVersion, snapshotUpperVersion, limit, continuation, cursors.deletedEntity, cursors.deletedTask, cursors.deletedObject,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query deletions: %w", err)
-	}
-	return page, nil
+	return result, nil
 }
 
-func assembleChangedSinceResult(page *changedSincePage, responseTimestamp time.Time, snapshotUpperVersion, sinceVersion int64) (*ChangedSinceResult, error) {
-	resp := &ChangedSinceResult{
-		Entities:               page.entities,
-		Tasks:                  page.tasks,
-		Objects:                page.objects,
-		DeletedEntities:        page.deletedEntities,
-		DeletedTasks:           page.deletedTasks,
-		DeletedObjects:         page.deletedObjects,
-		HasMoreEntities:        page.hasMoreEntities,
-		HasMoreTasks:           page.hasMoreTasks,
-		HasMoreObjects:         page.hasMoreObjects,
-		HasMoreDeletedEntities: page.hasMoreDeletedEntities,
-		HasMoreDeletedTasks:    page.hasMoreDeletedTasks,
-		HasMoreDeletedObjects:  page.hasMoreDeletedObjects,
-		Version:                snapshotUpperVersion,
-		Timestamp:              responseTimestamp.UTC().Format(time.RFC3339Nano),
+func readChangeSnapshotState(ctx context.Context, tx pgx.Tx) (int64, int64, error) {
+	var version, minRetainedVersion int64
+	if err := tx.QueryRow(ctx, `SELECT version, min_retained_version FROM atlas_change_clock WHERE singleton`).Scan(&version, &minRetainedVersion); err != nil {
+		return 0, 0, fmt.Errorf("read change snapshot state: %w", err)
 	}
-	var err error
-	resp.NextEntityCursor, err = encodeChangedSinceResourceCursor(page.entities, page.hasMoreEntities, snapshotUpperVersion, sinceVersion, "entity", func(entity *models.Entity) (int64, string) {
-		return entity.Version, entity.EntityID
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp.NextTaskCursor, err = encodeChangedSinceResourceCursor(page.tasks, page.hasMoreTasks, snapshotUpperVersion, sinceVersion, "task", func(task *models.Task) (int64, string) {
-		return task.Version, task.TaskID
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp.NextObjectCursor, err = encodeChangedSinceResourceCursor(page.objects, page.hasMoreObjects, snapshotUpperVersion, sinceVersion, "object", func(object *models.MediaObject) (int64, string) {
-		return object.Version, object.ObjectID
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp.NextDeletedEntityCursor, err = encodeChangedSinceDeletedCursor(page.deletedEntities, page.hasMoreDeletedEntities, snapshotUpperVersion, sinceVersion, "next_deleted_entity_cursor")
-	if err != nil {
-		return nil, err
-	}
-	resp.NextDeletedTaskCursor, err = encodeChangedSinceDeletedCursor(page.deletedTasks, page.hasMoreDeletedTasks, snapshotUpperVersion, sinceVersion, "next_deleted_task_cursor")
-	if err != nil {
-		return nil, err
-	}
-	resp.NextDeletedObjectCursor, err = encodeChangedSinceDeletedCursor(page.deletedObjects, page.hasMoreDeletedObjects, snapshotUpperVersion, sinceVersion, "next_deleted_object_cursor")
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return version, minRetainedVersion, nil
 }
 
-func encodeChangedSinceResourceCursor[T any](items []T, hasMore bool, snapshotUpperVersion, sinceVersion int64, resource string, row func(T) (int64, string)) (string, error) {
-	if !hasMore || len(items) == 0 {
-		return "", nil
+func changedSinceLimit(requested int) int {
+	if requested <= 0 {
+		return DefaultChangedSinceLimit
 	}
-	version, id := row(items[len(items)-1])
-	cursor, err := encodeVersionCursor(version, id, snapshotUpperVersion, sinceVersion)
-	if err != nil {
-		return "", fmt.Errorf("encode %s cursor: %w", resource, err)
+	if requested > MaxChangedSinceLimit {
+		return MaxChangedSinceLimit
 	}
-	return cursor, nil
-}
-
-func encodeChangedSinceDeletedCursor(items []DeletedResource, hasMore bool, snapshotUpperVersion, sinceVersion int64, cursorField string) (string, error) {
-	if !hasMore || len(items) == 0 {
-		return "", nil
-	}
-	return encodeDeletedCursor(items[len(items)-1], snapshotUpperVersion, sinceVersion, cursorField)
+	return requested
 }
 
 func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
@@ -388,24 +243,8 @@ func readSnapshotVersion(ctx context.Context, tx pgx.Tx) (int64, error) {
 	return version, nil
 }
 
-const visibleChangeVersionSQL = `
-		SELECT GREATEST(
-				COALESCE((SELECT MAX(version) FROM entities), 0),
-				COALESCE((SELECT MAX(version) FROM tasks), 0),
-				COALESCE((SELECT MAX(version) FROM objects), 0),
-				COALESCE((SELECT MAX(version) FROM deletions), 0)
-			)
-		`
-
-const currentChangeVersionSQL = `
-		SELECT GREATEST(
-				COALESCE((SELECT MAX(version) FROM entities), 0),
-				COALESCE((SELECT MAX(version) FROM tasks), 0),
-				COALESCE((SELECT MAX(version) FROM objects), 0),
-				COALESCE((SELECT MAX(version) FROM deletions), 0),
-				COALESCE((SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM atlas_change_version_seq), 0)
-			)
-		`
+const visibleChangeVersionSQL = `SELECT version FROM atlas_change_clock WHERE singleton`
+const currentChangeVersionSQL = visibleChangeVersionSQL
 
 // CurrentChangeVersion reads the current global high-water mark.
 func CurrentChangeVersion(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
@@ -417,47 +256,6 @@ func CurrentChangeVersion(ctx context.Context, pool *pgxpool.Pool) (int64, error
 	return version, nil
 }
 
-func encodeDeletedCursor(resource DeletedResource, snapshotUpperVersion, sinceVersion int64, cursorField string) (string, error) {
-	cursor, err := encodeVersionCursor(resource.Version, resource.ID, snapshotUpperVersion, sinceVersion)
-	if err != nil {
-		return "", fmt.Errorf("build %s: %w", cursorField, err)
-	}
-	return cursor, nil
-}
-
 func skipCursorStream[T any](continuation bool, cursor *T) bool {
 	return continuation && cursor == nil
-}
-
-// getDeletionsSince queries the deletions table for tombstones after the given version.
-func (a *QueryActions) getDeletionsSince(ctx context.Context, tx pgx.Tx, sinceVersion, snapshotUpperVersion int64, limitPerType int, continuation bool, cursorEntity, cursorTask, cursorObject *parsedVersionCursor) ([]DeletedResource, []DeletedResource, []DeletedResource, bool, bool, bool, error) {
-	var deletedEntities []DeletedResource
-	var moreE bool
-	var err error
-	if !skipCursorStream(continuation, cursorEntity) {
-		deletedEntities, moreE, err = queryDeletionsByTypeAndVersion(ctx, tx, "entity", sinceVersion, snapshotUpperVersion, cursorEntity != nil, cursorEntity, limitPerType)
-		if err != nil {
-			return nil, nil, nil, false, false, false, err
-		}
-	}
-
-	var deletedTasks []DeletedResource
-	var moreT bool
-	if !skipCursorStream(continuation, cursorTask) {
-		deletedTasks, moreT, err = queryDeletionsByTypeAndVersion(ctx, tx, "task", sinceVersion, snapshotUpperVersion, cursorTask != nil, cursorTask, limitPerType)
-		if err != nil {
-			return nil, nil, nil, false, false, false, err
-		}
-	}
-
-	var deletedObjects []DeletedResource
-	var moreO bool
-	if !skipCursorStream(continuation, cursorObject) {
-		deletedObjects, moreO, err = queryDeletionsByTypeAndVersion(ctx, tx, "object", sinceVersion, snapshotUpperVersion, cursorObject != nil, cursorObject, limitPerType)
-		if err != nil {
-			return nil, nil, nil, false, false, false, err
-		}
-	}
-
-	return deletedEntities, deletedTasks, deletedObjects, moreE, moreT, moreO, nil
 }

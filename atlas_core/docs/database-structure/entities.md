@@ -96,7 +96,6 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `PATCH` | `/entities/{entity_id}/telemetry` | Flat telemetry update |
 | `POST` | `/entities/{entity_id}/checkin` | Telemetry, components, heartbeat, fetch tasks |
 | `GET` | `/entities/alias/{alias}` | Lookup by alias |
 | `GET` | `/entities/{entity_id}/tasks` | Paginated tasks for entity |

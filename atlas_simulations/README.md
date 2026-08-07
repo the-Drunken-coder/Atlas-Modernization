@@ -28,7 +28,7 @@ ATLAS_DEPLOYED_BASE_URL=https://api.atlasinterface.com
 ATLAS_DEPLOYED_API_KEY=replace-with-deployed-core-key
 ```
 
-`ATLAS_DEPLOYED_BASE_URL` is required and must be a non-loopback HTTPS URL. A deployed target is never inferred from `ATLAS_BASE_URL`, and the local target remains selected unless `ATLAS_SIM_TARGET=deployed` is also set. The UI displays a danger state for every non-loopback target and requires a fresh confirmation before each run starts. The server enforces that confirmation independently.
+`ATLAS_DEPLOYED_BASE_URL` is required and must be a non-loopback HTTPS URL. The local target remains selected unless `ATLAS_SIM_TARGET=deployed` is also set. The UI displays a danger state for every non-loopback target and requires a fresh confirmation before each run starts. The server enforces that confirmation independently.
 
 You can also paste an API key into the topbar while the workbench is running. That key is kept in browser memory and sent only to the local simulation server for the selected target; it is not written to `.env`, the cleanup ledger, or run summaries. After a restart, paste the key again before cleaning up a recovered run if no deployed key is configured in `.env`.
 

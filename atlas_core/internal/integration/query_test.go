@@ -122,12 +122,18 @@ func TestQueryChangedSince(t *testing.T) {
 		t.Fatalf("Failed to create entity: %v", err)
 	}
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (changed-since setup)")
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close body: %v", err)
+	var createdEntity map[string]interface{}
+	if err := ParseResponse(resp, &createdEntity); err != nil {
+		t.Fatalf("Failed to parse created entity: %v", err)
 	}
+	metadata, ok := createdEntity["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("created entity missing metadata: %#v", createdEntity)
+	}
+	baseline := mustVersionFromMetadata(t, metadata) - 1
 
 	// Query changed since
-	resp, err = client.Get(ctx, "/queries/changed-since?since_version=0")
+	resp, err = client.Get(ctx, fmt.Sprintf("/queries/changed-since?since_version=%d", baseline))
 	if err != nil {
 		t.Fatalf("Failed to query changed-since: %v", err)
 	}
@@ -142,38 +148,18 @@ func TestQueryChangedSince(t *testing.T) {
 		t.Fatalf("Failed to parse query response: %v", err)
 	}
 
-	// Verify structure
-	if result["entities"] == nil {
-		t.Error("Expected 'entities' in response")
-	}
-	if result["tasks"] == nil {
-		t.Error("Expected 'tasks' in response")
-	}
-	if result["objects"] == nil {
-		t.Error("Expected 'objects' in response")
-	}
-	if result["timestamp"] == nil {
-		t.Error("Expected 'timestamp' in response")
-	}
 	if result["version"] == nil {
 		t.Error("Expected 'version' in response")
 	}
-
-	entities, ok := result["entities"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected entities array, got %T", result["entities"])
+	if result["has_more"] == nil {
+		t.Error("Expected 'has_more' in response")
 	}
-	if _, ok := result["tasks"].([]interface{}); !ok {
-		t.Fatalf("Expected tasks array, got %T", result["tasks"])
-	}
-	if _, ok := result["objects"].([]interface{}); !ok {
-		t.Fatalf("Expected objects array, got %T", result["objects"])
-	}
-	if !sliceContainsID(entities, "entity_id", entityID) {
-		t.Fatalf("expected entity_id %s in /queries/changed-since entities", entityID)
+	events := mustInterfaceSlice(t, result["events"], "events")
+	if findChangeEvent(events, "entity", entityID, "") == nil {
+		t.Fatalf("expected entity event %s in /queries/changed-since", entityID)
 	}
 
-	t.Logf("Changed-since query returned: %d entities changed after version 0", len(entities))
+	t.Logf("Changed-since query returned: %d events after version %d", len(events), baseline)
 	t.Logf("Entity %s left as artifact", entityID)
 }
 
@@ -235,34 +221,20 @@ func TestQueryChangedSinceIncludesTasksAffectedByDeletedEntity(t *testing.T) {
 	if err := ParseResponse(resp, &result); err != nil {
 		t.Fatalf("Failed to parse changed-since response: %v", err)
 	}
-	tasks, ok := result["tasks"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected tasks array, got %T", result["tasks"])
-	}
-	var changedTask map[string]interface{}
-	for _, item := range tasks {
-		task, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if task["task_id"] == taskID {
-			changedTask = task
-			break
-		}
-	}
-	if changedTask == nil {
+	events := mustInterfaceSlice(t, result["events"], "events")
+	taskEvent := findChangeEvent(events, "task", taskID, "update")
+	if taskEvent == nil {
 		t.Fatalf("expected changed-since tasks to include task %s after deleting entity %s", taskID, entityID)
+	}
+	changedTask, ok := taskEvent["resource"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("changed task event missing resource: %#v", taskEvent)
 	}
 	if entity, ok := changedTask["entity_id"]; ok && entity != nil {
 		t.Fatalf("expected changed task entity_id to be null after entity delete, got %#v", entity)
 	}
-
-	deletedEntities, ok := result["deleted_entities"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected deleted_entities array, got %T", result["deleted_entities"])
-	}
-	if !sliceContainsID(deletedEntities, "id", entityID) {
-		t.Fatalf("expected deleted_entities to include tombstone for %s", entityID)
+	if findChangeEvent(events, "entity", entityID, "delete") == nil {
+		t.Fatalf("expected entity delete event for %s", entityID)
 	}
 }
 
@@ -274,7 +246,7 @@ func TestQueryChangedSinceIncludesDeletedTaskEntityID(t *testing.T) {
 	prefix := TestArtifactPrefix()
 
 	entityID := fmt.Sprintf("%s-delete-task-entity", prefix)
-	taskID := fmt.Sprintf("%s-delete-task-tombstone", prefix)
+	taskID := fmt.Sprintf("%s-delete-task-event", prefix)
 
 	resp, err := client.Post(ctx, "/entities", map[string]interface{}{
 		"entity_id":   entityID,
@@ -283,7 +255,7 @@ func TestQueryChangedSinceIncludesDeletedTaskEntityID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create entity: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (task tombstone setup)")
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /entities (task delete-event setup)")
 	drainClose(resp)
 	t.Cleanup(func() {
 		cleanupResp, cleanupErr := client.Delete(context.Background(), "/entities/"+entityID)
@@ -299,7 +271,7 @@ func TestQueryChangedSinceIncludesDeletedTaskEntityID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (task tombstone setup)")
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (task delete-event setup)")
 	var createdTask map[string]interface{}
 	if err := ParseResponse(resp, &createdTask); err != nil {
 		t.Fatalf("Failed to parse created task: %v", err)
@@ -330,26 +302,13 @@ func TestQueryChangedSinceIncludesDeletedTaskEntityID(t *testing.T) {
 	if err := ParseResponse(resp, &result); err != nil {
 		t.Fatalf("Failed to parse changed-since response: %v", err)
 	}
-	deletedTasks, ok := result["deleted_tasks"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected deleted_tasks array, got %T", result["deleted_tasks"])
+	events := mustInterfaceSlice(t, result["events"], "events")
+	deleteEvent := findChangeEvent(events, "task", taskID, "delete")
+	if deleteEvent == nil {
+		t.Fatalf("expected task delete event for %s", taskID)
 	}
-	var tombstone map[string]interface{}
-	for _, item := range deletedTasks {
-		deleted, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if deleted["id"] == taskID {
-			tombstone = deleted
-			break
-		}
-	}
-	if tombstone == nil {
-		t.Fatalf("expected deleted_tasks to include tombstone for %s", taskID)
-	}
-	if tombstone["entity_id"] != entityID {
-		t.Fatalf("expected deleted task entity_id %q, got %#v", entityID, tombstone["entity_id"])
+	if deleteEvent["entity_id"] != entityID {
+		t.Fatalf("expected deleted task entity_id %q, got %#v", entityID, deleteEvent["entity_id"])
 	}
 }
 
@@ -366,7 +325,7 @@ func TestQueryChangedSinceIncludesDeletedTaskNullEntityID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create task without entity: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (null entity task tombstone setup)")
+	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (null entity task delete-event setup)")
 	var createdTask map[string]interface{}
 	if err := ParseResponse(resp, &createdTask); err != nil {
 		t.Fatalf("Failed to parse created task: %v", err)
@@ -397,25 +356,12 @@ func TestQueryChangedSinceIncludesDeletedTaskNullEntityID(t *testing.T) {
 	if err := ParseResponse(resp, &result); err != nil {
 		t.Fatalf("Failed to parse changed-since response: %v", err)
 	}
-	deletedTasks, ok := result["deleted_tasks"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected deleted_tasks array, got %T", result["deleted_tasks"])
+	events := mustInterfaceSlice(t, result["events"], "events")
+	deleteEvent := findChangeEvent(events, "task", taskID, "delete")
+	if deleteEvent == nil {
+		t.Fatalf("expected task delete event for %s", taskID)
 	}
-	var tombstone map[string]interface{}
-	for _, item := range deletedTasks {
-		deleted, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if deleted["id"] == taskID {
-			tombstone = deleted
-			break
-		}
-	}
-	if tombstone == nil {
-		t.Fatalf("expected deleted_tasks to include tombstone for %s", taskID)
-	}
-	if entityID, ok := tombstone["entity_id"]; ok && entityID != nil {
+	if entityID, ok := deleteEvent["entity_id"]; ok && entityID != nil {
 		t.Fatalf("expected deleted task entity_id to be null or omitted, got %#v", entityID)
 	}
 }
@@ -599,11 +545,22 @@ func TestQueryFullDatasetCursorContinuationOmitsUnrequestedStreams(t *testing.T)
 	}
 }
 
-func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStreams(t *testing.T) {
+func TestQueryChangedSinceCursorContinuationUsesOneOrderedSnapshot(t *testing.T) {
 	SkipIfSystemNotAvailable(t)
 
 	client := NewAPIClient()
 	ctx := context.Background()
+	baselineResponse, err := client.Get(ctx, "/queries/full?limit=1")
+	if err != nil {
+		t.Fatalf("read full-query baseline: %v", err)
+	}
+	requireHTTPStatus(t, baselineResponse, http.StatusOK, "GET /queries/full baseline")
+	var baselinePage map[string]interface{}
+	if err := ParseResponse(baselineResponse, &baselinePage); err != nil {
+		t.Fatalf("parse full-query baseline: %v", err)
+	}
+	baseline := int64(baselinePage["version"].(float64))
+
 	prefix := TestArtifactPrefix()
 	entityIDs := []string{
 		fmt.Sprintf("%s-changed-page-entity-1", prefix),
@@ -616,70 +573,79 @@ func TestQueryChangedSinceCursorContinuationReusesSnapshotAndOmitsUnrequestedStr
 	createQueryTestTask(ctx, t, client, taskID, entityIDs[0])
 	objectID := fmt.Sprintf("%s-changed-page-object", prefix)
 	createQueryTestObject(ctx, t, client, objectID, entityIDs[0], taskID)
+	lateEntityID := fmt.Sprintf("%s-changed-page-late-entity", prefix)
 
-	q := url.Values{}
-	q.Set("since_version", "0")
-	q.Set("limit_per_type", "1")
-	resp, err := client.Get(ctx, "/queries/changed-since?"+q.Encode())
+	var events []interface{}
+	var cursor string
+	var snapshotVersion int64
+	for pageNumber := 0; ; pageNumber++ {
+		q := url.Values{}
+		q.Set("since_version", fmt.Sprintf("%d", baseline))
+		q.Set("limit", "1")
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		resp, err := client.Get(ctx, "/queries/changed-since?"+q.Encode())
+		if err != nil {
+			t.Fatalf("query changed-since page %d: %v", pageNumber+1, err)
+		}
+		requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since continuation")
+		var page map[string]interface{}
+		if err := ParseResponse(resp, &page); err != nil {
+			t.Fatalf("parse changed-since page %d: %v", pageNumber+1, err)
+		}
+		version := int64(page["version"].(float64))
+		if pageNumber == 0 {
+			snapshotVersion = version
+			createQueryTestEntity(ctx, t, client, lateEntityID)
+		} else if version != snapshotVersion {
+			t.Fatalf("continuation version = %d, want %d", version, snapshotVersion)
+		}
+		events = append(events, mustInterfaceSlice(t, page["events"], "events")...)
+		if page["has_more"] != true {
+			break
+		}
+		cursor, _ = page["next_cursor"].(string)
+		if cursor == "" {
+			t.Fatal("has_more response omitted next_cursor")
+		}
+	}
+
+	for _, entityID := range entityIDs {
+		event := findChangeEvent(events, "entity", entityID, "")
+		if event == nil {
+			t.Fatalf("missing entity event %s", entityID)
+		}
+		resource, ok := event["resource"].(map[string]interface{})
+		if !ok || resource["entity_id"] != entityID {
+			t.Fatalf("entity create event resource = %#v, want %s", event["resource"], entityID)
+		}
+	}
+	if findChangeEvent(events, "entity", lateEntityID, "") != nil {
+		t.Fatalf("snapshot pagination included late entity %s", lateEntityID)
+	}
+	if findChangeEvent(events, "task", taskID, "") == nil || findChangeEvent(events, "object", objectID, "") == nil {
+		t.Fatal("changed-since continuation omitted task or object event")
+	}
+	for index := 1; index < len(events); index++ {
+		previous := events[index-1].(map[string]interface{})["version"].(float64)
+		current := events[index].(map[string]interface{})["version"].(float64)
+		if current <= previous {
+			t.Fatalf("events are not globally ordered: %v then %v", previous, current)
+		}
+	}
+
+	resp, err := client.Get(ctx, fmt.Sprintf("/queries/changed-since?since_version=%d", snapshotVersion))
 	if err != nil {
-		t.Fatalf("Failed to query changed-since page 1: %v", err)
+		t.Fatalf("query changed-since after snapshot: %v", err)
 	}
-	defer drainClose(resp)
-	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since page 1")
-
-	var firstPage map[string]interface{}
-	if err := ParseResponse(resp, &firstPage); err != nil {
-		t.Fatalf("Failed to parse changed-since page 1: %v", err)
+	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since after snapshot")
+	var nextPage map[string]interface{}
+	if err := ParseResponse(resp, &nextPage); err != nil {
+		t.Fatalf("parse changed-since after snapshot: %v", err)
 	}
-
-	firstVersion, ok := firstPage["version"].(float64)
-	entityCursor, _ := firstPage["next_entity_cursor"].(string)
-	if !ok || firstVersion <= 0 || entityCursor == "" {
-		t.Fatalf("expected version and next_entity_cursor, got version=%v cursor=%q", firstPage["version"], entityCursor)
-	}
-	if firstPage["has_more_entities"] != true {
-		t.Fatalf("expected has_more_entities on changed-since page 1, got %+v", firstPage)
-	}
-	if len(mustInterfaceSlice(t, firstPage["tasks"], "tasks")) != 1 {
-		t.Fatal("expected first changed-since page to include the new task")
-	}
-	if len(mustInterfaceSlice(t, firstPage["objects"], "objects")) != 1 {
-		t.Fatal("expected first changed-since page to include the new object")
-	}
-
-	q = url.Values{}
-	q.Set("since_version", "0")
-	q.Set("limit_per_type", "1")
-	q.Set("entity_cursor", entityCursor)
-	resp, err = client.Get(ctx, "/queries/changed-since?"+q.Encode())
-	if err != nil {
-		t.Fatalf("Failed to query changed-since entity continuation: %v", err)
-	}
-	defer drainClose(resp)
-	requireHTTPStatus(t, resp, http.StatusOK, "GET /queries/changed-since entity continuation")
-
-	var secondPage map[string]interface{}
-	if err := ParseResponse(resp, &secondPage); err != nil {
-		t.Fatalf("Failed to parse changed-since continuation: %v", err)
-	}
-
-	secondVersion, ok := secondPage["version"].(float64)
-	if !ok || int64(secondVersion) != int64(firstVersion) {
-		t.Fatalf("expected continuation version %v, got %v", firstVersion, secondPage["version"])
-	}
-	if len(mustInterfaceSlice(t, secondPage["entities"], "entities")) != 1 {
-		t.Fatal("expected one entity on changed-since continuation")
-	}
-	if len(mustInterfaceSlice(t, secondPage["tasks"], "tasks")) != 0 {
-		t.Fatal("expected omitted task stream to stay empty on changed-since continuation")
-	}
-	if len(mustInterfaceSlice(t, secondPage["objects"], "objects")) != 0 {
-		t.Fatal("expected omitted object stream to stay empty on changed-since continuation")
-	}
-	if len(mustInterfaceSlice(t, secondPage["deleted_entities"], "deleted_entities")) != 0 ||
-		len(mustInterfaceSlice(t, secondPage["deleted_tasks"], "deleted_tasks")) != 0 ||
-		len(mustInterfaceSlice(t, secondPage["deleted_objects"], "deleted_objects")) != 0 {
-		t.Fatal("expected omitted deleted streams to stay empty on entity-only continuation")
+	if findChangeEvent(mustInterfaceSlice(t, nextPage["events"], "events"), "entity", lateEntityID, "") == nil {
+		t.Fatalf("next changed-since query omitted late entity %s", lateEntityID)
 	}
 }
 
@@ -762,7 +728,7 @@ func TestComplexScenario(t *testing.T) {
 
 	// Acknowledge all tasks
 	for _, taskID := range taskIDs {
-		resp, err := client.Post(ctx, "/tasks/"+taskID+"/acknowledge", nil)
+		resp, err := client.Patch(ctx, "/tasks/"+taskID, map[string]interface{}{"status": "acknowledged"})
 		if err != nil {
 			t.Fatalf("Failed to acknowledge task %s: %v", taskID, err)
 		}
@@ -777,15 +743,18 @@ func TestComplexScenario(t *testing.T) {
 
 	// Complete first task, fail second, leave third acknowledged
 	completePayload := map[string]interface{}{
-		"result": map[string]interface{}{
-			"success":    true,
-			"waypoint":   1,
-			"photos":     5,
-			"duration_s": 120,
+		"status": "completed",
+		"extra": map[string]interface{}{
+			"result": map[string]interface{}{
+				"success":    true,
+				"waypoint":   1,
+				"photos":     5,
+				"duration_s": 120,
+			},
 		},
 	}
 
-	resp, err := client.Post(ctx, "/tasks/"+taskIDs[0]+"/complete", completePayload)
+	resp, err := client.Patch(ctx, "/tasks/"+taskIDs[0], completePayload)
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}
@@ -796,13 +765,16 @@ func TestComplexScenario(t *testing.T) {
 	resp.Body.Close()
 
 	failPayload := map[string]interface{}{
-		"error": map[string]interface{}{
-			"code":    "LOW_BATTERY",
-			"message": "Battery level critical, returning to base",
+		"status": "failed",
+		"extra": map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    "LOW_BATTERY",
+				"message": "Battery level critical, returning to base",
+			},
 		},
 	}
 
-	resp, err = client.Post(ctx, "/tasks/"+taskIDs[1]+"/fail", failPayload)
+	resp, err = client.Patch(ctx, "/tasks/"+taskIDs[1], failPayload)
 	if err != nil {
 		t.Fatalf("Failed to fail task: %v", err)
 	}
@@ -984,6 +956,19 @@ func mustInterfaceSlice(t *testing.T, raw interface{}, label string) []interface
 		t.Fatalf("expected %s array, got %T", label, raw)
 	}
 	return items
+}
+
+func findChangeEvent(events []interface{}, resourceType, id, eventType string) map[string]interface{} {
+	for _, raw := range events {
+		event, ok := raw.(map[string]interface{})
+		if !ok || event["resource_type"] != resourceType || event["id"] != id {
+			continue
+		}
+		if eventType == "" || event["event"] == eventType {
+			return event
+		}
+	}
+	return nil
 }
 
 func mustStringField(t *testing.T, raw interface{}, field string) string {

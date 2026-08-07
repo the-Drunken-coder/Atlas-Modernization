@@ -38,15 +38,6 @@ export function ConnectionBadge({
   useEffect(() => {
     if (!open) return;
     closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
   useEffect(() => {
@@ -140,6 +131,13 @@ export function ConnectionBadge({
               role="dialog"
               aria-labelledby={`${detailId}-title`}
               aria-describedby={`${detailId}-description`}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                setOpen(false);
+                triggerRef.current?.focus();
+              }}
             >
               <div className="connection-detail__header">
                 <strong id={`${detailId}-title`}>Atlas Core connection error</strong>

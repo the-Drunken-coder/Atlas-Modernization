@@ -2,6 +2,7 @@ import { ObjectContentCache, ResourceCache } from "./cache.js";
 import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport } from "./http.js";
 import type {
+  CommandCatalog,
   EntityCreateRequest,
   EntityResource,
   EntityUpdateRequest,
@@ -25,6 +26,7 @@ import type {
   ReadOptions,
   ResourceForSubscription,
   SyncSnapshot,
+  SyncSnapshotCallback,
   SyncStatus,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -36,6 +38,7 @@ import type {
 } from "./types.js";
 import {
   changedSinceResponseValidator,
+  isCommandCatalog,
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
@@ -46,7 +49,6 @@ export { ProtocolMismatchError } from "./feed-connection.js";
 export { AtlasAPIError, ConflictError } from "./http.js";
 export type {
   AtlasLocalDeleteWatchEvent,
-  AtlasRecoveredWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
   ChangedSinceQueryOptions,
@@ -62,6 +64,7 @@ export type {
   ReadOptions,
   ResourceForSubscription,
   SyncSnapshot,
+  SyncSnapshotCallback,
   SyncStatus,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -130,49 +133,27 @@ export class AtlasClient {
       ),
     delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
     acknowledge: (id: string, options?: TaskLifecycleOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/acknowledge`,
-        {},
-        "task",
-        id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
-      ),
+      this.tasks.update(id, { status: "acknowledged" }, options),
     complete: (id: string, options?: TaskCompleteOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/complete`,
-        options?.result === undefined ? {} : { result: options.result },
-        "task",
+      this.tasks.update(
         id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
+        {
+          status: "completed",
+          ...(options?.result === undefined ? {} : { extra: { result: options.result } })
+        },
+        options
       ),
     fail: (id: string, options?: TaskFailOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/fail`,
-        options?.error === undefined ? {} : { error: options.error },
-        "task",
+      this.tasks.update(
         id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
+        {
+          status: "failed",
+          ...(options?.error === undefined ? {} : { extra: { error: options.error } })
+        },
+        options
       ),
     setStatus: (id: string, status: TaskStatus, options?: TaskStatusOptions) =>
-      this.engine.writeResource(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/status`,
-        taskStatusBody(status, options),
-        "task",
-        id,
-        isTaskResource,
-        options?.ifMatchVersion,
-        "update"
-      ),
+      this.tasks.update(id, taskStatusPatch(status, options), options),
     cancel: (id: string, options?: TaskLifecycleOptions) => this.tasks.setStatus(id, "cancelled", options),
     watch: (id: string, callback: WatchCallback<TaskResource>) =>
       this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
@@ -216,12 +197,16 @@ export class AtlasClient {
       )
   };
 
+  readonly commandCatalog = (): Promise<CommandCatalog> =>
+    this.transport.json("GET", "/command-catalog", isCommandCatalog);
+
   sync = {
     start: async () => {
       await this.engine.start();
     },
     stop: () => this.engine.stop(),
     snapshot: (): SyncSnapshot => this.engine.snapshot(),
+    watchSnapshot: (callback: SyncSnapshotCallback) => this.engine.watchSnapshot(callback),
     status: (): SyncStatus => this.engine.status()
   };
 
@@ -313,14 +298,19 @@ export class AtlasClient {
   }
 }
 
-function taskStatusBody(
-  status: TaskStatus,
-  options?: TaskStatusOptions
-): { status: TaskStatus; progress?: number; message?: string } {
+type TaskStatusComponents = {
+  progress?: { percent: number };
+  status_message?: string;
+};
+
+function taskStatusPatch(status: TaskStatus, options?: TaskStatusOptions): TaskUpdateRequest {
+  const components: TaskStatusComponents = {
+    ...(options?.progress === undefined ? {} : { progress: { percent: options.progress } }),
+    ...(options?.message === undefined ? {} : { status_message: options.message })
+  };
   return {
     status,
-    ...(options?.progress === undefined ? {} : { progress: options.progress }),
-    ...(options?.message === undefined ? {} : { message: options.message })
+    ...(Object.keys(components).length === 0 ? {} : { components })
   };
 }
 
@@ -363,13 +353,8 @@ function fullDatasetQueryPath(options?: FullDatasetQueryOptions): string {
 function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQueryOptions): string {
   return pathWithQuery("/queries/changed-since", {
     since_version: String(sinceVersion),
-    limit_per_type: options?.limitPerType === undefined ? undefined : String(options.limitPerType),
-    entity_cursor: options?.entityCursor,
-    task_cursor: options?.taskCursor,
-    object_cursor: options?.objectCursor,
-    deleted_entity_cursor: options?.deletedEntityCursor,
-    deleted_task_cursor: options?.deletedTaskCursor,
-    deleted_object_cursor: options?.deletedObjectCursor
+    limit: options?.limit === undefined ? undefined : String(options.limit),
+    cursor: options?.cursor
   });
 }
 

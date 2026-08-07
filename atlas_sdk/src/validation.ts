@@ -1,9 +1,13 @@
 import type { ResponseValidator } from "./http.js";
 import {
+  type CommandCatalog,
   type EntityResource,
   type FeedEvent,
   type FeedHandshakeMessage,
+  type FeedSubscriptionsReadyMessage,
   isFeedHandshakeMessage,
+  isFeedSubscriptionsReadyMessage,
+  isCommandCatalog as isGeneratedCommandCatalog,
   isEntityResource as isGeneratedEntityResource,
   isFeedEvent as isGeneratedFeedEvent,
   isObjectDetailResource as isGeneratedObjectDetailResource,
@@ -11,16 +15,12 @@ import {
   isTaskResource as isGeneratedTaskResource,
   isJSONValue,
   isProtocolRevision,
-  isResourceType,
-  isRFC3339Timestamp,
   type ObjectDetailResource,
   type ObjectResource,
-  type ResourceType,
   type TaskResource
 } from "./protocol.js";
 import type {
   ChangedSinceResponse,
-  DeletedResource,
   EntityCheckInFields,
   EntityCheckInMinimalTask,
   EntityCheckInResponse,
@@ -32,13 +32,9 @@ const fullPaginationFields = [
   ["has_more_tasks", "next_task_cursor"],
   ["has_more_objects", "next_object_cursor"]
 ] as const;
+const changedPaginationFields = [["has_more", "next_cursor"]] as const;
 
-const changedSincePaginationFields = [
-  ...fullPaginationFields,
-  ["has_more_deleted_entities", "next_deleted_entity_cursor"],
-  ["has_more_deleted_tasks", "next_deleted_task_cursor"],
-  ["has_more_deleted_objects", "next_deleted_object_cursor"]
-] as const;
+export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
 export const isProtocolRevisionResponse: ResponseValidator<{ protocol_revision: string }> = (
   value
@@ -73,30 +69,22 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
     if (
       !isSafeNonNegativeInteger(sinceVersion) ||
       !isRecord(value) ||
-      !isArrayOf(value.entities, isEntityResource) ||
-      !isArrayOf(value.tasks, isTaskResource) ||
-      !isArrayOf(value.objects, isObjectDetailResource) ||
-      !isOptionalArrayOf(value.deleted_entities, (item) => isDeletedResource(item, "entity")) ||
-      !isOptionalArrayOf(value.deleted_tasks, (item) => isDeletedResource(item, "task")) ||
-      !isOptionalArrayOf(value.deleted_objects, (item) => isDeletedResource(item, "object")) ||
+      !isArrayOf(value.events, isInboundFeedEvent) ||
       !isSafeNonNegativeInteger(value.version) ||
       value.version < sinceVersion ||
-      (hasOwn(value, "timestamp") && !isRFC3339Timestamp(value.timestamp)) ||
-      !hasValidPagination(value, changedSincePaginationFields)
+      !hasValidPagination(value, changedPaginationFields) ||
+      (value.has_more && value.events.length === 0)
     ) {
       return false;
     }
 
-    const versions = [
-      ...value.entities.map((resource) => resource.metadata.version),
-      ...value.tasks.map((resource) => resource.metadata.version),
-      ...value.objects.map((resource) => resource.metadata.version),
-      ...(value.deleted_entities ?? []).map((resource) => resource.version),
-      ...(value.deleted_tasks ?? []).map((resource) => resource.version),
-      ...(value.deleted_objects ?? []).map((resource) => resource.version)
-    ];
     const highWaterVersion = value.version;
-    return versions.every((version) => version > sinceVersion && version <= highWaterVersion);
+    let previousVersion = sinceVersion;
+    return value.events.every((event) => {
+      const ordered = event.version > previousVersion && event.version <= highWaterVersion;
+      previousVersion = event.version;
+      return ordered;
+    });
   };
 }
 
@@ -133,6 +121,10 @@ export function isInboundFeedHandshake(value: unknown): value is FeedHandshakeMe
   return isFeedHandshakeMessage(value);
 }
 
+export function isInboundFeedSubscriptionsReady(value: unknown): value is FeedSubscriptionsReadyMessage {
+  return isFeedSubscriptionsReadyMessage(value);
+}
+
 export function isInboundFeedEvent(value: unknown): value is FeedEvent {
   if (!isGeneratedFeedEvent(value) || !isFeedVersion(value.version)) return false;
   if (value.event === "delete") return true;
@@ -144,23 +136,6 @@ export function isInboundFeedEvent(value: unknown): value is FeedEvent {
     case "object":
       return value.id === value.resource.object_id && value.version === value.resource.metadata.version;
   }
-}
-
-function isDeletedResource(value: unknown, type: ResourceType): value is DeletedResource {
-  if (
-    !isRecord(value) ||
-    !isNonEmptyString(value.id) ||
-    !isResourceType(value.type) ||
-    value.type !== type ||
-    !isFeedVersion(value.version) ||
-    (hasOwn(value, "deleted_at") && !isRFC3339Timestamp(value.deleted_at))
-  ) {
-    return false;
-  }
-  if (type === "task") {
-    return !hasOwn(value, "entity_id") || value.entity_id === null || isNonEmptyString(value.entity_id);
-  }
-  return !hasOwn(value, "entity_id");
 }
 
 function isEntityCheckInMinimalTask(value: unknown): value is EntityCheckInMinimalTask {
@@ -189,10 +164,6 @@ function hasValidPagination(
 
 function isArrayOf<T>(value: unknown, validate: ResponseValidator<T>): value is T[] {
   return Array.isArray(value) && value.every(validate);
-}
-
-function isOptionalArrayOf<T>(value: unknown, validate: ResponseValidator<T>): value is T[] | undefined {
-  return value === undefined || isArrayOf(value, validate);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

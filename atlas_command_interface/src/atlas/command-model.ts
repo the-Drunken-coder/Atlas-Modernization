@@ -1,30 +1,12 @@
-import type { EntityResource, JSONValue, ObjectDetailResource } from "@the-drunken-coder/atlas-sdk";
+import type {
+  CommandCatalog,
+  CommandDefinition,
+  CommandParameterSchema,
+  EntityResource,
+  JSONValue
+} from "@the-drunken-coder/atlas-sdk";
 
-export const COMMAND_CATALOG_OBJECT_ID = "command_catalog";
-
-export type ParameterType = "string" | "number" | "boolean";
-
-export type CommandParameterSchema = {
-  type: ParameterType;
-  description: string;
-  required: boolean;
-  minimum?: number;
-  maximum?: number;
-};
-
-export type CommandDefinition = {
-  id: string;
-  name: string;
-  description: string;
-  parameters_schema: Record<string, CommandParameterSchema>;
-};
-
-export type CommandCatalog = {
-  type: "command_catalog";
-  name: string;
-  description: string;
-  commands: CommandDefinition[];
-};
+export type { CommandCatalog, CommandDefinition, CommandParameterSchema } from "@the-drunken-coder/atlas-sdk";
 
 export type CommandTaskCreateRequest = {
   status: "pending";
@@ -34,8 +16,6 @@ export type CommandTaskCreateRequest = {
     parameters: Record<string, JSONValue>;
   };
 };
-
-type CommandModelErrorCode = "INVALID_CATALOG" | "INVALID_PARAMETERS";
 
 export class CommandModelError extends Error {
   readonly code: string;
@@ -47,51 +27,6 @@ export class CommandModelError extends Error {
     this.code = code;
     this.details = details;
   }
-}
-
-export function catalogFromObject(object: ObjectDetailResource): CommandCatalog {
-  const extra = requireRecord(object.extra, "$.extra");
-  return parseCommandCatalog({
-    ...extra,
-    type: typeof extra.type === "string" && extra.type.trim() !== "" ? extra.type : object.type
-  });
-}
-
-export function parseCommandCatalog(value: unknown): CommandCatalog {
-  const catalog = requireRecord(value, "catalog");
-  const type = requireString(catalog.type, "$.type");
-  if (type !== "command_catalog") {
-    throw new CommandModelError("INVALID_CATALOG", "$.type must be command_catalog", { path: "$.type" });
-  }
-
-  const rawCommands = catalog.commands;
-  if (!Array.isArray(rawCommands) || rawCommands.length === 0) {
-    throw new CommandModelError("INVALID_CATALOG", "$.commands must be a non-empty array", { path: "$.commands" });
-  }
-
-  const seen = new Set<string>();
-  const commands = rawCommands.map((rawCommand, index) => {
-    const commandPath = `$.commands[${index}]`;
-    const command = requireRecord(rawCommand, commandPath);
-    const id = requireSnakeCase(command.id, `${commandPath}.id`);
-    if (seen.has(id)) {
-      throw new CommandModelError("INVALID_CATALOG", `${commandPath}.id is duplicated`, { command_id: id });
-    }
-    seen.add(id);
-    return {
-      id,
-      name: requireString(command.name, `${commandPath}.name`),
-      description: requireString(command.description, `${commandPath}.description`),
-      parameters_schema: parseParameterSchema(command.parameters_schema, `${commandPath}.parameters_schema`)
-    };
-  });
-
-  return {
-    type: "command_catalog",
-    name: requireString(catalog.name, "$.name"),
-    description: requireString(catalog.description, "$.description"),
-    commands
-  };
 }
 
 export function commandById(catalog: CommandCatalog, commandId: string): CommandDefinition {
@@ -144,10 +79,7 @@ export function assertEntitySupportsCommand(entity: EntityResource, commandId: s
 }
 
 export function coerceParameters(command: CommandDefinition, rawParameters: unknown): Record<string, JSONValue> {
-  const raw =
-    rawParameters === undefined || rawParameters === null
-      ? {}
-      : requireRecord(rawParameters, "parameters", "INVALID_PARAMETERS");
+  const raw = rawParameters === undefined || rawParameters === null ? {} : requireParameterRecord(rawParameters);
   const result: Record<string, JSONValue> = {};
   const schemaEntries = Object.entries(command.parameters_schema);
   const knownNames = new Set(schemaEntries.map(([name]) => name));
@@ -194,53 +126,6 @@ export function commandLabel(command: CommandDefinition): string {
   return `${command.name} (${command.id})`;
 }
 
-function parseParameterSchema(value: unknown, path: string): Record<string, CommandParameterSchema> {
-  const parameters = requireRecord(value, path);
-  const parsed: Record<string, CommandParameterSchema> = {};
-  for (const [name, rawParameter] of Object.entries(parameters)) {
-    if (!isSnakeCase(name)) {
-      throw new CommandModelError("INVALID_CATALOG", `${path}.${name}: parameter name must be lowercase snake_case`, {
-        path: `${path}.${name}`
-      });
-    }
-    const parameterPath = `${path}.${name}`;
-    const parameter = requireRecord(rawParameter, parameterPath);
-    const type = requireParameterType(parameter.type, `${parameterPath}.type`);
-    const parsedParameter: CommandParameterSchema = {
-      type,
-      description: requireString(parameter.description, `${parameterPath}.description`),
-      required: requireBoolean(parameter.required, `${parameterPath}.required`)
-    };
-    if (parameter.minimum !== undefined) {
-      if (type !== "number") {
-        throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.minimum is only valid for number parameters`, {
-          path: `${parameterPath}.minimum`
-        });
-      }
-      parsedParameter.minimum = requireFiniteNumber(parameter.minimum, `${parameterPath}.minimum`);
-    }
-    if (parameter.maximum !== undefined) {
-      if (type !== "number") {
-        throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.maximum is only valid for number parameters`, {
-          path: `${parameterPath}.maximum`
-        });
-      }
-      parsedParameter.maximum = requireFiniteNumber(parameter.maximum, `${parameterPath}.maximum`);
-    }
-    if (
-      parsedParameter.minimum !== undefined &&
-      parsedParameter.maximum !== undefined &&
-      parsedParameter.minimum > parsedParameter.maximum
-    ) {
-      throw new CommandModelError("INVALID_CATALOG", `${parameterPath}.minimum must be <= maximum`, {
-        path: parameterPath
-      });
-    }
-    parsed[name] = parsedParameter;
-  }
-  return parsed;
-}
-
 function coerceParameterValue(name: string, schema: CommandParameterSchema, value: unknown): JSONValue {
   if (schema.type === "string") {
     if (typeof value !== "string") {
@@ -275,56 +160,11 @@ function coerceParameterValue(name: string, schema: CommandParameterSchema, valu
   return numberValue;
 }
 
-function requireRecord(
-  value: unknown,
-  path: string,
-  code: CommandModelErrorCode = "INVALID_CATALOG"
-): Record<string, unknown> {
+function requireParameterRecord(value: unknown): Record<string, unknown> {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return value as Record<string, unknown>;
   }
-  throw new CommandModelError(code, `${path} must be an object`, { path });
-}
-
-function requireString(value: unknown, path: string): string {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (trimmed !== "") {
-    return trimmed;
-  }
-  throw new CommandModelError("INVALID_CATALOG", `${path} must be a non-empty string`, { path });
-}
-
-function requireSnakeCase(value: unknown, path: string): string {
-  const stringValue = requireString(value, path);
-  if (!isSnakeCase(stringValue)) {
-    throw new CommandModelError("INVALID_CATALOG", `${path} must be lowercase snake_case`, { path });
-  }
-  return stringValue;
-}
-
-function requireBoolean(value: unknown, path: string): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  throw new CommandModelError("INVALID_CATALOG", `${path} must be a boolean`, { path });
-}
-
-function requireFiniteNumber(value: unknown, path: string): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  throw new CommandModelError("INVALID_CATALOG", `${path} must be a finite number`, { path });
-}
-
-function requireParameterType(value: unknown, path: string): ParameterType {
-  if (value === "string" || value === "number" || value === "boolean") {
-    return value;
-  }
-  throw new CommandModelError("INVALID_CATALOG", `${path} must be one of string, number, boolean`, { path });
-}
-
-function isSnakeCase(value: string): boolean {
-  return /^[a-z][a-z0-9_]*$/.test(value);
+  throw new CommandModelError("INVALID_PARAMETERS", "parameters must be an object", { path: "parameters" });
 }
 
 function isEmptyOptionalInput(value: unknown): boolean {

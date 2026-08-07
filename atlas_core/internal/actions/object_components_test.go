@@ -140,7 +140,7 @@ func TestUploadObjectJSONPreservesExistingBlobFields(t *testing.T) {
 }
 
 func TestUploadObjectJSONAcceptsTypedUsageHints(t *testing.T) {
-	data, err := uploadObjectJSON(map[string]interface{}{}, "atlas-media", 1024, []string{"command_catalog"})
+	data, err := uploadObjectJSON(map[string]interface{}{}, "atlas-media", 1024, []string{"mission_plan"})
 	if err != nil {
 		t.Fatalf("uploadObjectJSON() unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestUploadObjectJSONAcceptsTypedUsageHints(t *testing.T) {
 		t.Fatal(err)
 	}
 	hints, ok := got["usage_hints"].([]interface{})
-	if !ok || len(hints) != 1 || hints[0] != "command_catalog" {
-		t.Fatalf("usage_hints = %#v, want [command_catalog]", got["usage_hints"])
+	if !ok || len(hints) != 1 || hints[0] != "mission_plan" {
+		t.Fatalf("usage_hints = %#v, want [mission_plan]", got["usage_hints"])
 	}
 }

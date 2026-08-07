@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
+	commandcatalog "github.com/the-drunken-coder/atlas/atlas_core/command_catalog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/handlers"
@@ -30,7 +31,7 @@ const objectTransferIdleTimeout = 30 * time.Second
 func atlasCORSOptions(allowedOrigins []string, allowedOriginPatterns []string) cors.Options {
 	return cors.Options{
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "X-API-Key", "X-Request-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"},
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
 		AllowCredentials: true,
 		AllowOriginFunc: func(r *http.Request, origin string) bool {
@@ -150,6 +151,9 @@ func main() {
 	if err := db.EnsureTables(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
+	if _, err := commandcatalog.Default(); err != nil {
+		logger.Fatal().Err(err).Msg("Failed to validate embedded command catalog")
+	}
 	adminAuth := admin.NewService(db.Pool, cfg)
 	if admin.UsesDefaultDevelopmentPassword() {
 		if cfg.EnableAPIAuth {
@@ -171,33 +175,24 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to initialize storage")
 	}
 	if storageClient == nil {
-		logger.Warn().Msg("Disposable development storage unavailable; storage features and command catalog discovery disabled")
+		logger.Warn().Msg("Disposable development storage unavailable; object storage features disabled")
 	} else if cfg.DatabaseRecreateOnStartup {
 		logger.Info().Str("bucket", storageClient.Bucket()).Msg("Cleared storage bucket because DATABASE_RECREATE_ON_STARTUP=true")
 	}
-	if storageClient != nil {
-		catalogCtx, catalogCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := actions.NewObjectActions(db.Pool, storageClient).PublishCommandCatalog(catalogCtx)
-		catalogCancel()
-		if err != nil {
-			logger.Fatal().Err(err).Msg("Failed to publish embedded command catalog")
-		}
-		logger.Info().Msg("Ensured embedded command catalog is published")
-	}
-
 	versionCtx, versionCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	currentVersion, err := actions.CurrentChangeVersion(versionCtx, db.Pool)
 	versionCancel()
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to read current change version")
 	}
-	feedHub := feed.NewHub(currentVersion, feed.Options{})
+	feedHub := feed.NewHub(feed.Options{})
 
-	reconcilerCtx, stopReconciler := context.WithCancel(context.Background())
-	defer stopReconciler()
+	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
+	defer stopRuntime()
+	go feed.NewDispatcher(db.Pool, feedHub, currentVersion).Run(runtimeCtx)
 	if storageClient != nil {
 		go runStorageDeletionReconciler(
-			reconcilerCtx,
+			runtimeCtx,
 			logger,
 			actions.NewObjectActions(db.Pool, storageClient),
 			time.Minute,
@@ -237,6 +232,7 @@ func main() {
 	r.Get("/", handler.Root)
 	r.Get("/resources", handler.Resources)
 	r.Get("/protocol/revision", handler.ProtocolRevision)
+	r.Get("/command-catalog", handler.GetCommandCatalog)
 	r.Get("/feed", handler.Feed)
 	r.Post("/admin/auth/login", handler.AdminLogin)
 	r.Post("/admin/auth/logout", handler.AdminLogout)
@@ -252,7 +248,6 @@ func main() {
 	r.Patch("/entities/{entity_id}", handler.UpdateEntity)
 	r.Delete("/entities/{entity_id}", handler.DeleteEntity)
 	r.Get("/entities/alias/{alias}", handler.GetEntityByAlias)
-	r.Patch("/entities/{entity_id}/telemetry", handler.UpdateEntityTelemetry)
 	r.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
 	r.Get("/entities/{entity_id}/tasks", handler.GetTasksByEntity)
 	r.Get("/entities/{entity_id}/objects", handler.GetObjectsByEntity)
@@ -263,10 +258,6 @@ func main() {
 	r.Get("/tasks/{task_id}", handler.GetTask)
 	r.Patch("/tasks/{task_id}", handler.UpdateTask)
 	r.Delete("/tasks/{task_id}", handler.DeleteTask)
-	r.Post("/tasks/{task_id}/acknowledge", handler.AcknowledgeTask)
-	r.Post("/tasks/{task_id}/complete", handler.CompleteTask)
-	r.Post("/tasks/{task_id}/fail", handler.FailTask)
-	r.Post("/tasks/{task_id}/status", handler.TaskStatus)
 	r.Get("/tasks/{task_id}/objects", handler.GetObjectsByTask)
 
 	// Object routes
@@ -301,7 +292,7 @@ func main() {
 	<-quit
 
 	logger.Info().Msg("ATLAS Core API shutting down...")
-	stopReconciler()
+	stopRuntime()
 
 	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)

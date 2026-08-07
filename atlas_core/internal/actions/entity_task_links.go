@@ -12,6 +12,7 @@ func queryTasksByEntityForUpdate(ctx context.Context, tx pgx.Tx, entityID string
 	rows, err := tx.Query(ctx, `
 		SELECT task_id, status, entity_id, json, created_at, updated_at, version
 		FROM tasks WHERE entity_id = $1
+		ORDER BY task_id
 		FOR UPDATE
 	`, entityID)
 	if err != nil {

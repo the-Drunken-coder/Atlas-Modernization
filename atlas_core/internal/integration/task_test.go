@@ -300,14 +300,22 @@ func TestTaskStatusTransitions(t *testing.T) {
 		t.Fatalf("Failed to create task: %v", err)
 	}
 	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (status transitions)")
+	taskETag := requireETag(t, resp)
 	drainClose(resp)
 
 	// Acknowledge task
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/acknowledge", nil)
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPatch,
+		"/tasks/"+taskID,
+		map[string]interface{}{"status": "acknowledged"},
+		map[string]string{"If-Match": taskETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to acknowledge task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/acknowledge")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (acknowledge)")
 
 	var startResult map[string]interface{}
 	if err := ParseResponse(resp, &startResult); err != nil {
@@ -343,21 +351,32 @@ func TestTaskComplete(t *testing.T) {
 		drainClose(resp)
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
+	taskETag := requireETag(t, resp)
 	drainClose(resp)
 
 	// Complete task with result
 	completePayload := map[string]interface{}{
-		"result": map[string]interface{}{
-			"success":     true,
-			"description": "Task completed by integration test",
+		"status": "completed",
+		"extra": map[string]interface{}{
+			"result": map[string]interface{}{
+				"success":     true,
+				"description": "Task completed by integration test",
+			},
 		},
 	}
 
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/complete", completePayload)
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPatch,
+		"/tasks/"+taskID,
+		completePayload,
+		map[string]string{"If-Match": taskETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to complete task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/complete")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (complete)")
 
 	var result map[string]interface{}
 	if err := ParseResponse(resp, &result); err != nil {
@@ -366,6 +385,10 @@ func TestTaskComplete(t *testing.T) {
 
 	if result["status"] != "completed" {
 		t.Errorf("Expected status 'completed', got %v", result["status"])
+	}
+	extra, ok := result["extra"].(map[string]interface{})
+	if !ok || extra["result"] == nil {
+		t.Fatalf("Expected completion extra.result to be preserved, got %#v", result["extra"])
 	}
 
 	t.Logf("Task %s completed and left as artifact", taskID)
@@ -393,21 +416,32 @@ func TestTaskFail(t *testing.T) {
 		drainClose(resp)
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
+	taskETag := requireETag(t, resp)
 	drainClose(resp)
 
 	// Fail task with error
 	failPayload := map[string]interface{}{
-		"error": map[string]interface{}{
-			"code":    "TEST_ERROR",
-			"message": "Task failed by integration test",
+		"status": "failed",
+		"extra": map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    "TEST_ERROR",
+				"message": "Task failed by integration test",
+			},
 		},
 	}
 
-	resp, err = client.Post(ctx, "/tasks/"+taskID+"/fail", failPayload)
+	resp, err = requestJSONWithHeaders(
+		ctx,
+		client,
+		http.MethodPatch,
+		"/tasks/"+taskID,
+		failPayload,
+		map[string]string{"If-Match": taskETag},
+	)
 	if err != nil {
 		t.Fatalf("Failed to fail task: %v", err)
 	}
-	requireHTTPStatus(t, resp, http.StatusOK, "POST /tasks/{id}/fail")
+	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (fail)")
 
 	var result map[string]interface{}
 	if err := ParseResponse(resp, &result); err != nil {
@@ -416,6 +450,10 @@ func TestTaskFail(t *testing.T) {
 
 	if result["status"] != "failed" {
 		t.Errorf("Expected status 'failed', got %v", result["status"])
+	}
+	extra, ok := result["extra"].(map[string]interface{})
+	if !ok || extra["error"] == nil {
+		t.Fatalf("Expected failure extra.error to be preserved, got %#v", result["extra"])
 	}
 
 	t.Logf("Task %s failed and left as artifact", taskID)

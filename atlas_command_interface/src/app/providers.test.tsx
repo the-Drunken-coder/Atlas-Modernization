@@ -64,7 +64,7 @@ describe("Providers", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         startupOrder.push("session");
         fetchCalls.push([input, init]);
-        return new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+        return new Response(JSON.stringify({ user: { username: "operator" } }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         });
@@ -104,7 +104,7 @@ describe("Providers", () => {
       "fetch",
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ user: { username: "operator", role: "admin" } }), {
+          new Response(JSON.stringify({ user: { username: "operator" } }), {
             status: 200,
             headers: { "Content-Type": "application/json" }
           })

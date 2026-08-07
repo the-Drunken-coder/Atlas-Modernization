@@ -15,12 +15,12 @@ func TestDefaultCatalogLoadsCommandAndCoercesParameters(t *testing.T) {
 	if catalog.Type != "command_catalog" || catalog.Name == "" || len(catalog.Commands) == 0 {
 		t.Fatalf("Default() = %#v, want populated command catalog", catalog)
 	}
-	command, ok := catalog.Command("goto")
+	command, ok := Command(catalog, "goto")
 	if !ok {
 		t.Fatal("Default().Command(\"goto\") was not found")
 	}
 
-	coerced, err := command.CoerceParameters(map[string]any{
+	coerced, err := CoerceParameters(command, map[string]any{
 		"latitude":       "38.5",
 		"longitude":      json.Number("-77.1"),
 		"arrival_radius": 4,
@@ -32,11 +32,37 @@ func TestDefaultCatalogLoadsCommandAndCoercesParameters(t *testing.T) {
 		t.Fatalf("coerced parameters = %#v", coerced)
 	}
 
-	if _, err := command.CoerceParameters(map[string]any{"latitude": 91, "longitude": 0}); err == nil || !strings.Contains(err.Error(), "latitude must be <= 90") {
+	if _, err := CoerceParameters(command, map[string]any{"latitude": 91, "longitude": 0}); err == nil || !strings.Contains(err.Error(), "latitude must be <= 90") {
 		t.Fatalf("out-of-range latitude error = %v, want latitude maximum error", err)
 	}
-	if _, err := command.CoerceParameters(map[string]any{"latitude": 38.5, "longitude": -77.1, "unknown": true}); err == nil || !strings.Contains(err.Error(), "unknown parameter unknown") {
+	if _, err := CoerceParameters(command, map[string]any{"latitude": 38.5, "longitude": -77.1, "unknown": true}); err == nil || !strings.Contains(err.Error(), "unknown parameter unknown") {
 		t.Fatalf("unknown parameter error = %v, want unknown parameter error", err)
+	}
+}
+
+func TestEmbeddedCatalogJSONAndETagAreStable(t *testing.T) {
+	first, err := JSON()
+	if err != nil {
+		t.Fatalf("JSON() returned error: %v", err)
+	}
+	firstETag, err := ETag()
+	if err != nil {
+		t.Fatalf("ETag() returned error: %v", err)
+	}
+	first[0] = 'x'
+	second, err := JSON()
+	if err != nil {
+		t.Fatalf("second JSON() returned error: %v", err)
+	}
+	secondETag, err := ETag()
+	if err != nil {
+		t.Fatalf("second ETag() returned error: %v", err)
+	}
+	if second[0] == 'x' {
+		t.Fatal("JSON() exposed mutable cached bytes")
+	}
+	if firstETag == "" || secondETag != firstETag {
+		t.Fatalf("ETags = %q then %q, want one stable digest", firstETag, secondETag)
 	}
 }
 

@@ -250,8 +250,9 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var attempts int64
+		var sequenceCalled bool
 		var renewed bool
-		if err := pool.QueryRow(ctx, `SELECT last_value FROM `+sequenceIdentifier).Scan(&attempts); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT last_value, is_called FROM `+sequenceIdentifier).Scan(&attempts, &sequenceCalled); err != nil {
 			t.Fatalf("read heartbeat retry attempts: %v", err)
 		}
 		if err := pool.QueryRow(ctx, `
@@ -260,7 +261,7 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 		`, path, originalExpiry).Scan(&renewed); err != nil {
 			t.Fatalf("check renewed upload intent: %v", err)
 		}
-		if attempts >= 2 && renewed {
+		if sequenceCalled && attempts >= 2 && renewed {
 			break
 		}
 		select {
@@ -432,6 +433,91 @@ func TestReconcileStorageUploadIntentDeletesUnreferencedBlob(t *testing.T) {
 	}
 }
 
+func TestRecoverStorageUploadIntentLocksAdvisoryBeforeIntentRow(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("intent-lock-order-%d", time.Now().UTC().UnixNano())
+	path := fmt.Sprintf("objects/%s/blob", objectID)
+	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO storage_upload_intents
+			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
+		VALUES ('atlas-media', $1, $2, $3, clock_timestamp() - interval '11 minutes', clock_timestamp() - interval '6 minutes')
+	`, path, objectID, uuid.NewString()); err != nil {
+		t.Fatalf("insert orphaned upload intent: %v", err)
+	}
+
+	blocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin advisory blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err := blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, objectUploadLockKey(objectID)); err != nil {
+		t.Fatalf("lock object advisory key: %v", err)
+	}
+	var blockerPID int32
+	if err := blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatalf("read advisory blocker pid: %v", err)
+	}
+
+	type result struct {
+		recovered int
+		err       error
+	}
+	done := make(chan result, 1)
+	go func() {
+		recovered, err := NewObjectActions(pool, nil).recoverStorageUploadIntents(ctx, 1)
+		done <- result{recovered: recovered, err: err}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var blocked bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity
+				WHERE $1 = ANY(pg_blocking_pids(pid))
+					AND wait_event_type = 'Lock'
+					AND query ILIKE '%pg_advisory_xact_lock%'
+			)
+		`, blockerPID).Scan(&blocked); err != nil {
+			t.Fatalf("check advisory waiter: %v", err)
+		}
+		if blocked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("upload intent recovery did not wait on the advisory lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	checker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin intent row checker: %v", err)
+	}
+	var one int
+	if err := checker.QueryRow(ctx, `SELECT 1 FROM storage_upload_intents WHERE path = $1 FOR UPDATE NOWAIT`, path).Scan(&one); err != nil {
+		_ = checker.Rollback(ctx)
+		t.Fatalf("recovery locked the intent row before the advisory lock: %v", err)
+	}
+	if err := checker.Rollback(ctx); err != nil {
+		t.Fatalf("release intent row checker: %v", err)
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release advisory lock: %v", err)
+	}
+	select {
+	case result := <-done:
+		if result.err != nil || result.recovered != 1 {
+			t.Fatalf("recovery result = (%d, %v), want (1, nil)", result.recovered, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload intent recovery did not finish after advisory release")
+	}
+}
+
 func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -441,7 +527,7 @@ func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	if _, err := pool.Exec(ctx, `INSERT INTO objects (object_id, path) VALUES ($1, $2)`, objectID, path); err != nil {
+	if _, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &path}); err != nil {
 		t.Fatalf("insert live object: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

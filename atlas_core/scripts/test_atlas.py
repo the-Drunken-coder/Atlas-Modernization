@@ -83,6 +83,25 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 self.assertFalse(ensure_api_auth("Production mode"))
                 self.assertIn("development default or example", output.call_args.args[0])
 
+    def test_public_auth_enforces_admin_password_length_boundary(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {"API_AUTH_KEY": "configured-machine-key", "ATLAS_ADMIN_PASSWORD": "a" * 11},
+                clear=True,
+            ),
+            patch("builtins.print") as output,
+        ):
+            self.assertFalse(ensure_api_auth("Production mode"))
+            self.assertIn("at least 12 characters", output.call_args.args[0])
+
+        with patch.dict(
+            "os.environ",
+            {"API_AUTH_KEY": "configured-machine-key", "ATLAS_ADMIN_PASSWORD": "a" * 12},
+            clear=True,
+        ):
+            self.assertTrue(ensure_api_auth("Production mode"))
+
     def test_production_file_only_auth_stops_before_docker(self) -> None:
         with (
             patch.dict(

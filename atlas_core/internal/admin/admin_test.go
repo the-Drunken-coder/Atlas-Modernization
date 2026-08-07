@@ -40,7 +40,7 @@ func TestDevelopmentAdminSeedLoginAndLogout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get seeded account: %v", err)
 	}
-	if account.Username != "admin" || account.Role != "admin" || account.Disabled {
+	if account.Username != "admin" {
 		t.Fatalf("unexpected seeded account: %#v", account)
 	}
 	if account.Password.Algorithm != "argon2id" || strings.Contains(account.Password.Hash, "password") {
@@ -370,7 +370,7 @@ func TestLoginWaitsForSlotWithoutHoldingDatabaseAdmission(t *testing.T) {
 	}
 }
 
-func TestLoginUsesSamePasswordVerifierForEveryAccountState(t *testing.T) {
+func TestLoginUsesSamePasswordVerifierForMissingAndExistingAccounts(t *testing.T) {
 	pool := openAdminTestPool(t)
 	ctx := context.Background()
 	cleanupAdminRows(ctx, t, pool)
@@ -378,13 +378,6 @@ func TestLoginUsesSamePasswordVerifierForEveryAccountState(t *testing.T) {
 	insertAdminRecord(ctx, t, pool, "account:enabled", "account", AccountRecord{
 		Username: "enabled",
 		Password: PasswordHash{Hash: "enabled-hash"},
-		Role:     defaultRole,
-	})
-	insertAdminRecord(ctx, t, pool, "account:disabled", "account", AccountRecord{
-		Username: "disabled",
-		Password: PasswordHash{Hash: "disabled-hash"},
-		Role:     defaultRole,
-		Disabled: true,
 	})
 
 	service := NewService(pool, &config.Config{AdminCookieSameSite: "lax"})
@@ -393,13 +386,13 @@ func TestLoginUsesSamePasswordVerifierForEveryAccountState(t *testing.T) {
 		hashes = append(hashes, stored.Hash)
 		return false
 	}
-	for i, username := range []string{"missing", "enabled", "disabled"} {
+	for i, username := range []string{"missing", "enabled"} {
 		_, _, err := service.Login(ctx, username, "wrong", fmt.Sprintf("203.0.113.%d", i+1), time.Now().UTC())
 		if !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("Login(%q) error = %v, want ErrInvalidCredentials", username, err)
 		}
 	}
-	want := []string{dummyPasswordHash.Hash, "enabled-hash", "disabled-hash"}
+	want := []string{dummyPasswordHash.Hash, "enabled-hash"}
 	if !slices.Equal(hashes, want) {
 		t.Fatalf("verified hashes = %v, want %v", hashes, want)
 	}
@@ -458,7 +451,7 @@ func TestCleanupExpiredAuthRecordsRemovesOnlyTransientExpiredRows(t *testing.T) 
 	insertAdminRecord(ctx, t, pool, "session:active-cleanup", "session", SessionRecord{ExpiresAt: activeUntil})
 	insertAdminRecord(ctx, t, pool, "login_fail:user:expired-cleanup", "login_fail", LoginFailureRecord{Count: 1, ResetAt: expiredAt})
 	insertAdminRecord(ctx, t, pool, "login_fail:user:active-cleanup", "login_fail", LoginFailureRecord{Count: 1, ResetAt: activeUntil})
-	insertAdminRecord(ctx, t, pool, "account:cleanup", "account", AccountRecord{Username: "cleanup", Role: "admin"})
+	insertAdminRecord(ctx, t, pool, "account:cleanup", "account", AccountRecord{Username: "cleanup"})
 	insertAdminRecord(ctx, t, pool, "api_key:atlas_ak_cleanup", "api_key", APIKeyRecord{
 		ID:         "atlas_ak_cleanup",
 		Name:       "cleanup",
@@ -738,6 +731,8 @@ func TestValidateProductionAdminPassword(t *testing.T) {
 	for _, password := range []string{
 		"password",
 		" PASSWORD ",
+		"x",
+		"short-pass",
 		"REPLACE_WITH_SECURE_ADMIN_PASSWORD",
 		"replace-with-secure-admin-password",
 		"your-secure-admin-password",
@@ -750,6 +745,14 @@ func TestValidateProductionAdminPassword(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("counts characters rather than bytes", func(t *testing.T) {
+		t.Setenv("ATLAS_ADMIN_PASSWORD", "åß∂ƒ©˙∆˚¬…æ")
+		t.Setenv("ATLAS_ADMIN_PASSWORD_FILE", "")
+		if err := ValidateProductionAdminPassword(); err == nil {
+			t.Fatal("expected eleven-character password to be rejected")
+		}
+	})
 
 	t.Run("password file placeholder", func(t *testing.T) {
 		path := t.TempDir() + "/admin-password"

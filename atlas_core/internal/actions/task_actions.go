@@ -15,19 +15,12 @@ import (
 
 // TaskActions handles task business logic.
 type TaskActions struct {
-	pool       *pgxpool.Pool
-	changeSink ChangeSink
+	pool *pgxpool.Pool
 }
 
 // NewTaskActions creates a new TaskActions instance.
 func NewTaskActions(pool *pgxpool.Pool) *TaskActions {
-	return NewTaskActionsWithChangeSink(pool, nil)
-}
-
-// NewTaskActionsWithChangeSink creates a new TaskActions instance that emits
-// committed changes to sink.
-func NewTaskActionsWithChangeSink(pool *pgxpool.Pool, sink ChangeSink) *TaskActions {
-	return &TaskActions{pool: pool, changeSink: sink}
+	return &TaskActions{pool: pool}
 }
 
 // CreateTaskParams holds parameters for creating a task.
@@ -88,7 +81,7 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 		entityID = &trimmed
 	}
 
-	tx, err := beginChangeTx(ctx, a.pool, "task create", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "task create")
 	if err != nil {
 		return nil, err
 	}
@@ -104,12 +97,16 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 		}
 	}
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var task models.Task
 	err = tx.QueryRow(ctx, `
-		INSERT INTO tasks (task_id, status, entity_id, json)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO tasks (task_id, status, entity_id, json, version)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING task_id, status, entity_id, json, created_at, updated_at, version
-	`, taskID, status, entityID, jsonBytes).Scan(
+	`, taskID, status, entityID, jsonBytes, version).Scan(
 		&task.TaskID, &task.Status, &task.EntityID,
 		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
 	)
@@ -127,17 +124,18 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams) (*mod
 		}
 		return nil, fmt.Errorf("failed to create task: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit task create transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventCreate,
 		ResourceType: ChangeResourceTask,
 		ID:           task.TaskID,
 		Version:      task.Version,
 		AfterTask:    cloneTaskModel(&task),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit task create transaction: %w", err)
+	}
 
 	return &task, nil
 }
@@ -210,13 +208,12 @@ func (a *TaskActions) GetByEntity(ctx context.Context, entityID string, limit in
 
 // UpdateTaskParams holds parameters for updating a task.
 type UpdateTaskParams struct {
-	Status           *string
-	EntityID         *string
-	Components       map[string]interface{}
-	Extra            map[string]interface{}
-	RemoveExtraKeys  []string
-	ExpectedVersion  *int64
-	idempotentStatus bool
+	Status          *string
+	EntityID        *string
+	Components      map[string]interface{}
+	Extra           map[string]interface{}
+	RemoveExtraKeys []string
+	ExpectedVersion *int64
 }
 
 func isNoOpTaskUpdate(params UpdateTaskParams) bool {
@@ -247,7 +244,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 	}
 
 	// Begin transaction for atomic read-modify-write.
-	tx, err := beginChangeTx(ctx, a.pool, "task update", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "task update")
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +287,7 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		if err := validateTaskStatusTransition(task.Status, normalized); err != nil {
 			return nil, err
 		}
-		if params.idempotentStatus && task.Status == normalized {
+		if task.Status == normalized && params.EntityID == nil && len(params.Components) == 0 && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
 			if err := tx.Commit(ctx); err != nil {
 				return nil, fmt.Errorf("failed to commit idempotent task update: %w", err)
 			}
@@ -328,14 +325,18 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		return nil, err
 	}
 
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	err = tx.QueryRow(ctx, `
 		UPDATE tasks
 		SET status = $1, entity_id = $2, json = $3,
 			updated_at = clock_timestamp(),
-			version = nextval('atlas_change_version_seq')
-		WHERE task_id = $4
+			version = $4
+		WHERE task_id = $5
 		RETURNING task_id, status, entity_id, json, created_at, updated_at, version
-	`, newStatus, newEntityID, jsonBytes, taskID).Scan(
+	`, newStatus, newEntityID, jsonBytes, version, taskID).Scan(
 		&task.TaskID, &task.Status, &task.EntityID,
 		&task.JSON, &task.CreatedAt, &task.UpdatedAt, &task.Version,
 	)
@@ -348,18 +349,19 @@ func (a *TaskActions) Update(ctx context.Context, taskID string, params UpdateTa
 		return nil, fmt.Errorf("failed to update task: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventUpdate,
 		ResourceType: ChangeResourceTask,
 		ID:           task.TaskID,
 		Version:      task.Version,
 		BeforeTask:   before,
 		AfterTask:    cloneTaskModel(&task),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
 	return &task, nil
 }
@@ -382,7 +384,7 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 	}
 	taskID = SanitizeID(taskID)
 
-	tx, err := beginChangeTx(ctx, a.pool, "task delete", a.changeSink)
+	tx, err := beginChangeTx(ctx, a.pool, "task delete")
 	if err != nil {
 		return err
 	}
@@ -415,26 +417,22 @@ func (a *TaskActions) Delete(ctx context.Context, taskID string) error {
 		return NewTaskNotFoundError(taskID)
 	}
 
-	// Record tombstone with entity_id context so changed-since can notify clients which entity's tasks changed.
-	var tombstoneVersion int64
-	if err := tx.QueryRow(ctx,
-		"INSERT INTO deletions (resource_type, resource_id, context) VALUES ($1, $2, jsonb_strip_nulls(jsonb_build_object('entity_id', $3::text))) RETURNING version",
-		ChangeResourceTask, taskID, task.EntityID,
-	).Scan(&tombstoneVersion); err != nil {
-		return fmt.Errorf("failed to record task deletion tombstone: %w", err)
+	deleteVersion, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return err
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit delete transaction: %w", err)
-	}
-
-	publishChange(a.changeSink, ResourceChange{
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
 		Event:        ChangeEventDelete,
 		ResourceType: ChangeResourceTask,
 		ID:           task.TaskID,
-		Version:      tombstoneVersion,
+		Version:      deleteVersion,
 		BeforeTask:   cloneTaskModel(&task),
-	})
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit delete transaction: %w", err)
+	}
 
 	return nil
 }

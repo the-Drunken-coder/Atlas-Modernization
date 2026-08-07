@@ -26,6 +26,12 @@ describe("AtlasAssetRuntime", () => {
     expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 0 })).toThrow(
       "checkInIntervalMs"
     );
+    expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 2_147_483_648 })).toThrow(
+      "no greater than 2147483647"
+    );
+    expect(
+      () => new AtlasAssetRuntime(client, { entityId: "asset-1", checkInIntervalMs: 2_147_483_647 })
+    ).not.toThrow();
     expect(() => new AtlasAssetRuntime(client, { entityId: "asset-1" })).not.toThrow();
   });
 

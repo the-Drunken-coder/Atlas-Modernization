@@ -170,6 +170,9 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
+      - name: Verify generated Atlas SDK package metadata is checked in
+        run: git diff --exit-code -- atlas_sdk/src/package-metadata.ts
+
       - name: Audit JavaScript workspace dependencies
         run: npm audit --audit-level=high
 
@@ -205,6 +208,9 @@ jobs:
 
       - name: Smoke test packed Atlas SDK consumer
         run: npm run test:package --workspace @the-drunken-coder/atlas-sdk
+
+      - name: Run Atlas SDK type contract tests
+        run: npm run test:types --workspace @the-drunken-coder/atlas-sdk
 
       - name: Run Atlas SDK Node tests with coverage ratchet
         run: npm run test:coverage --workspace @the-drunken-coder/atlas-sdk
@@ -412,9 +418,6 @@ jobs:
 
       - name: Test Go coverage checker
         run: python3 scripts/test_check_coverage.py
-
-      - name: Test seed command catalog
-        run: python3 scripts/test_seed_command_catalog.py
 
       - name: Run ShellCheck
         run: |

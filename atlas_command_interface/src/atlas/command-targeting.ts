@@ -6,8 +6,8 @@ import {
   supportedCommandIds
 } from "./command-model.js";
 
-// Parameters that a map-point command receives from the right-click coordinate.
-// They are never asked for in a form because the map fills them in.
+// Parameters that identify a position command. The sidebar asks for them in a
+// form; the map context menu can prefill them from the chosen point.
 export const MAP_POINT_PARAMETERS = ["latitude", "longitude"] as const;
 
 export type CommandTargeting = "map_point" | "none";
@@ -18,7 +18,7 @@ export type CommandAvailability = {
   disabled: boolean;
   /** Tooltip-ready explanation when {@link disabled} is true. */
   disabledReason?: string;
-  /** Schema entries the operator must fill in before submit (excludes auto-filled map-point parameters). */
+  /** Non-coordinate schema entries shown in the command form. */
   formParameters: Array<[string, CommandParameterSchema]>;
   /** True when {@link formParameters} is non-empty, i.e. a compact form should be shown before submit. */
   requiresForm: boolean;
@@ -34,7 +34,7 @@ export function commandTargeting(command: CommandDefinition): CommandTargeting {
     : "none";
 }
 
-/** Parameters the operator still has to provide for the given targeting. */
+/** Non-coordinate schema entries shown for the given targeting. */
 export function formParameters(
   command: CommandDefinition,
   targeting: CommandTargeting

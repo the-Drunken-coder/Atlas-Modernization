@@ -96,14 +96,15 @@ func (h *Handler) Root(w http.ResponseWriter, r *http.Request) {
 		"version":     "1.0.0",
 		"description": "Core backend service for ATLAS",
 		"endpoints": map[string]string{
-			"health":        "/health",
-			"readiness":     "/readiness",
-			"resources":     "/resources",
-			"entities":      "/entities",
-			"tasks":         "/tasks",
-			"objects":       "/objects",
-			"queries":       "/queries/full",
-			"changed_since": "/queries/changed-since",
+			"health":          "/health",
+			"readiness":       "/readiness",
+			"resources":       "/resources",
+			"command_catalog": "/command-catalog",
+			"entities":        "/entities",
+			"tasks":           "/tasks",
+			"objects":         "/objects",
+			"queries":         "/queries/full",
+			"changed_since":   "/queries/changed-since",
 		},
 	}
 

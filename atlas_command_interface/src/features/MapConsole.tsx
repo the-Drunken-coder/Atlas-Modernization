@@ -1,10 +1,9 @@
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
-import { sanitizeConnectionError } from "../atlas/connection-error.js";
-import { type EntityKind, entityGeometry, entityKind } from "../atlas/entities.js";
+import { type EntityKind, entityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
@@ -22,15 +21,17 @@ import { SidebarPanel } from "../ui/layout/SidebarPanel.js";
 import { SidebarRail } from "../ui/layout/SidebarRail.js";
 import type { MapCameraCommand } from "../ui/map/interaction/map-camera.js";
 import { buildMapSources } from "../ui/map/rendering/map-sources.js";
-import type { MapContextMenuInfo, MapReticleTarget } from "../ui/map/view/MapView.js";
+import type { MapReticleTarget } from "../ui/map/view/MapView.js";
 import { Button, SelectField } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
 import { CommandForm } from "./commands/CommandForm.js";
 import { CommandList } from "./commands/CommandList.js";
+import { useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
+import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
 import { TrackInspector } from "./tracks/TrackInspector.js";
 
 const LIST_TITLES: Record<ListKind, string> = {
@@ -45,64 +46,20 @@ const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => 
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
 
-type MapMenuState = { x: number; y: number; lat: number; lng: number };
-type CommandFormState = { availability: CommandAvailability; mapPoint?: { lat: number; lng: number } };
-type EditState = { entityId: string; version: number; draft: UiGeometry };
-
 export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
 
-  const [mapMenu, setMapMenu] = useState<MapMenuState | null>(null);
-  const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
-  const commandDismissedRef = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string>();
-  const [edit, setEdit] = useState<EditState | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string>();
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
-
-  const dismissCommandForm = useCallback(() => {
-    commandDismissedRef.current = true;
-    setCommandForm(null);
-    setSubmitError(undefined);
-  }, []);
 
   const selection = sidebar.selection;
   const selectedEntity = getEntity(snapshot, selection?.id);
   const selectedId = selection?.id;
-  const selectedEntityId = selectedEntity?.entity_id;
-
-  // Drop transient command UI when the selected entity changes.
-  useEffect(() => {
-    setMapMenu(null);
-    dismissCommandForm();
-  }, [selectedId, dismissCommandForm]);
-
-  useEffect(() => {
-    setMapMenu(null);
-    dismissCommandForm();
-  }, [catalog, dismissCommandForm]);
-
-  // Drop an edit session when the selection moves to another entity.
-  useEffect(() => {
-    if (edit && edit.entityId !== selectedId) {
-      setEdit(null);
-      setSaveError(undefined);
-    }
-  }, [edit, selectedId]);
-
-  // Live updates can remove the selected entity while the sidebar still holds
-  // its ID; transient command/edit UI must follow the snapshot.
-  useEffect(() => {
-    if (!selectedId || selectedEntityId) return;
-    setMapMenu(null);
-    dismissCommandForm();
-    setEdit(null);
-    setSaveError(undefined);
-  }, [selectedId, selectedEntityId, dismissCommandForm]);
+  const commandFlow = useCommandFlow({ catalog, selectedEntity, selectedId, submitCommand: atlas.submitCommand });
+  const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
+  const { edit, saving, saveError } = geometryEdit;
+  const { mapMenu, commandForm, submitting, submitError } = commandFlow;
 
   useEffect(() => {
     const config = atlas.config;
@@ -147,97 +104,6 @@ export function MapConsole() {
     },
     [snapshot.entities]
   );
-
-  const submit = useCallback(
-    async (
-      availability: CommandAvailability,
-      parameters: Record<string, JSONValue>,
-      errorFormState?: CommandFormState
-    ) => {
-      if (!selectedEntity) return;
-      commandDismissedRef.current = false;
-      setSubmitting(true);
-      setSubmitError(undefined);
-      try {
-        await atlas.submitCommand({ entityId: selectedEntity.entity_id, command: availability.command, parameters });
-        setCommandForm(null);
-      } catch (cause) {
-        if (!commandDismissedRef.current) {
-          const message = sanitizeConnectionError(cause);
-          setSubmitError(message);
-          setCommandForm((current) => current ?? errorFormState ?? null);
-        }
-      } finally {
-        commandDismissedRef.current = false;
-        setSubmitting(false);
-      }
-    },
-    [atlas, selectedEntity]
-  );
-
-  const pickSidebarCommand = useCallback(
-    (availability: CommandAvailability) => {
-      if (submitting || availability.disabled) return;
-      if (availability.requiresForm) {
-        setSubmitError(undefined);
-        setCommandForm({ availability });
-        return;
-      }
-      const formState = { availability };
-      setCommandForm(formState);
-      void submit(availability, {}, formState);
-    },
-    [submit, submitting]
-  );
-
-  const pickMapCommand = useCallback(
-    (availability: CommandAvailability, point: { lat: number; lng: number }) => {
-      if (submitting || availability.disabled) return;
-      if (availability.requiresForm) {
-        setSubmitError(undefined);
-        setCommandForm({ availability, mapPoint: point });
-        return;
-      }
-      const formState = { availability, mapPoint: point };
-      setCommandForm(formState);
-      void submit(availability, { latitude: point.lat, longitude: point.lng }, formState);
-    },
-    [submit, submitting]
-  );
-
-  const onMapContextMenu = useCallback(
-    (info: MapContextMenuInfo) => {
-      if (!selectedEntity || entityKind(selectedEntity) !== "asset") {
-        setMapMenu(null);
-        return;
-      }
-      dismissCommandForm();
-      setMapMenu({ x: info.x, y: info.y, lat: info.lat, lng: info.lng });
-    },
-    [selectedEntity, dismissCommandForm]
-  );
-
-  const startEdit = useCallback(() => {
-    if (!selectedEntity) return;
-    const geometry = entityGeometry(selectedEntity);
-    if (!geometry) return;
-    setSaveError(undefined);
-    setEdit({ entityId: selectedEntity.entity_id, version: selectedEntity.metadata.version, draft: geometry });
-  }, [selectedEntity]);
-
-  const saveEdit = useCallback(async () => {
-    if (!edit || !selectedEntity) return;
-    setSaving(true);
-    setSaveError(undefined);
-    try {
-      await atlas.updateGeometry(edit.entityId, edit.draft, edit.version);
-      setEdit(null);
-    } catch (cause) {
-      setSaveError(sanitizeConnectionError(cause));
-    } finally {
-      setSaving(false);
-    }
-  }, [atlas, edit, selectedEntity]);
 
   if (atlas.status === "loading") {
     return (
@@ -287,7 +153,7 @@ export function MapConsole() {
           sub: availability.requiresForm ? "needs parameters" : undefined,
           disabled: availability.disabled,
           disabledReason: availability.disabledReason,
-          onSelect: () => pickMapCommand(availability, { lat: mapMenu.lat, lng: mapMenu.lng })
+          onSelect: () => commandFlow.pickMapCommand(availability, { lat: mapMenu.lat, lng: mapMenu.lng })
         }))
       : [];
 
@@ -308,6 +174,7 @@ export function MapConsole() {
           <SidebarPanel
             title={panelTitle(sidebar, selection?.kind)}
             onBack={sidebar.view.mode === "inspector" ? () => dispatch({ type: "back" }) : undefined}
+            autoFocusBack={sidebar.focusRequest?.id === selection?.id}
             onCollapse={() => dispatch({ type: "setCollapsed", collapsed: true })}
           >
             <PanelBody
@@ -323,14 +190,11 @@ export function MapConsole() {
                 if (kind === "other") return;
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
-              onPickCommand={pickSidebarCommand}
-              onStartEdit={startEdit}
-              onChangeDraft={(geometry) => setEdit((current) => (current ? { ...current, draft: geometry } : current))}
-              onSaveEdit={() => void saveEdit()}
-              onCancelEdit={() => {
-                setEdit(null);
-                setSaveError(undefined);
-              }}
+              onPickCommand={commandFlow.pickSidebarCommand}
+              onStartEdit={geometryEdit.startEdit}
+              onChangeDraft={geometryEdit.changeDraft}
+              onSaveEdit={() => void geometryEdit.saveEdit()}
+              onCancelEdit={geometryEdit.cancelEdit}
             />
           </SidebarPanel>
         }
@@ -355,17 +219,16 @@ export function MapConsole() {
                         edit
                           ? {
                               geometry: edit.draft,
-                              onChange: (geometry) =>
-                                setEdit((current) => (current ? { ...current, draft: geometry } : current))
+                              onChange: geometryEdit.changeDraft
                             }
                           : undefined
                       }
                       focusTarget={focusTarget}
                       cameraCommand={cameraCommand}
                       onSelectEntity={selectEntityById}
-                      onMapContextMenu={onMapContextMenu}
+                      onMapContextMenu={commandFlow.onMapContextMenu}
                       onBackgroundClick={() => {
-                        setMapMenu(null);
+                        commandFlow.closeMapMenu();
                         dispatch({ type: "clearSelection" });
                       }}
                       onStyleSwitchError={handleMapStyleSwitchError}
@@ -395,7 +258,7 @@ export function MapConsole() {
           header={`Commands · ${mapMenu.lat.toFixed(4)}, ${mapMenu.lng.toFixed(4)}`}
           items={mapCommands}
           emptyLabel="No position commands"
-          onClose={() => setMapMenu(null)}
+          onClose={commandFlow.closeMapMenu}
         />
       ) : null}
 
@@ -413,8 +276,8 @@ export function MapConsole() {
           mapPoint={commandForm.mapPoint}
           submitting={submitting}
           error={submitError}
-          onCancel={dismissCommandForm}
-          onSubmit={(parameters) => void submit(commandForm.availability, parameters, commandForm)}
+          onCancel={commandFlow.dismissCommandForm}
+          onSubmit={(parameters) => void commandFlow.submit(commandForm.availability, parameters, commandForm)}
         />
       ) : null}
     </>
@@ -460,7 +323,7 @@ type PanelBodyProps = {
   sidebar: SidebarState;
   selectedEntity?: EntityResource;
   catalog?: CommandCatalog;
-  edit: EditState | null;
+  edit: GeometryEditState | null;
   saving: boolean;
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
@@ -517,6 +380,7 @@ function PanelBody(props: PanelBodyProps) {
 function ListBody({
   list,
   snapshot,
+  sidebar,
   selectedEntity,
   catalog,
   onSelectEntity,
@@ -545,6 +409,7 @@ function ListBody({
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
+      restoreFocusId={sidebar.focusRequest?.id}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
       onSelect={onSelectEntity}
     />

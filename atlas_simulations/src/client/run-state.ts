@@ -1,5 +1,6 @@
 import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import {
+  type AtlasTargetSummary,
   isCreatedResource,
   jsonNumber,
   type RunEvent,
@@ -92,10 +93,34 @@ export function mergeRunSummary(existing: RunSummary | undefined, incoming: RunS
   };
 }
 
-export function submissionInputs(
+export function buildStartRunRequest(
   scenario: ScenarioDescriptor,
-  values: FieldValues
-): NonNullable<StartRunRequest["inputs"]> {
+  target: AtlasTargetSummary,
+  values: FieldValues,
+  jsonInput: string,
+  deployedMutationConfirmed: boolean
+): StartRunRequest {
+  if (target.deployed && !deployedMutationConfirmed) {
+    throw new Error("Confirm the deployed mutation before starting the run");
+  }
+  const normalizedJsonInput = scenario.acceptsJson && jsonInput.trim() !== "" ? jsonInput : undefined;
+  if (normalizedJsonInput !== undefined) {
+    try {
+      JSON.parse(normalizedJsonInput);
+    } catch {
+      throw new Error("JSON input must be valid JSON");
+    }
+  }
+  return {
+    scenarioId: scenario.id,
+    targetId: target.id,
+    ...(target.deployed ? { confirmDeployedMutation: true as const } : {}),
+    inputs: submissionInputs(scenario, values),
+    ...(normalizedJsonInput ? { jsonInput: normalizedJsonInput } : {})
+  };
+}
+
+function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): NonNullable<StartRunRequest["inputs"]> {
   return Object.fromEntries(
     scenario.inputFields.map((field): [string, string | boolean | ReturnType<typeof jsonNumber>] => {
       const value = values[field.key];
