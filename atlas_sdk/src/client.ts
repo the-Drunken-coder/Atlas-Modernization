@@ -3,6 +3,8 @@ import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport } from "./http.js";
 import type {
   CommandCatalog,
+  EntityCheckInRequest,
+  EntityCheckInResponse,
   EntityCreateRequest,
   EntityResource,
   EntityUpdateRequest,
@@ -17,10 +19,8 @@ import { SyncEngine } from "./sync-engine.js";
 import type {
   AtlasSubscription,
   ChangedSinceQueryOptions,
-  EntityCheckInBody,
   EntityCheckInMethod,
   EntityCheckInOptions,
-  EntityCheckInResponse,
   FetchLike,
   FullDatasetQueryOptions,
   ReadOptions,
@@ -48,19 +48,25 @@ import {
 export { ProtocolMismatchError } from "./feed-connection.js";
 export { AtlasAPIError, ConflictError } from "./http.js";
 export type {
+  ChangedSinceResponse,
+  EntityCheckInFullResponse,
+  EntityCheckInMinimalResponse,
+  EntityCheckInMinimalTask,
+  EntityCheckInRequest,
+  EntityCheckInResponse,
+  FullDatasetResponse,
+  ProtocolRevisionResponse
+} from "./protocol.js";
+export type {
   AtlasLocalDeleteWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
   ChangedSinceQueryOptions,
-  ChangedSinceResponse,
   EntityCheckInFields,
   EntityCheckInMethod,
-  EntityCheckInMinimalTask,
   EntityCheckInOptions,
-  EntityCheckInResponse,
   EntityCheckInTelemetry,
   FullDatasetQueryOptions,
-  FullDatasetResponse,
   ReadOptions,
   ResourceForSubscription,
   SyncSnapshot,
@@ -314,8 +320,8 @@ function taskStatusPatch(status: TaskStatus, options?: TaskStatusOptions): TaskU
   };
 }
 
-function checkInRequest(id: string, options?: EntityCheckInOptions): { path: string; body: EntityCheckInBody } {
-  const body: EntityCheckInBody = {};
+function checkInRequest(id: string, options?: EntityCheckInOptions): { path: string; body: EntityCheckInRequest } {
+  const body: EntityCheckInRequest = {};
   if (options?.status !== undefined) body.status = options.status;
   if (options?.components !== undefined) body.components = options.components;
   if (options?.telemetry) {

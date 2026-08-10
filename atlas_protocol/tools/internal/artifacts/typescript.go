@@ -56,6 +56,11 @@ func typeScriptSource(revision string, schemas map[string][]byte) ([]byte, error
 		builder.WriteString(gen.typeFor(gen.defs[name], name, 0))
 		builder.WriteString(";\n\n")
 	}
+	resourceTypeValues, err := resourceTypeValuesSource(gen)
+	if err != nil {
+		return nil, err
+	}
+	builder.WriteString(resourceTypeValues)
 	validatorSource, err := runtimeValidatorSource(gen)
 	if err != nil {
 		return nil, err

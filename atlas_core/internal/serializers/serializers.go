@@ -21,41 +21,8 @@ func StrongETag(version int64) string {
 	return fmt.Sprintf(`"v%d"`, version)
 }
 
-// EntityResponse represents the serialized form of an Entity.
-type EntityResponse struct {
-	EntityID   string                 `json:"entity_id"`
-	EntityType string                 `json:"entity_type"`
-	Subtype    *string                `json:"subtype"`
-	Alias      *string                `json:"alias"`
-	Components map[string]interface{} `json:"components"`
-	Metadata   MetadataBlock          `json:"metadata"`
-	Extra      map[string]interface{} `json:"extra,omitempty"`
-}
-
-// TaskResponse represents the serialized form of a Task.
-type TaskResponse struct {
-	TaskID     string                 `json:"task_id"`
-	Status     string                 `json:"status"`
-	EntityID   *string                `json:"entity_id"`
-	Components map[string]interface{} `json:"components"`
-	Metadata   MetadataBlock          `json:"metadata"`
-	Extra      map[string]interface{} `json:"extra,omitempty"`
-}
-
-// ObjectListResponse represents the serialized form of a MediaObject for list endpoints (without extra).
-type ObjectListResponse struct {
-	ObjectID    string        `json:"object_id"`
-	Path        *string       `json:"path"`
-	ContentType *string       `json:"content_type"`
-	Type        *string       `json:"type"`
-	SizeBytes   *int64        `json:"size_bytes"`
-	UsageHints  []string      `json:"usage_hints"`
-	Bucket      *string       `json:"bucket"`
-	Metadata    MetadataBlock `json:"metadata"`
-}
-
 // SerializeEntity converts an Entity to its API response format.
-func SerializeEntity(e *models.Entity) *EntityResponse {
+func SerializeEntity(e *models.Entity) *protocol.EntityResource {
 	if e == nil {
 		return nil
 	}
@@ -65,7 +32,7 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 		components = make(map[string]interface{})
 	}
 
-	return &EntityResponse{
+	return &protocol.EntityResource{
 		EntityID:   e.EntityID,
 		EntityType: e.Type,
 		Subtype:    e.Subtype,
@@ -81,7 +48,7 @@ func SerializeEntity(e *models.Entity) *EntityResponse {
 }
 
 // SerializeTask converts a Task to its API response format.
-func SerializeTask(t *models.Task) *TaskResponse {
+func SerializeTask(t *models.Task) *protocol.TaskResource {
 	if t == nil {
 		return nil
 	}
@@ -91,7 +58,7 @@ func SerializeTask(t *models.Task) *TaskResponse {
 		components = make(map[string]interface{})
 	}
 
-	return &TaskResponse{
+	return &protocol.TaskResource{
 		TaskID:     t.TaskID,
 		Status:     t.Status,
 		EntityID:   t.EntityID,
@@ -138,7 +105,7 @@ func SerializeObject(o *models.MediaObject) *protocol.ObjectDetailResource {
 }
 
 // SerializeObjectForList converts a MediaObject to its API list response format (without extra).
-func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
+func SerializeObjectForList(o *models.MediaObject) *protocol.ObjectResource {
 	if o == nil {
 		return nil
 	}
@@ -147,7 +114,7 @@ func SerializeObjectForList(o *models.MediaObject) *ObjectListResponse {
 	if usageHints == nil {
 		usageHints = []string{}
 	}
-	return &ObjectListResponse{
+	return &protocol.ObjectResource{
 		ObjectID:    o.ObjectID,
 		Path:        o.Path,
 		ContentType: o.ContentType,
@@ -242,37 +209,45 @@ func protocolObjectReferences(objectID string, values []map[string]interface{}) 
 }
 
 // SerializeEntities converts a slice of entities to their API response format.
-func SerializeEntities(entities []*models.Entity) []*EntityResponse {
-	result := make([]*EntityResponse, len(entities))
-	for i, e := range entities {
-		result[i] = SerializeEntity(e)
+func SerializeEntities(entities []*models.Entity) []protocol.EntityResource {
+	result := make([]protocol.EntityResource, 0, len(entities))
+	for _, entity := range entities {
+		if serialized := SerializeEntity(entity); serialized != nil {
+			result = append(result, *serialized)
+		}
 	}
 	return result
 }
 
 // SerializeTasks converts a slice of tasks to their API response format.
-func SerializeTasks(tasks []*models.Task) []*TaskResponse {
-	result := make([]*TaskResponse, len(tasks))
-	for i, t := range tasks {
-		result[i] = SerializeTask(t)
+func SerializeTasks(tasks []*models.Task) []protocol.TaskResource {
+	result := make([]protocol.TaskResource, 0, len(tasks))
+	for _, task := range tasks {
+		if serialized := SerializeTask(task); serialized != nil {
+			result = append(result, *serialized)
+		}
 	}
 	return result
 }
 
 // SerializeObjects converts a slice of objects to full-detail responses.
-func SerializeObjects(objects []*models.MediaObject) []*protocol.ObjectDetailResource {
-	result := make([]*protocol.ObjectDetailResource, len(objects))
-	for i, o := range objects {
-		result[i] = SerializeObject(o)
+func SerializeObjects(objects []*models.MediaObject) []protocol.ObjectDetailResource {
+	result := make([]protocol.ObjectDetailResource, 0, len(objects))
+	for _, object := range objects {
+		if serialized := SerializeObject(object); serialized != nil {
+			result = append(result, *serialized)
+		}
 	}
 	return result
 }
 
 // SerializeObjectsForList converts a slice of objects to their API list response format (without extra).
-func SerializeObjectsForList(objects []*models.MediaObject) []*ObjectListResponse {
-	result := make([]*ObjectListResponse, len(objects))
-	for i, o := range objects {
-		result[i] = SerializeObjectForList(o)
+func SerializeObjectsForList(objects []*models.MediaObject) []protocol.ObjectResource {
+	result := make([]protocol.ObjectResource, 0, len(objects))
+	for _, object := range objects {
+		if serialized := SerializeObjectForList(object); serialized != nil {
+			result = append(result, *serialized)
+		}
 	}
 	return result
 }

@@ -13,12 +13,13 @@ func TestPublicRequestValidatorsCoverConformanceCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	validators := map[string]func(any) []string{
-		"EntityCreateRequest": protocol.ValidateEntityCreateRequest,
-		"EntityUpdateRequest": protocol.ValidateEntityUpdateRequest,
-		"TaskCreateRequest":   protocol.ValidateTaskCreateRequest,
-		"TaskUpdateRequest":   protocol.ValidateTaskUpdateRequest,
-		"ObjectCreateRequest": protocol.ValidateObjectCreateRequest,
-		"ObjectUpdateRequest": protocol.ValidateObjectUpdateRequest,
+		"EntityCreateRequest":  protocol.ValidateEntityCreateRequest,
+		"EntityCheckInRequest": protocol.ValidateEntityCheckInRequest,
+		"EntityUpdateRequest":  protocol.ValidateEntityUpdateRequest,
+		"TaskCreateRequest":    protocol.ValidateTaskCreateRequest,
+		"TaskUpdateRequest":    protocol.ValidateTaskUpdateRequest,
+		"ObjectCreateRequest":  protocol.ValidateObjectCreateRequest,
+		"ObjectUpdateRequest":  protocol.ValidateObjectUpdateRequest,
 	}
 	seen := make(map[string]bool, len(validators))
 

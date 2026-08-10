@@ -1,3 +1,5 @@
+import { isResourceType, RESOURCE_TYPE_VALUES, type ResourceType } from "@the-drunken-coder/atlas-sdk";
+
 declare const jsonNumberBrand: unique symbol;
 export type JSONNumber = number & { readonly [jsonNumberBrand]: "JSONNumber" };
 export type JSONValue = null | boolean | string | JSONNumber | JSONValue[] | { [key: string]: JSONValue };
@@ -39,24 +41,17 @@ export type ScenarioDescriptor = {
   acceptsJson: boolean;
 };
 
-export const CREATED_RESOURCE_TYPES = ["entity", "task", "object"] as const;
+export const CREATED_RESOURCE_TYPES = RESOURCE_TYPE_VALUES;
 
-export type CreatedResourceType = (typeof CREATED_RESOURCE_TYPES)[number];
+export type CreatedResourceType = ResourceType;
 
 export type CreatedResource = {
   type: CreatedResourceType;
   id: string;
 };
 
-const CREATED_RESOURCE_TYPE_SET = new Set<string>(CREATED_RESOURCE_TYPES);
-
 export function isCreatedResource(value: unknown): value is CreatedResource {
-  return (
-    isRecord(value) &&
-    typeof value.type === "string" &&
-    CREATED_RESOURCE_TYPE_SET.has(value.type) &&
-    typeof value.id === "string"
-  );
+  return isRecord(value) && isResourceType(value.type) && typeof value.id === "string";
 }
 
 export type AssertionResult = {

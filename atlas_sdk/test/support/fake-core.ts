@@ -1,6 +1,7 @@
 import {
   ATLAS_PROTOCOL_REVISION,
   type CommandCatalog,
+  type EntityCheckInRequest,
   type EntityComponents,
   type EntityCreateRequest,
   type EntityResource,
@@ -19,7 +20,7 @@ import type { WebSocketCtor } from "../../src/types.js";
 import { recordLedgerEvent } from "./event-ledger.js";
 import { FakeWebSocket } from "./fake-websocket.js";
 import { metadata, taskFromCreateRequest } from "./fixtures.js";
-import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError, readBody } from "./http.js";
+import { InvalidCursorError, json, jsonOrNotFound, pageValues, protocolError } from "./http.js";
 import { readValidatedBody, requestValidators } from "./request-validation.js";
 
 export { entity, metadata, object, task, taskFromCreateRequest } from "./fixtures.js";
@@ -360,11 +361,8 @@ export class FakeCore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
       return protocolError("limit must be between 1 and 20", "VALIDATION_ERROR", 400);
     }
-    const body = await readRecord(init);
+    const body = await readValidatedBody<EntityCheckInRequest>(init ?? {}, requestValidators.entityCheckIn);
     if (body instanceof Response) return body;
-    if (!isCheckInBody(body)) {
-      return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-    }
 
     const now = metadata(0).updated_at;
     const components: EntityComponents = { ...(body.components ?? {}) };
@@ -599,41 +597,6 @@ const promotedObjectExtraKeys = new Set([
   "version"
 ]);
 
-async function readRecord(init: RequestInit | undefined): Promise<Record<string, unknown> | Response> {
-  let value: unknown;
-  try {
-    value = await readBody<unknown>(init ?? {});
-  } catch {
-    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-  }
-  if (!isRecord(value)) {
-    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
-  }
-  return value;
-}
-
-function isCheckInBody(value: Record<string, unknown>): value is {
-  status?: string;
-  latitude?: number;
-  longitude?: number;
-  altitude_m?: number;
-  speed_m_s?: number;
-  heading_deg?: number;
-  components?: EntityComponents;
-} {
-  const allowed = new Set(["status", "latitude", "longitude", "altitude_m", "speed_m_s", "heading_deg", "components"]);
-  return (
-    Object.keys(value).every((key) => allowed.has(key)) &&
-    (value.status === undefined || isNonEmptyString(value.status)) &&
-    (value.latitude === undefined || isFiniteNumber(value.latitude)) &&
-    (value.longitude === undefined || isFiniteNumber(value.longitude)) &&
-    (value.altitude_m === undefined || isFiniteNumber(value.altitude_m)) &&
-    (value.speed_m_s === undefined || isFiniteNumber(value.speed_m_s)) &&
-    (value.heading_deg === undefined || isFiniteNumber(value.heading_deg)) &&
-    (value.components === undefined || isRecord(value.components))
-  );
-}
-
 function minimalTask(value: TaskResource): Record<string, unknown> {
   const entry: Record<string, unknown> = {
     task_id: value.task_id,
@@ -678,12 +641,4 @@ function firstRecord(...values: unknown[]): Record<string, JSONValue> | undefine
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
 }

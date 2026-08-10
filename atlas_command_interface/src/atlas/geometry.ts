@@ -2,14 +2,23 @@
 // as strict GeoJSON Feature<Point> values with strict circle properties; the map
 // renders them through a derived polygon without changing the saved payload.
 
-export type Position = [number, number, ...number[]];
+import {
+  type GeoJSONCircleFeature,
+  type GeoJSONLineString,
+  type GeoJSONPoint,
+  type GeoJSONPolygon,
+  type GeoJSONPosition,
+  type GeometryComponent,
+  isGeometryComponent
+} from "@the-drunken-coder/atlas-sdk";
 
-export type UiPoint = { type: "Point"; coordinates: Position };
-export type UiLineString = { type: "LineString"; coordinates: Position[] };
-export type UiPolygon = { type: "Polygon"; coordinates: Position[][] };
+export type Position = GeoJSONPosition;
+export type UiPoint = GeoJSONPoint;
+export type UiLineString = GeoJSONLineString;
+export type UiPolygon = GeoJSONPolygon;
 export type UiRawGeometry = UiPoint | UiLineString | UiPolygon;
-export type UiCircleFeature = { type: "Feature"; geometry: UiPoint; properties: { shape: "circle"; radius_m: number } };
-export type UiGeometry = UiRawGeometry | UiCircleFeature;
+export type UiCircleFeature = GeoJSONCircleFeature;
+export type UiGeometry = GeometryComponent;
 
 export type GeometryKind = UiGeometry["type"];
 
@@ -36,7 +45,7 @@ const CIRCLE_DISPLAY_SEGMENTS = 64;
  * undefined when the geometry is absent or not a supported geometry.
  */
 export function toUiGeometry(value: unknown): UiGeometry | undefined {
-  return geometryFromGeoJSON(value);
+  return isGeometryComponent(value) ? value : undefined;
 }
 
 /** A representative [lng, lat] point used to place markers and recenter the map. */
@@ -256,71 +265,12 @@ function positionsEqual(a: Position | undefined, b: Position | undefined): boole
   return Math.abs(a[0] - b[0]) < COORDINATE_EPSILON && Math.abs(a[1] - b[1]) < COORDINATE_EPSILON;
 }
 
-function geometryFromGeoJSON(value: unknown): UiGeometry | undefined {
-  return geometryFromRawGeoJSON(value) ?? geometryFromCircleFeature(value);
-}
-
-function geometryFromRawGeoJSON(value: unknown): UiRawGeometry | undefined {
-  if (!isRecord(value)) return undefined;
-  if (value.type === "Point" && onlyKnownKeys(value, ["coordinates", "type"]) && isPosition(value.coordinates)) {
-    return { type: "Point", coordinates: toPosition(value.coordinates) };
-  }
-  if (
-    value.type === "LineString" &&
-    onlyKnownKeys(value, ["coordinates", "type"]) &&
-    isPositionArray(value.coordinates)
-  ) {
-    return { type: "LineString", coordinates: value.coordinates.map(toPosition) };
-  }
-  if (
-    value.type === "Polygon" &&
-    onlyKnownKeys(value, ["coordinates", "type"]) &&
-    Array.isArray(value.coordinates) &&
-    value.coordinates.every(isPositionArray)
-  ) {
-    return { type: "Polygon", coordinates: value.coordinates.map((ring) => ring.map(toPosition)) };
-  }
-  return undefined;
-}
-
-function geometryFromCircleFeature(value: unknown): UiCircleFeature | undefined {
-  if (!isRecord(value)) return undefined;
-  if (value.type !== "Feature" || !onlyKnownKeys(value, ["geometry", "properties", "type"])) return undefined;
-  const geometry = geometryFromRawGeoJSON(value.geometry);
-  if (geometry?.type !== "Point") return undefined;
-  const properties = value.properties;
-  if (!isRecord(properties) || !onlyKnownKeys(properties, ["radius_m", "shape"])) return undefined;
-  if (properties.shape !== "circle" || !isFiniteNumber(properties.radius_m) || properties.radius_m <= 0)
-    return undefined;
-  return { type: "Feature", geometry, properties: { shape: "circle", radius_m: properties.radius_m } };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function onlyKnownKeys(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key));
-}
-
-function isPositionArray(value: unknown): value is Position[] {
-  return Array.isArray(value) && value.every(isPosition);
-}
-
-function isPosition(value: unknown): value is Position {
-  return Array.isArray(value) && value.length >= 2 && value.every(isFiniteNumber);
-}
-
 function isFinitePosition(value: Position): boolean {
   return value.every(isFiniteNumber);
 }
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function toPosition(value: Position): Position {
-  return [value[0], value[1], ...value.slice(2)];
 }
 
 function circleFeaturePolygon(circle: UiCircleFeature): UiPolygon {

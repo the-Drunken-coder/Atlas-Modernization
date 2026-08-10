@@ -480,12 +480,13 @@ func TestRequestValidationConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	validators := map[string]func(any) []string{
-		"EntityCreateRequest": ValidateEntityCreateRequest,
-		"EntityUpdateRequest": ValidateEntityUpdateRequest,
-		"TaskCreateRequest":   ValidateTaskCreateRequest,
-		"TaskUpdateRequest":   ValidateTaskUpdateRequest,
-		"ObjectCreateRequest": ValidateObjectCreateRequest,
-		"ObjectUpdateRequest": ValidateObjectUpdateRequest,
+		"EntityCreateRequest":  ValidateEntityCreateRequest,
+		"EntityCheckInRequest": ValidateEntityCheckInRequest,
+		"EntityUpdateRequest":  ValidateEntityUpdateRequest,
+		"TaskCreateRequest":    ValidateTaskCreateRequest,
+		"TaskUpdateRequest":    ValidateTaskUpdateRequest,
+		"ObjectCreateRequest":  ValidateObjectCreateRequest,
+		"ObjectUpdateRequest":  ValidateObjectUpdateRequest,
 	}
 
 	for _, testCase := range cases {

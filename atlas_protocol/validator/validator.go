@@ -66,6 +66,38 @@ func ValidateErrorResponse(value any) []string {
 	return validate("ErrorResponse", value)
 }
 
+func ValidateProtocolRevisionResponse(value any) []string {
+	return validate("ProtocolRevisionResponse", value)
+}
+
+func ValidateEntityCheckInRequest(value any) []string {
+	return validate("EntityCheckInRequest", value)
+}
+
+func ValidateEntityCheckInMinimalTask(value any) []string {
+	return validate("EntityCheckInMinimalTask", value)
+}
+
+func ValidateEntityCheckInFullResponse(value any) []string {
+	return validate("EntityCheckInFullResponse", value)
+}
+
+func ValidateEntityCheckInMinimalResponse(value any) []string {
+	return validate("EntityCheckInMinimalResponse", value)
+}
+
+func ValidateEntityCheckInResponse(value any) []string {
+	return validate("EntityCheckInResponse", value)
+}
+
+func ValidateFullDatasetResponse(value any) []string {
+	return validate("FullDatasetResponse", value)
+}
+
+func ValidateChangedSinceResponse(value any) []string {
+	return validate("ChangedSinceResponse", value)
+}
+
 func ValidateEntityCreateRequest(value any) []string {
 	return validate("EntityCreateRequest", value)
 }

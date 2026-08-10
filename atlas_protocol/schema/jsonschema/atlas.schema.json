@@ -3,6 +3,33 @@
   "$id": "atlas.schema.json",
   "$comment": "Atlas Protocol canonical JSON Schema source. Edit this file and run go run ./tools/generate.",
   "$defs": {
+    "ChangedSinceResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/FeedEvent"
+          },
+          "type": "array"
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "version": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "events",
+        "has_more",
+        "version"
+      ],
+      "type": "object"
+    },
     "CircleProperties": {
       "additionalProperties": false,
       "properties": {
@@ -292,6 +319,151 @@
         "entity_type"
       ],
       "type": "object"
+    },
+    "EntityCheckInFullResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "$ref": "#/$defs/EntityResource"
+        },
+        "has_more_tasks": {
+          "type": "boolean"
+        },
+        "next_task_cursor": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "task_count": {
+          "maximum": 20,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_limit": {
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/TaskResource"
+          },
+          "maxItems": 20,
+          "type": "array"
+        }
+      },
+      "required": [
+        "entity",
+        "has_more_tasks",
+        "task_count",
+        "task_limit",
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "EntityCheckInMinimalResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "$ref": "#/$defs/EntityResource"
+        },
+        "has_more_tasks": {
+          "type": "boolean"
+        },
+        "next_task_cursor": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "task_count": {
+          "maximum": 20,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_limit": {
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/EntityCheckInMinimalTask"
+          },
+          "maxItems": 20,
+          "type": "array"
+        }
+      },
+      "required": [
+        "entity",
+        "has_more_tasks",
+        "task_count",
+        "task_limit",
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "EntityCheckInMinimalTask": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "entity_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "parameters": {
+          "$ref": "#/$defs/TaskParametersComponent"
+        },
+        "status": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "task_id": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "required": [
+        "status",
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "EntityCheckInRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "altitude_m": {
+          "$ref": "#/$defs/FiniteNumber"
+        },
+        "components": {
+          "$ref": "#/$defs/EntityComponents"
+        },
+        "heading_deg": {
+          "$ref": "#/$defs/FiniteNumber",
+          "exclusiveMaximum": 360,
+          "minimum": 0,
+          "type": "number"
+        },
+        "latitude": {
+          "$ref": "#/$defs/Latitude"
+        },
+        "longitude": {
+          "$ref": "#/$defs/Longitude"
+        },
+        "speed_m_s": {
+          "$ref": "#/$defs/FiniteNumber",
+          "minimum": 0,
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "type": "object"
+    },
+    "EntityCheckInResponse": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityCheckInFullResponse"
+        },
+        {
+          "$ref": "#/$defs/EntityCheckInMinimalResponse"
+        }
+      ]
     },
     "EntityDeleteEvent": {
       "additionalProperties": false,
@@ -657,6 +829,61 @@
     },
     "FiniteNumber": {
       "type": "number"
+    },
+    "FullDatasetResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/EntityResource"
+          },
+          "type": "array"
+        },
+        "has_more_entities": {
+          "type": "boolean"
+        },
+        "has_more_objects": {
+          "type": "boolean"
+        },
+        "has_more_tasks": {
+          "type": "boolean"
+        },
+        "next_entity_cursor": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "next_object_cursor": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "next_task_cursor": {
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "objects": {
+          "items": {
+            "$ref": "#/$defs/ObjectDetailResource"
+          },
+          "type": "array"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/TaskResource"
+          },
+          "type": "array"
+        },
+        "version": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entities",
+        "has_more_entities",
+        "has_more_objects",
+        "has_more_tasks",
+        "objects",
+        "tasks",
+        "version"
+      ],
+      "type": "object"
     },
     "GeoJSONCircleFeature": {
       "additionalProperties": false,
@@ -1317,6 +1544,18 @@
     "ProtocolRevision": {
       "pattern": "^sha256:[A-Fa-f0-9]{64}$",
       "type": "string"
+    },
+    "ProtocolRevisionResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol_revision": {
+          "$ref": "#/$defs/ProtocolRevision"
+        }
+      },
+      "required": [
+        "protocol_revision"
+      ],
+      "type": "object"
     },
     "RFC3339Timestamp": {
       "format": "date-time",

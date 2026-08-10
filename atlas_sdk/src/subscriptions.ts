@@ -1,4 +1,10 @@
-import type { FeedEvent, FeedSubscribeMessage, FeedUnsubscribeMessage, ResourceType } from "./protocol.js";
+import {
+  type FeedEvent,
+  type FeedSubscribeMessage,
+  type FeedUnsubscribeMessage,
+  isResourceType,
+  type ResourceType
+} from "./protocol.js";
 import type {
   AtlasLocalDeleteWatchEvent,
   AtlasSubscription,
@@ -7,8 +13,6 @@ import type {
   ResourceOf,
   ResourceValue
 } from "./types.js";
-
-const RESOURCE_TYPES = new Set<string>(["entity", "task", "object"]);
 
 export function subscriptionMessage(
   action: "subscribe" | "unsubscribe",
@@ -183,10 +187,6 @@ export function assertResourceMatchesSubscription<TFilter extends AtlasSubscript
     case "type":
       assertResourceMatchesType(filter.resource_type, resource);
   }
-}
-
-function isResourceType(value: string): value is ResourceType {
-  return RESOURCE_TYPES.has(value);
 }
 
 function isNonEmptyString(value: string | undefined): value is string {

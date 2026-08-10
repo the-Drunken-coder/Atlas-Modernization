@@ -1,6 +1,8 @@
 import {
+  type EntityCheckInRequest,
   type EntityCreateRequest,
   type EntityUpdateRequest,
+  isEntityCheckInRequest,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,
@@ -17,6 +19,7 @@ import { protocolError, readBody } from "./http.js";
 type RequestValidator<T> = (value: unknown) => value is T;
 
 export const requestValidators = {
+  entityCheckIn: isEntityCheckInRequest,
   entityCreate: isEntityCreateRequest,
   entityUpdate: isEntityUpdateRequest,
   objectCreate: isObjectCreateRequest,
@@ -24,6 +27,7 @@ export const requestValidators = {
   taskCreate: isTaskCreateRequest,
   taskUpdate: isTaskUpdateRequest
 } satisfies {
+  entityCheckIn: RequestValidator<EntityCheckInRequest>;
   entityCreate: RequestValidator<EntityCreateRequest>;
   entityUpdate: RequestValidator<EntityUpdateRequest>;
   objectCreate: RequestValidator<ObjectCreateRequest>;

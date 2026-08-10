@@ -249,6 +249,77 @@
       "schema_valid": false,
       "valid": false,
       "value": { "size_bytes": 9007199254740992 }
+    },
+    {
+      "name": "entity check-in accepts an empty object",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {}
+    },
+    {
+      "name": "entity check-in accepts bounded telemetry and custom components",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": {
+        "status": "operational",
+        "latitude": 90,
+        "longitude": -180,
+        "altitude_m": 12.5,
+        "speed_m_s": 0,
+        "heading_deg": 359.999,
+        "components": { "custom_power": { "battery_percent": 82 } }
+      }
+    },
+    {
+      "name": "entity check-in rejects unknown fields",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "unexpected": true }
+    },
+    {
+      "name": "entity check-in rejects empty status",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "status": "" }
+    },
+    {
+      "name": "entity check-in rejects latitude outside its range",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "latitude": 90.1 }
+    },
+    {
+      "name": "entity check-in rejects longitude outside its range",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "longitude": -180.1 }
+    },
+    {
+      "name": "entity check-in rejects negative speed",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "speed_m_s": -0.1 }
+    },
+    {
+      "name": "entity check-in rejects heading at 360 degrees",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "heading_deg": 360 }
+    },
+    {
+      "name": "entity check-in rejects unknown component keys",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "components": { "power": { "battery_percent": 82 } } }
     }
   ]
 }

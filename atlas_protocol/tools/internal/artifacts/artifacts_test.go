@@ -253,12 +253,21 @@ func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testi
 	}
 
 	for _, name := range []string{
+		"ProtocolRevisionResponse",
+		"EntityCheckInRequest",
+		"EntityCheckInMinimalTask",
+		"EntityCheckInFullResponse",
+		"EntityCheckInMinimalResponse",
+		"EntityCheckInResponse",
+		"FullDatasetResponse",
+		"ChangedSinceResponse",
 		"EntityResource",
 		"TaskResource",
 		"ObjectResource",
 		"ObjectDetailResource",
 		"FeedEvent",
 		"FeedHandshakeMessage",
+		"GeometryComponent",
 		"JSONValue",
 		"ProtocolRevision",
 		"ResourceType",
@@ -268,6 +277,9 @@ func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testi
 		if !strings.Contains(source, want) {
 			t.Fatalf("generated TypeScript missing %q", want)
 		}
+	}
+	if want := `export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];`; !strings.Contains(source, want) {
+		t.Fatalf("generated TypeScript missing %q", want)
 	}
 
 	for _, want := range []string{
@@ -281,6 +293,20 @@ func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testi
 		if !strings.Contains(source, want) {
 			t.Fatalf("generated TypeScript missing selected-root reuse %q", want)
 		}
+	}
+}
+
+func TestResourceTypeValuesSourcePreservesSchemaOrder(t *testing.T) {
+	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
+		"ResourceType": {"enum": []any{"task", "entity", "object"}},
+	}}
+	source, err := resourceTypeValuesSource(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `export const RESOURCE_TYPE_VALUES = ["task", "entity", "object"] as const satisfies readonly ResourceType[];`
+	if !strings.Contains(source, want) {
+		t.Fatalf("resource type values = %q, want %q", source, want)
 	}
 }
 

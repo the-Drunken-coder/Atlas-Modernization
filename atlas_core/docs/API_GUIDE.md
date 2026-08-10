@@ -287,6 +287,8 @@ Check-in body is optional. When present, it can include:
 }
 ```
 
+The body is the Protocol `EntityCheckInRequest`: unknown fields are rejected; `status` must be non-empty; latitude is `-90` through `90`; longitude is `-180` through `180`; altitude must be finite; speed cannot be negative; heading is at least `0` and less than `360`; and `components` must satisfy the canonical `EntityComponents` contract. An empty body is equivalent to `{}`. Malformed or trailing JSON returns `INVALID_JSON`; a structurally invalid body returns `VALIDATION_ERROR`. Body rejection happens before Core reads tasks or writes the entity.
+
 Check-in response:
 
 ```json
@@ -300,7 +302,7 @@ Check-in response:
 }
 ```
 
-Core validates and reads the requested task page before committing the heartbeat, status, or telemetry update. A malformed `task_cursor` or task-read failure therefore returns an error without changing the entity components or version and without publishing a feed event. The task read and entity write use separate transactions, so the returned task page is the snapshot selected immediately before the entity update; concurrent task changes may appear on the next check-in.
+Core validates the request body, then validates and reads the requested task page before committing the heartbeat, status, or telemetry update. A body rejection, malformed `task_cursor`, or task-read failure therefore returns an error without changing the entity components or version and without publishing a feed event. The task read and entity write use separate transactions, so the returned task page is the snapshot selected immediately before the entity update; concurrent task changes may appear on the next check-in.
 
 ## Tasks
 

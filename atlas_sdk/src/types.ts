@@ -1,9 +1,12 @@
 import type {
+  EntityCheckInFullResponse,
+  EntityCheckInMinimalResponse,
+  EntityCheckInResponse,
   EntityComponents,
   EntityResource,
   FeedEvent,
+  FeedSubscribeMessage,
   JSONValue,
-  ObjectDetailResource,
   ObjectResource,
   ResourceType,
   TaskResource
@@ -26,11 +29,9 @@ export type WebSocketEventType = "open" | "message" | "close" | "error";
 export type WebSocketEvent = { data?: unknown };
 export type WebSocketListener = (event: WebSocketEvent) => void;
 
-export type AtlasSubscription =
-  | { filter: "all" }
-  | { filter: "id"; resource_type: ResourceType; id: string }
-  | { filter: "type"; resource_type: ResourceType }
-  | { filter: "tasks_for_entity"; entity_id: string };
+type WithoutAction<T extends { action: unknown }> = T extends unknown ? Omit<T, "action"> : never;
+
+export type AtlasSubscription = WithoutAction<FeedSubscribeMessage>;
 
 export type ReadOptions = {
   fresh?: boolean;
@@ -79,38 +80,9 @@ type EntityCheckInBaseOptions = {
 export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = EntityCheckInBaseOptions &
   (TFields extends "minimal" ? { fields: "minimal" } : { fields?: TFields });
 
-export type EntityCheckInBody = {
-  status?: string;
-  latitude?: number;
-  longitude?: number;
-  altitude_m?: number;
-  speed_m_s?: number;
-  heading_deg?: number;
-  components?: EntityComponents;
-};
-
-export type EntityCheckInMinimalTask = {
-  task_id: string;
-  status: string;
-  entity_id?: string;
-  command_id?: string;
-  parameters?: Record<string, JSONValue>;
-};
-
-export type EntityCheckInResponse<
-  TTask extends TaskResource | EntityCheckInMinimalTask = TaskResource | EntityCheckInMinimalTask
-> = {
-  entity: EntityResource;
-  tasks: TTask[];
-  task_count: number;
-  task_limit: number;
-  has_more_tasks: boolean;
-  next_task_cursor?: string;
-};
-
 export type EntityCheckInMethod = {
-  (id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
-  (id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInResponse<TaskResource>>;
+  (id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
+  (id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
   (id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
 };
 
@@ -144,26 +116,6 @@ export type SyncSnapshot = {
 };
 
 export type SyncSnapshotCallback = (snapshot: SyncSnapshot) => void;
-
-export type ChangedSinceResponse = {
-  events: FeedEvent[];
-  version: number;
-  has_more: boolean;
-  next_cursor?: string;
-};
-
-export type FullDatasetResponse = {
-  entities: EntityResource[];
-  tasks: TaskResource[];
-  objects: ObjectDetailResource[];
-  version: number;
-  has_more_entities: boolean;
-  has_more_tasks: boolean;
-  has_more_objects: boolean;
-  next_entity_cursor?: string;
-  next_task_cursor?: string;
-  next_object_cursor?: string;
-};
 
 export type ResourceByType = {
   entity: EntityResource;

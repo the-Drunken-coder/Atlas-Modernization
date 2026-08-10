@@ -1,16 +1,13 @@
 import type {
+  EntityCheckInMinimalResponse,
   EntityCheckInMinimalTask,
   EntityCheckInOptions,
-  EntityCheckInResponse,
   TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AssetCheckInReport, type AtlasAssetClient, AtlasAssetRuntime } from "../src/index.js";
 
-type CheckIn = (
-  id: string,
-  options: EntityCheckInOptions<"minimal">
-) => Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
+type CheckIn = (id: string, options: EntityCheckInOptions<"minimal">) => Promise<EntityCheckInMinimalResponse>;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -167,7 +164,7 @@ describe("AtlasAssetRuntime", () => {
   });
 
   it("serializes concurrent manual cycles", async () => {
-    const first = deferred<EntityCheckInResponse<EntityCheckInMinimalTask>>();
+    const first = deferred<EntityCheckInMinimalResponse>();
     const checkIn = vi
       .fn<CheckIn>()
       .mockImplementationOnce(() => first.promise)
@@ -297,13 +294,9 @@ function command(taskId: string, commandId: string): EntityCheckInMinimalTask {
   return { task_id: taskId, status: "pending", entity_id: "asset-1", command_id: commandId, parameters: { speed: 4 } };
 }
 
-function page(
-  tasks: EntityCheckInMinimalTask[],
-  hasMore = false,
-  cursor?: string
-): EntityCheckInResponse<EntityCheckInMinimalTask> {
+function page(tasks: EntityCheckInMinimalTask[], hasMore = false, cursor?: string): EntityCheckInMinimalResponse {
   return {
-    entity: {} as EntityCheckInResponse["entity"],
+    entity: {} as EntityCheckInMinimalResponse["entity"],
     tasks,
     task_count: tasks.length,
     task_limit: 20,

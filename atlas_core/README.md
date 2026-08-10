@@ -233,6 +233,8 @@ Key environment variables:
 
 `POST /entities/{entity_id}/checkin` supports: `status_filter` (default `pending,acknowledged`), `limit` (1–20, default 10), `task_cursor`, `fields=minimal`, `since` (RFC3339).
 
+Its optional body is the Protocol `EntityCheckInRequest`; an empty body is `{}`. Malformed JSON returns `INVALID_JSON`, while unknown fields, invalid ranges, and invalid components return `VALIDATION_ERROR` before task reads or entity writes.
+
 ## Pagination and Limits
 
 List endpoints use `limit` and opaque `cursor` query params with defaults and clamping in the action layer. `offset` is rejected with `400 VALIDATION_ERROR`.

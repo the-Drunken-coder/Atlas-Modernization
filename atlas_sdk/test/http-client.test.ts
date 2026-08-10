@@ -619,6 +619,24 @@ describe("AtlasClient HTTP", () => {
     );
   });
 
+  it("supports a check-in with no reported status, telemetry, or components", async () => {
+    const core = new FakeCore();
+    const checkedIn = core.upsertEntity(entity("asset-empty-checkin"));
+    let requestBody: unknown;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (new URL(String(url)).pathname.endsWith("/checkin")) {
+        requestBody = JSON.parse(String(init?.body));
+      }
+      return core.fetch(String(url), init);
+    };
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    const response = await client.entities.checkIn(checkedIn.entity_id);
+
+    expect(requestBody).toEqual({});
+    expect(response).toMatchObject({ entity: { entity_id: checkedIn.entity_id }, tasks: [], task_count: 0 });
+  });
+
   it("supports minimal check-in task payloads without requiring task resource metadata", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-minimal-checkin"));

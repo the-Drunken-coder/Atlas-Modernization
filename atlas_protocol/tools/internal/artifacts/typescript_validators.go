@@ -9,6 +9,14 @@ import (
 
 var runtimeValidatorTypeNames = []string{
 	"CommandCatalog",
+	"ProtocolRevisionResponse",
+	"EntityCheckInRequest",
+	"EntityCheckInMinimalTask",
+	"EntityCheckInFullResponse",
+	"EntityCheckInMinimalResponse",
+	"EntityCheckInResponse",
+	"FullDatasetResponse",
+	"ChangedSinceResponse",
 	"EntityCreateRequest",
 	"EntityUpdateRequest",
 	"ObjectCreateRequest",
@@ -22,6 +30,7 @@ var runtimeValidatorTypeNames = []string{
 	"FeedEvent",
 	"FeedHandshakeMessage",
 	"FeedSubscriptionsReadyMessage",
+	"GeometryComponent",
 	"JSONValue",
 	"ProtocolRevision",
 	"ResourceType",

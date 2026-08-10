@@ -2,7 +2,16 @@ import { type CacheResourceOptions, ResourceCache } from "./cache.js";
 import { sanitizeErrorMessage } from "./error-sanitizer.js";
 import { assertRevision, FeedConnectionManager } from "./feed-connection.js";
 import { AtlasAPIError, type HttpTransport, type ResponseValidator } from "./http.js";
-import type { EntityResource, FeedEvent, ObjectDetailResource, ResourceType, TaskResource } from "./protocol.js";
+import type {
+  EntityCheckInRequest,
+  EntityCheckInResponse,
+  EntityResource,
+  FeedEvent,
+  FullDatasetResponse,
+  ObjectDetailResource,
+  ResourceType,
+  TaskResource
+} from "./protocol.js";
 import {
   assertResourceMatchesSubscription,
   covers,
@@ -21,10 +30,7 @@ import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
   AtlasSubscription,
   AtlasWatchEvent,
-  EntityCheckInBody,
-  EntityCheckInResponse,
   FullDatasetCursors,
-  FullDatasetResponse,
   ReadOptions,
   ResourceForSubscription,
   ResourceOf,
@@ -436,7 +442,7 @@ export class SyncEngine {
   async checkInEntity(
     id: string,
     path: string,
-    body: EntityCheckInBody,
+    body: EntityCheckInRequest,
     fields: "full" | "minimal",
     ifMatchVersion?: number
   ): Promise<EntityCheckInResponse> {

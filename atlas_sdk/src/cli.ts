@@ -9,8 +9,9 @@ import {
   type TaskCreateRequest
 } from "./index.js";
 import { PACKAGE_BIN, PACKAGE_NAME } from "./package-metadata.js";
+import { isResourceType as isProtocolResourceType, RESOURCE_TYPE_VALUES } from "./protocol.js";
 
-export { PACKAGE_BIN, PACKAGE_NAME };
+export { PACKAGE_BIN, PACKAGE_NAME, RESOURCE_TYPE_VALUES };
 
 export type CLIIO = {
   stdout: { write(data: string): void };
@@ -34,8 +35,6 @@ type CLICommand =
 
 const usage =
   "usage: atlas [--base-url <url>] [--api-key <key>] entities get <id> | atlas tasks create <json> | atlas watch --subscribe <filter> --follow\n";
-export const RESOURCE_TYPE_VALUES = ["entity", "task", "object"] as const satisfies readonly ResourceType[];
-const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPE_VALUES);
 const CLI_REQUEST_TIMEOUT_MS = 10_000;
 const CLI_ENTRYPOINT_NAMES = buildCLIEntrypointNames();
 
@@ -192,7 +191,7 @@ export function parseFilter(raw: string): AtlasSubscription {
 }
 
 export function isResourceType(value: string | undefined): value is ResourceType {
-  return value !== undefined && RESOURCE_TYPE_SET.has(value);
+  return isProtocolResourceType(value);
 }
 
 function parseTaskCreateBody(value: unknown): TaskCreateRequest {

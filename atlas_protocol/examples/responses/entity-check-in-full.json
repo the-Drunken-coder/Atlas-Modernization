@@ -1,0 +1,30 @@
+{
+  "entity": {
+    "entity_id": "asset-1",
+    "entity_type": "asset",
+    "subtype": null,
+    "alias": null,
+    "components": {},
+    "metadata": {
+      "created_at": "2026-08-10T12:00:00Z",
+      "updated_at": "2026-08-10T12:01:00Z",
+      "version": 2
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "task-1",
+      "status": "pending",
+      "entity_id": "asset-1",
+      "components": {},
+      "metadata": {
+        "created_at": "2026-08-10T12:00:30Z",
+        "updated_at": "2026-08-10T12:00:30Z",
+        "version": 1
+      }
+    }
+  ],
+  "task_count": 1,
+  "task_limit": 10,
+  "has_more_tasks": false
+}

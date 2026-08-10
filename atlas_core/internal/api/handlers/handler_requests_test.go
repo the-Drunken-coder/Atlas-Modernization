@@ -34,6 +34,80 @@ func TestCreateEntityRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeProtocolRequestBodyAllowsEmptyCheckInBody(t *testing.T) {
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/entities/entity-1/checkin", nil)
+	var decoded protocol.EntityCheckInRequest
+
+	if !handler.decodeProtocolRequestBody(
+		recorder,
+		request,
+		&decoded,
+		true,
+		protocol.ValidateEntityCheckInRequest,
+	) {
+		t.Fatalf("empty check-in body rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestEntityCheckInRejectsProtocolInvalidBodyBeforeActions(t *testing.T) {
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := withURLParam(
+		routeRequest(http.MethodPost, "/entities/entity-1/checkin", `{"latitude":91}`),
+		"entity_id",
+		"entity-1",
+	)
+
+	handler.EntityCheckin(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+	}
+}
+
+func TestEntityCheckInRejectsMalformedJSON(t *testing.T) {
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := withURLParam(
+		routeRequest(http.MethodPost, "/entities/entity-1/checkin", `{"latitude":`),
+		"entity_id",
+		"entity-1",
+	)
+
+	handler.EntityCheckin(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	if body := decodeBody(t, recorder); body["error_code"] != "INVALID_JSON" {
+		t.Fatalf("error_code = %v, want INVALID_JSON", body["error_code"])
+	}
+}
+
+func TestEntityCheckInRejectsTrailingJSON(t *testing.T) {
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := withURLParam(
+		routeRequest(http.MethodPost, "/entities/entity-1/checkin", `{}{"status":"online"}`),
+		"entity_id",
+		"entity-1",
+	)
+
+	handler.EntityCheckin(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	if body := decodeBody(t, recorder); body["error_code"] != "INVALID_JSON" {
+		t.Fatalf("error_code = %v, want INVALID_JSON", body["error_code"])
+	}
+}
+
 func TestCreateEntityRejectsTrailingJSON(t *testing.T) {
 	handler := newTestHandler()
 	rec := httptest.NewRecorder()
@@ -248,12 +322,13 @@ func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 		handle func(*Handler, http.ResponseWriter, *http.Request)
 	}
 	endpoints := map[string]endpoint{
-		"EntityCreateRequest": {method: http.MethodPost, path: "/entities", handle: (*Handler).CreateEntity},
-		"EntityUpdateRequest": {method: http.MethodPatch, path: "/entities/entity-1", handle: (*Handler).UpdateEntity},
-		"TaskCreateRequest":   {method: http.MethodPost, path: "/tasks", handle: (*Handler).CreateTask},
-		"TaskUpdateRequest":   {method: http.MethodPatch, path: "/tasks/task-1", handle: (*Handler).UpdateTask},
-		"ObjectCreateRequest": {method: http.MethodPost, path: "/objects", handle: (*Handler).CreateObject},
-		"ObjectUpdateRequest": {method: http.MethodPatch, path: "/objects/object-1", handle: (*Handler).UpdateObject},
+		"EntityCreateRequest":  {method: http.MethodPost, path: "/entities", handle: (*Handler).CreateEntity},
+		"EntityCheckInRequest": {method: http.MethodPost, path: "/entities/entity-1/checkin", handle: (*Handler).EntityCheckin},
+		"EntityUpdateRequest":  {method: http.MethodPatch, path: "/entities/entity-1", handle: (*Handler).UpdateEntity},
+		"TaskCreateRequest":    {method: http.MethodPost, path: "/tasks", handle: (*Handler).CreateTask},
+		"TaskUpdateRequest":    {method: http.MethodPatch, path: "/tasks/task-1", handle: (*Handler).UpdateTask},
+		"ObjectCreateRequest":  {method: http.MethodPost, path: "/objects", handle: (*Handler).CreateObject},
+		"ObjectUpdateRequest":  {method: http.MethodPatch, path: "/objects/object-1", handle: (*Handler).UpdateObject},
 	}
 	for _, testCase := range cases {
 		if testCase.Valid {
@@ -323,17 +398,17 @@ func TestEntityCheckinRequestComponentUpdate(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 30, 0, 0, time.FixedZone("EDT", -4*60*60))
 	wantTime := now.UTC().Format(time.RFC3339)
 
-	got := entityCheckinRequest{
+	got := checkinComponentUpdate(protocol.EntityCheckInRequest{
 		Status:     &status,
 		Latitude:   &latitude,
 		HeadingDeg: &heading,
 		Components: map[string]interface{}{
-			"custom": "preserved",
+			"custom_test": "preserved",
 		},
-	}.componentUpdate(now)
+	}, now)
 
-	if got["custom"] != "preserved" {
-		t.Fatalf("custom component = %v, want preserved", got["custom"])
+	if got["custom_test"] != "preserved" {
+		t.Fatalf("custom component = %v, want preserved", got["custom_test"])
 	}
 
 	statusComponent, ok := got["status"].(map[string]interface{})
@@ -594,19 +669,22 @@ func TestChangedSinceSerializesOrderedFeedEvents(t *testing.T) {
 
 func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
 	tests := []struct {
-		name string
-		resp interface{}
-		keys []string
+		name     string
+		resp     interface{}
+		keys     []string
+		validate func(any) []string
 	}{
 		{
-			name: "full dataset",
-			resp: &fullDatasetResponse{},
-			keys: []string{"has_more_entities", "has_more_tasks", "has_more_objects"},
+			name:     "full dataset",
+			resp:     &protocol.FullDatasetResponse{Entities: []protocol.EntityResource{}, Tasks: []protocol.TaskResource{}, Objects: []protocol.ObjectDetailResource{}},
+			keys:     []string{"has_more_entities", "has_more_tasks", "has_more_objects"},
+			validate: protocol.ValidateFullDatasetResponse,
 		},
 		{
-			name: "changed since",
-			resp: &changedSinceResponse{Version: 1},
-			keys: []string{"has_more"},
+			name:     "changed since",
+			resp:     &protocol.ChangedSinceResponse{Events: []protocol.FeedEvent{}, Version: 1},
+			keys:     []string{"has_more"},
+			validate: protocol.ValidateChangedSinceResponse,
 		},
 	}
 
@@ -615,6 +693,9 @@ func TestQueryResponsesIncludeFalseHasMoreFlags(t *testing.T) {
 			raw, err := json.Marshal(tt.resp)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
+			}
+			if validationErrors := tt.validate(json.RawMessage(raw)); len(validationErrors) > 0 {
+				t.Fatalf("response failed Atlas Protocol validation: %v", validationErrors)
 			}
 			var body map[string]interface{}
 			if err := json.Unmarshal(raw, &body); err != nil {

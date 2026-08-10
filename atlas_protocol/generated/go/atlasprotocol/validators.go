@@ -36,6 +36,38 @@ func ValidateErrorResponse(value any) []string {
 	return validator.ValidateErrorResponse(value)
 }
 
+func ValidateProtocolRevisionResponse(value any) []string {
+	return validator.ValidateProtocolRevisionResponse(value)
+}
+
+func ValidateEntityCheckInRequest(value any) []string {
+	return validator.ValidateEntityCheckInRequest(value)
+}
+
+func ValidateEntityCheckInMinimalTask(value any) []string {
+	return validator.ValidateEntityCheckInMinimalTask(value)
+}
+
+func ValidateEntityCheckInFullResponse(value any) []string {
+	return validator.ValidateEntityCheckInFullResponse(value)
+}
+
+func ValidateEntityCheckInMinimalResponse(value any) []string {
+	return validator.ValidateEntityCheckInMinimalResponse(value)
+}
+
+func ValidateEntityCheckInResponse(value any) []string {
+	return validator.ValidateEntityCheckInResponse(value)
+}
+
+func ValidateFullDatasetResponse(value any) []string {
+	return validator.ValidateFullDatasetResponse(value)
+}
+
+func ValidateChangedSinceResponse(value any) []string {
+	return validator.ValidateChangedSinceResponse(value)
+}
+
 func ValidateEntityCreateRequest(value any) []string {
 	return validator.ValidateEntityCreateRequest(value)
 }

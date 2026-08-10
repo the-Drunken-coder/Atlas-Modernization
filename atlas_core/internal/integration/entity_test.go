@@ -2,9 +2,12 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
+
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // TestHealthEndpoint tests the /health endpoint
@@ -572,6 +575,13 @@ func TestEntityCheckin(t *testing.T) {
 	var result map[string]interface{}
 	if err := ParseResponse(resp, &result); err != nil {
 		t.Fatalf("Failed to parse checkin response: %v", err)
+	}
+	encodedResult, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Failed to re-encode checkin response: %v", err)
+	}
+	if validationErrors := protocol.ValidateEntityCheckInMinimalResponse(json.RawMessage(encodedResult)); len(validationErrors) > 0 {
+		t.Fatalf("Check-in response failed Atlas Protocol validation: %v", validationErrors)
 	}
 
 	rawEntity, hasEntity := result["entity"]

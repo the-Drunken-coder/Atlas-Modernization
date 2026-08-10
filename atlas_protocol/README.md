@@ -4,7 +4,7 @@ This is the buildable Atlas Protocol module. It owns reusable data-shape contrac
 
 The canonical schema source is `schema/jsonschema/atlas.schema.json`.
 
-The implemented protocol slice covers entity, task, object metadata, and object detail resources; all six create/update request DTOs; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client and handshake messages; generated Go validators; generated TypeScript types and runtime predicates for requests, resources, feed contracts, and shared values; and revision metadata.
+The implemented protocol slice covers entity, task, object metadata, and object detail resources; all six create/update request DTOs plus entity check-in; full/minimal check-in, full-dataset, changed-since, and revision responses; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client and handshake messages; generated Go validators; generated TypeScript types, runtime predicates, and finite enum values; and revision metadata.
 
 ## Workflow
 
@@ -30,8 +30,8 @@ go test ./...
 ```
 
 `conformance/request-validation.json` is the shared request corpus used by the
-canonical schema, Go validation, generated TypeScript predicates, and all six
-Core create/update request boundaries. Cases separate `schema_valid` from full
+canonical schema, Go validation, generated TypeScript predicates, and all seven
+Core create/update/check-in request boundaries. Cases separate `schema_valid` from full
 runtime `valid` because polygon closure and aggregate position limits are
 semantic checks that draft 2020-12 JSON Schema cannot express.
 

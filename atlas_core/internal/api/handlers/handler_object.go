@@ -34,7 +34,7 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
 	var req createObjectRequest
-	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateObjectCreateRequest) {
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateObjectCreateRequest) {
 		return
 	}
 	if len(req.Bucket) > 0 {
@@ -74,7 +74,7 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
 	var req updateObjectRequest
-	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateObjectUpdateRequest) {
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateObjectUpdateRequest) {
 		return
 	}
 	if len(req.Bucket) > 0 {

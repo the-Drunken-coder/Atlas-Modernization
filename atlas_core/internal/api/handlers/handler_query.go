@@ -10,31 +10,11 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-type fullDatasetResponse struct {
-	Entities         []*serializers.EntityResponse    `json:"entities"`
-	Tasks            []*serializers.TaskResponse      `json:"tasks"`
-	Objects          []*protocol.ObjectDetailResource `json:"objects"`
-	Version          int64                            `json:"version"`
-	HasMoreEntities  bool                             `json:"has_more_entities"`
-	HasMoreTasks     bool                             `json:"has_more_tasks"`
-	HasMoreObjects   bool                             `json:"has_more_objects"`
-	NextEntityCursor string                           `json:"next_entity_cursor,omitempty"`
-	NextTaskCursor   string                           `json:"next_task_cursor,omitempty"`
-	NextObjectCursor string                           `json:"next_object_cursor,omitempty"`
-}
-
-type changedSinceResponse struct {
-	Events     []protocol.FeedEvent `json:"events"`
-	Version    int64                `json:"version"`
-	HasMore    bool                 `json:"has_more"`
-	NextCursor string               `json:"next_cursor,omitempty"`
-}
-
-func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetResponse {
+func serializeFullDatasetResult(result *actions.FullDatasetResult) *protocol.FullDatasetResponse {
 	if result == nil {
 		return nil
 	}
-	return &fullDatasetResponse{
+	return &protocol.FullDatasetResponse{
 		Entities:         serializers.SerializeEntities(result.Entities),
 		Tasks:            serializers.SerializeTasks(result.Tasks),
 		Objects:          serializers.SerializeObjects(result.Objects),
@@ -48,12 +28,16 @@ func serializeFullDatasetResult(result *actions.FullDatasetResult) *fullDatasetR
 	}
 }
 
-func serializeChangedSinceResult(result *actions.ChangedSinceResult) *changedSinceResponse {
+func serializeChangedSinceResult(result *actions.ChangedSinceResult) *protocol.ChangedSinceResponse {
 	if result == nil {
 		return nil
 	}
-	return &changedSinceResponse{
-		Events:     result.Events,
+	events := result.Events
+	if events == nil {
+		events = []protocol.FeedEvent{}
+	}
+	return &protocol.ChangedSinceResponse{
+		Events:     events,
 		Version:    result.Version,
 		HasMore:    result.HasMore,
 		NextCursor: result.NextCursor,
