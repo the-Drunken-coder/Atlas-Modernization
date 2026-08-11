@@ -240,7 +240,7 @@ func TestEntityCheckInResponseVariantsConformToProtocol(t *testing.T) {
 		TaskID:    "task-1",
 		Status:    "pending",
 		EntityID:  &entityID,
-		JSON:      []byte(`{"components":{"command":{"id":"move","type":"move"}}}`),
+		JSON:      []byte(`{"components":{"command":{"id":"move","type":"move","parameters":{"latitude":100}}}}`),
 		CreatedAt: now,
 		UpdatedAt: now,
 		Version:   2,

@@ -642,7 +642,7 @@ describe("AtlasClient HTTP", () => {
     core.upsertEntity(entity("asset-minimal-checkin"));
     core.upsertTask({
       ...task("task-minimal-checkin", "asset-minimal-checkin"),
-      components: { command: { id: "move_to", parameters: { latitude: 1 } } }
+      components: { command: { id: "move_to", parameters: { latitude: 100 } } }
     });
     core.upsertTask({
       ...task("task-minimal-target-checkin", "asset-minimal-checkin"),
@@ -662,7 +662,7 @@ describe("AtlasClient HTTP", () => {
         status: "pending",
         entity_id: "asset-minimal-checkin",
         command_id: "move_to",
-        parameters: { latitude: 1 }
+        parameters: { latitude: 100 }
       },
       {
         task_id: "task-minimal-target-checkin",
@@ -695,7 +695,11 @@ describe("AtlasClient HTTP", () => {
       method: "POST",
       body: "{"
     });
-    await expect(malformed.json()).resolves.toMatchObject({ error_code: "INVALID_JSON" });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toMatchObject({
+      success: false,
+      error_code: "INVALID_JSON"
+    });
   });
 
   it("exposes one-page query helpers without mutating sync state", async () => {

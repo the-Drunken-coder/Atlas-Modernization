@@ -273,6 +273,22 @@
       }
     },
     {
+      "name": "entity check-in rejects an unclosed polygon",
+      "definition": "EntityCheckInRequest",
+      "schema_valid": true,
+      "valid": false,
+      "value": {
+        "components": {
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [[0,0],[1,0],[1,1],[0,1]]
+            ]
+          }
+        }
+      }
+    },
+    {
       "name": "entity check-in rejects unknown fields",
       "definition": "EntityCheckInRequest",
       "schema_valid": false,

@@ -408,7 +408,10 @@
           "$ref": "#/$defs/NonEmptyString"
         },
         "parameters": {
-          "$ref": "#/$defs/TaskParametersComponent"
+          "additionalProperties": {
+            "$ref": "#/$defs/JSONValue"
+          },
+          "type": "object"
         },
         "status": {
           "$ref": "#/$defs/NonEmptyString"

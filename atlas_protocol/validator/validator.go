@@ -751,7 +751,7 @@ func semanticErrors(definition string, value any) []string {
 		return geometrySemanticErrors(value, "")
 	case "EntityComponents":
 		return componentGeometrySemanticErrors(value, "geometry")
-	case "EntityBlob", "EntityResource", "EntityCreateRequest", "EntityUpdateRequest":
+	case "EntityBlob", "EntityResource", "EntityCreateRequest", "EntityCheckInRequest", "EntityUpdateRequest":
 		return resourceGeometrySemanticErrors(value)
 	case "FeedEvent":
 		return feedEventGeometrySemanticErrors(value)
