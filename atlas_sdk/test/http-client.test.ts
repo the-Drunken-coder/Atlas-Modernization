@@ -682,10 +682,20 @@ describe("AtlasClient HTTP", () => {
     core.upsertEntity(entity("asset-invalid-checkin"));
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
+    await expect(client.entities.checkIn("asset-invalid-checkin", { status: "" } as never)).rejects.toMatchObject({
+      status: 400,
+      errorCode: "VALIDATION_ERROR"
+    });
     await expect(client.entities.checkIn("asset-invalid-checkin", { since: "not-a-date" })).rejects.toMatchObject({
       status: 400,
       errorCode: "VALIDATION_ERROR"
     });
+
+    const malformed = await core.fetch("http://atlas.test/entities/asset-invalid-checkin/checkin", {
+      method: "POST",
+      body: "{"
+    });
+    await expect(malformed.json()).resolves.toMatchObject({ error_code: "INVALID_JSON" });
   });
 
   it("exposes one-page query helpers without mutating sync state", async () => {

@@ -82,6 +82,15 @@ func TestRequestValidationConformance(t *testing.T) {
 				}
 			}
 			requireHTTPStatus(t, response, want, testCase.Name)
+			if !testCase.Valid && testCase.Definition == "EntityCheckInRequest" {
+				var errorBody map[string]interface{}
+				if err := ParseResponse(response, &errorBody); err != nil {
+					t.Fatalf("decode invalid check-in response: %v", err)
+				}
+				if errorBody["error_code"] != "VALIDATION_ERROR" {
+					t.Fatalf("error_code = %v, want VALIDATION_ERROR", errorBody["error_code"])
+				}
+			}
 		})
 	}
 }

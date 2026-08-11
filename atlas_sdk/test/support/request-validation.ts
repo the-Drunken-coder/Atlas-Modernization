@@ -2,6 +2,7 @@ import {
   type EntityCheckInRequest,
   type EntityCreateRequest,
   type EntityUpdateRequest,
+  type ErrorCode,
   isEntityCheckInRequest,
   isEntityCreateRequest,
   isEntityUpdateRequest,
@@ -36,7 +37,11 @@ export const requestValidators = {
   taskUpdate: RequestValidator<TaskUpdateRequest>;
 };
 
-export async function readValidatedBody<T>(init: RequestInit, validate: RequestValidator<T>): Promise<T | Response> {
+export async function readValidatedBody<T>(
+  init: RequestInit,
+  validate: RequestValidator<T>,
+  validationErrorCode: ErrorCode = "INVALID_JSON"
+): Promise<T | Response> {
   let value: unknown;
   try {
     value = await readBody<unknown>(init);
@@ -44,7 +49,7 @@ export async function readValidatedBody<T>(init: RequestInit, validate: RequestV
     return protocolError("Invalid JSON body", "INVALID_JSON", 400);
   }
   if (!validate(value)) {
-    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+    return protocolError("Invalid JSON body", validationErrorCode, 400);
   }
   return value;
 }

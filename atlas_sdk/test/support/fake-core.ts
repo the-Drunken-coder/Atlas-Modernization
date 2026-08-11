@@ -361,7 +361,11 @@ export class FakeCore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
       return protocolError("limit must be between 1 and 20", "VALIDATION_ERROR", 400);
     }
-    const body = await readValidatedBody<EntityCheckInRequest>(init ?? {}, requestValidators.entityCheckIn);
+    const body = await readValidatedBody<EntityCheckInRequest>(
+      init ?? {},
+      requestValidators.entityCheckIn,
+      "VALIDATION_ERROR"
+    );
     if (body instanceof Response) return body;
 
     const now = metadata(0).updated_at;

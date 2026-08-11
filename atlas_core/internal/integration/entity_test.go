@@ -563,6 +563,32 @@ func TestEntityCheckin(t *testing.T) {
 		"altitude_m": 0.0,
 	}
 
+	resp, err = client.Post(ctx, "/entities/"+entityID+"/checkin?status_filter=pending,acknowledged&limit=10&fields=full", checkinPayload)
+	if err != nil {
+		t.Fatalf("Failed to perform full checkin: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "POST /entities/{id}/checkin (full)")
+	var fullResult protocol.EntityCheckInFullResponse
+	if err := ParseResponse(resp, &fullResult); err != nil {
+		t.Fatalf("Failed to parse full checkin response: %v", err)
+	}
+	encodedFullResult, err := json.Marshal(fullResult)
+	if err != nil {
+		t.Fatalf("Failed to re-encode full checkin response: %v", err)
+	}
+	if validationErrors := protocol.ValidateEntityCheckInFullResponse(json.RawMessage(encodedFullResult)); len(validationErrors) > 0 {
+		t.Fatalf("Full check-in response failed Atlas Protocol validation: %v", validationErrors)
+	}
+	if len(fullResult.Tasks) != 1 {
+		t.Fatalf("Expected one task in full checkin response, got %d", len(fullResult.Tasks))
+	}
+	if fullResult.Tasks[0].Metadata.Version == 0 {
+		t.Fatal("Expected full task metadata")
+	}
+	if fullResult.TaskCount != 1 || fullResult.TaskLimit != 10 {
+		t.Fatalf("Unexpected full task pagination: count=%d limit=%d", fullResult.TaskCount, fullResult.TaskLimit)
+	}
+
 	resp, err = client.Post(ctx, "/entities/"+entityID+"/checkin?status_filter=pending,acknowledged&limit=10&fields=minimal", checkinPayload)
 	if err != nil {
 		t.Fatalf("Failed to checkin: %v", err)
