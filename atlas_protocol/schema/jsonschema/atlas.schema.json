@@ -5,6 +5,17 @@
   "$defs": {
     "ChangedSinceResponse": {
       "additionalProperties": false,
+      "if": {
+        "properties": {
+          "has_more": {
+            "const": true
+          }
+        },
+        "required": [
+          "has_more"
+        ],
+        "type": "object"
+      },
       "properties": {
         "events": {
           "items": {
@@ -28,6 +39,17 @@
         "has_more",
         "version"
       ],
+      "then": {
+        "properties": {
+          "next_cursor": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "required": [
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "type": "object"
     },
     "CircleProperties": {
@@ -322,6 +344,17 @@
     },
     "EntityCheckInFullResponse": {
       "additionalProperties": false,
+      "if": {
+        "properties": {
+          "has_more_tasks": {
+            "const": true
+          }
+        },
+        "required": [
+          "has_more_tasks"
+        ],
+        "type": "object"
+      },
       "properties": {
         "entity": {
           "$ref": "#/$defs/EntityResource"
@@ -357,10 +390,32 @@
         "task_limit",
         "tasks"
       ],
+      "then": {
+        "properties": {
+          "next_task_cursor": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "required": [
+          "next_task_cursor"
+        ],
+        "type": "object"
+      },
       "type": "object"
     },
     "EntityCheckInMinimalResponse": {
       "additionalProperties": false,
+      "if": {
+        "properties": {
+          "has_more_tasks": {
+            "const": true
+          }
+        },
+        "required": [
+          "has_more_tasks"
+        ],
+        "type": "object"
+      },
       "properties": {
         "entity": {
           "$ref": "#/$defs/EntityResource"
@@ -396,6 +451,17 @@
         "task_limit",
         "tasks"
       ],
+      "then": {
+        "properties": {
+          "next_task_cursor": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        },
+        "required": [
+          "next_task_cursor"
+        ],
+        "type": "object"
+      },
       "type": "object"
     },
     "EntityCheckInMinimalTask": {
@@ -408,10 +474,7 @@
           "$ref": "#/$defs/NonEmptyString"
         },
         "parameters": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JSONValue"
-          },
-          "type": "object"
+          "$ref": "#/$defs/JSONValue"
         },
         "status": {
           "$ref": "#/$defs/NonEmptyString"
@@ -835,6 +898,80 @@
     },
     "FullDatasetResponse": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "has_more_entities": {
+                "const": true
+              }
+            },
+            "required": [
+              "has_more_entities"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "next_entity_cursor": {
+                "$ref": "#/$defs/NonEmptyString"
+              }
+            },
+            "required": [
+              "next_entity_cursor"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "has_more_objects": {
+                "const": true
+              }
+            },
+            "required": [
+              "has_more_objects"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "next_object_cursor": {
+                "$ref": "#/$defs/NonEmptyString"
+              }
+            },
+            "required": [
+              "next_object_cursor"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "has_more_tasks": {
+                "const": true
+              }
+            },
+            "required": [
+              "has_more_tasks"
+            ],
+            "type": "object"
+          },
+          "then": {
+            "properties": {
+              "next_task_cursor": {
+                "$ref": "#/$defs/NonEmptyString"
+              }
+            },
+            "required": [
+              "next_task_cursor"
+            ],
+            "type": "object"
+          }
+        }
+      ],
       "properties": {
         "entities": {
           "items": {

@@ -215,11 +215,11 @@ type ObjectDetailResource struct {
 }
 
 type EntityCheckInMinimalTask struct {
-	TaskID     string               `json:"task_id"`
-	Status     string               `json:"status"`
-	EntityID   string               `json:"entity_id,omitempty"`
-	CommandID  string               `json:"command_id,omitempty"`
-	Parameters map[string]JSONValue `json:"parameters,omitempty"`
+	TaskID     string     `json:"task_id"`
+	Status     string     `json:"status"`
+	EntityID   string     `json:"entity_id,omitempty"`
+	CommandID  string     `json:"command_id,omitempty"`
+	Parameters *JSONValue `json:"parameters,omitempty"`
 }
 
 type EntityCheckInFullResponse struct {

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { ATLAS_PROTOCOL_REVISION, AtlasClient, isEntityCheckInFullResponse } from "../src";
+import {
+  ATLAS_PROTOCOL_REVISION,
+  AtlasClient,
+  isChangedSinceResponse,
+  isEntityCheckInFullResponse,
+  isFullDatasetResponse
+} from "../src";
 import { FeedConnectionManager } from "../src/feed-connection.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 import { FakeWebSocket } from "./support/fake-websocket.js";
@@ -35,6 +41,20 @@ const changedEntityEvent = (id: string, version: number) => ({
 });
 
 describe("AtlasClient inbound response validation", () => {
+  it("requires continuation cursors in generated response validators", () => {
+    expect(
+      isEntityCheckInFullResponse({
+        entity: validEntity("asset-continued", 1),
+        tasks: [],
+        task_count: 0,
+        task_limit: 10,
+        has_more_tasks: true
+      })
+    ).toBe(false);
+    expect(isFullDatasetResponse(fullPage({ has_more_entities: true }))).toBe(false);
+    expect(isChangedSinceResponse(changedPage({ has_more: true }))).toBe(false);
+  });
+
   it("rejects a malformed HTTP handshake even when the protocol revision matches", async () => {
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",

@@ -887,6 +887,94 @@ func TestGeometryValidation(t *testing.T) {
 	}
 }
 
+func TestEntityCheckInRequestRejectsAggregatePolygonPositionLimit(t *testing.T) {
+	ring := make([]any, 10_001)
+	for index := range ring {
+		ring[index] = []any{0.0, 0.0}
+	}
+	request := map[string]any{
+		"components": map[string]any{
+			"geometry": map[string]any{"type": "Polygon", "coordinates": []any{ring}},
+		},
+	}
+	assertErrorContains(t, protocol.ValidateEntityCheckInRequest(request), "must not exceed 10000")
+}
+
+func TestResponseValidatorsApplyNestedGeometrySemantics(t *testing.T) {
+	entity := responseEntity(map[string]any{
+		"geometry": map[string]any{
+			"type":        "Polygon",
+			"coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}},
+		},
+	})
+	checkIn := map[string]any{
+		"entity": entity, "tasks": []any{}, "task_count": 0, "task_limit": 10, "has_more_tasks": false,
+	}
+	fullDataset := map[string]any{
+		"entities": []any{entity}, "tasks": []any{}, "objects": []any{}, "version": 1,
+		"has_more_entities": false, "has_more_tasks": false, "has_more_objects": false,
+	}
+	changedSince := map[string]any{
+		"events": []any{map[string]any{
+			"event": "update", "resource_type": "entity", "id": "entity-1", "version": 1, "resource": entity,
+		}},
+		"has_more": false, "version": 1,
+	}
+
+	for name, validate := range map[string]func(any) []string{
+		"check-in full":    protocol.ValidateEntityCheckInFullResponse,
+		"check-in minimal": protocol.ValidateEntityCheckInMinimalResponse,
+		"check-in union":   protocol.ValidateEntityCheckInResponse,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertErrorContains(t, validate(checkIn), "closed")
+		})
+	}
+	assertErrorContains(t, protocol.ValidateFullDatasetResponse(fullDataset), "closed")
+	assertErrorContains(t, protocol.ValidateChangedSinceResponse(changedSince), "closed")
+}
+
+func TestResponseValidatorsRequireContinuationCursors(t *testing.T) {
+	entity := responseEntity(map[string]any{})
+	checkIn := map[string]any{
+		"entity": entity, "tasks": []any{}, "task_count": 0, "task_limit": 10, "has_more_tasks": true,
+	}
+	for name, validate := range map[string]func(any) []string{
+		"check-in full":    protocol.ValidateEntityCheckInFullResponse,
+		"check-in minimal": protocol.ValidateEntityCheckInMinimalResponse,
+		"check-in union":   protocol.ValidateEntityCheckInResponse,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertErrorContains(t, validate(checkIn), "next_task_cursor")
+		})
+	}
+
+	assertErrorContains(t, protocol.ValidateChangedSinceResponse(map[string]any{
+		"events": []any{}, "has_more": true, "version": 1,
+	}), "next_cursor")
+
+	for _, flag := range []string{"has_more_entities", "has_more_tasks", "has_more_objects"} {
+		t.Run(flag, func(t *testing.T) {
+			fullDataset := map[string]any{
+				"entities": []any{}, "tasks": []any{}, "objects": []any{}, "version": 1,
+				"has_more_entities": false, "has_more_tasks": false, "has_more_objects": false,
+			}
+			fullDataset[flag] = true
+			assertErrorContains(t, protocol.ValidateFullDatasetResponse(fullDataset), "cursor")
+		})
+	}
+}
+
+func responseEntity(components map[string]any) map[string]any {
+	return map[string]any{
+		"entity_id": "entity-1", "entity_type": "geofeature", "subtype": nil, "alias": nil,
+		"components": components,
+		"metadata": map[string]any{
+			"created_at": "2026-08-11T00:00:00Z", "updated_at": "2026-08-11T00:00:00Z", "version": 1,
+		},
+	}
+}
+
 func TestCanonicalJSONSchemaConstraints(t *testing.T) {
 	root := moduleRoot(t)
 

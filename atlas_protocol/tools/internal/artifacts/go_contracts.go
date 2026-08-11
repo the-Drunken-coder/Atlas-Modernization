@@ -58,7 +58,9 @@ var goStructContracts = []goStructContract{
 	}},
 	{goType: "ObjectResource"},
 	{goType: "ObjectDetailResource"},
-	{goType: "EntityCheckInMinimalTask"},
+	{goType: "EntityCheckInMinimalTask", typeOverrides: map[string]goTypeOverride{
+		"parameters": {schemaType: "JSONValue", goType: "*JSONValue"},
+	}},
 	{goType: "EntityCheckInFullResponse"},
 	{goType: "EntityCheckInMinimalResponse"},
 	{goType: "FullDatasetResponse"},

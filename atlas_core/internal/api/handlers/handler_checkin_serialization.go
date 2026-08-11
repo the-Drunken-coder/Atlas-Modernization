@@ -33,17 +33,17 @@ func serializeCheckinTasksMinimal(tasks []protocol.TaskResource) []protocol.Enti
 // extractCheckinTaskFields returns compact task fields for entity check-ins.
 // command_id priority is command.id, then command.type.
 // parameters priority is top-level parameters, top-level target, command.parameters, then command.target.
-func extractCheckinTaskFields(components map[string]protocol.JSONValue) (string, map[string]protocol.JSONValue) {
+func extractCheckinTaskFields(components map[string]protocol.JSONValue) (string, *protocol.JSONValue) {
 	if components == nil {
 		return "", nil
 	}
 
 	commandID := ""
-	parameters := firstMap(components["parameters"], components["target"])
+	parameters := firstJSONValue(components, "parameters", "target")
 	if command, ok := components["command"].(map[string]interface{}); ok {
 		commandID = firstNonEmptyString(command["id"], command["type"])
 		if parameters == nil {
-			parameters = firstMap(command["parameters"], command["target"])
+			parameters = firstJSONValue(command, "parameters", "target")
 		}
 	}
 
@@ -61,10 +61,10 @@ func firstNonEmptyString(values ...any) string {
 	return ""
 }
 
-func firstMap(values ...any) map[string]protocol.JSONValue {
-	for _, value := range values {
-		if m, ok := value.(map[string]protocol.JSONValue); ok {
-			return m
+func firstJSONValue(values map[string]protocol.JSONValue, keys ...string) *protocol.JSONValue {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return &value
 		}
 	}
 	return nil

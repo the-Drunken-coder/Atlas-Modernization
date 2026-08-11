@@ -471,7 +471,6 @@ func TestTypeScriptSourceRejectsUnsupportedRuntimeValidatorKeywords(t *testing.T
 		keyword string
 		schema  string
 	}{
-		{keyword: "allOf", schema: `{"allOf":[{"type":"string"}]}`},
 		{keyword: "dependentRequired", schema: `{"type":"object","dependentRequired":{"url":["label"]}}`},
 		{keyword: "minLength", schema: `{"type":"string","minLength":2}`},
 		{keyword: "oneOf", schema: `{"oneOf":[{"type":"string"},{"type":"number"}]}`},
@@ -495,6 +494,46 @@ func TestTypeScriptSourceRejectsUnsupportedRuntimeValidatorKeywords(t *testing.T
 				t.Fatalf("typeScriptSource error = %v, want unsupported %s error", err, test.keyword)
 			}
 		})
+	}
+}
+
+func TestTypeScriptSourceGeneratesConditionalRuntimeValidators(t *testing.T) {
+	source, err := typeScriptSource("sha256:0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789ABCDEF", map[string][]byte{
+		"EntityCheckInFullResponse": []byte(`{
+			"additionalProperties": false,
+			"allOf": [{
+				"if": {
+					"properties": {"has_more_tasks": {"const": true}},
+					"required": ["has_more_tasks"],
+					"type": "object"
+				},
+				"then": {
+					"properties": {"next_task_cursor": {"type": "string"}},
+					"required": ["next_task_cursor"],
+					"type": "object"
+				}
+			}],
+			"properties": {
+				"has_more_tasks": {"type": "boolean"},
+				"next_task_cursor": {"type": "string"}
+			},
+			"required": ["has_more_tasks"],
+			"type": "object"
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("typeScriptSource: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		`"has_more_tasks": boolean;`,
+		`"next_task_cursor"?: string;`,
+		`value["has_more_tasks"] === true`,
+		`atlasProtocolHasOwn(value, "next_task_cursor")`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated TypeScript missing %q:\n%s", want, text)
+		}
 	}
 }
 

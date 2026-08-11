@@ -355,6 +355,33 @@ func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 	}
 }
 
+func TestEntityCheckinRejectsAggregatePolygonPositionLimit(t *testing.T) {
+	ring := make([]any, 10_001)
+	for index := range ring {
+		ring[index] = []any{0.0, 0.0}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"components": map[string]any{
+			"geometry": map[string]any{"type": "Polygon", "coordinates": []any{ring}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := withURLParam(routeRequest(http.MethodPost, "/entities/entity-1/checkin", string(payload)), "entity_id", "entity-1")
+
+	handler.EntityCheckin(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	if body := decodeBody(t, recorder); body["error_code"] != "VALIDATION_ERROR" {
+		t.Fatalf("error_code = %v, want VALIDATION_ERROR", body["error_code"])
+	}
+}
+
 func TestCreateEntityMapsOversizedPromotedStringTo400(t *testing.T) {
 	handler := newTestHandler()
 	handler.entityActions = actions.NewEntityActions(nil)

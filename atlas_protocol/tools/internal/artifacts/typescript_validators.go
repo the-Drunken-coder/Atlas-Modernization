@@ -119,7 +119,78 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 		}
 		return "(" + refExpression + " && " + siblingExpression + ")", nil
 	}
-	for _, keyword := range []string{"allOf", "dependentRequired", "minLength", "oneOf"} {
+	if allOf, ok := schema["allOf"].([]any); ok {
+		parts := make([]string, 0, len(allOf)+1)
+		siblingSchema := cloneSchemaWithoutKey(schema, "allOf")
+		if len(siblingSchema) > 0 {
+			expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, siblingSchema, seenRefs)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, expression)
+		}
+		for index, raw := range allOf {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("allOf[%d] is not a schema", index)
+			}
+			expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, item, seenRefs)
+			if err != nil {
+				return "", fmt.Errorf("allOf[%d]: %w", index, err)
+			}
+			parts = append(parts, expression)
+		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("allOf has no schemas")
+		}
+		return "(" + strings.Join(parts, " && ") + ")", nil
+	}
+	if rawIf, ok := schema["if"]; ok {
+		ifSchema, ok := rawIf.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("if is not a schema")
+		}
+		condition, err := g.runtimeValidatorExpressionWithRefs(valueExpr, ifSchema, seenRefs)
+		if err != nil {
+			return "", fmt.Errorf("if: %w", err)
+		}
+		baseSchema := cloneSchemaWithoutKey(cloneSchemaWithoutKey(cloneSchemaWithoutKey(schema, "if"), "then"), "else")
+		parts := make([]string, 0, 3)
+		if len(baseSchema) > 0 {
+			base, err := g.runtimeValidatorExpressionWithRefs(valueExpr, baseSchema, seenRefs)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, base)
+		}
+		if rawThen, ok := schema["then"]; ok {
+			thenSchema, ok := rawThen.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("then is not a schema")
+			}
+			thenExpression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, thenSchema, seenRefs)
+			if err != nil {
+				return "", fmt.Errorf("then: %w", err)
+			}
+			parts = append(parts, "(!("+condition+") || ("+thenExpression+"))")
+		}
+		if rawElse, ok := schema["else"]; ok {
+			elseSchema, ok := rawElse.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("else is not a schema")
+			}
+			elseExpression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, elseSchema, seenRefs)
+			if err != nil {
+				return "", fmt.Errorf("else: %w", err)
+			}
+			parts = append(parts, "(("+condition+") || ("+elseExpression+"))")
+		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("if has no base, then, or else schema")
+		}
+		return "(" + strings.Join(parts, " && ") + ")", nil
+	}
+	for _, keyword := range []string{"dependentRequired", "minLength", "oneOf"} {
 		if _, ok := schema[keyword]; ok {
 			return "", fmt.Errorf("unsupported runtime validator keyword %q", keyword)
 		}

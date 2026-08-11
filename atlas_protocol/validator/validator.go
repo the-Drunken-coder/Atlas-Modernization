@@ -755,6 +755,12 @@ func semanticErrors(definition string, value any) []string {
 		return resourceGeometrySemanticErrors(value)
 	case "FeedEvent":
 		return feedEventGeometrySemanticErrors(value)
+	case "EntityCheckInFullResponse", "EntityCheckInMinimalResponse", "EntityCheckInResponse":
+		return entityCheckInResponseGeometrySemanticErrors(value)
+	case "FullDatasetResponse":
+		return fullDatasetResponseGeometrySemanticErrors(value)
+	case "ChangedSinceResponse":
+		return changedSinceResponseGeometrySemanticErrors(value)
 	default:
 		return nil
 	}
@@ -778,6 +784,46 @@ func feedEventGeometrySemanticErrors(value any) []string {
 		return nil
 	}
 	return componentGeometrySemanticErrors(resource["components"], "resource.components.geometry")
+}
+
+func entityCheckInResponseGeometrySemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return prefixErrors(resourceGeometrySemanticErrors(payload["entity"]), "entity")
+}
+
+func fullDatasetResponseGeometrySemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	entities, ok := payload["entities"].([]any)
+	if !ok {
+		return nil
+	}
+	var errors []string
+	for index, entity := range entities {
+		errors = append(errors, prefixErrors(resourceGeometrySemanticErrors(entity), fmt.Sprintf("entities.%d", index))...)
+	}
+	return errors
+}
+
+func changedSinceResponseGeometrySemanticErrors(value any) []string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	events, ok := payload["events"].([]any)
+	if !ok {
+		return nil
+	}
+	var errors []string
+	for index, event := range events {
+		errors = append(errors, prefixErrors(feedEventGeometrySemanticErrors(event), fmt.Sprintf("events.%d", index))...)
+	}
+	return errors
 }
 
 func componentGeometrySemanticErrors(value any, path string) []string {

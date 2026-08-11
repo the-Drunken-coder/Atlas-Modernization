@@ -26,7 +26,12 @@ func (g *typeScriptGenerator) typeFor(schema typeScriptSchema, current string, i
 		return g.unionType(oneOf, current, indent)
 	}
 	if allOf, ok := schema["allOf"].([]any); ok {
-		return g.intersectionType(allOf, current, indent)
+		items := make([]any, 0, len(allOf)+1)
+		if sibling := cloneSchemaWithoutKey(schema, "allOf"); len(sibling) > 0 {
+			items = append(items, map[string]any(sibling))
+		}
+		items = append(items, allOf...)
+		return g.intersectionType(items, current, indent)
 	}
 
 	switch schemaTypeValue(schema) {
@@ -73,7 +78,9 @@ func (g *typeScriptGenerator) intersectionType(items []any, current string, inde
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
 		if schema, ok := item.(map[string]any); ok {
-			parts = append(parts, g.typeFor(schema, current, indent))
+			if part := g.typeFor(schema, current, indent); part != "unknown" {
+				parts = append(parts, part)
+			}
 		}
 	}
 	if len(parts) == 0 {
