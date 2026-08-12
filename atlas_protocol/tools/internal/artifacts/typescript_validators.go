@@ -120,7 +120,7 @@ func (g *typeScriptGenerator) runtimeValidatorExpressionWithRefs(valueExpr strin
 		return "(" + refExpression + " && " + siblingExpression + ")", nil
 	}
 	if allOf, ok := schema["allOf"].([]any); ok {
-		parts := make([]string, 0, len(allOf)+1)
+		parts := make([]string, 0, len(allOf))
 		siblingSchema := cloneSchemaWithoutKey(schema, "allOf")
 		if len(siblingSchema) > 0 {
 			expression, err := g.runtimeValidatorExpressionWithRefs(valueExpr, siblingSchema, seenRefs)

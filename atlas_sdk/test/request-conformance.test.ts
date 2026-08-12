@@ -32,8 +32,8 @@ describe("generated request validator conformance", () => {
   }
 
   it("rejects aggregate polygon position overflow in entity check-ins", () => {
-    const ring = Array.from({ length: 10_001 }, () => [0, 0]);
-    expect(isEntityCheckInRequest({ components: { geometry: { type: "Polygon", coordinates: [ring] } } })).toBe(false);
+    const rings = Array.from({ length: 2 }, () => Array.from({ length: 5_001 }, () => [0, 0]));
+    expect(isEntityCheckInRequest({ components: { geometry: { type: "Polygon", coordinates: rings } } })).toBe(false);
   });
 
   it("validates deeply nested JSON without recursion and preserves cycle semantics", () => {

@@ -356,13 +356,16 @@ func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 }
 
 func TestEntityCheckinRejectsAggregatePolygonPositionLimit(t *testing.T) {
-	ring := make([]any, 10_001)
-	for index := range ring {
-		ring[index] = []any{0.0, 0.0}
+	exterior := make([]any, 5_001)
+	interior := make([]any, 5_001)
+	for index := range exterior {
+		exterior[index] = []any{0.0, 0.0}
+		interior[index] = []any{0.0, 0.0}
 	}
+	rings := []any{exterior, interior}
 	payload, err := json.Marshal(map[string]any{
 		"components": map[string]any{
-			"geometry": map[string]any{"type": "Polygon", "coordinates": []any{ring}},
+			"geometry": map[string]any{"type": "Polygon", "coordinates": rings},
 		},
 	})
 	if err != nil {

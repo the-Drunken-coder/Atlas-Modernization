@@ -26,7 +26,7 @@ func (g *typeScriptGenerator) typeFor(schema typeScriptSchema, current string, i
 		return g.unionType(oneOf, current, indent)
 	}
 	if allOf, ok := schema["allOf"].([]any); ok {
-		items := make([]any, 0, len(allOf)+1)
+		items := make([]any, 0, len(allOf))
 		if sibling := cloneSchemaWithoutKey(schema, "allOf"); len(sibling) > 0 {
 			items = append(items, map[string]any(sibling))
 		}
