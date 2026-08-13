@@ -69,7 +69,7 @@ describe("parseRunEvent", () => {
     expect(parseRunEvent({ ...base, type: "cleanup" })).toMatchObject({ type: "cleanup" });
   });
 
-  it("rejects invalid optional levels, JSON data, and assertion timestamps", () => {
+  it("rejects invalid optional levels, JSON data, and timestamps", () => {
     expect(() => parseRunEvent({ ...base, type: "status", status: "completed", level: "debug" })).toThrow(
       "Invalid run event"
     );
@@ -84,6 +84,23 @@ describe("parseRunEvent", () => {
         assertion: { id: "assertion-1", name: "passes", passed: true, timestamp: "not-a-date" }
       })
     ).toThrow("Invalid run event");
+    for (const nonCanonicalTimestamp of ["2026-08-12", "June 1, 2026", "08/12/2026", "2026-08-12T12:00:00Z"]) {
+      expect(() => parseRunEvent({ ...base, timestamp: nonCanonicalTimestamp, type: "log" })).toThrow(
+        "Invalid run event"
+      );
+      expect(() =>
+        parseRunEvent({
+          ...base,
+          type: "assertion",
+          assertion: {
+            id: "assertion-1",
+            name: "passes",
+            passed: true,
+            timestamp: nonCanonicalTimestamp
+          }
+        })
+      ).toThrow("Invalid run event");
+    }
   });
 
   it("rejects malformed branch data without accepting a partial event", () => {
