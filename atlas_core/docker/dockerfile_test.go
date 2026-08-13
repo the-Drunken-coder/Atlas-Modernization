@@ -91,24 +91,34 @@ func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 }
 
 func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.T) {
-	for _, filename := range []string{"docker-compose.yml", "docker-compose.production.yml"} {
-		t.Run(filename, func(t *testing.T) {
-			data, err := os.ReadFile(filename)
-			if err != nil {
-				t.Fatalf("read %s: %v", filename, err)
-			}
-			compose := string(data)
+	development, err := os.ReadFile("docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read development Compose file: %v", err)
+	}
+	production, err := os.ReadFile("docker-compose.production.yml")
+	if err != nil {
+		t.Fatalf("read production Compose file: %v", err)
+	}
+
+	for _, test := range []struct {
+		filename string
+		compose  string
+	}{
+		{filename: "docker-compose.yml", compose: string(development)},
+		{filename: "docker-compose.production.yml", compose: string(production)},
+	} {
+		t.Run(test.filename, func(t *testing.T) {
 			for _, required := range []string{
 				`mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"`,
 				`true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;`,
 				`*) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;`,
 			} {
-				if !strings.Contains(compose, required) {
-					t.Fatalf("%s MinIO initialization missing %q", filename, required)
+				if !strings.Contains(test.compose, required) {
+					t.Fatalf("%s MinIO initialization missing %q", test.filename, required)
 				}
 			}
-			if strings.Contains(compose, "MC_HOST_myminio:") {
-				t.Fatalf("%s must not embed operator credentials in an MC_HOST URL", filename)
+			if strings.Contains(test.compose, "MC_HOST_myminio:") {
+				t.Fatalf("%s must not embed operator credentials in an MC_HOST URL", test.filename)
 			}
 		})
 	}
