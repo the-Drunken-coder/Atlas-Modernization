@@ -20,6 +20,9 @@ func validateAPIAuthKey(enabled bool, key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("ENABLE_API_AUTH is true but API_AUTH_KEY is empty")
 	}
+	if !isASCII(key) {
+		return "", fmt.Errorf("API_AUTH_KEY is too weak for API auth")
+	}
 	placeholderKeys := map[string]struct{}{
 		"000000":        {},
 		"111111":        {},
@@ -51,6 +54,15 @@ func validateAPIAuthKey(enabled bool, key string) (string, error) {
 		return "", fmt.Errorf("API_AUTH_KEY is too weak for API auth")
 	}
 	return key, nil
+}
+
+func isASCII(value string) bool {
+	for _, current := range []byte(value) {
+		if current > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func isWeakAPIAuthKey(key string) bool {

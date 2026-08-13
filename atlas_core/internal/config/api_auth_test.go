@@ -93,6 +93,11 @@ func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
 		"letmein-now",
 		"welcome-home",
 		"abababababab",
+		"€aaaaaaa",
+		"KKKABC",
+		"ÅåÅåÅåx1",
+		"éøåßéøåß",
+		"٠١٢٣٤٥x",
 	} {
 		t.Run(apiKey, func(t *testing.T) {
 			chdirToTemp(t)

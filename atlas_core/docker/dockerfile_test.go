@@ -252,6 +252,16 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "enabled auth Unicode case fold",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=KKKABC"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth locale-sensitive uppercase",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=ÅåÅåÅåx1"},
+			wantErr: true,
+		},
+		{
 			name:    "enabled auth sequential key",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=abcdefgh"},
 			wantErr: true,
@@ -302,14 +312,14 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "enabled auth strong unicode key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=éøåßéøåß", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
-			wantErr: false,
+			name:    "enabled auth non-ASCII key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=éøåßéøåß"},
+			wantErr: true,
 		},
 		{
 			name:    "enabled auth non-ASCII numeric sequence",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=٠١٢٣٤٥x", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
-			wantErr: false,
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=٠١٢٣٤٥x"},
+			wantErr: true,
 		},
 	}
 

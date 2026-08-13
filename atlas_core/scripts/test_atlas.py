@@ -108,7 +108,17 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             self.assertTrue(ensure_api_auth("Production mode"))
 
     def test_public_auth_rejects_the_core_weak_api_key_classes(self) -> None:
-        for api_auth_key in ("short", "password123", "abcdefgh", "aaaaaaaa"):
+        for api_auth_key in (
+            "short",
+            "password123",
+            "abcdefgh",
+            "aaaaaaaa",
+            "€aaaaaaa",
+            "KKKABC",
+            "ÅåÅåÅåx1",
+            "éøåßéøåß",
+            "٠١٢٣٤٥x",
+        ):
             with (
                 self.subTest(api_auth_key=api_auth_key),
                 patch.dict(
@@ -138,14 +148,6 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ):
                 self.assertFalse(ensure_api_auth("Production mode"))
                 self.assertIn("example placeholder", output.call_args.args[0])
-
-    def test_public_auth_matches_core_ascii_sequence_detection(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"API_AUTH_KEY": "٠١٢٣٤٥x", "ATLAS_ADMIN_PASSWORD": "configured-admin-password"},
-            clear=True,
-        ):
-            self.assertTrue(ensure_api_auth("Production mode"))
 
     def test_weak_production_api_key_stops_before_cleanup_or_docker(self) -> None:
         with (

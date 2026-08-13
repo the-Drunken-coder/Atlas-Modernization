@@ -14,7 +14,7 @@ is_weak_api_auth_key() {
     esac
 
     byte_count="$(printf '%s' "$candidate" | wc -c | tr -d '[:space:]')"
-    unique_count="$(printf '%s' "$candidate" | LC_ALL=C.UTF-8 fold -w 1 | LC_ALL=C sort -u | wc -l | tr -d '[:space:]')"
+    unique_count="$(printf '%s' "$candidate" | LC_ALL=C fold -w 1 | LC_ALL=C sort -u | wc -l | tr -d '[:space:]')"
     if [ "$byte_count" -lt 8 ] || [ "$unique_count" -lt 4 ]; then
         return 0
     fi
@@ -95,6 +95,13 @@ normalized_api_auth_key="$(printf '%s' "$api_auth_key" | tr '[:upper:]' '[:lower
 
 if [ -z "$api_auth_key" ]; then
     printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY is empty." >&2
+    exit 1
+fi
+
+api_auth_key_byte_count="$(printf '%s' "$api_auth_key" | wc -c | tr -d '[:space:]')"
+api_auth_key_character_count="$(printf '%s' "$api_auth_key" | LC_ALL=C.UTF-8 wc -m | tr -d '[:space:]')"
+if [ "$api_auth_key_byte_count" -ne "$api_auth_key_character_count" ]; then
+    printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY must contain only ASCII characters." >&2
     exit 1
 fi
 
