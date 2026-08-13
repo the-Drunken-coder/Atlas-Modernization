@@ -102,6 +102,24 @@ describe("parseRunEvent", () => {
     }
   });
 
+  it("accepts only finite acyclic JSON data", () => {
+    const shared = { value: 1 };
+    expect(parseRunEvent({ ...base, type: "log", data: { left: shared, right: shared } })).toMatchObject({
+      type: "log"
+    });
+
+    class EventData {
+      readonly value = 1;
+    }
+    for (const data of [new Date(timestamp), new Map([["value", 1]]), new EventData()]) {
+      expect(() => parseRunEvent({ ...base, type: "log", data })).toThrow("Invalid run event");
+    }
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => parseRunEvent({ ...base, type: "log", data: cyclic })).toThrow("Invalid run event");
+  });
+
   it("rejects malformed branch data without accepting a partial event", () => {
     expect(() => parseRunEvent({ ...base, type: "status", status: "unknown" })).toThrow("Invalid run event");
     expect(() => parseRunEvent({ ...base, type: "resource", resource: { type: "entity" } })).toThrow(

@@ -184,13 +184,16 @@ docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloud
 3. Create a full custom-format database dump:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
-  >"${BACKUP_DIR}/postgres.dump"
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
-  pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
-  >"${BACKUP_DIR}/postgres.contents.txt"
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
+    >"${BACKUP_DIR}/postgres.dump"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+    pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
+    >"${BACKUP_DIR}/postgres.contents.txt"
+)
 ```
 
 Every current full dump must contain resource tables, `atlas_change_clock`, `atlas_change_events`, `object_deletion_fences`, `storage_deletion_outbox`, `storage_upload_intents`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata), plus `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to use the legacy v1 schema and is marked `unversioned-v1-candidate` instead.
@@ -214,10 +217,13 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
 5. Validate the pair before deploying:
 
 ```bash
-test -s "${BACKUP_DIR}/postgres.dump"
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
-  pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
-test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+(
+  set -e
+  test -s "${BACKUP_DIR}/postgres.dump"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+    pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+  test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+)
 ```
 
 Keep the dump, bucket mirror, manifests, and revision files under the same `BACKUP_ID`. Never mix a database snapshot with a bucket snapshot from another time; object rows may otherwise reference missing or wrong bytes.
@@ -257,28 +263,34 @@ Restoring is destructive to state created after the selected backup.
 2. Before stopping or deleting anything, validate both backup artifacts. The database check also confirms that `postgres.dump` is a readable PostgreSQL custom archive:
 
 ```bash
-test -s "${BACKUP_DIR}/postgres.dump"
-test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
-  pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+(
+  set -e
+  test -s "${BACKUP_DIR}/postgres.dump"
+  test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+    pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+)
 ```
 
 3. Restore the entire database:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
-  docker compose -f atlas_core/docker/docker-compose.production.yml stop api
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+    docker compose -f atlas_core/docker/docker-compose.production.yml stop api
 
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  dropdb -U atlas --if-exists atlas_core
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  createdb -U atlas atlas_core
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
-  <"${BACKUP_DIR}/postgres.dump"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    dropdb -U atlas --if-exists atlas_core
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    createdb -U atlas atlas_core
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
+    <"${BACKUP_DIR}/postgres.dump"
+)
 ```
 
 4. Replace the configured bucket with the matching mirror:

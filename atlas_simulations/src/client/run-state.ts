@@ -229,22 +229,35 @@ function isRunStatus(value: unknown): value is RunSummary["status"] {
 }
 
 function isJSONValue(value: unknown): value is JSONValue {
-  const pending: unknown[] = [value];
+  const pending: Array<{ value: unknown; exiting: false } | { value: object; exiting: true }> = [
+    { value, exiting: false }
+  ];
+  const ancestors = new WeakSet<object>();
   while (pending.length > 0) {
-    const current = pending.pop();
+    const entry = pending.pop();
+    if (entry === undefined) break;
+    if (entry.exiting) {
+      ancestors.delete(entry.value);
+      continue;
+    }
+    const current = entry.value;
     if (current === null || typeof current === "boolean" || typeof current === "string") continue;
     if (typeof current === "number" && Number.isFinite(current)) continue;
-    if (Array.isArray(current)) {
-      pending.push(...current);
-      continue;
+    if (!Array.isArray(current) && !isPlainJSONObject(current)) return false;
+    if (ancestors.has(current)) return false;
+    ancestors.add(current);
+    pending.push({ value: current, exiting: true });
+    for (const child of Array.isArray(current) ? current : Object.values(current)) {
+      pending.push({ value: child, exiting: false });
     }
-    if (isRecord(current)) {
-      pending.push(...Object.values(current));
-      continue;
-    }
-    return false;
   }
   return true;
+}
+
+function isPlainJSONObject(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 export function errorMessage(errorValue: unknown): string {
