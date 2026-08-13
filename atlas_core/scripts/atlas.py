@@ -14,8 +14,10 @@ Usage:
 """
 
 import argparse
+import ipaddress
 import logging
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -136,12 +138,28 @@ def ensure_production_storage_credentials(db_only=False):
     ):
         print("[ERROR] POSTGRES_PASSWORD must contain only characters safe in the production database URL.")
         return False
+    if not db_only and not valid_minio_bucket_name(configured_minio_bucket()):
+        print("[ERROR] MINIO_BUCKET must be a valid S3 bucket name.")
+        return False
     return True
 
 
 def configured_minio_bucket():
     """Return the bucket selected by the Compose environment."""
     return os.getenv("MINIO_BUCKET") or DEFAULT_MINIO_BUCKET
+
+
+def valid_minio_bucket_name(bucket):
+    """Return whether a bucket name meets MinIO's S3 naming rules."""
+    if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) is None:
+        return False
+    if any(separator in bucket for separator in ("..", ".-", "-.")):
+        return False
+    try:
+        ipaddress.ip_address(bucket)
+    except ValueError:
+        return True
+    return False
 
 
 def ensure_local_auth(docker_dir):

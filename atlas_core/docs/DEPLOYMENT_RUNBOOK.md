@@ -26,6 +26,8 @@ set +a
 export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 ```
 
+`MINIO_BUCKET` must be a 3 to 63 character S3 bucket name using lowercase letters, numbers, periods, or hyphens. It cannot use adjacent periods or period-hyphen pairs, start or end with punctuation, or be an IP address.
+
 The file must define `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`,
 `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and `ATLAS_ADMIN_PASSWORD`.
 `ATLAS_ADMIN_PASSWORD` must contain at least 12 characters.
