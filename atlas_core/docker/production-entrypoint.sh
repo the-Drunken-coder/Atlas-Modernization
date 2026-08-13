@@ -98,9 +98,7 @@ if [ -z "$api_auth_key" ]; then
     exit 1
 fi
 
-api_auth_key_byte_count="$(printf '%s' "$api_auth_key" | wc -c | tr -d '[:space:]')"
-api_auth_key_character_count="$(printf '%s' "$api_auth_key" | LC_ALL=C.UTF-8 wc -m | tr -d '[:space:]')"
-if [ "$api_auth_key_byte_count" -ne "$api_auth_key_character_count" ]; then
+if ! printf '%s' "$api_auth_key" | od -An -tu1 | awk '{ for (index_value = 1; index_value <= NF; index_value++) if ($index_value > 127) exit 1 }'; then
     printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY must contain only ASCII characters." >&2
     exit 1
 fi

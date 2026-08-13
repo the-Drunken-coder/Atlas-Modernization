@@ -331,6 +331,11 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=٠١٢٣٤٥x"},
 			wantErr: true,
 		},
+		{
+			name:    "enabled auth invalid UTF-8 byte",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=" + string([]byte{0xff, 'A', 'z', 'B', 'y', 'C', 'x', 'D'})},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
