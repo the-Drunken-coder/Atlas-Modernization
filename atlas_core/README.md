@@ -102,12 +102,16 @@ durable bucket and verify it exists; production startup deliberately will not cr
 
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
+mc alias set atlas_production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
 mc mb "atlas_production/${MINIO_BUCKET}"
 mc stat "atlas_production/${MINIO_BUCKET}"
-unset MC_HOST_atlas_production
+mc alias remove atlas_production
 python3 atlas_core/scripts/atlas.py --production
 ```
+
+Passing credentials as separate quoted arguments keeps values containing URL-reserved
+characters such as `/`, `?`, `#`, or `%` intact.
 
 Add `--tunnel` to start the optional Cloudflare Tunnel public edge. See
 [`docs/DEPLOYMENT_RUNBOOK.md`](docs/DEPLOYMENT_RUNBOOK.md) for the full operator

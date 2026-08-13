@@ -90,6 +90,30 @@ func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 	}
 }
 
+func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.T) {
+	for _, filename := range []string{"docker-compose.yml", "docker-compose.production.yml"} {
+		t.Run(filename, func(t *testing.T) {
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				t.Fatalf("read %s: %v", filename, err)
+			}
+			compose := string(data)
+			for _, required := range []string{
+				`mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"`,
+				`true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;`,
+				`*) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;`,
+			} {
+				if !strings.Contains(compose, required) {
+					t.Fatalf("%s MinIO initialization missing %q", filename, required)
+				}
+			}
+			if strings.Contains(compose, "MC_HOST_myminio:") {
+				t.Fatalf("%s must not embed operator credentials in an MC_HOST URL", filename)
+			}
+		})
+	}
+}
+
 func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("production entrypoint is a POSIX shell script")

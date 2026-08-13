@@ -38,11 +38,15 @@ provision the durable bucket with a host-installed MinIO client:
 
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
+mc alias set atlas_production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
 mc mb "atlas_production/${MINIO_BUCKET}"
 mc stat "atlas_production/${MINIO_BUCKET}"
-unset MC_HOST_atlas_production
+mc alias remove atlas_production
 ```
+
+The separate quoted credential arguments remain valid when values contain
+URL-reserved characters such as `/`, `?`, `#`, or `%`.
 
 For a restore onto a replacement volume, follow [Restore a backup
 set](#restore-a-backup-set): create the bucket only as the mirror target, restore
@@ -189,12 +193,13 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
 4. Mirror the entire configured bucket into the same backup set:
 
 ```bash
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
+mc alias set atlas_production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
 mc mirror --overwrite "atlas_production/${MINIO_BUCKET}" \
   "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
 mc ls --recursive "atlas_production/${MINIO_BUCKET}" \
   >"${BACKUP_DIR}/minio.contents.txt"
-unset MC_HOST_atlas_production
+mc alias remove atlas_production
 ```
 
 5. Validate the pair before deploying:
@@ -262,13 +267,14 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
 
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
+mc alias set atlas_production http://127.0.0.1:9000 \
+  "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
 mc mb --ignore-existing "atlas_production/${MINIO_BUCKET}"
 mc rm --recursive --force "atlas_production/${MINIO_BUCKET}"
 mc mirror --overwrite --remove "${BACKUP_DIR}/minio/${MINIO_BUCKET}" \
   "atlas_production/${MINIO_BUCKET}"
 test -z "$(mc diff "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}")"
-unset MC_HOST_atlas_production
+mc alias remove atlas_production
 ```
 
 4. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.

@@ -12,10 +12,10 @@ proxies public HTTPS traffic to the local ATLAS Core API.
    `atlas_core/docker/.env`:
 
    ```bash
-	   export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
-	   export API_AUTH_KEY='your-secure-api-key'
-	   export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
-	   ```
+   export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
+   export API_AUTH_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+   export ATLAS_ADMIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+   ```
 
    The admin password must contain at least 12 characters.
 

@@ -83,6 +83,23 @@ describe("parseRunEvent", () => {
         assertion: { id: "assertion-1", name: "passes", passed: true, timestamp: "not-a-date" }
       })
     ).toThrow("Invalid run event");
+    for (const nonCanonicalTimestamp of ["2026-08-12", "June 1, 2026", "2026-08-12T12:00:00Z"]) {
+      expect(() => parseRunEvent({ ...base, timestamp: nonCanonicalTimestamp, type: "log" })).toThrow(
+        "Invalid run event"
+      );
+      expect(() =>
+        parseRunEvent({
+          ...base,
+          type: "assertion",
+          assertion: {
+            id: "assertion-1",
+            name: "passes",
+            passed: true,
+            timestamp: nonCanonicalTimestamp
+          }
+        })
+      ).toThrow("Invalid run event");
+    }
   });
 
   it("rejects malformed branch data without accepting a partial event", () => {

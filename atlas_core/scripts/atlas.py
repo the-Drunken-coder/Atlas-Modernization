@@ -750,6 +750,9 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             if not db_only and not ensure_api_auth("Production mode"):
                 sys.exit(1)
         load_compose_dotenv(docker_dir)
+        if production and not db_only and database_recreate_on_startup_enabled(production=True):
+            print("[ERROR] Production mode refuses DATABASE_RECREATE_ON_STARTUP=true.")
+            sys.exit(1)
         if not db_only:
             try:
                 configured_minio_bucket()

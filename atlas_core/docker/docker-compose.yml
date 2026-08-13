@@ -104,7 +104,8 @@ services:
     container_name: atlas_core_minio_init
     restart: "no"
     environment:
-      MC_HOST_myminio: http://${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}:${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}@minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
       MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
       # When "true", apply anonymous download on the configured bucket (dev-only; not recommended on untrusted networks).
       ENABLE_PUBLIC_MINIO: ${ENABLE_PUBLIC_MINIO:-false}
@@ -116,8 +117,12 @@ services:
       - -c
       - |
         set -e
+        mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
         mc mb --ignore-existing "myminio/$$MINIO_BUCKET"
-        case "$$ENABLE_PUBLIC_MINIO" in true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;; esac
+        case "$$ENABLE_PUBLIC_MINIO" in
+          true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;
+          *) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;
+        esac
         echo 'MinIO bucket initialized successfully'
     networks:
       - atlas_core_network

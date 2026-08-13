@@ -188,8 +188,7 @@ function parseRunEventBase(value: Record<string, unknown>): ParsedRunEventBase {
     !Number.isSafeInteger(value.sequence) ||
     value.sequence < 1 ||
     typeof value.runId !== "string" ||
-    typeof value.timestamp !== "string" ||
-    Number.isNaN(Date.parse(value.timestamp)) ||
+    !isCanonicalTimestamp(value.timestamp) ||
     typeof value.message !== "string" ||
     (value.level !== undefined && !isRunEventLevel(value.level)) ||
     (value.data !== undefined && !isJSONValue(value.data))
@@ -212,10 +211,15 @@ function isAssertionResult(value: unknown): value is AssertionResult {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.passed === "boolean" &&
-    typeof value.timestamp === "string" &&
-    !Number.isNaN(Date.parse(value.timestamp)) &&
+    isCanonicalTimestamp(value.timestamp) &&
     (value.message === undefined || typeof value.message === "string")
   );
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const milliseconds = Date.parse(value);
+  return !Number.isNaN(milliseconds) && new Date(milliseconds).toISOString() === value;
 }
 
 function isRunStatus(value: unknown): value is RunSummary["status"] {
