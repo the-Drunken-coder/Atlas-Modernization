@@ -29,7 +29,11 @@ export function assertionBytes(assertion: AssertionResult): number {
   return Buffer.byteLength(JSON.stringify(assertion), "utf8");
 }
 
-export function assertEventJSONValue(value: unknown, depth = 0, state = { nodes: 0, stringBytes: 0 }): void {
+export function assertEventJSONValue(
+  value: unknown,
+  depth = 0,
+  state = { nodes: 0, stringBytes: 0, ancestors: new WeakSet<object>() }
+): void {
   state.nodes += 1;
   if (state.nodes > MAX_EVENT_DATA_NODES) {
     throw new Error(`Run event data must contain at most ${MAX_EVENT_DATA_NODES} values`);
@@ -46,23 +50,31 @@ export function assertEventJSONValue(value: unknown, depth = 0, state = { nodes:
     if (!Number.isFinite(value)) throw new Error("Run event data must contain only finite numbers");
     return;
   }
-  if (Array.isArray(value)) {
-    for (const item of value) assertEventJSONValue(item, depth + 1, state);
-    return;
-  }
   if (typeof value !== "object") {
     throw new Error("Run event data must contain only JSON values");
   }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new Error("Run event data must contain only JSON objects");
+  if (state.ancestors.has(value)) {
+    throw new Error("Run event data must not contain cycles");
   }
-  const record = value as Record<string, unknown>;
-  for (const key in record) {
-    if (!Object.hasOwn(record, key)) continue;
-    const item = record[key];
-    addEventDataStringBytes(key, state);
-    assertEventJSONValue(item, depth + 1, state);
+  state.ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      for (const item of value) assertEventJSONValue(item, depth + 1, state);
+      return;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new Error("Run event data must contain only JSON objects");
+    }
+    const record = value as Record<string, unknown>;
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
+      const item = record[key];
+      addEventDataStringBytes(key, state);
+      assertEventJSONValue(item, depth + 1, state);
+    }
+  } finally {
+    state.ancestors.delete(value);
   }
 }
 

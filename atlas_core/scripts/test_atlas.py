@@ -600,6 +600,42 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 },
             )
 
+        for rejected_key in ("replace_with_secure_key", "password-backed-key", "abcdefghi"):
+            with self.subTest(rejected_key=rejected_key):
+                with (
+                    patch.dict(
+                        "os.environ",
+                        {
+                            "API_AUTH_KEY": rejected_key,
+                            "ATLAS_ADMIN_PASSWORD": configured_password,
+                        },
+                        clear=True,
+                    ),
+                    patch("atlas.parse_compose_env_file", return_value={}),
+                    patch("atlas.secrets.token_urlsafe", return_value="generated-strong-local-key"),
+                ):
+                    self.assertEqual(
+                        ensure_local_auth("/tmp/docker")["API_AUTH_KEY"],
+                        "generated-strong-local-key",
+                    )
+
+    def test_local_auth_replaces_weak_persisted_key(self) -> None:
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "atlas.parse_compose_env_file",
+                return_value={
+                    "API_AUTH_KEY": "replace_with_secure_key",
+                    "ATLAS_ADMIN_PASSWORD": "persisted-local-password",
+                },
+            ),
+            patch("atlas.secrets.token_urlsafe", return_value="generated-strong-local-key"),
+        ):
+            self.assertEqual(
+                ensure_local_auth("/tmp/docker")["API_AUTH_KEY"],
+                "generated-strong-local-key",
+            )
+
     def test_local_auth_reuses_owner_only_local_file(self) -> None:
         with (
             patch.dict("os.environ", {}, clear=True),

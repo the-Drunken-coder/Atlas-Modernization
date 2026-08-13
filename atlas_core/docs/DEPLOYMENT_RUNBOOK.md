@@ -143,12 +143,13 @@ Back up before every binary/image change that may carry a migration. Run the exa
 1. Create one backup-set identifier and record the application/schema versions:
 
 ```bash
-export BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)" || exit 1
 export BACKUP_DIR="/srv/atlas-backups/${BACKUP_ID}"
+export BACKUP_ID
 umask 077
-mkdir -p "${BACKUP_DIR}/minio"
-chmod 0700 "${BACKUP_DIR}"
-git rev-parse HEAD >"${BACKUP_DIR}/app-revision.txt"
+mkdir -p "${BACKUP_DIR}/minio" || exit 1
+chmod 0700 "${BACKUP_DIR}" || exit 1
+git rev-parse HEAD >"${BACKUP_DIR}/app-revision.txt" || exit 1
 
 migration_table_present="$(
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
@@ -162,10 +163,13 @@ case "${migration_table_present}" in
       -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
       psql -At -U atlas -d atlas_core \
       -c "SELECT concat_ws(' ', version, name, checksum, fingerprint_version) FROM atlas_schema_migrations ORDER BY version" \
-      >"${BACKUP_DIR}/schema-migrations.txt"
+      >"${BACKUP_DIR}/schema-migrations.txt" || {
+        printf '%s\n' 'Failed to record schema migration state' >&2
+        exit 1
+      }
     ;;
   f)
-    printf '%s\n' 'unversioned-v1-candidate' >"${BACKUP_DIR}/schema-migrations.txt"
+    printf '%s\n' 'unversioned-v1-candidate' >"${BACKUP_DIR}/schema-migrations.txt" || exit 1
     ;;
   *)
     printf 'Unexpected migration-table probe result: %s\n' "${migration_table_present}" >&2
@@ -177,8 +181,11 @@ esac
 2. Quiesce all writes by stopping Core. Leave PostgreSQL and MinIO running:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
-  docker compose -f atlas_core/docker/docker-compose.production.yml stop api
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+    docker compose -f atlas_core/docker/docker-compose.production.yml stop api
+)
 ```
 
 3. Create a full custom-format database dump:
