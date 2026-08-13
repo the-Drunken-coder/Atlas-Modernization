@@ -468,6 +468,11 @@ jobs:
               (.services | has("cloudflared") | not) and
               (.networks | has("atlas_tunnel_network") | not)
             '
+          MINIO_BUCKET=mission-media docker compose -f docker/docker-compose.production.yml config --format json |
+            jq -e '
+              .services.api.environment.MINIO_BUCKET == "mission-media" and
+              .services["minio-init"].environment.MINIO_BUCKET == "mission-media"
+            '
           docker compose -f docker/docker-compose.production.yml -f docker/docker-compose.tunnel.yml config --quiet
           docker compose -f docker/docker-compose.production.yml -f docker/docker-compose.tunnel.yml config --format json |
             jq -e '

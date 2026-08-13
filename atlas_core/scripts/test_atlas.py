@@ -698,6 +698,41 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             cwd="/tmp/atlas_core/docker",
         )
 
+    def test_production_start_never_generates_or_persists_credentials(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.ensure_minio_secrets") as ensure_minio_secrets,
+            patch("atlas.ensure_postgres_password") as ensure_postgres_password,
+            patch("atlas.persist_compose_env_values") as persist,
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers"),
+            patch("atlas.subprocess.run"),
+            patch("atlas.wait_for_database_docker"),
+            patch("atlas.wait_for_minio"),
+            patch("atlas.ensure_minio_bucket_docker"),
+            patch("atlas.cleanup_init_containers"),
+            patch("atlas.wait_for_api"),
+            patch("atlas.wait_for_database_schema_docker"),
+            patch("builtins.print"),
+        ):
+            start_containers(production=True)
+
+        ensure_minio_secrets.assert_not_called()
+        ensure_postgres_password.assert_not_called()
+        persist.assert_not_called()
+
     def test_development_start_persists_local_api_auth(self) -> None:
         local_auth = {
             "ENABLE_API_AUTH": "true",
