@@ -98,6 +98,9 @@ func TestLoadRejectsEnabledAPIAuthWithPlaceholderKey(t *testing.T) {
 		"ÅåÅåÅåx1",
 		"éøåßéøåß",
 		"٠١٢٣٤٥x",
+		"real\nproduction-secret",
+		"real\rproduction-secret",
+		"real\tproduction-secret",
 		string([]byte{0xff, 'A', 'z', 'B', 'y', 'C', 'x', 'D'}),
 	} {
 		t.Run(apiKey, func(t *testing.T) {

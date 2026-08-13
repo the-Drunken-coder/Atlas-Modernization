@@ -633,7 +633,7 @@ def ensure_api_auth(mode):
 def is_weak_api_auth_key(value):
     """Mirror Core's API-key strength boundary for launcher preflight."""
     trimmed = value.strip()
-    if not trimmed.isascii():
+    if not trimmed.isascii() or any(not " " <= current <= "~" for current in trimmed):
         return True
     normalized = trimmed.lower()
     if normalized in WEAK_API_AUTH_KEYS or len(normalized.encode()) < 8 or len(set(normalized)) < 4:

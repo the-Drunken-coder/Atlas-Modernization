@@ -20,7 +20,7 @@ func validateAPIAuthKey(enabled bool, key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("ENABLE_API_AUTH is true but API_AUTH_KEY is empty")
 	}
-	if !isASCII(key) {
+	if !isPrintableASCII(key) {
 		return "", fmt.Errorf("API_AUTH_KEY is too weak for API auth")
 	}
 	placeholderKeys := map[string]struct{}{
@@ -56,9 +56,9 @@ func validateAPIAuthKey(enabled bool, key string) (string, error) {
 	return key, nil
 }
 
-func isASCII(value string) bool {
+func isPrintableASCII(value string) bool {
 	for _, current := range []byte(value) {
-		if current > 0x7f {
+		if current < 0x20 || current > 0x7e {
 			return false
 		}
 	}

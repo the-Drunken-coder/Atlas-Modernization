@@ -118,6 +118,9 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             "ÅåÅåÅåx1",
             "éøåßéøåß",
             "٠١٢٣٤٥x",
+            "real\nproduction-secret",
+            "real\rproduction-secret",
+            "real\tproduction-secret",
         ):
             with (
                 self.subTest(api_auth_key=api_auth_key),

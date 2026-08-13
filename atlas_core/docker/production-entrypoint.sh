@@ -98,8 +98,8 @@ if [ -z "$api_auth_key" ]; then
     exit 1
 fi
 
-if ! printf '%s' "$api_auth_key" | od -An -tu1 | awk '{ for (index_value = 1; index_value <= NF; index_value++) if ($index_value > 127) exit 1 }'; then
-    printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY must contain only ASCII characters." >&2
+if ! printf '%s' "$api_auth_key" | od -An -tu1 | awk '{ for (index_value = 1; index_value <= NF; index_value++) if ($index_value < 32 || $index_value > 126) exit 1 }'; then
+    printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY must contain only printable ASCII characters." >&2
     exit 1
 fi
 

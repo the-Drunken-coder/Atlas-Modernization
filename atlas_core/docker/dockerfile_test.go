@@ -332,6 +332,21 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "enabled auth embedded newline",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real\nproduction-secret"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth embedded carriage return",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real\rproduction-secret"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth embedded tab",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real\tproduction-secret"},
+			wantErr: true,
+		},
+		{
 			name:    "enabled auth invalid UTF-8 byte",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=" + string([]byte{0xff, 'A', 'z', 'B', 'y', 'C', 'x', 'D'})},
 			wantErr: true,

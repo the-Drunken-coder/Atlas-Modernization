@@ -95,8 +95,8 @@ export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 
 The owner-readable environment file must define `POSTGRES_PASSWORD`,
 `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and
-`ATLAS_ADMIN_PASSWORD`; the API key must contain only ASCII characters, and the
-admin password must contain at least 12 characters.
+`ATLAS_ADMIN_PASSWORD`; the API key must contain only printable ASCII
+characters, and the admin password must contain at least 12 characters.
 Before the first production start on a new MinIO volume, provision the configured
 durable bucket and verify it exists; production startup deliberately will not create it.
 `MINIO_BUCKET` defaults to `atlas-media` when the operator file omits it.
