@@ -55,8 +55,10 @@ permissions in `atlas_core/docker/.env.local`. Local server-side tools such as A
 Simulations use that file as the single source of local credentials. The
 launcher never prints either secret. Browser sessions continue to use the
 `admin` account; its password is the `ATLAS_ADMIN_PASSWORD` stored in that file.
-Production and tunnel startup never load `.env.local`; their credentials must
-still be supplied explicitly through the environment or `docker/.env`.
+Production and tunnel startup never load `.env.local`. The production launcher
+requires its operator-owned credentials in the process environment before it
+reads `docker/.env`; tunnel development and manual Compose runs may use
+`docker/.env`.
 
 For manual Compose configuration:
 
@@ -88,6 +90,7 @@ umask 077
 set -a
 . /secure/path/atlas-production.env
 set +a
+export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 ```
 
 The owner-readable environment file must define `POSTGRES_PASSWORD`,
@@ -95,17 +98,25 @@ The owner-readable environment file must define `POSTGRES_PASSWORD`,
 `ATLAS_ADMIN_PASSWORD`; the admin password must contain at least 12 characters.
 Before the first production start on a new MinIO volume, provision the configured
 durable bucket and verify it exists; production startup deliberately will not create it.
-`atlas-media` below is the default; replace it with the configured `MINIO_BUCKET`
-value if you changed it.
+`MINIO_BUCKET` defaults to `atlas-media` when the operator file omits it.
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mb atlas_production/atlas-media
-mc stat atlas_production/atlas-media
-unset MC_HOST_atlas_production
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+  minio_mc_config="$(mktemp -d)"
+  trap 'rm -rf -- "${minio_mc_config}"' EXIT
+  mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
+    "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+  mc --config-dir "${minio_mc_config}" mb "atlas_production/${MINIO_BUCKET}"
+  mc --config-dir "${minio_mc_config}" stat "atlas_production/${MINIO_BUCKET}"
+) || exit "$?"
 python3 atlas_core/scripts/atlas.py --production
 ```
+
+Passing credentials as separate quoted arguments keeps values containing URL-reserved
+characters such as `/`, `?`, `#`, or `%` intact. The isolated temporary client
+configuration is removed on success, failure, or interruption.
 
 Add `--tunnel` to start the optional Cloudflare Tunnel public edge. See
 [`docs/DEPLOYMENT_RUNBOOK.md`](docs/DEPLOYMENT_RUNBOOK.md) for the full operator

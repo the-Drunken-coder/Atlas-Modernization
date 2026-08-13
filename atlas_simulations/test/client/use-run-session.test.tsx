@@ -42,6 +42,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function emitEvent(source: FakeEventSource, event: Record<string, unknown>) {
+  source.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>);
+}
+
 beforeEach(() => {
   eventSources = [];
   vi.resetAllMocks();
@@ -212,5 +216,155 @@ describe("useRunSession", () => {
 
     expect(source.closed).toBe(true);
     expect(result.current.events).toHaveLength(1);
+  });
+
+  it("replays a cleaned run through its final cleanup event", async () => {
+    const cleanedRun = { ...run, id: "cleaned-replay", cleaned: true };
+    vi.mocked(loadRuns).mockResolvedValueOnce([cleanedRun]);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(cleanedRun));
+    const source = eventSources[0];
+    const timestamp = new Date().toISOString();
+    act(() => {
+      emitEvent(source, {
+        sequence: 1,
+        runId: cleanedRun.id,
+        timestamp,
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+    });
+
+    expect(source.closed).toBe(false);
+    act(() => {
+      emitEvent(source, {
+        sequence: 2,
+        runId: cleanedRun.id,
+        timestamp,
+        type: "cleanup",
+        message: "Cleanup complete"
+      });
+    });
+
+    expect(source.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
+  });
+
+  it("replays a cleaned run discovered while refreshing partial cached events", async () => {
+    const completedRun = { ...run, id: "cleaned-refresh-replay" };
+    const cleanedRun = { ...completedRun, cleaned: true };
+    vi.mocked(loadRuns).mockResolvedValueOnce([completedRun]).mockResolvedValue([cleanedRun]);
+    vi.mocked(cleanupRun).mockResolvedValueOnce(cleanedRun);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(completedRun));
+    const initialSource = eventSources[0];
+    const timestamp = new Date().toISOString();
+    act(() => {
+      emitEvent(initialSource, {
+        sequence: 1,
+        runId: completedRun.id,
+        timestamp,
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+    });
+    expect(initialSource.closed).toBe(true);
+
+    await act(async () => result.current.cleanupCurrentRun());
+    const replaySource = eventSources[2];
+    expect(replaySource).toBeDefined();
+    expect(replaySource.closed).toBe(false);
+
+    act(() => {
+      emitEvent(replaySource, {
+        sequence: 1,
+        runId: completedRun.id,
+        timestamp,
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+      emitEvent(replaySource, {
+        sequence: 2,
+        runId: completedRun.id,
+        timestamp,
+        type: "cleanup",
+        message: "Cleanup complete"
+      });
+    });
+
+    expect(replaySource.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
+  });
+
+  it("replays a terminal event missed when a running stream disconnects", async () => {
+    const runningRun = { ...run, id: "disconnected-run", status: "running" as const };
+    const completedRun = {
+      ...runningRun,
+      status: "completed" as const,
+      finishedAt: new Date(Date.parse(runningRun.startedAt) + 1_000).toISOString()
+    };
+    vi.mocked(loadRuns).mockResolvedValueOnce([runningRun]).mockResolvedValue([completedRun]);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(runningRun));
+    const disconnectedSource = eventSources[0];
+    act(() => disconnectedSource.onerror?.());
+
+    await waitFor(() => expect(eventSources).toHaveLength(2));
+    expect(disconnectedSource.closed).toBe(true);
+    const replaySource = eventSources[1];
+    act(() => {
+      emitEvent(replaySource, {
+        sequence: 1,
+        runId: runningRun.id,
+        timestamp: new Date().toISOString(),
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+    });
+
+    expect(replaySource.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed"]);
+  });
+
+  it("replays a disconnected run after another run was selected", async () => {
+    const runningRun = { ...run, id: "disconnected-selection", status: "running" as const };
+    const otherRun = { ...run, id: "other-run", scenarioId: "other-scenario" };
+    const completedRun = { ...runningRun, status: "completed" as const, finishedAt: new Date().toISOString() };
+    const refreshedRuns = deferred<RunSummary[]>();
+    vi.mocked(loadRuns).mockResolvedValueOnce([runningRun, otherRun]).mockReturnValueOnce(refreshedRuns.promise);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(2));
+
+    act(() => result.current.selectRun(runningRun));
+    act(() => eventSources[0].onerror?.());
+    act(() => result.current.selectRun(otherRun));
+    await act(async () => refreshedRuns.resolve([completedRun, otherRun]));
+
+    act(() => result.current.selectRun(completedRun));
+    const replaySource = eventSources.at(-1)!;
+    expect(replaySource).not.toBe(eventSources[0]);
+    act(() => {
+      emitEvent(replaySource, {
+        sequence: 1,
+        runId: completedRun.id,
+        timestamp: new Date().toISOString(),
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+    });
+
+    expect(replaySource.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed"]);
   });
 });

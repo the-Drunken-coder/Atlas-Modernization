@@ -31,7 +31,7 @@ func TestWebsocketFeedStartsUnsubscribedAndAllowsLiveSubscribe(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe all: %v", err)
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 	hub.Publish(entityEvent("create", "asset-after-subscribe", 2, "asset"))
 
 	var event protocol.FeedEvent
@@ -78,7 +78,7 @@ func TestWebsocketFeedAcknowledgesInstalledInitialSubscriptions(t *testing.T) {
 	if ready.Type != "subscriptions_ready" || ready.Version != 17 {
 		t.Fatalf("subscription acknowledgement = %+v", ready)
 	}
-	if !hub.HasSubscription(Subscription{Filter: FilterAll}) {
+	if !hub.HasSubscription(Subscription{Filter: protocol.FeedFilterAll}) {
 		t.Fatal("subscription acknowledgement arrived before the subscription was installed")
 	}
 }
@@ -119,7 +119,7 @@ func TestWebsocketFeedUnsubscribeStopsDelivery(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe all: %v", err)
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 	hub.Publish(entityEvent("create", "asset-before-unsubscribe", 1, "asset"))
 	var event protocol.FeedEvent
 	readFeedEvent(t, conn, &event)
@@ -130,7 +130,7 @@ func TestWebsocketFeedUnsubscribeStopsDelivery(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"unsubscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("unsubscribe all: %v", err)
 	}
-	waitForNoSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForNoSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 	hub.Publish(entityEvent("create", "asset-after-unsubscribe", 2, "asset"))
 	assertNoFeedEvent(t, conn)
 }
@@ -153,8 +153,8 @@ func TestWebsocketFeedAllowsMultipleSubscriptions(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"id","resource_type":"entity","id":"asset-specific"}`)); err != nil {
 		t.Fatalf("subscribe entity id: %v", err)
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
-	waitForSubscription(t, hub, Subscription{Filter: FilterID, ResourceType: protocol.ResourceTypeEntity, ID: "asset-specific"})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterID, ResourceType: protocol.ResourceTypeEntity, ID: "asset-specific"})
 
 	hub.Publish(entityEvent("create", "asset-specific", 1, "asset"))
 	var event protocol.FeedEvent
@@ -186,7 +186,7 @@ func TestWebsocketFeedDuplicateSubscriptionsAreIdempotent(t *testing.T) {
 			t.Fatalf("subscribe all %d: %v", i, err)
 		}
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 	hub.Publish(entityEvent("create", "asset-duplicate-sub", 1, "asset"))
 	var event protocol.FeedEvent
 	readFeedEvent(t, conn, &event)
@@ -221,7 +221,7 @@ func TestWebsocketFeedFirstMessageAuthWhenEnabled(t *testing.T) {
 		t.Fatalf("subscribe task type: %v", err)
 	}
 	waitForSubscription(t, hub, Subscription{
-		Filter:       FilterType,
+		Filter:       protocol.FeedFilterType,
 		ResourceType: protocol.ResourceTypeTask,
 	})
 	hub.Publish(taskEvent("create", "task-auth", 1, "", "asset-1", "pending"))
@@ -260,7 +260,7 @@ func TestWebsocketFeedFirstMessageAuthUsesAPIKeyValidator(t *testing.T) {
 		t.Fatalf("subscribe task type: %v", err)
 	}
 	waitForSubscription(t, hub, Subscription{
-		Filter:       FilterType,
+		Filter:       protocol.FeedFilterType,
 		ResourceType: protocol.ResourceTypeTask,
 	})
 	hub.Publish(taskEvent("create", "task-managed-auth", 1, "", "asset-1", "pending"))
@@ -508,7 +508,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterHandshake(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe feed: %v", err)
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 	hub.Publish(entityEvent("create", "asset-after-auth", 1, "asset"))
 	var event protocol.FeedEvent
 	readFeedEvent(t, conn, &event)
@@ -542,7 +542,7 @@ func TestWebsocketFeedFirstMessageAuthRejectsAuthAfterSubscription(t *testing.T)
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("write subscribe: %v", err)
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 	hub.Publish(entityEvent("create", "asset-after-subscription", 1, "asset"))
 	var event protocol.FeedEvent
 	readFeedEvent(t, conn, &event)
@@ -573,7 +573,7 @@ func TestWebsocketFeedClosesWhenHubClosesWhileReadSideIdle(t *testing.T) {
 	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe feed: %v", err)
 	}
-	waitForSubscription(t, hub, Subscription{Filter: FilterAll})
+	waitForSubscription(t, hub, Subscription{Filter: protocol.FeedFilterAll})
 
 	hub.Close()
 

@@ -10,7 +10,7 @@ func TestHubDeliversDurableEventsInPublishedOrder(t *testing.T) {
 	hub := NewHub(Options{})
 	defer hub.Close()
 	client := hub.NewClient()
-	client.Subscribe(Subscription{Filter: FilterAll})
+	client.Subscribe(Subscription{Filter: protocol.FeedFilterAll})
 
 	hub.Publish(testRoutedEvent(4, protocol.ResourceTypeEntity, "entity-1"))
 	hub.Publish(testRoutedEvent(5, protocol.ResourceTypeTask, "task-1"))
@@ -27,7 +27,7 @@ func TestTasksForEntityMatchesBeforeAndAfterRoutingContext(t *testing.T) {
 	hub := NewHub(Options{})
 	defer hub.Close()
 	client := hub.NewClient()
-	client.Subscribe(Subscription{Filter: FilterTasksForEntity, ResourceType: protocol.ResourceTypeTask, EntityID: "entity-1"})
+	client.Subscribe(Subscription{Filter: protocol.FeedFilterTasksForEntity, ResourceType: protocol.ResourceTypeTask, EntityID: "entity-1"})
 
 	hub.Publish(RoutedEvent{
 		Event:              testRoutedEvent(1, protocol.ResourceTypeTask, "task-1").Event,
@@ -59,7 +59,7 @@ func TestHubDisconnectsSlowClients(t *testing.T) {
 	hub := NewHub(Options{ClientBuffer: 1})
 	defer hub.Close()
 	client := hub.NewClient()
-	client.Subscribe(Subscription{Filter: FilterAll})
+	client.Subscribe(Subscription{Filter: protocol.FeedFilterAll})
 
 	hub.Publish(testRoutedEvent(1, protocol.ResourceTypeEntity, "entity-1"))
 	hub.Publish(testRoutedEvent(2, protocol.ResourceTypeEntity, "entity-2"))

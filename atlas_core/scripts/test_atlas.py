@@ -16,12 +16,14 @@ from atlas import (
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
+    compose_container_name,
     compose_down_command,
     compose_up_command,
     database_recreate_on_startup_enabled,
     ensure_api_auth,
     ensure_local_auth,
     ensure_minio_bucket_docker,
+    ensure_production_storage_credentials,
     main,
     print_storage_notice,
     public_base_url_from_hostname,
@@ -102,18 +104,79 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         ):
             self.assertTrue(ensure_api_auth("Production mode"))
 
+    def test_destructive_production_dotenv_stops_before_cleanup_or_docker(self) -> None:
+        def load_destructive_setting(_docker_dir: str) -> None:
+            os.environ["DATABASE_RECREATE_ON_STARTUP"] = "true"
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv", side_effect=load_destructive_setting),
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run") as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        cleanup.assert_not_called()
+        run.assert_not_called()
+
+    def test_destructive_production_mode_stops_before_cleanup_or_docker(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "DATABASE_RECREATE_ON_STARTUP": "true",
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv") as load_dotenv,
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run") as run,
+            patch("builtins.print"),
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        load_dotenv.assert_called_once_with("/tmp/atlas_core/docker")
+        cleanup.assert_not_called()
+        run.assert_not_called()
+
     def test_production_file_only_auth_stops_before_docker(self) -> None:
         with (
             patch.dict(
                 "os.environ",
-                {"API_AUTH_KEY": "configured-machine-key", "ATLAS_ADMIN_PASSWORD_FILE": "/run/secrets/admin"},
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "configured-machine-key",
+                    "ATLAS_ADMIN_PASSWORD_FILE": "/run/secrets/admin",
+                },
                 clear=True,
             ),
             patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
             patch("atlas.load_compose_dotenv"),
-            patch("atlas.ensure_minio_secrets", return_value={}),
-            patch("atlas.ensure_postgres_password", return_value={}),
-            patch("atlas.persist_compose_env_values"),
+            patch("atlas.ensure_minio_secrets") as ensure_minio_secrets,
+            patch("atlas.ensure_postgres_password") as ensure_postgres_password,
+            patch("atlas.persist_compose_env_values") as persist,
             patch("atlas.print_storage_notice"),
             patch("atlas.cleanup_containers") as cleanup,
             patch("atlas.subprocess.run") as run,
@@ -124,6 +187,126 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         cleanup.assert_not_called()
         run.assert_not_called()
+        ensure_minio_secrets.assert_not_called()
+        ensure_postgres_password.assert_not_called()
+        persist.assert_not_called()
+
+    def test_production_storage_rejects_example_passwords(self) -> None:
+        configured = {
+            "POSTGRES_PASSWORD": "operator-postgres-password",
+            "MINIO_ROOT_USER": "operator-minio-user",
+            "MINIO_ROOT_PASSWORD": "operator-minio-password",
+        }
+        for name in ("POSTGRES_PASSWORD", "MINIO_ROOT_PASSWORD"):
+            with (
+                self.subTest(name=name),
+                patch.dict("os.environ", {**configured, name: "REPLACE_WITH_STRONG_PASSWORD"}, clear=True),
+                patch("builtins.print") as output,
+            ):
+                self.assertFalse(ensure_production_storage_credentials())
+                self.assertIn("replace the committed example value", output.call_args.args[0])
+
+        with patch.dict("os.environ", {"POSTGRES_PASSWORD": "replace_with_strong_password"}, clear=True):
+            self.assertFalse(ensure_production_storage_credentials(db_only=True))
+
+    def test_production_rejects_database_url_unsafe_password_before_cleanup(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator@password#unsafe",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv") as load_dotenv,
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run") as run,
+            patch("builtins.print") as output,
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        self.assertIn("safe in the production database URL", output.call_args.args[0])
+        load_dotenv.assert_not_called()
+        cleanup.assert_not_called()
+        run.assert_not_called()
+
+    def test_production_rejects_database_password_whitespace(self) -> None:
+        with patch.dict("os.environ", {"POSTGRES_PASSWORD": " operator-postgres-password "}, clear=True):
+            self.assertFalse(ensure_production_storage_credentials(db_only=True))
+
+    def test_production_rejects_invalid_bucket(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "MINIO_BUCKET": " mission-media ",
+                },
+                clear=True,
+            ),
+            patch("builtins.print") as output,
+        ):
+            self.assertFalse(ensure_production_storage_credentials())
+
+        self.assertIn("valid S3 bucket name", output.call_args.args[0])
+
+    def test_production_exports_default_bucket_for_compose(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "POSTGRES_PASSWORD": "operator-postgres-password",
+                "MINIO_ROOT_USER": "operator-minio-user",
+                "MINIO_ROOT_PASSWORD": "operator-minio-password",
+            },
+            clear=True,
+        ):
+            self.assertTrue(ensure_production_storage_credentials())
+            self.assertEqual(os.environ["MINIO_BUCKET"], "atlas-media")
+
+    def test_production_missing_credential_stops_before_loading_local_defaults(self) -> None:
+        configured = {
+            "POSTGRES_PASSWORD": "operator-postgres-password",
+            "MINIO_ROOT_USER": "operator-minio-user",
+            "MINIO_ROOT_PASSWORD": "operator-minio-password",
+            "API_AUTH_KEY": "operator-api-key",
+            "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+        }
+        for missing in configured:
+            with (
+                self.subTest(missing=missing),
+                patch.dict(
+                    "os.environ",
+                    {key: value for key, value in configured.items() if key != missing},
+                    clear=True,
+                ),
+                patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+                patch("atlas.load_compose_dotenv") as load_dotenv,
+                patch("atlas.cleanup_containers") as cleanup,
+                patch("atlas.subprocess.run") as run,
+                patch("builtins.print"),
+                self.assertRaises(SystemExit),
+            ):
+                start_containers(production=True)
+
+            load_dotenv.assert_not_called()
+            cleanup.assert_not_called()
+            run.assert_not_called()
+
+    def test_production_db_only_requires_only_postgres_password(self) -> None:
+        with patch.dict("os.environ", {}, clear=True), patch("builtins.print") as output:
+            self.assertFalse(ensure_production_storage_credentials(db_only=True))
+            self.assertIn("POSTGRES_PASSWORD", output.call_args.args[0])
+
+        with patch.dict("os.environ", {"POSTGRES_PASSWORD": "operator-postgres-password"}, clear=True):
+            self.assertTrue(ensure_production_storage_credentials(db_only=True))
 
     def test_production_bucket_verification_rejects_missing_bucket(self) -> None:
         with patch("atlas.subprocess.run", return_value=CompletedProcess([], 1)):
@@ -136,6 +319,15 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ensure_minio_bucket_docker()
 
         self.assertIn("Development bucket initialization delegated", output.getvalue())
+
+    def test_bucket_verification_uses_configured_bucket(self) -> None:
+        with (
+            patch.dict("os.environ", {"MINIO_BUCKET": "mission-media"}, clear=True),
+            patch("atlas.subprocess.run", return_value=CompletedProcess([], 0)) as run,
+        ):
+            ensure_minio_bucket_docker(production=True)
+
+        self.assertEqual(run.call_args.args[0][-1], "local/mission-media")
 
     def test_reset_volumes_help_warns_about_production_data_loss(self) -> None:
         output = StringIO()
@@ -397,8 +589,12 @@ class AtlasScriptHelpersTest(unittest.TestCase):
     def test_compose_up_command_uses_dev_stack_by_default(self) -> None:
         self.assertEqual(
             compose_up_command(),
-            ["docker", "compose", "up", "-d", "--build"],
+            ["docker", "compose", "--project-name", "atlas_core_development", "up", "-d", "--build"],
         )
+
+    def test_compose_container_names_isolate_production(self) -> None:
+        self.assertEqual(compose_container_name("postgres"), "atlas_core_postgres")
+        self.assertEqual(compose_container_name("postgres", production=True), "atlas_core_production_postgres")
 
     def test_compose_up_command_uses_dev_tunnel_override(self) -> None:
         self.assertEqual(
@@ -406,6 +602,8 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             [
                 "docker",
                 "compose",
+                "--project-name",
+                "atlas_core_development",
                 "-f",
                 "docker-compose.yml",
                 "-f",
@@ -422,11 +620,30 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             [
                 "docker",
                 "compose",
+                "--project-name",
+                "atlas_core_production",
                 "-f",
                 "docker-compose.production.yml",
                 "up",
                 "-d",
                 "--build",
+            ],
+        )
+
+    def test_compose_up_command_uses_production_database_stack_for_db_only(self) -> None:
+        self.assertEqual(
+            compose_up_command(production=True, db_only=True, service="postgres"),
+            [
+                "docker",
+                "compose",
+                "--project-name",
+                "atlas_core_production",
+                "-f",
+                "docker-compose.production-db.yml",
+                "up",
+                "-d",
+                "--build",
+                "postgres",
             ],
         )
 
@@ -436,6 +653,8 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             [
                 "docker",
                 "compose",
+                "--project-name",
+                "atlas_core_production",
                 "-f",
                 "docker-compose.production.yml",
                 "-f",
@@ -452,6 +671,8 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             [
                 "docker",
                 "compose",
+                "--project-name",
+                "atlas_core_production",
                 "-f",
                 "docker-compose.production.yml",
                 "-f",
@@ -467,6 +688,8 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             [
                 "docker",
                 "compose",
+                "--project-name",
+                "atlas_core_production",
                 "-f",
                 "docker-compose.production.yml",
                 "down",
@@ -477,13 +700,36 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ],
         )
 
-    def test_production_db_only_does_not_require_api_auth(self) -> None:
+    def test_compose_down_command_uses_production_database_stack_for_db_only(self) -> None:
+        self.assertEqual(
+            compose_down_command(production=True, db_only=True),
+            [
+                "docker",
+                "compose",
+                "--project-name",
+                "atlas_core_production",
+                "-f",
+                "docker-compose.production-db.yml",
+                "down",
+                "--remove-orphans",
+            ],
+        )
+
+    def test_production_db_only_start_requires_only_postgres_password(self) -> None:
         with (
+            patch.dict(
+                "os.environ",
+                {
+                    "DATABASE_RECREATE_ON_STARTUP": "true",
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                },
+                clear=True,
+            ),
             patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
             patch("atlas.load_compose_dotenv"),
-            patch("atlas.ensure_minio_secrets", return_value={}),
-            patch("atlas.ensure_postgres_password", return_value={}),
-            patch("atlas.persist_compose_env_values"),
+            patch("atlas.ensure_minio_secrets") as ensure_minio_secrets,
+            patch("atlas.ensure_postgres_password") as ensure_postgres_password,
+            patch("atlas.persist_compose_env_values") as persist,
             patch("atlas.print_storage_notice"),
             patch("atlas.ensure_api_auth") as ensure_api_auth,
             patch("atlas.cleanup_containers"),
@@ -494,12 +740,17 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             start_containers(db_only=True, production=True)
 
         ensure_api_auth.assert_not_called()
+        ensure_minio_secrets.assert_not_called()
+        ensure_postgres_password.assert_not_called()
+        persist.assert_not_called()
         run.assert_called_once_with(
             [
                 "docker",
                 "compose",
+                "--project-name",
+                "atlas_core_production",
                 "-f",
-                "docker-compose.production.yml",
+                "docker-compose.production-db.yml",
                 "up",
                 "-d",
                 "--build",
@@ -508,6 +759,54 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             check=True,
             cwd="/tmp/atlas_core/docker",
         )
+
+    def test_production_db_only_rejects_resetting_only_half_of_storage(self) -> None:
+        with (
+            patch.object(sys, "argv", ["atlas.py", "--production", "--db-only", "--reset-volumes"]),
+            patch("atlas.start_containers") as start_containers_mock,
+            patch("builtins.print") as print_mock,
+            self.assertRaises(SystemExit) as exit_result,
+        ):
+            main()
+
+        self.assertEqual(exit_result.exception.code, 1)
+        start_containers_mock.assert_not_called()
+        print_mock.assert_called_with("[ERROR] Cannot reset the complete production storage pair in --db-only mode")
+
+    def test_production_start_never_generates_or_persists_credentials(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator-postgres-password",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv"),
+            patch("atlas.ensure_minio_secrets") as ensure_minio_secrets,
+            patch("atlas.ensure_postgres_password") as ensure_postgres_password,
+            patch("atlas.persist_compose_env_values") as persist,
+            patch("atlas.print_storage_notice"),
+            patch("atlas.cleanup_containers"),
+            patch("atlas.subprocess.run"),
+            patch("atlas.wait_for_database_docker"),
+            patch("atlas.wait_for_minio"),
+            patch("atlas.ensure_minio_bucket_docker"),
+            patch("atlas.cleanup_init_containers"),
+            patch("atlas.wait_for_api"),
+            patch("atlas.wait_for_database_schema_docker"),
+            patch("builtins.print"),
+        ):
+            start_containers(production=True)
+
+        ensure_minio_secrets.assert_not_called()
+        ensure_postgres_password.assert_not_called()
+        persist.assert_not_called()
 
     def test_development_start_persists_local_api_auth(self) -> None:
         local_auth = {

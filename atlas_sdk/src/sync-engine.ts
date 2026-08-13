@@ -40,6 +40,7 @@ import type {
   SyncStatus,
   WatchCallback
 } from "./types.js";
+import { pathWithQuery } from "./url.js";
 import {
   entityCheckInResponseValidator,
   isEntityResource,
@@ -904,17 +905,6 @@ function requireFullDatasetVersion(version: number): number {
     throw new Error("Atlas full-dataset response version watermark must be a non-negative safe integer");
   }
   return version;
-}
-
-function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      query.set(key, value);
-    }
-  }
-  const encoded = query.toString();
-  return encoded ? `${path}?${encoded}` : path;
 }
 
 function reportWatchCallbackError(error: unknown): void {

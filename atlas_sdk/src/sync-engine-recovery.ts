@@ -1,5 +1,6 @@
 import type { HttpTransport } from "./http.js";
 import type { FeedEvent } from "./protocol.js";
+import { pathWithQuery } from "./url.js";
 import { changedSinceResponseValidator } from "./validation.js";
 
 export type RecoveryEventApplier = (event: FeedEvent) => void;
@@ -109,13 +110,4 @@ function requireCursor(cursor: string | undefined): string {
     throw new Error("Atlas response set has_more without next_cursor");
   }
   return cursor;
-}
-
-function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) query.set(key, value);
-  }
-  const encoded = query.toString();
-  return encoded ? `${path}?${encoded}` : path;
 }

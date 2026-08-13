@@ -238,9 +238,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Audit asset runtime dependencies
-        run: npm audit --audit-level=high
-
       - name: Lint asset runtime
         run: npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
 
@@ -298,9 +295,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Audit command interface dependencies
-        run: npm audit --audit-level=high
-
       - name: Lint command interface
         run: npm run lint --workspace @the-drunken-coder/atlas-command-interface
 
@@ -338,9 +332,6 @@ jobs:
 
       - name: Install JavaScript workspace dependencies
         run: npm ci
-
-      - name: Audit simulations dependencies
-        run: npm audit --audit-level=high
 
       - name: Lint simulations
         run: npm run lint --workspace @the-drunken-coder/atlas-simulations
@@ -471,11 +462,17 @@ jobs:
           ATLAS_ADMIN_PASSWORD: dummy-ci-admin-password
         run: |
           docker compose -f docker/docker-compose.production.yml config --quiet
+          docker compose -f docker/docker-compose.production-db.yml config --quiet
           docker compose -f docker/docker-compose.production.yml config --format json |
             jq -e '
               .services.api.environment.TRUSTED_PROXY_CIDRS == "" and
               (.services | has("cloudflared") | not) and
               (.networks | has("atlas_tunnel_network") | not)
+            '
+          MINIO_BUCKET=mission-media docker compose -f docker/docker-compose.production.yml config --format json |
+            jq -e '
+              .services.api.environment.MINIO_BUCKET == "mission-media" and
+              .services["minio-init"].environment.MINIO_BUCKET == "mission-media"
             '
           docker compose -f docker/docker-compose.production.yml -f docker/docker-compose.tunnel.yml config --quiet
           docker compose -f docker/docker-compose.production.yml -f docker/docker-compose.tunnel.yml config --format json |

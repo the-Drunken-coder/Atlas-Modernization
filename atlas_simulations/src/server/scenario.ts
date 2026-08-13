@@ -1,4 +1,10 @@
 import type {
+  EntityCheckInFullResponse,
+  EntityCheckInMinimalResponse,
+  EntityCheckInOptions,
+  EntityCheckInResponse
+} from "@the-drunken-coder/atlas-sdk";
+import type {
   AssertionResult,
   CreatedResource,
   JSONValue,
@@ -238,8 +244,13 @@ function trackClientCreates(
     }
     return stop;
   };
-  const checkIn = ((id: string, options?: Parameters<AtlasClientLike["entities"]["checkIn"]>[1]) =>
-    guarded(() => client.entities.checkIn(id, options))) as AtlasClientLike["entities"]["checkIn"];
+  function checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
+  function checkIn(id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
+  function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
+  function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
+    if (options?.fields === "minimal") return guarded(() => client.entities.checkIn(id, options));
+    return guarded(() => client.entities.checkIn(id, options));
+  }
   return {
     entities: {
       get: (id) => guarded(() => client.entities.get(id)),

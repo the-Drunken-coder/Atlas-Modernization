@@ -3,6 +3,8 @@ import { FeedConnectionManager } from "./feed-connection.js";
 import { HttpTransport } from "./http.js";
 import type {
   CommandCatalog,
+  EntityCheckInFullResponse,
+  EntityCheckInMinimalResponse,
   EntityCheckInRequest,
   EntityCheckInResponse,
   EntityCreateRequest,
@@ -36,6 +38,7 @@ import type {
   WatchCallback,
   WebSocketCtor
 } from "./types.js";
+import { pathWithQuery } from "./url.js";
 import {
   changedSinceResponseValidator,
   isCommandCatalog,
@@ -93,6 +96,8 @@ export type AtlasClientOptions = {
 };
 
 export class AtlasClient {
+  private readonly checkInEntity = createEntityCheckIn(() => this.engine);
+
   readonly entities = {
     get: (id: string, options?: ReadOptions) => this.engine.readEntity(id, options),
     create: (entity: EntityCreateRequest) =>
@@ -108,7 +113,7 @@ export class AtlasClient {
         options?.ifMatchVersion
       ),
     delete: (id: string) => this.engine.deleteResource("entity", id, `/entities/${encodeURIComponent(id)}`),
-    checkIn: ((id: string, options?: EntityCheckInOptions) => this.checkInEntity(id, options)) as EntityCheckInMethod,
+    checkIn: this.checkInEntity,
     watch: (id: string, callback: WatchCallback<EntityResource>) =>
       this.engine.watch({ filter: "id", resource_type: "entity", id }, callback)
   };
@@ -279,11 +284,6 @@ export class AtlasClient {
     await this.engine.connectAndRecoverFeed();
   }
 
-  private async checkInEntity(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
-    const { path, body } = checkInRequest(id, options);
-    return this.engine.checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion);
-  }
-
   private async objectContent(id: string): Promise<ArrayBuffer> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const object = await this.objects.get(id, { fresh: true });
@@ -364,22 +364,22 @@ function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQuery
   });
 }
 
-function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      query.set(key, value);
-    }
-  }
-  const encoded = query.toString();
-  return encoded ? `${path}?${encoded}` : path;
-}
-
 function encodeTimestamp(value: string | Date | undefined): string | undefined {
   if (value === undefined) {
     return undefined;
   }
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
+  function checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
+  function checkIn(id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
+  function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
+  function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
+    const { path, body } = checkInRequest(id, options);
+    return engine().checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion);
+  }
+  return checkIn;
 }
 
 function validatedObjectRequest<T extends ObjectCreateRequest | ObjectUpdateRequest>(request: T): T {

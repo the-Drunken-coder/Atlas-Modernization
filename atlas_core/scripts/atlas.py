@@ -14,8 +14,10 @@ Usage:
 """
 
 import argparse
+import ipaddress
 import logging
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
 API_AUTH_KEY_PLACEHOLDERS = {API_AUTH_KEY_PLACEHOLDER, "REPLACE_WITH_STRONG_BOOTSTRAP_KEY"}
+PRODUCTION_STORAGE_PASSWORD_PLACEHOLDER = "replace_with_strong_password"
 ADMIN_PASSWORD_PLACEHOLDERS = {
     "password",
     "replace_with_secure_admin_password",
@@ -42,7 +45,11 @@ TUNNEL_HOSTNAME_ENV = "ATLAS_TUNNEL_HOSTNAME"
 DEV_COMPOSE_FILE = "docker-compose.yml"
 TUNNEL_COMPOSE_FILE = "docker-compose.tunnel.yml"
 PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
+PRODUCTION_DB_COMPOSE_FILE = "docker-compose.production-db.yml"
+DEVELOPMENT_COMPOSE_PROJECT = "atlas_core_development"
+PRODUCTION_COMPOSE_PROJECT = "atlas_core_production"
 LOCAL_AUTH_ENV_FILE = ".env.local"
+DEFAULT_MINIO_BUCKET = "atlas-media"
 
 
 def print_banner():
@@ -104,6 +111,58 @@ def ensure_postgres_password():
         print("[INFO] Generated POSTGRES_PASSWORD for this run (redacted)")
         return {"POSTGRES_PASSWORD": generated}
     return {}
+
+
+def ensure_production_storage_credentials(db_only=False):
+    """Require operator-owned credentials before touching production containers."""
+    required = ["POSTGRES_PASSWORD"]
+    if not db_only:
+        required.extend(["MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"])
+    missing = [name for name in required if not os.getenv(name, "").strip()]
+    if missing:
+        print(f"[ERROR] Production mode requires {', '.join(missing)} to be set.")
+        return False
+    password_names = ["POSTGRES_PASSWORD"] if db_only else ["POSTGRES_PASSWORD", "MINIO_ROOT_PASSWORD"]
+    placeholders = [
+        name
+        for name in password_names
+        if os.getenv(name, "").strip().lower() == PRODUCTION_STORAGE_PASSWORD_PLACEHOLDER
+    ]
+    if placeholders:
+        print("[ERROR] Production storage passwords must replace the committed example value.")
+        return False
+    postgres_password = os.environ["POSTGRES_PASSWORD"]
+    if any(
+        not (character.isascii() and (character.isalnum() or character in "-._~!$&'()*+,;=:"))
+        for character in postgres_password
+    ):
+        print("[ERROR] POSTGRES_PASSWORD must contain only characters safe in the production database URL.")
+        return False
+    if not db_only:
+        bucket = configured_minio_bucket()
+        if not valid_minio_bucket_name(bucket):
+            print("[ERROR] MINIO_BUCKET must be a valid S3 bucket name.")
+            return False
+        os.environ["MINIO_BUCKET"] = bucket
+    return True
+
+
+def configured_minio_bucket():
+    """Return the bucket selected by the Compose environment."""
+    return os.getenv("MINIO_BUCKET") or DEFAULT_MINIO_BUCKET
+
+
+def valid_minio_bucket_name(bucket):
+    """Return whether a bucket name meets MinIO's S3 naming rules."""
+    if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) is None:
+        return False
+    if any(separator in bucket for separator in ("..", ".-", "-.")):
+        return False
+    try:
+        ipaddress.ip_address(bucket)
+    except ValueError:
+        return True
+    return False
 
 
 def ensure_local_auth(docker_dir):
@@ -175,9 +234,16 @@ def print_storage_notice(db_only=False, production=False):
     )
 
 
-def wait_for_database_docker(container_name="atlas_core_postgres", max_retries=30, delay=1.0):
+def compose_container_name(service, production=False):
+    """Return the mode-specific explicit container name."""
+    prefix = "atlas_core_production" if production else "atlas_core"
+    return f"{prefix}_{service}"
+
+
+def wait_for_database_docker(container_name=None, max_retries=30, delay=1.0, production=False):
     """Wait for PostgreSQL to be ready using docker exec pg_isready."""
     print("[WAIT] Waiting for PostgreSQL to be ready...")
+    container_name = container_name or compose_container_name("postgres", production=production)
     password = os.getenv("POSTGRES_PASSWORD", "")
 
     for attempt in range(max_retries):
@@ -216,9 +282,10 @@ def wait_for_database_docker(container_name="atlas_core_postgres", max_retries=3
     raise Exception(f"PostgreSQL not ready after {max_retries} attempts")
 
 
-def wait_for_minio(container_name="atlas_core_minio", max_retries=30, delay=1.0):
+def wait_for_minio(container_name=None, max_retries=30, delay=1.0, production=False):
     """Wait for MinIO to be ready using docker exec mc ready."""
     print("[WAIT] Waiting for MinIO to be ready...")
+    container_name = container_name or compose_container_name("minio", production=production)
 
     for attempt in range(max_retries):
         try:
@@ -240,9 +307,9 @@ def wait_for_minio(container_name="atlas_core_minio", max_retries=30, delay=1.0)
     raise Exception(f"MinIO not ready after {max_retries} attempts")
 
 
-def cleanup_init_containers():
+def cleanup_init_containers(production=False):
     """Remove one-shot init containers after they complete."""
-    init_containers = ["atlas_core_minio_init"]
+    init_containers = [compose_container_name("minio_init", production=production)]
 
     for container in init_containers:
         try:
@@ -312,9 +379,10 @@ def raise_for_exited_development_core(container_name="atlas_core_api"):
     )
 
 
-def wait_for_api(max_retries=30, delay=2.0, production=False):
+def wait_for_api(max_retries=30, delay=2.0, production=False, container_name=None):
     """Wait for the API to be ready."""
     print("[WAIT] Waiting for API to be ready...")
+    container_name = container_name or compose_container_name("api", production=production)
 
     for attempt in range(max_retries):
         try:
@@ -322,7 +390,7 @@ def wait_for_api(max_retries=30, delay=2.0, production=False):
                 [
                     "docker",
                     "exec",
-                    "atlas_core_api",
+                    container_name,
                     "curl",
                     "-sf",
                     "--connect-timeout",
@@ -353,8 +421,10 @@ def wait_for_api(max_retries=30, delay=2.0, production=False):
     raise Exception(f"API not ready after {max_retries} attempts")
 
 
-def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-media", production=False):
+def ensure_minio_bucket_docker(container_name=None, bucket=None, production=False):
     """Verify the configured bucket after Compose startup."""
+    container_name = container_name or compose_container_name("minio", production=production)
+    bucket = bucket or configured_minio_bucket()
     print(f"[CHECK] Verifying MinIO bucket: {bucket}")
 
     try:
@@ -384,9 +454,10 @@ def ensure_minio_bucket_docker(container_name="atlas_core_minio", bucket="atlas-
     print("[OK] Development bucket initialization delegated to minio-init container!")
 
 
-def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_retries=60, delay=2.0):
+def wait_for_database_schema_docker(container_name=None, max_retries=60, delay=2.0, production=False):
     """Wait until the Go API has committed a versioned schema migration."""
     print("[WAIT] Waiting for verified database schema...")
+    container_name = container_name or compose_container_name("postgres", production=production)
     password = os.getenv("POSTGRES_PASSWORD", "")
     check_sql = "SELECT version FROM atlas_schema_migrations ORDER BY version DESC LIMIT 1"
 
@@ -427,12 +498,13 @@ def wait_for_database_schema_docker(container_name="atlas_core_postgres", max_re
     raise Exception(f"Database schema not ready after {max_retries} attempts")
 
 
-def compose_down_command(*, production=False, tunnel=False, remove_volumes=False):
+def compose_down_command(*, production=False, tunnel=False, remove_volumes=False, db_only=False):
     """Return the docker compose down command for the selected deployment mode."""
-    cmd = ["docker", "compose"]
+    project_name = PRODUCTION_COMPOSE_PROJECT if production else DEVELOPMENT_COMPOSE_PROJECT
+    cmd = ["docker", "compose", "--project-name", project_name]
     if production:
-        cmd.extend(["-f", PRODUCTION_COMPOSE_FILE])
-        if tunnel:
+        cmd.extend(["-f", PRODUCTION_DB_COMPOSE_FILE if db_only else PRODUCTION_COMPOSE_FILE])
+        if tunnel and not db_only:
             cmd.extend(["-f", TUNNEL_COMPOSE_FILE])
     elif tunnel:
         cmd.extend(["-f", DEV_COMPOSE_FILE, "-f", TUNNEL_COMPOSE_FILE])
@@ -442,12 +514,13 @@ def compose_down_command(*, production=False, tunnel=False, remove_volumes=False
     return cmd
 
 
-def compose_up_command(*, production=False, tunnel=False, service=None):
+def compose_up_command(*, production=False, tunnel=False, service=None, db_only=False):
     """Return the docker compose up command for the selected deployment mode."""
-    cmd = ["docker", "compose"]
+    project_name = PRODUCTION_COMPOSE_PROJECT if production else DEVELOPMENT_COMPOSE_PROJECT
+    cmd = ["docker", "compose", "--project-name", project_name]
     if production:
-        cmd.extend(["-f", PRODUCTION_COMPOSE_FILE])
-        if tunnel:
+        cmd.extend(["-f", PRODUCTION_DB_COMPOSE_FILE if db_only else PRODUCTION_COMPOSE_FILE])
+        if tunnel and not db_only:
             cmd.extend(["-f", TUNNEL_COMPOSE_FILE])
     elif tunnel:
         cmd.extend(["-f", DEV_COMPOSE_FILE, "-f", TUNNEL_COMPOSE_FILE])
@@ -457,13 +530,18 @@ def compose_up_command(*, production=False, tunnel=False, service=None):
     return cmd
 
 
-def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, tunnel=False):
+def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, tunnel=False, db_only=False):
     """Stop containers and optionally delete related volumes/images."""
     print("[STOP] Stopping existing containers...")
     docker_dir = os.path.join(atlas_core_dir, "docker")
     if remove_volumes:
         print("[STOP] Removing container volumes and local images...")
-    cmd = compose_down_command(production=production, tunnel=tunnel, remove_volumes=remove_volumes)
+    cmd = compose_down_command(
+        production=production,
+        tunnel=tunnel,
+        remove_volumes=remove_volumes,
+        db_only=db_only,
+    )
     result = subprocess.run(
         cmd,
         cwd=docker_dir,
@@ -608,19 +686,25 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
         atlas_core_dir = resolve_atlas_core_dir()
         docker_dir = os.path.join(atlas_core_dir, "docker")
         local_auth_values = ensure_local_auth(docker_dir) if not db_only and not production and not tunnel else {}
+        if production:
+            if not ensure_production_storage_credentials(db_only=db_only):
+                sys.exit(1)
+            if not db_only and not ensure_api_auth("Production mode"):
+                sys.exit(1)
         load_compose_dotenv(docker_dir)
-        generated_compose_values = {}
-        generated_compose_values.update(ensure_minio_secrets())
-        generated_compose_values.update(ensure_postgres_password())
-        persist_compose_env_values(docker_dir, generated_compose_values)
+        if production and not db_only and database_recreate_on_startup_enabled(production=True):
+            print("[ERROR] Production mode refuses DATABASE_RECREATE_ON_STARTUP=true.")
+            sys.exit(1)
+        if not production:
+            generated_compose_values = {}
+            generated_compose_values.update(ensure_minio_secrets())
+            generated_compose_values.update(ensure_postgres_password())
+            persist_compose_env_values(docker_dir, generated_compose_values)
         if local_auth_values:
             persist_compose_env_values(docker_dir, local_auth_values, env_filename=LOCAL_AUTH_ENV_FILE)
         print_storage_notice(db_only=db_only, production=production)
 
-        if production and not db_only:
-            if not ensure_api_auth("Production mode"):
-                sys.exit(1)
-        elif tunnel:
+        if tunnel and not production:
             if not ensure_api_auth("Tunnel mode"):
                 sys.exit(1)
 
@@ -636,12 +720,13 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             remove_volumes=reset_volumes,
             production=production,
             tunnel=tunnel,
+            db_only=db_only,
         )
 
         if db_only:
             print("[START] Starting PostgreSQL container...")
             subprocess.run(
-                compose_up_command(production=production, service="postgres"),
+                compose_up_command(production=production, service="postgres", db_only=db_only),
                 check=True,
                 cwd=docker_dir,
             )
@@ -663,14 +748,14 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             )
             print("[OK] All containers started successfully!")
 
-        wait_for_database_docker()
+        wait_for_database_docker(production=production)
 
         if not db_only:
-            wait_for_minio()
+            wait_for_minio(production=production)
             ensure_minio_bucket_docker(production=production)
-            cleanup_init_containers()
+            cleanup_init_containers(production=production)
             wait_for_api(production=production)
-            wait_for_database_schema_docker()
+            wait_for_database_schema_docker(production=production)
         else:
             print("[INFO] --db-only: schema is created when the API starts (EnsureTables in db.go)")
 
@@ -705,7 +790,7 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             print("  Console:  http://localhost:9001")
             print("  User:     atlas")
             print("  Password: *****")
-            print("  Bucket:   atlas-media")
+            print(f"  Bucket:   {configured_minio_bucket()}")
 
         if tunnel:
             tunnel_verified, tunnel_status = verify_tunnel_connection()
@@ -819,6 +904,10 @@ Examples:
 
     if args.db_only and args.tunnel:
         print("[ERROR] Cannot use --db-only and --tunnel together")
+        sys.exit(1)
+
+    if args.production and args.db_only and args.reset_volumes:
+        print("[ERROR] Cannot reset the complete production storage pair in --db-only mode")
         sys.exit(1)
 
     # Interactive menu only when invoked with no flags (any flag => non-interactive).

@@ -30,13 +30,6 @@ import {
 } from "./protocol.js";
 import type { EntityCheckInFields } from "./types.js";
 
-const fullPaginationFields = [
-  ["has_more_entities", "next_entity_cursor"],
-  ["has_more_tasks", "next_task_cursor"],
-  ["has_more_objects", "next_object_cursor"]
-] as const;
-const changedPaginationFields = [["has_more", "next_cursor"]] as const;
-
 export const isCommandCatalog: ResponseValidator<CommandCatalog> = isGeneratedCommandCatalog;
 
 export const isProtocolRevisionResponse: ResponseValidator<ProtocolRevisionResponse> =
@@ -60,7 +53,9 @@ export const isFullDatasetResponse: ResponseValidator<FullDatasetResponse> = (va
   value.tasks.every(isTaskResource) &&
   value.objects.every(isObjectDetailResource) &&
   isSafeNonNegativeInteger(value.version) &&
-  hasValidPagination(value, fullPaginationFields);
+  hasValidPagination(value.has_more_entities, value.next_entity_cursor) &&
+  hasValidPagination(value.has_more_tasks, value.next_task_cursor) &&
+  hasValidPagination(value.has_more_objects, value.next_object_cursor);
 
 export function changedSinceResponseValidator(sinceVersion: number): ResponseValidator<ChangedSinceResponse> {
   return (value): value is ChangedSinceResponse => {
@@ -70,7 +65,7 @@ export function changedSinceResponseValidator(sinceVersion: number): ResponseVal
       !value.events.every(isInboundFeedEvent) ||
       !isSafeNonNegativeInteger(value.version) ||
       value.version < sinceVersion ||
-      !hasValidPagination(value, changedPaginationFields) ||
+      !hasValidPagination(value.has_more, value.next_cursor) ||
       (value.has_more && value.events.length === 0)
     ) {
       return false;
@@ -115,7 +110,7 @@ function hasValidEntityCheckInContext(
     value.entity.entity_id === expectedEntityID &&
     value.task_count === value.tasks.length &&
     value.tasks.length <= value.task_limit &&
-    hasValidPagination(value, [["has_more_tasks", "next_task_cursor"]])
+    hasValidPagination(value.has_more_tasks, value.next_task_cursor)
   );
 }
 
@@ -140,20 +135,8 @@ export function isInboundFeedEvent(value: unknown): value is FeedEvent {
   }
 }
 
-function hasValidPagination(
-  value: object,
-  fields: ReadonlyArray<readonly [hasMore: string, nextCursor: string]>
-): boolean {
-  const record = value as Record<string, unknown>;
-  return fields.every(([hasMore, nextCursor]) => {
-    if (!hasOwn(record, hasMore) || typeof record[hasMore] !== "boolean") return false;
-    if (record[hasMore]) return hasOwn(record, nextCursor) && isNonEmptyString(record[nextCursor]);
-    return !hasOwn(record, nextCursor);
-  });
-}
-
-function hasOwn(value: Record<string, unknown>, key: string): boolean {
-  return Object.hasOwn(value, key);
+function hasValidPagination(hasMore: boolean, nextCursor: string | undefined): boolean {
+  return hasMore ? isNonEmptyString(nextCursor) : nextCursor === undefined;
 }
 
 function isNonEmptyString(value: unknown): value is string {

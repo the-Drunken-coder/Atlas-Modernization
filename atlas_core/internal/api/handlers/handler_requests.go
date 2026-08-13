@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
@@ -127,7 +126,6 @@ func (r updateTaskRequest) actionParams(expectedVersion *int64) actions.UpdateTa
 type createObjectRequest struct {
 	ObjectID     string                   `json:"object_id"`
 	Path         *string                  `json:"path,omitempty"`
-	Bucket       json.RawMessage          `json:"bucket,omitempty"`
 	SizeBytes    *int64                   `json:"size_bytes,omitempty"`
 	ContentType  *string                  `json:"content_type,omitempty"`
 	Type         *string                  `json:"type,omitempty"`
@@ -151,7 +149,6 @@ func (r createObjectRequest) actionParams() actions.CreateObjectParams {
 
 type updateObjectRequest struct {
 	Path         *string                  `json:"path,omitempty"`
-	Bucket       json.RawMessage          `json:"bucket,omitempty"`
 	ContentType  *string                  `json:"content_type,omitempty"`
 	Type         *string                  `json:"type,omitempty"`
 	SizeBytes    *int64                   `json:"size_bytes,omitempty"`

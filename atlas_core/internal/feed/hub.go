@@ -124,17 +124,8 @@ func (h *Hub) Publish(event RoutedEvent) {
 	}
 }
 
-type FilterKind string
-
-const (
-	FilterAll            FilterKind = "all"
-	FilterID             FilterKind = "id"
-	FilterType           FilterKind = "type"
-	FilterTasksForEntity FilterKind = "tasks_for_entity"
-)
-
 type Subscription struct {
-	Filter       FilterKind
+	Filter       protocol.FeedFilter
 	ResourceType protocol.ResourceType
 	ID           string
 	EntityID     string
@@ -147,26 +138,26 @@ func (s Subscription) Key() string {
 
 func SubscriptionFromMessage(msg protocol.FeedSubscriptionMessage) (Subscription, error) {
 	sub := Subscription{
-		Filter:       FilterKind(msg.Filter),
+		Filter:       msg.Filter,
 		ResourceType: msg.ResourceType,
 		ID:           strings.TrimSpace(msg.ID),
 		EntityID:     strings.TrimSpace(msg.EntityID),
 	}
 	switch sub.Filter {
-	case FilterAll:
-		return Subscription{Filter: FilterAll}, nil
-	case FilterID:
+	case protocol.FeedFilterAll:
+		return Subscription{Filter: protocol.FeedFilterAll}, nil
+	case protocol.FeedFilterID:
 		if sub.ResourceType == "" || sub.ID == "" {
 			return Subscription{}, fmt.Errorf("id subscriptions require resource_type and id")
 		}
 		return sub, nil
-	case FilterType:
+	case protocol.FeedFilterType:
 		if sub.ResourceType == "" {
 			return Subscription{}, fmt.Errorf("type subscriptions require resource_type")
 		}
 		sub.ID = ""
 		return sub, nil
-	case FilterTasksForEntity:
+	case protocol.FeedFilterTasksForEntity:
 		if sub.EntityID == "" {
 			return Subscription{}, fmt.Errorf("tasks_for_entity subscriptions require entity_id")
 		}
@@ -258,13 +249,13 @@ func (c *Client) matchesLocked(event RoutedEvent) bool {
 
 func subscriptionMatches(sub Subscription, event RoutedEvent) bool {
 	switch sub.Filter {
-	case FilterAll:
+	case protocol.FeedFilterAll:
 		return true
-	case FilterID:
+	case protocol.FeedFilterID:
 		return event.Event.ResourceType == sub.ResourceType && event.Event.ID == sub.ID
-	case FilterType:
+	case protocol.FeedFilterType:
 		return event.Event.ResourceType == sub.ResourceType
-	case FilterTasksForEntity:
+	case protocol.FeedFilterTasksForEntity:
 		return event.Event.ResourceType == protocol.ResourceTypeTask &&
 			(event.BeforeTaskEntityID == sub.EntityID || event.AfterTaskEntityID == sub.EntityID)
 	default:

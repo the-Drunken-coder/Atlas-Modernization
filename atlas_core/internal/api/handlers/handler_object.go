@@ -37,11 +37,6 @@ func (h *Handler) CreateObject(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateObjectCreateRequest) {
 		return
 	}
-	if len(req.Bucket) > 0 {
-		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", protocol.ErrorCodeValidationError)
-		return
-	}
-
 	obj, err := h.objectActions.Create(r.Context(), req.actionParams())
 	if err != nil {
 		h.handleActionError(w, r, err)
@@ -77,11 +72,6 @@ func (h *Handler) UpdateObject(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateObjectUpdateRequest) {
 		return
 	}
-	if len(req.Bucket) > 0 {
-		h.writeError(w, r, http.StatusBadRequest, "Object bucket is server-generated and cannot be set", protocol.ErrorCodeValidationError)
-		return
-	}
-
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "object")
 	if !ok {
 		return

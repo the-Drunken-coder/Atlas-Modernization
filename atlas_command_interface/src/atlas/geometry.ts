@@ -41,8 +41,8 @@ const EARTH_RADIUS_M = 6_371_008.8;
 const CIRCLE_DISPLAY_SEGMENTS = 64;
 
 /**
- * Normalise an entity geometry component into the shape the UI edits. Returns
- * undefined when the geometry is absent or not a supported geometry.
+ * Return a supported entity geometry in the shape the UI edits, or undefined
+ * when the geometry is absent or unsupported.
  */
 export function toUiGeometry(value: unknown): UiGeometry | undefined {
   return isGeometryComponent(value) ? value : undefined;

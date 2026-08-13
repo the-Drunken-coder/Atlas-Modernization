@@ -7,30 +7,38 @@ proxies public HTTPS traffic to the local ATLAS Core API.
 
 1. Create a Cloudflare tunnel in the Cloudflare dashboard and copy its **run token**.
 
-2. Export the token, a real API key, and an admin password override before
-   starting Compose, or put them in `atlas_core/docker/.env`:
+2. For a development tunnel, export the token, a real API key, and an admin
+   password override before starting Compose, or put them in
+   `atlas_core/docker/.env`:
 
    ```bash
-	   export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
-	   export API_AUTH_KEY='your-secure-api-key'
-	   export ATLAS_ADMIN_PASSWORD='your-secure-admin-password'
-	   ```
+   export CLOUDFLARE_TUNNEL_TOKEN='your-tunnel-token'
+   export API_AUTH_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+   export ATLAS_ADMIN_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+   ```
 
    The admin password must contain at least 12 characters.
 
-3. From the **repository root**, start the tunnel stack:
+3. From the **repository root**, start the development tunnel stack:
 
    ```bash
    python3 atlas_core/scripts/atlas.py --tunnel
    ```
 
-   For the production-image stack:
+4. For the production-image stack, load the complete operator-owned production
+   environment described in `atlas_core/docs/DEPLOYMENT_RUNBOOK.md`, including
+   PostgreSQL and MinIO credentials, the API key, and admin password. Supply the
+   tunnel token either in that process environment or in
+   `atlas_core/docker/.env`, then start from the repository root:
 
    ```bash
    python3 atlas_core/scripts/atlas.py --production --tunnel
    ```
 
-   Use `atlas.py` for development tunnel starts. The direct development Compose
+   The production launcher requires the Core credentials in its process
+   environment; it does not accept those production credentials only from
+   `docker/.env`. It may load the tunnel token from that file afterward. Use
+   `atlas.py` for development tunnel starts. The direct development Compose
    overlay only injects the tunnel token and bootstrap API key; it does not pass
    the admin password override that Core requires when API auth is enabled.
 
@@ -75,8 +83,10 @@ shared proxy-IP bucket.
   They are **not** mounted by the current `docker-compose.yml` tunnel service.
 - For manual config-file runs, set `CLOUDFLARED_TUNNEL` to your tunnel UUID and render
   the config: `envsubst '${CLOUDFLARED_TUNNEL}' < config.yml > /tmp/cloudflared-config.yml`
-- `atlas.py --tunnel` requires `CLOUDFLARE_TUNNEL_TOKEN`, `API_AUTH_KEY`, and
-  `ATLAS_ADMIN_PASSWORD` from the shell or `atlas_core/docker/.env`; it does not read
+- `atlas.py --tunnel` may load `CLOUDFLARE_TUNNEL_TOKEN`, `API_AUTH_KEY`, and
+  `ATLAS_ADMIN_PASSWORD` from the shell or `atlas_core/docker/.env`.
+  `atlas.py --production --tunnel` requires its operator-owned credentials in
+  the process environment before reading that Compose file. Neither mode reads
   `credentials/atlas-core.json`.
 
 ## Troubleshooting
@@ -85,6 +95,9 @@ shared proxy-IP bucket.
 - If the dedicated `172.30.0.0/29` subnet conflicts with a host route, update
   that subnet, both static service addresses, and Core's trusted proxy `/32`
   together before restarting the stack.
-- For `atlas.py --tunnel`, verify the token, API key, and admin password override
-  are exported in the shell or present in `atlas_core/docker/.env`.
+- For development `atlas.py --tunnel`, verify the token, API key, and admin
+  password override are exported in the shell or present in
+  `atlas_core/docker/.env`. For `atlas.py --production --tunnel`, export the
+  required Core credentials; the tunnel token may be exported or stored in
+  `atlas_core/docker/.env`.
 - Check tunnel logs: `cd atlas_core/docker && docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs cloudflared`

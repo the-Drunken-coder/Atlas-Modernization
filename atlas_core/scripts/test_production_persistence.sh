@@ -12,12 +12,13 @@ ENTITY_ID="durable-restart-entity"
 OBJECT_ID="durable-restart-object"
 ADMIN_ID="durable-restart-admin"
 EXPECTED_SCHEMA_VERSION="6"
+MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 MARKER_DIR="$(mktemp -d)"
 MARKER_FILE="${MARKER_DIR}/marker.txt"
 DOWNLOADED_FILE="${MARKER_DIR}/downloaded.txt"
 RESTORED_FILE="${MARKER_DIR}/restored.txt"
 POSTGRES_DUMP="${MARKER_DIR}/postgres.dump"
-MINIO_BACKUP_DIR="${MARKER_DIR}/minio"
+MINIO_BACKUP_DIR="${MARKER_DIR}/minio/${MINIO_BUCKET}"
 MC_IMAGE="minio/mc:RELEASE.2024-01-31T08-59-40Z@sha256:c084c9a67c7a9ed5f37cc7f2a905010861aaa882bec76da10352305c9709b6d2"
 
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
@@ -43,7 +44,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for container in atlas_core_api atlas_core_postgres atlas_core_minio atlas_core_minio_init; do
+for container in atlas_core_production_api atlas_core_production_postgres atlas_core_production_minio atlas_core_production_minio_init; do
     if docker container inspect "${container}" >/dev/null 2>&1; then
         printf 'Refusing to disturb existing Atlas container: %s\n' "${container}" >&2
         exit 1
@@ -72,9 +73,15 @@ mc() {
         --user "$(id -u):$(id -g)" \
         --network "${PROJECT_NAME}_atlas_core_network" \
         -e HOME=/tmp \
-        -e "MC_HOST_atlas=http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000" \
+        -e "MINIO_ROOT_USER=${MINIO_ROOT_USER}" \
+        -e "MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}" \
         -v "${MARKER_DIR}:/backup" \
-        "${MC_IMAGE}" "$@"
+        --entrypoint /bin/sh \
+        "${MC_IMAGE}" -c '
+            set -eu
+            mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+            exec mc "$@"
+        ' sh "$@"
 }
 
 verify_sentinels() {
@@ -101,7 +108,7 @@ if compose run --rm minio-init; then
     printf 'Production storage verification accepted a missing bucket\n' >&2
     exit 1
 fi
-mc mb atlas/atlas-media
+mc mb "atlas/${MINIO_BUCKET}"
 compose up -d --build
 wait_for_api
 
@@ -129,7 +136,7 @@ compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
     >"${POSTGRES_DUMP}"
 mkdir -p "${MINIO_BACKUP_DIR}"
-mc mirror --overwrite atlas/atlas-media /backup/minio
+mc mirror --overwrite "atlas/${MINIO_BUCKET}" "/backup/minio/${MINIO_BUCKET}"
 test -s "${POSTGRES_DUMP}"
 test -n "$(find "${MINIO_BACKUP_DIR}" -type f -print -quit)"
 
@@ -144,14 +151,18 @@ compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     psql -v ON_ERROR_STOP=1 -U atlas -d atlas_core \
     -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION atlas;' \
     >/dev/null
-mc rm --recursive --force atlas/atlas-media
-mc rb atlas/atlas-media
+mc rm --recursive --force "atlas/${MINIO_BUCKET}"
+mc rb "atlas/${MINIO_BUCKET}"
 compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
     <"${POSTGRES_DUMP}"
-mc mb atlas/atlas-media
-mc mirror --overwrite /backup/minio atlas/atlas-media
-test -z "$(mc diff /backup/minio atlas/atlas-media)"
+mc mb "atlas/${MINIO_BUCKET}"
+mc mirror --overwrite "/backup/minio/${MINIO_BUCKET}" "atlas/${MINIO_BUCKET}"
+if ! minio_diff="$(mc diff "/backup/minio/${MINIO_BUCKET}" "atlas/${MINIO_BUCKET}")"; then
+    printf 'MinIO restore verification failed\n' >&2
+    exit 1
+fi
+test -z "${minio_diff}"
 compose start api
 wait_for_api
 verify_sentinels "${RESTORED_FILE}"

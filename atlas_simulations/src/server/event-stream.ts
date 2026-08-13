@@ -1,16 +1,29 @@
-import type { ServerResponse } from "node:http";
 import type { RunEvent } from "../shared/types.js";
 import { errorMessage } from "./http-utils.js";
-import type { RunStore } from "./run-store.js";
+import { MAX_EVENT_HISTORY_BYTES_PER_RUN, MAX_EVENTS_PER_RUN } from "./run-store-limits.js";
+
+type EventStreamResponse = {
+  readonly writableEnded: boolean;
+  writeHead(statusCode: number, headers: Record<string, string>): unknown;
+  flushHeaders(): void;
+  write(chunk: string): boolean;
+  end(): unknown;
+  on(event: "close" | "drain", listener: () => void): unknown;
+  off(event: "drain", listener: () => void): unknown;
+};
+
+type EventStreamStore = {
+  get(runId: string): { cleaned: boolean } | undefined;
+  subscribe(runId: string, subscriber: (event: RunEvent) => void): () => void;
+};
 
 export type EventStream = {
-  response: ServerResponse;
   close(): void;
 };
 
 export function streamRunEvents(
-  response: ServerResponse,
-  store: RunStore,
+  response: EventStreamResponse,
+  store: EventStreamStore,
   runId: string,
   eventStreams: Set<EventStream>
 ): void {
@@ -26,40 +39,79 @@ export function streamRunEvents(
     let replaying = true;
     let closeAfterReplay = false;
     let closeScheduled = false;
-    let dropFurtherEvents = false;
-    const removeStream = () => {
+    let closed = false;
+    let waitingForDrain = false;
+    let bufferedEvents = 0;
+    let bufferedBytes = 0;
+    let pendingBytes = 0;
+    const pendingEvents: Array<{ bytes: number; chunk: string }> = [];
+    function removeStream() {
       unsubscribe?.();
       unsubscribe = undefined;
       if (stream) eventStreams.delete(stream);
-    };
-    const close = () => {
+      response.off("drain", resumePendingEvents);
+      pendingEvents.length = 0;
+      bufferedEvents = 0;
+      bufferedBytes = 0;
+      pendingBytes = 0;
+    }
+    function close() {
+      if (closed) return;
+      closed = true;
       removeStream();
       if (!response.writableEnded) response.end();
-    };
-    stream = { response, close };
+    }
+    stream = { close };
     eventStreams.add(stream);
-    const scheduleClose = () => {
+    function scheduleClose() {
       if (closeScheduled) return;
       closeScheduled = true;
       queueMicrotask(close);
-    };
-    const closeAfterCurrentReplay = () => {
-      closeAfterReplay = true;
-      if (!replaying && unsubscribe) scheduleClose();
-    };
+    }
+    function writePendingEvents() {
+      if (waitingForDrain) return;
+      while (pendingEvents.length > 0 && !closeScheduled && !response.writableEnded) {
+        const event = pendingEvents.shift()!;
+        pendingBytes -= event.bytes;
+        const wrote = response.write(event.chunk);
+        if (!wrote) {
+          waitingForDrain = true;
+          bufferedEvents = 1;
+          bufferedBytes = event.bytes;
+          return;
+        }
+      }
+      if (!replaying && closeAfterReplay && pendingEvents.length === 0) scheduleClose();
+    }
+    function resumePendingEvents() {
+      waitingForDrain = false;
+      bufferedEvents = 0;
+      bufferedBytes = 0;
+      writePendingEvents();
+    }
     response.on("close", removeStream);
-    unsubscribe = store.subscribe(runId, (event) => {
-      if (dropFurtherEvents || closeScheduled || response.writableEnded) return;
-      const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(safeStreamEvent(event))}\n\n`);
-      if (!wrote) {
-        dropFurtherEvents = true;
-        closeAfterCurrentReplay();
+    response.on("drain", resumePendingEvents);
+    const subscription = store.subscribe(runId, (event) => {
+      if (closed || closeScheduled || response.writableEnded) return;
+      if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterReplay = true;
+      const data = JSON.stringify(safeStreamEvent(event));
+      const chunk = `id: ${event.sequence}\ndata: ${data}\n\n`;
+      const bytes = Buffer.byteLength(chunk, "utf8");
+      if (
+        bufferedEvents + pendingEvents.length >= MAX_EVENTS_PER_RUN ||
+        bufferedBytes + pendingBytes + bytes > MAX_EVENT_HISTORY_BYTES_PER_RUN
+      ) {
+        close();
         return;
       }
-      if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterCurrentReplay();
+      pendingEvents.push({ bytes, chunk });
+      pendingBytes += bytes;
+      writePendingEvents();
     });
+    if (closed) subscription();
+    else unsubscribe = subscription;
     replaying = false;
-    if (closeAfterReplay) scheduleClose();
+    writePendingEvents();
   } catch (error) {
     response.write(`event: error\n`);
     response.write(`data: ${JSON.stringify({ message: errorMessage(error) })}\n\n`);

@@ -121,7 +121,7 @@ The database integration tests use isolated PostgreSQL schemas. With `ATLAS_CORE
 
 ## Development scratch workflow
 
-The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then clears disposable resource rows and the durable change log, resets `atlas_change_clock`, and empties the `atlas-media` bucket while retaining local `admin_records` and the migration ledger. The embedded catalog remains available through `GET /command-catalog` without seeding storage.
+The development Compose project is `atlas_core_development`; its containers and named volumes are isolated from the `atlas_core_production` project. The development Compose file sets `DATABASE_RECREATE_ON_STARTUP=true`. An ordinary API restart first migrates/verifies the schema, then clears disposable resource rows and the durable change log, resets `atlas_change_clock`, and empties the configured MinIO bucket (`MINIO_BUCKET`, default `atlas-media`) while retaining local `admin_records` and the migration ledger. The embedded catalog remains available through `GET /command-catalog` without seeding storage.
 
 ```bash
 python3 atlas_core/scripts/atlas.py --dev

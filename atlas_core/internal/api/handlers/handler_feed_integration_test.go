@@ -81,7 +81,7 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe to all feed events: %v", err)
 	}
-	waitForFeedSubscription(t, hub, feed.Subscription{Filter: feed.FilterAll})
+	waitForFeedSubscription(t, hub, feed.Subscription{Filter: protocol.FeedFilterAll})
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

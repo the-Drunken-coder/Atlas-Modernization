@@ -2,7 +2,7 @@
 
 Atlas Core uses a single-host deployment: Docker Compose runs the Core API, PostgreSQL, and MinIO, and an optional Cloudflare Tunnel provides the public HTTPS edge.
 
-Production storage is durable. Ordinary starts, restarts, and `docker compose down` preserve PostgreSQL rows, `admin_records`, migration history, and MinIO objects. PostgreSQL and MinIO are one logical store and must be backed up and restored as a matched pair.
+Production storage is durable. The production Compose files use the isolated `atlas_core_production` project; development uses `atlas_core_development`. Ordinary starts, restarts, and `docker compose down` preserve PostgreSQL rows, `admin_records`, migration history, and MinIO objects. PostgreSQL and MinIO are one logical store and must be backed up and restored as a matched pair.
 
 ## Local development
 
@@ -23,12 +23,16 @@ umask 077
 set -a
 . /secure/path/atlas-production.env
 set +a
+export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 ```
+
+`MINIO_BUCKET` must be a 3 to 63 character S3 bucket name using lowercase letters, numbers, periods, or hyphens. It cannot use adjacent periods or period-hyphen pairs, start or end with punctuation, or be an IP address.
 
 The file must define `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`,
 `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and `ATLAS_ADMIN_PASSWORD`.
-`ATLAS_ADMIN_PASSWORD` must contain at least 12 characters. The process,
-bundled launcher, and production image all enforce the same minimum.
+`ATLAS_ADMIN_PASSWORD` must contain at least 12 characters.
+Because Compose inserts `POSTGRES_PASSWORD` into the API database URL, use only ASCII
+letters, digits, and `-._~!$&'()*+,;=:` in that password.
 
 External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
@@ -36,12 +40,21 @@ For the first deployment onto a new MinIO volume, start MinIO and explicitly
 provision the durable bucket with a host-installed MinIO client:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mb atlas_production/atlas-media
-mc stat atlas_production/atlas-media
-unset MC_HOST_atlas_production
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+  minio_mc_config="$(mktemp -d)"
+  trap 'rm -rf -- "${minio_mc_config}"' EXIT
+  mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
+    "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+  mc --config-dir "${minio_mc_config}" mb "atlas_production/${MINIO_BUCKET}"
+  mc --config-dir "${minio_mc_config}" stat "atlas_production/${MINIO_BUCKET}"
+) || exit "$?"
 ```
+
+The separate quoted credential arguments remain valid when values contain
+URL-reserved characters such as `/`, `?`, `#`, or `%`. The subshell's isolated
+temporary client configuration is removed on success, failure, or interruption.
 
 For a restore onto a replacement volume, follow [Restore a backup
 set](#restore-a-backup-set): create the bucket only as the mirror target, restore
@@ -133,12 +146,13 @@ Back up before every binary/image change that may carry a migration. Run the exa
 1. Create one backup-set identifier and record the application/schema versions:
 
 ```bash
-export BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)" || exit 1
 export BACKUP_DIR="/srv/atlas-backups/${BACKUP_ID}"
+export BACKUP_ID
 umask 077
-mkdir -p "${BACKUP_DIR}/minio"
-chmod 0700 "${BACKUP_DIR}"
-git rev-parse HEAD >"${BACKUP_DIR}/app-revision.txt"
+mkdir -p "${BACKUP_DIR}/minio" || exit 1
+chmod 0700 "${BACKUP_DIR}" || exit 1
+git rev-parse HEAD >"${BACKUP_DIR}/app-revision.txt" || exit 1
 
 migration_table_present="$(
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
@@ -152,10 +166,13 @@ case "${migration_table_present}" in
       -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
       psql -At -U atlas -d atlas_core \
       -c "SELECT concat_ws(' ', version, name, checksum, fingerprint_version) FROM atlas_schema_migrations ORDER BY version" \
-      >"${BACKUP_DIR}/schema-migrations.txt"
+      >"${BACKUP_DIR}/schema-migrations.txt" || {
+        printf '%s\n' 'Failed to record schema migration state' >&2
+        exit 1
+      }
     ;;
   f)
-    printf '%s\n' 'unversioned-v1-candidate' >"${BACKUP_DIR}/schema-migrations.txt"
+    printf '%s\n' 'unversioned-v1-candidate' >"${BACKUP_DIR}/schema-migrations.txt" || exit 1
     ;;
   *)
     printf 'Unexpected migration-table probe result: %s\n' "${migration_table_present}" >&2
@@ -167,20 +184,25 @@ esac
 2. Quiesce all writes by stopping Core. Leave PostgreSQL and MinIO running:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+(
+  set -e
   docker compose -f atlas_core/docker/docker-compose.production.yml stop api
+) || exit "$?"
 ```
 
 3. Create a full custom-format database dump:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
-  >"${BACKUP_DIR}/postgres.dump"
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
-  pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
-  >"${BACKUP_DIR}/postgres.contents.txt"
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    pg_dump -U atlas -d atlas_core --format=custom --no-owner --no-privileges \
+    >"${BACKUP_DIR}/postgres.dump"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+    pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
+    >"${BACKUP_DIR}/postgres.contents.txt"
+) || exit "$?"
 ```
 
 Every current full dump must contain resource tables, `atlas_change_clock`, `atlas_change_events`, `object_deletion_fences`, `storage_deletion_outbox`, `storage_upload_intents`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata), plus `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to use the legacy v1 schema and is marked `unversioned-v1-candidate` instead.
@@ -188,21 +210,33 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
 4. Mirror the entire configured bucket into the same backup set:
 
 ```bash
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mirror --overwrite atlas_production/atlas-media \
-  "${BACKUP_DIR}/minio/atlas-media"
-mc ls --recursive atlas_production/atlas-media \
-  >"${BACKUP_DIR}/minio.contents.txt"
-unset MC_HOST_atlas_production
+(
+  set -e
+  rm -f -- "${BACKUP_DIR}/minio.complete"
+  minio_mc_config="$(mktemp -d)"
+  trap 'rm -rf -- "${minio_mc_config}"' EXIT
+  mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
+    "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+  mc --config-dir "${minio_mc_config}" mirror --overwrite "atlas_production/${MINIO_BUCKET}" \
+    "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+  mc --config-dir "${minio_mc_config}" ls --recursive "atlas_production/${MINIO_BUCKET}" \
+    >"${BACKUP_DIR}/minio.contents.txt"
+  printf '%s\n' "${MINIO_BUCKET}" >"${BACKUP_DIR}/minio.complete"
+) || exit "$?"
 ```
 
 5. Validate the pair before deploying:
 
 ```bash
-test -s "${BACKUP_DIR}/postgres.dump"
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
-  pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
-test -d "${BACKUP_DIR}/minio/atlas-media"
+(
+  set -e
+  test -s "${BACKUP_DIR}/postgres.dump"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+    pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+  test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+  test -f "${BACKUP_DIR}/minio.complete"
+  test "$(cat "${BACKUP_DIR}/minio.complete")" = "${MINIO_BUCKET}"
+) || exit "$?"
 ```
 
 Keep the dump, bucket mirror, manifests, and revision files under the same `BACKUP_ID`. Never mix a database snapshot with a bucket snapshot from another time; object rows may otherwise reference missing or wrong bytes.
@@ -238,39 +272,65 @@ ATLAS_CORE_API_URL=http://127.0.0.1:8000 \
 
 Restoring is destructive to state created after the selected backup.
 
-1. Stop Core and identify the matching application revision, database dump, and bucket directory from one `BACKUP_ID`.
-2. Restore the entire database:
+1. Identify the matching application revision, database dump, and bucket directory from one `BACKUP_ID`.
+2. Before stopping or deleting anything, validate both backup artifacts. The database check also confirms that `postgres.dump` is a readable PostgreSQL custom archive:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
+(
+  set -e
+  test -s "${BACKUP_DIR}/postgres.dump"
+  test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+  test -f "${BACKUP_DIR}/minio.complete"
+  test "$(cat "${BACKUP_DIR}/minio.complete")" = "${MINIO_BUCKET}"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+    pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+) || exit "$?"
+```
+
+3. Restore the entire database:
+
+```bash
+(
+  set -e
   docker compose -f atlas_core/docker/docker-compose.production.yml stop api
 
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  dropdb -U atlas --if-exists atlas_core
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  createdb -U atlas atlas_core
-docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
-  pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
-  <"${BACKUP_DIR}/postgres.dump"
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    dropdb -U atlas --if-exists atlas_core
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    createdb -U atlas atlas_core
+  docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
+    pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
+    <"${BACKUP_DIR}/postgres.dump"
+) || exit "$?"
 ```
 
-3. Replace the configured bucket with the matching mirror:
+4. Replace the configured bucket with the matching mirror:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
-export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mb --ignore-existing atlas_production/atlas-media
-mc rm --recursive --force atlas_production/atlas-media
-mc mirror --overwrite --remove "${BACKUP_DIR}/minio/atlas-media" \
-  atlas_production/atlas-media
-test -z "$(mc diff "${BACKUP_DIR}/minio/atlas-media" atlas_production/atlas-media)"
-unset MC_HOST_atlas_production
+(
+  set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
+  minio_mc_config="$(mktemp -d)"
+  trap 'rm -rf -- "${minio_mc_config}"' EXIT
+  mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
+    "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+  mc --config-dir "${minio_mc_config}" mb --ignore-existing "atlas_production/${MINIO_BUCKET}"
+  mc --config-dir "${minio_mc_config}" rm --recursive --force "atlas_production/${MINIO_BUCKET}"
+  mc --config-dir "${minio_mc_config}" mirror --overwrite --remove \
+    "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}"
+  if ! minio_diff="$(mc --config-dir "${minio_mc_config}" diff \
+    "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}")"; then
+    echo "MinIO restore verification failed" >&2
+    exit 1
+  fi
+  test -z "${minio_diff}"
+) || exit "$?"
 ```
 
-4. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.
+5. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.
 
 ## Rollback
 
