@@ -101,17 +101,16 @@ func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.
 	}
 
 	for _, test := range []struct {
-		filename string
-		compose  string
+		filename     string
+		compose      string
+		publicPolicy bool
 	}{
-		{filename: "docker-compose.yml", compose: string(development)},
+		{filename: "docker-compose.yml", compose: string(development), publicPolicy: true},
 		{filename: "docker-compose.production.yml", compose: string(production)},
 	} {
 		t.Run(test.filename, func(t *testing.T) {
 			for _, required := range []string{
 				`mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"`,
-				`true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;`,
-				`*) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;`,
 			} {
 				if !strings.Contains(test.compose, required) {
 					t.Fatalf("%s MinIO initialization missing %q", test.filename, required)
@@ -119,6 +118,41 @@ func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.
 			}
 			if strings.Contains(test.compose, "MC_HOST_myminio:") {
 				t.Fatalf("%s must not embed operator credentials in an MC_HOST URL", test.filename)
+			}
+			if test.publicPolicy {
+				for _, required := range []string{
+					`true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;`,
+					`*) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;`,
+				} {
+					if !strings.Contains(test.compose, required) {
+						t.Fatalf("development Compose MinIO policy missing %q", required)
+					}
+				}
+				return
+			}
+			if strings.Contains(test.compose, "ENABLE_PUBLIC_MINIO") || strings.Contains(test.compose, "mc anonymous set download") {
+				t.Fatal("production Compose must not allow anonymous MinIO downloads")
+			}
+			if !strings.Contains(test.compose, `mc anonymous set none "myminio/$$MINIO_BUCKET"`) {
+				t.Fatal("production Compose must revoke anonymous MinIO access")
+			}
+		})
+	}
+}
+
+func TestProductionPostgresHealthchecksExpandPasswordsInsideTheContainer(t *testing.T) {
+	for _, filename := range []string{"docker-compose.production.yml", "docker-compose.production-db.yml"} {
+		t.Run(filename, func(t *testing.T) {
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				t.Fatalf("read %s: %v", filename, err)
+			}
+			compose := string(data)
+			if strings.Contains(compose, "PGPASSWORD=${POSTGRES_PASSWORD") {
+				t.Fatal("production healthcheck must not interpolate the operator password into the shell command")
+			}
+			if !strings.Contains(compose, `PGPASSWORD=\"$$POSTGRES_PASSWORD\" pg_isready`) {
+				t.Fatal("production healthcheck must quote the container-side password expansion")
 			}
 		})
 	}
@@ -194,6 +228,31 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 		{
 			name:    "enabled auth documented placeholder key",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=your-secure-api-key"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth short key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=short"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth weak substring",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=operator-password-key"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth low diversity",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=abababab"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth sequential key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=abcdefgh"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth weak suffix",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=operator-key-123"},
 			wantErr: true,
 		},
 		{

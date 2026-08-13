@@ -66,7 +66,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set} pg_isready -U atlas -d atlas_core"]
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" pg_isready -U atlas -d atlas_core"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -104,7 +104,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
       MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
-      ENABLE_PUBLIC_MINIO: ${ENABLE_PUBLIC_MINIO:-false}
     depends_on:
       minio:
         condition: service_healthy
@@ -115,10 +114,7 @@ services:
         set -e
         mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
         mc stat "myminio/$$MINIO_BUCKET" >/dev/null
-        case "$$ENABLE_PUBLIC_MINIO" in
-          true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;
-          *) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;
-        esac
+        mc anonymous set none "myminio/$$MINIO_BUCKET"
         echo 'MinIO bucket verified successfully'
     networks:
       - atlas_core_network

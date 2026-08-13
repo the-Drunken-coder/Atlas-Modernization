@@ -5,6 +5,70 @@ trim() {
     printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
+is_weak_api_auth_key() {
+    candidate="$1"
+    case "$candidate" in
+        000000|111111|123456|abcd1234|changeme|admin|apikey|asdf|default|dummy|example|key|password|password123|placeholder|qwerty|secret|test|your-key-here|*admin*|*asdf*|*letmein*|*password*|*qwerty*|*welcome*|*123)
+            return 0
+            ;;
+    esac
+
+    if ! printf '%s\n' "$candidate" | LC_ALL=C awk '
+        {
+            value = $0
+            if (length(value) < 8) {
+                invalid = 1
+            }
+            digits = "0123456789"
+            letters = "abcdefghijklmnopqrstuvwxyz"
+            run_length = 1
+            last_step = 0
+            previous_class = ""
+            previous_position = 0
+            for (index_value = 1; index_value <= length(value); index_value++) {
+                current = substr(value, index_value, 1)
+                seen[current] = 1
+                current_position = index(digits, current)
+                current_class = current_position ? "digit" : ""
+                if (!current_position) {
+                    current_position = index(letters, current)
+                    current_class = current_position ? "letter" : ""
+                }
+                step = current_class != "" && current_class == previous_class \
+                    ? current_position - previous_position \
+                    : 0
+                if (step != 1 && step != -1) {
+                    step = 0
+                }
+                if (step != 0 && step == last_step) {
+                    run_length++
+                } else if (step != 0) {
+                    run_length = 2
+                } else {
+                    run_length = 1
+                }
+                last_step = step
+                if (run_length >= 6) {
+                    invalid = 1
+                }
+                previous_class = current_class
+                previous_position = current_position
+            }
+        }
+        END {
+            for (character in seen) {
+                unique_count++
+            }
+            if (invalid || unique_count < 4) {
+                exit 1
+            }
+        }
+    '; then
+        return 0
+    fi
+    return 1
+}
+
 recreate_on_startup="$(trim "${DATABASE_RECREATE_ON_STARTUP:-false}")"
 recreate_on_startup="$(printf '%s' "$recreate_on_startup" | tr '[:upper:]' '[:lower:]')"
 
@@ -41,6 +105,11 @@ case "$normalized_api_auth_key" in
         exit 1
         ;;
 esac
+
+if is_weak_api_auth_key "$normalized_api_auth_key"; then
+    printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY is too weak." >&2
+    exit 1
+fi
 
 admin_password="$(trim "${ATLAS_ADMIN_PASSWORD:-}")"
 admin_password_file="$(trim "${ATLAS_ADMIN_PASSWORD_FILE:-}")"

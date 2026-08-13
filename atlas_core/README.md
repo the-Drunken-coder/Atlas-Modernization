@@ -101,9 +101,9 @@ durable bucket and verify it exists; production startup deliberately will not cr
 `MINIO_BUCKET` defaults to `atlas-media` when the operator file omits it.
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 (
   set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
   minio_mc_config="$(mktemp -d)"
   trap 'rm -rf -- "${minio_mc_config}"' EXIT
   mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \

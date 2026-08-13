@@ -37,9 +37,9 @@ For the first deployment onto a new MinIO volume, start MinIO and explicitly
 provision the durable bucket with a host-installed MinIO client:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 (
   set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
   minio_mc_config="$(mktemp -d)"
   trap 'rm -rf -- "${minio_mc_config}"' EXIT
   mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
@@ -183,8 +183,7 @@ esac
 ```bash
 (
   set -e
-  docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
-    docker compose -f atlas_core/docker/docker-compose.production.yml stop api
+  docker compose -f atlas_core/docker/docker-compose.production.yml stop api
 )
 ```
 
@@ -284,8 +283,7 @@ Restoring is destructive to state created after the selected backup.
 ```bash
 (
   set -e
-  docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
-    docker compose -f atlas_core/docker/docker-compose.production.yml stop api
+  docker compose -f atlas_core/docker/docker-compose.production.yml stop api
 
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
     -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
@@ -303,9 +301,9 @@ Restoring is destructive to state created after the selected backup.
 4. Replace the configured bucket with the matching mirror:
 
 ```bash
-docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 (
   set -e
+  docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
   minio_mc_config="$(mktemp -d)"
   trap 'rm -rf -- "${minio_mc_config}"' EXIT
   mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
