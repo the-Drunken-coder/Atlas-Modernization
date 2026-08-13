@@ -462,6 +462,7 @@ jobs:
           ATLAS_ADMIN_PASSWORD: dummy-ci-admin-password
         run: |
           docker compose -f docker/docker-compose.production.yml config --quiet
+          docker compose -f docker/docker-compose.production-db.yml config --quiet
           docker compose -f docker/docker-compose.production.yml config --format json |
             jq -e '
               .services.api.environment.TRUSTED_PROXY_CIDRS == "" and

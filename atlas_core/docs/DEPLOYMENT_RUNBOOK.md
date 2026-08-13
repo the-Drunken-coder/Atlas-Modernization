@@ -208,6 +208,7 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
 ```bash
 (
   set -e
+  rm -f -- "${BACKUP_DIR}/minio.complete"
   minio_mc_config="$(mktemp -d)"
   trap 'rm -rf -- "${minio_mc_config}"' EXIT
   mc --config-dir "${minio_mc_config}" alias set atlas_production http://127.0.0.1:9000 \
@@ -216,6 +217,7 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
     "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
   mc --config-dir "${minio_mc_config}" ls --recursive "atlas_production/${MINIO_BUCKET}" \
     >"${BACKUP_DIR}/minio.contents.txt"
+  printf '%s\n' "${MINIO_BUCKET}" >"${BACKUP_DIR}/minio.complete"
 ) || exit "$?"
 ```
 
@@ -228,6 +230,8 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
     pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
   test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+  test -f "${BACKUP_DIR}/minio.complete"
+  test "$(cat "${BACKUP_DIR}/minio.complete")" = "${MINIO_BUCKET}"
 ) || exit "$?"
 ```
 
@@ -272,6 +276,8 @@ Restoring is destructive to state created after the selected backup.
   set -e
   test -s "${BACKUP_DIR}/postgres.dump"
   test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+  test -f "${BACKUP_DIR}/minio.complete"
+  test "$(cat "${BACKUP_DIR}/minio.complete")" = "${MINIO_BUCKET}"
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
     pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
 ) || exit "$?"
