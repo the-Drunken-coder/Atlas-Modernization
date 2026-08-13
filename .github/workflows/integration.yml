@@ -20,7 +20,7 @@ env:
   GO_SUM_FILE: atlas_core/go.sum
   WORKING_DIRECTORY: atlas_core
   ATLAS_CORE_API_URL: http://localhost:8000
-  MINIO_ROOT_PASSWORD: atlas-ci
+  MINIO_ROOT_PASSWORD: "atlas/ci?#%"
   POSTGRES_PASSWORD: atlas
   MINIO_ROOT_USER: atlas
   CLOUDFLARE_TUNNEL_TOKEN: dummy

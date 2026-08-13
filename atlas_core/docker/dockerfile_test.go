@@ -124,6 +124,23 @@ func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.
 	}
 }
 
+func TestProductionPersistenceMinIOUsesSeparateCredentials(t *testing.T) {
+	data, err := os.ReadFile("../scripts/test_production_persistence.sh")
+	if err != nil {
+		t.Fatalf("read production persistence script: %v", err)
+	}
+	script := string(data)
+	if strings.Contains(script, "MC_HOST_atlas=") {
+		t.Fatal("production persistence test must not embed operator credentials in an MC_HOST URL")
+	}
+	if !strings.Contains(
+		script,
+		`mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"`,
+	) {
+		t.Fatal("production persistence test must pass MinIO credentials as separate arguments")
+	}
+}
+
 func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("production entrypoint is a POSIX shell script")

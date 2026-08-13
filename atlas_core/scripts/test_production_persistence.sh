@@ -73,9 +73,15 @@ mc() {
         --user "$(id -u):$(id -g)" \
         --network "${PROJECT_NAME}_atlas_core_network" \
         -e HOME=/tmp \
-        -e "MC_HOST_atlas=http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000" \
+        -e "MINIO_ROOT_USER=${MINIO_ROOT_USER}" \
+        -e "MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}" \
         -v "${MARKER_DIR}:/backup" \
-        "${MC_IMAGE}" "$@"
+        --entrypoint /bin/sh \
+        "${MC_IMAGE}" -c '
+            set -eu
+            mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+            exec mc "$@"
+        ' sh "$@"
 }
 
 verify_sentinels() {
