@@ -139,6 +139,17 @@ func TestProductionPersistenceMinIOUsesSeparateCredentials(t *testing.T) {
 	) {
 		t.Fatal("production persistence test must pass MinIO credentials as separate arguments")
 	}
+	if strings.Contains(script, `test -z "$(mc diff`) {
+		t.Fatal("production persistence test must not hide mc diff command failures")
+	}
+	for _, required := range []string{
+		`if ! minio_diff="$(mc diff`,
+		`test -z "${minio_diff}"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("production persistence test must fail closed with %q", required)
+		}
+	}
 }
 
 func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {

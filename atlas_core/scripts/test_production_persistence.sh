@@ -158,7 +158,11 @@ compose exec -T -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     <"${POSTGRES_DUMP}"
 mc mb "atlas/${MINIO_BUCKET}"
 mc mirror --overwrite "/backup/minio/${MINIO_BUCKET}" "atlas/${MINIO_BUCKET}"
-test -z "$(mc diff "/backup/minio/${MINIO_BUCKET}" "atlas/${MINIO_BUCKET}")"
+if ! minio_diff="$(mc diff "/backup/minio/${MINIO_BUCKET}" "atlas/${MINIO_BUCKET}")"; then
+    printf 'MinIO restore verification failed\n' >&2
+    exit 1
+fi
+test -z "${minio_diff}"
 compose start api
 wait_for_api
 verify_sentinels "${RESTORED_FILE}"
