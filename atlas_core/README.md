@@ -110,7 +110,7 @@ durable bucket and verify it exists; production startup deliberately will not cr
     "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
   mc --config-dir "${minio_mc_config}" mb "atlas_production/${MINIO_BUCKET}"
   mc --config-dir "${minio_mc_config}" stat "atlas_production/${MINIO_BUCKET}"
-)
+) || exit 1
 python3 atlas_core/scripts/atlas.py --production
 ```
 
