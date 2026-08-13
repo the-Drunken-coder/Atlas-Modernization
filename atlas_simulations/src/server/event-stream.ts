@@ -41,6 +41,8 @@ export function streamRunEvents(
     let closeScheduled = false;
     let closed = false;
     let waitingForDrain = false;
+    let bufferedEvents = 0;
+    let bufferedBytes = 0;
     let pendingBytes = 0;
     const pendingEvents: Array<{ bytes: number; chunk: string }> = [];
     function removeStream() {
@@ -49,6 +51,8 @@ export function streamRunEvents(
       if (stream) eventStreams.delete(stream);
       response.off("drain", resumePendingEvents);
       pendingEvents.length = 0;
+      bufferedEvents = 0;
+      bufferedBytes = 0;
       pendingBytes = 0;
     }
     function close() {
@@ -72,6 +76,8 @@ export function streamRunEvents(
         const wrote = response.write(event.chunk);
         if (!wrote) {
           waitingForDrain = true;
+          bufferedEvents = 1;
+          bufferedBytes = event.bytes;
           return;
         }
       }
@@ -79,6 +85,8 @@ export function streamRunEvents(
     }
     function resumePendingEvents() {
       waitingForDrain = false;
+      bufferedEvents = 0;
+      bufferedBytes = 0;
       writePendingEvents();
     }
     response.on("close", removeStream);
@@ -87,12 +95,16 @@ export function streamRunEvents(
       if (closed || closeScheduled || response.writableEnded) return;
       if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterReplay = true;
       const data = JSON.stringify(safeStreamEvent(event));
-      const bytes = Buffer.byteLength(data, "utf8");
-      if (pendingEvents.length >= MAX_EVENTS_PER_RUN || pendingBytes + bytes > MAX_EVENT_HISTORY_BYTES_PER_RUN) {
+      const chunk = `id: ${event.sequence}\ndata: ${data}\n\n`;
+      const bytes = Buffer.byteLength(chunk, "utf8");
+      if (
+        bufferedEvents + pendingEvents.length >= MAX_EVENTS_PER_RUN ||
+        bufferedBytes + pendingBytes + bytes > MAX_EVENT_HISTORY_BYTES_PER_RUN
+      ) {
         close();
         return;
       }
-      pendingEvents.push({ bytes, chunk: `id: ${event.sequence}\ndata: ${data}\n\n` });
+      pendingEvents.push({ bytes, chunk });
       pendingBytes += bytes;
       writePendingEvents();
     });

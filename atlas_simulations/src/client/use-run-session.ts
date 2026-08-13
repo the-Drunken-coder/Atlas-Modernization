@@ -31,6 +31,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
   const cleanupStreamRunIdRef = useRef<string | undefined>(undefined);
   const currentRunIdRef = useRef<string | undefined>(undefined);
   const refreshRunsRequestRef = useRef(0);
+  const disconnectedRunIdsRef = useRef(new Set<string>());
   const runsRef = useRef<RunSummary[]>([]);
   const eventsByRunIdRef = useRef<Map<string, RunEvent[]>>(new Map());
   const onScenarioSelectedRef = useRef(onScenarioSelected);
@@ -76,6 +77,9 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     for (const runId of eventsByRunIdRef.current.keys()) {
       if (!mergedRunIds.has(runId)) eventsByRunIdRef.current.delete(runId);
     }
+    for (const runId of disconnectedRunIdsRef.current) {
+      if (!mergedRunIds.has(runId)) disconnectedRunIdsRef.current.delete(runId);
+    }
     runsRef.current = mergedRuns;
     setRuns(mergedRuns);
     setError(undefined);
@@ -91,8 +95,13 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
       refreshedSelection,
       selectedRunAfterLoad ? (eventsByRunIdRef.current.get(selectedRunAfterLoad) ?? []) : []
     );
+    const replayDisconnectedRun =
+      !!selectedRunAfterLoad &&
+      refreshedSelection?.status !== "running" &&
+      disconnectedRunIdsRef.current.has(selectedRunAfterLoad);
     if (
       !replayCleanedRun &&
+      !replayDisconnectedRun &&
       refreshedSelection?.status !== "running" &&
       eventStream.runId === selectedRunAfterLoad &&
       cleanupStreamRunIdRef.current !== selectedRunAfterLoad
@@ -109,10 +118,11 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     if (
       selectedRunAfterLoad &&
       refreshedSelection &&
-      (eventStream.runId !== selectedRunAfterLoad || replayCleanedRun) &&
-      (refreshedSelection.status === "running" || needsCleanupReconnect || replayCleanedRun)
+      (eventStream.runId !== selectedRunAfterLoad || replayCleanedRun || replayDisconnectedRun) &&
+      (refreshedSelection.status === "running" || needsCleanupReconnect || replayCleanedRun || replayDisconnectedRun)
     ) {
       if (needsCleanupReconnect) cleanupStreamRunIdRef.current = selectedRunAfterLoad;
+      disconnectedRunIdsRef.current.delete(selectedRunAfterLoad);
       connectEvents(selectedRunAfterLoad, { preserveCleanup: needsCleanupReconnect, replayCleanedRun });
     }
   }
@@ -204,6 +214,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     if (!options.preserveCleanup) cleanupStreamRunIdRef.current = undefined;
     eventStream.connect(runId, {
       onEvent(event) {
+        disconnectedRunIdsRef.current.delete(runId);
         const terminalStatus =
           !options.replayCleanedRun &&
           event.type === "status" &&
@@ -233,6 +244,7 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
         reportError(error);
       },
       onConnectionError() {
+        disconnectedRunIdsRef.current.add(runId);
         void refreshRunsBestEffort();
       }
     });

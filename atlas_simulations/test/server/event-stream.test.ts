@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { type EventStream, streamRunEvents } from "../../src/server/event-stream.js";
-import { MAX_EVENTS_PER_RUN } from "../../src/server/run-store-limits.js";
+import { MAX_EVENT_HISTORY_BYTES_PER_RUN, MAX_EVENTS_PER_RUN } from "../../src/server/run-store-limits.js";
 import { jsonNumber, type RunEvent, type RunEventDetails } from "../../src/shared/types.js";
 
 describe("streamRunEvents", () => {
@@ -75,13 +75,42 @@ describe("streamRunEvents", () => {
     const streams = new Set<EventStream>();
 
     streamRunEvents(response, store, "run-1", streams);
-    for (let sequence = 1; sequence <= MAX_EVENTS_PER_RUN + 2; sequence += 1) {
+    for (let sequence = 1; sequence <= MAX_EVENTS_PER_RUN + 1; sequence += 1) {
       subscriber?.(event(sequence, { type: "log", message: `Event ${sequence}` }));
     }
 
     expect(end).toHaveBeenCalledOnce();
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(streams).toHaveLength(0);
+  });
+
+  it("counts the buffered write toward the backpressure byte limit", () => {
+    let subscriber: ((runEvent: RunEvent) => void) | undefined;
+    const end = vi.fn();
+    const response = {
+      writableEnded: false,
+      writeHead: vi.fn(),
+      flushHeaders: vi.fn(),
+      write: vi.fn(() => false),
+      end,
+      on: vi.fn(),
+      off: vi.fn()
+    };
+    const store = {
+      get: () => ({ cleaned: false }),
+      subscribe: (_runId: string, next: (runEvent: RunEvent) => void) => {
+        subscriber = next;
+        return vi.fn();
+      }
+    };
+
+    streamRunEvents(response, store, "run-1", new Set<EventStream>());
+    const data = "x".repeat(Math.floor(MAX_EVENT_HISTORY_BYTES_PER_RUN / 5));
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      subscriber?.(event(sequence, { type: "log", message: `Event ${sequence}`, data }));
+    }
+
+    expect(end).toHaveBeenCalledOnce();
   });
 });
 

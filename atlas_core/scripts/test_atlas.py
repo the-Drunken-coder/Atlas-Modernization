@@ -209,6 +209,33 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         with patch.dict("os.environ", {"POSTGRES_PASSWORD": "replace_with_strong_password"}, clear=True):
             self.assertFalse(ensure_production_storage_credentials(db_only=True))
 
+    def test_production_rejects_database_url_unsafe_password_before_cleanup(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "POSTGRES_PASSWORD": "operator@password#unsafe",
+                    "MINIO_ROOT_USER": "operator-minio-user",
+                    "MINIO_ROOT_PASSWORD": "operator-minio-password",
+                    "API_AUTH_KEY": "operator-api-key",
+                    "ATLAS_ADMIN_PASSWORD": "operator-admin-password",
+                },
+                clear=True,
+            ),
+            patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
+            patch("atlas.load_compose_dotenv") as load_dotenv,
+            patch("atlas.cleanup_containers") as cleanup,
+            patch("atlas.subprocess.run") as run,
+            patch("builtins.print") as output,
+            self.assertRaises(SystemExit),
+        ):
+            start_containers(production=True)
+
+        self.assertIn("safe in the production database URL", output.call_args.args[0])
+        load_dotenv.assert_not_called()
+        cleanup.assert_not_called()
+        run.assert_not_called()
+
     def test_production_missing_credential_stops_before_loading_local_defaults(self) -> None:
         configured = {
             "POSTGRES_PASSWORD": "operator-postgres-password",
@@ -697,6 +724,19 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             check=True,
             cwd="/tmp/atlas_core/docker",
         )
+
+    def test_production_db_only_rejects_resetting_only_half_of_storage(self) -> None:
+        with (
+            patch.object(sys, "argv", ["atlas.py", "--production", "--db-only", "--reset-volumes"]),
+            patch("atlas.start_containers") as start_containers_mock,
+            patch("builtins.print") as print_mock,
+            self.assertRaises(SystemExit) as exit_result,
+        ):
+            main()
+
+        self.assertEqual(exit_result.exception.code, 1)
+        start_containers_mock.assert_not_called()
+        print_mock.assert_called_with("[ERROR] Cannot reset the complete production storage pair in --db-only mode")
 
     def test_production_start_never_generates_or_persists_credentials(self) -> None:
         with (

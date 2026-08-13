@@ -129,6 +129,13 @@ def ensure_production_storage_credentials(db_only=False):
     if placeholders:
         print("[ERROR] Production storage passwords must replace the committed example value.")
         return False
+    postgres_password = os.environ["POSTGRES_PASSWORD"].strip()
+    if any(
+        not (character.isascii() and (character.isalnum() or character in "-._~!$&'()*+,;=:"))
+        for character in postgres_password
+    ):
+        print("[ERROR] POSTGRES_PASSWORD must contain only characters safe in the production database URL.")
+        return False
     return True
 
 
@@ -876,6 +883,10 @@ Examples:
 
     if args.db_only and args.tunnel:
         print("[ERROR] Cannot use --db-only and --tunnel together")
+        sys.exit(1)
+
+    if args.production and args.db_only and args.reset_volumes:
+        print("[ERROR] Cannot reset the complete production storage pair in --db-only mode")
         sys.exit(1)
 
     # Interactive menu only when invoked with no flags (any flag => non-interactive).

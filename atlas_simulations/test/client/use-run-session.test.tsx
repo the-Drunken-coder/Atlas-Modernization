@@ -302,4 +302,37 @@ describe("useRunSession", () => {
     expect(replaySource.closed).toBe(true);
     expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
   });
+
+  it("replays a terminal event missed when a running stream disconnects", async () => {
+    const runningRun = { ...run, id: "disconnected-run", status: "running" as const };
+    const completedRun = {
+      ...runningRun,
+      status: "completed" as const,
+      finishedAt: new Date(Date.parse(runningRun.startedAt) + 1_000).toISOString()
+    };
+    vi.mocked(loadRuns).mockResolvedValueOnce([runningRun]).mockResolvedValue([completedRun]);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(runningRun));
+    const disconnectedSource = eventSources[0];
+    act(() => disconnectedSource.onerror?.());
+
+    await waitFor(() => expect(eventSources).toHaveLength(2));
+    expect(disconnectedSource.closed).toBe(true);
+    const replaySource = eventSources[1];
+    act(() => {
+      emitEvent(replaySource, {
+        sequence: 1,
+        runId: runningRun.id,
+        timestamp: new Date().toISOString(),
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+    });
+
+    expect(replaySource.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed"]);
+  });
 });

@@ -29,6 +29,8 @@ export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 The file must define `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`,
 `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and `ATLAS_ADMIN_PASSWORD`.
 `ATLAS_ADMIN_PASSWORD` must contain at least 12 characters.
+Because Compose inserts `POSTGRES_PASSWORD` into the API database URL, use only ASCII
+letters, digits, and `-._~!$&'()*+,;=:` in that password.
 
 External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
