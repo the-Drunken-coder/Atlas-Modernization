@@ -8,4 +8,4 @@
 8. **Reproduction:**
    1. Open an asset or track whose optional state, connection, battery, position, or timestamp is absent
    2. Inspect the unavailable field values and status descriptions
-9. **Notes:** Treat the replacements as one coordinated copy change. Before editing production UI, create three distinct static text mocks showing dense inspector rows and status descriptions, present them through the visualization workflow, and stop until the developer selects one. Update copy assertions and formatting tests after selection.
+9. **Notes:** The replacement copy is selected. Before editing production UI, create three distinct static text mocks showing its presentation in dense inspector rows and status descriptions, present them through the visualization workflow, and stop until the developer selects a mock. Update copy assertions and formatting tests after selection.
