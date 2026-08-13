@@ -1,5 +1,6 @@
 import type { RunEvent } from "../shared/types.js";
 import { errorMessage } from "./http-utils.js";
+import { MAX_EVENT_HISTORY_BYTES_PER_RUN, MAX_EVENTS_PER_RUN } from "./run-store-limits.js";
 
 type EventStreamResponse = {
   readonly writableEnded: boolean;
@@ -38,16 +39,21 @@ export function streamRunEvents(
     let replaying = true;
     let closeAfterReplay = false;
     let closeScheduled = false;
+    let closed = false;
     let waitingForDrain = false;
-    const pendingEvents: RunEvent[] = [];
+    let pendingBytes = 0;
+    const pendingEvents: Array<{ bytes: number; chunk: string }> = [];
     function removeStream() {
       unsubscribe?.();
       unsubscribe = undefined;
       if (stream) eventStreams.delete(stream);
       response.off("drain", resumePendingEvents);
       pendingEvents.length = 0;
+      pendingBytes = 0;
     }
     function close() {
+      if (closed) return;
+      closed = true;
       removeStream();
       if (!response.writableEnded) response.end();
     }
@@ -62,7 +68,8 @@ export function streamRunEvents(
       if (waitingForDrain) return;
       while (pendingEvents.length > 0 && !closeScheduled && !response.writableEnded) {
         const event = pendingEvents.shift()!;
-        const wrote = response.write(`id: ${event.sequence}\ndata: ${JSON.stringify(safeStreamEvent(event))}\n\n`);
+        pendingBytes -= event.bytes;
+        const wrote = response.write(event.chunk);
         if (!wrote) {
           waitingForDrain = true;
           return;
@@ -77,9 +84,16 @@ export function streamRunEvents(
     response.on("close", removeStream);
     response.on("drain", resumePendingEvents);
     unsubscribe = store.subscribe(runId, (event) => {
-      if (closeScheduled || response.writableEnded) return;
+      if (closed || closeScheduled || response.writableEnded) return;
       if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterReplay = true;
-      pendingEvents.push(event);
+      const data = JSON.stringify(safeStreamEvent(event));
+      const bytes = Buffer.byteLength(data, "utf8");
+      if (pendingEvents.length >= MAX_EVENTS_PER_RUN || pendingBytes + bytes > MAX_EVENT_HISTORY_BYTES_PER_RUN) {
+        close();
+        return;
+      }
+      pendingEvents.push({ bytes, chunk: `id: ${event.sequence}\ndata: ${data}\n\n` });
+      pendingBytes += bytes;
       writePendingEvents();
     });
     replaying = false;
