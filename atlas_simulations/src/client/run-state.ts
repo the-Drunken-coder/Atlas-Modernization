@@ -188,7 +188,7 @@ function parseRunEventBase(value: Record<string, unknown>): ParsedRunEventBase {
     !Number.isSafeInteger(value.sequence) ||
     value.sequence < 1 ||
     typeof value.runId !== "string" ||
-    !isCanonicalTimestamp(value.timestamp) ||
+    !isTimestamp(value.timestamp) ||
     typeof value.message !== "string" ||
     (value.level !== undefined && !isRunEventLevel(value.level)) ||
     (value.data !== undefined && !isJSONValue(value.data))
@@ -211,15 +211,13 @@ function isAssertionResult(value: unknown): value is AssertionResult {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.passed === "boolean" &&
-    isCanonicalTimestamp(value.timestamp) &&
+    isTimestamp(value.timestamp) &&
     (value.message === undefined || typeof value.message === "string")
   );
 }
 
-function isCanonicalTimestamp(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const milliseconds = Date.parse(value);
-  return !Number.isNaN(milliseconds) && new Date(milliseconds).toISOString() === value;
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
 
 function isRunStatus(value: unknown): value is RunSummary["status"] {
@@ -229,35 +227,20 @@ function isRunStatus(value: unknown): value is RunSummary["status"] {
 }
 
 function isJSONValue(value: unknown): value is JSONValue {
-  const pending: Array<{ value: unknown; exiting: false } | { value: object; exiting: true }> = [
-    { value, exiting: false }
-  ];
-  const ancestors = new WeakSet<object>();
+  const pending = [value];
   while (pending.length > 0) {
-    const entry = pending.pop();
-    if (entry === undefined) break;
-    if (entry.exiting) {
-      ancestors.delete(entry.value);
-      continue;
-    }
-    const current = entry.value;
+    const current = pending.pop();
     if (current === null || typeof current === "boolean" || typeof current === "string") continue;
     if (typeof current === "number" && Number.isFinite(current)) continue;
-    if (!Array.isArray(current) && !isPlainJSONObject(current)) return false;
-    if (ancestors.has(current)) return false;
-    ancestors.add(current);
-    pending.push({ value: current, exiting: true });
-    for (const child of Array.isArray(current) ? current : Object.values(current)) {
-      pending.push({ value: child, exiting: false });
-    }
+    if (Array.isArray(current)) pending.push(...current);
+    else if (
+      isRecord(current) &&
+      (Object.getPrototypeOf(current) === Object.prototype || Object.getPrototypeOf(current) === null)
+    )
+      pending.push(...Object.values(current));
+    else return false;
   }
   return true;
-}
-
-function isPlainJSONObject(value: unknown): value is Record<string, unknown> {
-  if (!isRecord(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
 }
 
 export function errorMessage(errorValue: unknown): string {

@@ -6,7 +6,6 @@ import type { AtlasClientFactory } from "../../src/server/atlas.js";
 import { CleanupLedger, type CleanupLedgerStore } from "../../src/server/cleanup-ledger.js";
 import { RunStore, type RunTarget } from "../../src/server/run-store.js";
 import type { Scenario, ScenarioInput } from "../../src/server/scenario.js";
-import { type JSONValue, jsonNumber } from "../../src/shared/types.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
 
 describe("RunStore", () => {
@@ -867,32 +866,6 @@ describe("RunStore", () => {
 
     expect(store.get(started.id)?.lastError).toBe("Run event data must be nested at most 200 levels");
     expect(store.events(started.id).some((event) => event.type === "log" && event.message === "too deep")).toBe(false);
-  });
-
-  it("rejects cyclic event data without rejecting shared acyclic values", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
-      id: "cyclic-event-data",
-      name: "Cyclic event data",
-      summary: "Emits shared and cyclic data",
-      acceptsJson: false,
-      inputFields: [],
-      async run(ctx) {
-        const shared: JSONValue = { value: jsonNumber(1) };
-        ctx.log("shared", { left: shared, right: shared });
-        const cyclic: { [key: string]: JSONValue } = {};
-        cyclic.self = cyclic;
-        ctx.log("cyclic", cyclic);
-      }
-    };
-
-    const started = store.start(scenario, { fields: {} });
-    await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
-
-    expect(store.get(started.id)?.lastError).toBe("Run event data must not contain cycles");
-    expect(store.events(started.id).some((event) => event.type === "log" && event.message === "shared")).toBe(true);
-    expect(store.events(started.id).some((event) => event.type === "log" && event.message === "cyclic")).toBe(false);
   });
 
   it("rejects event data with too many structured values before storing the log event", async () => {

@@ -76,6 +76,7 @@ describe("parseRunEvent", () => {
     expect(() => parseRunEvent({ ...base, type: "log", data: { invalid: Number.POSITIVE_INFINITY } })).toThrow(
       "Invalid run event"
     );
+    expect(() => parseRunEvent({ ...base, type: "log", data: new Date(timestamp) })).toThrow("Invalid run event");
     expect(() =>
       parseRunEvent({
         ...base,
@@ -83,41 +84,6 @@ describe("parseRunEvent", () => {
         assertion: { id: "assertion-1", name: "passes", passed: true, timestamp: "not-a-date" }
       })
     ).toThrow("Invalid run event");
-    for (const nonCanonicalTimestamp of ["2026-08-12", "June 1, 2026", "2026-08-12T12:00:00Z"]) {
-      expect(() => parseRunEvent({ ...base, timestamp: nonCanonicalTimestamp, type: "log" })).toThrow(
-        "Invalid run event"
-      );
-      expect(() =>
-        parseRunEvent({
-          ...base,
-          type: "assertion",
-          assertion: {
-            id: "assertion-1",
-            name: "passes",
-            passed: true,
-            timestamp: nonCanonicalTimestamp
-          }
-        })
-      ).toThrow("Invalid run event");
-    }
-  });
-
-  it("accepts only finite acyclic JSON data", () => {
-    const shared = { value: 1 };
-    expect(parseRunEvent({ ...base, type: "log", data: { left: shared, right: shared } })).toMatchObject({
-      type: "log"
-    });
-
-    class EventData {
-      readonly value = 1;
-    }
-    for (const data of [new Date(timestamp), new Map([["value", 1]]), new EventData()]) {
-      expect(() => parseRunEvent({ ...base, type: "log", data })).toThrow("Invalid run event");
-    }
-
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
-    expect(() => parseRunEvent({ ...base, type: "log", data: cyclic })).toThrow("Invalid run event");
   });
 
   it("rejects malformed branch data without accepting a partial event", () => {

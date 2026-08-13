@@ -42,6 +42,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function emitEvent(source: FakeEventSource, event: Record<string, unknown>) {
+  source.onmessage?.({ data: JSON.stringify(event) } as MessageEvent<string>);
+}
+
 beforeEach(() => {
   eventSources = [];
   vi.resetAllMocks();
@@ -224,88 +228,28 @@ describe("useRunSession", () => {
     const source = eventSources[0];
     const timestamp = new Date().toISOString();
     act(() => {
-      source.onmessage?.({
-        data: JSON.stringify({
-          sequence: 1,
-          runId: cleanedRun.id,
-          timestamp,
-          type: "status",
-          status: "completed",
-          message: "Run completed"
-        })
-      } as MessageEvent<string>);
+      emitEvent(source, {
+        sequence: 1,
+        runId: cleanedRun.id,
+        timestamp,
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
     });
 
     expect(source.closed).toBe(false);
     act(() => {
-      source.onmessage?.({
-        data: JSON.stringify({
-          sequence: 2,
-          runId: cleanedRun.id,
-          timestamp,
-          type: "cleanup",
-          message: "Cleanup complete"
-        })
-      } as MessageEvent<string>);
+      emitEvent(source, {
+        sequence: 2,
+        runId: cleanedRun.id,
+        timestamp,
+        type: "cleanup",
+        message: "Cleanup complete"
+      });
     });
 
     expect(source.closed).toBe(true);
-    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
-  });
-
-  it("replays a cleaned run when only its terminal status is cached", async () => {
-    const completedRun = { ...run, id: "cleaned-partial-replay" };
-    vi.mocked(loadRuns).mockResolvedValueOnce([completedRun]);
-    const { result } = renderHook(() => useRunSession(vi.fn()));
-    await waitFor(() => expect(result.current.runs).toHaveLength(1));
-
-    act(() => result.current.selectRun(completedRun));
-    const initialSource = eventSources[0];
-    const timestamp = new Date().toISOString();
-    act(() => {
-      initialSource.onmessage?.({
-        data: JSON.stringify({
-          sequence: 1,
-          runId: completedRun.id,
-          timestamp,
-          type: "status",
-          status: "completed",
-          message: "Run completed"
-        })
-      } as MessageEvent<string>);
-    });
-    expect(initialSource.closed).toBe(true);
-
-    act(() => result.current.selectRun({ ...completedRun, cleaned: true }));
-    const replaySource = eventSources[1];
-    expect(replaySource).toBeDefined();
-    act(() => {
-      replaySource.onmessage?.({
-        data: JSON.stringify({
-          sequence: 1,
-          runId: completedRun.id,
-          timestamp,
-          type: "status",
-          status: "completed",
-          message: "Run completed"
-        })
-      } as MessageEvent<string>);
-    });
-    expect(replaySource.closed).toBe(false);
-
-    act(() => {
-      replaySource.onmessage?.({
-        data: JSON.stringify({
-          sequence: 2,
-          runId: completedRun.id,
-          timestamp,
-          type: "cleanup",
-          message: "Cleanup complete"
-        })
-      } as MessageEvent<string>);
-    });
-
-    expect(replaySource.closed).toBe(true);
     expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
   });
 
@@ -321,16 +265,14 @@ describe("useRunSession", () => {
     const initialSource = eventSources[0];
     const timestamp = new Date().toISOString();
     act(() => {
-      initialSource.onmessage?.({
-        data: JSON.stringify({
-          sequence: 1,
-          runId: completedRun.id,
-          timestamp,
-          type: "status",
-          status: "completed",
-          message: "Run completed"
-        })
-      } as MessageEvent<string>);
+      emitEvent(initialSource, {
+        sequence: 1,
+        runId: completedRun.id,
+        timestamp,
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
     });
     expect(initialSource.closed).toBe(true);
 
@@ -340,25 +282,21 @@ describe("useRunSession", () => {
     expect(replaySource.closed).toBe(false);
 
     act(() => {
-      replaySource.onmessage?.({
-        data: JSON.stringify({
-          sequence: 1,
-          runId: completedRun.id,
-          timestamp,
-          type: "status",
-          status: "completed",
-          message: "Run completed"
-        })
-      } as MessageEvent<string>);
-      replaySource.onmessage?.({
-        data: JSON.stringify({
-          sequence: 2,
-          runId: completedRun.id,
-          timestamp,
-          type: "cleanup",
-          message: "Cleanup complete"
-        })
-      } as MessageEvent<string>);
+      emitEvent(replaySource, {
+        sequence: 1,
+        runId: completedRun.id,
+        timestamp,
+        type: "status",
+        status: "completed",
+        message: "Run completed"
+      });
+      emitEvent(replaySource, {
+        sequence: 2,
+        runId: completedRun.id,
+        timestamp,
+        type: "cleanup",
+        message: "Cleanup complete"
+      });
     });
 
     expect(replaySource.closed).toBe(true);

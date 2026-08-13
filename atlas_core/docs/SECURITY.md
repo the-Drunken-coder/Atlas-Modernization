@@ -133,8 +133,8 @@ API-key-authenticated requests cannot manage API keys. `admin_records` stores ad
 
 The production Docker target does not copy `atlas_core.settings.json.example`
 into the image. Its entrypoint refuses to start unless `ENABLE_API_AUTH=true`
-and `API_AUTH_KEY` is set to a strong printable-ASCII value that is non-empty,
-non-placeholder, not common, not too short, not low-entropy, and not sequential.
+and `API_AUTH_KEY` is set to a strong value that is non-empty, non-placeholder,
+not common, not too short, not low-entropy, and not sequential.
 This bootstrap key remains required even when managed API keys exist. The
 example settings file keeps the Core-level default disabled; the development
 launcher overrides it with its generated local credentials, while raw Compose

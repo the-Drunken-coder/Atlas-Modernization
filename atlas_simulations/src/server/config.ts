@@ -44,11 +44,9 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
     stringValue(runtimeEnv.ATLAS_SIM_ENABLE_DEPLOYED) ?? stringValue(fileEnv.ATLAS_SIM_ENABLE_DEPLOYED),
     "ATLAS_SIM_ENABLE_DEPLOYED"
   );
-  const runtimeDeployedBaseUrl = stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL);
-  const configuredDeployedBaseUrl = runtimeDeployedBaseUrl ?? stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
-  const deployedApiKey = runtimeDeployedBaseUrl
-    ? stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY)
-    : (stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY));
+  const configuredDeployedBaseUrl =
+    stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL) ?? stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
+  const deployedApiKey = stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY);
   const selectedTargetId = targetIdValue(
     stringValue(runtimeEnv.ATLAS_SIM_TARGET) ?? stringValue(fileEnv.ATLAS_SIM_TARGET) ?? LOCAL_TARGET_ID
   );
@@ -176,25 +174,13 @@ export function isDeployedAtlasUrl(value: string): boolean {
 }
 
 function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "")
-    .toLowerCase();
-  return (
-    normalized === "localhost" || normalized === "::1" || isIPv4Loopback(normalized) || isIPv4MappedLoopback(normalized)
-  );
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "localhost" || normalized === "::1" || isIPv4Loopback(normalized);
 }
 
 function isIPv4Loopback(hostname: string): boolean {
   const parts = hostname.split(".");
   return parts.length === 4 && parts[0] === "127" && parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
-}
-
-function isIPv4MappedLoopback(hostname: string): boolean {
-  const match = /^::ffff:([0-9a-f]{1,4}):[0-9a-f]{1,4}$/.exec(hostname);
-  if (!match) return false;
-  const highBits = Number.parseInt(match[1], 16);
-  return highBits >= 0x7f00 && highBits <= 0x7fff;
 }
 
 function unquote(value: string): string {

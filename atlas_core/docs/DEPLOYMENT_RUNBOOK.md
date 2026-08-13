@@ -28,9 +28,7 @@ export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 
 The file must define `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`,
 `MINIO_ROOT_PASSWORD`, `API_AUTH_KEY`, and `ATLAS_ADMIN_PASSWORD`.
-`API_AUTH_KEY` must contain only printable ASCII characters, and
-`ATLAS_ADMIN_PASSWORD` must contain at least 12 characters. The process,
-bundled launcher, and production image enforce the same boundaries.
+`ATLAS_ADMIN_PASSWORD` must contain at least 12 characters.
 
 External secrets are not stored in `admin_records` and are not recovered by a database restore. Back up the operator secret source separately.
 
@@ -47,9 +45,7 @@ provision the durable bucket with a host-installed MinIO client:
     "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
   mc --config-dir "${minio_mc_config}" mb "atlas_production/${MINIO_BUCKET}"
   mc --config-dir "${minio_mc_config}" stat "atlas_production/${MINIO_BUCKET}"
-)
-provision_status=$?
-test "${provision_status}" -eq 0 || exit "${provision_status}"
+) || exit "$?"
 ```
 
 The separate quoted credential arguments remain valid when values contain
@@ -187,9 +183,7 @@ esac
 (
   set -e
   docker compose -f atlas_core/docker/docker-compose.production.yml stop api
-)
-quiesce_status=$?
-test "${quiesce_status}" -eq 0 || exit "${quiesce_status}"
+) || exit "$?"
 ```
 
 3. Create a full custom-format database dump:
@@ -204,9 +198,7 @@ test "${quiesce_status}" -eq 0 || exit "${quiesce_status}"
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
     pg_restore --list <"${BACKUP_DIR}/postgres.dump" \
     >"${BACKUP_DIR}/postgres.contents.txt"
-)
-dump_status=$?
-test "${dump_status}" -eq 0 || exit "${dump_status}"
+) || exit "$?"
 ```
 
 Every current full dump must contain resource tables, `atlas_change_clock`, `atlas_change_events`, `object_deletion_fences`, `storage_deletion_outbox`, `storage_upload_intents`, and every `admin_records` row (accounts, sessions, login throttles, and managed API-key hashes/metadata), plus `atlas_schema_migrations`. The inaugural pre-cutover backup is expected to use the legacy v1 schema and is marked `unversioned-v1-candidate` instead.
@@ -224,9 +216,7 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
     "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
   mc --config-dir "${minio_mc_config}" ls --recursive "atlas_production/${MINIO_BUCKET}" \
     >"${BACKUP_DIR}/minio.contents.txt"
-)
-mirror_status=$?
-test "${mirror_status}" -eq 0 || exit "${mirror_status}"
+) || exit "$?"
 ```
 
 5. Validate the pair before deploying:
@@ -238,9 +228,7 @@ test "${mirror_status}" -eq 0 || exit "${mirror_status}"
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
     pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
   test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
-)
-validation_status=$?
-test "${validation_status}" -eq 0 || exit "${validation_status}"
+) || exit "$?"
 ```
 
 Keep the dump, bucket mirror, manifests, and revision files under the same `BACKUP_ID`. Never mix a database snapshot with a bucket snapshot from another time; object rows may otherwise reference missing or wrong bytes.
@@ -286,9 +274,7 @@ Restoring is destructive to state created after the selected backup.
   test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
   docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
     pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
-)
-validation_status=$?
-test "${validation_status}" -eq 0 || exit "${validation_status}"
+) || exit "$?"
 ```
 
 3. Restore the entire database:
@@ -308,9 +294,7 @@ test "${validation_status}" -eq 0 || exit "${validation_status}"
     -e PGPASSWORD="${POSTGRES_PASSWORD}" postgres \
     pg_restore -U atlas -d atlas_core --exit-on-error --no-owner --no-privileges \
     <"${BACKUP_DIR}/postgres.dump"
-)
-database_restore_status=$?
-test "${database_restore_status}" -eq 0 || exit "${database_restore_status}"
+) || exit "$?"
 ```
 
 4. Replace the configured bucket with the matching mirror:
@@ -333,9 +317,7 @@ test "${database_restore_status}" -eq 0 || exit "${database_restore_status}"
     exit 1
   fi
   test -z "${minio_diff}"
-)
-minio_restore_status=$?
-test "${minio_restore_status}" -eq 0 || exit "${minio_restore_status}"
+) || exit "$?"
 ```
 
 5. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.

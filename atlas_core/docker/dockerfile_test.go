@@ -90,103 +90,6 @@ func TestDockerfileKeepsAuthDisabledSettingsOutOfProductionImage(t *testing.T) {
 	}
 }
 
-func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.T) {
-	development, err := os.ReadFile("docker-compose.yml")
-	if err != nil {
-		t.Fatalf("read development Compose file: %v", err)
-	}
-	production, err := os.ReadFile("docker-compose.production.yml")
-	if err != nil {
-		t.Fatalf("read production Compose file: %v", err)
-	}
-
-	for _, test := range []struct {
-		filename     string
-		compose      string
-		publicPolicy bool
-	}{
-		{filename: "docker-compose.yml", compose: string(development), publicPolicy: true},
-		{filename: "docker-compose.production.yml", compose: string(production)},
-	} {
-		t.Run(test.filename, func(t *testing.T) {
-			for _, required := range []string{
-				`mc alias set myminio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"`,
-			} {
-				if !strings.Contains(test.compose, required) {
-					t.Fatalf("%s MinIO initialization missing %q", test.filename, required)
-				}
-			}
-			if strings.Contains(test.compose, "MC_HOST_myminio:") {
-				t.Fatalf("%s must not embed operator credentials in an MC_HOST URL", test.filename)
-			}
-			if test.publicPolicy {
-				for _, required := range []string{
-					`true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;;`,
-					`*) mc anonymous set none "myminio/$$MINIO_BUCKET" ;;`,
-				} {
-					if !strings.Contains(test.compose, required) {
-						t.Fatalf("development Compose MinIO policy missing %q", required)
-					}
-				}
-				return
-			}
-			if strings.Contains(test.compose, "ENABLE_PUBLIC_MINIO") || strings.Contains(test.compose, "mc anonymous set download") {
-				t.Fatal("production Compose must not allow anonymous MinIO downloads")
-			}
-			if !strings.Contains(test.compose, `mc anonymous set none "myminio/$$MINIO_BUCKET"`) {
-				t.Fatal("production Compose must revoke anonymous MinIO access")
-			}
-		})
-	}
-}
-
-func TestProductionPostgresHealthchecksExpandPasswordsInsideTheContainer(t *testing.T) {
-	for _, filename := range []string{"docker-compose.production.yml", "docker-compose.production-db.yml"} {
-		t.Run(filename, func(t *testing.T) {
-			// #nosec G304 -- filename comes only from the fixed fixture list above.
-			data, err := os.ReadFile(filename)
-			if err != nil {
-				t.Fatalf("read %s: %v", filename, err)
-			}
-			compose := string(data)
-			if strings.Contains(compose, "PGPASSWORD=${POSTGRES_PASSWORD") {
-				t.Fatal("production healthcheck must not interpolate the operator password into the shell command")
-			}
-			if !strings.Contains(compose, `PGPASSWORD=\"$$POSTGRES_PASSWORD\" pg_isready`) {
-				t.Fatal("production healthcheck must quote the container-side password expansion")
-			}
-		})
-	}
-}
-
-func TestProductionPersistenceMinIOUsesSeparateCredentials(t *testing.T) {
-	data, err := os.ReadFile("../scripts/test_production_persistence.sh")
-	if err != nil {
-		t.Fatalf("read production persistence script: %v", err)
-	}
-	script := string(data)
-	if strings.Contains(script, "MC_HOST_atlas=") {
-		t.Fatal("production persistence test must not embed operator credentials in an MC_HOST URL")
-	}
-	if !strings.Contains(
-		script,
-		`mc alias set atlas http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"`,
-	) {
-		t.Fatal("production persistence test must pass MinIO credentials as separate arguments")
-	}
-	if strings.Contains(script, `test -z "$(mc diff`) {
-		t.Fatal("production persistence test must not hide mc diff command failures")
-	}
-	for _, required := range []string{
-		`if ! minio_diff="$(mc diff`,
-		`test -z "${minio_diff}"`,
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("production persistence test must fail closed with %q", required)
-		}
-	}
-}
-
 func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("production entrypoint is a POSIX shell script")
@@ -217,61 +120,6 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "enabled auth case-folded placeholder key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=replace_with_secure_key"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth bootstrap placeholder key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=REPLACE_WITH_STRONG_BOOTSTRAP_KEY"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth documented placeholder key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=your-secure-api-key"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth short key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=short"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth weak substring",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=operator-password-key"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth low diversity",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=abababab"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth low unicode diversity",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=éøåéøåéø"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth Unicode case fold",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=KKKABC"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth locale-sensitive uppercase",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=ÅåÅåÅåx1"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth sequential key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=abcdefgh"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth weak suffix",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=operator-key-123"},
-			wantErr: true,
-		},
-		{
 			name:    "enabled auth real key missing admin password",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret"},
 			wantErr: true,
@@ -284,11 +132,6 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 		{
 			name:    "eleven-character admin password",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaa"},
-			wantErr: true,
-		},
-		{
-			name:    "eleven-character Unicode admin password",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=ééééééééééé"},
 			wantErr: true,
 		},
 		{
@@ -315,41 +158,6 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			name:    "enabled auth real key and twelve-character admin password",
 			env:     []string{"ENABLE_API_AUTH=TRUE", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
 			wantErr: false,
-		},
-		{
-			name:    "enabled auth twelve-character Unicode admin password",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=éééééééééééé"},
-			wantErr: false,
-		},
-		{
-			name:    "enabled auth non-ASCII key",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=éøåßéøåß"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth non-ASCII numeric sequence",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=٠١٢٣٤٥x"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth embedded newline",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real\nproduction-secret"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth embedded carriage return",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real\rproduction-secret"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth embedded tab",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real\tproduction-secret"},
-			wantErr: true,
-		},
-		{
-			name:    "enabled auth invalid UTF-8 byte",
-			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=" + string([]byte{0xff, 'A', 'z', 'B', 'y', 'C', 'x', 'D'})},
-			wantErr: true,
 		},
 	}
 

@@ -29,39 +29,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 API_AUTH_KEY_PLACEHOLDER = "REPLACE_WITH_SECURE_KEY"
-API_AUTH_KEY_PLACEHOLDERS = {
-    API_AUTH_KEY_PLACEHOLDER,
-    "REPLACE_WITH_STRONG_BOOTSTRAP_KEY",
-    "YOUR-SECURE-API-KEY",
-}
+API_AUTH_KEY_PLACEHOLDERS = {API_AUTH_KEY_PLACEHOLDER, "REPLACE_WITH_STRONG_BOOTSTRAP_KEY"}
 PRODUCTION_STORAGE_PASSWORD_PLACEHOLDER = "replace_with_strong_password"
-CLOUDFLARE_TUNNEL_TOKEN_PLACEHOLDERS = {
-    "replace-with-cloudflare-token",
-    "replace_with_cloudflare_tunnel_token",
-    "your-tunnel-token",
-}
-WEAK_API_AUTH_KEYS = {
-    "000000",
-    "111111",
-    "123456",
-    "abcd1234",
-    "changeme",
-    "admin",
-    "apikey",
-    "asdf",
-    "default",
-    "dummy",
-    "example",
-    "key",
-    "password",
-    "password123",
-    "placeholder",
-    "qwerty",
-    "secret",
-    "test",
-    "your-key-here",
-}
-WEAK_API_AUTH_KEY_SUBSTRINGS = ("admin", "asdf", "letmein", "password", "qwerty", "welcome")
 ADMIN_PASSWORD_PLACEHOLDERS = {
     "password",
     "replace_with_secure_admin_password",
@@ -77,7 +46,6 @@ PRODUCTION_COMPOSE_FILE = "docker-compose.production.yml"
 PRODUCTION_DB_COMPOSE_FILE = "docker-compose.production-db.yml"
 DEVELOPMENT_COMPOSE_PROJECT = "atlas_core_development"
 PRODUCTION_COMPOSE_PROJECT = "atlas_core_production"
-PRODUCTION_MINIO_VOLUME = f"{PRODUCTION_COMPOSE_PROJECT}_minio_data"
 LOCAL_AUTH_ENV_FILE = ".env.local"
 DEFAULT_MINIO_BUCKET = "atlas-media"
 
@@ -166,19 +134,14 @@ def ensure_production_storage_credentials(db_only=False):
 
 def configured_minio_bucket():
     """Return the bucket selected by the Compose environment."""
-    bucket = os.getenv("MINIO_BUCKET", "")
-    if not bucket:
-        return DEFAULT_MINIO_BUCKET
-    if bucket != bucket.strip():
-        raise ValueError("MINIO_BUCKET must not contain leading or trailing whitespace")
-    return bucket
+    return os.getenv("MINIO_BUCKET") or DEFAULT_MINIO_BUCKET
 
 
 def ensure_local_auth(docker_dir):
     """Generate or reuse the credentials required by the local authenticated stack."""
     local_auth = parse_compose_env_file(os.path.join(docker_dir, LOCAL_AUTH_ENV_FILE))
     api_auth_key = os.getenv("API_AUTH_KEY", "").strip() or local_auth.get("API_AUTH_KEY", "").strip()
-    if not api_auth_key or api_auth_key.upper() in API_AUTH_KEY_PLACEHOLDERS or is_weak_api_auth_key(api_auth_key):
+    if not api_auth_key or api_auth_key in API_AUTH_KEY_PLACEHOLDERS:
         api_auth_key = secrets.token_urlsafe(32)
         print("[INFO] Generated local API_AUTH_KEY (redacted)")
     else:
@@ -568,35 +531,16 @@ def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, t
             logger.error("docker compose down stderr:\n%s", err)
         detail = err or out
         raise RuntimeError(f"{msg}" + (f": {detail}" if detail else ""))
-    if remove_volumes and production and db_only:
-        remove_docker_volume_if_present(PRODUCTION_MINIO_VOLUME)
-
-
-def remove_docker_volume_if_present(volume_name):
-    """Remove an exact named volume when it exists."""
-    volumes = subprocess.run(
-        ["docker", "volume", "ls", "--quiet"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if volume_name not in volumes.stdout.splitlines():
-        return
-    subprocess.run(["docker", "volume", "rm", volume_name], check=True)
 
 
 def ensure_tunnel_token():
     """Ensure tunnel startup has a Cloudflare tunnel token."""
-    raw_token = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "")
-    token = raw_token.strip()
-    if token != raw_token:
-        print("[WARN] CLOUDFLARE_TUNNEL_TOKEN must not contain surrounding whitespace.")
-        return False
-    if token and token.lower() not in CLOUDFLARE_TUNNEL_TOKEN_PLACEHOLDERS:
+    token = os.getenv("CLOUDFLARE_TUNNEL_TOKEN")
+    if token:
         print("[INFO] Using CLOUDFLARE_TUNNEL_TOKEN from environment.")
         return True
 
-    print("[WARN] Tunnel mode requires a real CLOUDFLARE_TUNNEL_TOKEN.")
+    print("[WARN] Tunnel mode requires CLOUDFLARE_TUNNEL_TOKEN.")
     return False
 
 
@@ -606,11 +550,8 @@ def ensure_api_auth(mode):
     if not api_auth_key:
         print(f"[ERROR] {mode} requires API_AUTH_KEY to be set.")
         return False
-    if api_auth_key.upper() in API_AUTH_KEY_PLACEHOLDERS:
+    if api_auth_key in API_AUTH_KEY_PLACEHOLDERS:
         print(f"[ERROR] {mode} requires a real API_AUTH_KEY, not the example placeholder.")
-        return False
-    if is_weak_api_auth_key(api_auth_key):
-        print(f"[ERROR] {mode} requires a stronger API_AUTH_KEY.")
         return False
     admin_password = os.getenv("ATLAS_ADMIN_PASSWORD", "").strip()
     if not admin_password:
@@ -628,36 +569,6 @@ def ensure_api_auth(mode):
 
     os.environ["ENABLE_API_AUTH"] = "true"
     return True
-
-
-def is_weak_api_auth_key(value):
-    """Mirror Core's API-key strength boundary for launcher preflight."""
-    trimmed = value.strip()
-    if not trimmed.isascii() or any(not " " <= current <= "~" for current in trimmed):
-        return True
-    normalized = trimmed.lower()
-    if normalized in WEAK_API_AUTH_KEYS or len(normalized.encode()) < 8 or len(set(normalized)) < 4:
-        return True
-    if any(weak in normalized for weak in WEAK_API_AUTH_KEY_SUBSTRINGS) or normalized.endswith("123"):
-        return True
-    run_length = 1
-    last_step = 0
-    for previous, current in zip(normalized[:-1], normalized[1:], strict=True):
-        same_class = ("0" <= previous <= "9" and "0" <= current <= "9") or (
-            "a" <= previous <= "z" and "a" <= current <= "z"
-        )
-        step = ord(current) - ord(previous) if same_class and abs(ord(current) - ord(previous)) == 1 else 0
-        if step and step == last_step:
-            run_length += 1
-        elif step:
-            run_length = 2
-            last_step = step
-        else:
-            run_length = 1
-            last_step = 0
-        if run_length >= 6:
-            return True
-    return False
 
 
 def public_base_url_from_hostname(hostname, default_hostname=DEFAULT_TUNNEL_HOSTNAME):
@@ -756,12 +667,6 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
         if production and not db_only and database_recreate_on_startup_enabled(production=True):
             print("[ERROR] Production mode refuses DATABASE_RECREATE_ON_STARTUP=true.")
             sys.exit(1)
-        if not db_only:
-            try:
-                configured_minio_bucket()
-            except ValueError as exc:
-                print(f"[ERROR] {exc}")
-                sys.exit(1)
         if not production:
             generated_compose_values = {}
             generated_compose_values.update(ensure_minio_secrets())

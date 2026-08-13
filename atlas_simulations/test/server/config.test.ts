@@ -184,43 +184,6 @@ describe("loadConfig", () => {
     ]);
   });
 
-  it.each(["https://localhost.", "https://[::ffff:127.0.0.1]"])(
-    "rejects loopback alias %s for a deployed target",
-    (baseUrl) => {
-      const packageRoot = tempPackageRoot();
-
-      expect(() =>
-        loadConfig({
-          env: { ATLAS_SIM_ENABLE_DEPLOYED: "true", ATLAS_DEPLOYED_BASE_URL: baseUrl },
-          packageRoot
-        })
-      ).toThrow("ATLAS_DEPLOYED_BASE_URL must not target loopback");
-    }
-  );
-
-  it("does not reuse a file key when the runtime overrides the deployed URL", () => {
-    const packageRoot = tempPackageRoot();
-    writeFileSync(
-      path.join(packageRoot, ".env"),
-      [
-        "ATLAS_SIM_ENABLE_DEPLOYED=true",
-        "ATLAS_DEPLOYED_BASE_URL=https://file-atlas.example.test",
-        "ATLAS_DEPLOYED_API_KEY=file-key"
-      ].join("\n")
-    );
-
-    const config = loadConfig({
-      env: { ATLAS_DEPLOYED_BASE_URL: "https://runtime-atlas.example.test" },
-      packageRoot
-    });
-
-    expect(config.atlasTargets[1]).toEqual({
-      id: "deployed",
-      label: "Deployed Core",
-      baseUrl: "https://runtime-atlas.example.test"
-    });
-  });
-
   it("requires a deployed URL when deployed support is enabled", () => {
     const packageRoot = tempPackageRoot();
 
