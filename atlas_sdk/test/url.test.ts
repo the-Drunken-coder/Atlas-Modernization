@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ATLAS_PROTOCOL_REVISION, AtlasClient, joinAtlasUrl, normalizeAtlasBaseUrl } from "../src";
 import { AtlasAdminClient } from "../src/admin.js";
+import { pathWithQuery } from "../src/url.js";
 
 describe("Atlas URL handling", () => {
   it.each([
@@ -35,6 +36,13 @@ describe("Atlas URL handling", () => {
       "https://core.test/atlas/queries/changed-since?since_version=4"
     );
     expect(joinAtlasUrl("/atlas", "/feed")).toBe("/atlas/feed");
+  });
+
+  it("builds encoded query paths while omitting unset values", () => {
+    expect(pathWithQuery("/queries/full", { cursor: "next page/+", omitted: undefined, limit: "25" })).toBe(
+      "/queries/full?cursor=next+page%2F%2B&limit=25"
+    );
+    expect(pathWithQuery("/queries/full", { cursor: undefined })).toBe("/queries/full");
   });
 
   it.each([

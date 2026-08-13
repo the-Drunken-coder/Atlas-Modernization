@@ -13,7 +13,6 @@ services:
   # Cloudflare Tunnel for public HTTPS access (token-managed; see docker/cloudflared/README.md).
   cloudflared:
     image: cloudflare/cloudflared:2026.5.2@sha256:12ff5c6992a9863db4da270746af7c244bcaee49353039af8104268a18d6c4f0
-    container_name: atlas_core_cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN must be set}
     depends_on:

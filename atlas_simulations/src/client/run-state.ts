@@ -1,7 +1,9 @@
 import { sanitizeErrorMessage } from "@the-drunken-coder/atlas-sdk";
 import {
+  type AssertionResult,
   type AtlasTargetSummary,
   isCreatedResource,
+  type JSONValue,
   jsonNumber,
   type RunEvent,
   type RunSummary,
@@ -144,55 +146,101 @@ function submissionInputs(scenario: ScenarioDescriptor, values: FieldValues): No
 }
 
 export function parseRunEvent(value: unknown): RunEvent {
+  if (!isRecord(value)) throw new Error("Invalid run event");
+  const base = parseRunEventBase(value);
+  switch (value.type) {
+    case "status":
+      if (isRunStatus(value.status)) return sanitizedRunEvent({ ...base, type: "status", status: value.status });
+      break;
+    case "log":
+      return sanitizedRunEvent({ ...base, type: "log" });
+    case "assertion":
+      if (isAssertionResult(value.assertion))
+        return sanitizedRunEvent({ ...base, type: "assertion", assertion: value.assertion });
+      break;
+    case "resource":
+      if (isCreatedResource(value.resource))
+        return sanitizedRunEvent({ ...base, type: "resource", resource: value.resource });
+      break;
+    case "error":
+      if (base.level === "error") return sanitizedRunEvent({ ...base, type: "error", level: "error" });
+      break;
+    case "cleanup":
+      if (value.resource === undefined || isCreatedResource(value.resource))
+        return sanitizedRunEvent({ ...base, type: "cleanup", ...(value.resource ? { resource: value.resource } : {}) });
+      break;
+  }
+  throw new Error("Invalid run event");
+}
+
+type ParsedRunEventBase = {
+  sequence: ReturnType<typeof jsonNumber>;
+  runId: string;
+  timestamp: string;
+  message: string;
+  level?: "info" | "warn" | "error";
+  data?: JSONValue;
+};
+
+function parseRunEventBase(value: Record<string, unknown>): ParsedRunEventBase {
   if (
-    !isRecord(value) ||
     typeof value.sequence !== "number" ||
     !Number.isSafeInteger(value.sequence) ||
     value.sequence < 1 ||
     typeof value.runId !== "string" ||
     typeof value.timestamp !== "string" ||
     Number.isNaN(Date.parse(value.timestamp)) ||
-    typeof value.message !== "string"
+    typeof value.message !== "string" ||
+    (value.level !== undefined && !isRunEventLevel(value.level)) ||
+    (value.data !== undefined && !isJSONValue(value.data))
   ) {
     throw new Error("Invalid run event");
   }
-  switch (value.type) {
-    case "status":
-      if (
-        value.status === "running" ||
-        value.status === "completed" ||
-        value.status === "failed" ||
-        value.status === "cancelled" ||
-        value.status === "abandoned"
-      )
-        return sanitizedRunEvent(value as RunEvent);
-      break;
-    case "log":
-      if (value.level === undefined || isRunEventLevel(value.level)) return sanitizedRunEvent(value as RunEvent);
-      break;
-    case "assertion":
-      if (
-        isRecord(value.assertion) &&
-        typeof value.assertion.id === "string" &&
-        typeof value.assertion.name === "string" &&
-        typeof value.assertion.passed === "boolean" &&
-        typeof value.assertion.timestamp === "string" &&
-        (value.assertion.message === undefined || typeof value.assertion.message === "string")
-      )
-        return sanitizedRunEvent(value as RunEvent);
-      break;
-    case "resource":
-      if (isCreatedResource(value.resource)) return sanitizedRunEvent(value as RunEvent);
-      break;
-    case "error":
-      if (value.level === "error") return sanitizedRunEvent(value as RunEvent);
-      break;
-    case "cleanup":
-      if (value.resource === undefined || isCreatedResource(value.resource))
-        return sanitizedRunEvent(value as RunEvent);
-      break;
+  return {
+    sequence: jsonNumber(value.sequence),
+    runId: value.runId,
+    timestamp: value.timestamp,
+    message: value.message,
+    ...(value.level === undefined ? {} : { level: value.level }),
+    ...(value.data === undefined ? {} : { data: value.data })
+  };
+}
+
+function isAssertionResult(value: unknown): value is AssertionResult {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.passed === "boolean" &&
+    typeof value.timestamp === "string" &&
+    !Number.isNaN(Date.parse(value.timestamp)) &&
+    (value.message === undefined || typeof value.message === "string")
+  );
+}
+
+function isRunStatus(value: unknown): value is RunSummary["status"] {
+  return (
+    value === "running" || value === "completed" || value === "failed" || value === "cancelled" || value === "abandoned"
+  );
+}
+
+function isJSONValue(value: unknown): value is JSONValue {
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === null || typeof current === "boolean" || typeof current === "string") continue;
+    if (typeof current === "number" && Number.isFinite(current)) continue;
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    if (isRecord(current)) {
+      pending.push(...Object.values(current));
+      continue;
+    }
+    return false;
   }
-  throw new Error("Invalid run event");
+  return true;
 }
 
 export function errorMessage(errorValue: unknown): string {
@@ -237,7 +285,7 @@ function alignsToStep(value: number, step: number, base: number): boolean {
   return Math.abs(steps - Math.round(steps)) < 1e-9;
 }
 
-function isRunEventLevel(value: unknown): boolean {
+function isRunEventLevel(value: unknown): value is "info" | "warn" | "error" {
   return value === "info" || value === "warn" || value === "error";
 }
 

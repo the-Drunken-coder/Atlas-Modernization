@@ -120,6 +120,21 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "enabled auth case-folded placeholder key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=replace_with_secure_key"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth bootstrap placeholder key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=REPLACE_WITH_STRONG_BOOTSTRAP_KEY"},
+			wantErr: true,
+		},
+		{
+			name:    "enabled auth documented placeholder key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=your-secure-api-key"},
+			wantErr: true,
+		},
+		{
 			name:    "enabled auth real key missing admin password",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret"},
 			wantErr: true,

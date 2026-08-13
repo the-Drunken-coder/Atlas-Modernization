@@ -2,7 +2,7 @@
 
 Atlas Core uses a single-host deployment: Docker Compose runs the Core API, PostgreSQL, and MinIO, and an optional Cloudflare Tunnel provides the public HTTPS edge.
 
-Production storage is durable. Ordinary starts, restarts, and `docker compose down` preserve PostgreSQL rows, `admin_records`, migration history, and MinIO objects. PostgreSQL and MinIO are one logical store and must be backed up and restored as a matched pair.
+Production storage is durable. The production Compose files use the isolated `atlas_core_production` project; development uses `atlas_core_development`. Ordinary starts, restarts, and `docker compose down` preserve PostgreSQL rows, `admin_records`, migration history, and MinIO objects. PostgreSQL and MinIO are one logical store and must be backed up and restored as a matched pair.
 
 ## Local development
 
@@ -23,6 +23,7 @@ umask 077
 set -a
 . /secure/path/atlas-production.env
 set +a
+export MINIO_BUCKET="${MINIO_BUCKET:-atlas-media}"
 ```
 
 The file must define `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`,
@@ -38,8 +39,8 @@ provision the durable bucket with a host-installed MinIO client:
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mb atlas_production/atlas-media
-mc stat atlas_production/atlas-media
+mc mb "atlas_production/${MINIO_BUCKET}"
+mc stat "atlas_production/${MINIO_BUCKET}"
 unset MC_HOST_atlas_production
 ```
 
@@ -189,9 +190,9 @@ Every current full dump must contain resource tables, `atlas_change_clock`, `atl
 
 ```bash
 export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mirror --overwrite atlas_production/atlas-media \
-  "${BACKUP_DIR}/minio/atlas-media"
-mc ls --recursive atlas_production/atlas-media \
+mc mirror --overwrite "atlas_production/${MINIO_BUCKET}" \
+  "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+mc ls --recursive "atlas_production/${MINIO_BUCKET}" \
   >"${BACKUP_DIR}/minio.contents.txt"
 unset MC_HOST_atlas_production
 ```
@@ -202,7 +203,7 @@ unset MC_HOST_atlas_production
 test -s "${BACKUP_DIR}/postgres.dump"
 docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
   pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
-test -d "${BACKUP_DIR}/minio/atlas-media"
+test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
 ```
 
 Keep the dump, bucket mirror, manifests, and revision files under the same `BACKUP_ID`. Never mix a database snapshot with a bucket snapshot from another time; object rows may otherwise reference missing or wrong bytes.
@@ -262,11 +263,11 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
 export MC_HOST_atlas_production="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000"
-mc mb --ignore-existing atlas_production/atlas-media
-mc rm --recursive --force atlas_production/atlas-media
-mc mirror --overwrite --remove "${BACKUP_DIR}/minio/atlas-media" \
-  atlas_production/atlas-media
-test -z "$(mc diff "${BACKUP_DIR}/minio/atlas-media" atlas_production/atlas-media)"
+mc mb --ignore-existing "atlas_production/${MINIO_BUCKET}"
+mc rm --recursive --force "atlas_production/${MINIO_BUCKET}"
+mc mirror --overwrite --remove "${BACKUP_DIR}/minio/${MINIO_BUCKET}" \
+  "atlas_production/${MINIO_BUCKET}"
+test -z "$(mc diff "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}")"
 unset MC_HOST_atlas_production
 ```
 

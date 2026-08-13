@@ -1,3 +1,5 @@
+name: atlas_core_development
+
 services:
   # ATLAS Core API (Go)
   api:
@@ -23,7 +25,7 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
-      MINIO_BUCKET: atlas-media
+      MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
       MINIO_SECURE: "false"
       SERVER_PORT: "8000"
     ports:
@@ -103,7 +105,8 @@ services:
     restart: "no"
     environment:
       MC_HOST_myminio: http://${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}:${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}@minio:9000
-      # When "true", apply anonymous download on atlas-media (dev-only; not recommended on untrusted networks).
+      MINIO_BUCKET: ${MINIO_BUCKET:-atlas-media}
+      # When "true", apply anonymous download on the configured bucket (dev-only; not recommended on untrusted networks).
       ENABLE_PUBLIC_MINIO: ${ENABLE_PUBLIC_MINIO:-false}
     depends_on:
       minio:
@@ -113,8 +116,8 @@ services:
       - -c
       - |
         set -e
-        mc mb --ignore-existing myminio/atlas-media
-        case "$$ENABLE_PUBLIC_MINIO" in true|1|yes|on) mc anonymous set download myminio/atlas-media ;; esac
+        mc mb --ignore-existing "myminio/$$MINIO_BUCKET"
+        case "$$ENABLE_PUBLIC_MINIO" in true|1|yes|on) mc anonymous set download "myminio/$$MINIO_BUCKET" ;; esac
         echo 'MinIO bucket initialized successfully'
     networks:
       - atlas_core_network

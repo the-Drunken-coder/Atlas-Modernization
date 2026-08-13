@@ -42,7 +42,12 @@ func validateAPIAuthKey(enabled bool, key string) (string, error) {
 		"your-key-here": {},
 	}
 	normalized := strings.ToLower(key)
-	if _, placeholder := placeholderKeys[normalized]; placeholder || isWeakAPIAuthKey(normalized) {
+	_, placeholder := placeholderKeys[normalized]
+	if placeholder ||
+		normalized == "replace_with_secure_key" ||
+		normalized == "replace_with_strong_bootstrap_key" ||
+		normalized == "your-secure-api-key" ||
+		isWeakAPIAuthKey(normalized) {
 		return "", fmt.Errorf("API_AUTH_KEY is too weak for API auth")
 	}
 	return key, nil

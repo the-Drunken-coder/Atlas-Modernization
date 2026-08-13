@@ -51,6 +51,15 @@ export function joinAtlasUrl(baseUrl: string, endpoint: string): string {
   return base === "/" ? endpoint : `${base}${endpoint}`;
 }
 
+export function pathWithQuery(path: string, params: Record<string, string | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, value);
+  }
+  const encoded = query.toString();
+  return encoded ? `${path}?${encoded}` : path;
+}
+
 function stripTrailingSlashes(value: string): string {
   let end = value.length;
   while (end > 0 && value[end - 1] === "/") {

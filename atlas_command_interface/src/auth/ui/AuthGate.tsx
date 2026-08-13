@@ -1,4 +1,4 @@
-import { joinAtlasUrl } from "@the-drunken-coder/atlas-sdk";
+import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { Component, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
@@ -176,17 +176,13 @@ function errorMessage(error: unknown): string {
 }
 
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
-  const response = await fetch(joinAtlasUrl(baseUrl, "/admin/auth/me"), {
-    credentials: "include",
-    headers: { Accept: "application/json" }
-  });
-  if (response.status === 401) return { authenticated: false };
-  if (!response.ok) throw new Error(`Session check failed (${response.status})`);
-  const data = (await response.json()) as { user?: { username?: unknown } };
-  if (data.user && typeof data.user.username === "string") {
+  try {
+    const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.me();
     return { authenticated: true, user: { username: data.user.username } };
+  } catch (error) {
+    if (error instanceof AtlasAPIError && error.status === 401) return { authenticated: false };
+    throw error;
   }
-  throw new Error("Session check returned an unexpected shape");
 }
 
 function LoginPanel({

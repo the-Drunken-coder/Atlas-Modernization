@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { EntityCheckInMethod } from "@the-drunken-coder/atlas-sdk";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { createScenarioContext, parseStartRequest, type Scenario } from "../../src/server/scenario.js";
 import { jsonNumber } from "../../src/shared/types.js";
 import { createFakeAtlasCore } from "../support/fake-atlas.js";
@@ -224,6 +225,20 @@ describe("scenario input parsing", () => {
       { type: "entity", id: entityId },
       { type: "object", id: objectId }
     ]);
+  });
+
+  it("preserves full and minimal check-in response inference", () => {
+    const ctx = createScenarioContext({
+      runId: "sim-check-in-types",
+      signal: new AbortController().signal,
+      clientFactory: createFakeAtlasCore().factory,
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: () => undefined,
+      registerClient: () => undefined
+    });
+
+    expectTypeOf(ctx.client.entities.checkIn).toEqualTypeOf<EntityCheckInMethod>();
   });
 
   it("does not track resources when Core rejects the create", async () => {

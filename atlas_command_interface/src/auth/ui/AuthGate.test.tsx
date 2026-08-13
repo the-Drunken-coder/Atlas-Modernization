@@ -110,6 +110,54 @@ describe("AuthGate", () => {
     expect(screen.queryByText("map console")).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["a null response", null],
+    ["an empty username", { user: { username: "" } }],
+    ["a whitespace username", { user: { username: "   " } }],
+    ["a missing user", {}]
+  ])("rejects %s from the session endpoint", async (_name, body) => {
+    stubFetch([{ status: 200, body }]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Core unavailable");
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+    expect(screen.queryByText("map console")).not.toBeInTheDocument();
+  });
+
+  it("rejects malformed JSON from the session endpoint", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{", { status: 200, headers: { "Content-Type": "application/json" } }))
+    );
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Core unavailable");
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
+  it("does not treat a non-401 session response as logged out", async () => {
+    stubFetch([{ status: 503, body: { message: "session unavailable" } }]);
+
+    render(
+      <AuthGate baseUrl="https://core.test">
+        <div>map console</div>
+      </AuthGate>
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Core unavailable");
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
+  });
+
   it("retries the initial Core session check only when the operator requests it", async () => {
     const user = userEvent.setup();
     const fetchMock = vi

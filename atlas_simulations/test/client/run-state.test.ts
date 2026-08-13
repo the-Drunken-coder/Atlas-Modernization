@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStartRunRequest } from "../../src/client/run-state.js";
+import { buildStartRunRequest, parseRunEvent } from "../../src/client/run-state.js";
 import { type AtlasTargetSummary, jsonNumber, type ScenarioDescriptor } from "../../src/shared/types.js";
 
 const scenario: ScenarioDescriptor = {
@@ -42,5 +42,54 @@ describe("buildStartRunRequest", () => {
 
   it("rejects invalid JSON before a run is submitted", () => {
     expect(() => buildStartRunRequest(scenario, target, {}, "{", true)).toThrow("JSON input must be valid JSON");
+  });
+});
+
+describe("parseRunEvent", () => {
+  const timestamp = "2026-08-12T12:00:00.000Z";
+  const base = { sequence: 1, runId: "run-1", timestamp, message: "event" };
+
+  it("constructs every valid event variant", () => {
+    expect(parseRunEvent({ ...base, type: "status", status: "completed" })).toMatchObject({ type: "status" });
+    expect(parseRunEvent({ ...base, type: "log", level: "warn", data: { nested: [1, true, null] } })).toMatchObject({
+      type: "log",
+      level: "warn"
+    });
+    expect(
+      parseRunEvent({
+        ...base,
+        type: "assertion",
+        assertion: { id: "assertion-1", name: "passes", passed: true, timestamp }
+      })
+    ).toMatchObject({ type: "assertion" });
+    expect(parseRunEvent({ ...base, type: "resource", resource: { type: "entity", id: "entity-1" } })).toMatchObject({
+      type: "resource"
+    });
+    expect(parseRunEvent({ ...base, type: "error", level: "error" })).toMatchObject({ type: "error" });
+    expect(parseRunEvent({ ...base, type: "cleanup" })).toMatchObject({ type: "cleanup" });
+  });
+
+  it("rejects invalid optional levels, JSON data, and assertion timestamps", () => {
+    expect(() => parseRunEvent({ ...base, type: "status", status: "completed", level: "debug" })).toThrow(
+      "Invalid run event"
+    );
+    expect(() => parseRunEvent({ ...base, type: "log", data: { invalid: Number.POSITIVE_INFINITY } })).toThrow(
+      "Invalid run event"
+    );
+    expect(() =>
+      parseRunEvent({
+        ...base,
+        type: "assertion",
+        assertion: { id: "assertion-1", name: "passes", passed: true, timestamp: "not-a-date" }
+      })
+    ).toThrow("Invalid run event");
+  });
+
+  it("rejects malformed branch data without accepting a partial event", () => {
+    expect(() => parseRunEvent({ ...base, type: "status", status: "unknown" })).toThrow("Invalid run event");
+    expect(() => parseRunEvent({ ...base, type: "resource", resource: { type: "entity" } })).toThrow(
+      "Invalid run event"
+    );
+    expect(() => parseRunEvent({ ...base, type: "error", level: "warn" })).toThrow("Invalid run event");
   });
 });

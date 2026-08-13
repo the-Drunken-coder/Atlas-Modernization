@@ -213,4 +213,155 @@ describe("useRunSession", () => {
     expect(source.closed).toBe(true);
     expect(result.current.events).toHaveLength(1);
   });
+
+  it("replays a cleaned run through its final cleanup event", async () => {
+    const cleanedRun = { ...run, id: "cleaned-replay", cleaned: true };
+    vi.mocked(loadRuns).mockResolvedValueOnce([cleanedRun]);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(cleanedRun));
+    const source = eventSources[0];
+    const timestamp = new Date().toISOString();
+    act(() => {
+      source.onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: cleanedRun.id,
+          timestamp,
+          type: "status",
+          status: "completed",
+          message: "Run completed"
+        })
+      } as MessageEvent<string>);
+    });
+
+    expect(source.closed).toBe(false);
+    act(() => {
+      source.onmessage?.({
+        data: JSON.stringify({
+          sequence: 2,
+          runId: cleanedRun.id,
+          timestamp,
+          type: "cleanup",
+          message: "Cleanup complete"
+        })
+      } as MessageEvent<string>);
+    });
+
+    expect(source.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
+  });
+
+  it("replays a cleaned run when only its terminal status is cached", async () => {
+    const completedRun = { ...run, id: "cleaned-partial-replay" };
+    vi.mocked(loadRuns).mockResolvedValueOnce([completedRun]);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(completedRun));
+    const initialSource = eventSources[0];
+    const timestamp = new Date().toISOString();
+    act(() => {
+      initialSource.onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: completedRun.id,
+          timestamp,
+          type: "status",
+          status: "completed",
+          message: "Run completed"
+        })
+      } as MessageEvent<string>);
+    });
+    expect(initialSource.closed).toBe(true);
+
+    act(() => result.current.selectRun({ ...completedRun, cleaned: true }));
+    const replaySource = eventSources[1];
+    expect(replaySource).toBeDefined();
+    act(() => {
+      replaySource.onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: completedRun.id,
+          timestamp,
+          type: "status",
+          status: "completed",
+          message: "Run completed"
+        })
+      } as MessageEvent<string>);
+    });
+    expect(replaySource.closed).toBe(false);
+
+    act(() => {
+      replaySource.onmessage?.({
+        data: JSON.stringify({
+          sequence: 2,
+          runId: completedRun.id,
+          timestamp,
+          type: "cleanup",
+          message: "Cleanup complete"
+        })
+      } as MessageEvent<string>);
+    });
+
+    expect(replaySource.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
+  });
+
+  it("replays a cleaned run discovered while refreshing partial cached events", async () => {
+    const completedRun = { ...run, id: "cleaned-refresh-replay" };
+    const cleanedRun = { ...completedRun, cleaned: true };
+    vi.mocked(loadRuns).mockResolvedValueOnce([completedRun]).mockResolvedValue([cleanedRun]);
+    vi.mocked(cleanupRun).mockResolvedValueOnce(cleanedRun);
+    const { result } = renderHook(() => useRunSession(vi.fn()));
+    await waitFor(() => expect(result.current.runs).toHaveLength(1));
+
+    act(() => result.current.selectRun(completedRun));
+    const initialSource = eventSources[0];
+    const timestamp = new Date().toISOString();
+    act(() => {
+      initialSource.onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: completedRun.id,
+          timestamp,
+          type: "status",
+          status: "completed",
+          message: "Run completed"
+        })
+      } as MessageEvent<string>);
+    });
+    expect(initialSource.closed).toBe(true);
+
+    await act(async () => result.current.cleanupCurrentRun());
+    const replaySource = eventSources[2];
+    expect(replaySource).toBeDefined();
+    expect(replaySource.closed).toBe(false);
+
+    act(() => {
+      replaySource.onmessage?.({
+        data: JSON.stringify({
+          sequence: 1,
+          runId: completedRun.id,
+          timestamp,
+          type: "status",
+          status: "completed",
+          message: "Run completed"
+        })
+      } as MessageEvent<string>);
+      replaySource.onmessage?.({
+        data: JSON.stringify({
+          sequence: 2,
+          runId: completedRun.id,
+          timestamp,
+          type: "cleanup",
+          message: "Cleanup complete"
+        })
+      } as MessageEvent<string>);
+    });
+
+    expect(replaySource.closed).toBe(true);
+    expect(result.current.events.map((event) => event.message)).toEqual(["Run completed", "Cleanup complete"]);
+  });
 });

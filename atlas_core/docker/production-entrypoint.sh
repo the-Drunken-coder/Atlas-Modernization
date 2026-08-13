@@ -28,16 +28,19 @@ case "$enable_api_auth" in
 esac
 
 api_auth_key="$(trim "${API_AUTH_KEY:-}")"
+normalized_api_auth_key="$(printf '%s' "$api_auth_key" | tr '[:upper:]' '[:lower:]')"
 
 if [ -z "$api_auth_key" ]; then
     printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY is empty." >&2
     exit 1
 fi
 
-if [ "$api_auth_key" = "REPLACE_WITH_SECURE_KEY" ]; then
-    printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY is still the example placeholder." >&2
-    exit 1
-fi
+case "$normalized_api_auth_key" in
+    replace_with_secure_key|replace_with_strong_bootstrap_key|your-secure-api-key)
+        printf '%s\n' "Refusing to start production Atlas Core image: API_AUTH_KEY is still the example placeholder." >&2
+        exit 1
+        ;;
+esac
 
 admin_password="$(trim "${ATLAS_ADMIN_PASSWORD:-}")"
 admin_password_file="$(trim "${ATLAS_ADMIN_PASSWORD_FILE:-}")"

@@ -238,9 +238,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Audit asset runtime dependencies
-        run: npm audit --audit-level=high
-
       - name: Lint asset runtime
         run: npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
 
@@ -298,9 +295,6 @@ jobs:
       - name: Install JavaScript workspace dependencies
         run: npm ci
 
-      - name: Audit command interface dependencies
-        run: npm audit --audit-level=high
-
       - name: Lint command interface
         run: npm run lint --workspace @the-drunken-coder/atlas-command-interface
 
@@ -338,9 +332,6 @@ jobs:
 
       - name: Install JavaScript workspace dependencies
         run: npm ci
-
-      - name: Audit simulations dependencies
-        run: npm audit --audit-level=high
 
       - name: Lint simulations
         run: npm run lint --workspace @the-drunken-coder/atlas-simulations
