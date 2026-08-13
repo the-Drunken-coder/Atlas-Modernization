@@ -236,6 +236,10 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         cleanup.assert_not_called()
         run.assert_not_called()
 
+    def test_production_rejects_database_password_whitespace(self) -> None:
+        with patch.dict("os.environ", {"POSTGRES_PASSWORD": " operator-postgres-password "}, clear=True):
+            self.assertFalse(ensure_production_storage_credentials(db_only=True))
+
     def test_production_missing_credential_stops_before_loading_local_defaults(self) -> None:
         configured = {
             "POSTGRES_PASSWORD": "operator-postgres-password",

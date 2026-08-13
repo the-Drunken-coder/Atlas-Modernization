@@ -129,7 +129,7 @@ def ensure_production_storage_credentials(db_only=False):
     if placeholders:
         print("[ERROR] Production storage passwords must replace the committed example value.")
         return False
-    postgres_password = os.environ["POSTGRES_PASSWORD"].strip()
+    postgres_password = os.environ["POSTGRES_PASSWORD"]
     if any(
         not (character.isascii() and (character.isalnum() or character in "-._~!$&'()*+,;=:"))
         for character in postgres_password
