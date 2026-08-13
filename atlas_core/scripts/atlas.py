@@ -178,11 +178,7 @@ def ensure_local_auth(docker_dir):
     """Generate or reuse the credentials required by the local authenticated stack."""
     local_auth = parse_compose_env_file(os.path.join(docker_dir, LOCAL_AUTH_ENV_FILE))
     api_auth_key = os.getenv("API_AUTH_KEY", "").strip() or local_auth.get("API_AUTH_KEY", "").strip()
-    if (
-        not api_auth_key
-        or api_auth_key.upper() in API_AUTH_KEY_PLACEHOLDERS
-        or is_weak_api_auth_key(api_auth_key)
-    ):
+    if not api_auth_key or api_auth_key.upper() in API_AUTH_KEY_PLACEHOLDERS or is_weak_api_auth_key(api_auth_key):
         api_auth_key = secrets.token_urlsafe(32)
         print("[INFO] Generated local API_AUTH_KEY (redacted)")
     else:
