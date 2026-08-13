@@ -133,7 +133,8 @@ if [ -z "$admin_password_file" ]; then
             exit 1
             ;;
     esac
-    if [ "${#admin_password}" -lt 12 ]; then
+    admin_password_length="$(printf '%s' "$admin_password" | LC_ALL=C.UTF-8 wc -m | tr -d '[:space:]')"
+    if [ "$admin_password_length" -lt 12 ]; then
         printf '%s\n' "Refusing to start production Atlas Core image: ATLAS_ADMIN_PASSWORD must be at least 12 characters." >&2
         exit 1
     fi

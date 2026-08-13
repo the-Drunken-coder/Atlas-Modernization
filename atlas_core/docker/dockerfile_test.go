@@ -287,6 +287,11 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "eleven-character Unicode admin password",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=ééééééééééé"},
+			wantErr: true,
+		},
+		{
 			name:    "example admin password placeholder",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=REPLACE_WITH_SECURE_ADMIN_PASSWORD"},
 			wantErr: true,
@@ -309,6 +314,11 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 		{
 			name:    "enabled auth real key and twelve-character admin password",
 			env:     []string{"ENABLE_API_AUTH=TRUE", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
+			wantErr: false,
+		},
+		{
+			name:    "enabled auth twelve-character Unicode admin password",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=éééééééééééé"},
 			wantErr: false,
 		},
 		{
