@@ -253,8 +253,17 @@ ATLAS_CORE_API_URL=http://127.0.0.1:8000 \
 
 Restoring is destructive to state created after the selected backup.
 
-1. Stop Core and identify the matching application revision, database dump, and bucket directory from one `BACKUP_ID`.
-2. Restore the entire database:
+1. Identify the matching application revision, database dump, and bucket directory from one `BACKUP_ID`.
+2. Before stopping or deleting anything, validate both backup artifacts. The database check also confirms that `postgres.dump` is a readable PostgreSQL custom archive:
+
+```bash
+test -s "${BACKUP_DIR}/postgres.dump"
+test -d "${BACKUP_DIR}/minio/${MINIO_BUCKET}"
+docker compose -f atlas_core/docker/docker-compose.production.yml exec -T postgres \
+  pg_restore --list <"${BACKUP_DIR}/postgres.dump" >/dev/null
+```
+
+3. Restore the entire database:
 
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml stop api cloudflared 2>/dev/null || \
@@ -272,7 +281,7 @@ docker compose -f atlas_core/docker/docker-compose.production.yml exec -T \
   <"${BACKUP_DIR}/postgres.dump"
 ```
 
-3. Replace the configured bucket with the matching mirror:
+4. Replace the configured bucket with the matching mirror:
 
 ```bash
 docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
@@ -286,12 +295,16 @@ docker compose -f atlas_core/docker/docker-compose.production.yml up -d minio
   mc --config-dir "${minio_mc_config}" rm --recursive --force "atlas_production/${MINIO_BUCKET}"
   mc --config-dir "${minio_mc_config}" mirror --overwrite --remove \
     "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}"
-  test -z "$(mc --config-dir "${minio_mc_config}" diff \
-    "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}")"
+  if ! minio_diff="$(mc --config-dir "${minio_mc_config}" diff \
+    "${BACKUP_DIR}/minio/${MINIO_BUCKET}" "atlas_production/${MINIO_BUCKET}")"; then
+    echo "MinIO restore verification failed" >&2
+    exit 1
+  fi
+  test -z "${minio_diff}"
 )
 ```
 
-4. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.
+5. Deploy a schema-compatible durable binary, start Core (including `--tunnel` when applicable), and verify migration version/checksums, readiness, resource/admin counts, admin login or managed-key behavior, and a known row/blob download. For backups created after the durable-storage cutover, this is normally the recorded application revision. For an inaugural `unversioned-v1-candidate` backup, use the durable v1 release so it can verify and adopt the baseline; never use the older destructive runtime.
 
 ## Rollback
 
