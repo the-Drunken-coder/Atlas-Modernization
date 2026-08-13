@@ -258,6 +258,19 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         self.assertIn("valid S3 bucket name", output.call_args.args[0])
 
+    def test_production_exports_default_bucket_for_compose(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "POSTGRES_PASSWORD": "operator-postgres-password",
+                "MINIO_ROOT_USER": "operator-minio-user",
+                "MINIO_ROOT_PASSWORD": "operator-minio-password",
+            },
+            clear=True,
+        ):
+            self.assertTrue(ensure_production_storage_credentials())
+            self.assertEqual(os.environ["MINIO_BUCKET"], "atlas-media")
+
     def test_production_missing_credential_stops_before_loading_local_defaults(self) -> None:
         configured = {
             "POSTGRES_PASSWORD": "operator-postgres-password",

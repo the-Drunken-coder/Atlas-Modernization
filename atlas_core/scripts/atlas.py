@@ -138,9 +138,12 @@ def ensure_production_storage_credentials(db_only=False):
     ):
         print("[ERROR] POSTGRES_PASSWORD must contain only characters safe in the production database URL.")
         return False
-    if not db_only and not valid_minio_bucket_name(configured_minio_bucket()):
-        print("[ERROR] MINIO_BUCKET must be a valid S3 bucket name.")
-        return False
+    if not db_only:
+        bucket = configured_minio_bucket()
+        if not valid_minio_bucket_name(bucket):
+            print("[ERROR] MINIO_BUCKET must be a valid S3 bucket name.")
+            return False
+        os.environ["MINIO_BUCKET"] = bucket
     return True
 
 
