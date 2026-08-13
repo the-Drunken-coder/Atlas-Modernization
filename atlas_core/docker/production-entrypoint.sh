@@ -13,12 +13,15 @@ is_weak_api_auth_key() {
             ;;
     esac
 
+    byte_count="$(printf '%s' "$candidate" | wc -c | tr -d '[:space:]')"
+    unique_count="$(printf '%s' "$candidate" | LC_ALL=C.UTF-8 fold -w 1 | LC_ALL=C sort -u | wc -l | tr -d '[:space:]')"
+    if [ "$byte_count" -lt 8 ] || [ "$unique_count" -lt 4 ]; then
+        return 0
+    fi
+
     if ! printf '%s\n' "$candidate" | LC_ALL=C awk '
         {
             value = $0
-            if (length(value) < 8) {
-                invalid = 1
-            }
             digits = "0123456789"
             letters = "abcdefghijklmnopqrstuvwxyz"
             run_length = 1
@@ -27,7 +30,6 @@ is_weak_api_auth_key() {
             previous_position = 0
             for (index_value = 1; index_value <= length(value); index_value++) {
                 current = substr(value, index_value, 1)
-                seen[current] = 1
                 current_position = index(digits, current)
                 current_class = current_position ? "digit" : ""
                 if (!current_position) {
@@ -56,10 +58,7 @@ is_weak_api_auth_key() {
             }
         }
         END {
-            for (character in seen) {
-                unique_count++
-            }
-            if (invalid || unique_count < 4) {
+            if (invalid) {
                 exit 1
             }
         }

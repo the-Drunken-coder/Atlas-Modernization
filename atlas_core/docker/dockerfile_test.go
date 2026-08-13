@@ -247,6 +247,11 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "enabled auth low unicode diversity",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=éøåéøåéø"},
+			wantErr: true,
+		},
+		{
 			name:    "enabled auth sequential key",
 			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=abcdefgh"},
 			wantErr: true,
@@ -294,6 +299,16 @@ func TestProductionEntrypointRequiresExplicitAPIAuth(t *testing.T) {
 		{
 			name:    "enabled auth real key and twelve-character admin password",
 			env:     []string{"ENABLE_API_AUTH=TRUE", "API_AUTH_KEY=real-production-secret", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
+			wantErr: false,
+		},
+		{
+			name:    "enabled auth strong unicode key",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=éøåßéøåß", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
+			wantErr: false,
+		},
+		{
+			name:    "enabled auth non-ASCII numeric sequence",
+			env:     []string{"ENABLE_API_AUTH=true", "API_AUTH_KEY=٠١٢٣٤٥x", "ATLAS_ADMIN_PASSWORD=aaaaaaaaaaaa"},
 			wantErr: false,
 		},
 	}
