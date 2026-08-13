@@ -151,6 +151,20 @@ type CommandCatalog struct {
 	Commands    []CommandDefinition `json:"commands"`
 }
 
+type ProtocolRevisionResponse struct {
+	ProtocolRevision string `json:"protocol_revision"`
+}
+
+type EntityCheckInRequest struct {
+	Status     *string              `json:"status,omitempty"`
+	Latitude   *float64             `json:"latitude,omitempty"`
+	Longitude  *float64             `json:"longitude,omitempty"`
+	AltitudeM  *float64             `json:"altitude_m,omitempty"`
+	SpeedMS    *float64             `json:"speed_m_s,omitempty"`
+	HeadingDeg *float64             `json:"heading_deg,omitempty"`
+	Components map[string]JSONValue `json:"components,omitempty"`
+}
+
 type EntityResource struct {
 	EntityID   string               `json:"entity_id"`
 	EntityType string               `json:"entity_type"`
@@ -198,6 +212,52 @@ type ObjectDetailResource struct {
 	Bucket       *string              `json:"bucket"`
 	Metadata     MetadataBlock        `json:"metadata"`
 	Extra        map[string]JSONValue `json:"extra"`
+}
+
+type EntityCheckInMinimalTask struct {
+	TaskID     string     `json:"task_id"`
+	Status     string     `json:"status"`
+	EntityID   string     `json:"entity_id,omitempty"`
+	CommandID  string     `json:"command_id,omitempty"`
+	Parameters *JSONValue `json:"parameters,omitempty"`
+}
+
+type EntityCheckInFullResponse struct {
+	Entity         EntityResource `json:"entity"`
+	Tasks          []TaskResource `json:"tasks"`
+	TaskCount      int64          `json:"task_count"`
+	TaskLimit      int64          `json:"task_limit"`
+	HasMoreTasks   bool           `json:"has_more_tasks"`
+	NextTaskCursor string         `json:"next_task_cursor,omitempty"`
+}
+
+type EntityCheckInMinimalResponse struct {
+	Entity         EntityResource             `json:"entity"`
+	Tasks          []EntityCheckInMinimalTask `json:"tasks"`
+	TaskCount      int64                      `json:"task_count"`
+	TaskLimit      int64                      `json:"task_limit"`
+	HasMoreTasks   bool                       `json:"has_more_tasks"`
+	NextTaskCursor string                     `json:"next_task_cursor,omitempty"`
+}
+
+type FullDatasetResponse struct {
+	Entities         []EntityResource       `json:"entities"`
+	Tasks            []TaskResource         `json:"tasks"`
+	Objects          []ObjectDetailResource `json:"objects"`
+	Version          int64                  `json:"version"`
+	HasMoreEntities  bool                   `json:"has_more_entities"`
+	HasMoreTasks     bool                   `json:"has_more_tasks"`
+	HasMoreObjects   bool                   `json:"has_more_objects"`
+	NextEntityCursor string                 `json:"next_entity_cursor,omitempty"`
+	NextTaskCursor   string                 `json:"next_task_cursor,omitempty"`
+	NextObjectCursor string                 `json:"next_object_cursor,omitempty"`
+}
+
+type ChangedSinceResponse struct {
+	Events     []FeedEvent `json:"events"`
+	Version    int64       `json:"version"`
+	HasMore    bool        `json:"has_more"`
+	NextCursor string      `json:"next_cursor,omitempty"`
 }
 
 type FeedEvent struct {

@@ -1,9 +1,9 @@
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { Classification, EntityResource, LinkState } from "@the-drunken-coder/atlas-sdk";
 import { type Position, representativePoint, toUiGeometry, type UiGeometry } from "./geometry.js";
 
+export type { Classification, LinkState } from "@the-drunken-coder/atlas-sdk";
+
 export type EntityKind = "asset" | "track" | "geofeature";
-export type LinkState = "connected" | "disconnected" | "degraded" | "unknown";
-export type Classification = "friendly" | "hostile" | "neutral" | "unknown" | "civilian";
 
 export type HeartbeatLevel = "fresh" | "stale" | "offline";
 export type HeartbeatStatus = HeartbeatLevel | "clock-error";

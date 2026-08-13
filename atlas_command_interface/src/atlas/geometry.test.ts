@@ -67,6 +67,11 @@ describe("geometry normalisation", () => {
     ).toBeUndefined();
   });
 
+  it("returns undefined for coordinates outside Protocol ranges", () => {
+    expect(toUiGeometry({ type: "Point", coordinates: [180.0001, 40.1] })).toBeUndefined();
+    expect(toUiGeometry({ type: "Point", coordinates: [-74.2, -90.0001] })).toBeUndefined();
+  });
+
   it("returns undefined for missing or unsupported geometry", () => {
     expect(toUiGeometry(undefined)).toBeUndefined();
     expect(toUiGeometry({})).toBeUndefined();

@@ -308,7 +308,7 @@ func schemaObjectVariants(schema map[string]any, defs map[string]any, seen map[s
 	if patterns, ok := schema["patternProperties"].(map[string]any); ok && len(patterns) > 0 {
 		return nil, fmt.Errorf("pattern properties cannot be represented by a fixed Go struct")
 	}
-	if err := validateSchemaKeywords(schema, "go struct object shape", "additionalProperties", "minProperties", "properties", "required", "type"); err != nil {
+	if err := validateSchemaKeywords(schema, "go struct object shape", "additionalProperties", "allOf", "else", "if", "minProperties", "properties", "required", "then", "type"); err != nil {
 		return nil, err
 	}
 	additionalProperties, explicit := schema["additionalProperties"].(bool)

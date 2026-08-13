@@ -37,7 +37,7 @@ describe("MapView keyboard selection", () => {
       [pointEntity("center", 200, 100), pointEntity("offscreen-down", 200, 240)],
       "center"
     );
-    const { canvas, onSelectEntity } = renderMapView({ selectedId: "center", sources });
+    const { canvas, onSelectEntity } = renderProjectedMap({ selectedId: "center", sources });
 
     const event = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
     fireEvent(canvas, event);
@@ -51,7 +51,7 @@ describe("MapView keyboard selection", () => {
       [pointEntity("center", 200, 100), pointEntity("aligned-down", 200, 170), pointEntity("diagonal-down", 260, 120)],
       "center"
     );
-    const { canvas, onSelectEntity } = renderMapView({ selectedId: "center", sources });
+    const { canvas, onSelectEntity } = renderProjectedMap({ selectedId: "center", sources });
 
     fireEvent.keyDown(canvas, { key: "ArrowDown" });
 
@@ -133,13 +133,22 @@ function renderDirectionalMap(selectedId?: string) {
     ],
     selectedId
   );
-  return renderMapView({ selectedId, sources });
+  return renderProjectedMap({ selectedId, sources });
 }
 
 function pointEntity(entityId: string, x: number, y: number) {
   return entity({
     entity_id: entityId,
     entity_type: "geofeature",
-    components: { geometry: { type: "Point", coordinates: [x, y] } }
+    components: { geometry: { type: "Point", coordinates: [(x - 200) / 2, (y - 100) / 2] } }
   });
+}
+
+function renderProjectedMap(options: Parameters<typeof renderMapView>[0]) {
+  const rendered = renderMapView(options);
+  rendered.map.project.mockImplementation(([lng, lat]: [number, number]) => ({
+    x: lng * 2 + 200,
+    y: lat * 2 + 100
+  }));
+  return rendered;
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 type createEntityRequest struct {
@@ -50,31 +51,28 @@ func (r updateEntityRequest) actionParams(expectedVersion *int64) actions.Update
 	}
 }
 
-type entityCheckinRequest struct {
-	Status     *string                `json:"status,omitempty"`
-	Latitude   *float64               `json:"latitude,omitempty"`
-	Longitude  *float64               `json:"longitude,omitempty"`
-	AltitudeM  *float64               `json:"altitude_m,omitempty"`
-	SpeedMS    *float64               `json:"speed_m_s,omitempty"`
-	HeadingDeg *float64               `json:"heading_deg,omitempty"`
-	Components map[string]interface{} `json:"components,omitempty"`
-}
-
-func (r entityCheckinRequest) componentUpdate(now time.Time) map[string]interface{} {
+func checkinComponentUpdate(request protocol.EntityCheckInRequest, now time.Time) map[string]interface{} {
 	nowStr := now.UTC().Format(time.RFC3339)
-	components := make(map[string]interface{}, len(r.Components)+3)
-	for key, value := range r.Components {
+	components := make(map[string]interface{}, len(request.Components)+3)
+	for key, value := range request.Components {
 		components[key] = value
 	}
 
-	if r.Status != nil {
+	if request.Status != nil {
 		components["status"] = map[string]interface{}{
-			"value":       *r.Status,
+			"value":       *request.Status,
 			"last_update": nowStr,
 		}
 	}
 
-	telemetry := buildTelemetryComponent(r.Latitude, r.Longitude, r.AltitudeM, r.SpeedMS, r.HeadingDeg, &nowStr)
+	telemetry := buildTelemetryComponent(
+		request.Latitude,
+		request.Longitude,
+		request.AltitudeM,
+		request.SpeedMS,
+		request.HeadingDeg,
+		&nowStr,
+	)
 	if len(telemetry) > 0 {
 		components["telemetry"] = telemetry
 	}

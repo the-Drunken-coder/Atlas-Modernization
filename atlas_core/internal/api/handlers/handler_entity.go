@@ -38,7 +38,7 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
 	var req createEntityRequest
-	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateEntityCreateRequest) {
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateEntityCreateRequest) {
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *Handler) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
 
 	var req updateEntityRequest
-	if !h.decodeProtocolRequestBody(w, r, &req, protocol.ValidateEntityUpdateRequest) {
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateEntityUpdateRequest) {
 		return
 	}
 	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "entity")
@@ -187,8 +187,8 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	// Limit request body to 256KB for telemetry updates
 	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 
-	var req entityCheckinRequest
-	if !h.decodeJSONRequestBody(w, r, &req, true) {
+	var req protocol.EntityCheckInRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, true, protocol.ValidateEntityCheckInRequest) {
 		return
 	}
 
@@ -199,7 +199,7 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.checkinActions.CheckIn(r.Context(), actions.EntityCheckinParams{
 		EntityID:        entityID,
-		Components:      req.componentUpdate(time.Now()),
+		Components:      checkinComponentUpdate(req, time.Now()),
 		ExpectedVersion: expectedVersion,
 		TaskStatuses:    parseStatusFilter(statusFilter),
 		Since:           since,
@@ -212,23 +212,31 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serializedTasks := serializers.SerializeTasks(result.Tasks.Items)
-	var taskPayload interface{} = serializedTasks
-	if fields == "minimal" {
-		taskPayload = serializeCheckinTasksMinimal(serializedTasks)
-	}
-
-	response := map[string]interface{}{
-		"entity":         serializers.SerializeEntity(result.Entity),
-		"tasks":          taskPayload,
-		"task_count":     len(serializedTasks),
-		"task_limit":     result.Tasks.Limit,
-		"has_more_tasks": result.Tasks.HasMore,
-	}
-	if result.Tasks.NextCursor != "" {
-		response["next_task_cursor"] = result.Tasks.NextCursor
+	serializedEntity := serializers.SerializeEntity(result.Entity)
+	if serializedEntity == nil {
+		h.writeError(w, r, http.StatusInternalServerError, "Entity check-in returned no entity", protocol.ErrorCodeInternalServerError)
+		return
 	}
 	setResourceETag(w, result.Entity.Version)
-	writeJSON(w, r, http.StatusOK, response)
+	if fields == "minimal" {
+		writeJSON(w, r, http.StatusOK, protocol.EntityCheckInMinimalResponse{
+			Entity:         *serializedEntity,
+			Tasks:          serializeCheckinTasksMinimal(serializedTasks),
+			TaskCount:      int64(len(serializedTasks)),
+			TaskLimit:      int64(result.Tasks.Limit),
+			HasMoreTasks:   result.Tasks.HasMore,
+			NextTaskCursor: result.Tasks.NextCursor,
+		})
+		return
+	}
+	writeJSON(w, r, http.StatusOK, protocol.EntityCheckInFullResponse{
+		Entity:         *serializedEntity,
+		Tasks:          serializedTasks,
+		TaskCount:      int64(len(serializedTasks)),
+		TaskLimit:      int64(result.Tasks.Limit),
+		HasMoreTasks:   result.Tasks.HasMore,
+		NextTaskCursor: result.Tasks.NextCursor,
+	})
 }
 
 func buildTelemetryComponent(latitude, longitude, altitudeM, speedMS, headingDeg *float64, lastUpdate *string) map[string]interface{} {

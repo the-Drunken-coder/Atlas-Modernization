@@ -2,9 +2,13 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
+
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // TestHealthEndpoint tests the /health endpoint
@@ -560,6 +564,39 @@ func TestEntityCheckin(t *testing.T) {
 		"altitude_m": 0.0,
 	}
 
+	resp, err = client.Post(ctx, "/entities/"+entityID+"/checkin?status_filter=pending,acknowledged&limit=10&fields=full", checkinPayload)
+	if err != nil {
+		t.Fatalf("Failed to perform full checkin: %v", err)
+	}
+	requireHTTPStatus(t, resp, http.StatusOK, "POST /entities/{id}/checkin (full)")
+	fullResponseBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("Failed to read full checkin response: %v", err)
+	}
+	if validationErrors := protocol.ValidateEntityCheckInFullResponse(json.RawMessage(fullResponseBody)); len(validationErrors) > 0 {
+		t.Fatalf("Full check-in response failed Atlas Protocol validation: %v", validationErrors)
+	}
+	var fullResult protocol.EntityCheckInFullResponse
+	if err := json.Unmarshal(fullResponseBody, &fullResult); err != nil {
+		t.Fatalf("Failed to parse full checkin response: %v", err)
+	}
+	if len(fullResult.Tasks) != 1 {
+		t.Fatalf("Expected one task in full checkin response, got %d", len(fullResult.Tasks))
+	}
+	if fullResult.Tasks[0].TaskID != pendingTaskID {
+		t.Fatalf("Expected full task_id %s, got %s", pendingTaskID, fullResult.Tasks[0].TaskID)
+	}
+	if fullResult.Tasks[0].Metadata.Version == 0 {
+		t.Fatal("Expected full task metadata")
+	}
+	if fullResult.TaskCount != 1 || fullResult.TaskLimit != 10 {
+		t.Fatalf("Unexpected full task pagination: count=%d limit=%d", fullResult.TaskCount, fullResult.TaskLimit)
+	}
+	if fullResult.HasMoreTasks || fullResult.NextTaskCursor != "" {
+		t.Fatalf("Unexpected full task continuation: has_more=%t cursor=%q", fullResult.HasMoreTasks, fullResult.NextTaskCursor)
+	}
+
 	resp, err = client.Post(ctx, "/entities/"+entityID+"/checkin?status_filter=pending,acknowledged&limit=10&fields=minimal", checkinPayload)
 	if err != nil {
 		t.Fatalf("Failed to checkin: %v", err)
@@ -572,6 +609,13 @@ func TestEntityCheckin(t *testing.T) {
 	var result map[string]interface{}
 	if err := ParseResponse(resp, &result); err != nil {
 		t.Fatalf("Failed to parse checkin response: %v", err)
+	}
+	encodedResult, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Failed to re-encode checkin response: %v", err)
+	}
+	if validationErrors := protocol.ValidateEntityCheckInMinimalResponse(json.RawMessage(encodedResult)); len(validationErrors) > 0 {
+		t.Fatalf("Check-in response failed Atlas Protocol validation: %v", validationErrors)
 	}
 
 	rawEntity, hasEntity := result["entity"]

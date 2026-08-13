@@ -25,7 +25,9 @@ const entity: EntityResource = await client.entities.get("asset-1");
 console.log(ATLAS_PROTOCOL_REVISION, entity);
 ```
 
-Protocol resource types, request validators, and `ATLAS_PROTOCOL_REVISION` are public from the package root. The client checks that revision against Atlas Core before normal API use.
+Protocol resource, request, and response types; generated runtime predicates; `RESOURCE_TYPE_VALUES`; and `ATLAS_PROTOCOL_REVISION` are public from the package root. The client checks that revision against Atlas Core before normal API use. Generated predicates enforce inbound wire structure, while the SDK adds identity, ownership, count, pagination, version, and ordering coherence where those rules depend on request context.
+
+`client.entities.checkIn(id, { fields: "minimal" })` returns `EntityCheckInMinimalResponse`; the full/default form returns `EntityCheckInFullResponse`; and an unresolved options union returns the generated non-generic `EntityCheckInResponse` union.
 
 ## Admin client
 

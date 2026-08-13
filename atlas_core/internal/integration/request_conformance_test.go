@@ -34,6 +34,12 @@ func TestRequestValidationConformance(t *testing.T) {
 			case "EntityCreateRequest":
 				payload["entity_id"] = fmt.Sprintf("%s-conformance-%d", prefix, index)
 				response, requestErr = client.Post(ctx, "/entities", payload)
+			case "EntityCheckInRequest":
+				entityID := fmt.Sprintf("%s-conformance-checkin-%d", prefix, index)
+				requireConformanceSetup(ctx, t, client, "/entities", map[string]interface{}{
+					"entity_id": entityID, "entity_type": "asset",
+				}, "create entity for check-in conformance")
+				response, requestErr = client.Post(ctx, "/entities/"+entityID+"/checkin", payload)
 			case "EntityUpdateRequest":
 				entityID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
 				requireConformanceSetup(ctx, t, client, "/entities", map[string]interface{}{
@@ -68,13 +74,23 @@ func TestRequestValidationConformance(t *testing.T) {
 			want := http.StatusBadRequest
 			if testCase.Valid {
 				want = http.StatusCreated
-				if testCase.Definition == "EntityUpdateRequest" ||
+				if testCase.Definition == "EntityCheckInRequest" ||
+					testCase.Definition == "EntityUpdateRequest" ||
 					testCase.Definition == "TaskUpdateRequest" ||
 					testCase.Definition == "ObjectUpdateRequest" {
 					want = http.StatusOK
 				}
 			}
 			requireHTTPStatus(t, response, want, testCase.Name)
+			if !testCase.Valid && testCase.Definition == "EntityCheckInRequest" {
+				var errorBody map[string]interface{}
+				if err := ParseResponse(response, &errorBody); err != nil {
+					t.Fatalf("decode invalid check-in response: %v", err)
+				}
+				if errorBody["error_code"] != "VALIDATION_ERROR" {
+					t.Fatalf("error_code = %v, want VALIDATION_ERROR", errorBody["error_code"])
+				}
+			}
 		})
 	}
 }

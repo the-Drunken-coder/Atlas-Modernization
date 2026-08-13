@@ -21,8 +21,8 @@ The implemented protocol owns:
 
 - entity, task, and object JSON blob shapes
 - entity and task component keys and documented component payloads
-- request DTOs, resource envelopes, metadata, object references, error envelopes, feed events, feed client messages, and feed handshake messages
-- authored, schema-parity-checked Go types; generated Go validators; generated TypeScript types/request validators; and revision metadata
+- request DTOs, resource and query envelopes, check-in variants, metadata, object references, error envelopes, feed events, feed client messages, feed handshake messages, and the command catalog
+- authored, schema-parity-checked Go types; generated Go validators; generated TypeScript types, predicates, and finite enum values; and revision metadata
 
 Atlas Core still owns service behavior: HTTP routes, auth, status codes, database tables, transactions, pagination, task lifecycle semantics, object upload/download behavior, and startup/storage wiring.
 
@@ -31,4 +31,4 @@ Atlas Core still owns service behavior: HTTP routes, auth, status codes, databas
 - Edit `atlas_protocol/schema/jsonschema/atlas.schema.json`, not generated artifacts. Update the authored Go `types.go` only when a supported public contract changes.
 - Keep the reusable Go package under `atlas_protocol/generated/go/atlasprotocol`; do not move protocol source or protocol packages under `atlas_core/internal/`.
 - Preserve narrow semantic checks in `atlas_protocol/validator` when JSON Schema cannot express them cleanly, such as GeoJSON polygon ring closure and aggregate polygon position limits.
-- OpenAPI fragments, Postgres JSON checks, and command-catalog schema ownership remain deferred.
+- OpenAPI fragments and Postgres JSON checks remain deferred.

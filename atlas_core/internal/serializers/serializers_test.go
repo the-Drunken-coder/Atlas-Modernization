@@ -815,3 +815,44 @@ func TestSerializeObjectsForList(t *testing.T) {
 		t.Errorf("Expected empty non-nil slice for nil input, got %#v", empty)
 	}
 }
+
+func TestSerializedResourcesConformToAtlasProtocol(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		value    any
+		validate func(any) []string
+	}{
+		{
+			name:     "entity",
+			value:    serializers.SerializeEntity(&models.Entity{EntityID: "entity-1", Type: "asset", CreatedAt: now, UpdatedAt: now, Version: 1}),
+			validate: protocol.ValidateEntityResource,
+		},
+		{
+			name:     "task",
+			value:    serializers.SerializeTask(&models.Task{TaskID: "task-1", Status: "pending", CreatedAt: now, UpdatedAt: now, Version: 1}),
+			validate: protocol.ValidateTaskResource,
+		},
+		{
+			name:     "object detail",
+			value:    serializers.SerializeObject(&models.MediaObject{ObjectID: "object-1", CreatedAt: now, UpdatedAt: now, Version: 1}),
+			validate: protocol.ValidateObjectDetailResource,
+		},
+		{
+			name:     "object list",
+			value:    serializers.SerializeObjectForList(&models.MediaObject{ObjectID: "object-1", CreatedAt: now, UpdatedAt: now, Version: 1}),
+			validate: protocol.ValidateObjectResource,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if validationErrors := test.validate(json.RawMessage(encoded)); len(validationErrors) > 0 {
+				t.Fatalf("serialized resource failed Protocol validation: %v\n%s", validationErrors, encoded)
+			}
+		})
+	}
+}

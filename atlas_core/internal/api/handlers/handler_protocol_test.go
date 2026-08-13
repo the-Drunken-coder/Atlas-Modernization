@@ -22,9 +22,12 @@ func TestProtocolRevisionHandler(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 		t.Fatalf("Content-Type = %q, want application/json*", got)
 	}
-	var response protocolRevisionResponse
+	var response protocol.ProtocolRevisionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
+	}
+	if validationErrors := protocol.ValidateProtocolRevisionResponse(json.RawMessage(rec.Body.Bytes())); len(validationErrors) > 0 {
+		t.Fatalf("response failed Atlas Protocol validation: %v", validationErrors)
 	}
 	if response.ProtocolRevision != protocol.ProtocolRevision {
 		t.Fatalf("protocol_revision = %q, want %q", response.ProtocolRevision, protocol.ProtocolRevision)
@@ -54,9 +57,9 @@ func TestProtocolRevisionHandlerAcceptHeaders(t *testing.T) {
 	}
 }
 
-func decodeProtocolRevisionResponse(t *testing.T, rec *httptest.ResponseRecorder) protocolRevisionResponse {
+func decodeProtocolRevisionResponse(t *testing.T, rec *httptest.ResponseRecorder) protocol.ProtocolRevisionResponse {
 	t.Helper()
-	var response protocolRevisionResponse
+	var response protocol.ProtocolRevisionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

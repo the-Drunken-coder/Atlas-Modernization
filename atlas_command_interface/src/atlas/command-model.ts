@@ -3,19 +3,11 @@ import type {
   CommandDefinition,
   CommandParameterSchema,
   EntityResource,
-  JSONValue
+  JSONValue,
+  TaskCreateRequest
 } from "@the-drunken-coder/atlas-sdk";
 
 export type { CommandCatalog, CommandDefinition, CommandParameterSchema } from "@the-drunken-coder/atlas-sdk";
-
-export type CommandTaskCreateRequest = {
-  status: "pending";
-  entity_id: string;
-  components: {
-    command: { type: string; id: string };
-    parameters: Record<string, JSONValue>;
-  };
-};
 
 export class CommandModelError extends Error {
   readonly code: string;
@@ -108,7 +100,7 @@ export function buildCommandTaskRequest(options: {
   entityId: string;
   command: CommandDefinition;
   parameters: Record<string, JSONValue>;
-}): CommandTaskCreateRequest {
+}): TaskCreateRequest {
   return {
     status: "pending",
     entity_id: options.entityId,

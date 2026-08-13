@@ -1,6 +1,9 @@
 import {
+  type EntityCheckInRequest,
   type EntityCreateRequest,
   type EntityUpdateRequest,
+  type ErrorCode,
+  isEntityCheckInRequest,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,
@@ -17,6 +20,7 @@ import { protocolError, readBody } from "./http.js";
 type RequestValidator<T> = (value: unknown) => value is T;
 
 export const requestValidators = {
+  entityCheckIn: isEntityCheckInRequest,
   entityCreate: isEntityCreateRequest,
   entityUpdate: isEntityUpdateRequest,
   objectCreate: isObjectCreateRequest,
@@ -24,6 +28,7 @@ export const requestValidators = {
   taskCreate: isTaskCreateRequest,
   taskUpdate: isTaskUpdateRequest
 } satisfies {
+  entityCheckIn: RequestValidator<EntityCheckInRequest>;
   entityCreate: RequestValidator<EntityCreateRequest>;
   entityUpdate: RequestValidator<EntityUpdateRequest>;
   objectCreate: RequestValidator<ObjectCreateRequest>;
@@ -32,7 +37,11 @@ export const requestValidators = {
   taskUpdate: RequestValidator<TaskUpdateRequest>;
 };
 
-export async function readValidatedBody<T>(init: RequestInit, validate: RequestValidator<T>): Promise<T | Response> {
+export async function readValidatedBody<T>(
+  init: RequestInit,
+  validate: RequestValidator<T>,
+  validationErrorCode: ErrorCode = "INVALID_JSON"
+): Promise<T | Response> {
   let value: unknown;
   try {
     value = await readBody<unknown>(init);
@@ -40,7 +49,7 @@ export async function readValidatedBody<T>(init: RequestInit, validate: RequestV
     return protocolError("Invalid JSON body", "INVALID_JSON", 400);
   }
   if (!validate(value)) {
-    return protocolError("Invalid JSON body", "INVALID_JSON", 400);
+    return protocolError("Invalid JSON body", validationErrorCode, 400);
   }
   return value;
 }

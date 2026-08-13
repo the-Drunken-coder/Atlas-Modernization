@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import requestCorpus from "../../atlas_protocol/conformance/request-validation.json";
 import {
+  isEntityCheckInRequest,
   isEntityCreateRequest,
   isEntityUpdateRequest,
   isObjectCreateRequest,
@@ -12,6 +13,7 @@ import {
 import { isObjectDetailResource, isObjectResource } from "../src/protocol.js";
 
 const validators = {
+  EntityCheckInRequest: isEntityCheckInRequest,
   EntityCreateRequest: isEntityCreateRequest,
   EntityUpdateRequest: isEntityUpdateRequest,
   ObjectCreateRequest: isObjectCreateRequest,
@@ -28,6 +30,11 @@ describe("generated request validator conformance", () => {
       expect(validate(testCase.value)).toBe(testCase.valid);
     });
   }
+
+  it("rejects aggregate polygon position overflow in entity check-ins", () => {
+    const rings = Array.from({ length: 2 }, () => Array.from({ length: 5_001 }, () => [0, 0]));
+    expect(isEntityCheckInRequest({ components: { geometry: { type: "Polygon", coordinates: rings } } })).toBe(false);
+  });
 
   it("validates deeply nested JSON without recursion and preserves cycle semantics", () => {
     let nested: Record<string, unknown> = { leaf: true };

@@ -218,24 +218,29 @@ func (h *Handler) decodeJSONRequestBody(w http.ResponseWriter, r *http.Request, 
 type protocolRequestValidator func(any) []string
 
 // decodeProtocolRequestBody validates the exact JSON value against the
-// canonical Atlas Protocol contract before decoding it into Core's named
-// request type. Keeping the raw value preserves explicit null and empty-patch
+// canonical Atlas Protocol contract before decoding it into the typed request
+// value. Keeping the raw value preserves explicit null and empty-patch
 // semantics that ordinary Go struct decoding would otherwise collapse.
 func (h *Handler) decodeProtocolRequestBody(
 	w http.ResponseWriter,
 	r *http.Request,
 	v any,
+	allowEmpty bool,
 	validate protocolRequestValidator,
 ) bool {
 	var raw json.RawMessage
 	if err := jsondecode.Decode(json.NewDecoder(r.Body), &raw); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", protocol.ErrorCodeBodyTooLarge)
+		if allowEmpty && errors.Is(err, io.EOF) {
+			raw = json.RawMessage(`{}`)
+		} else {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				h.writeError(w, r, http.StatusRequestEntityTooLarge, "Request body too large", protocol.ErrorCodeBodyTooLarge)
+				return false
+			}
+			h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)
 			return false
 		}
-		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)
-		return false
 	}
 	if validationErrors := validate(raw); len(validationErrors) > 0 {
 		h.writeValidationError(

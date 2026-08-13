@@ -15,6 +15,7 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/config"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 func TestTaskStatusPatchHandlerIsIdempotent(t *testing.T) {
@@ -54,7 +55,7 @@ func TestTaskStatusPatchHandlerIsIdempotent(t *testing.T) {
 	patchTaskStatus(t, router, taskID, serializers.StrongETag(created.Version), http.StatusPreconditionFailed)
 }
 
-func patchTaskStatus(t *testing.T, router http.Handler, taskID, ifMatch string, wantStatus int) *serializers.TaskResponse {
+func patchTaskStatus(t *testing.T, router http.Handler, taskID, ifMatch string, wantStatus int) *protocol.TaskResource {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/tasks/"+taskID, strings.NewReader(`{"status":"acknowledged"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -69,7 +70,7 @@ func patchTaskStatus(t *testing.T, router http.Handler, taskID, ifMatch string, 
 	if wantStatus != http.StatusOK {
 		return nil
 	}
-	var task serializers.TaskResponse
+	var task protocol.TaskResource
 	if err := json.NewDecoder(rec.Body).Decode(&task); err != nil {
 		t.Fatalf("decode acknowledgement response: %v", err)
 	}
@@ -80,7 +81,7 @@ func patchTaskStatus(t *testing.T, router http.Handler, taskID, ifMatch string, 
 	return &task
 }
 
-func assertSameTaskResponseVersionAndTimestamp(t *testing.T, got, want *serializers.TaskResponse) {
+func assertSameTaskResponseVersionAndTimestamp(t *testing.T, got, want *protocol.TaskResource) {
 	t.Helper()
 	if got.Metadata.Version != want.Metadata.Version || got.Metadata.UpdatedAt != want.Metadata.UpdatedAt {
 		t.Fatalf("task version/updated_at = %d/%s, want %d/%s", got.Metadata.Version, got.Metadata.UpdatedAt, want.Metadata.Version, want.Metadata.UpdatedAt)

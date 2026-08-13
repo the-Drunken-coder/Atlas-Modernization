@@ -1,8 +1,8 @@
 import type {
   AtlasClient,
+  EntityCheckInMinimalResponse,
   EntityCheckInMinimalTask,
   EntityCheckInOptions,
-  EntityCheckInResponse,
   JSONValue,
   TaskCompleteOptions,
   TaskFailOptions,
@@ -19,10 +19,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export type AtlasAssetClient = Pick<AtlasClient, "handshake"> & {
   entities: {
-    checkIn(
-      id: string,
-      options: EntityCheckInOptions<"minimal">
-    ): Promise<EntityCheckInResponse<EntityCheckInMinimalTask>>;
+    checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
   };
   tasks: {
     acknowledge(id: string, options?: TaskLifecycleOptions): Promise<TaskResource>;

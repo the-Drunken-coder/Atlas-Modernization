@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	custommiddleware "github.com/the-drunken-coder/atlas/atlas_core/internal/api/middleware"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
@@ -196,7 +198,7 @@ func TestParseRFC3339TimestampAcceptsNanoPrecision(t *testing.T) {
 
 func TestSerializeCheckinTasksMinimalPromotesCommandData(t *testing.T) {
 	entityID := "entity-1"
-	tasks := []*serializers.TaskResponse{
+	tasks := []protocol.TaskResource{
 		{
 			TaskID:   "task-1",
 			Status:   "pending",
@@ -208,21 +210,114 @@ func TestSerializeCheckinTasksMinimalPromotesCommandData(t *testing.T) {
 				},
 			},
 		},
+		{
+			TaskID:   "task-2",
+			Status:   "pending",
+			EntityID: &entityID,
+			Components: map[string]interface{}{
+				"command": map[string]interface{}{
+					"id":         "set-mode",
+					"parameters": "silent",
+				},
+			},
+		},
+		{
+			TaskID:   "task-3",
+			Status:   "pending",
+			EntityID: &entityID,
+			Components: map[string]interface{}{
+				"command": map[string]interface{}{
+					"id":         "clear-mode",
+					"parameters": nil,
+				},
+			},
+		},
 	}
 
 	got := serializeCheckinTasksMinimal(tasks)
-	if len(got) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(got))
+	if len(got) != 3 {
+		t.Fatalf("expected 3 tasks, got %d", len(got))
 	}
-	if got[0]["command_id"] != "move-to" {
-		t.Fatalf("expected promoted command_id, got %v", got[0]["command_id"])
+	if got[0].CommandID != "move-to" {
+		t.Fatalf("expected promoted command_id, got %v", got[0].CommandID)
 	}
 
-	params, ok := got[0]["parameters"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected parameters map, got %T", got[0]["parameters"])
+	if got[0].Parameters == nil {
+		t.Fatal("expected promoted object parameters")
 	}
-	if params["speed"] != "fast" {
-		t.Fatalf("expected promoted parameters, got %v", params)
+	params, ok := (*got[0].Parameters).(map[string]interface{})
+	if !ok || params["speed"] != "fast" {
+		t.Fatalf("expected promoted object parameters, got %v", got[0].Parameters)
+	}
+	if got[1].Parameters == nil || *got[1].Parameters != "silent" {
+		t.Fatalf("expected promoted scalar parameters, got %v", got[1].Parameters)
+	}
+	if got[2].Parameters == nil || *got[2].Parameters != nil {
+		t.Fatalf("expected promoted null parameters, got %v", got[2].Parameters)
+	}
+	data, err := json.Marshal(got[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if value, exists := payload["parameters"]; !exists || value != nil {
+		t.Fatalf("serialized null parameters = %v, present = %t", value, exists)
+	}
+}
+
+func TestEntityCheckInResponseVariantsConformToProtocol(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	entityID := "entity-1"
+	entity := serializers.SerializeEntity(&models.Entity{
+		EntityID:  entityID,
+		Type:      "asset",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Version:   1,
+	})
+	tasks := serializers.SerializeTasks([]*models.Task{{
+		TaskID:    "task-1",
+		Status:    "pending",
+		EntityID:  &entityID,
+		JSON:      []byte(`{"components":{"command":{"id":"move","type":"move","parameters":{"latitude":100}}}}`),
+		CreatedAt: now,
+		UpdatedAt: now,
+		Version:   2,
+	}})
+
+	tests := []struct {
+		name     string
+		response any
+		validate func(any) []string
+	}{
+		{
+			name: "full",
+			response: protocol.EntityCheckInFullResponse{
+				Entity: *entity, Tasks: tasks, TaskCount: 1, TaskLimit: 10,
+			},
+			validate: protocol.ValidateEntityCheckInFullResponse,
+		},
+		{
+			name: "minimal",
+			response: protocol.EntityCheckInMinimalResponse{
+				Entity: *entity, Tasks: serializeCheckinTasksMinimal(tasks), TaskCount: 1, TaskLimit: 10,
+			},
+			validate: protocol.ValidateEntityCheckInMinimalResponse,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if validationErrors := test.validate(json.RawMessage(encoded)); len(validationErrors) > 0 {
+				t.Fatalf("response failed Atlas Protocol validation: %v\n%s", validationErrors, encoded)
+			}
+		})
 	}
 }
