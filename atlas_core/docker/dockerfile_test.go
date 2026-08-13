@@ -143,6 +143,7 @@ func TestMinIOInitializationUsesSeparateCredentialsAndExplicitPolicy(t *testing.
 func TestProductionPostgresHealthchecksExpandPasswordsInsideTheContainer(t *testing.T) {
 	for _, filename := range []string{"docker-compose.production.yml", "docker-compose.production-db.yml"} {
 		t.Run(filename, func(t *testing.T) {
+			// #nosec G304 -- filename comes only from the fixed fixture list above.
 			data, err := os.ReadFile(filename)
 			if err != nil {
 				t.Fatalf("read %s: %v", filename, err)
