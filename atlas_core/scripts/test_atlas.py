@@ -16,10 +16,10 @@ from atlas import (
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
+    cleanup_containers,
     compose_container_name,
     compose_down_command,
     compose_up_command,
-    cleanup_containers,
     configured_minio_bucket,
     database_recreate_on_startup_enabled,
     ensure_api_auth,
@@ -214,7 +214,11 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         for missing in configured:
             with (
                 self.subTest(missing=missing),
-                patch.dict("os.environ", {key: value for key, value in configured.items() if key != missing}, clear=True),
+                patch.dict(
+                    "os.environ",
+                    {key: value for key, value in configured.items() if key != missing},
+                    clear=True,
+                ),
                 patch("builtins.print") as output,
             ):
                 self.assertFalse(ensure_production_storage_credentials())
@@ -236,7 +240,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 patch("builtins.print") as output,
             ):
                 self.assertFalse(ensure_production_storage_credentials())
-                self.assertIn(name, output.call_args.args[0])
+                self.assertIn("replace the committed example value", output.call_args.args[0])
 
         with patch.dict("os.environ", {"POSTGRES_PASSWORD": "replace_with_strong_password"}, clear=True):
             self.assertFalse(ensure_production_storage_credentials(db_only=True))
@@ -252,7 +256,11 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         for missing in configured:
             with (
                 self.subTest(missing=missing),
-                patch.dict("os.environ", {key: value for key, value in configured.items() if key != missing}, clear=True),
+                patch.dict(
+                    "os.environ",
+                    {key: value for key, value in configured.items() if key != missing},
+                    clear=True,
+                ),
                 patch("atlas.resolve_atlas_core_dir", return_value="/tmp/atlas_core"),
                 patch("atlas.load_compose_dotenv") as load_dotenv,
                 patch("atlas.cleanup_containers") as cleanup,
@@ -284,9 +292,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             "replace-with-cloudflare-token",
             "your-tunnel-token",
         ):
-            with self.subTest(token=token), patch.dict(
-                "os.environ", {"CLOUDFLARE_TUNNEL_TOKEN": token}, clear=True
-            ):
+            with self.subTest(token=token), patch.dict("os.environ", {"CLOUDFLARE_TUNNEL_TOKEN": token}, clear=True):
                 self.assertFalse(ensure_tunnel_token())
 
         with patch.dict("os.environ", {"CLOUDFLARE_TUNNEL_TOKEN": "configured-tunnel-token"}, clear=True):

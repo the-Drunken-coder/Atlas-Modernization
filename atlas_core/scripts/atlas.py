@@ -159,7 +159,7 @@ def ensure_production_storage_credentials(db_only=False):
         if os.getenv(name, "").strip().lower() == PRODUCTION_STORAGE_PASSWORD_PLACEHOLDER
     ]
     if placeholders:
-        print(f"[ERROR] Production mode requires real operator-owned values for {', '.join(placeholders)}.")
+        print("[ERROR] Production storage passwords must replace the committed example value.")
         return False
     return True
 
@@ -639,7 +639,7 @@ def is_weak_api_auth_key(value):
         return True
     run_length = 1
     last_step = 0
-    for previous, current in zip(normalized, normalized[1:]):
+    for previous, current in zip(normalized[:-1], normalized[1:], strict=True):
         same_class = ("0" <= previous <= "9" and "0" <= current <= "9") or (
             "a" <= previous <= "z" and "a" <= current <= "z"
         )
