@@ -112,6 +112,34 @@ describe("streamRunEvents", () => {
 
     expect(end).toHaveBeenCalledOnce();
   });
+
+  it("unsubscribes when synchronous replay overflows the stream buffer", () => {
+    const response = {
+      writableEnded: false,
+      writeHead: vi.fn(),
+      flushHeaders: vi.fn(),
+      write: vi.fn(() => false),
+      end: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn()
+    };
+    const unsubscribe = vi.fn();
+    const data = "x".repeat(Math.floor(MAX_EVENT_HISTORY_BYTES_PER_RUN / 2));
+    const store = {
+      get: () => ({ cleaned: false }),
+      subscribe: (_runId: string, next: (runEvent: RunEvent) => void) => {
+        for (let sequence = 1; sequence <= 3; sequence += 1) {
+          next(event(sequence, { type: "log", message: `Event ${sequence}`, data }));
+        }
+        return unsubscribe;
+      }
+    };
+
+    streamRunEvents(response, store, "run-1", new Set<EventStream>());
+
+    expect(response.end).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
 });
 
 function event(sequence: number, details: RunEventDetails): RunEvent {

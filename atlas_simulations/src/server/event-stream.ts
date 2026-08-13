@@ -91,7 +91,7 @@ export function streamRunEvents(
     }
     response.on("close", removeStream);
     response.on("drain", resumePendingEvents);
-    unsubscribe = store.subscribe(runId, (event) => {
+    const subscription = store.subscribe(runId, (event) => {
       if (closed || closeScheduled || response.writableEnded) return;
       if (shouldCloseRunEventStream(event, store.get(runId), replaying)) closeAfterReplay = true;
       const data = JSON.stringify(safeStreamEvent(event));
@@ -108,6 +108,8 @@ export function streamRunEvents(
       pendingBytes += bytes;
       writePendingEvents();
     });
+    if (closed) subscription();
+    else unsubscribe = subscription;
     replaying = false;
     writePendingEvents();
   } catch (error) {

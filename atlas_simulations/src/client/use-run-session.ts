@@ -122,7 +122,6 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
       (refreshedSelection.status === "running" || needsCleanupReconnect || replayCleanedRun || replayDisconnectedRun)
     ) {
       if (needsCleanupReconnect) cleanupStreamRunIdRef.current = selectedRunAfterLoad;
-      disconnectedRunIdsRef.current.delete(selectedRunAfterLoad);
       connectEvents(selectedRunAfterLoad, { preserveCleanup: needsCleanupReconnect, replayCleanedRun });
     }
   }
@@ -175,12 +174,14 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
     const needsCleanupStream = cleanupStreamRunIdRef.current === run.id && !run.cleaned;
     const cachedEvents = eventsByRunIdRef.current.get(run.id) ?? [];
     const replayCleanedRun = needsCleanedRunReplay(run, cachedEvents);
-    const needsReplayStream = run.status !== "running" && (cachedEvents.length === 0 || replayCleanedRun);
+    const replayDisconnectedRun = disconnectedRunIdsRef.current.has(run.id);
+    const needsReplayStream =
+      run.status !== "running" && (cachedEvents.length === 0 || replayCleanedRun || replayDisconnectedRun);
     currentRunIdRef.current = run.id;
     if (currentRun?.id === run.id) {
       setCurrentRun((current) => (current ? { ...current, ...run } : run));
       if (run.status === "running" || needsCleanupStream || needsReplayStream) {
-        if (eventStream.runId !== run.id)
+        if (eventStream.runId !== run.id || replayDisconnectedRun)
           connectEvents(run.id, {
             preserveCleanup: needsCleanupStream,
             replayCleanedRun
