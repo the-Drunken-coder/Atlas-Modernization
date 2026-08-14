@@ -32,18 +32,18 @@
     "sidc-kit": "^0.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.5",
-    "@testing-library/jest-dom": "^7.0.0",
+    "@biomejs/biome": "2.5.7",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
+    "@testing-library/user-event": "^14.6.3",
     "@types/node": "^24.13.3",
-    "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0",
-    "@vitejs/plugin-react": "^6.0.4",
-    "jsdom": "^30.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
-    "vite": "^8.1.5",
+    "vite": "^8.2.1",
     "vitest": "^4.1.9",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.120.1"
   }
 }
