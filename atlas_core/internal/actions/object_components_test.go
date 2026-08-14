@@ -154,3 +154,24 @@ func TestUploadObjectJSONAcceptsTypedUsageHints(t *testing.T) {
 		t.Fatalf("usage_hints = %#v, want [mission_plan]", got["usage_hints"])
 	}
 }
+
+func TestUploadObjectJSONAddsUsageHintToExistingHints(t *testing.T) {
+	data, err := uploadObjectJSON(
+		map[string]interface{}{"usage_hints": []interface{}{"heatmap_data"}},
+		"atlas-media",
+		1024,
+		[]string{"mission_plan"},
+	)
+	if err != nil {
+		t.Fatalf("uploadObjectJSON() unexpected error: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	hints, ok := got["usage_hints"].([]interface{})
+	if !ok || len(hints) != 2 || hints[0] != "heatmap_data" || hints[1] != "mission_plan" {
+		t.Fatalf("usage_hints = %#v, want [heatmap_data mission_plan]", got["usage_hints"])
+	}
+}

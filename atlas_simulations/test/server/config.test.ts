@@ -85,6 +85,48 @@ describe("loadConfig", () => {
     expect(withRuntimeKey.atlasTargets[0]?.apiKey).toBe("runtime-key");
   });
 
+  it("does not reuse a file key when the runtime overrides the deployed URL", () => {
+    const packageRoot = tempPackageRoot();
+    writeFileSync(
+      path.join(packageRoot, ".env"),
+      [
+        "ATLAS_SIM_ENABLE_DEPLOYED=true",
+        "ATLAS_DEPLOYED_BASE_URL=https://tenant-a.example.test",
+        "ATLAS_DEPLOYED_API_KEY=tenant-a-key"
+      ].join("\n")
+    );
+
+    const fromFile = loadConfig({ env: {}, packageRoot });
+    const withoutRuntimeKey = loadConfig({
+      env: {
+        ATLAS_SIM_ENABLE_DEPLOYED: "true",
+        ATLAS_DEPLOYED_BASE_URL: "https://tenant-b.example.test"
+      },
+      packageRoot
+    });
+    const withRuntimeKey = loadConfig({
+      env: {
+        ATLAS_SIM_ENABLE_DEPLOYED: "true",
+        ATLAS_DEPLOYED_BASE_URL: "https://tenant-b.example.test",
+        ATLAS_DEPLOYED_API_KEY: "tenant-b-key"
+      },
+      packageRoot
+    });
+
+    expect(fromFile.atlasTargets[1]).toEqual({
+      id: "deployed",
+      label: "Deployed Core",
+      baseUrl: "https://tenant-a.example.test",
+      apiKey: "tenant-a-key"
+    });
+    expect(withoutRuntimeKey.atlasTargets[1]).toEqual({
+      id: "deployed",
+      label: "Deployed Core",
+      baseUrl: "https://tenant-b.example.test"
+    });
+    expect(withRuntimeKey.atlasTargets[1]?.apiKey).toBe("tenant-b-key");
+  });
+
   it("prefers an explicit simulation key and ignores disabled Core auth", () => {
     const packageRoot = tempWorkspacePackageRoot("ENABLE_API_AUTH=false\nAPI_AUTH_KEY=stale-core-key\n");
 

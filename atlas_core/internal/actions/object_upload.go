@@ -109,10 +109,35 @@ func uploadObjectJSON(existingJSON map[string]interface{}, bucket string, sizeBy
 	jsonData["bucket"] = bucket
 	jsonData["size_bytes"] = sizeBytes
 	if usageHints != nil {
-		jsonData["usage_hints"] = usageHints
+		mergedHints, err := mergeUploadUsageHints(existingJSON["usage_hints"], usageHints)
+		if err != nil {
+			return nil, err
+		}
+		jsonData["usage_hints"] = mergedHints
 	}
 
 	return marshalValidatedJSONBlob(jsonData, ValidateObjectBlob)
+}
+
+func mergeUploadUsageHints(existing interface{}, additions []string) ([]string, error) {
+	merged := make([]string, 0, len(additions))
+	switch hints := existing.(type) {
+	case nil:
+	case []interface{}:
+		merged = make([]string, 0, len(hints)+len(additions))
+		for index, value := range hints {
+			hint, ok := value.(string)
+			if !ok {
+				return nil, fmt.Errorf("existing usage_hints[%d] is not a string", index)
+			}
+			merged = append(merged, hint)
+		}
+	case []string:
+		merged = append(merged, hints...)
+	default:
+		return nil, fmt.Errorf("existing usage_hints has unsupported type %T", existing)
+	}
+	return append(merged, additions...), nil
 }
 
 func upsertUploadedObjectMetadata(

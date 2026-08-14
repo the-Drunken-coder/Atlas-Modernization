@@ -44,9 +44,11 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
     stringValue(runtimeEnv.ATLAS_SIM_ENABLE_DEPLOYED) ?? stringValue(fileEnv.ATLAS_SIM_ENABLE_DEPLOYED),
     "ATLAS_SIM_ENABLE_DEPLOYED"
   );
-  const configuredDeployedBaseUrl =
-    stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL) ?? stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
-  const deployedApiKey = stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY);
+  const runtimeDeployedBaseUrl = stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL);
+  const configuredDeployedBaseUrl = runtimeDeployedBaseUrl ?? stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
+  const deployedApiKey = runtimeDeployedBaseUrl
+    ? stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY)
+    : (stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY));
   const selectedTargetId = targetIdValue(
     stringValue(runtimeEnv.ATLAS_SIM_TARGET) ?? stringValue(fileEnv.ATLAS_SIM_TARGET) ?? LOCAL_TARGET_ID
   );
