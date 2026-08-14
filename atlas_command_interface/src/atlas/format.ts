@@ -1,5 +1,3 @@
-// Small, dependency-free formatting helpers shared across inspector panels.
-
 export function formatRelativeTime(iso: string | undefined, now: number = Date.now()): string {
   if (!iso) return "—";
   const timestamp = Date.parse(iso);

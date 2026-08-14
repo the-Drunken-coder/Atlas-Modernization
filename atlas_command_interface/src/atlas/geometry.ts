@@ -1,6 +1,4 @@
-// GeoJSON coordinates use [longitude, latitude]. Circle geofences are persisted
-// as strict GeoJSON Feature<Point> values with strict circle properties; the map
-// renders them through a derived polygon without changing the saved payload.
+// GeoJSON coordinates use [longitude, latitude].
 
 import {
   type GeoJSONCircleFeature,

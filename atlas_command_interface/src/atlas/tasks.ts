@@ -27,7 +27,6 @@ export function taskStatusMessage(task: TaskResource): string | undefined {
   return task.components.status_message;
 }
 
-/** Most-recently-updated task first. Falls back to created_at, then task_id. */
 export function sortTasksByRecency(tasks: TaskResource[]): TaskResource[] {
   return [...tasks].sort((a, b) => {
     const byUpdated = Date.parse(b.metadata.updated_at) - Date.parse(a.metadata.updated_at);
