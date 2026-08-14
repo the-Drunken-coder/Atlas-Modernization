@@ -20,8 +20,6 @@ export type UiRawGeometry = UiPoint | UiLineString | UiPolygon;
 export type UiCircleFeature = GeoJSONCircleFeature;
 export type UiGeometry = GeometryComponent;
 
-export type GeometryKind = UiGeometry["type"];
-
 export type VertexRef =
   | { kind: "Point" }
   | { kind: "Circle" }

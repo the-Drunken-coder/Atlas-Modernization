@@ -37,39 +37,6 @@ export function supportedCommandIds(entity: EntityResource): string[] | undefine
   return supported.filter((value): value is string => typeof value === "string" && value.trim() !== "");
 }
 
-export function commandsForEntity(catalog: CommandCatalog, entity: EntityResource): CommandDefinition[] {
-  if (entity.entity_type !== "asset") {
-    return [];
-  }
-  const supported = supportedCommandIds(entity);
-  if (supported === undefined) {
-    return [];
-  }
-  const supportedSet = new Set(supported);
-  return catalog.commands.filter((command) => supportedSet.has(command.id));
-}
-
-export function assertEntitySupportsCommand(entity: EntityResource, commandId: string): void {
-  if (entity.entity_type !== "asset") {
-    throw new CommandModelError("UNSUPPORTED_COMMAND", "Only assets can receive commands", {
-      entity_id: entity.entity_id,
-      entity_type: entity.entity_type,
-      command_id: commandId
-    });
-  }
-  const supported = supportedCommandIds(entity);
-  if (supported === undefined || !supported.includes(commandId)) {
-    throw new CommandModelError(
-      "UNSUPPORTED_COMMAND",
-      `${entity.entity_id} does not advertise support for ${commandId}`,
-      {
-        entity_id: entity.entity_id,
-        command_id: commandId
-      }
-    );
-  }
-}
-
 export function coerceParameters(command: CommandDefinition, rawParameters: unknown): Record<string, JSONValue> {
   const raw = rawParameters === undefined || rawParameters === null ? {} : requireParameterRecord(rawParameters);
   const result: Record<string, JSONValue> = {};
@@ -112,10 +79,6 @@ export function buildCommandTaskRequest(options: {
       parameters: options.parameters
     }
   };
-}
-
-export function commandLabel(command: CommandDefinition): string {
-  return `${command.name} (${command.id})`;
 }
 
 function coerceParameterValue(name: string, schema: CommandParameterSchema, value: unknown): JSONValue {

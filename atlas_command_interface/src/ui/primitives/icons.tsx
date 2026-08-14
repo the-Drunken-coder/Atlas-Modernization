@@ -123,20 +123,3 @@ export function TrashIcon(props: IconProps) {
     </Svg>
   );
 }
-
-export function TargetIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <circle cx="12" cy="12" r="7" />
-      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-    </Svg>
-  );
-}
-
-export function ChevronIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M9 6l6 6-6 6" />
-    </Svg>
-  );
-}

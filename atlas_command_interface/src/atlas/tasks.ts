@@ -1,4 +1,4 @@
-import type { JSONValue, TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 
 export const TASK_STATUSES = ["pending", "acknowledged", "completed", "failed", "cancelled"] as const;
 export type TaskStatusName = (typeof TASK_STATUSES)[number];
@@ -23,11 +23,6 @@ export function taskCommandId(task: TaskResource): string | undefined {
   return task.components.command?.id ?? task.components.command?.type;
 }
 
-export function taskParameters(task: TaskResource): Record<string, JSONValue> | undefined {
-  const parameters = task.components.parameters;
-  return isRecord(parameters) ? parameters : undefined;
-}
-
 export function taskStatusMessage(task: TaskResource): string | undefined {
   return task.components.status_message;
 }
@@ -41,8 +36,4 @@ export function sortTasksByRecency(tasks: TaskResource[]): TaskResource[] {
     if (Number.isFinite(byCreated) && byCreated !== 0) return byCreated;
     return a.task_id.localeCompare(b.task_id);
   });
-}
-
-function isRecord(value: unknown): value is Record<string, JSONValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

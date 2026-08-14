@@ -33,8 +33,6 @@ export type SidebarAction =
   | { type: "clearSelection" }
   | { type: "back" };
 
-export const LIST_KINDS: ListKind[] = ["assets", "tracks", "geofeatures", "commands", "apiKeys"];
-
 export const initialSidebarState: SidebarState = {
   collapsed: false,
   view: { mode: "list", list: "assets" },
