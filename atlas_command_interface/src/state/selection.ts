@@ -33,8 +33,6 @@ export type SidebarAction =
   | { type: "clearSelection" }
   | { type: "back" };
 
-export const LIST_KINDS: ListKind[] = ["assets", "tracks", "geofeatures", "commands", "apiKeys"];
-
 export const initialSidebarState: SidebarState = {
   collapsed: false,
   view: { mode: "list", list: "assets" },
@@ -58,7 +56,6 @@ export function sidebarReducer(state: SidebarState, action: SidebarAction): Side
     case "setCollapsed":
       return { ...state, collapsed: action.collapsed };
     case "openList":
-      // Opening a list always expands the rail and shows that list.
       return { ...state, collapsed: false, view: { mode: "list", list: action.list } };
     case "selectEntity": {
       // Sidebar selections drive the camera; map selections leave it alone

@@ -11,7 +11,7 @@ This is the single entry point for project documentation. Docs are split into **
 | --- | --- | --- |
 | [`docs/atlas-asset-runtime/`](atlas-asset-runtime/) | Asset runtime design: lifecycle, check-in polling, task dispatch, failure behavior, and explicit v1 boundaries. | "How does asset-side code participate in Atlas?" |
 | [`docs/atlas-change-feed/`](atlas-change-feed/) | Change feed design: websocket push contract, subscription filters, consumption rules, simulation-testing approach. | "How do clients learn about writes without polling?" |
-| [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions, bootstrap-era implementation prep, and reference docs. | "Why is the protocol shaped this way?" |
+| [`docs/atlas-protocol/`](atlas-protocol/) | Atlas Protocol design decisions and reference docs. | "Why is the protocol shaped this way?" |
 | [`docs/atlas-sdk/`](atlas-sdk/) | Atlas SDK design: client architecture, sync engine/cache, unified reads, testing, known gaps. | "How do services talk to Atlas Core?" |
 | [`docs/design-decisions/`](design-decisions/) | Durable architectural/implementation choices across the whole project (Atlas Core, Atlas Protocol, Atlas SDK, …). | "What did we decide, and why?" |
 | [`docs/problems/`](problems/) | Short-lived agent-to-agent notes on active blockers (minutes to a day or two). Spans all packages. | "What is broken right now on this branch?" |
@@ -27,7 +27,7 @@ Start templates: [`design-decisions/_EXAMPLE_DESIGN_DECISION_.md`](design-decisi
 | `atlas_protocol/` | [`atlas_protocol/README.md`](../atlas_protocol/README.md) and [`docs/atlas-protocol/`](atlas-protocol/) | Buildable Atlas Protocol module: JSON Schema source, generated contracts, validators, examples, tooling, and planning/reference docs. |
 | `atlas_sdk/` | [`docs/atlas-sdk/`](atlas-sdk/) | TypeScript/JavaScript Atlas SDK package: typed client, optional sync engine, CLI, package metadata, and Node/browser test suites. |
 | `atlas_asset_runtime/` | [`docs/atlas-asset-runtime/`](atlas-asset-runtime/) | TypeScript/Node asset runtime: check-in polling, telemetry reporting, and task dispatch through the Atlas SDK. |
-| `atlas_command_interface/` | [`atlas_command_interface/README.md`](../atlas_command_interface/README.md) | Atlas Command interface: Cloudflare Pages-hosted map console and reusable command-model helpers. |
+| `atlas_command_interface/` | [`atlas_command_interface/README.md`](../atlas_command_interface/README.md) | Atlas Command interface: Cloudflare Pages-hosted map console. |
 | `atlas_simulations/` | [`atlas_simulations/README.md`](../atlas_simulations/README.md) | Local simulation workbench for running trusted scenario scripts against Atlas Core through the SDK. |
 
 Use **`atlas_core/docs/`** when the question is "how does this API behave?"

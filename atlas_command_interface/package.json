@@ -8,15 +8,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "vite",
-    "dev:local": "vite --host 127.0.0.1",
+    "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "build:web": "vite build",
     "check:bundle": "node scripts/check-bundle.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome lint --config-path biome.json .",
     "format:check": "biome check --linter-enabled=false .",

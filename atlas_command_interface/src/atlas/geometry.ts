@@ -1,6 +1,4 @@
-// GeoJSON coordinates use [longitude, latitude]. Circle geofences are persisted
-// as strict GeoJSON Feature<Point> values with strict circle properties; the map
-// renders them through a derived polygon without changing the saved payload.
+// GeoJSON coordinates use [longitude, latitude].
 
 import {
   type GeoJSONCircleFeature,
@@ -19,8 +17,6 @@ export type UiPolygon = GeoJSONPolygon;
 export type UiRawGeometry = UiPoint | UiLineString | UiPolygon;
 export type UiCircleFeature = GeoJSONCircleFeature;
 export type UiGeometry = GeometryComponent;
-
-export type GeometryKind = UiGeometry["type"];
 
 export type VertexRef =
   | { kind: "Point" }

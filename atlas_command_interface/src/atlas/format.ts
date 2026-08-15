@@ -1,5 +1,3 @@
-// Small, dependency-free formatting helpers shared across inspector panels.
-
 export function formatRelativeTime(iso: string | undefined, now: number = Date.now()): string {
   if (!iso) return "—";
   const timestamp = Date.parse(iso);
@@ -14,16 +12,6 @@ export function formatRelativeTime(iso: string | undefined, now: number = Date.n
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-export function formatTimestamp(iso: string | undefined): string {
-  if (!iso) return "—";
-  const timestamp = Date.parse(iso);
-  if (!Number.isFinite(timestamp)) return iso;
-  return new Date(timestamp)
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d+Z$/, "Z");
 }
 
 export function formatNumber(value: number | undefined, options: { unit?: string; digits?: number } = {}): string {

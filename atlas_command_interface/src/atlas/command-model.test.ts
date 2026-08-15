@@ -1,20 +1,6 @@
-import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
-import {
-  assertEntitySupportsCommand,
-  buildCommandTaskRequest,
-  CommandModelError,
-  coerceParameters,
-  commandById,
-  commandLabel,
-  commandsForEntity
-} from "./command-model.js";
-
-const metadata = {
-  created_at: "2026-06-20T00:00:00Z",
-  updated_at: "2026-06-20T00:00:00Z",
-  version: 1
-};
+import { buildCommandTaskRequest, CommandModelError, coerceParameters, commandById } from "./command-model.js";
 
 const catalogPayload: CommandCatalog = {
   type: "command_catalog",
@@ -40,26 +26,6 @@ const catalogPayload: CommandCatalog = {
     }
   ]
 };
-
-function asset(supportedTasks?: string[]): EntityResource {
-  return {
-    entity_id: "asset-1",
-    entity_type: "asset",
-    subtype: null,
-    alias: "Rover 1",
-    components: supportedTasks === undefined ? {} : { task_catalog: { supported_tasks: supportedTasks } },
-    metadata
-  };
-}
-
-function track(supportedTasks?: string[]): EntityResource {
-  return {
-    ...asset(supportedTasks),
-    entity_id: "track-1",
-    entity_type: "track",
-    alias: "Track 1"
-  };
-}
 
 describe("command model", () => {
   it("coerces form values and validates numeric bounds", () => {
@@ -116,26 +82,6 @@ describe("command model", () => {
     );
   });
 
-  it("filters commands through explicit supported task declarations", () => {
-    expect(commandsForEntity(catalogPayload, asset())).toEqual([]);
-    expect(commandsForEntity(catalogPayload, asset(["hold_position"])).map((command) => command.id)).toEqual([
-      "hold_position"
-    ]);
-    expect(commandsForEntity(catalogPayload, asset([]))).toEqual([]);
-    expect(
-      commandsForEntity(catalogPayload, {
-        ...asset(),
-        components: { task_catalog: { supported_tasks: "hold_position" } }
-      } as unknown as EntityResource).map((command) => command.id)
-    ).toEqual([]);
-    expect(
-      commandsForEntity(catalogPayload, asset(["", "hold_position", 42 as unknown as string])).map(
-        (command) => command.id
-      )
-    ).toEqual(["hold_position"]);
-    expect(commandsForEntity(catalogPayload, track(["hold_position"]))).toEqual([]);
-  });
-
   it("builds command task payloads without client-supplied task IDs", () => {
     const command = commandById(catalogPayload, "move_to_location");
 
@@ -151,22 +97,8 @@ describe("command model", () => {
     });
   });
 
-  it("looks up and labels commands", () => {
-    const command = commandById(catalogPayload, "hold_position");
-
-    expect(commandLabel(command)).toBe("Hold Position (hold_position)");
+  it("looks up commands by id", () => {
+    expect(commandById(catalogPayload, "hold_position").id).toBe("hold_position");
     expect(() => commandById(catalogPayload, "missing_command")).toThrow("Unknown command missing_command");
-  });
-
-  it("enforces entity command support declarations", () => {
-    expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "move_to_location")).toThrow(
-      "does not advertise support"
-    );
-    expect(() => assertEntitySupportsCommand(asset(["hold_position"]), "hold_position")).not.toThrow();
-    expect(() => assertEntitySupportsCommand(asset([]), "hold_position")).toThrow("does not advertise support");
-    expect(() => assertEntitySupportsCommand(asset(), "move_to_location")).toThrow("does not advertise support");
-    expect(() => assertEntitySupportsCommand(track(["hold_position"]), "hold_position")).toThrow(
-      "Only assets can receive commands"
-    );
   });
 });

@@ -25,4 +25,4 @@ Each entry under `docs/design-decisions/` records a durable architectural or imp
 ### File naming
 
 - Keep `_EXAMPLE_DESIGN_DECISION_.md` as the style guide; do not edit it for real decisions.
-- Add one markdown file per decision, named `YYYY-MM-DD-short-slug.md` (e.g., `2026-05-29-no-database-migrations.md`).
+- Add one markdown file per decision, named `YYYY-MM-DD-short-slug.md` (e.g., `2026-05-29-schema-evolution-without-migrations.md`).
