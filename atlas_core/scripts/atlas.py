@@ -532,6 +532,9 @@ def compose_up_command(*, production=False, tunnel=False, service=None, db_only=
 
 def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, tunnel=False, db_only=False):
     """Stop containers and optionally delete related volumes/images."""
+    if production and remove_volumes:
+        raise RuntimeError("--reset-volumes is disabled for production storage")
+
     print("[STOP] Stopping existing containers...")
     docker_dir = os.path.join(atlas_core_dir, "docker")
     if remove_volumes:

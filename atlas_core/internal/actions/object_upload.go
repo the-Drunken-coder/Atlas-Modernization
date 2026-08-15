@@ -132,8 +132,6 @@ func mergeUploadUsageHints(existing interface{}, additions []string) ([]string, 
 			}
 			merged = append(merged, hint)
 		}
-	case []string:
-		merged = append(merged, hints...)
 	default:
 		return nil, fmt.Errorf("existing usage_hints has unsupported type %T", existing)
 	}

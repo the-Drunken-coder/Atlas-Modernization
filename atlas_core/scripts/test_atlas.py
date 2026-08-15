@@ -16,6 +16,7 @@ from atlas import (
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
+    cleanup_containers,
     compose_container_name,
     compose_down_command,
     compose_up_command,
@@ -712,6 +713,15 @@ class AtlasScriptHelpersTest(unittest.TestCase):
                 "local",
             ],
         )
+
+    def test_cleanup_refuses_production_volume_removal(self) -> None:
+        with (
+            patch("atlas.subprocess.run") as run,
+            self.assertRaisesRegex(RuntimeError, "--reset-volumes is disabled for production storage"),
+        ):
+            cleanup_containers("/tmp/atlas_core", production=True, remove_volumes=True)
+
+        run.assert_not_called()
 
     def test_compose_down_command_uses_production_database_stack_for_db_only(self) -> None:
         self.assertEqual(
