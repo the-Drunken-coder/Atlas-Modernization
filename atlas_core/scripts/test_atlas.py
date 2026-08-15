@@ -16,6 +16,7 @@ from atlas import (
     API_AUTH_KEY_PLACEHOLDER,
     DEFAULT_TUNNEL_HOSTNAME,
     LOCAL_AUTH_ENV_FILE,
+    cleanup_containers,
     compose_container_name,
     compose_down_command,
     compose_up_command,
@@ -329,7 +330,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         self.assertEqual(run.call_args.args[0][-1], "local/mission-media")
 
-    def test_reset_volumes_help_warns_about_production_data_loss(self) -> None:
+    def test_reset_volumes_help_limits_option_to_development(self) -> None:
         output = StringIO()
         with patch.object(sys, "argv", ["atlas.py", "--help"]), redirect_stdout(output):
             with self.assertRaises(SystemExit) as exit_result:
@@ -339,9 +340,22 @@ class AtlasScriptHelpersTest(unittest.TestCase):
         help_text = output.getvalue()
         self.assertIn("--reset-volumes", help_text)
         self.assertIn(
-            "deliberately deletes durable production PostgreSQL and MinIO volumes",
+            "This option is disabled for production storage",
             " ".join(help_text.split()),
         )
+
+    def test_production_reset_volumes_is_rejected_before_start(self) -> None:
+        with (
+            patch.object(sys, "argv", ["atlas.py", "--production", "--reset-volumes"]),
+            patch("atlas.start_containers") as start_containers_mock,
+            patch("builtins.print") as print_mock,
+            self.assertRaises(SystemExit) as exit_result,
+        ):
+            main()
+
+        self.assertEqual(exit_result.exception.code, 1)
+        start_containers_mock.assert_not_called()
+        print_mock.assert_called_with("[ERROR] --reset-volumes is disabled for production storage")
 
     def test_wait_for_api_diagnoses_stale_development_volume_password(self) -> None:
         fixture_credential = "do-not-print-this"
@@ -700,6 +714,15 @@ class AtlasScriptHelpersTest(unittest.TestCase):
             ],
         )
 
+    def test_cleanup_refuses_production_volume_removal(self) -> None:
+        with (
+            patch("atlas.subprocess.run") as run,
+            self.assertRaisesRegex(RuntimeError, "--reset-volumes is disabled for production storage"),
+        ):
+            cleanup_containers("/tmp/atlas_core", production=True, remove_volumes=True)
+
+        run.assert_not_called()
+
     def test_compose_down_command_uses_production_database_stack_for_db_only(self) -> None:
         self.assertEqual(
             compose_down_command(production=True, db_only=True),
@@ -771,7 +794,7 @@ class AtlasScriptHelpersTest(unittest.TestCase):
 
         self.assertEqual(exit_result.exception.code, 1)
         start_containers_mock.assert_not_called()
-        print_mock.assert_called_with("[ERROR] Cannot reset the complete production storage pair in --db-only mode")
+        print_mock.assert_called_with("[ERROR] --reset-volumes is disabled for production storage")
 
     def test_production_start_never_generates_or_persists_credentials(self) -> None:
         with (

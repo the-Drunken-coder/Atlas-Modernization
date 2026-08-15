@@ -154,3 +154,60 @@ func TestUploadObjectJSONAcceptsTypedUsageHints(t *testing.T) {
 		t.Fatalf("usage_hints = %#v, want [mission_plan]", got["usage_hints"])
 	}
 }
+
+func TestUploadObjectJSONAddsUsageHintToExistingHints(t *testing.T) {
+	data, err := uploadObjectJSON(
+		map[string]interface{}{"usage_hints": []interface{}{"heatmap_data"}},
+		"atlas-media",
+		1024,
+		[]string{"mission_plan"},
+	)
+	if err != nil {
+		t.Fatalf("uploadObjectJSON() unexpected error: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	hints, ok := got["usage_hints"].([]interface{})
+	if !ok || len(hints) != 2 || hints[0] != "heatmap_data" || hints[1] != "mission_plan" {
+		t.Fatalf("usage_hints = %#v, want [heatmap_data mission_plan]", got["usage_hints"])
+	}
+}
+
+func TestUploadObjectJSONRejectsInvalidExistingUsageHints(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing interface{}
+		wantErr  string
+	}{
+		{
+			name:     "non-string element",
+			existing: []interface{}{"heatmap_data", 12},
+			wantErr:  "existing usage_hints[1] is not a string",
+		},
+		{
+			name:     "unsupported typed slice",
+			existing: []string{"heatmap_data"},
+			wantErr:  "existing usage_hints has unsupported type []string",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := uploadObjectJSON(
+				map[string]interface{}{"usage_hints": test.existing},
+				"atlas-media",
+				1024,
+				[]string{"mission_plan"},
+			)
+			if err == nil || err.Error() != test.wantErr {
+				t.Fatalf("uploadObjectJSON() error = %v, want %q", err, test.wantErr)
+			}
+			if data != nil {
+				t.Fatalf("uploadObjectJSON() data = %q, want nil", data)
+			}
+		})
+	}
+}

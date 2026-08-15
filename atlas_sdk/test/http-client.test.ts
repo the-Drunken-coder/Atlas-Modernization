@@ -50,6 +50,19 @@ describe("AtlasClient HTTP", () => {
     );
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("rejects invalid changed-since cursors before serialization", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
+
+    for (const sinceVersion of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(client.queries.changedSince(sinceVersion)).rejects.toThrow(
+        "sinceVersion must be a non-negative safe integer"
+      );
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("sanitizes untrusted HTTP errors while preserving status and error code", async () => {
     const secret = "http-canary-secret";
     const client = new AtlasClient({

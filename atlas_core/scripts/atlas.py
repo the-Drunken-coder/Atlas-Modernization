@@ -532,6 +532,9 @@ def compose_up_command(*, production=False, tunnel=False, service=None, db_only=
 
 def cleanup_containers(atlas_core_dir, remove_volumes=False, production=False, tunnel=False, db_only=False):
     """Stop containers and optionally delete related volumes/images."""
+    if production and remove_volumes:
+        raise RuntimeError("--reset-volumes is disabled for production storage")
+
     print("[STOP] Stopping existing containers...")
     docker_dir = os.path.join(atlas_core_dir, "docker")
     if remove_volumes:
@@ -712,9 +715,6 @@ def start_containers(db_only=False, tunnel=False, reset_volumes=False, productio
             if not ensure_tunnel_token():
                 sys.exit(1)
 
-        # Design decision: --reset-volumes applies to whichever Compose project
-        # the operator selected. With --production, it intentionally deletes that
-        # project's durable PostgreSQL and MinIO volumes; callers must choose it knowingly.
         cleanup_containers(
             atlas_core_dir,
             remove_volumes=reset_volumes,
@@ -890,9 +890,8 @@ Examples:
         "--reset-volumes",
         action="store_true",
         help=(
-            "Remove the selected Compose project's volumes and images before starting. "
-            "With --production, this deliberately deletes durable production PostgreSQL "
-            "and MinIO volumes."
+            "Remove the development Compose project's volumes and images before starting. "
+            "This option is disabled for production storage."
         ),
     )
 
@@ -906,8 +905,8 @@ Examples:
         print("[ERROR] Cannot use --db-only and --tunnel together")
         sys.exit(1)
 
-    if args.production and args.db_only and args.reset_volumes:
-        print("[ERROR] Cannot reset the complete production storage pair in --db-only mode")
+    if args.production and args.reset_volumes:
+        print("[ERROR] --reset-volumes is disabled for production storage")
         sys.exit(1)
 
     # Interactive menu only when invoked with no flags (any flag => non-interactive).

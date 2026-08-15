@@ -200,7 +200,7 @@ export class AtlasClient {
   readonly queries = {
     full: (options?: FullDatasetQueryOptions) =>
       this.transport.json("GET", fullDatasetQueryPath(options), isFullDatasetResponse),
-    changedSince: (sinceVersion: number, options?: ChangedSinceQueryOptions) =>
+    changedSince: async (sinceVersion: number, options?: ChangedSinceQueryOptions) =>
       this.transport.json(
         "GET",
         changedSinceQueryPath(sinceVersion, options),
@@ -357,6 +357,9 @@ function fullDatasetQueryPath(options?: FullDatasetQueryOptions): string {
 }
 
 function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQueryOptions): string {
+  if (!Number.isSafeInteger(sinceVersion) || sinceVersion < 0) {
+    throw new TypeError("Atlas changed-since sinceVersion must be a non-negative safe integer");
+  }
   return pathWithQuery("/queries/changed-since", {
     since_version: String(sinceVersion),
     limit: options?.limit === undefined ? undefined : String(options.limit),
