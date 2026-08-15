@@ -32,12 +32,17 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const fileEnv = readEnvFile(path.join(packageRoot, ".env"));
   const runtimeEnv = options.env ?? process.env;
   const runtimeLocalBaseUrl = stringValue(runtimeEnv.ATLAS_LOCAL_BASE_URL);
-  const configuredLocalBaseUrl = runtimeLocalBaseUrl ?? stringValue(fileEnv.ATLAS_LOCAL_BASE_URL);
+  const fileLocalBaseUrl = stringValue(fileEnv.ATLAS_LOCAL_BASE_URL);
+  const configuredLocalBaseUrl = runtimeLocalBaseUrl ?? fileLocalBaseUrl;
   const localBaseUrl = atlasUrlValue(configuredLocalBaseUrl ?? DEFAULT_LOCAL_BASE_URL, "ATLAS_LOCAL_BASE_URL");
   if (!isLoopbackUrl(localBaseUrl)) throw new Error("ATLAS_LOCAL_BASE_URL must target loopback");
-  const explicitLocalApiKey = runtimeLocalBaseUrl
-    ? stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY)
-    : (stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY) ?? stringValue(fileEnv.ATLAS_LOCAL_API_KEY));
+  const runtimeLocalApiKey = stringValue(runtimeEnv.ATLAS_LOCAL_API_KEY);
+  const fileLocalApiKey = stringValue(fileEnv.ATLAS_LOCAL_API_KEY);
+  const useFileLocalApiKey =
+    fileLocalApiKey !== undefined &&
+    (!runtimeLocalBaseUrl ||
+      (fileLocalBaseUrl !== undefined && localBaseUrl === atlasUrlValue(fileLocalBaseUrl, "ATLAS_LOCAL_BASE_URL")));
+  const explicitLocalApiKey = runtimeLocalApiKey ?? (useFileLocalApiKey ? fileLocalApiKey : undefined);
   const localApiKey =
     explicitLocalApiKey ?? (localBaseUrl === DEFAULT_LOCAL_BASE_URL ? localCoreAPIKey(packageRoot) : undefined);
   const enableDeployed = booleanValue(
@@ -45,14 +50,20 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
     "ATLAS_SIM_ENABLE_DEPLOYED"
   );
   const runtimeDeployedBaseUrl = stringValue(runtimeEnv.ATLAS_DEPLOYED_BASE_URL);
-  const configuredDeployedBaseUrl = runtimeDeployedBaseUrl ?? stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
-  const deployedApiKey = runtimeDeployedBaseUrl
-    ? stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY)
-    : (stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY) ?? stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY));
+  const fileDeployedBaseUrl = stringValue(fileEnv.ATLAS_DEPLOYED_BASE_URL);
+  const configuredDeployedBaseUrl = runtimeDeployedBaseUrl ?? fileDeployedBaseUrl;
+  const runtimeDeployedApiKey = stringValue(runtimeEnv.ATLAS_DEPLOYED_API_KEY);
+  const fileDeployedApiKey = stringValue(fileEnv.ATLAS_DEPLOYED_API_KEY);
   const selectedTargetId = targetIdValue(
     stringValue(runtimeEnv.ATLAS_SIM_TARGET) ?? stringValue(fileEnv.ATLAS_SIM_TARGET) ?? LOCAL_TARGET_ID
   );
-  if (!enableDeployed && (configuredDeployedBaseUrl || deployedApiKey || selectedTargetId === DEPLOYED_TARGET_ID)) {
+  if (
+    !enableDeployed &&
+    (configuredDeployedBaseUrl ||
+      runtimeDeployedApiKey ||
+      fileDeployedApiKey ||
+      selectedTargetId === DEPLOYED_TARGET_ID)
+  ) {
     throw new Error("Set ATLAS_SIM_ENABLE_DEPLOYED=true before configuring or selecting a deployed target");
   }
   if (enableDeployed && !configuredDeployedBaseUrl) {
@@ -61,6 +72,12 @@ export function loadConfig(options: { env?: NodeJS.ProcessEnv; packageRoot?: str
   const deployedBaseUrl = configuredDeployedBaseUrl
     ? atlasUrlValue(configuredDeployedBaseUrl, "ATLAS_DEPLOYED_BASE_URL")
     : undefined;
+  const useFileDeployedApiKey =
+    fileDeployedApiKey !== undefined &&
+    (!runtimeDeployedBaseUrl ||
+      (fileDeployedBaseUrl !== undefined &&
+        deployedBaseUrl === atlasUrlValue(fileDeployedBaseUrl, "ATLAS_DEPLOYED_BASE_URL")));
+  const deployedApiKey = runtimeDeployedApiKey ?? (useFileDeployedApiKey ? fileDeployedApiKey : undefined);
   if (deployedBaseUrl && isLoopbackUrl(deployedBaseUrl))
     throw new Error("ATLAS_DEPLOYED_BASE_URL must not target loopback");
   const port = portValue(stringValue(runtimeEnv.ATLAS_SIM_PORT) ?? stringValue(fileEnv.ATLAS_SIM_PORT));

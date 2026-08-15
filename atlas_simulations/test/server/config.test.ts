@@ -72,6 +72,10 @@ describe("loadConfig", () => {
       env: { ATLAS_LOCAL_BASE_URL: "http://127.0.0.2:8000" },
       packageRoot
     });
+    const sameRuntimeTarget = loadConfig({
+      env: { ATLAS_LOCAL_BASE_URL: "http://localhost:8000/" },
+      packageRoot
+    });
     const withRuntimeKey = loadConfig({
       env: { ATLAS_LOCAL_BASE_URL: "http://127.0.0.2:8000", ATLAS_LOCAL_API_KEY: "runtime-key" },
       packageRoot
@@ -82,6 +86,7 @@ describe("loadConfig", () => {
       label: "Local Core",
       baseUrl: "http://127.0.0.2:8000"
     });
+    expect(sameRuntimeTarget.atlasTargets[0]?.apiKey).toBe("file-key");
     expect(withRuntimeKey.atlasTargets[0]?.apiKey).toBe("runtime-key");
   });
 
@@ -101,6 +106,13 @@ describe("loadConfig", () => {
       env: {
         ATLAS_SIM_ENABLE_DEPLOYED: "true",
         ATLAS_DEPLOYED_BASE_URL: "https://tenant-b.example.test"
+      },
+      packageRoot
+    });
+    const sameRuntimeTarget = loadConfig({
+      env: {
+        ATLAS_SIM_ENABLE_DEPLOYED: "true",
+        ATLAS_DEPLOYED_BASE_URL: "https://tenant-a.example.test/"
       },
       packageRoot
     });
@@ -124,6 +136,7 @@ describe("loadConfig", () => {
       label: "Deployed Core",
       baseUrl: "https://tenant-b.example.test"
     });
+    expect(sameRuntimeTarget.atlasTargets[1]?.apiKey).toBe("tenant-a-key");
     expect(withRuntimeKey.atlasTargets[1]?.apiKey).toBe("tenant-b-key");
   });
 
