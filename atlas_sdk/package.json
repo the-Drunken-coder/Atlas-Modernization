@@ -64,7 +64,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.8",
     "@types/node": "26.2.0",
-    "@vitest/browser": "4.1.10",
     "@vitest/browser-playwright": "4.1.10",
     "playwright": "1.62.1",
     "typescript": "^7.0.2",

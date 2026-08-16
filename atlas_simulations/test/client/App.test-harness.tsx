@@ -2,7 +2,6 @@ import { afterEach, beforeEach, vi } from "vitest";
 import {
   cleanupRun,
   loadHealth,
-  loadRun,
   loadRuns,
   loadScenarios,
   loadTargets,
@@ -123,7 +122,6 @@ beforeEach(() => {
   });
   vi.mocked(loadHealth).mockResolvedValue({ ok: true, status: jsonNumber(200), message: "ok" });
   vi.mocked(loadScenarios).mockResolvedValue([scenario]);
-  vi.mocked(loadRun).mockResolvedValue(cloneRun());
   vi.mocked(loadRuns).mockResolvedValue([]);
   vi.mocked(startRun).mockResolvedValue(cloneRun());
   vi.mocked(stopRun).mockResolvedValue(cloneRun({ status: "running" }));
