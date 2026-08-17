@@ -20,7 +20,7 @@ function selectScenarioForm(
   scenarios: ScenarioDescriptor[]
 ): ScenarioFormState {
   const scenario = scenarios.find((candidate) => candidate.id === scenarioId);
-  return scenario
+  return scenario && current.selectedId !== scenarioId
     ? { selectedId: scenarioId, inputs: defaultInputs(scenario), jsonInput: "" }
     : { ...current, selectedId: scenarioId };
 }

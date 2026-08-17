@@ -788,10 +788,8 @@ func TestComplexScenario(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		objectID := fmt.Sprintf("%s-capture-%d", prefix, i+1)
 		objectPayload := map[string]interface{}{
-			"object_id":    objectID,
-			"content_type": "image/jpeg",
-			"type":         "aerial-photo",
-			"size_bytes":   1024 * 1024 * (i + 1),
+			"object_id": objectID,
+			"type":      "aerial-photo",
 			"referenced_by": []map[string]interface{}{
 				{"entity_id": entityIDs[0]},
 				{"task_id": taskIDs[0]},
@@ -928,9 +926,8 @@ func createQueryTestTask(ctx context.Context, t *testing.T, client *APIClient, t
 func createQueryTestObject(ctx context.Context, t *testing.T, client *APIClient, objectID, entityID, taskID string) {
 	t.Helper()
 	objectPayload := map[string]interface{}{
-		"object_id":    objectID,
-		"content_type": "application/json",
-		"type":         "query-page-test",
+		"object_id": objectID,
+		"type":      "query-page-test",
 		"referenced_by": []map[string]interface{}{
 			{"entity_id": entityID},
 			{"task_id": taskID},

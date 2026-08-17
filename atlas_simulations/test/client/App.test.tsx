@@ -82,6 +82,8 @@ describe("App startup and forms", () => {
       })
     );
     await waitFor(() => expect(screen.getAllByText("running").length).toBeGreaterThan(0));
+    expect(assetCount).toHaveValue(3);
+    expect(jsonInput).toHaveValue('{"note":"ok"}');
     await waitFor(() => expect(eventSources).toHaveLength(1));
     expect(eventSources[0].url).toBe(`/api/runs/${encodeURIComponent(run.id)}/events`);
     const assertionEvent: RunEvent = {

@@ -92,9 +92,7 @@ func TestIfMatchPreconditionsForEntityTaskAndObject(t *testing.T) {
 	exerciseIfMatchResource(ctx, t, client, ifMatchResource{
 		createPath: "/objects",
 		createBody: map[string]interface{}{
-			"object_id":    objectID,
-			"content_type": "application/json",
-			"size_bytes":   1,
+			"object_id": objectID,
 		},
 		patchPath: "/objects/" + objectID,
 		matchBody: map[string]interface{}{
@@ -173,9 +171,7 @@ func TestIfMatchConcurrentConflict(t *testing.T) {
 			resource: ifMatchConcurrentResource{
 				createPath: "/objects",
 				createBody: map[string]interface{}{
-					"object_id":    objectID,
-					"content_type": "application/json",
-					"size_bytes":   1,
+					"object_id": objectID,
 				},
 				patchPath: "/objects/" + objectID,
 			},
