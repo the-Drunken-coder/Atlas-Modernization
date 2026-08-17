@@ -1335,10 +1335,6 @@
     "ObjectCreateRequest": {
       "additionalProperties": false,
       "properties": {
-        "content_type": {
-          "maxLength": 100,
-          "type": "string"
-        },
         "extra": {
           "additionalProperties": {
             "$ref": "#/$defs/JSONValue"
@@ -1350,20 +1346,11 @@
           "maxLength": 50,
           "type": "string"
         },
-        "path": {
-          "maxLength": 500,
-          "type": "string"
-        },
         "referenced_by": {
           "items": {
             "$ref": "#/$defs/ObjectReference"
           },
           "type": "array"
-        },
-        "size_bytes": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
         },
         "type": {
           "maxLength": 50,
@@ -1643,30 +1630,17 @@
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "content_type": {
-          "maxLength": 100,
-          "type": "string"
-        },
         "extra": {
           "additionalProperties": {
             "$ref": "#/$defs/JSONValue"
           },
           "type": "object"
         },
-        "path": {
-          "maxLength": 500,
-          "type": "string"
-        },
         "referenced_by": {
           "items": {
             "$ref": "#/$defs/ObjectReference"
           },
           "type": "array"
-        },
-        "size_bytes": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
         },
         "type": {
           "maxLength": 50,

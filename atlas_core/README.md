@@ -163,7 +163,6 @@ Key environment variables:
 
 - `SERVER_PORT` (default `8000`)
 - `LOG_LEVEL` (default `INFO`)
-- `DEBUG` (default `false`)
 - `DATABASE_URL` (default `postgres://atlas@localhost:5432/atlas_core`)
 - `DATABASE_RECREATE_ON_STARTUP` (default `false`; development Compose explicitly sets `true` for scratch resets, and the production image rejects `true`)
 - `DATABASE_POOL_SIZE` (default `5`)
@@ -203,7 +202,6 @@ Key environment variables:
 - `PATCH /entities/{entity_id}`
 - `DELETE /entities/{entity_id}`
 - `GET /entities/alias/{alias}`
-- `PATCH /entities/{entity_id}/telemetry`
 - `POST /entities/{entity_id}/checkin`
 - `GET /entities/{entity_id}/tasks`
 - `GET /entities/{entity_id}/objects`
@@ -231,6 +229,8 @@ Key environment variables:
 - `DELETE /objects/{object_id}`
 - `GET /objects/{object_id}/download`
 - `GET /objects/{object_id}/view`
+
+`POST /objects` and `PATCH /objects/{object_id}` manage descriptive metadata only. Blob facts (`path`, `content_type`, `size_bytes`, and `bucket`) are storage-owned and are set only by `POST /objects/upload`.
 
 ### Queries
 

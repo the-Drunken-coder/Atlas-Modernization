@@ -54,14 +54,6 @@ export function useRunSession(onScenarioSelected: (scenarioId: string) => void) 
   }, []);
 
   useEffect(() => {
-    runsRef.current = runs;
-  }, [runs]);
-
-  useEffect(() => {
-    currentRunIdRef.current = currentRun?.id;
-  }, [currentRun?.id]);
-
-  useEffect(() => {
     if (!hasRunningRuns && !hasCleanupInFlight) return;
     const interval = window.setInterval(() => void effectsRef.current.refreshRunsBestEffort(), ACTIVE_RUN_REFRESH_MS);
     return () => window.clearInterval(interval);

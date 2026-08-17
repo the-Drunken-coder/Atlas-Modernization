@@ -4,11 +4,36 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "../../src/client/App.js";
 import { cleanupRun, loadRuns, loadScenarios, startRun, stopRun } from "../../src/client/api.js";
 import { jsonNumber } from "../../src/shared/types.js";
-import { cloneRun, eventSources, run, scenario, syncScenario } from "./App.test-harness.js";
+import { cloneRun, deferred, eventSources, run, scenario, syncScenario } from "./App.test-harness.js";
 
 vi.mock("../../src/client/api.js");
 
 describe("App run lifecycle", () => {
+  it("preserves a run selection made before scenarios finish loading", async () => {
+    const user = userEvent.setup();
+    const loadedScenarios = deferred<Array<typeof scenario>>();
+    const syncRun = cloneRun({
+      id: "sim-early-selection",
+      scenarioId: syncScenario.id,
+      scenarioName: syncScenario.name,
+      status: "completed"
+    });
+    vi.mocked(loadScenarios).mockReturnValueOnce(loadedScenarios.promise);
+    vi.mocked(loadRuns).mockResolvedValue([syncRun]);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: syncRun.scenarioName }));
+    await act(async () => {
+      loadedScenarios.resolve([scenario, syncScenario]);
+      await loadedScenarios.promise;
+    });
+
+    expect(screen.getByRole("button", { name: /multi-client sync checks sync/i })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+  });
+
   it("keeps selected scenario and selected run synchronized", async () => {
     const user = userEvent.setup();
     const syncRun = cloneRun({

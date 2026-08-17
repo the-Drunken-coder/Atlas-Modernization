@@ -209,25 +209,25 @@
       "value": { "status": null }
     },
     {
-      "name": "object create accepts maximum safe size_bytes",
-      "definition": "ObjectCreateRequest",
-      "schema_valid": true,
-      "valid": true,
-      "value": { "object_id": "object-safe-size", "size_bytes": 9007199254740991 }
-    },
-    {
-      "name": "object create rejects unsafe size_bytes",
+      "name": "object create rejects a client-owned storage path",
       "definition": "ObjectCreateRequest",
       "schema_valid": false,
       "valid": false,
-      "value": { "object_id": "object-unsafe-size", "size_bytes": 9007199254740992 }
+      "value": { "object_id": "object-with-path", "path": "objects/object-with-path/1" }
     },
     {
-      "name": "object create rejects null content_type",
+      "name": "object create rejects client-owned size_bytes",
       "definition": "ObjectCreateRequest",
       "schema_valid": false,
       "valid": false,
-      "value": { "object_id": "object-null-content-type", "content_type": null }
+      "value": { "object_id": "object-with-size", "size_bytes": 1 }
+    },
+    {
+      "name": "object create rejects client-owned content_type",
+      "definition": "ObjectCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "object_id": "object-with-content-type", "content_type": "image/png" }
     },
     {
       "name": "object update rejects an empty patch",
@@ -237,18 +237,18 @@
       "value": {}
     },
     {
-      "name": "object update accepts zero size_bytes",
-      "definition": "ObjectUpdateRequest",
-      "schema_valid": true,
-      "valid": true,
-      "value": { "size_bytes": 0 }
-    },
-    {
-      "name": "object update rejects unsafe size_bytes",
+      "name": "object update rejects client-owned size_bytes",
       "definition": "ObjectUpdateRequest",
       "schema_valid": false,
       "valid": false,
-      "value": { "size_bytes": 9007199254740992 }
+      "value": { "size_bytes": 0 }
+    },
+    {
+      "name": "object update rejects a client-owned storage path",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "path": "objects/object-with-path/2" }
     },
     {
       "name": "entity check-in accepts an empty object",

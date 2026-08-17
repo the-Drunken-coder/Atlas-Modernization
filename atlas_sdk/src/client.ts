@@ -173,19 +173,12 @@ export class AtlasClient {
   readonly objects = {
     get: (id: string, options?: ReadOptions) => this.engine.readObject(id, options),
     create: async (object: ObjectCreateRequest) =>
-      this.engine.writeResource(
-        "POST",
-        "/objects",
-        validatedObjectRequest(object),
-        "object",
-        object.object_id,
-        isObjectDetailResource
-      ),
+      this.engine.writeResource("POST", "/objects", object, "object", object.object_id, isObjectDetailResource),
     update: async (id: string, patch: ObjectUpdateRequest, options?: { ifMatchVersion?: number }) =>
       this.engine.writeResource(
         "PATCH",
         `/objects/${encodeURIComponent(id)}`,
-        validatedObjectRequest(patch),
+        patch,
         "object",
         id,
         isObjectDetailResource,
@@ -383,11 +376,4 @@ function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
     return engine().checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion);
   }
   return checkIn;
-}
-
-function validatedObjectRequest<T extends ObjectCreateRequest | ObjectUpdateRequest>(request: T): T {
-  if (typeof request.size_bytes === "number" && !Number.isSafeInteger(request.size_bytes)) {
-    throw new TypeError("Atlas object request size_bytes must be a safe integer");
-  }
-  return request;
 }

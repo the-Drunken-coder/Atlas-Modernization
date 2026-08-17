@@ -105,7 +105,6 @@ func TestObjectJSONPatchReplacesSelectedExtraFields(t *testing.T) {
 			Extra:           map[string]interface{}{"name": "new"},
 			RemoveExtraKeys: []string{"name", "stale", "size_bytes"},
 		},
-		nil,
 	))
 	if err != nil {
 		t.Fatalf("patch object JSON: %v", err)

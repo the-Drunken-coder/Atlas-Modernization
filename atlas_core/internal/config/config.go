@@ -9,7 +9,6 @@ import (
 type Config struct {
 	// Server settings
 	ServerPort string
-	Debug      bool
 	LogLevel   string
 
 	// Database settings

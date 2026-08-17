@@ -1,5 +1,5 @@
 import { Play, Square, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ScenarioDescriptor } from "../shared/types.js";
 import { AssertionTable, LogList, ResourceTable, RunDetails, RunTable } from "./AppPanels.js";
 import { loadScenarios } from "./api.js";
@@ -8,13 +8,38 @@ import { SimulationTargetControls } from "./SimulationTargetControls.js";
 import { useRunSession } from "./use-run-session.js";
 import { useSimulationTarget } from "./use-simulation-target.js";
 
+function defaultInputs(scenario: ScenarioDescriptor): FieldValues {
+  return Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.defaultValue]));
+}
+
+type ScenarioFormState = { selectedId: string; inputs: FieldValues; jsonInput: string };
+
+function selectScenarioForm(
+  current: ScenarioFormState,
+  scenarioId: string,
+  scenarios: ScenarioDescriptor[]
+): ScenarioFormState {
+  const scenario = scenarios.find((candidate) => candidate.id === scenarioId);
+  return scenario
+    ? { selectedId: scenarioId, inputs: defaultInputs(scenario), jsonInput: "" }
+    : { ...current, selectedId: scenarioId };
+}
+
 export function App() {
   const [recoveryApiKeysByRunId, setRecoveryApiKeysByRunId] = useState<Record<string, string>>({});
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
-  const [inputs, setInputs] = useState<FieldValues>({});
-  const [jsonInput, setJsonInput] = useState("");
-  const runSession = useRunSession(setSelectedId);
+  const [scenarioForm, setScenarioForm] = useState<ScenarioFormState>({ selectedId: "", inputs: {}, jsonInput: "" });
+  const { selectedId, inputs, jsonInput } = scenarioForm;
+
+  function selectScenarioState(scenarioId: string, availableScenarios = scenarios) {
+    setScenarioForm((current) => selectScenarioForm(current, scenarioId, availableScenarios));
+  }
+
+  function setInput(name: string, value: FieldValues[string]) {
+    setScenarioForm((current) => ({ ...current, inputs: { ...current.inputs, [name]: value } }));
+  }
+
+  const runSession = useRunSession(selectScenarioState);
   const { currentRun, error, events, mutationPending, runs } = runSession;
   const target = useSimulationTarget({ clearError: runSession.clearError, reportError: runSession.reportError });
   const { selectedTarget, deployedMutationConfirmed, setDeployedMutationConfirmed, apiKeyForTarget } = target;
@@ -27,7 +52,7 @@ export function App() {
       .then((loaded) => {
         if (cancelled) return;
         setScenarios(loaded);
-        setSelectedId((current) => current || loaded[0]?.id || "");
+        setScenarioForm((current) => selectScenarioForm(current, current.selectedId || loaded[0]?.id || "", loaded));
       })
       .catch((errorValue) => {
         if (!cancelled) reportErrorRef.current(errorValue);
@@ -37,12 +62,7 @@ export function App() {
     };
   }, []);
 
-  const selected = useMemo(() => scenarios.find((scenario) => scenario.id === selectedId), [scenarios, selectedId]);
-  useEffect(() => {
-    if (!selected) return;
-    setInputs(Object.fromEntries(selected.inputFields.map((field) => [field.key, field.defaultValue])));
-    setJsonInput("");
-  }, [selected]);
+  const selected = scenarios.find((scenario) => scenario.id === selectedId);
 
   async function startSelectedRun() {
     if (!selected || !selectedTarget || mutationPending || (selectedTarget.deployed && !deployedMutationConfirmed))
@@ -61,7 +81,7 @@ export function App() {
   }
 
   function selectScenario(scenarioId: string) {
-    setSelectedId(scenarioId);
+    selectScenarioState(scenarioId);
     runSession.selectScenarioRun(scenarioId);
   }
 
@@ -163,7 +183,7 @@ export function App() {
                   <input
                     type="checkbox"
                     checked={Boolean(inputs[field.key])}
-                    onChange={(event) => setInputs((current) => ({ ...current, [field.key]: event.target.checked }))}
+                    onChange={(event) => setInput(field.key, event.target.checked)}
                   />
                 ) : field.type === "number" ? (
                   <input
@@ -173,23 +193,14 @@ export function App() {
                     max={field.max}
                     step={field.step}
                     onChange={(event) => {
-                      const rawValue = event.target.value;
-                      setInputs((current) => ({
-                        ...current,
-                        [field.key]: rawValue
-                      }));
+                      setInput(field.key, event.target.value);
                     }}
                   />
                 ) : field.type === "text" ? (
                   <input
                     type="text"
                     value={String(inputs[field.key] ?? "")}
-                    onChange={(event) =>
-                      setInputs((current) => ({
-                        ...current,
-                        [field.key]: event.target.value
-                      }))
-                    }
+                    onChange={(event) => setInput(field.key, event.target.value)}
                   />
                 ) : null}
               </label>
@@ -199,7 +210,11 @@ export function App() {
           {selected?.acceptsJson ? (
             <label className="json-field">
               <span>JSON input</span>
-              <textarea value={jsonInput} onChange={(event) => setJsonInput(event.target.value)} spellCheck={false} />
+              <textarea
+                value={jsonInput}
+                onChange={(event) => setScenarioForm((current) => ({ ...current, jsonInput: event.target.value }))}
+                spellCheck={false}
+              />
             </label>
           ) : null}
         </section>

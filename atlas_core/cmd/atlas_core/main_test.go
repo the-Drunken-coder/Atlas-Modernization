@@ -142,6 +142,10 @@ func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) 
 	if !opts.AllowCredentials {
 		t.Fatal("expected CORS AllowCredentials to be true")
 	}
+	wantMethods := []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"}
+	if !slices.Equal(opts.AllowedMethods, wantMethods) {
+		t.Fatalf("AllowedMethods = %#v, want %#v", opts.AllowedMethods, wantMethods)
+	}
 	if opts.AllowOriginFunc == nil {
 		t.Fatal("expected CORS AllowOriginFunc to be configured")
 	}

@@ -434,22 +434,6 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			validate: ValidateObjectCreateRequest,
 		},
 		{
-			name:  "object path",
-			limit: 500,
-			request: func(value string) any {
-				return map[string]any{"object_id": "object-1", "path": value}
-			},
-			validate: ValidateObjectCreateRequest,
-		},
-		{
-			name:  "object content type",
-			limit: 100,
-			request: func(value string) any {
-				return map[string]any{"object_id": "object-1", "content_type": value}
-			},
-			validate: ValidateObjectCreateRequest,
-		},
-		{
 			name:  "object type",
 			limit: 50,
 			request: func(value string) any {
@@ -528,14 +512,12 @@ func TestObjectSizeBytesUsesJavaScriptSafeIntegerRange(t *testing.T) {
 		validate func(any) []string
 	}{
 		{name: "blob", value: func(size int64) any { return map[string]any{"size_bytes": size} }, validate: ValidateObjectBlob},
-		{name: "create", value: func(size int64) any { return map[string]any{"object_id": "object-1", "size_bytes": size} }, validate: ValidateObjectCreateRequest},
 		{name: "resource", value: func(size int64) any {
 			return map[string]any{"object_id": "object-1", "path": nil, "content_type": nil, "type": nil, "bucket": nil, "size_bytes": size, "usage_hints": []any{}, "referenced_by": []any{}, "metadata": metadata}
 		}, validate: ValidateObjectResource},
 		{name: "detail", value: func(size int64) any {
 			return map[string]any{"object_id": "object-1", "path": nil, "content_type": nil, "type": nil, "bucket": nil, "size_bytes": size, "usage_hints": []any{}, "referenced_by": []any{}, "metadata": metadata, "extra": map[string]any{}}
 		}, validate: ValidateObjectDetailResource},
-		{name: "update", value: func(size int64) any { return map[string]any{"size_bytes": size} }, validate: ValidateObjectUpdateRequest},
 	}
 
 	for _, tt := range tests {

@@ -10,7 +10,6 @@ import (
 
 // SettingsFile represents the atlas_core.settings.json file structure.
 type SettingsFile struct {
-	Debug               bool     `json:"debug"`
 	LogLevel            string   `json:"log_level"`
 	CORSOrigins         []string `json:"cors_origins"`
 	CORSOriginPatterns  []string `json:"cors_origin_patterns"`
@@ -65,9 +64,6 @@ func readSettingsFile() ([]byte, error) {
 func (s SettingsFile) applyTo(c *Config) {
 	if _, ok := os.LookupEnv("LOG_LEVEL"); !ok && s.LogLevel != "" {
 		c.LogLevel = s.LogLevel
-	}
-	if _, ok := os.LookupEnv("DEBUG"); !ok {
-		c.Debug = s.Debug
 	}
 	if s.hasCORSAllowlist() {
 		s.applyCORSAllowlist(c)

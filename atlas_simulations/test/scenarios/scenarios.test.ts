@@ -184,7 +184,7 @@ describe("v1 scenarios", () => {
           )
         )
       ).toBe(true);
-      expect(dataset.objects.map((object) => object.size_bytes).sort()).toEqual([256, 257, 258]);
+      expect(dataset.objects.every((object) => object.size_bytes === null && object.path === null)).toBe(true);
     } finally {
       vi.useRealTimers();
     }

@@ -1,3 +1,4 @@
+import { AtlasAPIError } from "@the-drunken-coder/atlas-sdk";
 import { type AdminAPIKey, type AdminCreatedAPIKey, AtlasAdminClient } from "@the-drunken-coder/atlas-sdk/admin";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { sanitizeConnectionError } from "../../atlas/connection-error.js";
@@ -39,7 +40,7 @@ export function APIKeysPanel() {
       .catch((cause) => {
         if (!cancelled) {
           handleAdminError(cause);
-          setError(errorMessage(cause));
+          setError(sanitizeConnectionError(cause));
           setLoadState("error");
         }
       });
@@ -63,7 +64,7 @@ export function APIKeysPanel() {
       setLoadState("ready");
     } catch (cause) {
       handleAdminError(cause);
-      setError(errorMessage(cause));
+      setError(sanitizeConnectionError(cause));
     } finally {
       setSubmitting(false);
     }
@@ -92,7 +93,7 @@ export function APIKeysPanel() {
       if (generated?.id === key.id) setGenerated(undefined);
     } catch (cause) {
       handleAdminError(cause);
-      setError(errorMessage(cause));
+      setError(sanitizeConnectionError(cause));
     } finally {
       setRevoking(undefined);
     }
@@ -157,13 +158,9 @@ export function APIKeysPanel() {
 }
 
 function handleAdminError(error: unknown) {
-  if (typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401) {
+  if (error instanceof AtlasAPIError && error.status === 401) {
     window.dispatchEvent(new Event("atlas-auth-expired"));
   }
-}
-
-function errorMessage(error: unknown): string {
-  return sanitizeConnectionError(error);
 }
 
 function formatCreatedAt(value: string): string {
