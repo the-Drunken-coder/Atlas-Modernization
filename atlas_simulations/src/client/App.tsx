@@ -12,7 +12,12 @@ function defaultInputs(scenario: ScenarioDescriptor): FieldValues {
   return Object.fromEntries(scenario.inputFields.map((field) => [field.key, field.defaultValue]));
 }
 
-type ScenarioFormState = { selectedId: string; inputs: FieldValues; jsonInput: string };
+type ScenarioFormState = {
+  selectedId: string;
+  initializedScenarioId: string;
+  inputs: FieldValues;
+  jsonInput: string;
+};
 
 function selectScenarioForm(
   current: ScenarioFormState,
@@ -20,15 +25,20 @@ function selectScenarioForm(
   scenarios: ScenarioDescriptor[]
 ): ScenarioFormState {
   const scenario = scenarios.find((candidate) => candidate.id === scenarioId);
-  return scenario && current.selectedId !== scenarioId
-    ? { selectedId: scenarioId, inputs: defaultInputs(scenario), jsonInput: "" }
+  return scenario && current.initializedScenarioId !== scenarioId
+    ? { selectedId: scenarioId, initializedScenarioId: scenarioId, inputs: defaultInputs(scenario), jsonInput: "" }
     : { ...current, selectedId: scenarioId };
 }
 
 export function App() {
   const [recoveryApiKeysByRunId, setRecoveryApiKeysByRunId] = useState<Record<string, string>>({});
   const [scenarios, setScenarios] = useState<ScenarioDescriptor[]>([]);
-  const [scenarioForm, setScenarioForm] = useState<ScenarioFormState>({ selectedId: "", inputs: {}, jsonInput: "" });
+  const [scenarioForm, setScenarioForm] = useState<ScenarioFormState>({
+    selectedId: "",
+    initializedScenarioId: "",
+    inputs: {},
+    jsonInput: ""
+  });
   const { selectedId, inputs, jsonInput } = scenarioForm;
 
   function selectScenarioState(scenarioId: string, availableScenarios = scenarios) {

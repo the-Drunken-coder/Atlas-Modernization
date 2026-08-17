@@ -12,6 +12,18 @@ describe("App run lifecycle", () => {
   it("preserves a run selection made before scenarios finish loading", async () => {
     const user = userEvent.setup();
     const loadedScenarios = deferred<Array<typeof scenario>>();
+    const selectedScenario: typeof scenario = {
+      ...syncScenario,
+      acceptsJson: true,
+      inputFields: [
+        {
+          key: "attempts",
+          label: "Attempts",
+          type: "number",
+          defaultValue: jsonNumber(3)
+        }
+      ]
+    };
     const syncRun = cloneRun({
       id: "sim-early-selection",
       scenarioId: syncScenario.id,
@@ -24,7 +36,7 @@ describe("App run lifecycle", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: syncRun.scenarioName }));
     await act(async () => {
-      loadedScenarios.resolve([scenario, syncScenario]);
+      loadedScenarios.resolve([scenario, selectedScenario]);
       await loadedScenarios.promise;
     });
 
@@ -32,6 +44,7 @@ describe("App run lifecycle", () => {
       "aria-pressed",
       "true"
     );
+    expect(screen.getByLabelText("Attempts")).toHaveValue(3);
   });
 
   it("keeps selected scenario and selected run synchronized", async () => {
