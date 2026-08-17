@@ -198,7 +198,7 @@ func TestReconcileStorageDeletionPreservesPathThatBecameLive(t *testing.T) {
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	createStoredObjectFixture(t, ctx, pool, objectID, path)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_deletion_outbox (bucket, path, object_id)
 		VALUES ('atlas-media', $1, $2)

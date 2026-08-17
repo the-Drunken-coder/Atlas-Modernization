@@ -73,7 +73,7 @@ func TestDecodeObjectJSONForPatchRejectsTrailingData(t *testing.T) {
 	}
 }
 
-func createStoredObjectFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, objectID, path string) int64 {
+func createStoredObjectFixture(ctx context.Context, t *testing.T, pool *pgxpool.Pool, objectID, path string) int64 {
 	t.Helper()
 	object, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID})
 	if err != nil {
@@ -217,7 +217,7 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
-	beforeVersion := createStoredObjectFixture(t, ctx, pool, objectID, objectPath)
+	beforeVersion := createStoredObjectFixture(ctx, t, pool, objectID, objectPath)
 
 	storageClient := newPausingDeleteObjectStorage()
 	defer storageClient.releaseDelete()
@@ -443,7 +443,7 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	sizeBytes := int64(3)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	createStoredObjectFixture(t, ctx, pool, objectID, initialPath)
+	createStoredObjectFixture(ctx, t, pool, objectID, initialPath)
 
 	uploadErr := make(chan error, 1)
 	go func() {

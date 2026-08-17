@@ -59,7 +59,7 @@ func TestUploadCrashLeavesRecoverableIntentForNewAndReplacementBlobs(t *testing.
 			defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
 			if replacement {
-				createStoredObjectFixture(t, ctx, pool, objectID, oldPath)
+				createStoredObjectFixture(ctx, t, pool, objectID, oldPath)
 			}
 
 			// #nosec G204 G702 -- os.Args[0] is the current test binary, not external input.
@@ -521,7 +521,7 @@ func TestReconcileStorageUploadIntentPreservesLiveBlob(t *testing.T) {
 	path := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	createStoredObjectFixture(t, ctx, pool, objectID, path)
+	createStoredObjectFixture(ctx, t, pool, objectID, path)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO storage_upload_intents
 			(bucket, path, object_id, owner_id, expires_at, orphaned_at)
@@ -607,7 +607,7 @@ func TestUploadDoesNotResurrectObjectCreatedAndDeletedAfterMissingPreflight(t *t
 	}()
 	uploadedPath := storageClient.waitForUploadStart(t)
 
-	createStoredObjectFixture(t, ctx, pool, objectID, initialPath)
+	createStoredObjectFixture(ctx, t, pool, objectID, initialPath)
 	if err := actions.Delete(ctx, objectID); err != nil {
 		t.Fatalf("delete object after missing preflight: %v", err)
 	}
