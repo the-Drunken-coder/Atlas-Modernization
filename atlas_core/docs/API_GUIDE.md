@@ -405,9 +405,6 @@ Metadata create body:
 ```json
 {
   "object_id": "object-1",
-  "path": "objects/object-1/blob",
-  "size_bytes": 1234,
-  "content_type": "application/json",
   "type": "heatmap",
   "usage_hints": ["heatmap_data"],
   "referenced_by": [{ "entity_id": "asset-1" }],
@@ -417,13 +414,14 @@ Metadata create body:
 }
 ```
 
-Do not send `bucket` in create or patch requests; the server owns that field and rejects client-supplied values.
+`POST /objects` and `PATCH /objects/{object_id}` manage descriptive metadata only.
+Do not send `path`, `content_type`, `size_bytes`, or `bucket`; Atlas Core sets
+those blob facts when the object is uploaded.
 
 Metadata patch body:
 
 ```json
 {
-  "content_type": "application/json",
   "type": "mission_report",
   "usage_hints": ["report"],
   "referenced_by": [{ "task_id": "task-1" }],
