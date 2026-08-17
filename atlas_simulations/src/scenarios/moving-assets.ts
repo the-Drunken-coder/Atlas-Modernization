@@ -149,9 +149,7 @@ const movingAssets: Scenario = {
     ctx.assert(
       "Telemetry persisted",
       persistedAssets.length === assetCount &&
-        persistedAssets.every(
-          (asset) => (asset.components.telemetry as { speed_m_s?: number } | undefined)?.speed_m_s === finalSpeed
-        ),
+        persistedAssets.every((asset) => asset.components.telemetry?.speed_m_s === finalSpeed),
       `expected final speed ${finalSpeed}`
     );
   }
