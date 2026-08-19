@@ -1,4 +1,4 @@
-import type maplibregl from "maplibre-gl";
+import type * as maplibregl from "maplibre-gl";
 import type { Map as MlMap } from "maplibre-gl";
 import { displayGeometry } from "../../../atlas/geometry.js";
 import type { MapEditing } from "./map-editing.js";

@@ -1,4 +1,4 @@
-import type maplibregl from "maplibre-gl";
+import type * as maplibregl from "maplibre-gl";
 import type { Map as MlMap } from "maplibre-gl";
 import {
   addVertexAfter,

@@ -1,42 +1,32 @@
-import { maplibreCssUrl, maplibreScriptUrl } from "../../runtime-asset-urls.js";
+import { maplibreCssUrl } from "../../runtime-asset-urls.js";
 
 export type MapLibreRuntime = typeof import("maplibre-gl");
 
-type MapLibreGlobal = typeof globalThis & { maplibregl?: MapLibreRuntime };
 type MapLibreStylesheet = HTMLLinkElement;
 
+let runtime: MapLibreRuntime | undefined;
 let runtimePromise: Promise<MapLibreRuntime> | undefined;
 
 export function getMapLibreRuntime(): MapLibreRuntime | undefined {
-  const global = globalThis as MapLibreGlobal;
-  return global.maplibregl && hasReadyStylesheet() ? global.maplibregl : undefined;
+  return runtime && hasReadyStylesheet() ? runtime : undefined;
 }
 
 export function loadMapLibre(): Promise<MapLibreRuntime> {
-  const global = globalThis as MapLibreGlobal;
-  if (global.maplibregl && hasReadyStylesheet()) return Promise.resolve(global.maplibregl);
+  if (runtime && hasReadyStylesheet()) return Promise.resolve(runtime);
   if (runtimePromise !== undefined) return runtimePromise;
-  runtimePromise = loadRuntime(global).catch((error: unknown) => {
+  runtimePromise = loadRuntime().catch((error: unknown) => {
     runtimePromise = undefined;
     throw error;
   });
   return runtimePromise;
 }
 
-function loadRuntime(global: MapLibreGlobal): Promise<MapLibreRuntime> {
+function loadRuntime(): Promise<MapLibreRuntime> {
   const stylesheet = getOrCreateStylesheet();
-  let script: HTMLScriptElement | undefined;
-  const stylesheetPromise = loadStylesheet(stylesheet);
-  const scriptPromise = loadScript(global, (loadedScript) => {
-    script = loadedScript;
+  return Promise.all([loadStylesheet(stylesheet), import("maplibre-gl")]).then(([, loadedRuntime]) => {
+    runtime = loadedRuntime;
+    return loadedRuntime;
   });
-
-  return Promise.all([stylesheetPromise, scriptPromise])
-    .then(([, runtime]) => runtime)
-    .catch((error: unknown) => {
-      if (stylesheet.dataset.atlasMaplibreStyleState === "failed") script?.remove();
-      throw error;
-    });
 }
 
 function hasReadyStylesheet(): boolean {
@@ -89,36 +79,5 @@ function loadStylesheet(stylesheet: MapLibreStylesheet): Promise<void> {
       },
       { once: true }
     );
-  });
-}
-
-function loadScript(global: MapLibreGlobal, setScript: (script: HTMLScriptElement) => void): Promise<MapLibreRuntime> {
-  if (global.maplibregl) return Promise.resolve(global.maplibregl);
-
-  const existingScript = document.querySelector<HTMLScriptElement>("script[data-atlas-maplibre]");
-  const script = existingScript ?? document.createElement("script");
-  setScript(script);
-
-  return new Promise<MapLibreRuntime>((resolve, reject) => {
-    const fail = () => {
-      script.remove();
-      reject(new Error("MapLibre runtime failed to load"));
-    };
-    const finish = () => {
-      if (global.maplibregl) {
-        resolve(global.maplibregl);
-      } else {
-        script.remove();
-        reject(new Error("MapLibre runtime did not initialize"));
-      }
-    };
-
-    script.addEventListener("load", finish, { once: true });
-    script.addEventListener("error", fail, { once: true });
-    if (!existingScript) {
-      script.src = maplibreScriptUrl;
-      script.dataset.atlasMaplibre = "true";
-      document.head.append(script);
-    }
   });
 }
