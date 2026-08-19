@@ -15,14 +15,14 @@ export {
   ProtocolMismatchError,
   type ReadOptions,
   type ResourceForSubscription,
+  type RuntimeContextOptions,
   type SyncSnapshot,
   type SyncSnapshotCallback,
   type SyncStatus,
+  type TaskCancelOptions,
   type TaskCompleteOptions,
-  type TaskFailOptions,
-  type TaskLifecycleOptions,
-  type TaskStatus,
-  type TaskStatusOptions
+  type TaskCreateOptions,
+  type TaskFailOptions
 } from "./client.js";
 export { type ErrorMessageSanitizerOptions, sanitizeErrorMessage } from "./error-sanitizer.js";
 export type {
@@ -30,10 +30,11 @@ export type {
   Classification,
   CommandCatalog,
   CommandDefinition,
-  CommandParameterSchema,
+  CommandManifest,
+  CommandManifestEntry,
+  CommandScheduling,
   EntityCheckInFullResponse,
   EntityCheckInMinimalResponse,
-  EntityCheckInMinimalTask,
   EntityCheckInRequest,
   EntityCheckInResponse,
   EntityComponents,
@@ -58,17 +59,30 @@ export type {
   ObjectUpdateRequest,
   ProtocolRevisionResponse,
   ResourceType,
+  RuntimeReadyRequest,
+  RuntimeRegistrationRequest,
+  RuntimeTaskDeliveryResponse,
+  TaskAcknowledgeRequest,
+  TaskCancellation,
+  TaskCancellationCode,
+  TaskCancelRequest,
+  TaskCompleteRequest,
   TaskCreateRequest,
+  TaskFailRequest,
+  TaskFailure,
+  TaskFailureCode,
+  TaskProgressRequest,
   TaskResource,
-  TaskUpdateRequest
+  TaskStartRequest,
+  TaskStatus
 } from "./protocol.js";
 export {
   ATLAS_PROTOCOL_REVISION,
   isChangedSinceResponse,
   isCommandCatalog,
+  isCommandManifest,
   isEntityCheckInFullResponse,
   isEntityCheckInMinimalResponse,
-  isEntityCheckInMinimalTask,
   isEntityCheckInRequest,
   isEntityCheckInResponse,
   isEntityCreateRequest,
@@ -79,8 +93,16 @@ export {
   isObjectUpdateRequest,
   isProtocolRevisionResponse,
   isResourceType,
+  isRuntimeReadyRequest,
+  isRuntimeRegistrationRequest,
+  isRuntimeTaskDeliveryResponse,
+  isTaskAcknowledgeRequest,
+  isTaskCancelRequest,
+  isTaskCompleteRequest,
   isTaskCreateRequest,
-  isTaskUpdateRequest,
+  isTaskFailRequest,
+  isTaskProgressRequest,
+  isTaskStartRequest,
   RESOURCE_TYPE_VALUES
 } from "./protocol.js";
 export { joinAtlasUrl, normalizeAtlasBaseUrl } from "./url.js";

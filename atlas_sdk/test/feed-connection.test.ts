@@ -43,7 +43,7 @@ describe("AtlasClient feed connection", () => {
     expect(connected).toBe(true);
 
     const ignoredEntity = { ...entity("post-barrier-entity"), metadata: metadata(1) };
-    const deliveredTask = { ...task("post-barrier-task", "asset-1"), metadata: metadata(2) };
+    const deliveredTask = task("post-barrier-task", "asset-1");
     core.emit(
       {
         event: "update",

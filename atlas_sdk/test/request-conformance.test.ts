@@ -7,8 +7,15 @@ import {
   isEntityUpdateRequest,
   isObjectCreateRequest,
   isObjectUpdateRequest,
+  isRuntimeReadyRequest,
+  isRuntimeRegistrationRequest,
+  isTaskAcknowledgeRequest,
+  isTaskCancelRequest,
+  isTaskCompleteRequest,
   isTaskCreateRequest,
-  isTaskUpdateRequest
+  isTaskFailRequest,
+  isTaskProgressRequest,
+  isTaskStartRequest
 } from "../src";
 import { isObjectDetailResource, isObjectResource } from "../src/protocol.js";
 
@@ -18,8 +25,15 @@ const validators = {
   EntityUpdateRequest: isEntityUpdateRequest,
   ObjectCreateRequest: isObjectCreateRequest,
   ObjectUpdateRequest: isObjectUpdateRequest,
+  RuntimeReadyRequest: isRuntimeReadyRequest,
+  RuntimeRegistrationRequest: isRuntimeRegistrationRequest,
+  TaskAcknowledgeRequest: isTaskAcknowledgeRequest,
+  TaskCancelRequest: isTaskCancelRequest,
+  TaskCompleteRequest: isTaskCompleteRequest,
   TaskCreateRequest: isTaskCreateRequest,
-  TaskUpdateRequest: isTaskUpdateRequest
+  TaskFailRequest: isTaskFailRequest,
+  TaskProgressRequest: isTaskProgressRequest,
+  TaskStartRequest: isTaskStartRequest
 } as const;
 
 describe("generated request validator conformance", () => {

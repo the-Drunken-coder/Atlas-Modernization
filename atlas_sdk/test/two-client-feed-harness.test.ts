@@ -5,12 +5,11 @@ import type {
   EntityResource,
   ObjectDetailResource,
   ObjectResource,
-  ResourceType,
-  TaskResource
+  ResourceType
 } from "../src";
 import { createTwoClientFeedHarness, type TwoClientFeedHarness } from "./support/two-client-feed-harness.js";
 
-type ResourceValue = EntityResource | TaskResource | ObjectResource;
+type ResourceValue = EntityResource | ObjectResource;
 type UpsertCase<TResource extends ResourceValue> = {
   name: string;
   resource_type: ResourceType;
@@ -104,39 +103,53 @@ describe("two-client feed harness", () => {
     });
   }
 
-  it("delivers writer task lifecycle updates to a receiving SDK within one second", async () => {
+  it("delivers writer Task creation and lifecycle updates to a receiving SDK within one second", async () => {
     const { core, writer, receiver, stop } = createTwoClientFeedHarness();
-    const taskID = "task-two-client-lifecycle-feed";
     const watch = vi.fn();
-    receiver.tasks.watch(taskID, watch);
+    receiver.watch({ filter: "type", resource_type: "task" }, watch);
 
     try {
       await receiver.sync.start();
-      await writer.tasks.create({ task_id: taskID, status: "pending" });
-      await vi.waitFor(() => expect(watch).toHaveBeenCalled(), { timeout: 1_000 });
+      const created = await writer.tasks.create(
+        { asset_id: "asset-two-client-feed", command: "fixture.queued", input: {} },
+        { idempotencyKey: "two-client-create" }
+      );
+      const createVersion = core.version;
+      await vi.waitFor(
+        () => {
+          expect(watch).toHaveBeenCalledWith(
+            created,
+            expect.objectContaining({ event: "create", id: created.task_id, version: createVersion })
+          );
+        },
+        { timeout: 1_000 }
+      );
       watch.mockClear();
       core.requests = [];
 
-      const acknowledged = await writer.tasks.acknowledge(taskID);
+      const acknowledged = await writer.tasks.acknowledge(created.task_id, { runtimeId: "runtime-1" });
+      const acknowledgeVersion = core.version;
 
-      await expectWatch(watch, acknowledged, {
-        event: "update",
-        id: taskID,
-        resource_type: "task",
-        version: acknowledged.metadata.version
-      });
-      const taskReads = core.requests.filter((request) => request === `/tasks/${taskID}`).length;
-      await expect(receiver.tasks.get(taskID)).resolves.toEqual(acknowledged);
-      expect(core.requests.filter((request) => request === `/tasks/${taskID}`)).toHaveLength(taskReads);
+      await vi.waitFor(
+        () => {
+          expect(watch).toHaveBeenCalledWith(
+            acknowledged,
+            expect.objectContaining({ event: "update", id: created.task_id, version: acknowledgeVersion })
+          );
+        },
+        { timeout: 1_000 }
+      );
+      const path = `/tasks/${created.task_id}`;
+      const taskReads = core.requests.filter((request) => request === path).length;
+      await expect(receiver.tasks.get(created.task_id)).resolves.toEqual(acknowledged);
+      expect(core.requests.filter((request) => request === path)).toHaveLength(taskReads);
     } finally {
       stop();
     }
   });
 });
 
-function upsertCases(): Array<
-  UpsertCase<EntityResource> | UpsertCase<TaskResource> | UpsertCase<ObjectDetailResource>
-> {
+function upsertCases(): Array<UpsertCase<EntityResource> | UpsertCase<ObjectDetailResource>> {
   return [
     {
       name: "entity",
@@ -153,20 +166,6 @@ function upsertCases(): Array<
         expect(core.requests.filter((request) => request === "/entities/asset-two-client-feed")).toHaveLength(
           entityReads
         );
-      }
-    },
-    {
-      name: "task",
-      resource_type: "task",
-      id: "task-two-client-feed",
-      watch: (receiver, callback) => receiver.tasks.watch("task-two-client-feed", callback),
-      create: (writer) => writer.tasks.create({ task_id: "task-two-client-feed", status: "pending" }),
-      update: (writer) => writer.tasks.update("task-two-client-feed", { status: "acknowledged" }),
-      expectedFeedResource: (value) => value,
-      assertRead: async ({ core, receiver }, value) => {
-        const taskReads = core.requests.filter((request) => request === "/tasks/task-two-client-feed").length;
-        await expect(receiver.tasks.get("task-two-client-feed")).resolves.toEqual(value);
-        expect(core.requests.filter((request) => request === "/tasks/task-two-client-feed")).toHaveLength(taskReads);
       }
     },
     {
@@ -205,8 +204,6 @@ async function expectWatch(
 async function deleteResource(writer: AtlasClient, type: ResourceType, id: string): Promise<void> {
   if (type === "entity") {
     await writer.entities.delete(id);
-  } else if (type === "task") {
-    await writer.tasks.delete(id);
   } else {
     await writer.objects.delete(id);
   }

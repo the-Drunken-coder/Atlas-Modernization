@@ -13,9 +13,11 @@ import type {
   ObjectCreateRequest,
   ObjectResource,
   ObjectUpdateRequest,
+  RuntimeReadyRequest,
+  RuntimeRegistrationRequest,
   TaskCreateRequest,
-  TaskResource,
-  TaskUpdateRequest
+  TaskProgressRequest,
+  TaskResource
 } from "./protocol.js";
 import { SyncEngine } from "./sync-engine.js";
 import type {
@@ -27,14 +29,14 @@ import type {
   FullDatasetQueryOptions,
   ReadOptions,
   ResourceForSubscription,
+  RuntimeContextOptions,
   SyncSnapshot,
   SyncSnapshotCallback,
   SyncStatus,
+  TaskCancelOptions,
   TaskCompleteOptions,
+  TaskCreateOptions,
   TaskFailOptions,
-  TaskLifecycleOptions,
-  TaskStatus,
-  TaskStatusOptions,
   WatchCallback,
   WebSocketCtor
 } from "./types.js";
@@ -45,7 +47,7 @@ import {
   isEntityResource,
   isFullDatasetResponse,
   isObjectDetailResource,
-  isTaskResource
+  isRuntimeTaskDeliveryResponse
 } from "./validation.js";
 
 export { ProtocolMismatchError } from "./feed-connection.js";
@@ -54,7 +56,6 @@ export type {
   ChangedSinceResponse,
   EntityCheckInFullResponse,
   EntityCheckInMinimalResponse,
-  EntityCheckInMinimalTask,
   EntityCheckInRequest,
   EntityCheckInResponse,
   FullDatasetResponse,
@@ -72,14 +73,14 @@ export type {
   FullDatasetQueryOptions,
   ReadOptions,
   ResourceForSubscription,
+  RuntimeContextOptions,
   SyncSnapshot,
   SyncSnapshotCallback,
   SyncStatus,
+  TaskCancelOptions,
   TaskCompleteOptions,
-  TaskFailOptions,
-  TaskLifecycleOptions,
-  TaskStatus,
-  TaskStatusOptions
+  TaskCreateOptions,
+  TaskFailOptions
 } from "./types.js";
 
 export type AtlasClientOptions = {
@@ -120,54 +121,94 @@ export class AtlasClient {
 
   readonly tasks = {
     get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
-    create: (task: TaskCreateRequest, options?: { signal?: AbortSignal }) =>
-      this.engine.writeResource(
+    create: (task: TaskCreateRequest, options: TaskCreateOptions) =>
+      this.engine.writeTask(
         "POST",
         "/tasks",
         task,
-        "task",
-        "task_id" in task ? task.task_id : undefined,
-        isTaskResource,
+        { "Idempotency-Key": requireOpaqueHeader("idempotencyKey", options.idempotencyKey) },
+        options.signal,
+        "create"
+      ),
+    acknowledge: (id: string, options: RuntimeContextOptions) =>
+      this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/acknowledge`,
+        {},
+        runtimeHeaders(options.runtimeId),
+        options.signal
+      ),
+    start: (id: string, options: RuntimeContextOptions) =>
+      this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/start`,
+        {},
+        runtimeHeaders(options.runtimeId),
+        options.signal
+      ),
+    progress: (id: string, request: TaskProgressRequest, options: RuntimeContextOptions) =>
+      this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/progress`,
+        request,
+        runtimeHeaders(options.runtimeId),
+        options.signal
+      ),
+    complete: (id: string, options: TaskCompleteOptions) =>
+      this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/complete`,
+        options.output === undefined ? {} : { output: options.output },
+        runtimeHeaders(options.runtimeId),
+        options.signal
+      ),
+    fail: (id: string, options: TaskFailOptions) =>
+      this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/fail`,
+        { failure: options.failure },
+        runtimeHeaders(options.runtimeId),
+        options.signal
+      ),
+    cancel: (id: string, options: TaskCancelOptions) =>
+      this.engine.writeTask(
+        "POST",
+        `/tasks/${encodeURIComponent(id)}/cancel`,
+        { cancellation: options.cancellation },
         undefined,
+        options.signal
+      ),
+    watch: (id: string, callback: WatchCallback<TaskResource>) =>
+      this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
+  };
+
+  readonly runtime = {
+    begin: (assetId: string, request: RuntimeRegistrationRequest, options?: { signal?: AbortSignal }) =>
+      this.transport.empty(
+        "POST",
+        `/entities/${encodeURIComponent(assetId)}/runtime`,
+        request,
         undefined,
         options?.signal
       ),
-    update: (id: string, patch: TaskUpdateRequest, options?: { ifMatchVersion?: number }) =>
-      this.engine.writeResource(
-        "PATCH",
-        `/tasks/${encodeURIComponent(id)}`,
-        patch,
-        "task",
-        id,
-        isTaskResource,
-        options?.ifMatchVersion
+    ready: (assetId: string, request: RuntimeReadyRequest, options?: { signal?: AbortSignal }) =>
+      this.transport.empty(
+        "POST",
+        `/entities/${encodeURIComponent(assetId)}/runtime/ready`,
+        request,
+        undefined,
+        options?.signal
       ),
-    delete: (id: string) => this.engine.deleteResource("task", id, `/tasks/${encodeURIComponent(id)}`),
-    acknowledge: (id: string, options?: TaskLifecycleOptions) =>
-      this.tasks.update(id, { status: "acknowledged" }, options),
-    complete: (id: string, options?: TaskCompleteOptions) =>
-      this.tasks.update(
-        id,
-        {
-          status: "completed",
-          ...(options?.result === undefined ? {} : { extra: { result: options.result } })
-        },
-        options
-      ),
-    fail: (id: string, options?: TaskFailOptions) =>
-      this.tasks.update(
-        id,
-        {
-          status: "failed",
-          ...(options?.error === undefined ? {} : { extra: { error: options.error } })
-        },
-        options
-      ),
-    setStatus: (id: string, status: TaskStatus, options?: TaskStatusOptions) =>
-      this.tasks.update(id, taskStatusPatch(status, options), options),
-    cancel: (id: string, options?: TaskLifecycleOptions) => this.tasks.setStatus(id, "cancelled", options),
-    watch: (id: string, callback: WatchCallback<TaskResource>) =>
-      this.engine.watch({ filter: "id", resource_type: "task", id }, callback)
+    tasks: (assetId: string, options: RuntimeContextOptions) =>
+      this.transport.json(
+        "GET",
+        `/entities/${encodeURIComponent(assetId)}/runtime/tasks`,
+        isRuntimeTaskDeliveryResponse,
+        undefined,
+        undefined,
+        options.signal,
+        runtimeHeaders(options.runtimeId)
+      )
   };
 
   readonly objects = {
@@ -297,22 +338,6 @@ export class AtlasClient {
   }
 }
 
-type TaskStatusComponents = {
-  progress?: { percent: number };
-  status_message?: string;
-};
-
-function taskStatusPatch(status: TaskStatus, options?: TaskStatusOptions): TaskUpdateRequest {
-  const components: TaskStatusComponents = {
-    ...(options?.progress === undefined ? {} : { progress: { percent: options.progress } }),
-    ...(options?.message === undefined ? {} : { status_message: options.message })
-  };
-  return {
-    status,
-    ...(Object.keys(components).length === 0 ? {} : { components })
-  };
-}
-
 function checkInRequest(id: string, options?: EntityCheckInOptions): { path: string; body: EntityCheckInRequest } {
   const body: EntityCheckInRequest = {};
   if (options?.status !== undefined) body.status = options.status;
@@ -325,14 +350,8 @@ function checkInRequest(id: string, options?: EntityCheckInOptions): { path: str
     if (speed_m_s !== undefined) body.speed_m_s = speed_m_s;
     if (heading_deg !== undefined) body.heading_deg = heading_deg;
   }
-  const statusFilter =
-    options?.statusFilter && options.statusFilter.length > 0 ? options.statusFilter.join(",") : undefined;
   const fields = options?.fields === "minimal" ? "minimal" : undefined;
   const path = pathWithQuery(`/entities/${encodeURIComponent(id)}/checkin`, {
-    status_filter: statusFilter,
-    limit: options?.limit === undefined ? undefined : String(options.limit),
-    task_cursor: options?.taskCursor,
-    since: encodeTimestamp(options?.since),
     fields
   });
   return { path, body };
@@ -360,13 +379,6 @@ function changedSinceQueryPath(sinceVersion: number, options?: ChangedSinceQuery
   });
 }
 
-function encodeTimestamp(value: string | Date | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  return value instanceof Date ? value.toISOString() : value;
-}
-
 function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
   function checkIn(id: string, options: EntityCheckInOptions<"minimal">): Promise<EntityCheckInMinimalResponse>;
   function checkIn(id: string, options?: EntityCheckInOptions<"full">): Promise<EntityCheckInFullResponse>;
@@ -376,4 +388,13 @@ function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
     return engine().checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion);
   }
   return checkIn;
+}
+
+function runtimeHeaders(runtimeId: string): HeadersInit {
+  return { "Atlas-Runtime-ID": requireOpaqueHeader("runtimeId", runtimeId) };
+}
+
+function requireOpaqueHeader(name: string, value: string): string {
+  if (!value.trim()) throw new TypeError(`${name} must not be empty`);
+  return value;
 }

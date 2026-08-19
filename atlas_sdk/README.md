@@ -48,7 +48,9 @@ The admin entry point covers operator sessions and managed API keys. Admin recor
 
 ```bash
 atlas --base-url http://127.0.0.1:8000 --api-key "$ATLAS_API_KEY" entities get asset-1
-atlas --base-url http://127.0.0.1:8000 tasks create '{"task_id":"task-1"}'
+atlas --base-url http://127.0.0.1:8000 tasks create \
+  '{"asset_id":"asset-1","command":"example.inspect","input":{}}' \
+  --idempotency-key tasking-attempt-1
 atlas --base-url http://127.0.0.1:8000 watch --subscribe all --follow
 ```
 

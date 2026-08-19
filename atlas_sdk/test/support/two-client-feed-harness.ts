@@ -6,6 +6,7 @@ import {
   type ResourceType,
   type TaskResource
 } from "../../src";
+import { isEntityResource, isObjectDetailResource, isTaskResource } from "../../src/protocol.js";
 import type { FetchLike } from "../../src/types.js";
 import { FakeCore } from "./fake-core.js";
 
@@ -62,7 +63,7 @@ function writerFetch(core: FakeCore): FetchLike {
     }
     const resource = await readResource(response.clone(), route.resource_type);
     if (resource) {
-      core.emit(upsertEvent(route.event, route.resource_type, resource), { record: false });
+      core.emit(upsertEvent(core, route.event, route.resource_type, resource), { record: false });
     }
     return response;
   };
@@ -82,14 +83,14 @@ function writeRoute(url: RequestInfo | URL, init?: RequestInit): WriteRoute | un
   }
   if (method === "PATCH") {
     if (entityIDPathPattern.test(parsed.pathname)) return { kind: "upsert", event: "update", resource_type: "entity" };
-    if (taskIDPathPattern.test(parsed.pathname)) return { kind: "upsert", event: "update", resource_type: "task" };
     if (objectIDPathPattern.test(parsed.pathname)) return { kind: "upsert", event: "update", resource_type: "object" };
+  }
+  if (method === "POST" && taskLifecyclePathPattern.test(parsed.pathname)) {
+    return { kind: "upsert", event: "update", resource_type: "task" };
   }
   if (method === "DELETE") {
     const entityID = pathID(parsed.pathname, entityIDPathPattern);
     if (entityID) return { kind: "delete", resource_type: "entity", id: entityID };
-    const taskID = pathID(parsed.pathname, taskIDPathPattern);
-    if (taskID) return { kind: "delete", resource_type: "task", id: taskID };
     const objectID = pathID(parsed.pathname, objectIDPathPattern);
     if (objectID) return { kind: "delete", resource_type: "object", id: objectID };
   }
@@ -104,7 +105,7 @@ async function readResource(
     const value = (await response.json()) as unknown;
     if (type === "entity" && isEntityResource(value)) return value;
     if (type === "task" && isTaskResource(value)) return value;
-    if (type === "object" && isObjectResource(value)) return objectResource(value);
+    if (type === "object" && isObjectDetailResource(value)) return objectResource(value);
     return undefined;
   } catch {
     return undefined;
@@ -112,6 +113,7 @@ async function readResource(
 }
 
 function upsertEvent(
+  core: FakeCore,
   event: "create" | "update",
   type: ResourceType,
   resource: EntityResource | TaskResource | ObjectResource
@@ -123,7 +125,9 @@ function upsertEvent(
     }
     case "task": {
       const value = resource as TaskResource;
-      return { event, resource_type: "task", id: value.task_id, version: value.metadata.version, resource: value };
+      const version = core.tasks.get(value.task_id)?.metadata.version;
+      if (version === undefined) throw new Error(`missing fake Task ${value.task_id}`);
+      return { event, resource_type: "task", id: value.task_id, version, resource: value };
     }
     case "object": {
       const value = resource as ObjectResource;
@@ -132,34 +136,9 @@ function upsertEvent(
   }
 }
 
-function isEntityResource(value: unknown): value is EntityResource {
-  if (!isRecord(value) || typeof value.entity_id !== "string" || !isRecord(value.metadata)) {
-    return false;
-  }
-  return typeof value.metadata.version === "number";
-}
-
-function isTaskResource(value: unknown): value is TaskResource {
-  if (!isRecord(value) || typeof value.task_id !== "string" || !isRecord(value.metadata)) {
-    return false;
-  }
-  return typeof value.metadata.version === "number";
-}
-
-function isObjectResource(value: unknown): value is ObjectResource & { extra?: unknown } {
-  if (!isRecord(value) || typeof value.object_id !== "string" || !isRecord(value.metadata)) {
-    return false;
-  }
-  return typeof value.metadata.version === "number";
-}
-
 function objectResource(value: ObjectResource & { extra?: unknown }): ObjectResource {
   const { extra: _extra, ...resource } = value;
   return resource;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function pathID(pathname: string, pattern: RegExp): string | undefined {
@@ -170,5 +149,5 @@ function pathID(pathname: string, pattern: RegExp): string | undefined {
 }
 
 const entityIDPathPattern = /^\/entities\/[^/]+$/;
-const taskIDPathPattern = /^\/tasks\/[^/]+$/;
+const taskLifecyclePathPattern = /^\/tasks\/[^/]+\/(acknowledge|start|progress|complete|fail|cancel)$/;
 const objectIDPathPattern = /^\/objects\/[^/]+$/;

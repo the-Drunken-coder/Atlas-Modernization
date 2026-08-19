@@ -150,9 +150,12 @@ function packedTarballName(packOutput) {
 
 async function withFakeCore(callback) {
   const seenApiKeys = [];
+  const seenIdempotencyKeys = [];
   const server = createServer(async (req, res) => {
     const apiKey = req.headers["x-api-key"];
     seenApiKeys.push(Array.isArray(apiKey) ? apiKey.join(",") : (apiKey ?? null));
+    const idempotencyKey = req.headers["idempotency-key"];
+    seenIdempotencyKeys.push(Array.isArray(idempotencyKey) ? idempotencyKey.join(",") : (idempotencyKey ?? null));
     if (req.method === "GET" && req.url === "/protocol/revision") {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ protocol_revision: protocolRevision }));
@@ -171,18 +174,16 @@ async function withFakeCore(callback) {
         return;
       }
       res.setHeader("Content-Type", "application/json");
+      res.setHeader("ETag", '"v1"');
       res.end(
         JSON.stringify({
-          task_id: task.task_id,
-          status: task.status ?? "pending",
-          entity_id: task.entity_id ?? null,
-          components: task.components ?? {},
-          ...(task.extra === undefined ? {} : { extra: task.extra }),
-          metadata: {
-            created_at: "2026-06-12T12:00:00Z",
-            updated_at: "2026-06-12T12:00:00Z",
-            version: 1
-          }
+          task_id: "smoke-task",
+          asset_id: task.asset_id,
+          command: task.command,
+          input: task.input,
+          status: "pending",
+          created_at: "2026-06-12T12:00:00Z",
+          updated_at: "2026-06-12T12:00:00Z"
         })
       );
       return;
@@ -193,7 +194,7 @@ async function withFakeCore(callback) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();
-    await callback(`http://127.0.0.1:${address.port}`, seenApiKeys);
+    await callback(`http://127.0.0.1:${address.port}`, seenApiKeys, seenIdempotencyKeys);
   } finally {
     await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
@@ -253,7 +254,7 @@ try {
     [
       "--input-type=module",
       "-e",
-      "import('@the-drunken-coder/atlas-sdk').then((m) => console.log(JSON.stringify({ client: typeof m.AtlasClient, revision: m.ATLAS_PROTOCOL_REVISION, validTask: m.isTaskCreateRequest({ task_id: 'smoke-task' }) })))"
+      "import('@the-drunken-coder/atlas-sdk').then((m) => console.log(JSON.stringify({ client: typeof m.AtlasClient, revision: m.ATLAS_PROTOCOL_REVISION, validTask: m.isTaskCreateRequest({ asset_id: 'asset-smoke', command: 'smoke.inspect', input: {} }) })))"
     ],
     { cwd: projectDir }
   );
@@ -289,7 +290,7 @@ const adminConstructor: typeof AtlasAdminClient = AtlasAdminClient;
 const revision: string = ATLAS_PROTOCOL_REVISION;
 const entity: EntityResource | undefined = undefined;
 const apiKey: AdminAPIKey | undefined = undefined;
-const validTask: boolean = isTaskCreateRequest({ task_id: "smoke-task" });
+const validTask: boolean = isTaskCreateRequest({ asset_id: "asset-smoke", command: "smoke.inspect", input: {} });
 void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
 `
   );
@@ -322,13 +323,26 @@ void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
     throw new Error("installed atlas binary did not print usage");
   }
 
-  await withFakeCore(async (baseUrl, seenApiKeys) => {
+  await withFakeCore(async (baseUrl, seenApiKeys, seenIdempotencyKeys) => {
     const task = {
-      task_id: "smoke-task"
+      asset_id: "asset-smoke",
+      command: "smoke.inspect",
+      input: { target: "camera-1" }
     };
     const output = await runCombinedAsync(
       process.execPath,
-      [atlasCLI, "--base-url", baseUrl, "--api-key", "smoke-key", "tasks", "create", JSON.stringify(task)],
+      [
+        atlasCLI,
+        "--base-url",
+        baseUrl,
+        "--api-key",
+        "smoke-key",
+        "--idempotency-key",
+        "smoke-attempt",
+        "tasks",
+        "create",
+        JSON.stringify(task)
+      ],
       {
         cwd: projectDir
       }
@@ -339,14 +353,17 @@ void [clientConstructor, adminConstructor, revision, entity, apiKey, validTask];
     }
     if (
       !output.includes('"status":"pending"') ||
-      !output.includes('"entity_id":null') ||
-      !output.includes('"components":{}')
+      !output.includes('"asset_id":"asset-smoke"') ||
+      !output.includes('"command":"smoke.inspect"')
     ) {
       process.stderr.write(output);
       throw new Error("installed atlas binary did not print Core task create defaults");
     }
     if (!seenApiKeys.includes("smoke-key")) {
       throw new Error("installed atlas binary did not send --api-key as X-API-Key");
+    }
+    if (!seenIdempotencyKeys.includes("smoke-attempt")) {
+      throw new Error("installed atlas binary did not send --idempotency-key as Idempotency-Key");
     }
   });
 

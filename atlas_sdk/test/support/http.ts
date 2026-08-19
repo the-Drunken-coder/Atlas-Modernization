@@ -11,6 +11,13 @@ export function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 }
 
+export function versionedJSON(value: unknown, version: number, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json", ETag: `"v${version}"` }
+  });
+}
+
 export function jsonOrNotFound(value: unknown, message: string): Response {
   if (value === undefined) {
     if (message.startsWith("entity")) return protocolError(message, "ENTITY_NOT_FOUND", 404);

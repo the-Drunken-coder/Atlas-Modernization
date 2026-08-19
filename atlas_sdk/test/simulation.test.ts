@@ -54,10 +54,24 @@ describe("AtlasClient simulation", () => {
           };
           core.emit(objectEvent, { dropForSockets: i === 12, record: false });
         }
-        // Mid-simulation task delete is dropped from sockets to force gap reconciliation.
+        // A dropped terminal Task update forces gap reconciliation.
         if (i === 10) {
-          const event = core.deleteTask("task-sim-2");
-          if (event) core.emit(event, { dropForSockets: true, record: false });
+          const failed = core.upsertTask({
+            ...core.tasks.get("task-sim-2")!,
+            status: "failed",
+            failure: { code: "execution_failed", message: "simulated failure" },
+            finished_at: "2026-06-12T12:01:00Z"
+          });
+          core.emit(
+            {
+              event: "update",
+              resource_type: "task",
+              id: failed.task_id,
+              version: failed.metadata.version,
+              resource: failed
+            },
+            { dropForSockets: true, record: false }
+          );
         }
         // Entity delete follows later so the ledger sees a live delete event after recovery.
         if (i === 14) {
@@ -100,9 +114,6 @@ async function assertClientMatchesLedger(client: AtlasClient, core: FakeCore): P
           status: 404,
           errorCode: "ENTITY_NOT_FOUND"
         });
-      }
-      if (deletion.resource_type === "task" && !core.tasks.has(deletion.id)) {
-        await expect(client.tasks.get(deletion.id)).rejects.toMatchObject({ status: 404, errorCode: "TASK_NOT_FOUND" });
       }
       if (deletion.resource_type === "object" && !core.objects.has(deletion.id)) {
         await expect(client.objects.get(deletion.id)).rejects.toMatchObject({

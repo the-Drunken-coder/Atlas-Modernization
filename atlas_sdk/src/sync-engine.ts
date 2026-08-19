@@ -399,9 +399,51 @@ export class SyncEngine {
     ) {
       return cached.value;
     }
-    const task = await this.transport.json("GET", `/tasks/${encodeURIComponent(id)}`, isTaskResource);
+    const { value: task, version } = await this.transport.versionedJSON(
+      "GET",
+      `/tasks/${encodeURIComponent(id)}`,
+      isTaskResource
+    );
     assertExpectedResourceID("task", id, task);
-    if (this.cache.cacheResource("task", id, task, { advanceCursor: false })) this.notifySnapshot();
+    if (
+      this.cache.cacheResource("task", id, task, {
+        advanceCursor: false,
+        version,
+        replaceSameVersion: options?.fresh === true
+      })
+    ) {
+      this.notifySnapshot();
+    }
+    return task;
+  }
+
+  async writeTask(
+    method: "POST",
+    path: string,
+    body: unknown,
+    requestHeaders?: HeadersInit,
+    signal?: AbortSignal,
+    eventName: "create" | "update" = "update"
+  ): Promise<TaskResource> {
+    const { value: task, version } = await this.transport.versionedJSON(
+      method,
+      path,
+      isTaskResource,
+      body,
+      signal,
+      requestHeaders
+    );
+    const previous = this.cache.value("task", task.task_id);
+    if (
+      this.cache.cacheResource("task", task.task_id, task, {
+        advanceCursor: false,
+        version,
+        replaceSameVersion: true
+      })
+    ) {
+      this.notify(resourceUpsertEvent("task", eventName, task.task_id, version, task), task, previous);
+      this.notifySnapshot();
+    }
     return task;
   }
 
@@ -433,7 +475,7 @@ export class SyncEngine {
       throw new TypeError(`Atlas ${type} response id ${id} does not match requested id ${expectedID}`);
     }
     const event = eventName ?? (method === "POST" ? "create" : "update");
-    this.applyEvent(resourceUpsertEvent(type, event, id, resource.metadata.version, resource), {
+    this.applyEvent(resourceUpsertEvent(type, event, id, embeddedResourceVersion(type, resource), resource), {
       detail: type === "object",
       advanceCursor: false
     });
@@ -464,14 +506,6 @@ export class SyncEngine {
       },
       { advanceCursor: false }
     );
-    for (const task of response.tasks) {
-      if (isTaskResource(task)) {
-        this.applyEvent(
-          { event: "update", resource_type: "task", id: task.task_id, version: task.metadata.version, resource: task },
-          { advanceCursor: false }
-        );
-      }
-    }
     return response;
   }
 
@@ -796,7 +830,7 @@ export class SyncEngine {
       }
       return;
     }
-    this.cache.cacheResource(event.resource_type, event.id, event.resource, options);
+    this.cache.cacheResource(event.resource_type, event.id, event.resource, { ...options, version: event.version });
     this.advanceCursor(event, advanceCursor);
     this.notify(event, this.cache.value(event.resource_type, event.id), previous);
     this.notifySnapshot();
@@ -850,6 +884,12 @@ export class SyncEngine {
       }
     }
   }
+}
+
+function embeddedResourceVersion<TType extends ResourceType>(type: TType, resource: ResourceOf<TType>): number {
+  if (type === "task") return 0;
+  if (!("metadata" in resource)) return 0;
+  return resource.metadata.version;
 }
 
 function fullDatasetPath(cursors: FullDatasetCursors): string {

@@ -125,8 +125,8 @@ export class FakeWebSocket {
     this.dispatch("message", { data: JSON.stringify(value) });
   }
 
-  subscribedTo(event: FeedEvent, beforeTaskEntityId?: string | null): boolean {
-    return this.subscriptions.some((subscription) => subscriptionMatches(subscription, event, beforeTaskEntityId));
+  subscribedTo(event: FeedEvent, beforeTaskAssetId?: string | null): boolean {
+    return this.subscriptions.some((subscription) => subscriptionMatches(subscription, event, beforeTaskAssetId));
   }
 
   private dispatch(type: WebSocketEventType, event: WebSocketEvent): void {
@@ -142,12 +142,12 @@ function subscriptionKey(filter: AtlasSubscription): string {
       return `id:${filter.resource_type}:${filter.id}`;
     case "type":
       return `type:${filter.resource_type}`;
-    case "tasks_for_entity":
-      return `tasks_for_entity:${filter.entity_id}`;
+    case "tasks_for_asset":
+      return `tasks_for_asset:${filter.asset_id}`;
   }
 }
 
-function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, beforeTaskEntityId?: string | null): boolean {
+function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, beforeTaskAssetId?: string | null): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -155,13 +155,10 @@ function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, before
       return event.resource_type === filter.resource_type && event.id === filter.id;
     case "type":
       return event.resource_type === filter.resource_type;
-    case "tasks_for_entity":
+    case "tasks_for_asset":
       return (
         event.resource_type === "task" &&
-        (beforeTaskEntityId === filter.entity_id ||
-          (event as FeedEvent & { entity_id?: string | null }).entity_id === filter.entity_id ||
-          (event as FeedEvent & { previous_entity_id?: string | null }).previous_entity_id === filter.entity_id ||
-          (event.event !== "delete" && (event.resource as TaskResource).entity_id === filter.entity_id))
+        (beforeTaskAssetId === filter.asset_id || (event.resource as TaskResource).asset_id === filter.asset_id)
       );
   }
 }

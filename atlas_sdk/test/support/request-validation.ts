@@ -8,12 +8,26 @@ import {
   isEntityUpdateRequest,
   isObjectCreateRequest,
   isObjectUpdateRequest,
+  isRuntimeReadyRequest,
+  isRuntimeRegistrationRequest,
+  isTaskAcknowledgeRequest,
+  isTaskCancelRequest,
+  isTaskCompleteRequest,
   isTaskCreateRequest,
-  isTaskUpdateRequest,
+  isTaskFailRequest,
+  isTaskProgressRequest,
+  isTaskStartRequest,
   type ObjectCreateRequest,
   type ObjectUpdateRequest,
+  type RuntimeReadyRequest,
+  type RuntimeRegistrationRequest,
+  type TaskAcknowledgeRequest,
+  type TaskCancelRequest,
+  type TaskCompleteRequest,
   type TaskCreateRequest,
-  type TaskUpdateRequest
+  type TaskFailRequest,
+  type TaskProgressRequest,
+  type TaskStartRequest
 } from "../../src";
 import { protocolError, readBody } from "./http.js";
 
@@ -25,16 +39,30 @@ export const requestValidators = {
   entityUpdate: isEntityUpdateRequest,
   objectCreate: isObjectCreateRequest,
   objectUpdate: isObjectUpdateRequest,
+  runtimeReady: isRuntimeReadyRequest,
+  runtimeRegistration: isRuntimeRegistrationRequest,
+  taskAcknowledge: isTaskAcknowledgeRequest,
+  taskCancel: isTaskCancelRequest,
+  taskComplete: isTaskCompleteRequest,
   taskCreate: isTaskCreateRequest,
-  taskUpdate: isTaskUpdateRequest
+  taskFail: isTaskFailRequest,
+  taskProgress: isTaskProgressRequest,
+  taskStart: isTaskStartRequest
 } satisfies {
   entityCheckIn: RequestValidator<EntityCheckInRequest>;
   entityCreate: RequestValidator<EntityCreateRequest>;
   entityUpdate: RequestValidator<EntityUpdateRequest>;
   objectCreate: RequestValidator<ObjectCreateRequest>;
   objectUpdate: RequestValidator<ObjectUpdateRequest>;
+  runtimeReady: RequestValidator<RuntimeReadyRequest>;
+  runtimeRegistration: RequestValidator<RuntimeRegistrationRequest>;
+  taskAcknowledge: RequestValidator<TaskAcknowledgeRequest>;
+  taskCancel: RequestValidator<TaskCancelRequest>;
+  taskComplete: RequestValidator<TaskCompleteRequest>;
   taskCreate: RequestValidator<TaskCreateRequest>;
-  taskUpdate: RequestValidator<TaskUpdateRequest>;
+  taskFail: RequestValidator<TaskFailRequest>;
+  taskProgress: RequestValidator<TaskProgressRequest>;
+  taskStart: RequestValidator<TaskStartRequest>;
 };
 
 export async function readValidatedBody<T>(

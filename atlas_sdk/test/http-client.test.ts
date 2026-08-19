@@ -8,7 +8,6 @@ import {
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isTaskCreateRequest,
-  isTaskUpdateRequest,
   ProtocolMismatchError
 } from "../src";
 import { AtlasAdminClient } from "../src/admin.js";
@@ -26,7 +25,9 @@ async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
         throw new Error("iframe Object constructor unavailable");
       }
       const value = new objectCtor() as Record<string, unknown>;
-      value.task_id = "task-cross-realm";
+      value.asset_id = "asset-cross-realm";
+      value.command = "fixture.queued";
+      value.input = {};
       return value;
     } finally {
       iframe.remove();
@@ -34,7 +35,10 @@ async function crossRealmTaskCreateRequest(): Promise<Record<string, unknown>> {
   }
 
   const { runInNewContext } = await import(/* @vite-ignore */ "node:vm");
-  return runInNewContext("({ task_id: 'task-cross-realm' })") as Record<string, unknown>;
+  return runInNewContext("({ asset_id: 'asset-cross-realm', command: 'fixture.queued', input: {} })") as Record<
+    string,
+    unknown
+  >;
 }
 
 describe("AtlasClient HTTP", () => {
@@ -203,15 +207,19 @@ describe("AtlasClient HTTP", () => {
 
   it("accepts plain records and rejects non-plain records in task create requests", async () => {
     const nullPrototypeRequest = Object.assign(Object.create(null) as Record<string, unknown>, {
-      task_id: "task-null-proto"
+      asset_id: "asset-null-proto",
+      command: "fixture.queued",
+      input: {}
     });
     const crossRealmRequest = await crossRealmTaskCreateRequest();
 
-    expect(isTaskCreateRequest({ task_id: "task-plain", components: {}, extra: {} })).toBe(true);
+    expect(isTaskCreateRequest({ asset_id: "asset-plain", command: "fixture.queued", input: {} })).toBe(true);
     expect(isTaskCreateRequest(nullPrototypeRequest)).toBe(true);
     expect(isTaskCreateRequest(crossRealmRequest)).toBe(true);
-    expect(isTaskCreateRequest({ task_id: "task-date", components: new Date() })).toBe(false);
-    expect(isTaskCreateRequest({ task_id: "task-map", extra: new Map([["priority", "high"]]) })).toBe(false);
+    expect(isTaskCreateRequest({ asset_id: "asset-date", command: "fixture.queued", input: new Date() })).toBe(false);
+    expect(
+      isTaskCreateRequest({ asset_id: "asset-map", command: "fixture.queued", input: new Map([["priority", "high"]]) })
+    ).toBe(false);
   });
 
   it("rejects malformed generated entity create validator geometry and timestamps", () => {
@@ -294,28 +302,20 @@ describe("AtlasClient HTTP", () => {
 
     expect(
       isTaskCreateRequest({
-        task_id: "task-valid",
-        entity_id: null,
-        components: { parameters: { latitude: 38, longitude: -77 } }
+        asset_id: "asset-valid",
+        command: "fixture.queued",
+        input: { latitude: 38, longitude: -77 }
       })
     ).toBe(true);
     expect(
       isTaskCreateRequest({
-        entity_id: "asset-command",
-        components: { command: { type: "goto" }, parameters: { latitude: 38, longitude: -77 } }
+        asset_id: "asset-command",
+        command: "fixture.queued",
+        input: null
       })
     ).toBe(true);
-    expect(isTaskCreateRequest({ task_id: "task-invalid", components: { parameters: { latitude: 91 } } })).toBe(false);
-    expect(
-      isTaskCreateRequest({
-        task_id: "task-command-invalid",
-        entity_id: "asset-command",
-        components: { command: { type: "goto" } }
-      })
-    ).toBe(false);
-    expect(isTaskCreateRequest({ components: { command: { type: "goto" } } })).toBe(false);
-    expect(isTaskUpdateRequest({ remove_extra_keys: ["priority"] })).toBe(true);
-    expect(isTaskUpdateRequest({})).toBe(false);
+    expect(isTaskCreateRequest({ asset_id: "", command: "fixture.queued", input: {} })).toBe(false);
+    expect(isTaskCreateRequest({ asset_id: "asset-command", input: {} })).toBe(false);
 
     expect(isObjectCreateRequest({ object_id: "object-valid", referenced_by: [{ entity_id: "asset-valid" }] })).toBe(
       true
@@ -357,7 +357,6 @@ describe("AtlasClient HTTP", () => {
     const created = await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
     await expect(client.entities.get("asset-1")).resolves.toEqual(created);
     const currentEntity = core.upsertEntity(created);
-    const currentTask = core.upsertTask({ ...task("task-precondition", currentEntity.entity_id), status: "pending" });
     const currentObject = core.upsertObject(object("object-precondition"));
 
     const staleWrites = [
@@ -373,13 +372,6 @@ describe("AtlasClient HTTP", () => {
           ifMatchVersion: currentEntity.metadata.version - 1
         }),
       () =>
-        client.tasks.update(
-          currentTask.task_id,
-          { status: "acknowledged" },
-          { ifMatchVersion: currentTask.metadata.version - 1 }
-        ),
-      () => client.tasks.acknowledge(currentTask.task_id, { ifMatchVersion: currentTask.metadata.version - 1 }),
-      () =>
         client.objects.update(
           currentObject.object_id,
           { type: "log" },
@@ -393,20 +385,17 @@ describe("AtlasClient HTTP", () => {
       expect(conflict).toMatchObject({ status: 412, errorCode: "PRECONDITION_FAILED" });
     }
     expect(core.entities.get(currentEntity.entity_id)).toEqual(currentEntity);
-    expect(core.tasks.get(currentTask.task_id)).toEqual(currentTask);
     expect(core.objects.get(currentObject.object_id)).toEqual(currentObject);
   });
 
   it("accepts wildcard preconditions across mutable fake Core routes", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-wildcard"));
-    core.upsertTask(task("task-wildcard", "asset-wildcard"));
     core.upsertObject(object("object-wildcard"));
 
     const wildcardWrites = [
       ["PATCH", "/entities/asset-wildcard", { alias: "updated" }],
       ["POST", "/entities/asset-wildcard/checkin", {}],
-      ["PATCH", "/tasks/task-wildcard", { status: "acknowledged" }],
       ["PATCH", "/objects/object-wildcard", { type: "log" }]
     ] as const;
 
@@ -504,12 +493,13 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
-  it("offers task lifecycle helpers as cache-aware update operations", async () => {
+  it("uses explicit Task lifecycle routes with runtime fencing headers", async () => {
     const core = new FakeCore();
-    const ackBase = core.upsertTask(task("task-ack", "asset-1"));
+    core.upsertTask(task("task-ack", "asset-1"));
+    core.upsertTask(task("task-start", "asset-1"));
+    core.upsertTask(task("task-progress", "asset-1"));
     core.upsertTask(task("task-complete", "asset-1"));
     core.upsertTask(task("task-fail", "asset-1"));
-    core.upsertTask(task("task-status", "asset-1"));
     core.upsertTask(task("task-cancel", "asset-1"));
     const client = new AtlasClient({
       baseUrl: "http://atlas.test",
@@ -522,37 +512,38 @@ describe("AtlasClient HTTP", () => {
     const watch = vi.fn();
     client.tasks.watch("task-ack", watch);
 
-    const acknowledged = await client.tasks.acknowledge("task-ack", { ifMatchVersion: ackBase.metadata.version });
-    const completed = await client.tasks.complete("task-complete", { result: { ok: true } });
-    const failed = await client.tasks.fail("task-fail", { error: { code: "boom" } });
-    const status = await client.tasks.setStatus("task-status", "acknowledged", { progress: 62.5, message: "moving" });
-    const cancelled = await client.tasks.cancel("task-cancel");
+    const runtime = { runtimeId: "runtime-1" };
+    const acknowledged = await client.tasks.acknowledge("task-ack", runtime);
+    const started = await client.tasks.start("task-start", runtime);
+    const progressed = await client.tasks.progress("task-progress", { progress: 0.625 }, runtime);
+    const completed = await client.tasks.complete("task-complete", { ...runtime, output: { ok: true } });
+    const failed = await client.tasks.fail("task-fail", {
+      ...runtime,
+      failure: { code: "execution_failed", message: "boom" }
+    });
+    const cancelled = await client.tasks.cancel("task-cancel", {
+      cancellation: { code: "requested", message: "Operator cancelled" }
+    });
 
     expect(acknowledged.status).toBe("acknowledged");
-    expect(completed).toMatchObject({ status: "completed", extra: { result: { ok: true } } });
-    expect(failed).toMatchObject({ status: "failed", extra: { error: { code: "boom" } } });
-    expect(status).toMatchObject({
-      status: "acknowledged",
-      components: { progress: { percent: 62.5 }, status_message: "moving" }
-    });
+    expect(started.status).toBe("in_progress");
+    expect(progressed.progress).toBe(0.625);
+    expect(completed).toMatchObject({ status: "completed", output: { ok: true } });
+    expect(failed).toMatchObject({ status: "failed", failure: { code: "execution_failed", message: "boom" } });
     expect(cancelled.status).toBe("cancelled");
     await expect(client.tasks.get("task-ack")).resolves.toEqual(acknowledged);
-    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack")?.ifMatch).toBe(
-      `"v${ackBase.metadata.version}"`
+    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-ack/acknowledge")?.runtimeId).toBe(
+      "runtime-1"
     );
-    expect(
-      core.requests
-        .filter((request) => request.startsWith("/tasks/"))
-        .every((request) => request.split("/").length === 3)
-    ).toBe(true);
+    expect(core.requestHeaders.find((request) => request.path === "/tasks/task-cancel/cancel")?.runtimeId).toBeNull();
     expect(watch).toHaveBeenCalledWith(
       expect.objectContaining({ status: "acknowledged" }),
       expect.objectContaining({ event: "update", id: "task-ack" })
     );
-    await expect(client.tasks.acknowledge("missing-task")).rejects.toBeInstanceOf(AtlasAPIError);
+    await expect(client.tasks.acknowledge("missing-task", runtime)).rejects.toBeInstanceOf(AtlasAPIError);
   });
 
-  it("checks in entities, applies full task responses to cache, and preserves pagination fields", async () => {
+  it("checks in telemetry without polling Tasks", async () => {
     const core = new FakeCore();
     const baseEntity = core.upsertEntity(entity("asset-checkin"));
     const client = new AtlasClient({
@@ -563,30 +554,17 @@ describe("AtlasClient HTTP", () => {
       pollIntervalMs: 0
     });
     await client.sync.start();
-    const pending = core.upsertTask({
-      ...task("task-checkin-pending", "asset-checkin"),
-      components: { command: { type: "move", parameters: { latitude: 1 } } }
-    });
-    core.upsertTask({ ...task("task-checkin-completed", "asset-checkin"), status: "completed" });
     const entityWatch = vi.fn();
-    const taskWatch = vi.fn();
     client.entities.watch("asset-checkin", entityWatch);
-    client.tasks.watch("task-checkin-pending", taskWatch);
 
     const response = await client.entities.checkIn("asset-checkin", {
       status: "active",
       telemetry: { latitude: 40.1, longitude: -74.2, altitude_m: 120 },
       components: { communications: { link_state: "connected" } },
-      statusFilter: ["pending"],
-      limit: 1,
-      since: new Date("2026-06-12T00:00:00Z"),
       ifMatchVersion: baseEntity.metadata.version
     });
 
     expect(response).toMatchObject({
-      task_count: 1,
-      task_limit: 1,
-      has_more_tasks: false,
       entity: {
         components: {
           communications: { link_state: "connected" },
@@ -594,27 +572,15 @@ describe("AtlasClient HTTP", () => {
           telemetry: { latitude: 40.1, longitude: -74.2, altitude_m: 120 },
           heartbeat: expect.objectContaining({ last_seen: expect.any(String) })
         }
-      },
-      tasks: [expect.objectContaining({ task_id: pending.task_id })]
+      }
     });
     await expect(client.entities.get("asset-checkin")).resolves.toEqual(response.entity);
-    await expect(client.tasks.get("task-checkin-pending")).resolves.toEqual(response.tasks[0]);
-    expect(
-      core.requests.some((request) =>
-        request.includes(
-          "/entities/asset-checkin/checkin?status_filter=pending&limit=1&since=2026-06-12T00%3A00%3A00.000Z"
-        )
-      )
-    ).toBe(true);
-    expect(
-      core.requestHeaders.find((request) => request.path.startsWith("/entities/asset-checkin/checkin?"))?.ifMatch
-    ).toBe(`"v${baseEntity.metadata.version}"`);
+    expect(core.requests).toContain("/entities/asset-checkin/checkin");
+    expect(core.requestHeaders.find((request) => request.path === "/entities/asset-checkin/checkin")?.ifMatch).toBe(
+      `"v${baseEntity.metadata.version}"`
+    );
     expect(entityWatch).toHaveBeenCalledWith(
       expect.objectContaining({ entity_id: "asset-checkin" }),
-      expect.objectContaining({ event: "update" })
-    );
-    expect(taskWatch).toHaveBeenCalledWith(
-      expect.objectContaining({ task_id: "task-checkin-pending" }),
       expect.objectContaining({ event: "update" })
     );
   });
@@ -634,47 +600,7 @@ describe("AtlasClient HTTP", () => {
     const response = await client.entities.checkIn(checkedIn.entity_id);
 
     expect(requestBody).toEqual({});
-    expect(response).toMatchObject({ entity: { entity_id: checkedIn.entity_id }, tasks: [], task_count: 0 });
-  });
-
-  it("supports minimal check-in task payloads without requiring task resource metadata", async () => {
-    const core = new FakeCore();
-    core.upsertEntity(entity("asset-minimal-checkin"));
-    core.upsertTask({
-      ...task("task-minimal-checkin", "asset-minimal-checkin"),
-      components: { command: { id: "move_to", parameters: { latitude: 100 } } }
-    });
-    core.upsertTask({
-      ...task("task-minimal-target-checkin", "asset-minimal-checkin"),
-      components: { command: { type: "loiter", target: { radius_m: 50 } } }
-    });
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
-
-    const response = await client.entities.checkIn("asset-minimal-checkin", {
-      fields: "minimal",
-      statusFilter: ["pending", "acknowledged"],
-      limit: 10
-    });
-
-    expect(response.tasks).toEqual([
-      {
-        task_id: "task-minimal-checkin",
-        status: "pending",
-        entity_id: "asset-minimal-checkin",
-        command_id: "move_to",
-        parameters: { latitude: 100 }
-      },
-      {
-        task_id: "task-minimal-target-checkin",
-        status: "pending",
-        entity_id: "asset-minimal-checkin",
-        command_id: "loiter",
-        parameters: { radius_m: 50 }
-      }
-    ]);
-    expect(core.requests).toContain(
-      "/entities/asset-minimal-checkin/checkin?status_filter=pending%2Cacknowledged&limit=10&fields=minimal"
-    );
+    expect(response).toMatchObject({ entity: { entity_id: checkedIn.entity_id } });
   });
 
   it("surfaces Core-style check-in validation errors from the fake transport", async () => {
@@ -686,11 +612,6 @@ describe("AtlasClient HTTP", () => {
       status: 400,
       errorCode: "VALIDATION_ERROR"
     });
-    await expect(client.entities.checkIn("asset-invalid-checkin", { since: "not-a-date" })).rejects.toMatchObject({
-      status: 400,
-      errorCode: "VALIDATION_ERROR"
-    });
-
     const malformed = await core.fetch("http://atlas.test/entities/asset-invalid-checkin/checkin", {
       method: "POST",
       body: "{"
@@ -748,13 +669,15 @@ describe("AtlasClient HTTP", () => {
       errorCode: "ENTITY_ALREADY_EXISTS"
     });
 
-    await client.tasks.create({ task_id: "task-conflict" });
-    const taskConflict = await client.tasks.create({ task_id: "task-conflict" }).catch((error) => error);
+    const request = { asset_id: "asset-conflict", command: "fixture.queued", input: {} };
+    const firstTask = await client.tasks.create(request, { idempotencyKey: "task-conflict" });
+    const repeatedTask = await client.tasks.create(request, { idempotencyKey: "task-conflict" });
+    expect(repeatedTask.task_id).toBe(firstTask.task_id);
+    const taskConflict = await client.tasks
+      .create({ ...request, input: { changed: true } }, { idempotencyKey: "task-conflict" })
+      .catch((error) => error);
     expect(taskConflict).toBeInstanceOf(ConflictError);
-    expect(taskConflict).toMatchObject({
-      status: 409,
-      errorCode: "TASK_ALREADY_EXISTS"
-    });
+    expect(taskConflict).toMatchObject({ status: 409, errorCode: "TASK_ALREADY_EXISTS" });
 
     await client.objects.create({ object_id: "object-conflict" });
     const objectConflict = await client.objects.create({ object_id: "object-conflict" }).catch((error) => error);
@@ -768,16 +691,13 @@ describe("AtlasClient HTTP", () => {
   it("assigns distinct UUID task IDs to repeated command requests", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
-    const command = {
-      entity_id: "asset-command",
-      components: { command: { type: "goto" as const }, parameters: { latitude: 38, longitude: -77 } }
-    };
+    const command = { asset_id: "asset-command", command: "fixture.queued", input: { latitude: 38, longitude: -77 } };
 
-    const first = await client.tasks.create(command);
-    const second = await client.tasks.create(command);
+    const first = await client.tasks.create(command, { idempotencyKey: "attempt-1" });
+    const second = await client.tasks.create(command, { idempotencyKey: "attempt-2" });
 
-    expect(first.task_id).toMatch(/^command-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-    expect(second.task_id).toMatch(/^command-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(first.task_id).toMatch(/^task-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(second.task_id).toMatch(/^task-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(second.task_id).not.toBe(first.task_id);
     expect([...core.tasks.keys()]).toEqual([first.task_id, second.task_id]);
   });
@@ -880,7 +800,7 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
 
-    await expect(client.tasks.create({} as never)).rejects.toMatchObject({
+    await expect(client.tasks.create({} as never, { idempotencyKey: "invalid" })).rejects.toMatchObject({
       status: 400,
       errorCode: "INVALID_JSON"
     });
@@ -897,17 +817,21 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
-  it("rejects cyclic JSON values in task create extra payloads", () => {
-    const extra: Record<string, unknown> = {};
-    extra.self = extra;
+  it("rejects cyclic JSON values in Task input", () => {
+    const input: Record<string, unknown> = {};
+    input.self = input;
 
-    expect(isTaskCreateRequest({ task_id: "task-cycle", extra })).toBe(false);
+    expect(isTaskCreateRequest({ asset_id: "asset-cycle", command: "fixture.queued", input })).toBe(false);
   });
 
   it("returns protocol errors for malformed fake Core request JSON", async () => {
     const core = new FakeCore();
 
-    const response = await core.fetch("http://atlas.test/tasks", { method: "POST", body: "{" });
+    const response = await core.fetch("http://atlas.test/tasks", {
+      method: "POST",
+      headers: { "Idempotency-Key": "malformed-json" },
+      body: "{"
+    });
 
     await expect(response.json()).resolves.toEqual({
       success: false,
