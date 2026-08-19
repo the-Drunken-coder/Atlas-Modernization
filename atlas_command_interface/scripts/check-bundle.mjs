@@ -16,10 +16,11 @@ const budgets = {
   shellJavaScript: { raw: 50_000, gzip: 16_000 },
   mapViewJavaScript: { raw: 50_000, gzip: 16_000 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
+  mapLibreWorkerJavaScript: { raw: 500_000, gzip: 140_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 85_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  allJavaScript: { raw: 2_400_000, gzip: 650_000 },
+  allJavaScript: { raw: 2_900_000, gzip: 800_000 },
   allCss: { raw: 110_000, gzip: 18_000 }
 };
 
@@ -46,7 +47,9 @@ for (const entry of Object.values(manifest)) collectManifestFiles(entry, manifes
 
 const emittedFiles = walk(outputDir).map((path) => relative(outputDir, path));
 const assetFiles = emittedFiles.filter((file) => file.startsWith("assets/") && /\.(?:js|css)$/.test(file));
-const unbudgetedFiles = assetFiles.filter((file) => !manifestFiles.has(file));
+const mapLibreWorkerFiles = new Set(assetFiles.filter((file) => /^assets\/maplibre-gl-worker-[^/]+\.js$/.test(file)));
+if (mapLibreWorkerFiles.size !== 1) fail(`Expected one MapLibre worker asset, found ${mapLibreWorkerFiles.size}`);
+const unbudgetedFiles = assetFiles.filter((file) => !manifestFiles.has(file) && !mapLibreWorkerFiles.has(file));
 if (unbudgetedFiles.length > 0) fail(`Unbudgeted emitted JS/CSS assets: ${unbudgetedFiles.join(", ")}`);
 
 const records = new Map(assetFiles.map((file) => [file, measure(resolve(outputDir, file))]));
@@ -57,7 +60,10 @@ if (!entry || !shell || !mapView) fail("Manifest is missing the index, MapConsol
 
 const initialFiles = new Set([entry.file, ...(entry.css ?? [])]);
 const shellFiles = uniqueFiles(shell, manifest).difference(initialFiles);
-const mapRouteFiles = uniqueFiles(mapView, manifest).difference(initialFiles).difference(shellFiles);
+const mapRouteFiles = uniqueFiles(mapView, manifest)
+  .union(mapLibreWorkerFiles)
+  .difference(initialFiles)
+  .difference(shellFiles);
 const allJavaScript = selectByExtension(records, ".js");
 const allCss = selectByExtension(records, ".css");
 const failures = [];
@@ -67,7 +73,8 @@ const checks = [
   checkGroup("initialCss", selectByExtension(selectRecords(records, initialFiles), ".css")),
   checkGroup("shellJavaScript", selectByExtension(selectRecords(records, shellFiles), ".js")),
   checkGroup("mapViewJavaScript", selectByExtension(selectRecords(records, new Set([mapView.file])), ".js")),
-  checkGroup("mapLibreJavaScript", findByName(records, "maplibre-gl", ".js")),
+  checkGroup("mapLibreJavaScript", excludeFiles(findByName(records, "maplibre-gl", ".js"), mapLibreWorkerFiles)),
+  checkGroup("mapLibreWorkerJavaScript", selectRecords(records, mapLibreWorkerFiles)),
   checkGroup("milsymbolJavaScript", findByName(records, "milsymbol", ".js")),
   checkGroup("mapLibreCss", findByName(records, "maplibre-gl", ".css")),
   checkGroup("mapRoute", selectRecords(records, mapRouteFiles)),
@@ -123,6 +130,10 @@ function selectRecords(records, files) {
 
 function selectByExtension(records, extension) {
   return new Map([...records].filter(([file]) => file.endsWith(extension)));
+}
+
+function excludeFiles(records, excluded) {
+  return new Map([...records].filter(([file]) => !excluded.has(file)));
 }
 
 function findByName(records, name, extension) {
