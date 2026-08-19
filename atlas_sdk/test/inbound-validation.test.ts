@@ -111,34 +111,33 @@ describe("AtlasClient inbound response validation", () => {
 
   it.each<[string, unknown]>([
     [
-      "duplicate command IDs",
-      {
-        type: "command_catalog",
-        name: "Catalog",
-        description: "Commands",
-        commands: [
-          { id: "hold", name: "Hold", description: "Hold.", parameters_schema: {} },
-          { id: "hold", name: "Hold Again", description: "Still hold.", parameters_schema: {} }
-        ]
-      }
+      "duplicate Command identifiers",
+      [
+        {
+          command: "fixture.inspect",
+          name: "Inspect",
+          description: "Inspect the fixture.",
+          input_schema: "atlas.tasking.EmptyObject"
+        },
+        {
+          command: "fixture.inspect",
+          name: "Inspect Again",
+          description: "Inspect the fixture again.",
+          input_schema: "atlas.tasking.EmptyObject"
+        }
+      ]
     ],
     [
-      "inverted parameter bounds",
-      {
-        type: "command_catalog",
-        name: "Catalog",
-        description: "Commands",
-        commands: [
-          {
-            id: "move",
-            name: "Move",
-            description: "Move.",
-            parameters_schema: {
-              speed: { type: "number", description: "Speed.", required: true, minimum: 10, maximum: 1 }
-            }
-          }
-        ]
-      }
+      "unsupported scheduling",
+      [
+        {
+          command: "fixture.inspect",
+          name: "Inspect",
+          description: "Inspect the fixture.",
+          input_schema: "atlas.tasking.EmptyObject",
+          scheduling: "periodic"
+        }
+      ]
     ]
   ])("rejects a command catalog with %s", async (_name, payload) => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(payload) });

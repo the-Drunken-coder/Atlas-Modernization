@@ -1,9 +1,6 @@
-import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type { TaskResource, TaskStatus } from "@the-drunken-coder/atlas-sdk";
 
-export const TASK_STATUSES = ["pending", "acknowledged", "in_progress", "completed", "failed", "cancelled"] as const;
-export type TaskStatusName = (typeof TASK_STATUSES)[number];
-
-const TASK_STATUS_LABELS: Record<TaskStatusName, string> = {
+const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   pending: "Pending",
   acknowledged: "Acknowledged",
   in_progress: "In progress",
@@ -12,12 +9,8 @@ const TASK_STATUS_LABELS: Record<TaskStatusName, string> = {
   cancelled: "Cancelled"
 };
 
-export function isKnownTaskStatus(status: string): status is TaskStatusName {
-  return (TASK_STATUSES as readonly string[]).includes(status);
-}
-
-export function taskStatusLabel(status: string): string {
-  return isKnownTaskStatus(status) ? TASK_STATUS_LABELS[status] : status;
+export function taskStatusLabel(status: TaskStatus): string {
+  return TASK_STATUS_LABELS[status];
 }
 
 export function taskStatusMessage(task: TaskResource): string | undefined {

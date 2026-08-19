@@ -6,15 +6,13 @@ import (
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
 )
 
-// EntityCheckinActions coordinates the task-page read with the entity check-in
-// write used by the response.
+// EntityCheckinActions applies telemetry updates reported by an Asset.
 type EntityCheckinActions struct {
 	entityActions *EntityActions
 }
 
-// NewEntityCheckinActions creates a check-in action service from existing
-// entity and task actions.
-func NewEntityCheckinActions(entityActions *EntityActions, taskActions *TaskActions) *EntityCheckinActions {
+// NewEntityCheckinActions creates a check-in action service.
+func NewEntityCheckinActions(entityActions *EntityActions) *EntityCheckinActions {
 	return &EntityCheckinActions{
 		entityActions: entityActions,
 	}

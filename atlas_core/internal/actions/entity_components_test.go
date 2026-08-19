@@ -81,5 +81,3 @@ func TestValidateEntityComponents_NilAndEmpty(t *testing.T) {
 		})
 	}
 }
-
-// TestValidateTaskComponents tests task component validation
