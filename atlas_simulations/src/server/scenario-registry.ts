@@ -25,18 +25,9 @@ function assertUniqueScenarioIds(allScenarios: readonly RegisteredScenario[]): v
 }
 
 function freezeScenario(scenario: Scenario): RegisteredScenario {
+  const inputFields = scenario.inputFields.map((field) => Object.freeze({ ...field }));
   return Object.freeze({
     ...scenario,
-    inputFields: deepFreeze(scenario.inputFields.map((field) => ({ ...field }))) as Scenario["inputFields"]
+    inputFields: Object.freeze(inputFields)
   });
-}
-
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const key of Reflect.ownKeys(value)) {
-      deepFreeze((value as Record<PropertyKey, unknown>)[key]);
-    }
-    Object.freeze(value);
-  }
-  return value;
 }
