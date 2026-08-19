@@ -18,10 +18,10 @@ const config = {
 };
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 const holdPositionCommand: CommandDefinition = {
-  id: "hold_position",
-  name: "Hold Position",
+  command: "fixture.queued",
+  name: "Fixture queued",
   description: "Hold here.",
-  parameters_schema: { seconds: { type: "number", description: "Seconds", required: false } }
+  input_schema: "atlas.fixture.FixtureInput"
 };
 
 afterEach(() => {
@@ -44,8 +44,17 @@ function entity(id: string, version = 1): EntityResource {
   };
 }
 
-function task(id: string, entityId: string, version = 1): TaskResource {
-  return { task_id: id, status: "pending", entity_id: entityId, components: {}, metadata: { ...metadata, version } };
+function task(id: string, assetId: string, version = 1): TaskResource {
+  const timestamp = `2026-06-20T00:00:0${version}Z`;
+  return {
+    task_id: id,
+    asset_id: assetId,
+    command: "fixture.queued",
+    input: { value: id },
+    status: "pending",
+    created_at: timestamp,
+    updated_at: timestamp
+  };
 }
 
 describe("sdk data source", () => {
@@ -95,13 +104,13 @@ describe("sdk data source", () => {
         }
         if (url === `https://core.test/queries/changed-since?since_version=${hydrationVersion}`) {
           return Response.json({
-            version: secondTask.metadata.version,
+            version: 4,
             events: [
               {
                 event: "update",
                 resource_type: "task",
                 id: secondTask.task_id,
-                version: secondTask.metadata.version,
+                version: 4,
                 resource: secondTask
               }
             ],
@@ -320,18 +329,35 @@ describe("sdk data source", () => {
   it("rejects an invalid command catalog from Core", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({
-          type: "command_catalog",
-          name: "Invalid catalog",
-          description: "Missing command fields",
-          commands: [{ id: "broken" }]
-        })
-      )
+      vi.fn(async () => Response.json([{ command: "broken" }]))
     );
     const dataSource = createSdkDataSource(config);
 
     await expect(dataSource.loadCommandCatalog()).rejects.toThrow("Atlas response failed validation");
+  });
+
+  it("loads the selected Asset detail fresh for its current runtime manifest", async () => {
+    const detailed = {
+      ...entity("asset-1", 3),
+      command_manifest: [
+        {
+          command: "fixture.queued",
+          description: "Runs the fixture.",
+          scheduling: "queued" as const,
+          supports_cancel: true,
+          supports_progress: true
+        }
+      ]
+    };
+    const fetchMock = vi.fn(async () => Response.json(detailed));
+    vi.stubGlobal("fetch", fetchMock);
+    const dataSource = createSdkDataSource(config);
+
+    await expect(dataSource.loadEntityDetails?.("asset-1")).resolves.toEqual(detailed);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://core.test/entities/asset-1",
+      expect.objectContaining({ method: "GET", credentials: "include" })
+    );
   });
 
   it("routes command and geometry writes through SDK cache notifications", async () => {
@@ -343,7 +369,9 @@ describe("sdk data source", () => {
       "fetch",
       vi.fn(async (input: unknown, init: RequestInit) => {
         calls.push({ input, init });
-        if (String(input) === "https://core.test/tasks") return Response.json(createdTask, { status: 201 });
+        if (String(input) === "https://core.test/tasks") {
+          return Response.json(createdTask, { status: 201, headers: { ETag: '"v2"' } });
+        }
         if (String(input) === "https://core.test/entities/asset-1") return Response.json(updatedEntity);
         throw new Error(`Unexpected request: ${String(input)}`);
       })
@@ -353,20 +381,23 @@ describe("sdk data source", () => {
     dataSource.watch(snapshots);
 
     await expect(
-      dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: "5" } })
+      dataSource.submitCommand({
+        assetId: "asset-1",
+        command: holdPositionCommand,
+        input: { value: "5" },
+        idempotencyKey: "tasking-1"
+      })
     ).resolves.toEqual(createdTask);
     expect(snapshots).toHaveBeenLastCalledWith({ entities: {}, tasks: { [createdTask.task_id]: createdTask } });
     expect(calls[0].input).toBe("https://core.test/tasks");
     expect(calls[0].init).toMatchObject({ method: "POST", credentials: "include" });
     expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      entity_id: "asset-1",
-      components: {
-        command: { type: "hold_position", id: "hold_position" },
-        parameters: { seconds: 5 }
-      },
-      status: "pending"
+      asset_id: "asset-1",
+      command: "fixture.queued",
+      input: { value: "5" }
     });
+    expect(new Headers(calls[0].init.headers).get("Idempotency-Key")).toBe("tasking-1");
 
     await expect(dataSource.updateGeometry("asset-1", updatedGeometry, 2)).resolves.toEqual(updatedEntity);
     expect(snapshots).toHaveBeenLastCalledWith({
@@ -390,8 +421,10 @@ describe("sdk data source", () => {
     const dataSource = createSdkDataSource(config);
     const controller = new AbortController();
     const request = dataSource.submitCommand({
-      entityId: "asset-1",
+      assetId: "asset-1",
       command: holdPositionCommand,
+      input: { value: "abort" },
+      idempotencyKey: "tasking-abort",
       signal: controller.signal
     });
 
@@ -412,7 +445,12 @@ describe("sdk data source", () => {
 
     const dataSource = createSdkDataSource(config);
     await expect(
-      dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: 5 } })
+      dataSource.submitCommand({
+        assetId: "asset-1",
+        command: holdPositionCommand,
+        input: { value: "auth" },
+        idempotencyKey: "tasking-auth"
+      })
     ).rejects.toMatchObject({
       status: 401,
       errorCode: "UNAUTHORIZED"
@@ -432,7 +470,12 @@ describe("sdk data source", () => {
 
     const dataSource = createSdkDataSource(config);
     await expect(
-      dataSource.submitCommand({ entityId: "asset-1", command: holdPositionCommand, parameters: { seconds: 5 } })
+      dataSource.submitCommand({
+        assetId: "asset-1",
+        command: holdPositionCommand,
+        input: { value: "auth" },
+        idempotencyKey: "tasking-auth"
+      })
     ).rejects.toMatchObject({
       status: 401,
       errorCode: "SOMETHING_ELSE"
@@ -445,12 +488,7 @@ class TestCore {
   version = 0;
   minRetainedVersion = 0;
   feedConnections = 0;
-  readonly catalog = {
-    type: "command_catalog" as const,
-    name: "Atlas Command Catalog",
-    description: "Test catalog",
-    commands: [holdPositionCommand]
-  };
+  readonly catalog = [holdPositionCommand];
   requests: string[] = [];
   readonly sockets = new Set<TestWebSocket>();
   private readonly entities = new Map<string, EntityResource>();

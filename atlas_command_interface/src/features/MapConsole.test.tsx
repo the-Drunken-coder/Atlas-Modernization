@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../app/config.js";
@@ -60,30 +60,7 @@ vi.mock("../ui/map/view/MapView.js", async () => {
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 
-const catalog: CommandCatalog = {
-  type: "command_catalog",
-  name: "Catalog",
-  description: "Test",
-  commands: [
-    { id: "hold_position", name: "Hold Position", description: "Hold here.", parameters_schema: {} },
-    {
-      id: "goto",
-      name: "Goto",
-      description: "Go there.",
-      parameters_schema: {
-        latitude: { type: "number", description: "Latitude", minimum: -90, maximum: 90, required: true },
-        longitude: { type: "number", description: "Longitude", minimum: -180, maximum: 180, required: true }
-      }
-    },
-    {
-      id: "set_speed",
-      name: "Set Speed",
-      description: "Set travel speed.",
-      parameters_schema: { speed: { type: "number", description: "Speed", minimum: 0, required: true } }
-    },
-    { id: "return_to_home", name: "Return To Home", description: "Go home.", parameters_schema: {} }
-  ]
-};
+const catalog: CommandCatalog = [];
 
 const rover: EntityResource = {
   entity_id: "asset-1",
@@ -91,7 +68,6 @@ const rover: EntityResource = {
   subtype: null,
   alias: "Rover",
   components: {
-    task_catalog: { supported_tasks: ["hold_position", "goto", "set_speed"] },
     telemetry: { latitude: 40, longitude: -74 }
   },
   metadata
@@ -158,15 +134,14 @@ function makeFakeDataSource(geofeature: EntityResource = area, health: Connectio
     },
     async submitCommand(submission) {
       submissions.push(submission);
-      const task = {
+      const task: TaskResource = {
         task_id: "task-1",
         status: "pending",
-        entity_id: submission.entityId,
-        components: {
-          command: { type: submission.command.id, id: submission.command.id },
-          parameters: submission.parameters ?? {}
-        },
-        metadata: { ...metadata, version: 2 }
+        asset_id: submission.assetId,
+        command: submission.command.command,
+        input: submission.input,
+        created_at: "2026-06-20T00:00:00Z",
+        updated_at: "2026-06-20T00:00:00Z"
       };
       current = { ...current, tasks: { ...current.tasks, [task.task_id]: task } };
       notify?.(current);
@@ -249,94 +224,14 @@ function renderStaticConsole(overrides: Partial<AtlasContextValue> = {}) {
   );
 }
 
-describe("MapConsole command flow", () => {
-  it("selects an asset, lists its commands, and submits a pending task", async () => {
+describe("MapConsole", () => {
+  it("shows the intentional no-Commands state for the empty Protocol catalog", async () => {
     const user = userEvent.setup();
-    const { fake, submissions } = makeFakeDataSource();
-    renderConsole(fake);
-
-    // Default assets list renders once the snapshot is ready.
-    const row = await screen.findByText("Rover");
-    await user.click(row);
-
-    // The asset inspector lists the supported command and greys out the rest.
-    const hold = await screen.findByRole("button", { name: /Hold Position/ });
-    expect(screen.getByRole("button", { name: /Return To Home/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Return To Home/ })).toHaveAttribute(
-      "title",
-      "This asset does not support this command"
-    );
-
-    await user.click(hold);
-    await waitFor(() => expect(submissions).toHaveLength(1));
-    expect(submissions[0]).toMatchObject({ entityId: "asset-1", command: { id: "hold_position" } });
-
-    // The created task arrives over the feed and shows as pending in history.
-    expect(await screen.findByText("Pending")).toBeInTheDocument();
-  });
-
-  it("sanitizes command mutation failures before rendering them", async () => {
-    const user = userEvent.setup();
-    const secret = "mutation-canary-secret";
     const { fake } = makeFakeDataSource();
-    fake.submitCommand = async () => {
-      throw new Error(
-        `failed https://user:${secret}@core.test?api_key=${secret} Bearer ${secret} Basic ${secret} \u001b[31m`
-      );
-    };
     renderConsole(fake);
 
     await user.click(await screen.findByText("Rover"));
-    await user.click(await screen.findByRole("button", { name: /Set Speed/ }));
-    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
-    await user.click(screen.getByRole("button", { name: "Send command" }));
-    await screen.findByText(/failed/);
-
-    expect(document.body.textContent).not.toContain(secret);
-    expect(document.body.textContent).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/);
-    expect(document.body.textContent).toContain("[redacted]");
-  });
-
-  it("surfaces an in-flight submission failure across a catalog refresh", async () => {
-    const user = userEvent.setup();
-    let rejectSubmission!: (cause: Error) => void;
-    const submitCommand = vi.fn(
-      () =>
-        new Promise<never>((_resolve, reject) => {
-          rejectSubmission = reject;
-        })
-    );
-    const snapshot = makeFakeDataSource().fake.snapshot();
-    const value = (nextCatalog: CommandCatalog): AtlasContextValue => ({
-      status: "ready",
-      config: appConfig(),
-      snapshot,
-      catalog: nextCatalog,
-      health: healthyConnection,
-      reconnect: vi.fn(),
-      submitCommand,
-      updateGeometry: async () => {
-        throw new Error("not used");
-      }
-    });
-    const view = (nextCatalog: CommandCatalog) => (
-      <AtlasStaticProvider value={value(nextCatalog)}>
-        <MapConsole />
-      </AtlasStaticProvider>
-    );
-    const { rerender } = render(view(catalog));
-
-    await user.click(screen.getByRole("button", { name: /Rover/ }));
-    await user.click(screen.getByRole("button", { name: /Set Speed/ }));
-    await user.type(screen.getByRole("spinbutton", { name: /speed/ }), "10");
-    await user.click(screen.getByRole("button", { name: "Send command" }));
-    await waitFor(() => expect(submitCommand).toHaveBeenCalledTimes(1));
-
-    rerender(view({ ...catalog, name: "Updated catalog" }));
-    await act(async () => rejectSubmission(new Error("submission rejected")));
-
-    expect(await screen.findByText("submission rejected")).toBeInTheDocument();
-    expect(screen.getByRole("spinbutton", { name: /speed/ })).toBeInTheDocument();
+    expect(screen.getByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
   });
 
   it("does not change the map reticle target when sidebar rows are hovered", async () => {
@@ -389,7 +284,7 @@ describe("MapConsole command flow", () => {
 
     await user.click(screen.getByTestId("map-marker-select"));
 
-    expect(await screen.findByRole("button", { name: /Hold Position/ })).toBeInTheDocument();
+    expect(await screen.findByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
     const map = screen.getByTestId("map");
     expect(map).toHaveAttribute("data-focus-target", "asset-1");
     expect(map).toHaveAttribute("data-camera-target", "");
@@ -691,42 +586,6 @@ describe("MapConsole command flow", () => {
     expect(geometryUpdates[0].geometry).toEqual(circleArea.components.geometry);
   });
 
-  it("submits map-point commands with the clicked coordinates", async () => {
-    const user = userEvent.setup();
-    const { fake, submissions } = makeFakeDataSource();
-    renderConsole(fake);
-
-    await user.click(await screen.findByText("Rover"));
-    fireEvent.contextMenu(screen.getByTestId("map"));
-    await user.click(await screen.findByRole("menuitem", { name: /Goto/ }));
-
-    await waitFor(() => expect(submissions).toHaveLength(1));
-    expect(submissions[0]).toMatchObject({
-      entityId: "asset-1",
-      command: { id: "goto" },
-      parameters: { latitude: 47.61, longitude: -122.33 }
-    });
-  });
-
-  it("offers position commands in the inspector and accepts keyboard-entered coordinates", async () => {
-    const user = userEvent.setup();
-    const { fake, submissions } = makeFakeDataSource();
-    renderConsole(fake);
-
-    await user.click(await screen.findByText("Rover"));
-    await user.click(await screen.findByRole("button", { name: /Goto/ }));
-    await user.type(screen.getByRole("spinbutton", { name: /latitude/i }), "47.61");
-    await user.type(screen.getByRole("spinbutton", { name: /longitude/i }), "-122.33");
-    await user.click(screen.getByRole("button", { name: "Send command" }));
-
-    await waitFor(() => expect(submissions).toHaveLength(1));
-    expect(submissions[0]).toMatchObject({
-      entityId: "asset-1",
-      command: { id: "goto" },
-      parameters: { latitude: 47.61, longitude: -122.33 }
-    });
-  });
-
   it("switches between configured map sources", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();
@@ -835,11 +694,13 @@ describe("MapConsole command flow", () => {
     renderConsole(fake);
 
     await user.click(await screen.findByText("Rover"));
-    expect(await screen.findByRole("button", { name: /Hold Position/ })).toBeInTheDocument();
+    expect(await screen.findByText("No Commands are defined in Atlas Protocol")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("map"));
 
-    await waitFor(() => expect(screen.queryByRole("button", { name: /Hold Position/ })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText("No Commands are defined in Atlas Protocol")).not.toBeInTheDocument()
+    );
     expect(screen.getByText("Rover")).toBeInTheDocument();
   });
 

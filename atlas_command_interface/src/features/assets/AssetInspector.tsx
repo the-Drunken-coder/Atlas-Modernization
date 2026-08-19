@@ -14,7 +14,7 @@ import {
   heartbeatLevel
 } from "../../atlas/entities.js";
 import { formatNumber, formatPercent, formatRelativeTime } from "../../atlas/format.js";
-import { currentTask, queuedTasks, tasksForEntity } from "../../atlas/selectors.js";
+import { currentTask, queuedTasks, tasksForAsset } from "../../atlas/selectors.js";
 import type { AtlasSnapshot } from "../../atlas/store.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
@@ -41,10 +41,17 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
   const level = heartbeatLevel(lastSeen, now);
   const active = currentTask(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
-  const history = tasksForEntity(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
+  const history = tasksForAsset(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
   const sidebarCommands = catalog
     ? [...commandsForTargeting(catalog, entity, "none"), ...commandsForTargeting(catalog, entity, "map_point")]
     : [];
+  const commandEmptyLabel = !catalog
+    ? "Command Catalog unavailable"
+    : catalog.length === 0
+      ? "No Commands are defined in Atlas Protocol"
+      : !entity.command_manifest?.length
+        ? "This Asset has no Commands"
+        : "No operator inputs are available for this Asset's Commands";
 
   return (
     <div className="inspector">
@@ -90,14 +97,7 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       </Section>
 
       <Section title="Commands">
-        <CommandList
-          availabilities={sidebarCommands}
-          onPick={onPickCommand}
-          emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"}
-        />
-        <p className="field__hint" style={{ marginTop: 8 }}>
-          Position commands accept coordinates here. Right-click the map to fill them from a point.
-        </p>
+        <CommandList availabilities={sidebarCommands} onPick={onPickCommand} emptyLabel={commandEmptyLabel} />
       </Section>
 
       <Section title="Task History">

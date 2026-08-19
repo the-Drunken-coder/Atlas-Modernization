@@ -1,12 +1,5 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import {
-  type EntityKind,
-  entityCurrentTaskId,
-  entityDisplayName,
-  entityKind,
-  entityQueuedTaskIds,
-  isSelectableKind
-} from "./entities.js";
+import { type EntityKind, entityDisplayName, entityKind, isSelectableKind } from "./entities.js";
 import type { AtlasSnapshot } from "./store.js";
 import { sortTasksByRecency } from "./tasks.js";
 
@@ -38,17 +31,17 @@ export function countsByKind(snapshot: AtlasSnapshot): Record<EntityKind, number
   return counts;
 }
 
-/** All tasks targeting the entity, most recent first. */
-export function tasksForEntity(snapshot: AtlasSnapshot, entityId: string): TaskResource[] {
-  return sortTasksByRecency(Object.values(snapshot.tasks).filter((task) => task.entity_id === entityId));
+/** All Tasks assigned to the Asset, most recent first. */
+export function tasksForAsset(snapshot: AtlasSnapshot, assetId: string): TaskResource[] {
+  return sortTasksByRecency(Object.values(snapshot.tasks).filter((task) => task.asset_id === assetId));
 }
 
 export function currentTask(snapshot: AtlasSnapshot, entity: EntityResource): TaskResource | undefined {
-  return getTask(snapshot, entityCurrentTaskId(entity));
+  return tasksForAsset(snapshot, entity.entity_id).find((task) => task.status === "in_progress");
 }
 
 export function queuedTasks(snapshot: AtlasSnapshot, entity: EntityResource): TaskResource[] {
-  return entityQueuedTaskIds(entity)
-    .map((id) => snapshot.tasks[id])
-    .filter((task): task is TaskResource => task !== undefined);
+  return tasksForAsset(snapshot, entity.entity_id).filter(
+    (task) => task.status === "pending" || task.status === "acknowledged"
+  );
 }

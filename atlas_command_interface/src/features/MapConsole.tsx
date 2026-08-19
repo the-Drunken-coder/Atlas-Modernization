@@ -1,4 +1,4 @@
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
@@ -26,9 +26,8 @@ import { Button, SelectField } from "../ui/primitives/controls.js";
 import { ContextMenu, type MenuItemDef } from "../ui/primitives/Menu.js";
 import { APIKeysPanel } from "./admin/APIKeysPanel.js";
 import { AssetInspector } from "./assets/AssetInspector.js";
-import { CommandForm } from "./commands/CommandForm.js";
 import { CommandList } from "./commands/CommandList.js";
-import { useCommandFlow } from "./commands/use-command-flow.js";
+import { type CommandFormState, useCommandFlow } from "./commands/use-command-flow.js";
 import { EntityList } from "./EntityList.js";
 import { GeofeatureInspector } from "./geofeatures/GeofeatureInspector.js";
 import { type GeometryEditState, useGeometryEdit } from "./geofeatures/use-geometry-edit.js";
@@ -54,7 +53,41 @@ export function MapConsole() {
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
   const selection = sidebar.selection;
-  const selectedEntity = getEntity(snapshot, selection?.id);
+  const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
+  const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
+  const commandDetailsRequired = Boolean(
+    selectedSnapshotEntity &&
+      entityKind(selectedSnapshotEntity) === "asset" &&
+      catalog?.length &&
+      atlas.loadEntityDetails
+  );
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedEntityDetails(undefined);
+    if (!commandDetailsRequired || !selectedSnapshotEntity || !atlas.loadEntityDetails) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    void atlas
+      .loadEntityDetails(selectedSnapshotEntity.entity_id)
+      .then((entity) => {
+        if (!cancelled) setSelectedEntityDetails(entity);
+      })
+      .catch(() => {
+        // Command availability fails closed when the current runtime manifest
+        // cannot be loaded from Asset details.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntity]);
+  const selectedEntity =
+    selectedSnapshotEntity && selectedEntityDetails?.entity_id === selectedSnapshotEntity.entity_id
+      ? { ...selectedSnapshotEntity, command_manifest: selectedEntityDetails.command_manifest }
+      : commandDetailsRequired
+        ? selectedSnapshotEntity && { ...selectedSnapshotEntity, command_manifest: undefined }
+        : selectedSnapshotEntity;
   const selectedId = selection?.id;
   const commandFlow = useCommandFlow({ catalog, selectedEntity, selectedId, submitCommand: atlas.submitCommand });
   const geometryEdit = useGeometryEdit({ selectedEntity, selectedId, updateGeometry: atlas.updateGeometry });
@@ -148,11 +181,9 @@ export function MapConsole() {
   const mapCommands: MenuItemDef[] =
     mapMenu && selectedEntity && catalog
       ? commandsForTargeting(catalog, selectedEntity, "map_point").map((availability) => ({
-          key: availability.command.id,
+          key: availability.command.command,
           title: availability.command.name,
-          sub: availability.requiresForm ? "needs parameters" : undefined,
-          disabled: availability.disabled,
-          disabledReason: availability.disabledReason,
+          sub: availability.manifest.description,
           onSelect: () => commandFlow.pickMapCommand(availability, { lat: mapMenu.lat, lng: mapMenu.lng })
         }))
       : [];
@@ -264,23 +295,55 @@ export function MapConsole() {
 
       {submitting && !commandForm ? (
         <div className="banner banner--info" role="status">
-          Command submission pending…
+          Tasking pending…
         </div>
       ) : null}
 
       {commandForm && selectedEntity ? (
-        <CommandForm
-          command={commandForm.availability.command}
-          targeting={commandForm.availability.targeting}
-          formParameters={commandForm.availability.formParameters}
-          mapPoint={commandForm.mapPoint}
+        <PurposeBuiltCommandForm
+          state={commandForm}
+          asset={selectedEntity}
           submitting={submitting}
           error={submitError}
           onCancel={commandFlow.dismissCommandForm}
-          onSubmit={(parameters) => void commandFlow.submit(commandForm.availability, parameters, commandForm)}
+          onSubmit={(input) => void commandFlow.submit(commandForm.availability, input)}
         />
+      ) : submitError ? (
+        <div className="banner banner--error" role="alert">
+          {submitError}
+        </div>
       ) : null}
     </>
+  );
+}
+
+function PurposeBuiltCommandForm({
+  state,
+  asset,
+  submitting,
+  error,
+  onCancel,
+  onSubmit
+}: {
+  state: CommandFormState;
+  asset: EntityResource;
+  submitting: boolean;
+  error?: string;
+  onCancel: () => void;
+  onSubmit: (input: JSONValue) => void;
+}) {
+  const Form = state.availability.input.Form;
+  if (!Form) return null;
+  return (
+    <Form
+      asset={asset}
+      command={state.availability.command}
+      mapPoint={state.mapPoint}
+      submitting={submitting}
+      error={error}
+      onCancel={onCancel}
+      onSubmit={onSubmit}
+    />
   );
 }
 
@@ -393,7 +456,15 @@ function ListBody({
           <CommandList
             availabilities={catalog ? commandsForTargeting(catalog, selectedEntity, "none") : []}
             onPick={onPickCommand}
-            emptyLabel={catalog ? "No commands available" : "Command catalog unavailable"}
+            emptyLabel={
+              !catalog
+                ? "Command Catalog unavailable"
+                : catalog.length === 0
+                  ? "No Commands are defined in Atlas Protocol"
+                  : !selectedEntity.command_manifest?.length
+                    ? "This Asset has no Commands"
+                    : "No operator inputs are available for this Asset's Commands"
+            }
           />
         </div>
       );

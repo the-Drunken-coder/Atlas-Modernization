@@ -40,6 +40,7 @@
   /* Task status */
   --status-pending: #f5c451;
   --status-acknowledged: #5aa0ff;
+  --status-in_progress: #4fc3f7;
   --status-completed: #3fd27a;
   --status-failed: #ff5d5d;
   --status-cancelled: #7a8699;

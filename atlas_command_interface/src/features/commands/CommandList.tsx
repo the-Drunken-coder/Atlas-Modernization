@@ -6,7 +6,7 @@ type CommandListProps = {
   emptyLabel?: string;
 };
 
-/** Sidebar list of non-position commands. Valid first, disabled greyed below. */
+/** Sidebar list of Commands supported by both Protocol and the selected Asset. */
 export function CommandList({ availabilities, onPick, emptyLabel }: CommandListProps) {
   if (availabilities.length === 0) {
     return <div className="panel__empty">{emptyLabel ?? "No commands available"}</div>;
@@ -14,21 +14,18 @@ export function CommandList({ availabilities, onPick, emptyLabel }: CommandListP
   return (
     <div className="stack">
       {availabilities.map((availability) => {
-        const { command, disabled, disabledReason, requiresForm } = availability;
+        const { command, manifest } = availability;
         return (
           <button
-            key={command.id}
+            key={command.command}
             type="button"
             className="command-row"
-            disabled={disabled}
-            title={disabled ? disabledReason : command.description}
+            title={command.description}
             onClick={() => onPick(availability)}
           >
             <span className="command-row__main">
               <span className="command-row__title">{command.name}</span>
-              <span className="command-row__sub">
-                {disabled ? disabledReason : requiresForm ? `${command.id} · needs parameters` : command.id}
-              </span>
+              <span className="command-row__sub">{manifest.description}</span>
             </span>
           </button>
         );

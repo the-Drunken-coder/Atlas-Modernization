@@ -17,7 +17,7 @@ function StatusProbe() {
     <div>
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
-      <span data-testid="catalog-name">{atlas.catalog?.name}</span>
+      <span data-testid="catalog-name">{atlas.catalog?.[0]?.name}</span>
       {atlas.health.error ? (
         <code data-testid="health-error">
           {atlas.health.error.source}: {atlas.health.error.message}
@@ -81,7 +81,14 @@ function entity(alias: string, version: number): EntityResource {
 }
 
 function catalog(name: string): CommandCatalog {
-  return { type: "command_catalog", name, description: "Test", commands: [] };
+  return [
+    {
+      command: "fixture.queued",
+      name,
+      description: "Test",
+      input_schema: "atlas.fixture.FixtureInput"
+    }
+  ];
 }
 
 function deferred<T>() {
@@ -235,7 +242,7 @@ describe("AtlasProvider", () => {
         return current;
       },
       async loadCommandCatalog() {
-        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+        return [];
       },
       watch(onEvent) {
         calls.push("watch");
@@ -298,7 +305,7 @@ describe("AtlasProvider", () => {
         return { entities: { "asset-1": entity("Recovered", 2) }, tasks: {} };
       },
       async loadCommandCatalog() {
-        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+        return [];
       },
       watch() {
         return () => undefined;
@@ -391,7 +398,7 @@ describe("AtlasProvider", () => {
         return current;
       },
       async loadCommandCatalog() {
-        return { type: "command_catalog", name: "Catalog", description: "Test", commands: [] };
+        return [];
       },
       watch(onEvent) {
         emit = onEvent;

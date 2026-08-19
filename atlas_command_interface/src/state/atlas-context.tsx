@@ -24,6 +24,7 @@ export type AtlasContextValue = {
   catalog?: CommandCatalog;
   health: ConnectionHealth;
   reconnect: () => void;
+  loadEntityDetails?: (entityId: string) => Promise<EntityResource>;
   submitCommand: (submission: CommandSubmission) => Promise<TaskResource>;
   updateGeometry: (entityId: string, geometry: UiGeometry, ifMatchVersion?: number) => Promise<EntityResource>;
 };
@@ -164,6 +165,12 @@ export function AtlasProvider({
     setConnectionAttempt((attempt) => attempt + 1);
   }, []);
 
+  const loadEntityDetails = useCallback(async (entityId: string) => {
+    const dataSource = dataSourceRef.current;
+    if (!dataSource?.loadEntityDetails) return Promise.reject(new Error("Atlas Entity details are unavailable"));
+    return dataSource.loadEntityDetails(entityId);
+  }, []);
+
   const value = useMemo<AtlasContextValue>(
     () => ({
       status,
@@ -174,6 +181,7 @@ export function AtlasProvider({
       catalog,
       health,
       reconnect,
+      loadEntityDetails,
       submitCommand: async (submission) => {
         const dataSource = dataSourceRef.current;
         if (!dataSource) return Promise.reject(new Error("Atlas data source is not ready"));
@@ -185,7 +193,7 @@ export function AtlasProvider({
         return dataSource.updateGeometry(entityId, geometry, ifMatchVersion);
       }
     }),
-    [status, error, connectionError, config, snapshot, catalog, health, reconnect]
+    [status, error, connectionError, config, snapshot, catalog, health, reconnect, loadEntityDetails]
   );
 
   return <AtlasContext.Provider value={value}>{children}</AtlasContext.Provider>;
