@@ -43,7 +43,7 @@ export function AccountMenu({ username, loggingOut, error, onLogout }: AccountMe
       <button
         ref={triggerRef}
         type="button"
-        className="rail__brand rail__brand-button"
+        className="bp6-button bp6-minimal rail__brand rail__brand-button"
         aria-label="Account"
         aria-expanded={open}
         aria-controls="account-menu-popover"

@@ -1,125 +1,84 @@
-import type { SVGProps } from "react";
+import {
+  ArrowLeftIcon as BlueprintArrowLeftIcon,
+  ChevronLeftIcon as BlueprintChevronLeftIcon,
+  ChevronRightIcon as BlueprintChevronRightIcon,
+  CrossIcon as BlueprintCrossIcon,
+  DoubleCaretVerticalIcon as BlueprintDoubleCaretVerticalIcon,
+  DuplicateIcon as BlueprintDuplicateIcon,
+  GlobeNetworkIcon as BlueprintGlobeNetworkIcon,
+  KeyIcon as BlueprintKeyIcon,
+  PathSearchIcon as BlueprintPathSearchIcon,
+  PlusIcon as BlueprintPlusIcon,
+  PolygonFilterIcon as BlueprintPolygonFilterIcon,
+  SatelliteIcon as BlueprintSatelliteIcon,
+  SearchIcon as BlueprintSearchIcon,
+  SendToGraphIcon as BlueprintSendToGraphIcon,
+  TrashIcon as BlueprintTrashIcon
+} from "@blueprintjs/icons";
+import type { CSSProperties } from "react";
 
-type IconProps = SVGProps<SVGSVGElement> & { size?: number };
-
-function Svg({ size = 18, children, ...props }: IconProps & { children: React.ReactNode }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      {...props}
-    >
-      {children}
-    </svg>
-  );
-}
+type IconProps = {
+  size?: number;
+  className?: string;
+  style?: CSSProperties;
+};
 
 export function AssetsIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M12 3l8 16H4l8-16z" />
-      <circle cx="12" cy="14" r="1.4" />
-    </Svg>
-  );
+  return <BlueprintSatelliteIcon {...props} />;
 }
 
 export function TracksIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M12 3l9 9-9 9-9-9 9-9z" />
-    </Svg>
-  );
+  return <BlueprintPathSearchIcon {...props} />;
 }
 
 export function GeofeaturesIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M4 7l7-3 9 4-2 11-9 2-5-4 0-10z" />
-    </Svg>
-  );
+  return <BlueprintPolygonFilterIcon {...props} />;
 }
 
 export function CommandsIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M5 7l4 4-4 4" />
-      <path d="M12 16h7" />
-    </Svg>
-  );
+  return <BlueprintSendToGraphIcon {...props} />;
 }
 
 export function KeyIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <circle cx="7.5" cy="12" r="3.5" />
-      <path d="M11 12h9M16 12v3M19 12v-3" />
-    </Svg>
-  );
+  return <BlueprintKeyIcon {...props} />;
 }
 
 export function BrandIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M12 3.5v17M3.5 12h17" />
-      <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
-    </Svg>
-  );
+  return <BlueprintGlobeNetworkIcon {...props} />;
 }
 
 export function BackIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M15 6l-6 6 6 6" />
-    </Svg>
-  );
+  return <BlueprintArrowLeftIcon {...props} />;
 }
 
 export function CollapseIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M14 6l-6 6 6 6" />
-      <path d="M19 6v12" />
-    </Svg>
-  );
+  return <BlueprintChevronLeftIcon {...props} />;
+}
+
+export function ChevronRightIcon(props: IconProps) {
+  return <BlueprintChevronRightIcon {...props} />;
+}
+
+export function SearchIcon(props: IconProps) {
+  return <BlueprintSearchIcon {...props} />;
+}
+
+export function DoubleCaretVerticalIcon(props: IconProps) {
+  return <BlueprintDoubleCaretVerticalIcon {...props} />;
 }
 
 export function CopyIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <path d="M5 15V5a2 2 0 0 1 2-2h8" />
-    </Svg>
-  );
+  return <BlueprintDuplicateIcon {...props} />;
 }
 
 export function CloseIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M6 6l12 12M18 6L6 18" />
-    </Svg>
-  );
+  return <BlueprintCrossIcon {...props} />;
 }
 
 export function PlusIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M12 5v14M5 12h14" />
-    </Svg>
-  );
+  return <BlueprintPlusIcon {...props} />;
 }
 
 export function TrashIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
-    </Svg>
-  );
+  return <BlueprintTrashIcon {...props} />;
 }

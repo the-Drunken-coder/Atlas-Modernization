@@ -133,6 +133,17 @@ describe("sidebar rail + panel", () => {
     expect(onPreview).toHaveBeenCalledWith(ASSETS[0]);
   });
 
+  it("filters entity rows without changing the source list", async () => {
+    const user = userEvent.setup();
+    render(<EntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Filter entities" }), "Two");
+
+    expect(screen.queryByRole("button", { name: /Rover One/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rover Two/ })).toBeInTheDocument();
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
   it("does not move focus for a map-origin selection", async () => {
     const user = userEvent.setup();
     render(<Harness />);
