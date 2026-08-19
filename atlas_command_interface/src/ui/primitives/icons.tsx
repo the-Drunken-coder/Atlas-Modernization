@@ -3,16 +3,16 @@ import {
   ChevronLeftIcon as BlueprintChevronLeftIcon,
   ChevronRightIcon as BlueprintChevronRightIcon,
   CrossIcon as BlueprintCrossIcon,
+  CubeIcon as BlueprintCubeIcon,
+  DetectionIcon as BlueprintDetectionIcon,
   DoubleCaretVerticalIcon as BlueprintDoubleCaretVerticalIcon,
   DuplicateIcon as BlueprintDuplicateIcon,
   GlobeNetworkIcon as BlueprintGlobeNetworkIcon,
   KeyIcon as BlueprintKeyIcon,
-  PathSearchIcon as BlueprintPathSearchIcon,
+  PlayIcon as BlueprintPlayIcon,
   PlusIcon as BlueprintPlusIcon,
   PolygonFilterIcon as BlueprintPolygonFilterIcon,
-  SatelliteIcon as BlueprintSatelliteIcon,
   SearchIcon as BlueprintSearchIcon,
-  SendToGraphIcon as BlueprintSendToGraphIcon,
   TrashIcon as BlueprintTrashIcon
 } from "@blueprintjs/icons";
 import type { CSSProperties } from "react";
@@ -24,11 +24,11 @@ type IconProps = {
 };
 
 export function AssetsIcon(props: IconProps) {
-  return <BlueprintSatelliteIcon {...props} />;
+  return <BlueprintCubeIcon {...props} />;
 }
 
 export function TracksIcon(props: IconProps) {
-  return <BlueprintPathSearchIcon {...props} />;
+  return <BlueprintDetectionIcon {...props} />;
 }
 
 export function GeofeaturesIcon(props: IconProps) {
@@ -36,7 +36,7 @@ export function GeofeaturesIcon(props: IconProps) {
 }
 
 export function CommandsIcon(props: IconProps) {
-  return <BlueprintSendToGraphIcon {...props} />;
+  return <BlueprintPlayIcon {...props} />;
 }
 
 export function KeyIcon(props: IconProps) {
