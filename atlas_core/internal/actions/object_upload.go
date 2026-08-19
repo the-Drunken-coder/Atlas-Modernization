@@ -300,6 +300,9 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 	if objectDeletedAfterUploadPreflight(preflightState, currentState) {
 		return cleanupMetadataFailure(NewObjectNotFoundError(objectID))
 	}
+	if typePtr == nil && currentState.resource != nil {
+		typePtr = currentState.resource.Type
+	}
 
 	jsonBytes, err := uploadObjectJSON(currentState.json, bucket, uploadedInfo.SizeBytes, usageHints)
 	if err != nil {
