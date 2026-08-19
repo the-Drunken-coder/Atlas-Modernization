@@ -89,7 +89,7 @@ Content-Type: application/json
 
 ### Entity Check-in
 
-The check-in endpoint is how agents/assets regularly report in. It accepts telemetry, optional component updates, and an optional operational status string simultaneously, updates the heartbeat, and returns pending and acknowledged tasks for the asset (configurable via `status_filter`).
+The check-in endpoint is how agents/assets regularly report observed state. It accepts telemetry, optional component updates, and an optional operational status string simultaneously, updates the heartbeat, and returns the updated Entity. Task delivery uses the current runtime's separate push and reconciliation path.
 
 ```bash
 POST /entities/{entity_id}/checkin
@@ -117,16 +117,11 @@ Response:
 
 ```json
 {
-  "entity": { "...": "full entity object with updated components" },
-  "tasks": [ "...pending tasks for this entity" ],
-  "task_count": 1,
-  "task_limit": 10
+  "entity": { "...": "full entity object with updated components" }
 }
 ```
 
-The server resolves the requested task page before it commits the entity update. If task pagination is invalid or the task read fails, the check-in returns an error without changing heartbeat, telemetry, status, entity version, or the change feed. The task read and entity write are separate transactions, so concurrent task changes may appear on the next check-in.
-
-Optional query parameters: `status_filter` (default `pending,acknowledged`), `limit` (1–20, default 10), `fields` (`minimal` for compact task payloads), `since` (RFC3339 timestamp to filter tasks).
+The optional `fields=minimal` query selects the generated minimal response shape. It does not change Task delivery.
 
 ### Get Entity
 
@@ -155,7 +150,7 @@ The `telemetry` component in the JSON blob tracks position and motion:
 ## Operational Guidance
 
 - Create entities via `POST /entities` with required `entity_type` and optional `subtype`
-- Use `POST /entities/{entity_id}/checkin` for asset reporting to update telemetry and status and fetch pending tasks in one request
+- Use `POST /entities/{entity_id}/checkin` for telemetry and observed status reporting
 - The `updated_at` timestamp is automatically updated on any entity modification
 - Use the `communications.link_state` component to track connection status
 

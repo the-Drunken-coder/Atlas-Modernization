@@ -325,17 +325,18 @@ describe("scenario input parsing", () => {
       registerClient: () => undefined
     });
 
-    const task = await ctx.client.tasks.create({
-      entity_id: ctx.id("asset"),
-      components: { command: { type: "goto" } }
+    const task = await ctx.createTask({
+      asset_id: ctx.id("asset"),
+      command: "fixture.queued",
+      input: { value: "tracked" }
     });
 
-    expect(task.task_id).toMatch(/^command-/);
-    expect(cleanupCandidates).toEqual([{ type: "task", id: task.task_id }]);
+    expect(task.task_id).toMatch(/^task-/);
+    expect(cleanupCandidates).toEqual([]);
     expect(tracked).toEqual([{ type: "task", id: task.task_id }]);
   });
 
-  it("requires explicit run-owned task IDs when generated task IDs are disabled", async () => {
+  it("tracks server-generated Task IDs without adding cleanup candidates", async () => {
     const core = createFakeAtlasCore();
     const tracked: Array<{ type: string; id: string }> = [];
     const ctx = createScenarioContext({
@@ -345,18 +346,16 @@ describe("scenario input parsing", () => {
       log: () => undefined,
       assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
       track: (resource) => tracked.push(resource),
-      registerClient: () => undefined,
-      allowGeneratedTaskIds: false
+      registerClient: () => undefined
     });
 
-    await expect(
-      ctx.client.tasks.create({
-        entity_id: ctx.id("asset"),
-        components: { command: { type: "goto" } }
-      })
-    ).rejects.toThrow("Deployed simulations require an explicit run-owned task ID");
-    expect(core.state.tasks.size).toBe(0);
-    expect(tracked).toEqual([]);
+    const task = await ctx.createTask({
+      asset_id: ctx.id("asset"),
+      command: "fixture.queued",
+      input: { value: "retained" }
+    });
+    expect(core.state.tasks.size).toBe(1);
+    expect(tracked).toEqual([{ type: "task", id: task.task_id }]);
   });
 
   it("rejects created and tracked resources outside the run ID prefix", async () => {
@@ -373,9 +372,6 @@ describe("scenario input parsing", () => {
 
     await expect(ctx.client.entities.create({ entity_id: "external-entity", entity_type: "asset" })).rejects.toThrow(
       "entity ID must start with run ID prefix sim-owned-"
-    );
-    await expect(ctx.client.tasks.create({ task_id: "external-task" })).rejects.toThrow(
-      "task ID must start with run ID prefix sim-owned-"
     );
     await expect(ctx.client.objects.create({ object_id: "external-object" })).rejects.toThrow(
       "object ID must start with run ID prefix sim-owned-"

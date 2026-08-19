@@ -245,6 +245,7 @@ Every entry explicitly declares:
 - `supports_progress`: whether the Asset reports meaningful numeric progress
 
 The manifest does not repeat the Command's input or output schema references. Those always resolve through the Protocol catalog.
+Each Command appears at most once in a manifest.
 
 The manifest also has no `produces` field. Durable effects belong to the Command's behavioral documentation and normal Atlas resource systems, while bounded Task results belong to the optional output schema. A generic output list would duplicate those contracts and would misrepresent Commands such as `sensing.scan_area`, whose Track publications may be unbounded while it runs.
 
@@ -426,6 +427,8 @@ Pending and acknowledged Tasks can ordinarily be cancelled because execution has
 
 `safety.emergency_stop` is the exception to client cancellation. After Core accepts it, tasking clients cannot cancel that Task in any nonterminal state. The `emergency_stop` cancellation code describes the earlier Tasks cancelled by the safety transition, not cancellation of the emergency-stop Task itself. Only the reset flow described below can withdraw the persistent safety interlock.
 
+The Asset learns cancellation through runtime-scoped delivery. If it has already started the Task, its runtime aborts the matching local handler signal. Atlas does not define a second abort route or ask the Asset to cancel the Task again.
+
 When completion and cancellation race, the first terminal change accepted by Core wins. Cancellation describes Atlas intent; the Asset publishes its current observed physical state separately.
 
 ### Output and durable results
@@ -561,6 +564,8 @@ No later queued Task may enter `in_progress` while the barrier is engaged. Succe
 
 Failure, cancellation, or `immediate_start_timeout` does not clear the barrier because none confirms that movement stopped. Core accepts a replacement `mobility.stop` while the barrier is engaged; successful completion of that replacement clears the barrier and releases later queued work. This prevents both unsafe automatic release and a failed stop from becoming an unrecoverable queue block.
 
+If the stop Task fails, is fenced by a restart, or reaches its start deadline, the halt remains unconfirmed and later queued work stays blocked. Recovery requires a new `mobility.stop` Task to complete; an operator cannot release the blocked queue by cancelling or dismissing the failed attempt.
+
 Movement Tasks created after the stop remain valid.
 
 ## Safety
@@ -583,6 +588,8 @@ The atomic transition:
 4. blocks new non-safety tasking before Task creation
 
 After the transition commits, Core attempts physical emergency stop by delivering the immediate Task.
+
+The emergency-stop Task cannot be cancelled by a tasking client, including while it is still pending. Once Core has accepted the Task, only a completed `safety.reset_emergency_stop` can clear the interlock. A delivery failure or operator change of mind cannot silently withdraw the safety intent.
 
 The Core interlock remains engaged if delivery fails or physical state is unknown. Repeated emergency-stop tasking safely reasserts the request. The newest safety intent governs the interlock, so a late result from an older Safety Task cannot override it.
 

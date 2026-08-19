@@ -1,84 +1,94 @@
 # Atlas asset runtime
 
-The Atlas asset runtime (`atlas_asset_runtime/`) is the small Node-side loop for code that represents an Atlas entity. It uses the public Atlas SDK to perform compact entity check-ins, publish telemetry, receive pending command tasks, and report task progress or completion.
+The Atlas asset runtime (`atlas_asset_runtime/`) is the small Node-side execution loop for a process that represents an Atlas Asset. It registers a fresh process fence, establishes safe state, publishes a fixed Command Manifest, consumes runtime-scoped Task delivery, executes handlers, and reports telemetry and Task lifecycle changes through the public Atlas SDK.
 
-The runtime is deliberately not an operating system. The caller owns the process, configuration, Atlas client, entity creation, hardware integration, and deployment. The runtime owns only the repeated asset lifecycle that is useful across those hosts.
+The caller owns process configuration, Entity creation, hardware integration, Command handlers, execution modules, and deployment. The runtime owns only the shared registration, delivery, lifecycle, and check-in behavior.
 
 ## Package boundary
 
-`@the-drunken-coder/atlas-asset-runtime` is a TypeScript/ESM package for Node 24 or newer. It depends on `@the-drunken-coder/atlas-sdk` as a normal package and imports only public SDK exports. It does not bundle a private SDK copy.
-
-The first repository consumer is `atlas_simulations/`. That migration proves the API against an existing scenario; it is not evidence that the old scenarios already contained a reusable handshake, reconnect, feed, or task-dispatch loop. They did not.
+`@the-drunken-coder/atlas-asset-runtime` is a TypeScript/ESM package for Node 24 or newer. It depends on `@the-drunken-coder/atlas-sdk` through public exports and does not bundle a private SDK copy.
 
 ## Public lifecycle
 
-Create an `AtlasAssetRuntime` with an SDK-backed client, the ID of an entity that already exists, optional command handlers, and an optional function that returns the asset's current check-in report. A runtime with no handlers is a valid telemetry-only asset. `start()` performs the protocol handshake and one complete check-in cycle before resolving, then leaves a background check-in loop running. `stop()` stops background scheduling, rejects new cycles while shutdown is in progress, signals background handlers, waits for in-flight manual or background work, and is safe to call more than once. Restarting performs a fresh protocol handshake.
+Every advertised Command requires one handler, and every handler must appear in the manifest. A telemetry-only Asset uses the empty manifest and no handlers.
 
 ```ts
 import { AtlasAssetRuntime } from "@the-drunken-coder/atlas-asset-runtime";
-import { AtlasClient } from "@the-drunken-coder/atlas-sdk";
+import { AtlasClient, type CommandManifest } from "@the-drunken-coder/atlas-sdk";
 
 const client = new AtlasClient({
   baseUrl: "http://127.0.0.1:8000",
   apiKey: process.env.ATLAS_API_KEY
 });
 
+const manifest: CommandManifest = [
+  {
+    command: "example.inspect",
+    description: "Inspect the current location with the onboard sensor.",
+    scheduling: "queued",
+    supports_cancel: true,
+    supports_progress: true
+  }
+];
+
 const runtime = new AtlasAssetRuntime(client, {
   entityId: "asset-1",
+  manifest,
+  handlers: {
+    "example.inspect": async ({ signal, reportProgress }) => {
+      signal.throwIfAborted();
+      await reportProgress(0.5);
+      return { observations: 3 };
+    }
+  },
   checkIn: () => ({
     status: "online",
     telemetry: { latitude: 38.8977, longitude: -77.0365 }
   }),
-  handlers: {
-    move: async ({ reportProgress }) => {
-      await reportProgress(50, "en route");
-      return { arrived: true };
-    }
-  },
   onError: console.error
 });
 
 await runtime.start();
 ```
 
-The runtime exposes four states: `stopped`, `starting`, `running`, and `stopping`. Callers can also request a complete cycle directly with `checkIn()`.
+`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, runs every execution module's safety barrier, publishes the manifest, subscribes to `tasks_for_asset`, starts SDK synchronization, and reconciles deliverable work. Only then does it enter `running`. `stop()` aborts local work, stops synchronization, and waits for in-flight runtime work to settle. Starting again creates a new runtime ID.
 
-Each cycle:
+The runtime exposes `stopped`, `starting`, `running`, and `stopping` states. `checkIn()` remains available for a caller-requested telemetry cycle; the background loop calls the same method at the configured interval. Check-in never carries or retrieves Tasks.
 
-1. Gets the latest telemetry/status/components report from the caller.
-2. Calls the entity check-in endpoint with compact task fields, pending-task filtering, and a bounded page size.
-3. Drains every returned task page in order.
-4. Dispatches command tasks sequentially.
+## Safety barrier
 
-Cycles do not overlap, and task handlers do not run concurrently. The runtime forwards caller-owned components as provided; it does not inject or overwrite an entity task catalog.
+Execution modules isolate the physical procedure needed to establish safe state:
 
-## Task handling
+```ts
+import type { ExecutionModule } from "@the-drunken-coder/atlas-asset-runtime";
 
-A runtime with no registered handlers is telemetry-only: it performs one check-in request per cycle and does not mutate returned tasks. Once at least one handler is registered, a recognized command task is acknowledged before its handler runs. The handler receives the minimal task, an abort signal, and a function for reporting progress. Returning a JSON object completes the task with that object as its result; returning nothing completes it without a result. Throwing fails the task.
+const mobility: ExecutionModule = {
+  id: "mobility",
+  async establishSafeState({ signal }) {
+    signal.throwIfAborted();
+    await haltAndConfirm();
+  }
+};
+```
 
-For runtimes with handlers, tasks without a command are ignored. A command that has no registered handler is failed so it does not remain silently pending.
+Pass modules through `executionModules`. Core never sees module IDs or procedures. If any module fails, registration does not become ready and no Task is delivered.
 
-Stopping or aborting the runtime does not report an active task as failed merely because local shutdown interrupted it. Atlas may therefore retain an acknowledged task for later operator or asset recovery.
+## Task execution
 
-## Failure and delivery semantics
+Core remains authoritative for Task eligibility and ordering. The runtime asks only for work released to its current runtime ID.
 
-Every failed background cycle is surfaced through the caller's error callback. The loop then retries with an increasing delay capped at an internal maximum and returns to the normal check-in interval after a successful cycle. Retry policy is intentionally internal in v1 rather than exposed as configuration.
+- Queued Commands are acknowledged and executed by one serial local executor.
+- Immediate Commands start independently and may overlap queued or other immediate work.
+- Progress is available only when the manifest declares `supports_progress` and is reported from `0` to `1`.
+- A handler return value becomes Task output. Returning nothing completes without output. A thrown error fails the Task with `execution_failed`.
+- A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
+- A Core cancellation aborts the matching local handler immediately. The cancellation route belongs to the tasking client; the runtime does not issue a second cancellation or abort API call.
 
-The runtime does **not** promise exactly-once task execution. A process crash after acknowledgement can leave a task acknowledged without a result, and restarting a process does not provide durable execution recovery. Handlers must be written with those limits in mind.
+Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. A temporary WebSocket reconnect keeps the same runtime ID and relies on feed recovery; it is not a process restart.
 
-## Explicit v1 boundaries
+## Boundaries
 
-V1 does not include:
-
-- change-feed consumption or global SDK hydration;
-- entity creation or registration;
-- a durable task journal, offline outbox, or crash recovery;
-- concurrent task execution;
-- a plugin system, scaffolding CLI, deployment manager, or bundled host runtime;
-- configurable retry/backoff policy;
-- Python, Bun, or multi-language bindings.
-
-These are not reserved extension points. Add one only when a real asset integration demonstrates the need.
+The package does not provide Entity creation, a hardware plugin system, durable local execution journals, deployment management, or its own retry queue. It also does not define Command semantics. Commands and their schemas, operator input, handlers, and any special Core policy are added together through the Protocol authoring process.
 
 ## Repository checks
 
@@ -88,10 +98,10 @@ Install once from the repository root with Node 24:
 npm ci
 npm run build:asset-runtime
 npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
-npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime -- --since=origin/main
+npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime
 npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
 npm test --workspace @the-drunken-coder/atlas-asset-runtime
 npm run test:package --workspace @the-drunken-coder/atlas-asset-runtime
 ```
 
-The packed-consumer smoke verifies the public package boundary from clean tarballs. The package is configured for public npm access, but this repository does not automate npm publication. Publish the pinned `@the-drunken-coder/atlas-sdk@0.1.0` dependency first, then publish runtime version `0.1.0` as a separate explicit release action.
+The packed-consumer smoke builds clean SDK and runtime tarballs, installs them into a temporary consumer, compiles the public declarations, and exercises the public runtime boundary.

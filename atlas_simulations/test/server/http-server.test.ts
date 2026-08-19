@@ -788,7 +788,7 @@ async function startCoreResourceServer(): Promise<string> {
         metadata: metadata(++version, (current.metadata as { created_at?: string } | undefined)?.created_at)
       };
       entities.set(id, updated);
-      sendCoreJSON(response, 200, { entity: updated, tasks: [], task_count: 0, task_limit: 10, has_more_tasks: false });
+      sendCoreJSON(response, 200, { entity: updated });
       return;
     }
     if (request.method === "GET" && entityMatch) {

@@ -24,7 +24,7 @@ The SDK is the preferred client path for UI code, asset-side services, and tools
 
 Two components, not three modes:
 
-1. **Typed HTTP client** — always present. The implemented surface covers entity/task/object CRUD, task lifecycle helpers, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Object upload remains a direct API call for now; use entity check-in for telemetry and status reporting.
+1. **Typed HTTP client** — always present. The implemented surface covers entity/object CRUD, immutable Task creation and explicit lifecycle operations, Asset runtime registration and delivery, entity check-in, one-page query helpers, `client.commandCatalog()`, object content download, optimistic-concurrency errors, protocol handshake checks, and cache-aware reads. The command catalog type and validator are generated from Atlas Protocol; the method reads Core's direct `/command-catalog` endpoint rather than an Atlas object. Object upload remains a direct API call for now; use entity check-in for telemetry and status reporting.
 2. **Sync engine** — optional. Local cache + change feed consumer + reconciliation loop.
 
 The constructor can optionally seed the all-resources subscription:
@@ -73,7 +73,7 @@ The SDK surfaces the API's optimistic concurrency (ETag/`If-Match`) as a typed `
 
 The websocket change feed — event shapes, delete events, subscription primitives, task-routing rules, delivery mechanics, and its testing approach — is documented in the [change feed doc](../atlas-change-feed/README.md). The sync engine's websocket transport and recovery path consume the same Protocol events.
 
-What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, versioned delete events, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, tasks-for-entity).
+What the SDK relies on from that contract: fat events carrying the full serialized resource and a global version, versioned Entity and Object delete events, object metadata (never content) on the feed, and the four subscription filters (`all`, by resource ID, by resource type, and `tasks_for_asset`).
 
 ## Reconciliation (replaces the original 20-second hard refresh)
 
@@ -118,9 +118,11 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 ## Task lifecycle, check-in, and queries
 
-Task lifecycle helpers—`client.tasks.acknowledge`, `complete`, `fail`, `setStatus`, and `cancel`—are conveniences over `client.tasks.update` and Core's `PATCH /tasks/{task_id}` endpoint. They preserve Core's optimistic concurrency behavior through optional `ifMatchVersion` and apply successful responses to the same cache/watch path as other task writes.
+`client.tasks.create(request, { idempotencyKey })` creates an immutable Task. The request contains only `asset_id`, `command`, and `input`; Core generates `task_id`. The required key belongs to one operator tasking attempt and must be reused when that attempt is retried. Asset runtimes use the explicit `acknowledge`, `start`, `progress`, `complete`, and `fail` methods with a current `runtimeId`. Tasking clients use `cancel` without runtime context. Every successful lifecycle response enters the same cache/watch path as feed updates.
 
-`client.entities.checkIn` is the asset reporting path. It accepts telemetry, operational status, component updates, task filters, and task pagination options, refreshes the entity heartbeat through Core, and returns the updated entity plus the requested task page. Full/default calls return the generated `EntityCheckInFullResponse`; `fields: "minimal"` returns `EntityCheckInMinimalResponse`; unresolved option unions return the generated non-generic `EntityCheckInResponse` union. Full task pages are merged into the SDK cache.
+`client.runtime.begin`, `ready`, and `tasks` expose process registration, manifest publication, and runtime-scoped delivery. Runtime lifecycle and delivery calls carry `Atlas-Runtime-ID`; registration bodies carry the same runtime ID explicitly. The SDK does not infer process restarts from transport reconnects.
+
+`client.entities.checkIn` is the telemetry and observed-state reporting path. It accepts telemetry, operational status, and component updates, refreshes the entity heartbeat through Core, and returns the updated Entity only. Full/default calls return the generated `EntityCheckInFullResponse`; `fields: "minimal"` returns `EntityCheckInMinimalResponse`; unresolved option unions return the generated non-generic `EntityCheckInResponse` union. Task delivery is separate and push-driven.
 
 `client.queries.full` and `client.queries.changedSince` expose typed one-page wrappers over the existing query endpoints. They intentionally do not mutate sync state or fire watchers; the sync engine manages its own reconciliation cursor.
 

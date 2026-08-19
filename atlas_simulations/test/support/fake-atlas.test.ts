@@ -2,36 +2,44 @@ import { describe, expect, it, vi } from "vitest";
 import { createFakeAtlasCore } from "./fake-atlas.js";
 
 describe("fake Atlas core", () => {
-  it("returns pending entity tasks from check-in", async () => {
+  it("keeps check-in telemetry-only and delivers pending Tasks through the runtime route", async () => {
     const core = createFakeAtlasCore();
     const client = core.factory();
     await client.entities.create({ entity_id: "asset-1", entity_type: "asset" });
-    await client.tasks.create({ task_id: "task-1", entity_id: "asset-1" });
-    await client.tasks.create({ task_id: "task-2", entity_id: "asset-1" });
-    await client.tasks.acknowledge("task-2");
+    await client.runtime.begin("asset-1", { runtime_id: "runtime-1" });
+    await client.runtime.ready("asset-1", { runtime_id: "runtime-1", manifest: [] });
+    const first = await client.tasks.create(
+      { asset_id: "asset-1", command: "fixture.queued", input: { value: "first" } },
+      { idempotencyKey: "first" }
+    );
+    const second = await client.tasks.create(
+      { asset_id: "asset-1", command: "fixture.queued", input: { value: "second" } },
+      { idempotencyKey: "second" }
+    );
+    await client.tasks.acknowledge(second.task_id, { runtimeId: "runtime-1" });
 
     const checkIn = await client.entities.checkIn("asset-1");
+    const delivery = await client.runtime.tasks("asset-1", { runtimeId: "runtime-1" });
 
-    expect(checkIn.tasks.map((task) => task.task_id)).toEqual(["task-1"]);
-    expect(checkIn.task_count).toBe(1);
-    expect(checkIn.task_limit).toBe(10);
-    expect(checkIn.has_more_tasks).toBe(false);
+    expect(checkIn).toEqual({ entity: expect.objectContaining({ entity_id: "asset-1" }) });
+    expect(delivery.tasks.map((task) => task.task_id)).toEqual([first.task_id]);
   });
 
   it("generates command task IDs when Core owns task creation", async () => {
     const core = createFakeAtlasCore();
     const client = core.factory();
 
-    const task = await client.tasks.create({
-      entity_id: "asset-1",
-      components: { command: { type: "goto" } }
-    });
+    const task = await client.tasks.create(
+      { asset_id: "asset-1", command: "fixture.queued", input: { value: "test" } },
+      { idempotencyKey: "generated" }
+    );
 
-    expect(task.task_id).toMatch(/^command-/);
+    expect(task.task_id).toMatch(/^task-/);
     await expect(client.tasks.get(task.task_id)).resolves.toMatchObject({
       task_id: task.task_id,
-      entity_id: "asset-1",
-      components: { command: { type: "goto" } }
+      asset_id: "asset-1",
+      command: "fixture.queued",
+      input: { value: "test" }
     });
   });
 

@@ -10,9 +10,9 @@ Atlas Protocol is the reusable contract layer for Atlas data. The buildable modu
 - Atlas Core consumes Protocol request, response, resource, and validator types at shared wire boundaries while retaining route orchestration and service behavior.
 - The Atlas SDK imports and re-exports generated TypeScript directly; generated-artifact checks and the protocol revision token detect drift or deployment mismatches.
 
-The implemented contract covers entity, task, and object resources; all six create/update request DTOs plus entity check-in; full/minimal check-in, full-dataset, changed-since, and revision responses; resource metadata; object references; documented entity and task components; error envelopes; feed events; feed client and handshake messages; generated Go validators; generated TypeScript types, runtime predicates, and finite enum values; and revision metadata.
+The implemented contract covers Entity, immutable Task, and Object resources; the Protocol-owned Command Catalog and Command Manifest; Entity and Object create/update requests; Task creation and six explicit lifecycle requests; Asset runtime registration, readiness, and delivery; telemetry-only Entity check-in; query and revision responses; resource metadata; object references; error envelopes; feed events and subscriptions; generated Go validators; generated TypeScript types and predicates; and revision metadata.
 
-The shared request corpus in `atlas_protocol/conformance/request-validation.json` checks the canonical schema, Go validation, generated TypeScript predicates, and all seven Core create/update/check-in request boundaries against the same cases.
+The shared request corpus in `atlas_protocol/conformance/request-validation.json` checks the canonical schema, Go validation, generated TypeScript predicates, and Core request boundaries against the same cases. `atlas_protocol/conformance/tasking/` adds portable lifecycle, scheduling, outcome, and restart scenarios using fixture Commands that never enter the production catalog.
 
 ## Boundary
 

@@ -4,7 +4,7 @@ _Revision: 2026-06-03_
 
 ## Overview
 
-Atlas Core uses keyset pagination for collection endpoints while keeping response bodies as JSON arrays. Standard list pages are ordered by `(created_at DESC, id DESC)` and use opaque cursor tokens for continuation. Check-in task pagination is the one endpoint-specific exception; it is described below.
+Atlas Core uses keyset pagination for collection endpoints while keeping response bodies as JSON arrays. Standard list pages are ordered by `(created_at DESC, id DESC)` and use opaque cursor tokens for continuation.
 
 ## Query Parameters
 
@@ -55,22 +55,6 @@ Follow-up requests pass `X-Next-Cursor` back as the `cursor` query parameter. Cl
 - `GET /entities/{entity_id}/tasks`
 - `GET /entities/{entity_id}/objects`
 - `GET /tasks/{task_id}/objects`
-
-### Check-in task pagination
-
-`POST /entities/{entity_id}/checkin` returns tasks inline (not via pagination headers). Query params:
-
-- `limit` — default **10**, range **1–20** (invalid values return 400)
-- `task_cursor` — opaque continuation cursor from `next_task_cursor`
-- `status_filter`, `fields`, `since` — see entity status docs
-
-The response includes:
-
-- `has_more_tasks`
-- `next_task_cursor` when another task page exists
-
-Check-in task pages are ordered by `(updated_at DESC, task_id DESC)`.
-Malformed `task_cursor` values return `400 VALIDATION_ERROR` before the check-in mutates the entity. A task-page read failure likewise leaves the heartbeat, telemetry, entity version, and feed unchanged.
 
 ## Query endpoints (`/queries/full`, `/queries/changed-since`)
 

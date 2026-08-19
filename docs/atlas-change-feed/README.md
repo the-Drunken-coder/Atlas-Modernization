@@ -22,7 +22,7 @@ If those product requirements go away, a poll-only `changed-since` client is the
 ## Event contract
 
 - Events are fat: each frame carries event type, resource type, global `version`, resource ID, and the full serialized resource when present.
-- Deletes are versioned events without a `resource` payload. Task delete events may carry `entity_id` so `tasks_for_entity` consumers can evict correctly.
+- Entity and Object deletes are versioned events without a `resource` payload. Tasks are retained and have no delete event.
 - Object metadata flows over the feed; object content is never pushed.
 - Shapes are authored in JSON Schema, structurally checked against the authored Go API, and generated into TypeScript and Go validators.
 - The envelope is flat:
@@ -45,12 +45,12 @@ If those product requirements go away, a poll-only `changed-since` client is the
 
 ## Subscriptions
 
-- Supported filters: `all`, resource `id`, resource `type`, and `tasks_for_entity`.
+- Supported filters: `all`, resource `id`, resource `type`, and `tasks_for_asset`.
 - Initial subscription state is empty; clients must subscribe before receiving events.
 - Subscribe/unsubscribe messages are live commands over the existing connection.
 - After sending its initial subscriptions, a client sends `{"action":"subscription_barrier"}`. Core processes websocket frames in order and replies with `{"type":"subscriptions_ready","version":N}` only after those subscriptions are active. The version is the current database watermark at acknowledgement time.
 - Ordinary subscribe/unsubscribe commands change filters silently; malformed frames or invalid filters close the websocket with policy violation.
-- A `tasks_for_entity` subscriber receives task events when the task matched the entity before or after the change. Reassignment therefore notifies both the losing and gaining entity subscriptions.
+- A `tasks_for_asset` subscriber receives lifecycle events for immutable Tasks assigned to that Asset. Asset runtimes use this as the push signal, then reconcile eligibility through the runtime-scoped delivery route.
 
 ## What clients must do (consumption contract)
 

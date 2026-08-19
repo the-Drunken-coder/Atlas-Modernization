@@ -39,8 +39,7 @@ export async function executeRun(
       },
       trackCleanupCandidate: (resource) => {
         if (!run.settled && !run.cleanupStarted && !run.cleaned) operations.trackCleanupCandidate(run, resource);
-      },
-      allowGeneratedTaskIds: !run.target?.deployed
+      }
     });
     await scenario.run(context, input);
     if (run.controller.signal.aborted) {

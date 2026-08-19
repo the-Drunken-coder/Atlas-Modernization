@@ -33,9 +33,6 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
       "type": "Point",
       "coordinates": [-74.0060, 40.7128]
     },
-    "task_catalog": {
-      "supported_tasks": ["move_to_location", "survey_grid"]
-    },
     "media_refs": [
       { "object_id": "obj-123", "role": "camera_feed" },
       { "object_id": "obj-456", "role": "thumbnail" },
@@ -60,10 +57,6 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
     ],
     "communications": {
       "link_state": "connected"
-    },
-    "task_queue": {
-      "current_task_id": "task-abc",
-      "queued_task_ids": ["task-def", "task-ghi"]
     },
     "status": {
       "value": "active",
@@ -92,11 +85,16 @@ The JSON blob stored in the `json` column should NOT include `type`, `subtype`, 
 | Extra blob fields | `extra` map on POST/PATCH | Keys in `json` outside `components` |
 | Response | `entity_type` | — |
 
+Asset responses may also contain `command_manifest`. This read-only field comes from the current ready runtime in the separate `asset_runtimes` table. It is not part of the Entity JSON blob and cannot be set through Entity create or patch requests. Core uses it with the Protocol Command Catalog when validating Task creation.
+
 ### Additional entity endpoints
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/entities/{entity_id}/checkin` | Telemetry, components, heartbeat, fetch tasks |
+| `POST` | `/entities/{entity_id}/checkin` | Telemetry, components, and heartbeat reporting |
+| `POST` | `/entities/{entity_id}/runtime` | Begin a new Asset process registration |
+| `POST` | `/entities/{entity_id}/runtime/ready` | Publish the current runtime's Command Manifest |
+| `GET` | `/entities/{entity_id}/runtime/tasks` | Fetch work deliverable to the current runtime |
 | `GET` | `/entities/alias/{alias}` | Lookup by alias |
 | `GET` | `/entities/{entity_id}/tasks` | Paginated tasks for entity |
 | `GET` | `/entities/{entity_id}/objects` | Paginated objects referencing entity |
@@ -111,15 +109,11 @@ The JSON blob may contain fields outside `components`:
 
 - **telemetry**: Position/motion data. Units are meters, meters-per-second, and degrees (WGS84). Fields: `latitude`, `longitude`, `altitude_m`, `speed_m_s`, `heading_deg`.
 - **geometry**: Spatial footprint for geofeatures. Supports GeoJSON geometries and the Atlas circle Feature convention (see [Geometry Formats](#geometry-formats) below).
-- **task_catalog**: Lists `supported_tasks` identifiers so controllers know which work packages the asset can accept.
 - **media_refs**: Array of references to objects in MinIO. Each entry has `object_id` (required) and `role` (required). Valid roles: `camera_feed`, `thumbnail`, `heatmap_data`.
 - **mil_view**: Tacsight classification plus the last observed timestamp. `classification` must be one of: `friendly`, `hostile`, `neutral`, `unknown`, `civilian`.
 - **health**: Vitals such as `battery_percent` (0–100).
 - **sensor_refs**: Array of upstream sensors with canonical FOV/orientation metadata. See [Sensor Refs Fields](#sensor-refs-fields) below.
 - **communications**: Network link hints. `link_state` must be one of: `connected`, `disconnected`, `degraded`, `unknown`.
-- **task_queue**: Current and queued work items.
-  - `current_task_id` (string \| null): must be `null` or a non-blank string (reject empty or whitespace-only values; no additional canonical-format validation is performed).
-  - `queued_task_ids` (array of strings): each element must be non-blank (reject empty or whitespace-only entries; no canonical-format validation).
 - **status**: Operational status metadata. When present, must be an object with non-empty string `value`; optional `last_update` (RFC3339).
 - **heartbeat**: Heartbeat timing metadata. When present, must be an object with required RFC3339 `last_seen`.
 - **custom_\* components**: Namespaced extensions (prefixed with `custom_`) contain integration-defined payloads.
@@ -184,13 +178,11 @@ Not all components are meaningful for every entity type. The table below shows t
 | --- | --- | --- | --- |
 | telemetry | ✔ | ✔ | — |
 | geometry | — | — | ✔ |
-| task_catalog | ✔ | — | — |
 | media_refs | ✔ | ✔ | ✔ |
 | mil_view | ✔ | ✔ | ✔ |
 | health | ✔ | — | — |
 | sensor_refs | ✔ | ✔ | — |
 | communications | ✔ | — | — |
-| task_queue | ✔ | — | — |
 | status | ✔ | ✔ | ✔ |
 | heartbeat | ✔ | — | — |
 | custom_* | ✔ | ✔ | ✔ |
@@ -212,8 +204,6 @@ Validation is performed in `internal/actions/component_validation.go` and relate
 | `mil_view.classification` | `friendly` / `hostile` / `neutral` / `unknown` / `civilian` |
 | `mil_view.last_seen` | RFC 3339 timestamp |
 | `communications.link_state` | `connected` / `disconnected` / `degraded` / `unknown` |
-| `task_queue.current_task_id` | `null` or a non-blank string (reject empty / whitespace-only; no canonical-format validation) |
-| `task_queue.queued_task_ids[]` | Each entry: non-blank string (reject empty / whitespace-only; no canonical-format validation) |
 | `media_refs[].object_id` | Required, non-empty string |
 | `media_refs[].role` | `camera_feed` / `thumbnail` / `heatmap_data` |
 | `sensor_refs[].sensor_id` | Required, non-empty string |

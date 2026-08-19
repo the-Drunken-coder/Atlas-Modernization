@@ -22,7 +22,7 @@ describe("RunStore", () => {
         inputFields: [],
         async run(ctx) {
           await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
-          await ctx.createTask({ task_id: ctx.id("task"), entity_id: ctx.id("asset") });
+          await ctx.createTask({ asset_id: ctx.id("asset"), command: "fixture.queued", input: { value: "run" } });
           ctx.assert("created", true, "resources tracked");
         }
       };
@@ -35,10 +35,7 @@ describe("RunStore", () => {
 
       await store.cleanup(started.id);
       expect(store.get(started.id)).toMatchObject({ status: "completed", cleaned: true });
-      expect(core.state.deleted).toEqual([
-        `task:${resources.find((resource) => resource.type === "task")?.id}`,
-        `entity:${resources.find((resource) => resource.type === "entity")?.id}`
-      ]);
+      expect(core.state.deleted).toEqual([`entity:${resources.find((resource) => resource.type === "entity")?.id}`]);
     } finally {
       vi.useRealTimers();
     }
@@ -626,7 +623,7 @@ describe("RunStore", () => {
         await ctx.createEntity({ entity_id: entityId, entity_type: "asset" });
         await ctx.createObject({ object_id: ctx.id("object-1") });
         await ctx.createObject({ object_id: ctx.id("object-2") });
-        await ctx.createTask({ task_id: ctx.id("task"), entity_id: entityId });
+        await ctx.createTask({ asset_id: entityId, command: "fixture.queued", input: { value: "run" } });
       }
     };
 
@@ -634,12 +631,10 @@ describe("RunStore", () => {
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
     const resources = store.get(started.id)?.createdResources ?? [];
     const entity = resources.find((resource) => resource.type === "entity");
-    const task = resources.find((resource) => resource.type === "task");
     const objects = resources.filter((resource) => resource.type === "object");
     await store.cleanup(started.id);
 
     expect(core.state.deleted).toEqual([
-      `task:${task?.id}`,
       `object:${objects[1]?.id}`,
       `object:${objects[0]?.id}`,
       `entity:${entity?.id}`
@@ -1060,7 +1055,7 @@ describe("RunStore", () => {
     }
   });
 
-  it("blocks Core-generated task IDs for deployed runs before mutation", async () => {
+  it("retains deployed Tasks outside the cleanup ledger", async () => {
     const { directory, ledger } = temporaryLedger();
     try {
       const core = createFakeAtlasCore();
@@ -1068,23 +1063,28 @@ describe("RunStore", () => {
       const scenario: Scenario = {
         id: "generated-deployed-task",
         name: "Generated deployed task",
-        summary: "Must not create an unledgerable task",
+        summary: "Retains Task execution history",
         acceptsJson: false,
         inputFields: [],
         async run(ctx) {
           await ctx.createTask({
-            entity_id: ctx.id("asset"),
-            components: { command: { type: "goto" } }
+            asset_id: ctx.id("asset"),
+            command: "fixture.queued",
+            input: { value: "deployed" }
           });
         }
       };
 
       const started = store.start(scenario, { fields: {} }, deployedTarget(core.factory));
-      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
+      await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
 
-      expect(store.get(started.id)?.lastError).toBe("Deployed simulations require an explicit run-owned task ID");
-      expect(core.state.tasks.size).toBe(0);
+      expect(store.get(started.id)?.createdResources).toEqual([
+        expect.objectContaining({ type: "task", id: expect.stringMatching(/^task-/) })
+      ]);
+      expect(core.state.tasks.size).toBe(1);
       expect(ledger.load()[0]?.resources).toEqual([]);
+      await expect(store.cleanup(started.id)).resolves.toMatchObject({ cleaned: true });
+      expect(core.state.tasks.size).toBe(1);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -258,8 +258,8 @@ Own this phase in `atlas_sdk/` and `atlas_asset_runtime/`.
 6. Require a Protocol-valid manifest entry and handler for every advertised Command; the initial production runtime can publish only an empty manifest.
 7. Run the safety barrier before marking a runtime ready.
 8. Maintain one local queued executor plus independently abortable immediate executions.
-9. Start, progress, complete, and fail work only through the explicit lifecycle methods; abort execution locally when cancellation is delivered.
-10. Apply cancellation changes from runtime-scoped delivery immediately.
+9. Start, progress, complete, and fail work only through the explicit lifecycle methods.
+10. Apply cancellation changes from runtime-scoped delivery immediately by aborting the matching local handler signal. There is no separate runtime abort endpoint.
 11. Remove periodic Task polling and the old `setStatus` behavior.
 
 Exit gate:

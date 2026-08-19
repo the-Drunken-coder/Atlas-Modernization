@@ -2,7 +2,9 @@ import type {
   EntityCheckInFullResponse,
   EntityCheckInMinimalResponse,
   EntityCheckInOptions,
-  EntityCheckInResponse
+  EntityCheckInResponse,
+  TaskCreateRequest,
+  TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type {
   AssertionResult,
@@ -36,7 +38,7 @@ export type ScenarioContext = {
   wait(ms: number): Promise<void>;
   track(resource: CreatedResource): void;
   createEntity: AtlasClientLike["entities"]["create"];
-  createTask: AtlasClientLike["tasks"]["create"];
+  createTask(task: TaskCreateRequest): Promise<TaskResource>;
   createObject: AtlasClientLike["objects"]["create"];
 };
 
@@ -115,7 +117,6 @@ export function createScenarioContext(args: {
   track(resource: CreatedResource): void;
   trackCleanupCandidate?(resource: CreatedResource): void;
   registerClient(client: AtlasClientLike): void;
-  allowGeneratedTaskIds?: boolean;
 }): ScenarioContext {
   const throwIfCancelled = () => {
     if (args.signal.aborted) {
@@ -123,17 +124,13 @@ export function createScenarioContext(args: {
     }
   };
   const track = (resource: CreatedResource) => {
-    assertRunOwnedResourceId(args.runId, resource);
+    if (resource.type !== "task") assertRunOwnedResourceId(args.runId, resource);
     args.track(resource);
   };
   const trackCleanupCandidate = (resource: CreatedResource) => {
+    if (resource.type === "task") return;
     assertRunOwnedResourceId(args.runId, resource);
     args.trackCleanupCandidate?.(resource);
-  };
-  const trackGeneratedCommandTask = (resource: CreatedResource) => {
-    assertGeneratedCommandTask(resource);
-    args.trackCleanupCandidate?.(resource);
-    args.track(resource);
   };
   const assertRunOwned = (resource: CreatedResource) => {
     assertRunOwnedResourceId(args.runId, resource);
@@ -142,19 +139,11 @@ export function createScenarioContext(args: {
     throwIfCancelled();
     const rawClient = args.clientFactory({ ...options, signal: args.signal });
     args.registerClient(rawClient);
-    return trackClientCreates(
-      rawClient,
-      track,
-      trackCleanupCandidate,
-      trackGeneratedCommandTask,
-      assertRunOwned,
-      throwIfCancelled,
-      args.signal,
-      args.allowGeneratedTaskIds ?? true
-    );
+    return trackClientCreates(rawClient, track, trackCleanupCandidate, assertRunOwned, throwIfCancelled, args.signal);
   };
   const client = newClient({ sync: false });
   const idForName = createIdFactory(args.runId);
+  let taskingAttempt = 0;
   return {
     runId: args.runId,
     signal: args.signal,
@@ -166,7 +155,7 @@ export function createScenarioContext(args: {
     wait: (ms) => waitFor(ms, args.signal),
     track,
     createEntity: (entity) => client.entities.create(entity),
-    createTask: (task) => client.tasks.create(task),
+    createTask: (task) => client.tasks.create(task, { idempotencyKey: `${args.runId}-tasking-${++taskingAttempt}` }),
     createObject: (object) => client.objects.create(object)
   };
 }
@@ -182,11 +171,9 @@ function trackClientCreates(
   client: AtlasClientLike,
   track: (resource: CreatedResource) => void,
   trackCleanupCandidate: (resource: CreatedResource) => void,
-  trackGeneratedCommandTask: (resource: CreatedResource) => void,
   assertRunOwned: (resource: CreatedResource) => void,
   throwIfCancelled: () => void,
-  signal: AbortSignal,
-  allowGeneratedTaskIds: boolean
+  signal: AbortSignal
 ): AtlasClientLike {
   const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
     throwIfCancelled();
@@ -206,14 +193,6 @@ function trackClientCreates(
     trackCleanupCandidate(resource);
     const created = await operation();
     track(resource);
-    throwIfCancelled();
-    return created;
-  };
-  const createGeneratedCommandTask = async (operation: () => ReturnType<AtlasClientLike["tasks"]["create"]>) => {
-    throwIfCancelled();
-    const created = await operation();
-    const resource = { type: "task", id: created.task_id } satisfies CreatedResource;
-    trackGeneratedCommandTask(resource);
     throwIfCancelled();
     return created;
   };
@@ -264,19 +243,22 @@ function trackClientCreates(
     },
     tasks: {
       get: (id) => guarded(() => client.tasks.get(id)),
-      create: async (task) => {
-        if (!("task_id" in task)) {
-          if (!allowGeneratedTaskIds) throw new Error("Deployed simulations require an explicit run-owned task ID");
-          return createGeneratedCommandTask(() => client.tasks.create(task));
-        }
-        const resource = { type: "task", id: task.task_id } satisfies CreatedResource;
-        return createTracked(resource, () => client.tasks.create(task));
+      create: async (task, options) => {
+        const created = await guarded(() => client.tasks.create(task, options));
+        track({ type: "task", id: created.task_id });
+        return created;
       },
-      delete: (id) => guarded(() => client.tasks.delete(id)),
       acknowledge: (id, options) => guarded(() => client.tasks.acknowledge(id, options)),
+      start: (id, options) => guarded(() => client.tasks.start(id, options)),
+      progress: (id, request, options) => guarded(() => client.tasks.progress(id, request, options)),
       complete: (id, options) => guarded(() => client.tasks.complete(id, options)),
       fail: (id, options) => guarded(() => client.tasks.fail(id, options)),
-      setStatus: (id, status, options) => guarded(() => client.tasks.setStatus(id, status, options))
+      cancel: (id, options) => guarded(() => client.tasks.cancel(id, options))
+    },
+    runtime: {
+      begin: (assetId, request, options) => guarded(() => client.runtime.begin(assetId, request, options)),
+      ready: (assetId, request, options) => guarded(() => client.runtime.ready(assetId, request, options)),
+      tasks: (assetId, options) => guarded(() => client.runtime.tasks(assetId, options))
     },
     objects: {
       get: (id) => guarded(() => client.objects.get(id)),
@@ -296,14 +278,9 @@ function trackClientCreates(
       status: () => guardedSync(() => client.sync.status())
     },
     watch: guardedWatch,
+    subscribe: (filter) => guarded(() => client.subscribe(filter)),
     handshake: () => guarded(() => client.handshake())
   };
-}
-
-function assertGeneratedCommandTask(resource: CreatedResource): void {
-  if (resource.type !== "task" || !resource.id.startsWith("command-")) {
-    throw new Error(`generated command task ID must start with command-`);
-  }
 }
 
 function parseFields(
