@@ -52,7 +52,9 @@ _Avoid_: Immediate Task, Control Task, operational Task
 
 The Command Catalog moves into Atlas Protocol beside the schemas it references. There is one canonical catalog.
 
-A Command definition has this shape:
+The initial generated catalog is intentionally empty. Atlas first ships the catalog machinery and the documented process for adding Commands, not a preset collection of Commands. Core therefore serves an empty array until a Command is deliberately added to Protocol.
+
+When a Command is added, its definition has this shape:
 
 ```json
 {
@@ -73,28 +75,18 @@ Each definition requires:
 
 `output_schema` is optional. A Command without a meaningful Task result omits it.
 
-`scheduling` is optional in a Command definition. When present, it is a Protocol requirement rather than a default. Every manifest entry still declares its scheduling, and registration rejects an entry that contradicts the Command definition. `mobility.stop`, `safety.emergency_stop`, and `safety.reset_emergency_stop` require `immediate` scheduling.
+`scheduling` is optional in a Command definition. When present, it is a Protocol requirement rather than a default. Every manifest entry still declares its scheduling, and registration rejects an entry that contradicts the Command definition. When they are added, `mobility.stop`, `safety.emergency_stop`, and `safety.reset_emergency_stop` require `immediate` scheduling.
 
 The catalog does not need wrapper metadata such as a catalog type, name, or description. Core may continue exposing a read-only catalog endpoint, but it serves the Protocol-owned catalog rather than maintaining another definition.
 
 ### Authored file layout
 
-Command definitions are authored as one JSON file per operational namespace:
+Command definitions are authored as one JSON file per operational namespace. The initial empty catalog has this layout:
 
 ```text
 atlas_protocol/
 ├── commands/
-│   ├── README.md
-│   ├── mobility.json
-│   ├── navigation.json
-│   ├── sensing.json
-│   ├── sensor.json
-│   ├── tracking.json
-│   ├── payload.json
-│   ├── communications.json
-│   ├── lighting.json
-│   ├── airframe.json
-│   └── safety.json
+│   └── README.md
 ├── schema/
 │   └── jsonschema/
 │       └── atlas.schema.json
@@ -102,19 +94,14 @@ atlas_protocol/
     └── command_catalog.json
 
 docs/atlas-protocol/commands/
-├── mobility/
-│   ├── goto.md
-│   └── stop.md
-├── sensing/
-│   └── scan-area.md
-└── safety/
-    ├── emergency-stop.md
-    └── reset-emergency-stop.md
+└── README.md
 ```
+
+Adding `sensing.scan_area`, for example, creates `commands/sensing.json` and `docs/atlas-protocol/commands/sensing/scan-area.md`. Other namespace files and documentation directories appear only when they contain a real Command.
 
 Each namespace file contains a JSON array of Command definitions. Every `command` identifier in the file must use the filename as its namespace prefix. For example, every definition in `mobility.json` begins with `mobility.`.
 
-Protocol generation loads every namespace file, rejects duplicate Command identifiers and namespace mismatches, sorts definitions by `command`, validates all referenced schemas, and writes the single canonical `generated/command_catalog.json`. The generated catalog is never edited directly, and there is no handwritten master index or second catalog in Core.
+Protocol generation loads every namespace file, rejects duplicate Command identifiers and namespace mismatches, sorts definitions by `command`, validates all referenced schemas, and writes the single canonical `generated/command_catalog.json`. With no namespace files it writes `[]`. The generated catalog is never edited directly, and there is no handwritten master index or second catalog in Core.
 
 Input and output schemas remain named definitions in `schema/jsonschema/atlas.schema.json`. Behavioral documentation mirrors the namespace and Command name under `docs/atlas-protocol/commands/`. Namespace files are therefore the authored Command source, the generated catalog is the published aggregate, and the documentation explains behavior without duplicating machine-readable definitions.
 
@@ -152,11 +139,15 @@ safety.emergency_stop
 safety.reset_emergency_stop
 ```
 
+These are examples of the namespace language, not Commands included in the initial catalog.
+
 The catalog and developer documentation group Commands by this prefix. The operator interface may present related Commands together when that is clearer. In particular, all sensor-related Commands appear in one Sensors group even when their canonical namespaces differ. This is presentation only; there is no second category field carrying the same information.
 
 ### Intent over implementation
 
 `sensing.scan_area` means that the Asset observes a geographic area and publishes Track entities for what it finds. It does not prescribe how the Asset observes the area.
+
+Its input may include a positive `duration_seconds`. When present, the Asset scans for that duration unless the Task is cancelled or fails. When omitted, the Asset performs one bounded scan and completes according to the rule in its Asset-specific description and Command documentation. A scan without a duration must not run indefinitely.
 
 An ADS-B-backed Asset and an AIS-backed Asset therefore advertise the same Command while describing different implementations:
 
@@ -178,6 +169,21 @@ Every Command needs a reference page that explains:
 - examples for operators and Asset developers
 
 Schema-derived field tables and examples can be generated. Behavioral explanations are written deliberately because a schema cannot explain what an Asset promises to do.
+
+### Adding a Command
+
+Adding a Command is one deliberate Protocol change. The same change must:
+
+1. define the stable operator intent and observable guarantee
+2. choose the operational namespace and add the definition to its namespace file
+3. add or reuse the input schema and add an output schema only when the Task has a bounded result
+4. write the Command reference page, including completion and cancellation behavior
+5. add any purpose-built operator input needed by the command interface
+6. add Asset implementation and manifest examples without leaking their technology into the Command name
+7. add focused conformance and acceptance cases, including any special scheduling or safety policy
+8. regenerate and validate the canonical catalog and language artifacts
+
+A proposed Command does not enter the catalog until all applicable pieces exist. Test-only and demonstration actions do not receive permanent Command names merely to preserve the old catalog.
 
 ## Schemas
 
@@ -218,7 +224,7 @@ Schemas are validation and code-generation contracts. They are not a promise tha
 
 ## Command Manifest
 
-An Asset publishes its Command Manifest as part of registration and includes an Asset-specific description for every entry:
+An Asset publishes its Command Manifest as part of registration and includes an Asset-specific description for every entry. Initial manifests are empty because the initial Protocol catalog is empty. After `sensing.scan_area` is added, an entry could look like:
 
 ```json
 {
@@ -242,6 +248,8 @@ The manifest does not repeat the Command's input or output schema references. Th
 
 The manifest is fixed for the lifetime of the current Asset `runtime_id`, so the scheduling and lifecycle rules governing accepted Tasks cannot change underneath them. Publishing a different manifest requires a fresh runtime registration. A process restart creates that registration and republishes the manifest before Atlas sends it work.
 
+Core exposes the current ready runtime's manifest read-only in the Asset's details. It is absent while no runtime is ready, updates atomically when registration completes, and cannot be changed through generic Entity patching. This is the manifest the command interface uses for Command availability and Asset-specific descriptions.
+
 ### Scheduling
 
 Scheduling is the sole canonical term for how a Task enters execution. Atlas does not define a separate execution-mode concept.
@@ -252,7 +260,9 @@ Scheduling is the sole canonical term for how a Task enters execution. Atlas doe
 
 Multiple immediate Tasks begin in tasking order without waiting for one another to finish. Core does not release a later immediate Task until the earlier one has entered `in_progress` or become terminal. Protocol-defined supersession rules may make an older Task terminal during creation of a newer one. Core alone records the resulting `cancelled` state; Assets do not invent supersession relationships.
 
-Emergency stop is the deliberate exception to ordinary immediate delivery. Its Core interlock persists even if the physical Task cannot start within the immediate window. A current or newly registered runtime establishes the required safe condition through its safety barrier rather than executing an expired Task.
+The one-at-a-time rule applies to queued Tasks. Immediate Tasks may overlap a queued Task and one another when prompt interruption or an independent action is required. This hybrid is intentional; it does not create operator-visible execution groups.
+
+When emergency stop is added, it is the deliberate exception to ordinary immediate delivery. Its Core interlock persists even if the physical Task cannot start within the immediate window. A current or newly registered runtime establishes the required safe condition through its safety barrier rather than executing an expired Task.
 
 This is the entire scheduling contract Atlas exposes. An Asset may internally coordinate motors, gimbals, radios, cameras, or other subsystems however it needs. Those private locks and queues do not become Atlas concepts.
 
@@ -345,7 +355,7 @@ Their named Protocol request schemas and bodies are:
 
 Every successful operation returns the resulting `TaskResource`. Atlas does not define a separate response type for each transition.
 
-Tasking clients create and cancel Tasks. The assigned Asset runtime acknowledges, starts, reports progress, completes, and fails them. Core may apply restart, supersession, and emergency transitions.
+Tasking clients create and cancel Tasks. The assigned Asset runtime acknowledges, starts, reports progress, completes, and fails them. Core applies restart transitions and may apply supersession or emergency transitions after Commands defining those policies are added.
 
 Canonical lifecycle examples follow the operation names:
 
@@ -402,11 +412,13 @@ A cancelled Task uses the same small shape under `cancellation`:
 Task outcomes use closed Protocol enums rather than arbitrary strings:
 
 - `TaskFailureCode`: `unsupported_command`, `precondition_failed`, `execution_failed`, `asset_restarted`, `immediate_start_timeout`, or `invalid_output`
-- `TaskCancellationCode`: `requested`, `superseded`, `mobility_stop`, or `emergency_stop`
+- `TaskCancellationCode`: `requested` or `superseded`
 
 `TaskFailure` and `TaskCancellation` each contain the applicable code and a human-readable message. Their codes use lowercase snake case. Transport and HTTP errors, such as `TASK_NOT_FOUND`, remain a separate concern and are never stored as Task outcomes. The meaning and valid use of each outcome code are documented in `docs/atlas-protocol/task-outcomes.md`.
 
-Pending and acknowledged Tasks can always be cancelled because execution has not begun. An `in_progress` Task can be ordinarily cancelled only when its manifest entry declares `supports_cancel: true`. `mobility.stop` and emergency stop apply their Protocol-defined supersession rules regardless of that declaration.
+Command-specific cancellation codes are added with the Commands that require them. Adding `mobility.stop` adds `mobility_stop`; adding `safety.emergency_stop` adds `emergency_stop`.
+
+Pending and acknowledged Tasks can always be cancelled because execution has not begun. An `in_progress` Task can be ordinarily cancelled only when its manifest entry declares `supports_cancel: true`. When added, `mobility.stop` and emergency stop apply their Protocol-defined supersession rules regardless of that declaration.
 
 When completion and cancellation race, the first terminal change accepted by Core wins. Cancellation describes Atlas intent; the Asset publishes its current observed physical state separately.
 
@@ -453,7 +465,7 @@ Task creation and lifecycle changes are delivered as they happen:
 4. Stable Task IDs make repeated delivery safe.
 5. The Asset acknowledges only after validating, accepting, and placing queued work in its local Task Queue.
 
-Cancellation, supersession, and safety changes use the same delivery path as Task creation. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
+Cancellation uses the same delivery path as Task creation. Commands later added with supersession or safety behavior also use this path. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
 
 Core releases queued Tasks to a runtime in authoritative tasking order. It does not release a later queued Task until every earlier queued Task has been acknowledged or has become terminal. Immediate Tasks are released in tasking order without waiting for earlier immediate Tasks to finish. These rules prevent transport delay or reordering from changing execution order.
 
@@ -488,7 +500,6 @@ Its conceptual contract is:
 ```ts
 type SafeStateContext = {
   signal: AbortSignal;
-  emergencyStopRequired: boolean;
 };
 
 interface ExecutionModule {
@@ -497,7 +508,7 @@ interface ExecutionModule {
 }
 ```
 
-MAVLink, ROS, sensor, and other execution modules implement this interface while keeping their physical procedures private. At startup, the runtime invokes every registered module and waits for every required safe state. It reports ready only after all succeed and receives no Tasks if any fail. The context tells each module whether the persistent Core emergency interlock must also be established.
+MAVLink, ROS, sensor, and other execution modules implement this interface while keeping their physical procedures private. At startup, the runtime invokes every registered module and waits for every required safe state. It reports ready only after all succeed and receives no Tasks if any fail.
 
 Core observes only whether the runtime-wide barrier is ready. Module identifiers, ordering, retries, and physical actions remain internal to the Asset runtime.
 
@@ -510,7 +521,7 @@ When an Asset process restarts:
 5. The new runtime establishes safe conditions through its execution modules.
 6. The new runtime republishes its Command Manifest and completes registration before it can receive work.
 
-If the Core safety interlock is engaged, the new runtime's barrier also applies and confirms emergency stop before it can receive any permitted work. Confirmation used for reset must come from the current runtime rather than stale Entity data.
+If Safety Commands are later added and the Core safety interlock is engaged, that change also extends the runtime barrier so the new runtime confirms emergency stop before it can receive any permitted work. Confirmation used for reset must come from the current runtime rather than stale Entity data.
 
 This prevents an Asset from unexpectedly resuming stale physical work or accepting conflicting new work after a restart.
 
@@ -534,6 +545,10 @@ Direct configuration changes must not become a hidden second tasking system.
 
 ## Stopping movement
 
+The initial empty catalog does not include `mobility.stop`, and the initial implementation contains no dormant stop policy. The following rules become mandatory in the same change that adds this Command.
+
+That change also adds `mobility_stop` to `TaskCancellationCode`.
+
 `mobility.stop` is an immediate controlled halt. Core atomically creates it and cancels every earlier queued Task for the same Asset, regardless of domain. This deliberately favors a simple and safe rule over trying to model which Asset-specific operations might use mobility.
 
 No later queued Task may enter `in_progress` until the stop Task completes. This prevents the Asset from stopping and immediately resuming queued work before the halt is physically confirmed.
@@ -541,6 +556,10 @@ No later queued Task may enter `in_progress` until the stop Task completes. This
 Movement Tasks created after the stop remain valid.
 
 ## Safety
+
+The initial empty catalog includes no Safety Commands, interlock persistence, or dormant Safety policy. The following target rules become mandatory in the same change that adds the applicable Commands.
+
+That change also adds `emergency_stop` to `TaskCancellationCode` and extends the runtime safety barrier and registration handshake with the emergency-stop requirement.
 
 Safety operations are ordinary Commands in the `safety` namespace, with additional Core enforcement where physical safety requires it. They are not a separate kind of Task.
 
@@ -581,6 +600,8 @@ When an operator selects an Asset, Atlas shows only the Commands in that Asset's
 4. whether it runs immediately or joins the Task Queue
 5. whether an active Task can be cancelled and whether it reports progress
 
+With the initial empty catalog and manifest, Atlas shows an intentional no-Commands state. It does not fall back to the retired Core catalog or invent controls from Asset data.
+
 Task state is presented in user language:
 
 - Pending: sent by Atlas, not yet accepted by the Asset
@@ -599,8 +620,7 @@ atlas_protocol/conformance/tasking/
 ├── lifecycle.json
 ├── scheduling.json
 ├── outcomes.json
-├── restart.json
-└── safety.json
+└── restart.json
 
 atlas_core/internal/integration/
 └── tasking_acceptance_test.go
@@ -612,12 +632,12 @@ atlas_asset_runtime/test/
 └── tasking-conformance.test.ts
 
 atlas_simulations/test/
-└── commanded-asset-closed-loop.test.ts
+└── tasking-fixture-closed-loop.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Core, the SDK, and the Asset runtime consume the cases relevant to their boundary. One small simulation proves the complete path without duplicating the entire corpus as end-to-end tests.
+The JSON corpus defines portable inputs, events, and expected outcomes. Core, the SDK, and the Asset runtime consume the cases relevant to their boundary. Because the shipped catalog starts empty, lifecycle and scheduling conformance use test-only fixture Commands that are excluded from the generated catalog.
 
-The target state is not complete until these behaviors are demonstrated:
+The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
 
 1. Task creation validates the Command, current Asset manifest, and input before persisting anything.
 2. Repeating a creation request with the same idempotency key returns one Task and causes at most one physical action.
@@ -628,10 +648,13 @@ The target state is not complete until these behaviors are demonstrated:
 7. Completion validates any required output and commits the output and terminal transition atomically.
 8. Competing terminal operations obey first-valid-update-wins and cannot mutate a terminal Task.
 9. A restart fences the old runtime, fails its nonterminal Tasks, and establishes every registered module's safe state before new work is delivered.
-10. `mobility.stop` cancels earlier queued work and blocks later queued execution until the halt is confirmed.
-11. Emergency stop atomically engages the Core interlock, creates the Safety Task, cancels prior work, and blocks ordinary tasking.
-12. Reset cannot clear the interlock using stale physical state from an old runtime.
-13. ADS-B-backed and AIS-backed Assets both accept `sensing.scan_area` while publishing their distinct Track types through the Entity system.
+10. The generated production catalog is empty, Core serves it unchanged, ready runtimes publish empty manifests, and production Task creation rejects every Command.
+
+Command-specific acceptance travels with the change that adds that Command. In particular:
+
+- adding `mobility.stop` must prove it cancels earlier queued work and blocks later queued execution until the halt is confirmed
+- adding `safety.emergency_stop` and `safety.reset_emergency_stop` must prove the interlock, cancellation, reset, and stale-runtime rules in this document
+- adding `sensing.scan_area` must prove optional-duration completion and that different Asset implementations can publish their distinct Track types through the Entity system
 
 ## Replacement seam
 
@@ -663,7 +686,7 @@ The rebuilt Task module should expose the small lifecycle interface described he
 
 The executable module-by-module work plan, cutover rules, and validation gates are defined in [Commands and Tasking Implementation Plan](commands-and-tasking-implementation-plan.md).
 
-1. Add the Protocol namespace files, canonical schema definitions, lifecycle requests, outcome enums, examples, conformance corpus, generated Command Catalog, Task shape, lifecycle states, and manifest shape.
+1. Add the empty Protocol catalog structure, Command authoring guide, canonical schema definitions, lifecycle requests, outcome enums, examples, conformance fixtures, generated Command Catalog, Task shape, lifecycle states, and manifest shape.
 2. Replace Core Task behavior and have Core serve the Protocol-owned catalog.
 3. Update the SDK and Asset runtime registration, local Task Queue, lifecycle operations, execution-module safety barrier, and runtime fencing.
 4. Update the command interface to use manifests, purpose-built inputs, and the new Task lifecycle.

@@ -4,9 +4,9 @@ This is the execution companion to [Commands and Tasking](commands-and-tasking.m
 
 ## Outcome
 
-The work is complete when Atlas has one Protocol-owned Command Catalog, one immutable Task resource, explicit lifecycle operations, runtime-scoped delivery, restart fencing, and the safety behavior defined in the target-state specification.
+The work is complete when Atlas has one Protocol-owned but initially empty Command Catalog, one immutable Task resource, explicit lifecycle operations, runtime-scoped delivery, and restart fencing. Core must serve the empty catalog unchanged, and production Task creation must reject every Command until one is added through the documented process.
 
-The cutover removes the old task shape and catalog. It does not leave adapters, dual endpoints, legacy schema definitions, or compatibility code behind.
+The cutover removes the old task shape and every old Command. It does not leave adapters, dual endpoints, legacy schema definitions, dormant Command policies, or compatibility code behind. Stop, emergency-stop, scan-area, and other Command-specific behavior is implemented only in the later change that adds that Command.
 
 ## Starting inventory
 
@@ -36,6 +36,15 @@ This shape is deliberate:
 
 No implementation phase creates a second runtime path. When a replacement is complete, its old implementation and old tests are deleted in the same branch.
 
+## Discrepancy resolutions
+
+The planning audit resolved four points that were previously missing or ambiguous:
+
+1. One queued Task may be in progress at a time. Immediate Tasks may overlap queued and other immediate work when prompt interruption or independent action is required.
+2. `sensing.scan_area` accepts an optional positive duration. Without one, an Asset performs one bounded scan under its documented completion rule; it never silently runs forever.
+3. The initial generated Command Catalog contains no Commands. Test-only fixture Commands exercise tasking conformance but never enter the production catalog.
+4. Core exposes the current ready runtime's manifest read-only in Asset details. The command interface does not infer support from the catalog or use a separate editable field.
+
 ## Core module seam
 
 Keep `TaskActions` as the concrete Core Task module rather than introducing a repository interface with one implementation. HTTP handlers, the delivery transport, and the timeout worker are adapters around it. Domain rules stay inside it.
@@ -48,7 +57,7 @@ The module's external interface is limited to:
 - get and list Tasks
 - return currently deliverable work for a runtime
 
-The implementation owns all validation, transactions, ordering, idempotency, runtime fencing, supersession, interlocks, and terminal-state races. Handlers only parse requests and serialize results. The delivery adapter never decides whether work is eligible.
+The implementation owns all validation, transactions, ordering, idempotency, runtime fencing, and terminal-state races. Handlers only parse requests and serialize results. The delivery adapter never decides whether work is eligible. Command-specific supersession and interlocks join this module only when the corresponding Command is added.
 
 Organize the implementation for locality:
 
@@ -59,8 +68,7 @@ atlas_core/internal/actions/
 ├── task_transition.go
 ├── task_query.go
 ├── task_runtime.go
-├── task_scheduling.go
-└── task_safety.go
+└── task_scheduling.go
 ```
 
 Tests exercise the concrete Task module against the existing local PostgreSQL test database. Do not add a mock repository or expose private scheduling helpers for tests.
@@ -77,7 +85,7 @@ On process startup, the Asset runtime generates a fresh `runtime_id` and begins 
 POST /entities/{asset_id}/runtime
 ```
 
-Core atomically records the new runtime, fences the previous runtime, fails its nonterminal Tasks with `asset_restarted`, and returns whether the persistent emergency interlock must be established. The new runtime is not ready and receives no work.
+Core atomically records the new runtime, fences the previous runtime, and fails its nonterminal Tasks with `asset_restarted`. The new runtime is not ready and receives no work.
 
 The runtime then calls `establishSafeState` on every registered execution module. After they all succeed, it submits the fixed Command Manifest:
 
@@ -85,7 +93,7 @@ The runtime then calls `establishSafeState` on every registered execution module
 POST /entities/{asset_id}/runtime/ready
 ```
 
-Core accepts the ready transition only for the current `runtime_id`. Repeating either registration call with the same data is idempotent. An old process cannot become current again after a newer runtime has registered.
+Core accepts the ready transition only for the current `runtime_id`. Repeating either registration call with the same data is idempotent. An old process cannot become current again after a newer runtime has registered. Registration stores the manifest and exposes it read-only in Asset details; the initial empty catalog permits only an empty manifest.
 
 A WebSocket reconnect keeps the same runtime and uses feed recovery. It does not repeat process registration, clear the local queue, or establish safe state again.
 
@@ -110,7 +118,7 @@ The rebuilt persistence model stores:
 
 `asset_id`, `command`, `input`, and the internal runtime binding are immutable after creation. `asset_id` remains on the Task even if the Asset Entity is later removed; assignment must never turn into `null`.
 
-Core also persists current Asset runtime state and the safety interlock in dedicated tables so registration, Task fencing, and safety transitions can lock and update them atomically. The current manifest belongs to the runtime record and is not editable through generic Entity patching.
+Core persists current Asset runtime state in a dedicated table so registration and Task fencing can lock and update it atomically. The current manifest belongs to the runtime record, appears read-only in Asset details, and is not editable through generic Entity patching. A safety interlock table is added later with the Safety Commands that need it, not during the empty-catalog cutover.
 
 ### Task creation
 
@@ -122,7 +130,7 @@ In one transaction, creation:
 2. resolves the Command from the generated Protocol catalog
 3. validates the Command against the runtime manifest
 4. validates input using the referenced Protocol schema
-5. applies any Command-defined scheduling or safety policy
+5. applies the Command and manifest scheduling rules
 6. stores the Task and idempotency key
 7. records the resource-feed event
 8. exposes newly eligible work to the delivery adapter
@@ -148,20 +156,19 @@ The runtime-scoped adapter asks the Task module for eligible work. It does not f
 - acknowledgement before a later queued Task is released
 - immediate start order without waiting for earlier immediate completion
 - current-runtime fencing
-- safety-interlock filtering
-- cancellation and supersession delivery
+- cancellation delivery
 
 An in-process Core timeout worker fails immediate Tasks that have not started before the 60-second deadline. It also reconciles overdue Tasks at startup before any delivery occurs. It is a small timer and database query, not a second job or message-queue system.
 
 The Asset runtime stops requesting pending Tasks through periodic Entity check-in. Check-in remains for telemetry and observed state. Task delivery is push-driven, and feed recovery reconciles missed changes from Core's authoritative records.
 
-### Safety
+### Empty production catalog
 
-Implement `mobility.stop`, `safety.emergency_stop`, and `safety.reset_emergency_stop` as Command policies inside the Task module, not special handler shortcuts.
+The production catalog generated by this cutover is `[]`. Do not migrate, rename, or preserve any current Core catalog entry. Do not add dormant switches, handlers, database tables, or runtime behavior for `mobility.stop`, Safety Commands, or `sensing.scan_area`.
 
-Task creation for those Commands performs the required Task creation, cancellation, queue blocking, and interlock update in one database transaction. The safety state stores the governing Safety Task so a late outcome from older work cannot clear newer intent.
+The concrete Task module accepts the generated catalog as data. Production supplies the empty generated catalog; conformance tests supply a small fixture catalog from `atlas_protocol/conformance/tasking/fixtures/`. This is test data, not a second production catalog or an asset extension point.
 
-The Asset runtime independently latches emergency stop and rejects ordinary work while latched. Reset completion requires current-runtime confirmation of physical state. No passcode, extra identity, or Task provenance is added.
+When a real Command is added later, its change follows the Protocol authoring guide and includes its schemas, documentation, purpose-built operator input, Asset implementation, and any special Core policy. Safety Commands add their interlock persistence and atomic rules at that time. No passcode, extra identity, or Task provenance is introduced.
 
 ### Simulation cleanup
 
@@ -175,30 +182,22 @@ Simulation-created Entities and Objects continue using the existing guarded clea
 
 Own this phase in `atlas_protocol/`.
 
-1. Add the namespace catalog files under `atlas_protocol/commands/` and their authoring rules.
-2. Consolidate current implementation-specific intent:
-   - `adsb_monitoring` and `ais_monitoring` become `sensing.scan_area`.
-   - `move_to_location` and `goto` become `mobility.goto`.
-   - `hold_position` becomes `mobility.stop`.
-   - `emergency_disarm` becomes `safety.emergency_stop`.
-   - `rf_scan` becomes `sensor.rf.scan`.
-   - `rf_calibrate` becomes `sensor.rf.calibrate`.
-   - `get_signal_strength` becomes `tracking.localize_emitter` when the implementation actually creates a location estimate.
-   - `return_to_home` becomes `navigation.return_home`.
-   - `arm_test` and `motor_test` do not enter the permanent catalog unless they receive a stable operator guarantee and documented schema before cutover.
-3. Add shared domain schemas, Command input and optional output schemas, the manifest, the flat Task resource, lifecycle requests, outcome codes, and runtime registration requests.
+1. Add `atlas_protocol/commands/README.md` with the complete cross-module process for adding a Command.
+2. Add no production namespace files. Teach catalog generation to accept zero namespace files and deterministically emit `[]`.
+3. Add shared domain schemas, the manifest, the flat Task resource, lifecycle requests, outcome codes, and runtime registration requests.
 4. Add deterministic catalog aggregation to `tools/generate` and validation to `tools/check`.
-5. Add canonical request, response, Task, manifest, and catalog examples.
-6. Add and validate the shared conformance scenarios under `conformance/tasking/`.
+5. Add canonical request, response, Task, empty-manifest, and empty-catalog examples.
+6. Add test-only fixture Commands and the shared conformance scenarios under `conformance/tasking/`. Keep the fixtures outside `commands/` so generation cannot publish them accidentally.
 7. Regenerate Go and TypeScript artifacts.
 8. Remove `CommandParameterSchema`, generic Task components, `TaskUpdateRequest`, Task deletion events, `TaskCatalogComponent`, `TaskQueueComponent`, and check-in Task payload definitions that no longer exist.
+9. Delete the old Core catalog without mapping or preserving any of its Command IDs.
 
 Exit gate:
 
-- all catalog schema references resolve
+- the empty production catalog and non-empty fixture catalog both validate
 - duplicate Commands and namespace mismatches fail generation
 - generated artifacts are reproducible
-- Protocol tests and checks pass with no old Task contract remaining
+- Protocol tests and checks pass with no old Task contract or old Command ID remaining
 
 ### Phase 2: Core persistence and Task module
 
@@ -206,15 +205,15 @@ Own this phase in `atlas_core/internal/database/`, `atlas_core/internal/models/`
 
 1. Add the guarded Task-storage migration and migration tests for empty and non-empty databases.
 2. Replace the generic JSON-blob Task model with the target fields and internal fencing fields.
-3. Add persistent current-runtime and safety-interlock records.
-4. Rebuild `TaskActions` around create, lifecycle transition, queries, registration, ordering, and safety.
+3. Add persistent current-runtime records and read-only manifest exposure in Asset details.
+4. Rebuild `TaskActions` around create, lifecycle transition, queries, registration, and ordering.
 5. Add database constraints and indexes for idempotency, runtime lookup, status lookup, and `(asset_id, created_at, task_id)` ordering.
 6. Keep resource-feed recording inside the same transaction as every Task change.
 7. Preserve Object references to `task_id` without coupling Object storage to Task output.
 
 Exit gate:
 
-- the Core module passes the lifecycle, idempotency, ordering, terminal-race, restart, stop, and safety scenario corpus directly through its public interface
+- the Core module passes the lifecycle, idempotency, ordering, terminal-race, and restart scenario corpus directly through its public interface using fixture Commands
 - the non-empty migration safety test proves retained data cannot be discarded accidentally
 - no caller can mutate assignment, Command, or input after creation
 
@@ -234,10 +233,11 @@ Own this phase in `atlas_core/internal/api/`, `atlas_core/internal/feed/`, and `
 
 Exit gate:
 
-- handler integration tests prove request validation and resulting Task resources for every route
+- handler integration tests use fixture Commands to prove request validation and resulting Task resources for every route
 - a stale runtime cannot acknowledge, start, progress, or finish a Task
 - transport reconnect does not create a new runtime or reorder work
 - Core restart fails overdue immediate work before it can be delivered
+- the production catalog endpoint returns `[]` and production Task creation rejects every Command
 
 ### Phase 4: SDK and Asset runtime
 
@@ -248,36 +248,34 @@ Own this phase in `atlas_sdk/` and `atlas_asset_runtime/`.
 3. Add runtime begin, ready, and runtime-scoped delivery methods.
 4. Keep Task resources in the existing SDK cache and snapshots, updated from ordinary feed events.
 5. Split the Asset runtime into the target `runtime`, `execution-module`, and `safety-barrier` files.
-6. Require a Protocol-valid manifest entry and handler for every advertised Command.
+6. Require a Protocol-valid manifest entry and handler for every advertised Command; the initial production runtime can publish only an empty manifest.
 7. Run the safety barrier before marking a runtime ready.
 8. Maintain one local queued executor plus independently abortable immediate executions.
 9. Start, progress, complete, fail, and abort work only through the explicit lifecycle methods.
-10. Apply cancellation and safety changes from runtime-scoped delivery immediately.
+10. Apply cancellation changes from runtime-scoped delivery immediately.
 11. Remove periodic Task polling and the old `setStatus` behavior.
 
 Exit gate:
 
 - SDK request conformance tests cover every new request shape and header
-- runtime tests cover queue order, immediate work, cancellation, progress, restart fencing, and failed safe-state establishment
+- runtime tests use fixture Commands to cover queue order, immediate overlap, cancellation, progress, restart fencing, and failed safe-state establishment
 - packed consumer checks prove the public SDK and runtime exports work outside the monorepo
 
 ### Phase 5: Command interface
 
 Own this phase in `atlas_command_interface/`.
 
-1. Load the Protocol catalog and selected Asset's current manifest.
-2. Show only manifest-supported Commands and display both the stable and Asset-specific descriptions.
-3. Replace the generic parameter-schema form with a registry of purpose-built inputs for the initial catalog.
-4. Submit `{ asset_id, command, input }` with one idempotency key per user tasking attempt.
-5. Add `in_progress`, progress, output, failure, and cancellation presentation.
-6. Offer cancellation only when the Task state and manifest allow it.
-7. Show whether a Command is queued or immediate.
-8. Remove UI assumptions about Task components, mutable assignment, generic status messages, and Task deletion.
+1. Load the empty Protocol catalog and the selected Asset's read-only current manifest from Asset details.
+2. Present a clear no-Commands state rather than showing old catalog entries or an empty broken form.
+3. Replace the generic parameter-schema form with an empty registry for purpose-built Command inputs. The Command authoring guide explains how a later Command adds its form.
+4. Keep typed Task submission and lifecycle presentation ready for future Commands without adding production form entries.
+5. Add `in_progress`, progress, output, failure, and cancellation presentation using fixture Tasks in focused tests.
+6. Remove UI assumptions about Task components, mutable assignment, generic status messages, and Task deletion.
 
 Exit gate:
 
-- focused interface tests cover Asset-specific Command availability and descriptions
-- input tests prove `sensing.scan_area` can target both ADS-B and AIS Assets through the same Command
+- focused interface tests prove the empty catalog and empty manifest produce the intentional no-Commands state
+- fixture tests prove a later Command appears only when both the catalog and selected Asset manifest contain it
 - Task rows render every lifecycle and outcome state without reading removed fields
 
 ### Phase 6: Simulations and documentation
@@ -285,17 +283,17 @@ Exit gate:
 Own this phase in `atlas_simulations/`, `docs/`, and module READMEs.
 
 1. Rebuild the simulation fake around the flat Task resource and explicit lifecycle operations.
-2. Remove Task deletion from the cleanup ledger and update deployed-run safety tests.
-3. Add one commanded-Asset closed-loop scenario that tasks two different Assets with `sensing.scan_area` and observes their distinct Track outputs.
-4. Add restart, stale-runtime, immediate-timeout, cancellation, stop, and emergency-stop scenarios where a cross-module test adds evidence beyond the shared corpus.
-5. Add Command reference pages and the outcome-code reference.
+2. Remove Task deletion from the cleanup ledger and update deployed-run cleanup safeguards.
+3. Use fixture Commands for restart, stale-runtime, immediate-timeout, cancellation, and overlap scenarios where a cross-module test adds evidence beyond the shared corpus.
+4. Add the Command authoring guide and outcome-code reference. Add no production Command reference pages.
+5. Document that scan-area, stop, and Safety acceptance travels with the later change that adds each Command.
 6. Replace Core, SDK, runtime, interface, simulation, API, and database documentation that describes the old system.
 7. Remove old examples, fixtures, fake behavior, and duplicate status lists.
 
 Exit gate:
 
 - repository search finds no old Command IDs, task catalog, task queue Entity component, generic Task patch, Task delete, or component-based Task payloads outside historical migration tests
-- the closed-loop scenario proves Command intent, runtime delivery, lifecycle updates, and Track publication together
+- the command interface and Core both expose the intentional empty-catalog state without fallback behavior
 
 ### Phase 7: Final acceptance
 
@@ -324,15 +322,15 @@ npm run build
 git diff --check
 ```
 
-The final acceptance review checks every behavior listed in the target-state specification, confirms the generated catalog is the one served by Core, and verifies there is only one Task model from Protocol through the operator interface.
+The final acceptance review checks every empty-catalog infrastructure behavior listed in the target-state specification, confirms the generated `[]` catalog is the one served by Core, and verifies there is only one Task model from Protocol through the operator interface. Command-specific acceptance remains attached to the future change that adds each Command.
 
 ## Reviewable commit sequence
 
 Use this commit order inside the direct cutover pull request:
 
-1. Protocol catalog, schemas, examples, generated artifacts, and conformance corpus
+1. Empty Protocol catalog machinery, Command authoring guide, schemas, examples, generated artifacts, and conformance fixtures
 2. Core persistence and deep Task module
-3. Core runtime registration, lifecycle routes, delivery, timeout, and safety
+3. Core runtime registration, lifecycle routes, delivery, timeout, and runtime fencing
 4. SDK and Asset runtime
 5. Command interface
 6. Simulations, documentation, old-system deletion, and final acceptance fixes
@@ -345,6 +343,8 @@ Do not add:
 
 - a legacy Task adapter
 - old-to-new Task data conversion
+- preset initial Commands or mapped legacy Command IDs
+- dormant Command-specific policy code
 - asset-defined Commands or remote schemas
 - priority or manual queue reordering
 - exposed subsystem locks or execution groups
