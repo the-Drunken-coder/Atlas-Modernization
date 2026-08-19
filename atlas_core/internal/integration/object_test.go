@@ -128,21 +128,9 @@ func TestObjectWithReferences(t *testing.T) {
 		t.Fatalf("close body: %v", err)
 	}
 
-	// Create task to reference
+	// Object references are descriptive and may name a retained Task without coupling
+	// object creation to Task lifecycle setup in the empty production catalog.
 	taskID := fmt.Sprintf("%s-object-ref-task", prefix)
-	taskPayload := map[string]interface{}{
-		"task_id":   taskID,
-		"entity_id": entityID,
-	}
-
-	resp, err = client.Post(ctx, "/tasks", taskPayload)
-	if err != nil {
-		t.Fatalf("Failed to create task: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusCreated, "POST /tasks (object refs setup)")
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close body: %v", err)
-	}
 
 	// Create object with references
 	objectID := fmt.Sprintf("%s-object-with-refs", prefix)
@@ -285,36 +273,9 @@ func TestObjectsByTask(t *testing.T) {
 	ctx := context.Background()
 	prefix := TestArtifactPrefix()
 
-	// Create task
+	// The relationship query is driven by descriptive object references. It does not
+	// require a mutable Task fixture or a production Command.
 	taskID := fmt.Sprintf("%s-objects-by-task", prefix)
-	taskPayload := map[string]interface{}{
-		"task_id": taskID,
-		"status":  "pending",
-	}
-
-	resp, err := client.Post(ctx, "/tasks", taskPayload)
-	if err != nil {
-		t.Fatalf("Failed to create task: %v", err)
-	}
-	if resp.StatusCode != http.StatusCreated {
-		resp.Body.Close()
-		t.Fatalf("Expected 201 creating task, got %d", resp.StatusCode)
-	}
-	taskETag := requireETag(t, resp)
-	resp.Body.Close()
-	resp, err = requestJSONWithHeaders(
-		ctx,
-		client,
-		http.MethodPatch,
-		"/tasks/"+taskID,
-		map[string]interface{}{"status": "completed"},
-		map[string]string{"If-Match": taskETag},
-	)
-	if err != nil {
-		t.Fatalf("Failed to complete task: %v", err)
-	}
-	requireHTTPStatus(t, resp, http.StatusOK, "PATCH /tasks/{id} (complete objects fixture)")
-	resp.Body.Close()
 
 	// Create objects referencing the task
 	for i := 1; i <= 2; i++ {
@@ -327,7 +288,7 @@ func TestObjectsByTask(t *testing.T) {
 			},
 		}
 
-		resp, err = client.Post(ctx, "/objects", createPayload)
+		resp, err := client.Post(ctx, "/objects", createPayload)
 		if err != nil {
 			t.Fatalf("Failed to create object %d: %v", i, err)
 		}
@@ -339,7 +300,7 @@ func TestObjectsByTask(t *testing.T) {
 	}
 
 	// Get objects by task
-	resp, err = client.Get(ctx, "/tasks/"+taskID+"/objects")
+	resp, err := client.Get(ctx, "/tasks/"+taskID+"/objects")
 	if err != nil {
 		t.Fatalf("Failed to get objects by task: %v", err)
 	}

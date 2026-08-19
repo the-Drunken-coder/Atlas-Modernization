@@ -128,11 +128,11 @@ type Subscription struct {
 	Filter       protocol.FeedFilter
 	ResourceType protocol.ResourceType
 	ID           string
-	EntityID     string
+	AssetID      string
 }
 
 func (s Subscription) Key() string {
-	parts := []string{string(s.Filter), string(s.ResourceType), s.ID, s.EntityID}
+	parts := []string{string(s.Filter), string(s.ResourceType), s.ID, s.AssetID}
 	return strings.Join(parts, "\x00")
 }
 
@@ -141,7 +141,7 @@ func SubscriptionFromMessage(msg protocol.FeedSubscriptionMessage) (Subscription
 		Filter:       msg.Filter,
 		ResourceType: msg.ResourceType,
 		ID:           strings.TrimSpace(msg.ID),
-		EntityID:     strings.TrimSpace(msg.EntityID),
+		AssetID:      strings.TrimSpace(msg.AssetID),
 	}
 	switch sub.Filter {
 	case protocol.FeedFilterAll:
@@ -157,9 +157,9 @@ func SubscriptionFromMessage(msg protocol.FeedSubscriptionMessage) (Subscription
 		}
 		sub.ID = ""
 		return sub, nil
-	case protocol.FeedFilterTasksForEntity:
-		if sub.EntityID == "" {
-			return Subscription{}, fmt.Errorf("tasks_for_entity subscriptions require entity_id")
+	case protocol.FeedFilterTasksForAsset:
+		if sub.AssetID == "" {
+			return Subscription{}, fmt.Errorf("tasks_for_asset subscriptions require asset_id")
 		}
 		sub.ResourceType = protocol.ResourceTypeTask
 		sub.ID = ""
@@ -255,9 +255,9 @@ func subscriptionMatches(sub Subscription, event RoutedEvent) bool {
 		return event.Event.ResourceType == sub.ResourceType && event.Event.ID == sub.ID
 	case protocol.FeedFilterType:
 		return event.Event.ResourceType == sub.ResourceType
-	case protocol.FeedFilterTasksForEntity:
+	case protocol.FeedFilterTasksForAsset:
 		return event.Event.ResourceType == protocol.ResourceTypeTask &&
-			(event.BeforeTaskEntityID == sub.EntityID || event.AfterTaskEntityID == sub.EntityID)
+			(event.BeforeTaskEntityID == sub.AssetID || event.AfterTaskEntityID == sub.AssetID)
 	default:
 		return false
 	}

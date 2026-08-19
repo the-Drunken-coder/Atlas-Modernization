@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -62,8 +61,19 @@ func (h *Handler) GetEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serialized := serializers.SerializeEntity(entity)
+	if entity.Type == "asset" {
+		manifest, err := h.taskActions.RuntimeManifest(r.Context(), entity.EntityID)
+		if err != nil {
+			h.handleActionError(w, r, err)
+			return
+		}
+		if manifest != nil {
+			serialized.CommandManifest = &manifest
+		}
+	}
 	setResourceETag(w, entity.Version)
-	writeJSON(w, r, http.StatusOK, serializers.SerializeEntity(entity))
+	writeJSON(w, r, http.StatusOK, serialized)
 }
 
 // GetEntityByAlias handles GET /entities/alias/{alias}.
@@ -151,38 +161,6 @@ func (h *Handler) DeleteEntity(w http.ResponseWriter, r *http.Request) {
 // EntityCheckin handles POST /entities/{entity_id}/checkin.
 func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 	entityID := chi.URLParam(r, "entity_id")
-	statusFilter := strings.TrimSpace(r.URL.Query().Get("status_filter"))
-	if statusFilter == "" {
-		statusFilter = "pending,acknowledged"
-	}
-
-	limit, err := parseNonNegativeIntQuery(r, "limit", 10)
-	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "Invalid limit parameter", protocol.ErrorCodeValidationError)
-		return
-	}
-	if limit < 1 || limit > 20 {
-		h.writeError(w, r, http.StatusBadRequest, "limit must be between 1 and 20", protocol.ErrorCodeValidationError)
-		return
-	}
-
-	if _, exists := r.URL.Query()["offset"]; exists {
-		h.writeError(w, r, http.StatusBadRequest, "offset pagination is not supported; use task_cursor", protocol.ErrorCodeValidationError)
-		return
-	}
-	taskCursor := strings.TrimSpace(r.URL.Query().Get("task_cursor"))
-
-	fields := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("fields")))
-	sinceStr := strings.TrimSpace(r.URL.Query().Get("since"))
-	var since *time.Time
-	if sinceStr != "" {
-		parsed, err := parseRFC3339Timestamp(sinceStr)
-		if err != nil {
-			h.writeError(w, r, http.StatusBadRequest, "Invalid since timestamp format (use RFC3339)", protocol.ErrorCodeValidationError)
-			return
-		}
-		since = &parsed
-	}
 
 	// Limit request body to 256KB for telemetry updates
 	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
@@ -201,42 +179,19 @@ func (h *Handler) EntityCheckin(w http.ResponseWriter, r *http.Request) {
 		EntityID:        entityID,
 		Components:      checkinComponentUpdate(req, time.Now()),
 		ExpectedVersion: expectedVersion,
-		TaskStatuses:    parseStatusFilter(statusFilter),
-		Since:           since,
-		TaskLimit:       limit,
-		TaskCursor:      taskCursor,
 	})
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	serializedTasks := serializers.SerializeTasks(result.Tasks.Items)
 	serializedEntity := serializers.SerializeEntity(result.Entity)
 	if serializedEntity == nil {
 		h.writeError(w, r, http.StatusInternalServerError, "Entity check-in returned no entity", protocol.ErrorCodeInternalServerError)
 		return
 	}
 	setResourceETag(w, result.Entity.Version)
-	if fields == "minimal" {
-		writeJSON(w, r, http.StatusOK, protocol.EntityCheckInMinimalResponse{
-			Entity:         *serializedEntity,
-			Tasks:          serializeCheckinTasksMinimal(serializedTasks),
-			TaskCount:      int64(len(serializedTasks)),
-			TaskLimit:      int64(result.Tasks.Limit),
-			HasMoreTasks:   result.Tasks.HasMore,
-			NextTaskCursor: result.Tasks.NextCursor,
-		})
-		return
-	}
-	writeJSON(w, r, http.StatusOK, protocol.EntityCheckInFullResponse{
-		Entity:         *serializedEntity,
-		Tasks:          serializedTasks,
-		TaskCount:      int64(len(serializedTasks)),
-		TaskLimit:      int64(result.Tasks.Limit),
-		HasMoreTasks:   result.Tasks.HasMore,
-		NextTaskCursor: result.Tasks.NextCursor,
-	})
+	writeJSON(w, r, http.StatusOK, protocol.EntityCheckInFullResponse{Entity: *serializedEntity})
 }
 
 func buildTelemetryComponent(latitude, longitude, altitudeM, speedMS, headingDeg *float64, lastUpdate *string) map[string]interface{} {

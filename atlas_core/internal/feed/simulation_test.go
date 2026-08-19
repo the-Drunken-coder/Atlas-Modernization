@@ -23,11 +23,11 @@ func TestHubDeliversDurableEventsInPublishedOrder(t *testing.T) {
 	}
 }
 
-func TestTasksForEntityMatchesBeforeAndAfterRoutingContext(t *testing.T) {
+func TestTasksForAssetMatchesImmutableAssetRoutingContext(t *testing.T) {
 	hub := NewHub(Options{})
 	defer hub.Close()
 	client := hub.NewClient()
-	client.Subscribe(Subscription{Filter: protocol.FeedFilterTasksForEntity, ResourceType: protocol.ResourceTypeTask, EntityID: "entity-1"})
+	client.Subscribe(Subscription{Filter: protocol.FeedFilterTasksForAsset, ResourceType: protocol.ResourceTypeTask, AssetID: "entity-1"})
 
 	hub.Publish(RoutedEvent{
 		Event:              testRoutedEvent(1, protocol.ResourceTypeTask, "task-1").Event,
@@ -105,20 +105,11 @@ func entityEvent(eventName, id string, version int64, entityType string) RoutedE
 
 func taskEvent(eventName, id string, version int64, beforeEntity, afterEntity, status string) RoutedEvent {
 	event := protocol.FeedEvent{Event: protocol.FeedEventName(eventName), ResourceType: protocol.ResourceTypeTask, ID: id, Version: version}
-	if eventName == "update" && beforeEntity != "" {
-		event.PreviousEntityID = &beforeEntity
-	}
-	if eventName == "delete" && beforeEntity != "" {
-		event.EntityID = &beforeEntity
-	}
 	if eventName != "delete" {
-		var entityID any
-		if afterEntity != "" {
-			entityID = afterEntity
-		}
 		event.Resource = map[string]any{
-			"task_id": id, "status": status, "entity_id": entityID,
-			"components": map[string]any{}, "metadata": testMetadata(version),
+			"task_id": id, "asset_id": afterEntity, "command": "fixture.immediate",
+			"input": map[string]any{}, "status": status,
+			"created_at": "2026-06-12T12:00:00Z", "updated_at": "2026-06-12T12:00:00Z",
 		}
 	}
 	return RoutedEvent{Event: event, BeforeTaskEntityID: beforeEntity, AfterTaskEntityID: afterEntity}

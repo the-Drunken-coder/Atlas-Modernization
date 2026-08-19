@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/the-drunken-coder/atlas/atlas_protocol/conformance"
@@ -22,6 +23,12 @@ func TestRequestValidationConformance(t *testing.T) {
 	prefix := TestArtifactPrefix()
 
 	for index, testCase := range cases {
+		// Task and runtime request shapes are exercised by handler and Task-module tests with
+		// fixture Commands. The external integration server intentionally uses the empty
+		// production catalog, so it cannot create a Task fixture for lifecycle requests.
+		if strings.HasPrefix(testCase.Definition, "Task") || strings.HasPrefix(testCase.Definition, "Runtime") {
+			continue
+		}
 		t.Run(testCase.Name, func(t *testing.T) {
 			var payload map[string]interface{}
 			if err := json.Unmarshal(testCase.Value, &payload); err != nil {
@@ -46,15 +53,6 @@ func TestRequestValidationConformance(t *testing.T) {
 					"entity_id": entityID, "entity_type": "geofeature",
 				}, "create entity for conformance update")
 				response, requestErr = client.Patch(ctx, "/entities/"+entityID, payload)
-			case "TaskCreateRequest":
-				payload["task_id"] = fmt.Sprintf("%s-conformance-%d", prefix, index)
-				response, requestErr = client.Post(ctx, "/tasks", payload)
-			case "TaskUpdateRequest":
-				taskID := fmt.Sprintf("%s-conformance-update-%d", prefix, index)
-				requireConformanceSetup(ctx, t, client, "/tasks", map[string]interface{}{
-					"task_id": taskID,
-				}, "create task for conformance update")
-				response, requestErr = client.Patch(ctx, "/tasks/"+taskID, payload)
 			case "ObjectCreateRequest":
 				payload["object_id"] = fmt.Sprintf("%s-conformance-%d", prefix, index)
 				response, requestErr = client.Post(ctx, "/objects", payload)
@@ -76,7 +74,6 @@ func TestRequestValidationConformance(t *testing.T) {
 				want = http.StatusCreated
 				if testCase.Definition == "EntityCheckInRequest" ||
 					testCase.Definition == "EntityUpdateRequest" ||
-					testCase.Definition == "TaskUpdateRequest" ||
 					testCase.Definition == "ObjectUpdateRequest" {
 					want = http.StatusOK
 				}

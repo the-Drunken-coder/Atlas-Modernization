@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
-	commandcatalog "github.com/the-drunken-coder/atlas/atlas_core/command_catalog"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/admin"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/api/handlers"
@@ -31,7 +30,7 @@ const objectTransferIdleTimeout = 30 * time.Second
 func atlasCORSOptions(allowedOrigins []string, allowedOriginPatterns []string) cors.Options {
 	return cors.Options{
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key", "Atlas-Runtime-ID", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"},
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
 		AllowCredentials: true,
 		AllowOriginFunc: func(r *http.Request, origin string) bool {
@@ -147,8 +146,9 @@ func main() {
 	if err := db.EnsureTables(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
-	if _, err := commandcatalog.Default(); err != nil {
-		logger.Fatal().Err(err).Msg("Failed to validate embedded command catalog")
+	taskActions := actions.NewTaskActions(db.Pool)
+	if _, err := taskActions.ReconcileImmediateTimeouts(ensureCtx, time.Now().UTC()); err != nil {
+		logger.Fatal().Err(err).Msg("Failed to reconcile immediate Task deadlines")
 	}
 	adminAuth := admin.NewService(db.Pool, cfg)
 	if admin.UsesDefaultDevelopmentPassword() {
@@ -186,6 +186,7 @@ func main() {
 	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
 	defer stopRuntime()
 	go feed.NewDispatcher(db.Pool, feedHub, currentVersion).Run(runtimeCtx)
+	go runImmediateTaskTimeouts(runtimeCtx, logger, taskActions)
 	if storageClient != nil {
 		go runStorageDeletionReconciler(
 			runtimeCtx,
@@ -239,6 +240,9 @@ func main() {
 	r.Delete("/entities/{entity_id}", handler.DeleteEntity)
 	r.Get("/entities/alias/{alias}", handler.GetEntityByAlias)
 	r.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
+	r.Post("/entities/{entity_id}/runtime", handler.BeginAssetRuntime)
+	r.Post("/entities/{entity_id}/runtime/ready", handler.ReadyAssetRuntime)
+	r.Get("/entities/{entity_id}/runtime/tasks", handler.DeliverAssetTasks)
 	r.Get("/entities/{entity_id}/tasks", handler.GetTasksByEntity)
 	r.Get("/entities/{entity_id}/objects", handler.GetObjectsByEntity)
 
@@ -246,8 +250,12 @@ func main() {
 	r.Get("/tasks", handler.ListTasks)
 	r.Post("/tasks", handler.CreateTask)
 	r.Get("/tasks/{task_id}", handler.GetTask)
-	r.Patch("/tasks/{task_id}", handler.UpdateTask)
-	r.Delete("/tasks/{task_id}", handler.DeleteTask)
+	r.Post("/tasks/{task_id}/acknowledge", handler.AcknowledgeTask)
+	r.Post("/tasks/{task_id}/start", handler.StartTask)
+	r.Post("/tasks/{task_id}/progress", handler.ProgressTask)
+	r.Post("/tasks/{task_id}/complete", handler.CompleteTask)
+	r.Post("/tasks/{task_id}/fail", handler.FailTask)
+	r.Post("/tasks/{task_id}/cancel", handler.CancelTask)
 	r.Get("/tasks/{task_id}/objects", handler.GetObjectsByTask)
 
 	// Object routes
@@ -290,4 +298,19 @@ func main() {
 	feedHub.Close()
 
 	logger.Info().Msg("ATLAS Core API shutdown complete")
+}
+
+func runImmediateTaskTimeouts(ctx context.Context, logger zerolog.Logger, tasks *actions.TaskActions) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if _, err := tasks.ReconcileImmediateTimeouts(ctx, now.UTC()); err != nil && ctx.Err() == nil {
+				logger.Error().Err(err).Msg("Immediate Task deadline reconciliation failed")
+			}
+		}
+	}
 }

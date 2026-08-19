@@ -194,11 +194,6 @@ func (c *APIClient) Patch(ctx context.Context, path string, body interface{}) (*
 	return c.Request(ctx, "PATCH", path, body)
 }
 
-// Delete makes a DELETE request
-func (c *APIClient) Delete(ctx context.Context, path string) (*http.Response, error) {
-	return c.Request(ctx, "DELETE", path, nil)
-}
-
 // ParseResponse parses a JSON response body
 func ParseResponse(resp *http.Response, v interface{}) error {
 	return parseResponse(resp, v, false)

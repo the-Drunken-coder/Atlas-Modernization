@@ -36,14 +36,18 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskActions.Create(r.Context(), req.actionParams())
+	task, created, err := h.taskActions.Create(r.Context(), req.actionParams(), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
 	setResourceETag(w, task.Version)
-	writeJSON(w, r, http.StatusCreated, serializers.SerializeTask(task))
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, r, status, serializers.SerializeTask(task))
 }
 
 // GetTask handles GET /tasks/{task_id}.
@@ -60,42 +64,94 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
-// UpdateTask handles PATCH /tasks/{task_id}.
-func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) AcknowledgeTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
-
-	// Limit request body to 512KB for task operations
-	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
-
-	var req updateTaskRequest
-	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskUpdateRequest) {
+	var req protocol.TaskAcknowledgeRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskAcknowledgeRequest) {
 		return
 	}
-	expectedVersion, ok := h.parseIfMatchExpectedVersion(w, r, "task")
-	if !ok {
-		return
-	}
-
-	task, err := h.taskActions.Update(r.Context(), taskID, req.actionParams(expectedVersion))
+	task, err := h.taskActions.Acknowledge(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"))
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
-
 	setResourceETag(w, task.Version)
 	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
-// DeleteTask handles DELETE /tasks/{task_id}.
-func (h *Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
-
-	if err := h.taskActions.Delete(r.Context(), taskID); err != nil {
+	var req protocol.TaskStartRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskStartRequest) {
+		return
+	}
+	task, err := h.taskActions.Start(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"))
+	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
+	setResourceETag(w, task.Version)
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
+}
 
-	w.WriteHeader(http.StatusNoContent)
+func (h *Handler) ProgressTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "task_id")
+	var req protocol.TaskProgressRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskProgressRequest) {
+		return
+	}
+	task, err := h.taskActions.Progress(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"), req.Progress)
+	if err != nil {
+		h.handleActionError(w, r, err)
+		return
+	}
+	setResourceETag(w, task.Version)
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
+}
+
+func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "task_id")
+	var req protocol.TaskCompleteRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskCompleteRequest) {
+		return
+	}
+	task, err := h.taskActions.Complete(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"), req.Output)
+	if err != nil {
+		h.handleActionError(w, r, err)
+		return
+	}
+	setResourceETag(w, task.Version)
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
+}
+
+func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "task_id")
+	var req protocol.TaskFailRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskFailRequest) {
+		return
+	}
+	task, err := h.taskActions.Fail(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"), req.Failure)
+	if err != nil {
+		h.handleActionError(w, r, err)
+		return
+	}
+	setResourceETag(w, task.Version)
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
+}
+
+func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "task_id")
+	var req protocol.TaskCancelRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskCancelRequest) {
+		return
+	}
+	task, err := h.taskActions.Cancel(r.Context(), taskID, req.Cancellation)
+	if err != nil {
+		h.handleActionError(w, r, err)
+		return
+	}
+	setResourceETag(w, task.Version)
+	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
 }
 
 // GetTasksByEntity handles GET /entities/{entity_id}/tasks.
