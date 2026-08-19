@@ -37,8 +37,6 @@ func TestRootDockerignoreAllowsOnlyDockerfileInputs(t *testing.T) {
 		"!atlas_core/go.sum",
 		"!atlas_core/cmd/",
 		"!atlas_core/cmd/**",
-		"!atlas_core/command_catalog/",
-		"!atlas_core/command_catalog/**",
 		"!atlas_core/internal/",
 		"!atlas_core/internal/**",
 		"!atlas_core/atlas_core.settings.json.example",
