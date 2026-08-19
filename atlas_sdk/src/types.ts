@@ -127,6 +127,7 @@ export type ResourceByType = {
 
 export type ResourceValue = ResourceByType[ResourceType];
 export type ResourceOf<TType extends ResourceType> = ResourceByType[TType];
+export type DeletableResourceType = Exclude<ResourceType, "task">;
 export type ResourceForSubscription<TFilter extends AtlasSubscription> = TFilter extends { filter: "all" }
   ? ResourceValue
   : TFilter extends { filter: "tasks_for_asset" }
@@ -136,13 +137,13 @@ export type ResourceForSubscription<TFilter extends AtlasSubscription> = TFilter
       : never;
 
 export type AtlasLocalDeleteWatchEvent = {
-  [TType in ResourceType]: {
+  [TType in DeletableResourceType]: {
     event: "local_delete";
     resource_type: TType;
     id: string;
     previous_version?: number;
   };
-}[ResourceType];
+}[DeletableResourceType];
 
 export type AtlasWatchEvent = FeedEvent | AtlasLocalDeleteWatchEvent;
 

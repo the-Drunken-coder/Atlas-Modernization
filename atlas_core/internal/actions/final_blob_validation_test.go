@@ -114,8 +114,7 @@ func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgx
 		if _, err := pool.Exec(ctx, `
 			DELETE FROM atlas_change_events
 			WHERE (event->>'resource_type' = 'entity' AND event->>'id' = $1)
-				OR before_task_entity_id = $1
-				OR after_task_entity_id = $1
+				OR task_asset_id = $1
 		`, entityID); err != nil {
 			t.Errorf("cleanup entity change rows %q: %v", entityID, err)
 		}

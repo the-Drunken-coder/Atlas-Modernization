@@ -15,9 +15,8 @@ type Options struct {
 }
 
 type RoutedEvent struct {
-	Event              protocol.FeedEvent
-	BeforeTaskEntityID string
-	AfterTaskEntityID  string
+	Event       protocol.FeedEvent
+	TaskAssetID string
 }
 
 // Hub fans already ordered durable events out to active subscriptions. It does
@@ -257,7 +256,7 @@ func subscriptionMatches(sub Subscription, event RoutedEvent) bool {
 		return event.Event.ResourceType == sub.ResourceType
 	case protocol.FeedFilterTasksForAsset:
 		return event.Event.ResourceType == protocol.ResourceTypeTask &&
-			(event.BeforeTaskEntityID == sub.AssetID || event.AfterTaskEntityID == sub.AssetID)
+			event.TaskAssetID == sub.AssetID
 	default:
 		return false
 	}

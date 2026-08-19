@@ -125,8 +125,8 @@ export class FakeWebSocket {
     this.dispatch("message", { data: JSON.stringify(value) });
   }
 
-  subscribedTo(event: FeedEvent, beforeTaskAssetId?: string | null): boolean {
-    return this.subscriptions.some((subscription) => subscriptionMatches(subscription, event, beforeTaskAssetId));
+  subscribedTo(event: FeedEvent): boolean {
+    return this.subscriptions.some((subscription) => subscriptionMatches(subscription, event));
   }
 
   private dispatch(type: WebSocketEventType, event: WebSocketEvent): void {
@@ -147,7 +147,7 @@ function subscriptionKey(filter: AtlasSubscription): string {
   }
 }
 
-function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, beforeTaskAssetId?: string | null): boolean {
+function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -156,9 +156,6 @@ function subscriptionMatches(filter: AtlasSubscription, event: FeedEvent, before
     case "type":
       return event.resource_type === filter.resource_type;
     case "tasks_for_asset":
-      return (
-        event.resource_type === "task" &&
-        (beforeTaskAssetId === filter.asset_id || (event.resource as TaskResource).asset_id === filter.asset_id)
-      );
+      return event.resource_type === "task" && (event.resource as TaskResource).asset_id === filter.asset_id;
   }
 }

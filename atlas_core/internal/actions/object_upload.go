@@ -337,7 +337,6 @@ func (a *ObjectActions) Upload(ctx context.Context, objectID string, reader io.R
 		ResourceType: ChangeResourceObject,
 		ID:           out.ObjectID,
 		Version:      out.Version,
-		BeforeObject: cloneObjectModel(currentState.resource),
 		AfterObject:  cloneObjectModel(out),
 	}); err != nil {
 		return cleanupMetadataFailure(err)

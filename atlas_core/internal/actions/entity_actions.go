@@ -297,7 +297,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	if err := checkExpectedVersion("entity", params.ExpectedVersion, entity.Version); err != nil {
 		return nil, err
 	}
-	before := cloneEntityModel(&entity)
 	if params.IsEmpty() {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)
@@ -382,7 +381,6 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 		ResourceType: ChangeResourceEntity,
 		ID:           out.EntityID,
 		Version:      out.Version,
-		BeforeEntity: before,
 		AfterEntity:  cloneEntityModel(&out),
 	}); err != nil {
 		return nil, err
@@ -443,7 +441,6 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		ResourceType: ChangeResourceEntity,
 		ID:           entity.EntityID,
 		Version:      deleteVersion,
-		BeforeEntity: cloneEntityModel(&entity),
 	}); err != nil {
 		return err
 	}

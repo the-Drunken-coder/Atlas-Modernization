@@ -164,7 +164,6 @@ func recordRuntimeManifestEntityChange(ctx context.Context, tx pgx.Tx, before *m
 		ResourceType: ChangeResourceEntity,
 		ID:           updated.EntityID,
 		Version:      updated.Version,
-		BeforeEntity: cloneEntityModel(before),
 		AfterEntity:  cloneEntityModel(&updated),
 	}); err != nil {
 		return err
@@ -245,16 +244,16 @@ func (a *TaskActions) failRuntimeTasks(ctx context.Context, tx pgx.Tx, assetID, 
 		return err
 	}
 	encoded, _ := json.Marshal(failure)
-	for _, before := range tasks {
+	for _, task := range tasks {
 		version, err := nextChangeVersion(ctx, tx)
 		if err != nil {
 			return err
 		}
-		updated, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = 'failed', failure = $2, finished_at = clock_timestamp(), updated_at = clock_timestamp(), version = $3 WHERE task_id = $1 RETURNING `+taskColumns, before.TaskID, encoded, version))
+		updated, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = 'failed', failure = $2, finished_at = clock_timestamp(), updated_at = clock_timestamp(), version = $3 WHERE task_id = $1 RETURNING `+taskColumns, task.TaskID, encoded, version))
 		if err != nil {
 			return fmt.Errorf("fail fenced runtime Task: %w", err)
 		}
-		if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, BeforeTask: cloneTaskModel(before), AfterTask: cloneTaskModel(updated)}); err != nil {
+		if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, AfterTask: cloneTaskModel(updated)}); err != nil {
 			return err
 		}
 	}
@@ -287,16 +286,16 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context, now time.T
 		return 0, err
 	}
 	failure, _ := json.Marshal(protocol.TaskFailure{Code: protocol.TaskFailureCodeImmediateStartTimeout, Message: "The immediate Task did not start within 60 seconds."})
-	for _, before := range tasks {
+	for _, task := range tasks {
 		version, err := nextChangeVersion(ctx, tx)
 		if err != nil {
 			return 0, err
 		}
-		updated, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = 'failed', failure = $2, finished_at = $3, updated_at = clock_timestamp(), version = $4 WHERE task_id = $1 RETURNING `+taskColumns, before.TaskID, failure, now, version))
+		updated, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = 'failed', failure = $2, finished_at = $3, updated_at = clock_timestamp(), version = $4 WHERE task_id = $1 RETURNING `+taskColumns, task.TaskID, failure, now, version))
 		if err != nil {
 			return 0, fmt.Errorf("fail expired immediate Task: %w", err)
 		}
-		if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, BeforeTask: cloneTaskModel(before), AfterTask: cloneTaskModel(updated)}); err != nil {
+		if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, AfterTask: cloneTaskModel(updated)}); err != nil {
 			return 0, err
 		}
 	}

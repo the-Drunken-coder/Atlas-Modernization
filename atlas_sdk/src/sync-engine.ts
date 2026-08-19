@@ -30,6 +30,7 @@ import { isTimerDelayInRange, MAX_TIMER_DELAY_MS } from "./timer.js";
 import type {
   AtlasSubscription,
   AtlasWatchEvent,
+  DeletableResourceType,
   FullDatasetCursors,
   ReadOptions,
   ResourceForSubscription,
@@ -433,7 +434,6 @@ export class SyncEngine {
       signal,
       requestHeaders
     );
-    const previous = this.cache.value("task", task.task_id);
     if (
       this.cache.cacheResource("task", task.task_id, task, {
         advanceCursor: false,
@@ -441,7 +441,7 @@ export class SyncEngine {
         replaceSameVersion: true
       })
     ) {
-      this.notify(resourceUpsertEvent("task", eventName, task.task_id, version, task), task, previous);
+      this.notify(resourceUpsertEvent("task", eventName, task.task_id, version, task), task);
       this.notifySnapshot();
     }
     return task;
@@ -509,10 +509,10 @@ export class SyncEngine {
     return response;
   }
 
-  async deleteResource(type: ResourceType, id: string, path: string): Promise<void> {
+  async deleteResource(type: DeletableResourceType, id: string, path: string): Promise<void> {
     await this.transport.empty("DELETE", path);
-    const { previousVersion, previous } = this.cache.markLocalDelete(type, id);
-    this.notify(localDeleteEvent(type, id, previousVersion), undefined, previous);
+    const previousVersion = this.cache.markLocalDelete(type, id);
+    this.notify(localDeleteEvent(type, id, previousVersion), undefined);
     this.notifySnapshot();
   }
 
@@ -797,9 +797,7 @@ export class SyncEngine {
   private applyEvent(event: FeedEvent, options?: CacheResourceOptions): void {
     const advanceCursor = options?.advanceCursor !== false;
     const key = resourceCacheKey(event.resource_type, event.id);
-    const current = this.cache.entry(event.resource_type, event.id);
     const pendingDelete = this.cache.pendingDeletes.has(key);
-    const previous = current?.value;
     if (event.version <= this.cache.versionFor(event.resource_type, event.id)) {
       this.advanceCursor(event, advanceCursor);
       return;
@@ -810,7 +808,7 @@ export class SyncEngine {
       this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
-        this.notify(event, undefined, previous);
+        this.notify(event, undefined);
         this.notifySnapshot();
       }
       return;
@@ -825,14 +823,14 @@ export class SyncEngine {
       this.advanceCursor(event, advanceCursor);
       const alreadyNotified = this.cache.locallyNotifiedDeletes.delete(key);
       if (!alreadyNotified) {
-        this.notify(event, undefined, previous);
+        this.notify(event, undefined);
         this.notifySnapshot();
       }
       return;
     }
     this.cache.cacheResource(event.resource_type, event.id, event.resource, { ...options, version: event.version });
     this.advanceCursor(event, advanceCursor);
-    this.notify(event, this.cache.value(event.resource_type, event.id), previous);
+    this.notify(event, this.cache.value(event.resource_type, event.id));
     this.notifySnapshot();
   }
 
@@ -854,13 +852,9 @@ export class SyncEngine {
     }
   }
 
-  private notify(
-    event: AtlasWatchEvent,
-    resource: ResourceValue | undefined,
-    previous: ResourceValue | undefined
-  ): void {
+  private notify(event: AtlasWatchEvent, resource: ResourceValue | undefined): void {
     for (const [key, callbacks] of this.watchers) {
-      if (!matchesSubscription(parseSubscriptionKey(key), event, previous)) {
+      if (!matchesSubscription(parseSubscriptionKey(key), event)) {
         continue;
       }
       for (const callback of callbacks) {

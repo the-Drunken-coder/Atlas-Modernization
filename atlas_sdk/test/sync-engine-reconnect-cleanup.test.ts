@@ -622,7 +622,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     client.watch({ filter: "tasks_for_asset", asset_id: "asset-old" }, watch);
     await client.connectFeed();
 
-    const first = core.upsertTask(task("task-reassign", "asset-old"));
+    const first = core.upsertTask(task("task-lifecycle", "asset-old"));
     core.emit(
       { event: "create", resource_type: "task", id: first.task_id, version: first.metadata.version, resource: first },
       { record: false }
@@ -642,7 +642,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     await vi.waitFor(() => {
       expect(watch).toHaveBeenCalledWith(
         progressed,
-        expect.objectContaining({ id: "task-reassign", version: progressed.metadata.version })
+        expect.objectContaining({ id: "task-lifecycle", version: progressed.metadata.version })
       );
     });
   });

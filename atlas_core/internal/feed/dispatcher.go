@@ -109,9 +109,8 @@ func (d *Dispatcher) drain(ctx context.Context, conn *pgx.Conn) error {
 		}
 		for _, record := range records {
 			d.hub.Publish(RoutedEvent{
-				Event:              record.Event,
-				BeforeTaskEntityID: record.BeforeTaskEntityID,
-				AfterTaskEntityID:  record.AfterTaskEntityID,
+				Event:       record.Event,
+				TaskAssetID: record.TaskAssetID,
 			})
 			d.cursor = record.Event.Version
 		}

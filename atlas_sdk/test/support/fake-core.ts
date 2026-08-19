@@ -509,16 +509,13 @@ export class FakeCore {
       : protocolError("object not found", "OBJECT_NOT_FOUND", 404);
   }
 
-  emit(
-    event: FeedEvent,
-    options?: { dropForSockets?: boolean; beforeTaskEntityId?: string | null; record?: boolean }
-  ): void {
+  emit(event: FeedEvent, options?: { dropForSockets?: boolean; record?: boolean }): void {
     if (options?.record !== false) {
       this.record(event);
     }
     if (options?.dropForSockets) return;
     for (const socket of this.sockets) {
-      if (socket.subscribedTo(event, options?.beforeTaskEntityId)) {
+      if (socket.subscribedTo(event)) {
         socket.receive(event);
       }
     }

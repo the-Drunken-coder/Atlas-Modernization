@@ -127,11 +127,9 @@ func TestCloneObjectModelCopiesPublicFields(t *testing.T) {
 }
 
 func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
-	beforeTaskEntity := "asset-before"
-	beforeTask := &models.Task{TaskID: "task-1", AssetID: beforeTaskEntity, Version: 6}
-	afterTaskEntity := "asset-after"
+	assetID := "asset-1"
 	afterTask := &models.Task{
-		TaskID: "task-1", AssetID: afterTaskEntity, Command: "fixture.immediate",
+		TaskID: "task-1", AssetID: assetID, Command: "fixture.immediate",
 		Input: json.RawMessage(`{}`), Status: "pending",
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 7,
 	}
@@ -141,7 +139,6 @@ func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
 		ResourceType: ChangeResourceTask,
 		ID:           "task-1",
 		Version:      7,
-		BeforeTask:   beforeTask,
 		AfterTask:    afterTask,
 	})
 	if err != nil {
@@ -150,7 +147,7 @@ func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
 	if record.Event.Version != 7 || record.Event.ResourceType != ChangeResourceTask || record.Event.ID != "task-1" {
 		t.Fatalf("event identity = %#v", record.Event)
 	}
-	if record.BeforeTaskEntityID != beforeTaskEntity || record.AfterTaskEntityID != afterTaskEntity {
+	if record.TaskAssetID != assetID {
 		t.Fatalf("routing context = %#v", record)
 	}
 	if record.Event.Resource == nil {

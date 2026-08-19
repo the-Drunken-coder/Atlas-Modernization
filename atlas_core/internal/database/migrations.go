@@ -25,7 +25,7 @@ const (
 	recoveryFloorMigrationName      = "recovery_log_floor_and_retention_index"
 	recoveryFloorMigrationChecksum  = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
 	taskingRuntimeMigrationName     = "immutable_tasks_and_asset_runtimes"
-	taskingRuntimeMigrationChecksum = "ff11a2ea5834cab88d223d680249a16c5452307bfb2f583185e3ffeb5a000b7d"
+	taskingRuntimeMigrationChecksum = "8109dede8ab513300e490d3d1fc19caf36a0371e67906bb233b2e1b1cc8c3d73"
 	fingerprintVersionV1            = 1
 )
 
@@ -175,6 +175,19 @@ func coreSchemaMigrations() []schemaMigration {
 						RAISE EXCEPTION 'Atlas Task cutover requires an empty tasks table';
 					END IF;
 				END $$`,
+				`DO $$ BEGIN
+					IF EXISTS (
+						SELECT 1 FROM atlas_change_events
+						WHERE event->>'resource_type' = 'task'
+						LIMIT 1
+					) THEN
+						RAISE EXCEPTION 'Atlas Task cutover requires an empty Task change history';
+					END IF;
+				END $$`,
+				`ALTER TABLE atlas_change_events
+					DROP COLUMN before_task_entity_id,
+					DROP COLUMN after_task_entity_id,
+					ADD COLUMN task_asset_id VARCHAR(50)`,
 				`DROP TABLE tasks`,
 				`CREATE TABLE asset_runtimes (
 					asset_id VARCHAR(50) PRIMARY KEY REFERENCES entities(entity_id) ON DELETE CASCADE,

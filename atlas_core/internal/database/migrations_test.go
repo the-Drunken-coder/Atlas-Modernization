@@ -121,6 +121,10 @@ func TestTaskingRuntimeMigrationDefinitionIsFrozen(t *testing.T) {
 	ddl := strings.Join(migration.statements, "\n")
 	for _, required := range []string{
 		"Atlas Task cutover requires an empty tasks table",
+		"Atlas Task cutover requires an empty Task change history",
+		"DROP COLUMN before_task_entity_id",
+		"DROP COLUMN after_task_entity_id",
+		"ADD COLUMN task_asset_id",
 		"DROP TABLE tasks",
 		"CREATE TABLE asset_runtimes",
 		"CREATE TABLE tasks",
@@ -287,6 +291,49 @@ func TestTaskingRuntimeMigrationRefusesLegacyTasks(t *testing.T) {
 	}
 }
 
+func TestTaskingRuntimeMigrationRefusesLegacyTaskEvents(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:6]); err != nil {
+		t.Fatalf("install schema through version six: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+		)
+		INSERT INTO atlas_change_events (version, event, before_task_entity_id)
+		SELECT version, jsonb_build_object(
+			'event', 'delete',
+			'resource_type', 'task',
+			'id', 'deleted-legacy-task',
+			'version', version
+		), 'asset-1' FROM next
+	`); err != nil {
+		t.Fatalf("insert legacy Task event: %v", err)
+	}
+
+	err := db.EnsureTables(ctx)
+	if err == nil || !strings.Contains(err.Error(), "Atlas Task cutover requires an empty Task change history") {
+		t.Fatalf("Task cutover error = %v, want empty-history refusal", err)
+	}
+
+	var eventCount, migrationVersion int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM atlas_change_events WHERE event->>'resource_type' = 'task'`).Scan(&eventCount); err != nil {
+		t.Fatalf("count preserved legacy Task events: %v", err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&migrationVersion); err != nil {
+		t.Fatalf("read migration version after refusal: %v", err)
+	}
+	if eventCount != 1 || migrationVersion != 6 {
+		t.Fatalf("refused cutover state = task-events:%d migration:%d", eventCount, migrationVersion)
+	}
+}
+
 func TestTaskingRuntimeMigrationReplacesEmptyTaskTable(t *testing.T) {
 	dbURL := migrationTestSchema(t)
 	db := openMigrationTestDB(t, dbURL, false)
@@ -314,6 +361,24 @@ func TestTaskingRuntimeMigrationReplacesEmptyTaskTable(t *testing.T) {
 		}
 		if !present {
 			t.Fatalf("migrated Task table is missing %s", column)
+		}
+	}
+	for column, wantPresent := range map[string]bool{
+		"task_asset_id":         true,
+		"before_task_entity_id": false,
+		"after_task_entity_id":  false,
+	} {
+		var present bool
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = current_schema() AND table_name = 'atlas_change_events' AND column_name = $1
+			)
+		`, column).Scan(&present); err != nil {
+			t.Fatalf("check change-event column %s: %v", column, err)
+		}
+		if present != wantPresent {
+			t.Fatalf("change-event column %s present = %t, want %t", column, present, wantPresent)
 		}
 	}
 	assertCurrentMigration(ctx, t, db)

@@ -9,6 +9,7 @@ import type {
   AtlasLocalDeleteWatchEvent,
   AtlasSubscription,
   AtlasWatchEvent,
+  DeletableResourceType,
   ResourceForSubscription,
   ResourceOf,
   ResourceValue
@@ -64,11 +65,7 @@ export function covers(covering: AtlasSubscription, wanted: AtlasSubscription): 
   return subscriptionKey(covering) === subscriptionKey(wanted);
 }
 
-export function matchesSubscription(
-  filter: AtlasSubscription,
-  event: AtlasWatchEvent,
-  previous?: ResourceValue
-): boolean {
+export function matchesSubscription(filter: AtlasSubscription, event: AtlasWatchEvent): boolean {
   switch (filter.filter) {
     case "all":
       return true;
@@ -80,7 +77,7 @@ export function matchesSubscription(
       if (event.resource_type !== "task") {
         return false;
       }
-      return taskEventAssetIDs(event, previous).some((assetID) => assetID === filter.asset_id);
+      return event.resource.asset_id === filter.asset_id;
   }
 }
 
@@ -103,16 +100,16 @@ export function resourceCacheKey(type: ResourceType, id: string): string {
   return JSON.stringify([type, id]);
 }
 
-export function localDeleteEvent(type: ResourceType, id: string, previousVersion: number): AtlasLocalDeleteWatchEvent {
+export function localDeleteEvent(
+  type: DeletableResourceType,
+  id: string,
+  previousVersion: number
+): AtlasLocalDeleteWatchEvent {
   switch (type) {
     case "entity":
       return previousVersion > 0
         ? { event: "local_delete", resource_type: "entity", id, previous_version: previousVersion }
         : { event: "local_delete", resource_type: "entity", id };
-    case "task":
-      return previousVersion > 0
-        ? { event: "local_delete", resource_type: "task", id, previous_version: previousVersion }
-        : { event: "local_delete", resource_type: "task", id };
     case "object":
       return previousVersion > 0
         ? { event: "local_delete", resource_type: "object", id, previous_version: previousVersion }
@@ -191,20 +188,6 @@ export function assertResourceMatchesSubscription<TFilter extends AtlasSubscript
 
 function isNonEmptyString(value: string | undefined): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function taskEventAssetIDs(
-  event: Extract<AtlasWatchEvent, { resource_type: "task" }>,
-  previous?: ResourceValue
-): string[] {
-  const ids: string[] = [];
-  if (event.event !== "local_delete") {
-    ids.push(event.resource.asset_id);
-  }
-  if (previous && resourceMatchesType("task", previous)) {
-    ids.push(previous.asset_id);
-  }
-  return ids;
 }
 
 function resourceTypeName(resource: ResourceValue): ResourceType {

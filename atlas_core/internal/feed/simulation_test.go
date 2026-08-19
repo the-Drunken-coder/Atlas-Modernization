@@ -30,18 +30,16 @@ func TestTasksForAssetMatchesImmutableAssetRoutingContext(t *testing.T) {
 	client.Subscribe(Subscription{Filter: protocol.FeedFilterTasksForAsset, ResourceType: protocol.ResourceTypeTask, AssetID: "entity-1"})
 
 	hub.Publish(RoutedEvent{
-		Event:              testRoutedEvent(1, protocol.ResourceTypeTask, "task-1").Event,
-		BeforeTaskEntityID: "entity-1",
-		AfterTaskEntityID:  "entity-2",
+		Event:       testRoutedEvent(1, protocol.ResourceTypeTask, "task-1").Event,
+		TaskAssetID: "entity-1",
 	})
 	hub.Publish(RoutedEvent{
-		Event:             testRoutedEvent(2, protocol.ResourceTypeTask, "task-2").Event,
-		AfterTaskEntityID: "entity-1",
+		Event:       testRoutedEvent(2, protocol.ResourceTypeTask, "task-2").Event,
+		TaskAssetID: "entity-1",
 	})
 	hub.Publish(RoutedEvent{
-		Event:              testRoutedEvent(3, protocol.ResourceTypeTask, "task-unrelated").Event,
-		BeforeTaskEntityID: "entity-9",
-		AfterTaskEntityID:  "entity-9",
+		Event:       testRoutedEvent(3, protocol.ResourceTypeTask, "task-unrelated").Event,
+		TaskAssetID: "entity-9",
 	})
 	for _, want := range []string{"task-1", "task-2"} {
 		if got := <-client.Events(); got.Event.ID != want {
@@ -103,16 +101,16 @@ func entityEvent(eventName, id string, version int64, entityType string) RoutedE
 	return RoutedEvent{Event: event}
 }
 
-func taskEvent(eventName, id string, version int64, beforeEntity, afterEntity, status string) RoutedEvent {
+func taskEvent(eventName, id string, version int64, assetID, status string) RoutedEvent {
 	event := protocol.FeedEvent{Event: protocol.FeedEventName(eventName), ResourceType: protocol.ResourceTypeTask, ID: id, Version: version}
 	if eventName != "delete" {
 		event.Resource = map[string]any{
-			"task_id": id, "asset_id": afterEntity, "command": "fixture.immediate",
+			"task_id": id, "asset_id": assetID, "command": "fixture.immediate",
 			"input": map[string]any{}, "status": status,
 			"created_at": "2026-06-12T12:00:00Z", "updated_at": "2026-06-12T12:00:00Z",
 		}
 	}
-	return RoutedEvent{Event: event, BeforeTaskEntityID: beforeEntity, AfterTaskEntityID: afterEntity}
+	return RoutedEvent{Event: event, TaskAssetID: assetID}
 }
 
 func testMetadata(version int64) map[string]any {

@@ -83,7 +83,14 @@ func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
 		{`INSERT INTO entities (entity_id, type, version) VALUES ('legacy-recovery-entity', 'asset', $1)`, []any{legacyVersion}},
 		{`TRUNCATE atlas_change_events`, nil},
 		{`UPDATE atlas_change_clock SET version = $1, min_retained_version = 0 WHERE singleton`, []any{legacyVersion}},
-		{`DROP INDEX idx_atlas_change_events_retention`, nil},
+		{`DROP TABLE atlas_change_events`, nil},
+		{`CREATE TABLE atlas_change_events (
+			version BIGINT PRIMARY KEY CHECK (version > 0),
+			event JSONB NOT NULL,
+			before_task_entity_id VARCHAR(50),
+			after_task_entity_id VARCHAR(50),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+		)`, nil},
 		{`DROP TABLE tasks`, nil},
 		{`DROP TABLE asset_runtimes`, nil},
 		{`CREATE TABLE tasks (

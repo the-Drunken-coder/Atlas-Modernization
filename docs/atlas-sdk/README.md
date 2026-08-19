@@ -59,7 +59,7 @@ Rules that make this safe:
 
 `client.entities.watch(id, callback)` (and equivalents per resource type) reports accepted resource events. Collection-level event watches use the generic `client.watch(filter, callback)` surface, such as `client.watch({ filter: "type", resource_type: "entity" }, callback)` or `client.watch({ filter: "all" }, callback)`.
 
-Watcher callbacks receive the same Protocol feed events whether they arrive over the websocket or through changed-since recovery. They can also receive the SDK-local `local_delete` event when a successful local DELETE removes a resource from the cache before Core's versioned delete event arrives.
+Watcher callbacks receive the same Protocol feed events whether they arrive over the websocket or through changed-since recovery. Entity and Object watchers can also receive the SDK-local `local_delete` event when a successful local DELETE removes the resource from the cache before Core's versioned delete event arrives. Tasks are retained permanently and never produce this event.
 
 Snapshot consumers such as UIs use `client.sync.watchSnapshot(callback)`. It fires with the current immutable snapshot after cache changes and after an expired-cursor recovery atomically replaces the cache through full hydration. This keeps snapshot-driven views observable even when no individual recovery event exists for the replacement.
 
@@ -128,7 +128,7 @@ Higher-level functions (multiple endpoints, or one endpoint with opinionated def
 
 ## Testing
 
-Same philosophy as the [change feed doc](../atlas-change-feed/README.md): simulation against ground truth. The test harness (`atlas_sdk/test/`) drives a fake Core/feed transport through realistic mixed traffic — entity, task, and object writes, reassignments, dropped feed events, forced version gaps — while keeping a ledger of every write. At checkpoints and at the end of the run, the SDK's view is compared to that reality: cache contents match the ledger, watch callbacks fired for every relevant change, and fault injection converges back to truth through reconciliation. The same suite runs in both Node and a real browser (Playwright) in CI, per the isomorphic goal, alongside ordinary unit tests and a CLI binary smoke test.
+The test harness in `atlas_sdk/test/` drives a fake Core and feed through Entity writes, Task lifecycle changes, Object writes, deletions, dropped events, and forced version gaps while keeping a ledger of every write. At checkpoints and at the end, the SDK cache must match the ledger, watchers must receive every relevant change, and reconciliation must recover from injected faults. The same suite runs in Node and a browser through Playwright, alongside unit tests and the CLI smoke test.
 
 ## Known gaps (explicitly deferred)
 

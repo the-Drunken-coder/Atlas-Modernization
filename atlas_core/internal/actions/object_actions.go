@@ -221,8 +221,6 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	if err := checkExpectedVersion("object", params.ExpectedVersion, obj.Version); err != nil {
 		return nil, err
 	}
-	before := cloneObjectModel(&obj)
-
 	newType := obj.Type
 	if params.Type != nil {
 		newType = normalizedType
@@ -258,7 +256,6 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		ResourceType: ChangeResourceObject,
 		ID:           out.ObjectID,
 		Version:      out.Version,
-		BeforeObject: before,
 		AfterObject:  cloneObjectModel(&out),
 	}); err != nil {
 		return nil, err
@@ -362,7 +359,6 @@ func (a *ObjectActions) Delete(ctx context.Context, objectID string) error {
 		ResourceType: ChangeResourceObject,
 		ID:           object.ObjectID,
 		Version:      deleteVersion,
-		BeforeObject: cloneObjectModel(&object),
 	}); err != nil {
 		return err
 	}

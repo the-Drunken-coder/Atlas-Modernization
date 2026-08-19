@@ -7,7 +7,7 @@ import {
   type TaskResource
 } from "./protocol.js";
 import { resourceCacheKey, resourceID } from "./subscriptions.js";
-import type { CacheEntry, ResourceOf, ResourceValue, SyncSnapshot } from "./types.js";
+import type { CacheEntry, DeletableResourceType, ResourceOf, SyncSnapshot } from "./types.js";
 
 export type CacheResourceOptions = {
   detail?: boolean;
@@ -197,15 +197,14 @@ export class ResourceCache {
     this.removeFromSnapshot(type, id);
   }
 
-  markLocalDelete(type: ResourceType, id: string): { previousVersion: number; previous?: ResourceValue } {
+  markLocalDelete(type: DeletableResourceType, id: string): number {
     const previousEntry = this.entries[type].get(id);
     const previousVersion = previousEntry?.version ?? 0;
-    const previous = previousEntry?.value;
     this.markRemoteDelete(type, id, previousVersion);
     const key = resourceCacheKey(type, id);
     this.pendingDeletes.add(key);
     this.locallyNotifiedDeletes.add(key);
-    return { previousVersion, previous };
+    return previousVersion;
   }
 
   private updateSnapshot<TType extends ResourceType>(type: TType, id: string, value: ResourceOf<TType>): void {

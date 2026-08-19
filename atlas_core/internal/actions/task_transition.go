@@ -218,7 +218,6 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 			return nil, err
 		}
 	}
-	before := cloneTaskModel(task)
 	changed, err := mutate(task, command, entry, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -244,7 +243,7 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 	if err != nil {
 		return nil, fmt.Errorf("persist Task transition: %w", err)
 	}
-	if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, BeforeTask: before, AfterTask: cloneTaskModel(updated)}); err != nil {
+	if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, AfterTask: cloneTaskModel(updated)}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
