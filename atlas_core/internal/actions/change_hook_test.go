@@ -70,26 +70,26 @@ func TestCloneEntityModelCopiesPublicFields(t *testing.T) {
 }
 
 func TestCloneTaskModelCopiesPublicFields(t *testing.T) {
-	entityID := "asset-1"
+	progress := 0.5
 	now := time.Now().UTC()
 	original := &models.Task{
-		TaskID:    "task-1",
-		Status:    "pending",
-		EntityID:  &entityID,
-		JSON:      json.RawMessage(`{"components":{}}`),
-		CreatedAt: now,
-		UpdatedAt: now.Add(time.Second),
-		Version:   5,
+		TaskID: "task-1", AssetID: "asset-1", Command: "fixture.queued",
+		Input: json.RawMessage(`{"value":1}`), Status: "in_progress", Progress: &progress,
+		RuntimeID: "runtime-1", IdempotencyKey: "attempt-1",
+		CreatedAt: now, AcknowledgedAt: &now, StartedAt: &now,
+		UpdatedAt: now.Add(time.Second), Version: 5,
 	}
 	cloned := cloneTaskModel(original)
 	if cloned == nil {
 		t.Fatal("cloneTaskModel returned nil")
 	}
-	if cloned.TaskID != original.TaskID || cloned.Status != original.Status || cloned.CreatedAt != original.CreatedAt || cloned.UpdatedAt != original.UpdatedAt || cloned.Version != original.Version {
+	if cloned.TaskID != original.TaskID || cloned.AssetID != original.AssetID || cloned.Command != original.Command || cloned.Status != original.Status || cloned.CreatedAt != original.CreatedAt || cloned.UpdatedAt != original.UpdatedAt || cloned.Version != original.Version {
 		t.Fatalf("cloneTaskModel did not copy scalar fields: %#v", cloned)
 	}
-	assertIndependentStringPointer(t, "EntityID", original.EntityID, cloned.EntityID)
-	assertIndependentJSON(t, original.JSON, cloned.JSON)
+	assertIndependentJSON(t, original.Input, cloned.Input)
+	if cloned.Progress == original.Progress || cloned.AcknowledgedAt == original.AcknowledgedAt {
+		t.Fatal("cloneTaskModel returned aliased pointers")
+	}
 	if cloneTaskModel(nil) != nil {
 		t.Fatal("cloneTaskModel(nil) should return nil")
 	}
@@ -128,16 +128,12 @@ func TestCloneObjectModelCopiesPublicFields(t *testing.T) {
 
 func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
 	beforeTaskEntity := "asset-before"
-	beforeTask := &models.Task{TaskID: "task-1", EntityID: &beforeTaskEntity, Version: 6}
+	beforeTask := &models.Task{TaskID: "task-1", AssetID: beforeTaskEntity, Version: 6}
 	afterTaskEntity := "asset-after"
 	afterTask := &models.Task{
-		TaskID:    "task-1",
-		Status:    "pending",
-		EntityID:  &afterTaskEntity,
-		JSON:      json.RawMessage(`{}`),
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-		Version:   7,
+		TaskID: "task-1", AssetID: afterTaskEntity, Command: "fixture.immediate",
+		Input: json.RawMessage(`{}`), Status: "pending",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 7,
 	}
 
 	record, err := resourceChangeRecord(ResourceChange{
@@ -156,9 +152,6 @@ func TestResourceChangeRecordBuildsCanonicalTaskRoutingEvent(t *testing.T) {
 	}
 	if record.BeforeTaskEntityID != beforeTaskEntity || record.AfterTaskEntityID != afterTaskEntity {
 		t.Fatalf("routing context = %#v", record)
-	}
-	if record.Event.PreviousEntityID == nil || *record.Event.PreviousEntityID != beforeTaskEntity {
-		t.Fatalf("previous_entity_id = %#v", record.Event.PreviousEntityID)
 	}
 	if record.Event.Resource == nil {
 		t.Fatal("task update resource is nil")

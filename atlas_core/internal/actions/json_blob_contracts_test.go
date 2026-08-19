@@ -9,21 +9,21 @@ import (
 
 func TestMergeBlobExtraFieldsFiltersPromotedFields(t *testing.T) {
 	blob := map[string]interface{}{
-		string(taskBlobFieldStatus): "pending",
+		string(entityBlobFieldType): "asset",
 		"priority":                  "low",
 	}
 	extra := map[string]interface{}{
-		string(taskBlobFieldStatus):   "completed",
-		string(taskBlobFieldEntityID): "entity-1",
-		string(jsonBlobFieldVersion):  float64(99),
-		"priority":                    "high",
-		"operator_note":               "hold position",
+		string(entityBlobFieldType):  "area",
+		string(entityBlobFieldAlias): "not-authoritative",
+		string(jsonBlobFieldVersion): float64(99),
+		"priority":                   "high",
+		"operator_note":              "hold position",
 	}
 
-	mergeBlobExtraFields(blob, extra, taskPromotedBlobFields)
+	mergeBlobExtraFields(blob, extra, entityPromotedBlobFields)
 
 	want := map[string]interface{}{
-		string(taskBlobFieldStatus): "pending",
+		string(entityBlobFieldType): "asset",
 		"priority":                  "high",
 		"operator_note":             "hold position",
 	}
@@ -61,8 +61,8 @@ func TestPatchValidatedJSONBlobRejectsOversizedMergedFinalState(t *testing.T) {
 func TestRemoveBlobExtraKeysKeepsPromotedFields(t *testing.T) {
 	blob := map[string]interface{}{
 		string(jsonBlobFieldComponents): map[string]interface{}{},
-		string(taskBlobFieldStatus):     "pending",
-		string(taskBlobFieldEntityID):   "entity-1",
+		string(entityBlobFieldType):     "asset",
+		string(entityBlobFieldAlias):    "alpha",
 		string(jsonBlobFieldVersion):    float64(12),
 		"progress":                      float64(20),
 		"status_message":                "legacy",
@@ -71,10 +71,10 @@ func TestRemoveBlobExtraKeysKeepsPromotedFields(t *testing.T) {
 
 	removeBlobExtraKeys(
 		blob,
-		taskPromotedBlobFields,
+		entityPromotedBlobFields,
 		string(jsonBlobFieldComponents),
-		string(taskBlobFieldStatus),
-		string(taskBlobFieldEntityID),
+		string(entityBlobFieldType),
+		string(entityBlobFieldAlias),
 		string(jsonBlobFieldVersion),
 		"progress",
 		"status_message",
@@ -82,8 +82,8 @@ func TestRemoveBlobExtraKeysKeepsPromotedFields(t *testing.T) {
 
 	for _, key := range []string{
 		string(jsonBlobFieldComponents),
-		string(taskBlobFieldStatus),
-		string(taskBlobFieldEntityID),
+		string(entityBlobFieldType),
+		string(entityBlobFieldAlias),
 		string(jsonBlobFieldVersion),
 		"result",
 	} {

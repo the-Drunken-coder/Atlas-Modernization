@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -37,30 +36,6 @@ func TestValidateEntityBlobAcceptsValidBlob(t *testing.T) {
 	}
 }
 
-func TestCreateTaskValidatesFinalBlobBeforeInsert(t *testing.T) {
-	actions := NewTaskActions(nil)
-
-	_, err := actions.Create(context.Background(), CreateTaskParams{
-		TaskID: "bad-task-blob",
-		Status: "pending",
-		Extra: map[string]interface{}{
-			"bad_number": math.NaN(),
-		},
-	})
-
-	assertValidationDetailsContain(t, err, "bad_number: must be finite")
-}
-
-func TestValidateTaskBlobAcceptsValidBlob(t *testing.T) {
-	err := ValidateTaskBlob(map[string]interface{}{
-		"priority": "normal",
-		"score":    1.5,
-	})
-	if err != nil {
-		t.Fatalf("ValidateTaskBlob() unexpected error: %v", err)
-	}
-}
-
 func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 	pool := openActionsTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -84,31 +59,6 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 	})
 
 	assertValidationDetailsContain(t, err, "published_at")
-}
-
-func TestUpdateTaskValidatesFinalBlobBeforeUpdate(t *testing.T) {
-	pool := openActionsTestPool(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	actions := NewTaskActions(pool)
-	taskID := fmt.Sprintf("task-final-blob-%d", time.Now().UTC().UnixNano())
-	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, "", taskID)
-
-	if _, err := actions.Create(ctx, CreateTaskParams{
-		TaskID: taskID,
-		Status: "pending",
-	}); err != nil {
-		t.Fatalf("create task fixture: %v", err)
-	}
-
-	_, err := actions.Update(ctx, taskID, UpdateTaskParams{
-		Extra: map[string]interface{}{
-			"bad_number": math.NaN(),
-		},
-	})
-
-	assertValidationDetailsContain(t, err, "bad_number: must be finite")
 }
 
 func openActionsTestPool(t *testing.T) *pgxpool.Pool {
@@ -155,7 +105,7 @@ func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgx
 		}
 	}
 	if entityID != "" {
-		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE entity_id = $1`, entityID); err != nil {
+		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE asset_id = $1`, entityID); err != nil {
 			t.Errorf("cleanup tasks for entity %q: %v", entityID, err)
 		}
 		if _, err := pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = $1`, entityID); err != nil {

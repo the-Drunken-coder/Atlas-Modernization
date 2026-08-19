@@ -131,7 +131,7 @@ func TestCloseHandlesNilPool(t *testing.T) {
 }
 
 func TestCoreSchemaTables(t *testing.T) {
-	want := []string{"entities", "tasks", "objects", "atlas_change_clock", "atlas_change_events", "object_deletion_fences", "storage_deletion_outbox", "storage_upload_intents", "admin_records"}
+	want := []string{"entities", "tasks", "asset_runtimes", "objects", "atlas_change_clock", "atlas_change_events", "object_deletion_fences", "storage_deletion_outbox", "storage_upload_intents", "admin_records"}
 	if len(coreSchemaTables) != len(want) {
 		t.Fatalf("expected %d core tables, got %d", len(want), len(coreSchemaTables))
 	}

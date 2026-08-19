@@ -113,6 +113,26 @@ func TestRecoveryLogFloorMigrationDefinitionIsFrozen(t *testing.T) {
 	}
 }
 
+func TestTaskingRuntimeMigrationDefinitionIsFrozen(t *testing.T) {
+	migration := coreSchemaMigrations()[6]
+	if actual := migrationChecksum(migration); actual != taskingRuntimeMigrationChecksum {
+		t.Fatalf("tasking-runtime migration checksum = %s, want %s", actual, taskingRuntimeMigrationChecksum)
+	}
+	ddl := strings.Join(migration.statements, "\n")
+	for _, required := range []string{
+		"Atlas Task cutover requires an empty tasks table",
+		"DROP TABLE tasks",
+		"CREATE TABLE asset_runtimes",
+		"CREATE TABLE tasks",
+		"idempotency_key TEXT NOT NULL UNIQUE",
+		"runtime_id VARCHAR(255) NOT NULL",
+	} {
+		if !strings.Contains(ddl, required) {
+			t.Fatalf("tasking-runtime migration is missing %q", required)
+		}
+	}
+}
+
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
@@ -223,6 +243,80 @@ func TestProductionSchemaCleanInstallAndRestartPreserveData(t *testing.T) {
 	if intentCount != 1 {
 		t.Fatalf("durable upload intent count = %d, want 1", intentCount)
 	}
+}
+
+func TestTaskingRuntimeMigrationRefusesLegacyTasks(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:6]); err != nil {
+		t.Fatalf("install schema through version six: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		WITH next AS (
+			UPDATE atlas_change_clock SET version = version + 1 WHERE singleton RETURNING version
+		)
+		INSERT INTO tasks (task_id, status, version)
+		SELECT 'legacy-task', 'pending', version FROM next
+	`); err != nil {
+		t.Fatalf("insert legacy Task: %v", err)
+	}
+
+	err := db.EnsureTables(ctx)
+	if err == nil || !strings.Contains(err.Error(), "Atlas Task cutover requires an empty tasks table") {
+		t.Fatalf("Task cutover error = %v, want empty-table refusal", err)
+	}
+
+	var taskCount, migrationVersion int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM tasks`).Scan(&taskCount); err != nil {
+		t.Fatalf("count preserved legacy Tasks: %v", err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT max(version) FROM atlas_schema_migrations`).Scan(&migrationVersion); err != nil {
+		t.Fatalf("read migration version after refusal: %v", err)
+	}
+	var runtimeTableExists bool
+	if err := db.Pool.QueryRow(ctx, `SELECT to_regclass('asset_runtimes') IS NOT NULL`).Scan(&runtimeTableExists); err != nil {
+		t.Fatalf("check runtime table after refusal: %v", err)
+	}
+	if taskCount != 1 || migrationVersion != 6 || runtimeTableExists {
+		t.Fatalf("refused cutover state = tasks:%d migration:%d runtime-table:%t", taskCount, migrationVersion, runtimeTableExists)
+	}
+}
+
+func TestTaskingRuntimeMigrationReplacesEmptyTaskTable(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := coreSchemaMigrations()
+	if err := db.ensureTables(ctx, migrations[:6]); err != nil {
+		t.Fatalf("install schema through version six: %v", err)
+	}
+	if err := db.EnsureTables(ctx); err != nil {
+		t.Fatalf("replace empty legacy Task table: %v", err)
+	}
+
+	for _, column := range []string{"asset_id", "command", "input", "idempotency_key", "runtime_id"} {
+		var present bool
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = current_schema() AND table_name = 'tasks' AND column_name = $1
+			)
+		`, column).Scan(&present); err != nil {
+			t.Fatalf("check Task column %s: %v", column, err)
+		}
+		if !present {
+			t.Fatalf("migrated Task table is missing %s", column)
+		}
+	}
+	assertCurrentMigration(ctx, t, db)
 }
 
 func TestProductionSchemaUpgradesFromVersionOne(t *testing.T) {

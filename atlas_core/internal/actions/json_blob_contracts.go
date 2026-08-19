@@ -20,9 +20,6 @@ const (
 	entityBlobFieldSubtype jsonBlobField = "subtype"
 	entityBlobFieldAlias   jsonBlobField = "alias"
 
-	taskBlobFieldStatus   jsonBlobField = "status"
-	taskBlobFieldEntityID jsonBlobField = "entity_id"
-
 	objectBlobFieldPath         jsonBlobField = "path"
 	objectBlobFieldContentType  jsonBlobField = "content_type"
 	objectBlobFieldType         jsonBlobField = "type"
@@ -49,12 +46,6 @@ var (
 		entityBlobFieldSubtype,
 		entityBlobFieldAlias,
 		jsonBlobFieldComponents,
-		jsonBlobFieldVersion,
-	}
-	taskPromotedBlobFields = jsonBlobFieldSet{
-		jsonBlobFieldComponents,
-		taskBlobFieldStatus,
-		taskBlobFieldEntityID,
 		jsonBlobFieldVersion,
 	}
 	objectPromotedBlobFields = jsonBlobFieldSet{
@@ -160,10 +151,6 @@ func removeBlobExtraKeys(blob map[string]interface{}, promoted jsonBlobFieldSet,
 
 func mergeEntityComponents(blob map[string]interface{}, components map[string]interface{}) error {
 	return mergeBlobComponents(blob, components, ValidateEntityComponents, "entity")
-}
-
-func mergeTaskComponents(blob map[string]interface{}, components map[string]interface{}) error {
-	return mergeBlobComponents(blob, components, ValidateTaskComponents, "task")
 }
 
 func mergeBlobComponents(blob map[string]interface{}, components map[string]interface{}, validate func(map[string]interface{}) error, resource string) error {

@@ -103,56 +103,23 @@ func TestSerializeEntityEmptyJSONUsesEmptyComponents(t *testing.T) {
 	}
 }
 
-func TestSerializeTask(t *testing.T) {
-	now := time.Now().UTC()
-	entityID := "entity-1"
-
-	jsonData := map[string]interface{}{
-		"components": map[string]interface{}{
-			"command": map[string]interface{}{
-				"type": "move_to",
-			},
-		},
-		"priority": "high",
-		"version":  999,
-	}
-	jsonBytes, _ := json.Marshal(jsonData)
-
+func TestSerializeTaskUsesFlatProtocolResource(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	progress := 0.4
 	task := &models.Task{
-		TaskID:    "task-1",
-		Status:    "pending",
-		EntityID:  &entityID,
-		JSON:      jsonBytes,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Version:   88,
+		TaskID: "task-1", AssetID: "asset-1", Command: "fixture.queued",
+		Input: []byte(`{"value":1}`), Status: "in_progress", Progress: &progress,
+		CreatedAt: now, AcknowledgedAt: &now, StartedAt: &now, UpdatedAt: now, Version: 7,
 	}
-
 	result := serializers.SerializeTask(task)
-
-	if result.TaskID != "task-1" {
-		t.Errorf("Expected TaskID task-1, got %s", result.TaskID)
+	if result.TaskID != task.TaskID || result.AssetID != task.AssetID || result.Command != task.Command || result.Status != protocol.TaskStatusInProgress {
+		t.Fatalf("SerializeTask = %#v", result)
 	}
-	if result.Status != "pending" {
-		t.Errorf("Expected Status pending, got %s", result.Status)
+	if result.Progress == nil || *result.Progress != progress {
+		t.Fatalf("progress = %#v", result.Progress)
 	}
-	if result.EntityID == nil {
-		t.Fatalf("Expected EntityID to be set")
-	}
-	if *result.EntityID != "entity-1" {
-		t.Errorf("Expected EntityID entity-1, got %s", *result.EntityID)
-	}
-	if result.Components == nil {
-		t.Error("Expected Components to be set")
-	}
-	if result.Extra == nil || result.Extra["priority"] != "high" {
-		t.Errorf("Expected Extra priority high, got %#v", result.Extra)
-	}
-	if result.Extra["version"] != nil {
-		t.Error("Expected blob version to be excluded from Extra")
-	}
-	if result.Metadata.Version != 88 {
-		t.Errorf("Expected metadata version 88, got %d", result.Metadata.Version)
+	if errors := protocol.ValidateTaskResource(result); len(errors) > 0 {
+		t.Fatalf("serialized Task failed Protocol validation: %v", errors)
 	}
 }
 
@@ -560,77 +527,6 @@ func TestSerializeEntityWithMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestSerializeTaskWithNilJSON(t *testing.T) {
-	now := time.Now().UTC()
-	task := &models.Task{
-		TaskID:    "task-nil-json",
-		Status:    "pending",
-		EntityID:  nil, // nil entity reference
-		JSON:      nil, // nil JSON
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeTask(task)
-
-	if result.TaskID != "task-nil-json" {
-		t.Errorf("Expected TaskID task-nil-json, got %s", result.TaskID)
-	}
-	if result.Status != "pending" {
-		t.Errorf("Expected Status pending, got %s", result.Status)
-	}
-	if result.EntityID != nil {
-		t.Error("Expected EntityID to be nil")
-	}
-}
-
-func TestSerializeTaskWithEmptyJSON(t *testing.T) {
-	now := time.Now().UTC()
-	task := &models.Task{
-		TaskID:    "task-empty-json",
-		Status:    "in_progress",
-		JSON:      []byte("{}"), // empty JSON object
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	result := serializers.SerializeTask(task)
-
-	if result.TaskID != "task-empty-json" {
-		t.Errorf("Expected TaskID task-empty-json, got %s", result.TaskID)
-	}
-	if result.Status != "in_progress" {
-		t.Errorf("Expected Status in_progress, got %s", result.Status)
-	}
-	if result.Components == nil {
-		t.Fatal("Expected Components non-nil (empty map)")
-	}
-	if len(result.Components) != 0 {
-		t.Errorf("Expected empty components, got %d keys", len(result.Components))
-	}
-	if result.Metadata.CreatedAt == "" || result.Metadata.UpdatedAt == "" {
-		t.Errorf("Expected metadata timestamps set, got created=%q updated=%q", result.Metadata.CreatedAt, result.Metadata.UpdatedAt)
-	}
-}
-
-func TestSerializeTaskWithMalformedJSON(t *testing.T) {
-	now := time.Now().UTC()
-	task := &models.Task{
-		TaskID:    "task-bad-json",
-		Status:    "failed",
-		JSON:      []byte("}{invalid"), // malformed JSON
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	// Should not panic - should handle gracefully
-	result := serializers.SerializeTask(task)
-
-	if result.TaskID != "task-bad-json" {
-		t.Errorf("Expected TaskID task-bad-json, got %s", result.TaskID)
-	}
-}
-
 func TestSerializeObjectWithNilJSON(t *testing.T) {
 	now := time.Now().UTC()
 	obj := &models.MediaObject{
@@ -749,29 +645,6 @@ func TestSerializeEntities(t *testing.T) {
 	}
 }
 
-func TestSerializeTasks(t *testing.T) {
-	now := time.Now().UTC()
-	tasks := []*models.Task{
-		{TaskID: "t1", Status: "pending", CreatedAt: now, UpdatedAt: now},
-		{TaskID: "t2", Status: "completed", CreatedAt: now, UpdatedAt: now},
-	}
-
-	result := serializers.SerializeTasks(tasks)
-
-	if len(result) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(result))
-	}
-	if result[0].TaskID != "t1" || result[1].TaskID != "t2" {
-		t.Errorf("Expected task IDs t1,t2, got %s,%s", result[0].TaskID, result[1].TaskID)
-	}
-
-	// Empty input yields a non-nil, zero-length slice (JSON-encodes as []).
-	empty := serializers.SerializeTasks(nil)
-	if empty == nil || len(empty) != 0 {
-		t.Errorf("Expected empty non-nil slice for nil input, got %#v", empty)
-	}
-}
-
 func TestSerializeObjects(t *testing.T) {
 	now := time.Now().UTC()
 	objects := []*models.MediaObject{
@@ -830,7 +703,7 @@ func TestSerializedResourcesConformToAtlasProtocol(t *testing.T) {
 		},
 		{
 			name:     "task",
-			value:    serializers.SerializeTask(&models.Task{TaskID: "task-1", Status: "pending", CreatedAt: now, UpdatedAt: now, Version: 1}),
+			value:    serializers.SerializeTask(&models.Task{TaskID: "task-1", AssetID: "asset-1", Command: "fixture.immediate", Input: []byte(`{}`), Status: "pending", CreatedAt: now, UpdatedAt: now, Version: 1}),
 			validate: protocol.ValidateTaskResource,
 		},
 		{

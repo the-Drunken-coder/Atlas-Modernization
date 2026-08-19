@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -85,14 +86,29 @@ func cloneTaskModel(task *models.Task) *models.Task {
 		return nil
 	}
 	return &models.Task{
-		TaskID:    task.TaskID,
-		Status:    task.Status,
-		EntityID:  cloneStringPointer(task.EntityID),
-		JSON:      cloneRawMessage(task.JSON),
-		CreatedAt: task.CreatedAt,
-		UpdatedAt: task.UpdatedAt,
-		Version:   task.Version,
+		TaskID: task.TaskID, AssetID: task.AssetID, Command: task.Command,
+		Input: cloneRawMessage(task.Input), Status: task.Status, Progress: cloneFloatPointer(task.Progress),
+		Output: cloneRawMessage(task.Output), Failure: cloneRawMessage(task.Failure), Cancellation: cloneRawMessage(task.Cancellation),
+		IdempotencyKey: task.IdempotencyKey, RuntimeID: task.RuntimeID,
+		CreatedAt: task.CreatedAt, AcknowledgedAt: cloneTimePointer(task.AcknowledgedAt), StartedAt: cloneTimePointer(task.StartedAt),
+		FinishedAt: cloneTimePointer(task.FinishedAt), UpdatedAt: task.UpdatedAt, Version: task.Version,
 	}
+}
+
+func cloneFloatPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func cloneObjectModel(object *models.MediaObject) *models.MediaObject {
@@ -130,17 +146,13 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 	case ChangeResourceTask:
 		record.BeforeTaskEntityID = taskEntityID(change.BeforeTask)
 		record.AfterTaskEntityID = taskEntityID(change.AfterTask)
-		if change.Event == ChangeEventUpdate {
-			event.PreviousEntityID = taskEntityIDPointer(change.BeforeTask)
-		}
 		if change.Event == ChangeEventDelete {
-			event.EntityID = taskEntityIDPointer(change.BeforeTask)
-		} else {
-			if change.AfterTask == nil {
-				return ChangeRecord{}, fmt.Errorf("task %s event missing after state", change.Event)
-			}
-			event.Resource = serializers.SerializeTask(change.AfterTask)
+			return ChangeRecord{}, fmt.Errorf("task delete events are not supported")
 		}
+		if change.AfterTask == nil {
+			return ChangeRecord{}, fmt.Errorf("task %s event missing after state", change.Event)
+		}
+		event.Resource = serializers.SerializeTask(change.AfterTask)
 	case ChangeResourceObject:
 		if change.Event != ChangeEventDelete {
 			if change.AfterObject == nil {
@@ -156,17 +168,10 @@ func resourceChangeRecord(change ResourceChange) (ChangeRecord, error) {
 }
 
 func taskEntityID(task *models.Task) string {
-	if task == nil || task.EntityID == nil {
+	if task == nil {
 		return ""
 	}
-	return *task.EntityID
-}
-
-func taskEntityIDPointer(task *models.Task) *string {
-	if task == nil {
-		return nil
-	}
-	return cloneStringPointer(task.EntityID)
+	return task.AssetID
 }
 
 // RecordResourceChange inserts the complete protocol event before its resource

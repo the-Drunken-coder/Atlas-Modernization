@@ -425,26 +425,6 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return fmt.Errorf("failed to get entity for deletion: %w", err)
 	}
 
-	beforeTasks, err := queryTasksByEntityForUpdate(ctx, tx, entityID)
-	if err != nil {
-		return err
-	}
-
-	if len(beforeTasks) > 0 {
-		lastVersion, err := reserveChangeVersions(ctx, tx, len(beforeTasks))
-		if err != nil {
-			return err
-		}
-		firstVersion := lastVersion - int64(len(beforeTasks)) + 1
-		for index, task := range beforeTasks {
-			if _, err := tx.Exec(ctx, `
-			UPDATE tasks SET updated_at = clock_timestamp(), version = $1 WHERE task_id = $2
-		`, firstVersion+int64(index), task.TaskID); err != nil {
-				return fmt.Errorf("failed to mark entity task changed before deletion: %w", err)
-			}
-		}
-	}
-
 	result, err := tx.Exec(ctx, "DELETE FROM entities WHERE entity_id = $1", entityID)
 	if err != nil {
 		return fmt.Errorf("failed to delete entity: %w", err)
@@ -454,27 +434,6 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return NewEntityNotFoundError(entityID)
 	}
 
-	afterTasks, err := queryTasksByIDs(ctx, tx, taskIDs(beforeTasks))
-	if err != nil {
-		return err
-	}
-
-	for _, beforeTask := range beforeTasks {
-		afterTask := afterTasks[beforeTask.TaskID]
-		if afterTask == nil {
-			return fmt.Errorf("task %s disappeared during entity deletion after its change version was allocated", beforeTask.TaskID)
-		}
-		if err := RecordResourceChange(ctx, tx, ResourceChange{
-			Event:        ChangeEventUpdate,
-			ResourceType: ChangeResourceTask,
-			ID:           afterTask.TaskID,
-			Version:      afterTask.Version,
-			BeforeTask:   cloneTaskModel(beforeTask),
-			AfterTask:    cloneTaskModel(afterTask),
-		}); err != nil {
-			return err
-		}
-	}
 	deleteVersion, err := nextChangeVersion(ctx, tx)
 	if err != nil {
 		return err

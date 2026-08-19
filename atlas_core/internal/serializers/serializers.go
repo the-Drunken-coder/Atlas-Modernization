@@ -2,8 +2,10 @@
 package serializers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -53,23 +55,52 @@ func SerializeTask(t *models.Task) *protocol.TaskResource {
 		return nil
 	}
 
-	components := t.GetComponents()
-	if components == nil {
-		components = make(map[string]interface{})
+	resource := &protocol.TaskResource{
+		TaskID:         t.TaskID,
+		AssetID:        t.AssetID,
+		Command:        t.Command,
+		Input:          decodeTaskJSON(t.TaskID, "input", t.Input),
+		Status:         protocol.TaskStatus(t.Status),
+		Progress:       t.Progress,
+		Output:         decodeTaskJSON(t.TaskID, "output", t.Output),
+		CreatedAt:      t.CreatedAt.UTC().Format(APIMetadataTimeLayout),
+		AcknowledgedAt: formatOptionalTaskTime(t.AcknowledgedAt),
+		StartedAt:      formatOptionalTaskTime(t.StartedAt),
+		FinishedAt:     formatOptionalTaskTime(t.FinishedAt),
+		UpdatedAt:      t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
 	}
+	if len(t.Failure) > 0 {
+		failure := protocol.TaskFailure{}
+		if err := json.Unmarshal(t.Failure, &failure); err == nil {
+			resource.Failure = &failure
+		}
+	}
+	if len(t.Cancellation) > 0 {
+		cancellation := protocol.TaskCancellation{}
+		if err := json.Unmarshal(t.Cancellation, &cancellation); err == nil {
+			resource.Cancellation = &cancellation
+		}
+	}
+	return resource
+}
 
-	return &protocol.TaskResource{
-		TaskID:     t.TaskID,
-		Status:     t.Status,
-		EntityID:   t.EntityID,
-		Components: components,
-		Metadata: MetadataBlock{
-			CreatedAt: t.CreatedAt.UTC().Format(APIMetadataTimeLayout),
-			UpdatedAt: t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
-			Version:   t.Version,
-		},
-		Extra: t.GetExtra(),
+func decodeTaskJSON(taskID, field string, value json.RawMessage) protocol.JSONValue {
+	if len(value) == 0 {
+		return nil
 	}
+	var decoded protocol.JSONValue
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		log.Error().Err(err).Str("task_id", taskID).Str("field", field).Msg("invalid stored Task JSON")
+		return nil
+	}
+	return decoded
+}
+
+func formatOptionalTaskTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(APIMetadataTimeLayout)
 }
 
 // SerializeObject converts a MediaObject to its protocol-owned full-detail response.

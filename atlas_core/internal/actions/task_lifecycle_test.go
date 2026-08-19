@@ -1,0 +1,189 @@
+package actions
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
+)
+
+func fixtureTaskCatalog(t *testing.T) protocol.CommandCatalog {
+	t.Helper()
+	return loadTaskingFixture[protocol.CommandCatalog](t, "catalog.json")
+}
+
+func fixtureTaskManifest(t *testing.T) protocol.CommandManifest {
+	t.Helper()
+	return loadTaskingFixture[protocol.CommandManifest](t, "manifest.json")
+}
+
+func loadTaskingFixture[T any](t *testing.T, name string) T {
+	t.Helper()
+	var encoded []byte
+	var err error
+	switch name {
+	case "catalog.json":
+		encoded, err = os.ReadFile("../../../atlas_protocol/conformance/tasking/fixtures/catalog.json")
+	case "manifest.json":
+		encoded, err = os.ReadFile("../../../atlas_protocol/conformance/tasking/fixtures/manifest.json")
+	default:
+		t.Fatalf("unknown tasking fixture %q", name)
+	}
+	if err != nil {
+		t.Fatalf("read tasking fixture %s: %v", name, err)
+	}
+	var value T
+	if err := json.Unmarshal(encoded, &value); err != nil {
+		t.Fatalf("decode tasking fixture %s: %v", name, err)
+	}
+	return value
+}
+
+func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("tasking-asset-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	entities := NewEntityActions(pool)
+	createdEntity, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"})
+	if err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	registeringEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read registering Entity: %v", err)
+	}
+	if registeringEntity.Version <= createdEntity.Version {
+		t.Fatalf("runtime registration Entity version = %d after %d", registeringEntity.Version, createdEntity.Version)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-1", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime: %v", err)
+	}
+	readyEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read ready Entity: %v", err)
+	}
+	if readyEntity.Version <= registeringEntity.Version {
+		t.Fatalf("runtime readiness Entity version = %d after %d", readyEntity.Version, registeringEntity.Version)
+	}
+	manifest, err := tasks.RuntimeManifest(ctx, assetID)
+	if err != nil || len(manifest) != 2 {
+		t.Fatalf("ready runtime manifest = %#v, %v", manifest, err)
+	}
+
+	first, created, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.queued", Input: map[string]any{"value": "first"}}, "attempt-1")
+	if err != nil || !created {
+		t.Fatalf("create first Task = %#v, %t, %v", first, created, err)
+	}
+	repeated, created, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.queued", Input: map[string]any{"value": "first"}}, "attempt-1")
+	if err != nil || created || repeated.TaskID != first.TaskID {
+		t.Fatalf("idempotent create = %#v, %t, %v", repeated, created, err)
+	}
+	if _, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.queued", Input: map[string]any{"value": "changed"}}, "attempt-1"); err == nil {
+		t.Fatal("reused idempotency key accepted different input")
+	}
+	second, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.queued", Input: map[string]any{"value": "second"}}, "attempt-2")
+	if err != nil {
+		t.Fatalf("create second Task: %v", err)
+	}
+	deliverable, err := tasks.Deliverable(ctx, assetID, "runtime-1")
+	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != first.TaskID {
+		t.Fatalf("initial delivery = %#v, %v", deliverable, err)
+	}
+	if _, err := tasks.Acknowledge(ctx, first.TaskID, "stale-runtime"); err == nil {
+		t.Fatal("stale runtime acknowledged a Task")
+	}
+	if _, err := tasks.Acknowledge(ctx, first.TaskID, "runtime-1"); err != nil {
+		t.Fatalf("acknowledge first Task: %v", err)
+	}
+	deliverable, err = tasks.Deliverable(ctx, assetID, "runtime-1")
+	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != second.TaskID {
+		t.Fatalf("delivery after acknowledgement = %#v, %v", deliverable, err)
+	}
+	if _, err := tasks.Acknowledge(ctx, second.TaskID, "runtime-1"); err != nil {
+		t.Fatalf("acknowledge second Task: %v", err)
+	}
+	if _, err := tasks.Start(ctx, first.TaskID, "runtime-1"); err != nil {
+		t.Fatalf("start Task: %v", err)
+	}
+	if _, err := tasks.Start(ctx, second.TaskID, "runtime-1"); err == nil {
+		t.Fatal("second queued Task started while the first was in progress")
+	}
+	if _, err := tasks.Progress(ctx, first.TaskID, "runtime-1", 0.5); err != nil {
+		t.Fatalf("progress Task: %v", err)
+	}
+	if _, err := tasks.Progress(ctx, first.TaskID, "runtime-1", 0.4); err == nil {
+		t.Fatal("decreasing progress was accepted")
+	}
+	completed, err := tasks.Complete(ctx, first.TaskID, "runtime-1", map[string]any{"result": "done"})
+	if err != nil || completed.Status != string(protocol.TaskStatusCompleted) {
+		t.Fatalf("complete Task = %#v, %v", completed, err)
+	}
+	if _, err := tasks.Cancel(ctx, first.TaskID, protocol.TaskCancellation{Code: protocol.TaskCancellationCodeRequested, Message: "too late"}); err == nil {
+		t.Fatal("terminal Task accepted cancellation")
+	}
+	if _, err := tasks.Start(ctx, second.TaskID, "runtime-1"); err != nil {
+		t.Fatalf("start second queued Task after first completed: %v", err)
+	}
+
+	immediateOne, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.immediate", Input: map[string]any{}}, "attempt-immediate-1")
+	if err != nil {
+		t.Fatalf("create first immediate Task: %v", err)
+	}
+	immediateTwo, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.immediate", Input: map[string]any{}}, "attempt-immediate-2")
+	if err != nil {
+		t.Fatalf("create second immediate Task: %v", err)
+	}
+	deliverable, err = tasks.Deliverable(ctx, assetID, "runtime-1")
+	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != immediateOne.TaskID {
+		t.Fatalf("initial immediate delivery = %#v, %v", deliverable, err)
+	}
+	if _, err := tasks.Start(ctx, immediateOne.TaskID, "runtime-1"); err != nil {
+		t.Fatalf("start first immediate Task: %v", err)
+	}
+	deliverable, err = tasks.Deliverable(ctx, assetID, "runtime-1")
+	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != immediateTwo.TaskID {
+		t.Fatalf("immediate delivery after first start = %#v, %v", deliverable, err)
+	}
+	if _, err := tasks.Start(ctx, immediateTwo.TaskID, "runtime-1"); err != nil {
+		t.Fatalf("start second immediate Task: %v", err)
+	}
+
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-2"); err != nil {
+		t.Fatalf("restart runtime: %v", err)
+	}
+	fenced, err := tasks.Get(ctx, second.TaskID)
+	if err != nil || fenced.Status != string(protocol.TaskStatusFailed) {
+		t.Fatalf("fenced Task = %#v, %v", fenced, err)
+	}
+	var failure protocol.TaskFailure
+	if err := json.Unmarshal(fenced.Failure, &failure); err != nil || failure.Code != protocol.TaskFailureCodeAssetRestarted {
+		t.Fatalf("restart failure = %#v, %v", failure, err)
+	}
+	if _, err := tasks.Deliverable(ctx, assetID, "runtime-1"); err == nil {
+		t.Fatal("old runtime remained eligible for delivery")
+	}
+}
+
+func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
+	var catalog protocol.CommandCatalog
+	if err := json.Unmarshal([]byte(protocol.CommandCatalogJSON), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 0 {
+		t.Fatalf("production Command Catalog has %d entries, want zero", len(catalog))
+	}
+	if _, ok := NewTaskActionsWithCatalog(nil, catalog).catalog["fixture.immediate"]; ok {
+		t.Fatal("production Task module accepted fixture Command")
+	}
+}

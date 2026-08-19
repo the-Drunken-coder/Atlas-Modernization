@@ -11,7 +11,6 @@ import (
 
 const (
 	entitySelectSQL = `SELECT entity_id, type, subtype, alias, json, created_at, updated_at, version FROM entities`
-	taskSelectSQL   = `SELECT task_id, status, entity_id, json, created_at, updated_at, version FROM tasks`
 	objectSelectSQL = `SELECT object_id, path, content_type, type, json, created_at, updated_at, version FROM objects`
 )
 
@@ -26,6 +25,7 @@ var (
 	}
 	allowedColumns = map[string]struct{}{
 		"entity_id":  {},
+		"asset_id":   {},
 		"task_id":    {},
 		"object_id":  {},
 		"created_at": {},

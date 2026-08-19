@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/storage"
 )
 
@@ -236,6 +237,20 @@ func assertPromotedStringValidationError(t *testing.T, err error) {
 	}
 	if !strings.Contains(validationErr.Error(), "must not exceed") {
 		t.Fatalf("validation error = %q, want length limit", validationErr.Error())
+	}
+}
+
+func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, prefix string) {
+	t.Helper()
+	pattern := prefix + "%"
+	for _, statement := range []string{
+		`DELETE FROM storage_deletion_outbox WHERE object_id LIKE $1 OR path LIKE $1`,
+		`DELETE FROM objects WHERE object_id LIKE $1`,
+		`DELETE FROM entities WHERE entity_id LIKE $1`,
+	} {
+		if _, err := pool.Exec(ctx, statement, pattern); err != nil {
+			t.Fatalf("cleanup live action rows matching %q: %v", pattern, err)
+		}
 	}
 }
 

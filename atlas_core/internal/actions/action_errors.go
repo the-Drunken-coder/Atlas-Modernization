@@ -138,16 +138,6 @@ func NewEntityUniqueConstraintError() *ConflictError {
 	}
 }
 
-// NewTaskConflictError reports a duplicate task id on insert.
-func NewTaskConflictError(taskID string) *ConflictError {
-	return &ConflictError{
-		ActionError: ActionError{
-			Message: fmt.Sprintf("A task with id '%s' already exists", taskID),
-			Code:    protocol.ErrorCodeTaskAlreadyExists,
-		},
-	}
-}
-
 // NewObjectConflictError reports a duplicate object id on insert.
 func NewObjectConflictError(objectID string) *ConflictError {
 	return &ConflictError{
@@ -171,9 +161,4 @@ func NewObjectPathConflictError() *ConflictError {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-func isForeignKeyViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
