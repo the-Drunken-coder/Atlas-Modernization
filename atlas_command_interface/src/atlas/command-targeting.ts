@@ -1,11 +1,15 @@
-import type { CommandManifestEntry, EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type {
+  CommandCatalog,
+  CommandDefinition,
+  CommandManifestEntry,
+  EntityResource
+} from "@the-drunken-coder/atlas-sdk";
 import {
   COMMAND_INPUT_REGISTRY,
   type CommandInputRegistration,
   type CommandInputRegistry,
   type CommandTargeting
 } from "../features/commands/command-input-registry.js";
-import type { CommandCatalog, CommandDefinition } from "./command-model.js";
 
 export type { CommandTargeting } from "../features/commands/command-input-registry.js";
 

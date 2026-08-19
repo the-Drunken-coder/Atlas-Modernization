@@ -1,12 +1,12 @@
 import {
   ATLAS_PROTOCOL_REVISION,
+  type CommandDefinition,
   type EntityResource,
   type FeedEvent,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CommandDefinition } from "./command-model.js";
 import { createSdkDataSource } from "./data-source.js";
 import type { UiGeometry } from "./geometry.js";
 

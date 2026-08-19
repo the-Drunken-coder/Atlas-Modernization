@@ -1,5 +1,4 @@
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import type { CommandCatalog } from "../../atlas/command-model.js";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { type CommandAvailability, commandsForTargeting } from "../../atlas/command-targeting.js";
 import {
   entityAltitude,

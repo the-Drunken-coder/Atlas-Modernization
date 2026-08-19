@@ -1,9 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../app/config.js";
-import type { CommandCatalog } from "../atlas/command-model.js";
 import type { AtlasDataSource, ConnectionHealth } from "../atlas/data-source.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
 import { AtlasProvider, useAtlas } from "./atlas-context.js";

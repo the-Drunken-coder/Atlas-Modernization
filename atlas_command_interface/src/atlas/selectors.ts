@@ -7,10 +7,6 @@ export function getEntity(snapshot: AtlasSnapshot, id: string | undefined): Enti
   return id ? snapshot.entities[id] : undefined;
 }
 
-export function getTask(snapshot: AtlasSnapshot, id: string | undefined): TaskResource | undefined {
-  return id ? snapshot.tasks[id] : undefined;
-}
-
 /** Selectable entities (asset/track/geofeature) sorted by display name. */
 export function listEntities(snapshot: AtlasSnapshot): EntityResource[] {
   return Object.values(snapshot.entities)

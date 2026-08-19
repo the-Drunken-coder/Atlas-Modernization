@@ -1,6 +1,12 @@
-import { AtlasClient, type EntityResource, type JSONValue, type TaskResource } from "@the-drunken-coder/atlas-sdk";
+import {
+  AtlasClient,
+  type CommandCatalog,
+  type CommandDefinition,
+  type EntityResource,
+  type JSONValue,
+  type TaskResource
+} from "@the-drunken-coder/atlas-sdk";
 import type { AppConfig } from "../app/config.js";
-import { buildCommandTaskRequest, type CommandCatalog, type CommandDefinition } from "./command-model.js";
 import { sanitizeConnectionError } from "./connection-error.js";
 import type { UiGeometry } from "./geometry.js";
 import type { AtlasSnapshot } from "./store.js";
@@ -88,7 +94,7 @@ export function createSdkDataSource(config: AppConfig): AtlasDataSource {
 
     async submitCommand(submission) {
       return client.tasks.create(
-        buildCommandTaskRequest({ assetId: submission.assetId, command: submission.command, input: submission.input }),
+        { asset_id: submission.assetId, command: submission.command.command, input: submission.input },
         {
           idempotencyKey: submission.idempotencyKey,
           signal: submission.signal

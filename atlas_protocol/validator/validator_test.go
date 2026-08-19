@@ -45,6 +45,14 @@ func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
 	}
 }
 
+func TestValidateDefinitionUsesNamedCommandSchema(t *testing.T) {
+	if errors := ValidateDefinition("FixtureInput", map[string]any{"value": "inspect"}); len(errors) > 0 {
+		t.Fatalf("ValidateDefinition(valid) errors = %v", errors)
+	}
+	assertAnyContains(t, ValidateDefinition("FixtureInput", map[string]any{}), "value")
+	assertAnyContains(t, ValidateDefinition("MissingDefinition", map[string]any{}), "not found")
+}
+
 func TestConcurrentValidationIsSafe(t *testing.T) {
 	const goroutines = 16
 	results := make(chan []string, goroutines)

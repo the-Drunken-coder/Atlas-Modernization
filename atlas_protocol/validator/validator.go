@@ -504,8 +504,6 @@ func prefixErrors(errors []string, fieldPrefix string) []string {
 		if message == "" {
 			continue
 		}
-		message = strings.TrimPrefix(message, "TaskParametersComponent.")
-		message = strings.TrimPrefix(message, "TaskParametersComponent")
 		prefixed = append(prefixed, fieldPrefix+"."+message)
 	}
 	return prefixed

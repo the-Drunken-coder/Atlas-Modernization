@@ -1,7 +1,6 @@
-import type { EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
+import type { CommandCatalog, EntityResource, JSONValue } from "@the-drunken-coder/atlas-sdk";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { MapSourceConfig } from "../app/config.js";
-import type { CommandCatalog } from "../atlas/command-model.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
 import { type EntityKind, entityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
