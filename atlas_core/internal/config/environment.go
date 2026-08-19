@@ -8,10 +8,6 @@ func loadFromEnvironment() (*Config, error) {
 		return nil, err
 	}
 
-	debug, err := getEnvBool("DEBUG", false)
-	if err != nil {
-		return nil, err
-	}
 	dbRecreateOnStartup, err := getEnvBool("DATABASE_RECREATE_ON_STARTUP", false)
 	if err != nil {
 		return nil, err
@@ -59,7 +55,6 @@ func loadFromEnvironment() (*Config, error) {
 
 	return &Config{
 		ServerPort:                getEnv("SERVER_PORT", "8000"),
-		Debug:                     debug,
 		LogLevel:                  getEnv("LOG_LEVEL", "INFO"),
 		DatabaseURL:               getEnv("DATABASE_URL", "postgres://atlas@localhost:5432/atlas_core"),
 		DatabaseRecreateOnStartup: dbRecreateOnStartup,

@@ -1,5 +1,5 @@
 {
-  "content_type": "application/json",
+  "type": "mission_plan",
   "usage_hints": ["mission_plan"],
   "referenced_by": [
     {

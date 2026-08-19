@@ -89,7 +89,7 @@ The consistency mechanism is `GET /queries/changed-since` with one global versio
 
 An object is two things, treated differently:
 
-- **Metadata** (small JSON: `object_id`, `path`, `type`, `version`, references, and storage fields) — flows over the change feed and lives in the cache like entities and tasks.
+- **Metadata** (small JSON: identity, type, references, and usage hints) — created and updated through the object API, flows over the change feed, and lives in the cache like entities and tasks. Blob facts (`path`, `content_type`, `size_bytes`, and `bucket`) are read-only response data populated by Core's upload path.
 - **Content** (the blob, e.g. heat map data) — fetched on first use and cached keyed by `(object_id, version)`. A metadata event with a newer version makes the stored blob stale by construction; the next read re-downloads. The content cache owns a copy of each buffer and returns a fresh copy to each caller, so caller mutation cannot corrupt later reads. It also has a size cap with least-recently-used eviction so a long-running browser tab does not accumulate blobs without bound. Because Core has no versioned download endpoint, the SDK verifies metadata after each download and retries once if the version moved mid-flight — correctness over an extra metadata round-trip.
 
 Object `referenced_by` entries are normalized to the protocol `ObjectReference` shape: only `entity_id` and `task_id` are emitted. Extra keys in stored object metadata are intentionally not part of the public API response.

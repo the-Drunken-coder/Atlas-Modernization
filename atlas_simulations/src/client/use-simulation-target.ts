@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AtlasTargetSummary, HealthResponse } from "../shared/types.js";
 import { loadHealth, loadTargets } from "./api.js";
 import { errorMessage } from "./run-state.js";
@@ -40,10 +40,7 @@ export function useSimulationTarget({
     };
   }, []);
 
-  const selectedTarget = useMemo(
-    () => targets.find((target) => target.id === selectedTargetId),
-    [selectedTargetId, targets]
-  );
+  const selectedTarget = targets.find((target) => target.id === selectedTargetId);
   const selectedApiKey = selectedTargetId ? (apiKeysByTargetId[selectedTargetId] ?? "") : "";
 
   async function refreshHealth(targetId = selectedTargetId) {

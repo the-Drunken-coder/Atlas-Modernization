@@ -33,7 +33,7 @@ export function AuthGate({ baseUrl, children }: { baseUrl: string; children: Rea
         }
       } catch (error) {
         if (!cancelled) {
-          setState({ status: "error", error: errorMessage(error) });
+          setState({ status: "error", error: sanitizeConnectionError(error) });
         }
       }
     };
@@ -122,7 +122,7 @@ function AuthenticatedShell({
       await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.logout();
       onLoggedOut();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(sanitizeConnectionError(cause));
       setLoggingOut(false);
     }
   };
@@ -171,10 +171,6 @@ export class WorkspaceErrorBoundary extends Component<
   }
 }
 
-function errorMessage(error: unknown): string {
-  return sanitizeConnectionError(error);
-}
-
 async function loadSession(baseUrl: string): Promise<SessionResponse> {
   try {
     const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.me();
@@ -211,7 +207,7 @@ function LoginPanel({
       const data = await new AtlasAdminClient({ baseUrl, credentials: "include" }).auth.login({ username, password });
       onAuthenticated(data.user.username);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(sanitizeConnectionError(cause));
     } finally {
       setSubmitting(false);
     }

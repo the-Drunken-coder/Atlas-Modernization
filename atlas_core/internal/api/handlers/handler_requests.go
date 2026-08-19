@@ -125,9 +125,6 @@ func (r updateTaskRequest) actionParams(expectedVersion *int64) actions.UpdateTa
 
 type createObjectRequest struct {
 	ObjectID     string                   `json:"object_id"`
-	Path         *string                  `json:"path,omitempty"`
-	SizeBytes    *int64                   `json:"size_bytes,omitempty"`
-	ContentType  *string                  `json:"content_type,omitempty"`
 	Type         *string                  `json:"type,omitempty"`
 	UsageHints   []string                 `json:"usage_hints,omitempty"`
 	ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
@@ -137,9 +134,6 @@ type createObjectRequest struct {
 func (r createObjectRequest) actionParams() actions.CreateObjectParams {
 	return actions.CreateObjectParams{
 		ObjectID:     r.ObjectID,
-		Path:         r.Path,
-		SizeBytes:    r.SizeBytes,
-		ContentType:  r.ContentType,
 		Type:         r.Type,
 		UsageHints:   r.UsageHints,
 		ReferencedBy: r.ReferencedBy,
@@ -148,10 +142,7 @@ func (r createObjectRequest) actionParams() actions.CreateObjectParams {
 }
 
 type updateObjectRequest struct {
-	Path         *string                  `json:"path,omitempty"`
-	ContentType  *string                  `json:"content_type,omitempty"`
 	Type         *string                  `json:"type,omitempty"`
-	SizeBytes    *int64                   `json:"size_bytes,omitempty"`
 	UsageHints   []string                 `json:"usage_hints,omitempty"`
 	ReferencedBy []map[string]interface{} `json:"referenced_by,omitempty"`
 	Extra        map[string]interface{}   `json:"extra,omitempty"`
@@ -159,10 +150,7 @@ type updateObjectRequest struct {
 
 func (r updateObjectRequest) actionParams(expectedVersion *int64) actions.UpdateObjectParams {
 	return actions.UpdateObjectParams{
-		Path:            r.Path,
-		ContentType:     r.ContentType,
 		Type:            r.Type,
-		SizeBytes:       r.SizeBytes,
 		UsageHints:      r.UsageHints,
 		ReferencedBy:    r.ReferencedBy,
 		Extra:           r.Extra,

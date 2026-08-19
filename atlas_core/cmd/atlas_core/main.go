@@ -30,7 +30,7 @@ const objectTransferIdleTimeout = 30 * time.Second
 
 func atlasCORSOptions(allowedOrigins []string, allowedOriginPatterns []string) cors.Options {
 	return cors.Options{
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "If-Match", "If-None-Match", "X-API-Key", "X-Request-ID"},
 		ExposedHeaders:   []string{"ETag", "X-Has-More", "X-Next-Cursor", "X-Limit", "X-Returned-Count", "Content-Length"},
 		AllowCredentials: true,
@@ -101,14 +101,12 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 func main() {
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Configure logging
 	zerolog.TimeFieldFormat = time.RFC3339
 	logLevel := zerolog.InfoLevel
 	switch strings.ToUpper(strings.TrimSpace(cfg.LogLevel)) {
@@ -138,14 +136,12 @@ func main() {
 		}
 	}
 
-	// Connect to database
 	db, err := database.New(cfg)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 	defer db.Close()
 
-	// Ensure database tables exist
 	ensureCtx, ensureCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer ensureCancel()
 	if err := db.EnsureTables(ensureCtx); err != nil {
@@ -200,20 +196,16 @@ func main() {
 		)
 	}
 
-	// Create handler
 	handler := handlers.NewHandlerWithFeed(db, storageClient, logger, cfg, feedHub, adminAuth)
 
-	// Create router
 	r := chi.NewRouter()
 
-	// Add middleware
 	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.RequestID)
 	r.Use(custommiddleware.RequestLogger(logger))
 	r.Use(custommiddleware.Recoverer)
 	r.Use(middleware.Compress(5))
 
-	// Add CORS
 	r.Use(cors.Handler(atlasCORSOptions(cfg.CORSOrigins, cfg.CORSOriginPatterns)))
 
 	// Auth middleware must be registered before route handlers (chi requirement); public endpoints skip auth.
@@ -224,11 +216,9 @@ func main() {
 	}
 	r.Use(custommiddleware.CombinedAuth(apiKey, cfg.EnableAPIAuth, adminAuth, cfg.CORSOrigins, cfg.CORSOriginPatterns))
 
-	// Public health endpoints (no API key — middleware skips these paths)
 	r.Get("/health", handler.LivenessCheck)
 	r.Get("/readiness", handler.ReadinessCheck)
 
-	// Register routes
 	r.Get("/", handler.Root)
 	r.Get("/resources", handler.Resources)
 	r.Get("/protocol/revision", handler.ProtocolRevision)
@@ -275,10 +265,8 @@ func main() {
 	r.Get("/queries/full", handler.GetFullDataset)
 	r.Get("/queries/changed-since", handler.GetChangedSince)
 
-	// Create server
 	server := newHTTPServer(":"+cfg.ServerPort, r)
 
-	// Start server in goroutine
 	go func() {
 		logger.Info().Str("port", cfg.ServerPort).Msg("Starting HTTP server")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -286,7 +274,6 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -294,7 +281,6 @@ func main() {
 	logger.Info().Msg("ATLAS Core API shutting down...")
 	stopRuntime()
 
-	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 

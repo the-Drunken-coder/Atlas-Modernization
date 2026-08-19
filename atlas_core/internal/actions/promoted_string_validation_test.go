@@ -118,13 +118,9 @@ func TestObjectActionsRejectOversizedPromotedStringsBeforeDatabaseOrStorage(t *t
 	oversizedType := strings.Repeat("t", objectTypeMaxLength+1)
 
 	createTests := []CreateObjectParams{
-		{ObjectID: "object-length-create-path", Path: &oversizedPath},
-		{ObjectID: "object-length-create-content", ContentType: &oversizedContentType},
 		{ObjectID: "object-length-create-type", Type: &oversizedType},
 	}
 	updateTests := []UpdateObjectParams{
-		{Path: &oversizedPath},
-		{ContentType: &oversizedContentType},
 		{Type: &oversizedType},
 	}
 
@@ -203,23 +199,17 @@ func TestPromotedStringMaximumsAcceptedByActions(t *testing.T) {
 	}
 
 	objectActions := NewObjectActions(pool, nil)
-	createPath := "create-" + strings.Repeat("p", objectPathMaxLength-len("create-"))
 	contentType := strings.Repeat("c", objectContentMaxLength)
 	objectType := strings.Repeat("t", objectTypeMaxLength)
 	object, err := objectActions.Create(ctx, CreateObjectParams{
-		ObjectID:    prefix + "object",
-		Path:        &createPath,
-		ContentType: &contentType,
-		Type:        &objectType,
+		ObjectID: prefix + "object",
+		Type:     &objectType,
 	})
 	if err != nil {
 		t.Fatalf("create object with maximum-length fields: %v", err)
 	}
-	updatePath := "update-" + strings.Repeat("p", objectPathMaxLength-len("update-"))
 	if _, err := objectActions.Update(ctx, object.ObjectID, UpdateObjectParams{
-		Path:        &updatePath,
-		ContentType: &contentType,
-		Type:        &objectType,
+		Type: &objectType,
 	}); err != nil {
 		t.Fatalf("update object with maximum-length fields: %v", err)
 	}

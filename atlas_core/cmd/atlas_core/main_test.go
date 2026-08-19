@@ -142,6 +142,10 @@ func TestAtlasCORSOptionsAllowsCredentialsAndExposesCursorHeaders(t *testing.T) 
 	if !opts.AllowCredentials {
 		t.Fatal("expected CORS AllowCredentials to be true")
 	}
+	wantMethods := []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"}
+	if !slices.Equal(opts.AllowedMethods, wantMethods) {
+		t.Fatalf("AllowedMethods = %#v, want %#v", opts.AllowedMethods, wantMethods)
+	}
 	if opts.AllowOriginFunc == nil {
 		t.Fatal("expected CORS AllowOriginFunc to be configured")
 	}
@@ -214,6 +218,18 @@ func TestAtlasCORSPreflightEchoesAllowedPreviewOrigin(t *testing.T) {
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(got), "if-none-match") {
 		t.Fatalf("Access-Control-Allow-Headers = %q, want If-None-Match", got)
+	}
+
+	unsupportedReq := httptest.NewRequest(http.MethodOptions, "/command-catalog", nil)
+	unsupportedReq.Header.Set("Origin", origin)
+	unsupportedReq.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	unsupportedRec := httptest.NewRecorder()
+	handler.ServeHTTP(unsupportedRec, unsupportedReq)
+
+	for _, header := range []string{"Access-Control-Allow-Origin", "Access-Control-Allow-Methods"} {
+		if got := unsupportedRec.Header().Get(header); got != "" {
+			t.Fatalf("unsupported PUT preflight %s = %q, want empty", header, got)
+		}
 	}
 }
 

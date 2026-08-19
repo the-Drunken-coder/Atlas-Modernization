@@ -134,8 +134,6 @@ const observationsObjects: Scenario = {
       await ctx.createObject({
         object_id: objectId,
         type: "observation",
-        content_type: "application/json",
-        size_bytes: 256 + index,
         usage_hints: ["thumbnail"],
         referenced_by: [{ entity_id: trackId }]
       });

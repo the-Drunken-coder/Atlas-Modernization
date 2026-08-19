@@ -349,6 +349,33 @@ func TestLiveEntityCheckinTaskReadFailureDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestUploadPreservesExistingTypeWhenOmitted(t *testing.T) {
+	pool := openActionsLivePool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objectID := fmt.Sprintf("actions-live-upload-type-%d", time.Now().UTC().UnixNano())
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		cleanupActionsLiveRows(cleanupCtx, t, pool, objectID)
+	})
+
+	objectType := "observation"
+	actions := NewObjectActions(pool, newMemoryObjectStorage("atlas-media"))
+	if _, err := actions.Create(ctx, CreateObjectParams{ObjectID: objectID, Type: &objectType}); err != nil {
+		t.Fatalf("create object metadata: %v", err)
+	}
+
+	uploaded, err := actions.Upload(ctx, objectID, strings.NewReader("content"), int64(len("content")), "text/plain", "", nil)
+	if err != nil {
+		t.Fatalf("upload object without type: %v", err)
+	}
+	if uploaded.Type == nil || *uploaded.Type != objectType {
+		t.Fatalf("uploaded object type = %#v, want %q", uploaded.Type, objectType)
+	}
+}
+
 func openActionsLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicitDBURL := actionsTestDatabaseURL()

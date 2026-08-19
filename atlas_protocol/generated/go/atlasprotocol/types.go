@@ -60,8 +60,8 @@ const (
 )
 
 // ErrorResponse is exported so HTTP handlers can attach request metadata.
-// Prefer NewErrorResponse for base responses; Validate and MarshalJSON enforce
-// the Atlas Protocol error contract before a response is sent.
+// Prefer NewErrorResponse for base responses; MarshalJSON enforces the Atlas
+// Protocol error contract before a response is sent.
 type ErrorResponse struct {
 	Success   bool                 `json:"success"`
 	Message   string               `json:"message"`
@@ -78,19 +78,10 @@ func NewErrorResponse(message string, code ErrorCode) (ErrorResponse, error) {
 		Message:   message,
 		ErrorCode: code,
 	}
-	if errors := response.Validate(); len(errors) > 0 {
-		return ErrorResponse{}, fmt.Errorf("invalid ErrorResponse: %s", strings.Join(errors, "; "))
+	if _, err := json.Marshal(response); err != nil {
+		return ErrorResponse{}, err
 	}
 	return response, nil
-}
-
-func (e ErrorResponse) Validate() []string {
-	type errorResponseAlias ErrorResponse
-	data, err := json.Marshal(errorResponseAlias(e))
-	if err != nil {
-		return []string{err.Error()}
-	}
-	return validator.ValidateErrorResponse(json.RawMessage(data))
 }
 
 func (e ErrorResponse) MarshalJSON() ([]byte, error) {
@@ -405,15 +396,6 @@ type FeedAuthMessage struct {
 
 type feedAuthMessageAlias FeedAuthMessage
 
-func (m FeedAuthMessage) Validate() []string {
-	m.Action = FeedActionAuth
-	data, err := json.Marshal(feedAuthMessageAlias(m))
-	if err != nil {
-		return []string{err.Error()}
-	}
-	return validator.ValidateFeedAuthMessage(json.RawMessage(data))
-}
-
 func (m FeedAuthMessage) MarshalJSON() ([]byte, error) {
 	m.Action = FeedActionAuth
 	data, err := json.Marshal(feedAuthMessageAlias(m))
@@ -435,14 +417,6 @@ type FeedSubscriptionMessage struct {
 }
 
 type feedSubscriptionMessageAlias FeedSubscriptionMessage
-
-func (m FeedSubscriptionMessage) Validate() []string {
-	data, err := json.Marshal(feedSubscriptionMessageAlias(m))
-	if err != nil {
-		return []string{err.Error()}
-	}
-	return validateFeedSubscriptionMessagePayload(data)
-}
 
 func (m FeedSubscriptionMessage) MarshalJSON() ([]byte, error) {
 	data, err := json.Marshal(feedSubscriptionMessageAlias(m))
@@ -486,15 +460,6 @@ type FeedSubscriptionBarrierMessage struct {
 
 type feedSubscriptionBarrierMessageAlias FeedSubscriptionBarrierMessage
 
-func (m FeedSubscriptionBarrierMessage) Validate() []string {
-	m.Action = FeedActionSubscriptionBarrier
-	data, err := json.Marshal(feedSubscriptionBarrierMessageAlias(m))
-	if err != nil {
-		return []string{err.Error()}
-	}
-	return validator.ValidateFeedSubscriptionBarrierMessage(json.RawMessage(data))
-}
-
 func (m FeedSubscriptionBarrierMessage) MarshalJSON() ([]byte, error) {
 	m.Action = FeedActionSubscriptionBarrier
 	data, err := json.Marshal(feedSubscriptionBarrierMessageAlias(m))
@@ -514,15 +479,6 @@ type FeedSubscriptionsReadyMessage struct {
 
 type feedSubscriptionsReadyMessageAlias FeedSubscriptionsReadyMessage
 
-func (m FeedSubscriptionsReadyMessage) Validate() []string {
-	m.Type = "subscriptions_ready"
-	data, err := json.Marshal(feedSubscriptionsReadyMessageAlias(m))
-	if err != nil {
-		return []string{err.Error()}
-	}
-	return validator.ValidateFeedSubscriptionsReadyMessage(json.RawMessage(data))
-}
-
 func (m FeedSubscriptionsReadyMessage) MarshalJSON() ([]byte, error) {
 	m.Type = "subscriptions_ready"
 	data, err := json.Marshal(feedSubscriptionsReadyMessageAlias(m))
@@ -536,15 +492,6 @@ func (m FeedSubscriptionsReadyMessage) MarshalJSON() ([]byte, error) {
 }
 
 type feedHandshakeMessageAlias FeedHandshakeMessage
-
-func (m FeedHandshakeMessage) Validate() []string {
-	m.Type = "hello"
-	data, err := json.Marshal(feedHandshakeMessageAlias(m))
-	if err != nil {
-		return []string{err.Error()}
-	}
-	return validator.ValidateFeedHandshakeMessage(json.RawMessage(data))
-}
 
 func (m FeedHandshakeMessage) MarshalJSON() ([]byte, error) {
 	m.Type = "hello"

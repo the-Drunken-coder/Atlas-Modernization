@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
@@ -35,9 +34,6 @@ func NewObjectActions(pool *pgxpool.Pool, storageClient objectStorage) *ObjectAc
 // CreateObjectParams holds parameters for creating an object.
 type CreateObjectParams struct {
 	ObjectID     string
-	Path         *string
-	SizeBytes    *int64
-	ContentType  *string
 	Type         *string
 	UsageHints   []string
 	ReferencedBy []map[string]interface{}
@@ -56,21 +52,7 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		}
 	}
 	normalizedType := normalizeOptionalObjectString(params.Type)
-	if params.Path != nil {
-		if err := validateStringMaxLength("path", *params.Path, objectPathMaxLength); err != nil {
-			return nil, err
-		}
-	}
-	if params.ContentType != nil {
-		if err := validateStringMaxLength("content_type", *params.ContentType, objectContentMaxLength); err != nil {
-			return nil, err
-		}
-	}
-	// Build JSON payload
 	jsonData := make(map[string]interface{})
-	if params.SizeBytes != nil {
-		jsonData[string(objectBlobFieldSizeBytes)] = *params.SizeBytes
-	}
 	if params.UsageHints != nil {
 		jsonData[string(objectBlobFieldUsageHints)] = params.UsageHints
 	}
@@ -78,7 +60,6 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 		jsonData[string(objectBlobFieldReferencedBy)] = params.ReferencedBy
 	}
 	mergeBlobExtraFields(jsonData, params.Extra, objectPromotedBlobFields)
-	applyConfiguredObjectBucket(jsonData, a.storage)
 
 	jsonBytes, err := marshalValidatedJSONBlob(jsonData, ValidateObjectBlob)
 	if err != nil {
@@ -95,33 +76,18 @@ func (a *ObjectActions) Create(ctx context.Context, params CreateObjectParams) (
 	if err != nil {
 		return nil, err
 	}
-	if params.Path != nil {
-		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
-			return nil, err
-		}
-	}
 	var obj models.MediaObject
 	err = tx.QueryRow(ctx, `
-		INSERT INTO objects (object_id, path, content_type, type, json, version)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO objects (object_id, type, json, version)
+		VALUES ($1, $2, $3, $4)
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, objectID, params.Path, params.ContentType, normalizedType, jsonBytes, version).Scan(
+	`, objectID, normalizedType, jsonBytes, version).Scan(
 		&obj.ObjectID, &obj.Path, &obj.ContentType, &obj.Type,
 		&obj.JSON, &obj.CreatedAt, &obj.UpdatedAt, &obj.Version,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) {
-				switch pgErr.ConstraintName {
-				case "objects_pkey":
-					return nil, NewObjectConflictError(objectID)
-				case "objects_path_key":
-					return nil, NewObjectPathConflictError()
-				default:
-					return nil, NewObjectPathConflictError()
-				}
-			}
+			return nil, NewObjectConflictError(objectID)
 		}
 		return nil, fmt.Errorf("failed to create object: %w", err)
 	}
@@ -197,10 +163,7 @@ func (a *ObjectActions) List(ctx context.Context, limit int, cursor string) (*Li
 
 // UpdateObjectParams holds parameters for updating an object.
 type UpdateObjectParams struct {
-	Path            *string
-	ContentType     *string
 	Type            *string
-	SizeBytes       *int64
 	UsageHints      []string
 	ReferencedBy    []map[string]interface{}
 	Extra           map[string]interface{}
@@ -214,24 +177,13 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 		return nil, err
 	}
 	objectID = SanitizeID(objectID)
-	if params.Path != nil {
-		if err := validateStringMaxLength("path", *params.Path, objectPathMaxLength); err != nil {
-			return nil, err
-		}
-	}
-	if params.ContentType != nil {
-		if err := validateStringMaxLength("content_type", *params.ContentType, objectContentMaxLength); err != nil {
-			return nil, err
-		}
-	}
 	if params.Type != nil {
 		if err := validateStringMaxLength("type", *params.Type, objectTypeMaxLength); err != nil {
 			return nil, err
 		}
 	}
 	normalizedType := normalizeOptionalObjectString(params.Type)
-	if params.Path == nil && params.ContentType == nil && params.Type == nil && params.SizeBytes == nil &&
-		params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
+	if params.Type == nil && params.UsageHints == nil && params.ReferencedBy == nil && len(params.Extra) == 0 && len(params.RemoveExtraKeys) == 0 {
 		if params.ExpectedVersion != nil {
 			return a.lockObjectAndCheckExpectedVersion(ctx, objectID, params.ExpectedVersion)
 		}
@@ -271,23 +223,12 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	}
 	before := cloneObjectModel(&obj)
 
-	// Update columns if provided
-	newPath := obj.Path
-	if params.Path != nil {
-		newPath = params.Path
-	}
-
-	newContentType := obj.ContentType
-	if params.ContentType != nil {
-		newContentType = params.ContentType
-	}
-
 	newType := obj.Type
 	if params.Type != nil {
 		newType = normalizedType
 	}
 
-	jsonBytes, err := patchValidatedJSONBlob(objectJSONPatch(obj.JSON, params, a.storage))
+	jsonBytes, err := patchValidatedJSONBlob(objectJSONPatch(obj.JSON, params))
 	if err != nil {
 		return nil, err
 	}
@@ -296,38 +237,19 @@ func (a *ObjectActions) Update(ctx context.Context, objectID string, params Upda
 	if err != nil {
 		return nil, err
 	}
-	if params.Path != nil {
-		if err := ensureObjectStoragePathAvailable(ctx, tx, *params.Path, objectID); err != nil {
-			return nil, err
-		}
-	}
 	var out models.MediaObject
 	err = tx.QueryRow(ctx, `
 		UPDATE objects
-		SET path = $1, content_type = $2, type = $3, json = $4,
+		SET type = $1, json = $2,
 			updated_at = clock_timestamp(),
-			version = $5
-		WHERE object_id = $6
+			version = $3
+		WHERE object_id = $4
 		RETURNING object_id, path, content_type, type, json, created_at, updated_at, version
-	`, newPath, newContentType, newType, jsonBytes, version, objectID).Scan(
+	`, newType, jsonBytes, version, objectID).Scan(
 		&out.ObjectID, &out.Path, &out.ContentType, &out.Type,
 		&out.JSON, &out.CreatedAt, &out.UpdatedAt, &out.Version,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) {
-				switch pgErr.ConstraintName {
-				case "objects_pkey":
-					return nil, NewObjectConflictError(objectID)
-				case "objects_path_key":
-					return nil, NewObjectPathConflictError()
-				default:
-					return nil, NewObjectPathConflictError()
-				}
-			}
-			return nil, NewObjectPathConflictError()
-		}
 		return nil, fmt.Errorf("failed to update object: %w", err)
 	}
 

@@ -243,9 +243,9 @@ func TestCRUDRequestBodiesEnforceCanonicalProtocolBeforeActions(t *testing.T) {
 		{name: "task create rejects non-pending status", method: http.MethodPost, path: "/tasks", payload: `{"task_id":"task-1","status":"acknowledged"}`, handle: (*Handler).CreateTask},
 		{name: "task update rejects empty patch", method: http.MethodPatch, path: "/tasks/task-1", payload: `{}`, handle: (*Handler).UpdateTask},
 		{name: "task update rejects null status", method: http.MethodPatch, path: "/tasks/task-1", payload: `{"status":null}`, handle: (*Handler).UpdateTask},
-		{name: "object create rejects unsafe size", method: http.MethodPost, path: "/objects", payload: `{"object_id":"object-1","size_bytes":9007199254740992}`, handle: (*Handler).CreateObject},
+		{name: "object create rejects client-owned size", method: http.MethodPost, path: "/objects", payload: `{"object_id":"object-1","size_bytes":1}`, handle: (*Handler).CreateObject},
 		{name: "object update rejects empty patch", method: http.MethodPatch, path: "/objects/object-1", payload: `{}`, handle: (*Handler).UpdateObject},
-		{name: "object update rejects null content type", method: http.MethodPatch, path: "/objects/object-1", payload: `{"content_type":null}`, handle: (*Handler).UpdateObject},
+		{name: "object update rejects client-owned content type", method: http.MethodPatch, path: "/objects/object-1", payload: `{"content_type":"image/png"}`, handle: (*Handler).UpdateObject},
 	}
 
 	for _, tt := range tests {

@@ -73,6 +73,22 @@ func TestDecodeObjectJSONForPatchRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func createStoredObjectFixture(ctx context.Context, t *testing.T, pool *pgxpool.Pool, objectID, path string) int64 {
+	t.Helper()
+	object, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID})
+	if err != nil {
+		t.Fatalf("create object fixture: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE objects
+		SET path = $2, content_type = 'text/plain', json = '{"bucket":"atlas-media","size_bytes":3}'::jsonb
+		WHERE object_id = $1
+	`, objectID, path); err != nil {
+		t.Fatalf("attach storage metadata to object fixture: %v", err)
+	}
+	return object.Version
+}
+
 func TestCleanupUploadedPathAfterFailureDeletesUploadedObject(t *testing.T) {
 	storageClient := &recordingObjectStorage{}
 	actions := &ObjectActions{storage: storageClient}
@@ -201,10 +217,7 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	objectID := fmt.Sprintf("delete-publish-before-storage-%d", time.Now().UTC().UnixNano())
 	objectPath := fmt.Sprintf("objects/%s/blob", objectID)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
-	beforeObject, err := NewObjectActions(pool, nil).Create(ctx, CreateObjectParams{ObjectID: objectID, Path: &objectPath})
-	if err != nil {
-		t.Fatalf("create object row: %v", err)
-	}
+	beforeVersion := createStoredObjectFixture(ctx, t, pool, objectID, objectPath)
 
 	storageClient := newPausingDeleteObjectStorage()
 	defer storageClient.releaseDelete()
@@ -230,8 +243,8 @@ func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
 	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatalf("decode durable delete event: %v", err)
 	}
-	if event.Event != ChangeEventDelete || event.ResourceType != ChangeResourceObject || event.ID != objectID || event.Version <= beforeObject.Version {
-		t.Fatalf("durable delete event = %#v, want object delete after version %d", event, beforeObject.Version)
+	if event.Event != ChangeEventDelete || event.ResourceType != ChangeResourceObject || event.ID != objectID || event.Version <= beforeVersion {
+		t.Fatalf("durable delete event = %#v, want object delete after version %d", event, beforeVersion)
 	}
 
 	storageClient.releaseDelete()
@@ -297,56 +310,6 @@ func TestObjectDeletedAfterUploadPreflight(t *testing.T) {
 			got := objectDeletedAfterUploadPreflight(&tt.preflight, &tt.current)
 			if got != tt.want {
 				t.Fatalf("objectDeletedAfterUploadPreflight() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestApplyConfiguredObjectBucketOverwritesExistingBucket(t *testing.T) {
-	blob := map[string]interface{}{
-		"bucket":   "client-selected-bucket",
-		"checksum": "sha256:test",
-	}
-
-	applyConfiguredObjectBucket(blob, &recordingObjectStorage{})
-
-	if blob["bucket"] != "atlas-media" {
-		t.Fatalf("bucket = %v, want configured bucket atlas-media", blob["bucket"])
-	}
-	if blob["checksum"] != "sha256:test" {
-		t.Fatalf("checksum = %v, want preserved checksum", blob["checksum"])
-	}
-}
-
-func TestApplyConfiguredObjectBucketLeavesBlobWithoutStorage(t *testing.T) {
-	tests := []struct {
-		name string
-		blob map[string]interface{}
-	}{
-		{
-			name: "no bucket added",
-			blob: map[string]interface{}{
-				"checksum": "sha256:test",
-			},
-		},
-		{
-			name: "stale bucket removed",
-			blob: map[string]interface{}{
-				"bucket":   "legacy-bucket",
-				"checksum": "sha256:test",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			applyConfiguredObjectBucket(tt.blob, nil)
-
-			if _, ok := tt.blob["bucket"]; ok {
-				t.Fatalf("bucket should not be set without configured storage: %#v", tt.blob)
-			}
-			if tt.blob["checksum"] != "sha256:test" {
-				t.Fatalf("checksum = %v, want preserved checksum", tt.blob["checksum"])
 			}
 		})
 	}
@@ -480,14 +443,7 @@ func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
 	sizeBytes := int64(3)
 	defer cleanupObjectRaceTestRowsWithTimeout(t, pool, objectID)
 
-	if _, err := actions.Create(ctx, CreateObjectParams{
-		ObjectID:    objectID,
-		Path:        &initialPath,
-		ContentType: &contentType,
-		SizeBytes:   &sizeBytes,
-	}); err != nil {
-		t.Fatalf("create initial object: %v", err)
-	}
+	createStoredObjectFixture(ctx, t, pool, objectID, initialPath)
 
 	uploadErr := make(chan error, 1)
 	go func() {

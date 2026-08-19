@@ -17,14 +17,10 @@ func TestObjectLifecycle(t *testing.T) {
 
 	// Create object metadata
 	objectID := fmt.Sprintf("%s-object-lifecycle", prefix)
-	path := fmt.Sprintf("objects/%s/test-file.json", objectID)
 	createPayload := map[string]interface{}{
-		"object_id":    objectID,
-		"path":         path,
-		"content_type": "application/json",
-		"type":         "data",
-		"size_bytes":   1024,
-		"usage_hints":  []string{"integration-test"},
+		"object_id":   objectID,
+		"type":        "data",
+		"usage_hints": []string{"integration-test"},
 	}
 
 	respCreate, err := client.Post(ctx, "/objects", createPayload)
@@ -151,9 +147,8 @@ func TestObjectWithReferences(t *testing.T) {
 	// Create object with references
 	objectID := fmt.Sprintf("%s-object-with-refs", prefix)
 	createPayload := map[string]interface{}{
-		"object_id":    objectID,
-		"content_type": "image/jpeg",
-		"type":         "capture",
+		"object_id": objectID,
+		"type":      "capture",
 		"referenced_by": []map[string]interface{}{
 			{"entity_id": entityID},
 			{"task_id": taskID},
@@ -231,9 +226,8 @@ func TestObjectsByEntity(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		objectID := fmt.Sprintf("%s-entity-object-%d", prefix, i)
 		createPayload := map[string]interface{}{
-			"object_id":    objectID,
-			"content_type": "application/octet-stream",
-			"type":         "sensor-data",
+			"object_id": objectID,
+			"type":      "sensor-data",
 			"referenced_by": []map[string]interface{}{
 				{"entity_id": entityID},
 			},
@@ -326,9 +320,8 @@ func TestObjectsByTask(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		objectID := fmt.Sprintf("%s-task-object-%d", prefix, i)
 		createPayload := map[string]interface{}{
-			"object_id":    objectID,
-			"content_type": "text/plain",
-			"type":         "log",
+			"object_id": objectID,
+			"type":      "log",
 			"referenced_by": []map[string]interface{}{
 				{"task_id": taskID},
 			},

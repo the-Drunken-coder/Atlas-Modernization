@@ -25,16 +25,14 @@ func TestCreateDeleteAndUniqueValueRacesDoNotDeadlock(t *testing.T) {
 	parentID := fmt.Sprintf("race-parent-%d", suffix)
 	aliasOwnerID := fmt.Sprintf("race-alias-owner-%d", suffix)
 	aliasCreateID := fmt.Sprintf("race-alias-create-%d", suffix)
-	pathOwnerID := fmt.Sprintf("race-path-owner-%d", suffix)
-	pathCreateID := fmt.Sprintf("race-path-create-%d", suffix)
-	ids := []string{entityID, taskID, objectID, parentID, aliasOwnerID, aliasCreateID, pathOwnerID, pathCreateID}
+	ids := []string{entityID, taskID, objectID, parentID, aliasOwnerID, aliasCreateID}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cleanupCancel()
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM tasks WHERE task_id = $1`, taskID)
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{entityID, parentID, aliasOwnerID, aliasCreateID})
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = ANY($1)`, []string{objectID, pathOwnerID, pathCreateID})
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = ANY($1)`, []string{objectID, pathOwnerID, pathCreateID})
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM objects WHERE object_id = $1`, objectID)
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM object_deletion_fences WHERE object_id = $1`, objectID)
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM atlas_change_events WHERE event->>'id' = ANY($1)`, ids)
 	})
 
@@ -74,18 +72,6 @@ func TestCreateDeleteAndUniqueValueRacesDoNotDeadlock(t *testing.T) {
 		return err
 	}, func() error {
 		_, err := entityActions.Update(ctx, aliasOwnerID, UpdateEntityParams{Alias: &alias})
-		return err
-	})
-
-	if _, err := objectActions.Create(ctx, CreateObjectParams{ObjectID: pathOwnerID}); err != nil {
-		t.Fatalf("create path owner: %v", err)
-	}
-	path := fmt.Sprintf("objects/race-%d/blob", suffix)
-	runMutationRace(t, "object create versus path update", func() error {
-		_, err := objectActions.Create(ctx, CreateObjectParams{ObjectID: pathCreateID, Path: &path})
-		return err
-	}, func() error {
-		_, err := objectActions.Update(ctx, pathOwnerID, UpdateObjectParams{Path: &path})
 		return err
 	})
 }

@@ -228,10 +228,10 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
   return {
     object_id: request.object_id,
     type: request.type ?? null,
-    path: request.path ?? null,
+    path: null,
     bucket: null,
-    content_type: request.content_type ?? null,
-    size_bytes: request.size_bytes ?? null,
+    content_type: null,
+    size_bytes: null,
     usage_hints: request.usage_hints ?? [],
     referenced_by: request.referenced_by ?? [],
     metadata: metadata(version),

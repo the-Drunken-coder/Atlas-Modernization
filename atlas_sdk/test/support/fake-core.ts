@@ -423,10 +423,10 @@ export class FakeCore {
     const version = this.nextVersion();
     const value: ObjectResource = {
       object_id: request.object_id,
-      path: request.path ?? null,
-      content_type: request.content_type ?? null,
+      path: null,
+      content_type: null,
       type: request.type ?? null,
-      size_bytes: request.size_bytes ?? null,
+      size_bytes: null,
       usage_hints: request.usage_hints ?? [],
       ...(request.referenced_by === undefined ? {} : { referenced_by: request.referenced_by }),
       bucket: null,
@@ -445,10 +445,7 @@ export class FakeCore {
     }
     const value = this.upsertObject({
       ...current,
-      ...(patch.path === undefined ? {} : { path: patch.path }),
-      ...(patch.content_type === undefined ? {} : { content_type: patch.content_type }),
       ...(patch.type === undefined ? {} : { type: patch.type }),
-      ...(patch.size_bytes === undefined ? {} : { size_bytes: patch.size_bytes }),
       ...(patch.usage_hints === undefined ? {} : { usage_hints: patch.usage_hints }),
       ...(patch.referenced_by === undefined ? {} : { referenced_by: patch.referenced_by })
     });

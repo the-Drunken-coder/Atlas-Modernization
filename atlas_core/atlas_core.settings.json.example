@@ -1,5 +1,4 @@
 {
-  "debug": false,
   "log_level": "INFO",
   "enable_api_auth": false,
   "_api_auth_key_note": "Generate a strong random key and replace api_auth_key before setting enable_api_auth to true.",

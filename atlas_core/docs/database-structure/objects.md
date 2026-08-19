@@ -1,6 +1,6 @@
 # Objects JSON Guide
 
-_Revision: 2026-08-03_
+_Revision: 2026-08-19_
 
 Atlas Core stores object metadata in `objects`, with selected fields promoted to columns.
 Binary content is served through the storage client when configured.
@@ -28,22 +28,23 @@ Implementation references:
 
 Common keys in `json`:
 
-- `bucket` (string, server-generated from the configured storage bucket; read-only in API create/update bodies)
-- `size_bytes` (non-negative integer)
+- `bucket` (string, set by upload from the configured storage bucket)
+- `size_bytes` (non-negative integer, set by upload from the stored blob)
 - `usage_hints` (array of strings)
 - `referenced_by` (array of objects, each with `entity_id` and/or `task_id`)
 - additional metadata in extra keys
 
-Promoted fields (`path`, `content_type`, `type`) are stored as columns, not in the blob.
+Promoted fields (`path`, `content_type`, `type`) are stored as columns, not in the blob. Uploads own
+`path` and `content_type`; `type` remains descriptive metadata that clients may set.
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/objects` | `GET` | List object metadata (paginated) |
-| `/objects` | `POST` | Create object metadata |
+| `/objects` | `POST` | Create descriptive object metadata; blob facts are not accepted |
 | `/objects/{object_id}` | `GET` | Fetch object metadata |
-| `/objects/{object_id}` | `PATCH` | Update object metadata |
+| `/objects/{object_id}` | `PATCH` | Update descriptive object metadata; blob facts are not accepted |
 | `/objects/{object_id}` | `DELETE` | Delete object metadata |
 | `/objects/upload` | `POST` | Multipart upload: form fields `object_id`, `file` (required); optional `usage_hint` (singular), `type`. Does not accept `referenced_by` — use `PATCH` after upload. |
 | `/objects/{object_id}/download` | `GET` | Download file attachment |
@@ -57,9 +58,10 @@ after `POST /objects/upload` via a follow-up `PATCH`.
 
 `GET /objects` list responses omit `referenced_by` for compactness; `GET /objects/{object_id}` returns full metadata including `referenced_by`. `PATCH /objects/{object_id}` supports optimistic concurrency via `If-Match` / ETag from `GET`; object ETags are based on the monotonic object `version`.
 
-`bucket` is returned as storage metadata, but clients must not send it in `POST /objects` or
-`PATCH /objects/{object_id}`. Downloads always use Atlas Core's configured storage bucket and the
-stored object path, so the server generates `bucket` metadata from that configured bucket.
+`path`, `content_type`, `size_bytes`, and `bucket` are returned as storage metadata, but clients must
+not send them in `POST /objects` or `PATCH /objects/{object_id}`. `POST /objects/upload` derives these
+blob facts from the stored file and Atlas Core's configured storage bucket. Downloads use the stored
+path and bucket.
 
 When `DELETE /objects/{object_id}` removes metadata for an object with a stored
 blob path, Atlas Core also records that blob path in `storage_deletion_outbox`
@@ -72,10 +74,9 @@ PostgreSQL and blob storage. An upload owns a renewable lease until its metadata
 commit. If Core stops after writing the blob, the reconciler waits for the lease
 and orphan grace period, then serializes its live-reference decision with object
 metadata writes before queuing the unreferenced blob in
-`storage_deletion_outbox`. Object path writers reject paths reserved by an
-upload intent or deletion outbox row, both before waiting for the database
-write lock and again inside their transaction, so a deletion already in progress
-cannot be outwaited and reused by live metadata. After blob deletion succeeds,
+`storage_deletion_outbox`. Upload path reservation rejects paths already used by
+object metadata, an upload intent, or a deletion outbox row before the blob write,
+so a deletion already in progress cannot be outwaited and reused. After blob deletion succeeds,
 the outbox row remains with an infinite next-attempt timestamp as a permanent
 path tombstone; generated blob paths are never reused.
 

@@ -1,9 +1,6 @@
 {
   "object_id": "object-001",
-  "path": "objects/object-001/1",
-  "content_type": "image/png",
   "type": "image",
-  "size_bytes": 4096,
   "usage_hints": ["thumbnail"],
   "referenced_by": [
     {
