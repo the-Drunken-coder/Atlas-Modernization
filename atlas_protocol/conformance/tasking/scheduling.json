@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "name": "queued work is released in tasking order",
+      "scheduling": "queued",
+      "created_task_ids": ["task-1", "task-2"],
+      "expected_release_order": ["task-1", "task-2"]
+    },
+    {
+      "name": "immediate work may overlap queued work",
+      "scheduling": "immediate",
+      "created_task_ids": ["task-queued", "task-immediate"],
+      "expected_release_order": ["task-immediate"]
+    }
+  ]
+}

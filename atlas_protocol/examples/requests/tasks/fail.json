@@ -1,0 +1,6 @@
+{
+  "failure": {
+    "code": "execution_failed",
+    "message": "The fixture execution module rejected the request."
+  }
+}

@@ -18,11 +18,6 @@ func TestEntityExamplesValidate(t *testing.T) {
 	assertExamplesValidate(t, filepath.Join(root, "examples", "entities"), protocol.ValidateEntityBlob)
 }
 
-func TestTaskExamplesValidate(t *testing.T) {
-	root := moduleRoot(t)
-	assertExamplesValidate(t, filepath.Join(root, "examples", "tasks"), protocol.ValidateTaskBlob)
-}
-
 func TestObjectExamplesValidate(t *testing.T) {
 	root := moduleRoot(t)
 	assertExamplesValidate(t, filepath.Join(root, "examples", "objects"), protocol.ValidateObjectBlob)
@@ -198,544 +193,6 @@ func TestFeedControlMessageMarshalingPinsAndValidatesDiscriminators(t *testing.T
 	}
 }
 
-func TestTaskDeleteFeedEventAllowsEntityIDContext(t *testing.T) {
-	tests := []struct {
-		name    string
-		event   map[string]any
-		wantErr bool
-	}{
-		{
-			name: "populated",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     "asset-1",
-			},
-		},
-		{
-			name: "null",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     nil,
-			},
-		},
-		{
-			name: "omitted",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-			},
-		},
-		{
-			name: "empty",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     "",
-			},
-			wantErr: true,
-		},
-		{
-			name: "blank",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     " ",
-			},
-			wantErr: true,
-		},
-		{
-			name: "number",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     42,
-			},
-			wantErr: true,
-		},
-		{
-			name: "array",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     []any{"asset-1"},
-			},
-			wantErr: true,
-		},
-		{
-			name: "object",
-			event: map[string]any{
-				"event":         "delete",
-				"resource_type": "task",
-				"id":            "task-1",
-				"version":       1,
-				"entity_id":     map[string]any{"id": "asset-1"},
-			},
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errors := protocol.ValidateFeedEvent(tt.event)
-			if tt.wantErr {
-				assertErrorContains(t, errors, "entity_id")
-				return
-			}
-			if len(errors) > 0 {
-				t.Fatalf("ValidateFeedEvent errors = %v", errors)
-			}
-		})
-	}
-}
-
-func TestTaskUpdateFeedEventAllowsPreviousEntityIDContext(t *testing.T) {
-	tests := []struct {
-		name    string
-		event   map[string]any
-		wantErr bool
-	}{
-		{name: "populated", event: taskUpdateEventWithPreviousEntityID("asset-1", true)},
-		{name: "null", event: taskUpdateEventWithPreviousEntityID(nil, true)},
-		{name: "omitted", event: taskUpdateEventWithPreviousEntityID(nil, false)},
-		{name: "empty", event: taskUpdateEventWithPreviousEntityID("", true), wantErr: true},
-		{name: "blank", event: taskUpdateEventWithPreviousEntityID(" ", true), wantErr: true},
-		{name: "number", event: taskUpdateEventWithPreviousEntityID(42, true), wantErr: true},
-		{name: "array", event: taskUpdateEventWithPreviousEntityID([]any{"asset-1"}, true), wantErr: true},
-		{name: "object", event: taskUpdateEventWithPreviousEntityID(map[string]any{"id": "asset-1"}, true), wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errors := protocol.ValidateFeedEvent(tt.event)
-			if tt.wantErr {
-				assertErrorContains(t, errors, "previous_entity_id")
-				return
-			}
-			if len(errors) > 0 {
-				t.Fatalf("ValidateFeedEvent errors = %v", errors)
-			}
-		})
-	}
-}
-
-func taskUpdateEventWithPreviousEntityID(previousEntityID any, includePreviousEntityID bool) map[string]any {
-	event := map[string]any{
-		"event":         "update",
-		"resource_type": "task",
-		"id":            "task-1",
-		"version":       1,
-		"resource": map[string]any{
-			"task_id":    "task-1",
-			"status":     "acknowledged",
-			"entity_id":  "asset-2",
-			"components": map[string]any{},
-			"metadata": map[string]any{
-				"created_at": "2026-06-12T12:00:00Z",
-				"updated_at": "2026-06-12T12:01:00Z",
-				"version":    1,
-			},
-		},
-	}
-	if includePreviousEntityID {
-		event["previous_entity_id"] = previousEntityID
-	}
-	return event
-}
-
-func TestFeedEventMarshalRejectsInvalidVariantFields(t *testing.T) {
-	previousEntityID := "asset-1"
-	entityID := "asset-1"
-	tests := []struct {
-		name  string
-		event protocol.FeedEvent
-	}{
-		{
-			name: "previous entity outside task update",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventCreate,
-				ResourceType:     protocol.ResourceTypeEntity,
-				ID:               "asset-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "entity id on entity delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on entity create",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventCreate,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on entity update",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventUpdate,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on object create",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventCreate,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on object update",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventUpdate,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on object delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on task create",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventCreate,
-				ResourceType: protocol.ResourceTypeTask,
-				ID:           "task-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "entity id on task update",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventUpdate,
-				ResourceType: protocol.ResourceTypeTask,
-				ID:           "task-1",
-				Version:      1,
-				EntityID:     &entityID,
-			},
-		},
-		{
-			name: "previous entity on entity delete",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventDelete,
-				ResourceType:     protocol.ResourceTypeEntity,
-				ID:               "asset-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "previous entity on entity update",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventUpdate,
-				ResourceType:     protocol.ResourceTypeEntity,
-				ID:               "asset-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "previous entity on object create",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventCreate,
-				ResourceType:     protocol.ResourceTypeObject,
-				ID:               "object-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "previous entity on object update",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventUpdate,
-				ResourceType:     protocol.ResourceTypeObject,
-				ID:               "object-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "previous entity on object delete",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventDelete,
-				ResourceType:     protocol.ResourceTypeObject,
-				ID:               "object-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "previous entity on task create",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventCreate,
-				ResourceType:     protocol.ResourceTypeTask,
-				ID:               "task-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "previous entity on task delete",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventDelete,
-				ResourceType:     protocol.ResourceTypeTask,
-				ID:               "task-1",
-				Version:          1,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-		{
-			name: "resource on object delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      1,
-				Resource:     map[string]any{"object_id": "object-1"},
-			},
-		},
-		{
-			name: "resource on entity delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      1,
-				Resource:     map[string]any{"entity_id": "asset-1"},
-			},
-		},
-		{
-			name: "resource on task delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeTask,
-				ID:           "task-1",
-				Version:      1,
-				Resource:     map[string]any{"task_id": "task-1"},
-			},
-		},
-		{
-			name: "both entity_id and previous_entity_id",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventUpdate,
-				ResourceType:     protocol.ResourceTypeTask,
-				ID:               "task-1",
-				Version:          2,
-				EntityID:         &entityID,
-				PreviousEntityID: &previousEntityID,
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if _, err := json.Marshal(tt.event); err == nil {
-				t.Fatal("json.Marshal accepted invalid FeedEvent variant fields")
-			}
-		})
-	}
-}
-
-func TestFeedEventMarshalAcceptsValidVariant(t *testing.T) {
-	taskEntityID := "asset-1"
-	entityResource := protocol.EntityResource{
-		EntityID:   "asset-1",
-		EntityType: "asset",
-		Components: map[string]protocol.JSONValue{},
-		Metadata: protocol.MetadataBlock{
-			CreatedAt: "2026-06-12T12:00:00Z",
-			UpdatedAt: "2026-06-12T12:01:00Z",
-			Version:   1,
-		},
-	}
-	objectResource := protocol.ObjectResource{
-		ObjectID:   "object-1",
-		UsageHints: []string{},
-		Metadata: protocol.MetadataBlock{
-			CreatedAt: "2026-06-12T12:00:00Z",
-			UpdatedAt: "2026-06-12T12:01:00Z",
-			Version:   1,
-		},
-	}
-	taskResource := protocol.TaskResource{
-		TaskID:     "task-1",
-		Status:     "pending",
-		Components: map[string]protocol.JSONValue{},
-		Metadata: protocol.MetadataBlock{
-			CreatedAt: "2026-06-12T12:00:00Z",
-			UpdatedAt: "2026-06-12T12:01:00Z",
-			Version:   1,
-		},
-	}
-	tests := []struct {
-		name  string
-		event protocol.FeedEvent
-	}{
-		{
-			name: "entity create",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventCreate,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      1,
-				Resource:     entityResource,
-			},
-		},
-		{
-			name: "entity update",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventUpdate,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      2,
-				Resource:     entityResource,
-			},
-		},
-		{
-			name: "entity delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeEntity,
-				ID:           "asset-1",
-				Version:      3,
-			},
-		},
-		{
-			name: "object create",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventCreate,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      1,
-				Resource:     objectResource,
-			},
-		},
-		{
-			name: "object update",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventUpdate,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      2,
-				Resource:     objectResource,
-			},
-		},
-		{
-			name: "object delete",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeObject,
-				ID:           "object-1",
-				Version:      1,
-			},
-		},
-		{
-			name: "task create",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventCreate,
-				ResourceType: protocol.ResourceTypeTask,
-				ID:           "task-1",
-				Version:      1,
-				Resource:     taskResource,
-			},
-		},
-		{
-			name: "task update without previous entity",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventUpdate,
-				ResourceType: protocol.ResourceTypeTask,
-				ID:           "task-1",
-				Version:      2,
-				Resource:     taskResource,
-			},
-		},
-		{
-			name: "task update previous entity",
-			event: protocol.FeedEvent{
-				Event:            protocol.FeedEventUpdate,
-				ResourceType:     protocol.ResourceTypeTask,
-				ID:               "task-1",
-				Version:          2,
-				PreviousEntityID: &taskEntityID,
-				Resource: protocol.TaskResource{
-					TaskID:     "task-1",
-					Status:     "acknowledged",
-					EntityID:   &taskEntityID,
-					Components: map[string]protocol.JSONValue{},
-					Metadata: protocol.MetadataBlock{
-						CreatedAt: "2026-06-12T12:00:00Z",
-						UpdatedAt: "2026-06-12T12:01:00Z",
-						Version:   2,
-					},
-				},
-			},
-		},
-		{
-			name: "task delete entity",
-			event: protocol.FeedEvent{
-				Event:        protocol.FeedEventDelete,
-				ResourceType: protocol.ResourceTypeTask,
-				ID:           "task-1",
-				Version:      3,
-				EntityID:     &taskEntityID,
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := json.Marshal(tt.event)
-			if err != nil {
-				t.Fatalf("json.Marshal(valid FeedEvent) error = %v", err)
-			}
-			var decoded protocol.FeedEvent
-			if err := json.Unmarshal(data, &decoded); err != nil {
-				t.Fatalf("json.Unmarshal(valid FeedEvent JSON) error = %v", err)
-			}
-			if errors := protocol.ValidateFeedEvent(json.RawMessage(data)); len(errors) > 0 {
-				t.Fatalf("marshaled FeedEvent did not validate: %v\n%s", errors, string(data))
-			}
-		})
-	}
-}
-
 func TestEntityComponentKeys(t *testing.T) {
 	valid := map[string]any{
 		"components": map[string]any{
@@ -766,15 +223,6 @@ func TestComponentValidationUnknownKeysAreSorted(t *testing.T) {
 		t.Fatalf("ValidateEntityComponents unknown errors = %v, want %v", entityErrors, wantEntityErrors)
 	}
 
-	taskErrors := protocol.ValidateTaskComponents(map[string]any{
-		"z_unknown":   true,
-		"a_unknown":   true,
-		"custom_free": true,
-	})
-	wantTaskErrors := []string{`Unknown component "a_unknown"`, `Unknown component "z_unknown"`}
-	if !reflect.DeepEqual(taskErrors, wantTaskErrors) {
-		t.Fatalf("ValidateTaskComponents unknown errors = %v, want %v", taskErrors, wantTaskErrors)
-	}
 }
 
 func TestTelemetryValidation(t *testing.T) {
@@ -910,9 +358,7 @@ func TestResponseValidatorsApplyNestedGeometrySemantics(t *testing.T) {
 			"coordinates": []any{[]any{[]any{0.0, 0.0}, []any{1.0, 0.0}, []any{1.0, 1.0}, []any{0.0, 1.0}}},
 		},
 	})
-	checkIn := map[string]any{
-		"entity": entity, "tasks": []any{}, "task_count": 0, "task_limit": 10, "has_more_tasks": false,
-	}
+	checkIn := map[string]any{"entity": entity}
 	fullDataset := map[string]any{
 		"entities": []any{entity}, "tasks": []any{}, "objects": []any{}, "version": 1,
 		"has_more_entities": false, "has_more_tasks": false, "has_more_objects": false,
@@ -938,20 +384,6 @@ func TestResponseValidatorsApplyNestedGeometrySemantics(t *testing.T) {
 }
 
 func TestResponseValidatorsRequireContinuationCursors(t *testing.T) {
-	entity := responseEntity(map[string]any{})
-	checkIn := map[string]any{
-		"entity": entity, "tasks": []any{}, "task_count": 0, "task_limit": 10, "has_more_tasks": true,
-	}
-	for name, validate := range map[string]func(any) []string{
-		"check-in full":    protocol.ValidateEntityCheckInFullResponse,
-		"check-in minimal": protocol.ValidateEntityCheckInMinimalResponse,
-		"check-in union":   protocol.ValidateEntityCheckInResponse,
-	} {
-		t.Run(name, func(t *testing.T) {
-			assertErrorContains(t, validate(checkIn), "next_task_cursor")
-		})
-	}
-
 	assertErrorContains(t, protocol.ValidateChangedSinceResponse(map[string]any{
 		"events": []any{}, "has_more": true, "version": 1,
 	}), "next_cursor")
@@ -1033,9 +465,6 @@ func TestCanonicalJSONSchemaConstraints(t *testing.T) {
 
 func TestEntityComponentPayloadValidation(t *testing.T) {
 	valid := map[string]any{
-		"task_catalog": map[string]any{
-			"supported_tasks": []any{"move_to_location", "survey_grid"},
-		},
 		"health": map[string]any{
 			"battery_percent": 76.0,
 		},
@@ -1045,10 +474,6 @@ func TestEntityComponentPayloadValidation(t *testing.T) {
 		},
 		"communications": map[string]any{
 			"link_state": "connected",
-		},
-		"task_queue": map[string]any{
-			"current_task_id": nil,
-			"queued_task_ids": []any{"task-1"},
 		},
 		"status": map[string]any{
 			"value":       "available",
@@ -1080,7 +505,6 @@ func TestEntityComponentPayloadValidation(t *testing.T) {
 		components map[string]any
 		contains   string
 	}{
-		{name: "bad task catalog", components: map[string]any{"task_catalog": map[string]any{"supported_tasks": []any{"move", ""}}}, contains: "task_catalog.supported_tasks.1"},
 		{name: "bad health", components: map[string]any{"health": map[string]any{"battery_percent": 101.0}}, contains: "health.battery_percent"},
 		{name: "null health battery", components: map[string]any{"health": map[string]any{"battery_percent": nil}}, contains: "health.battery_percent"},
 		{name: "bad classification", components: map[string]any{"mil_view": map[string]any{"classification": "enemy"}}, contains: "mil_view.classification"},
@@ -1088,8 +512,6 @@ func TestEntityComponentPayloadValidation(t *testing.T) {
 		{name: "null last seen", components: map[string]any{"mil_view": map[string]any{"last_seen": nil}}, contains: "mil_view.last_seen"},
 		{name: "bad link state", components: map[string]any{"communications": map[string]any{"link_state": "offline"}}, contains: "communications.link_state"},
 		{name: "null link state", components: map[string]any{"communications": map[string]any{"link_state": nil}}, contains: "communications.link_state"},
-		{name: "bad queue id", components: map[string]any{"task_queue": map[string]any{"current_task_id": " "}}, contains: "task_queue.current_task_id"},
-		{name: "null queued task ids", components: map[string]any{"task_queue": map[string]any{"queued_task_ids": nil}}, contains: "task_queue.queued_task_ids"},
 		{name: "bad status", components: map[string]any{"status": map[string]any{"value": ""}}, contains: "status.value"},
 		{name: "bad heartbeat", components: map[string]any{"heartbeat": map[string]any{}}, contains: "heartbeat.last_seen"},
 		{name: "bad media role", components: map[string]any{"media_refs": []any{map[string]any{"object_id": "obj-1", "role": "bad"}}}, contains: "media_refs.0.role"},
@@ -1105,41 +527,34 @@ func TestEntityComponentPayloadValidation(t *testing.T) {
 
 func TestTaskValidation(t *testing.T) {
 	valid := map[string]any{
-		"command": map[string]any{"type": "move_to_location"},
-		"parameters": map[string]any{
-			"latitude":   40.7,
-			"longitude":  -73.9,
-			"altitude_m": 120,
-		},
-		"progress": map[string]any{
-			"percent":       75.5,
-			"updated_at":    "2026-05-29T10:00:00Z",
-			"status_detail": "en route",
-		},
-		"custom_note": "operator supplied",
+		"task_id": "task-1", "asset_id": "asset-1", "command": "fixture.immediate",
+		"input": map[string]any{"value": 1}, "status": "in_progress", "progress": 0.75,
+		"created_at": "2026-05-29T10:00:00Z", "updated_at": "2026-05-29T10:01:00Z",
+		"acknowledged_at": "2026-05-29T10:00:10Z", "started_at": "2026-05-29T10:00:20Z",
 	}
-	if errors := protocol.ValidateTaskComponents(valid); len(errors) > 0 {
-		t.Fatalf("ValidateTaskComponents(valid) errors = %v", errors)
+	if errors := protocol.ValidateTaskResource(valid); len(errors) > 0 {
+		t.Fatalf("ValidateTaskResource(valid) errors = %v", errors)
 	}
 
 	tests := []struct {
-		name       string
-		components map[string]any
-		contains   []string
+		name     string
+		resource map[string]any
+		contains string
 	}{
-		{name: "legacy command string rejected", components: map[string]any{"command": "legacy"}, contains: []string{"command"}},
-		{name: "unknown key", components: map[string]any{"unknown": true}, contains: []string{`Unknown component "unknown"`}},
-		{name: "missing command type", components: map[string]any{"command": map[string]any{}}, contains: []string{"command.type"}},
-		{name: "empty command type", components: map[string]any{"command": map[string]any{"type": "   "}}, contains: []string{"command.type"}},
-		{name: "bad parameters latitude", components: map[string]any{"parameters": map[string]any{"latitude": 91.0}}, contains: []string{"parameters.latitude"}},
-		{name: "bad progress percent", components: map[string]any{"progress": map[string]any{"percent": 101.0}}, contains: []string{"progress.percent"}},
-		{name: "bad progress timestamp", components: map[string]any{"progress": map[string]any{"updated_at": "not-a-date"}}, contains: []string{"progress.updated_at"}},
-		{name: "bad status message", components: map[string]any{"status_message": 123}, contains: []string{"status_message"}},
-		{name: "null status message", components: map[string]any{"status_message": nil}, contains: []string{"status_message"}},
+		{name: "null task id", resource: map[string]any{"task_id": nil}, contains: "task_id"},
+		{name: "bad progress", resource: map[string]any{"progress": 1.1}, contains: "progress"},
+		{name: "legacy components", resource: map[string]any{"components": map[string]any{}}, contains: "components"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertErrorsContainAll(t, protocol.ValidateTaskComponents(tt.components), tt.contains...)
+			resource := make(map[string]any, len(valid)+len(tt.resource))
+			for key, value := range valid {
+				resource[key] = value
+			}
+			for key, value := range tt.resource {
+				resource[key] = value
+			}
+			assertErrorContains(t, protocol.ValidateTaskResource(resource), tt.contains)
 		})
 	}
 }
@@ -1197,12 +612,7 @@ func TestRawJSONValidatorsRejectTrailingValues(t *testing.T) {
 			validate: protocol.ValidateEntityBlob,
 			contains: "trailing JSON value",
 		},
-		{
-			name:     "task",
-			raw:      json.RawMessage(`{"components":{}}{"extra":true}`),
-			validate: protocol.ValidateTaskBlob,
-			contains: "trailing JSON value",
-		},
+		{name: "task", raw: json.RawMessage(`{"asset_id":"asset-1","command":"fixture.immediate","input":{}}{"extra":true}`), validate: protocol.ValidateTaskCreateRequest, contains: "trailing JSON value"},
 		{
 			name:     "object",
 			raw:      json.RawMessage(`{"size_bytes":1}{"bad":true}`),

@@ -1,0 +1,15 @@
+{
+  "task_id": "task-123",
+  "asset_id": "asset-456",
+  "command": "fixture.queued",
+  "input": { "value": "inspect-sector-7" },
+  "status": "cancelled",
+  "cancellation": {
+    "code": "requested",
+    "message": "Atlas withdrew the Task."
+  },
+  "created_at": "2026-08-17T14:30:00Z",
+  "acknowledged_at": "2026-08-17T14:30:01Z",
+  "finished_at": "2026-08-17T14:30:20Z",
+  "updated_at": "2026-08-17T14:30:20Z"
+}

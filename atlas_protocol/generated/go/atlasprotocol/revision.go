@@ -3,4 +3,4 @@
 package atlasprotocol
 
 // ProtocolRevision identifies the protocol JSON Schema source used to generate this package.
-const ProtocolRevision = "sha256:c5dd08b7108a6387bc13225e169025944719f950225096bfd80cb6676d3c22a8"
+const ProtocolRevision = "sha256:d8737e47f13b7a2e01569f25aee5bc28c3948695117dbb30c9dcbe488176a22e"

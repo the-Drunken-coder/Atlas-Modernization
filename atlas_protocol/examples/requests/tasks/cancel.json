@@ -1,0 +1,6 @@
+{
+  "cancellation": {
+    "code": "requested",
+    "message": "Atlas withdrew the Task."
+  }
+}

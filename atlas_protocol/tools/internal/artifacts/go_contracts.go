@@ -35,12 +35,8 @@ type goTypeOverride struct {
 var goStructContracts = []goStructContract{
 	{goType: "ErrorResponse"},
 	{goType: "MetadataBlock"},
-	{goType: "CommandParameterSchema", typeOverrides: map[string]goTypeOverride{
-		"minimum": {schemaType: "float64", goType: "*float64"},
-		"maximum": {schemaType: "float64", goType: "*float64"},
-	}},
 	{goType: "CommandDefinition"},
-	{goType: "CommandCatalog"},
+	{goType: "CommandManifestEntry"},
 	{goType: "ProtocolRevisionResponse"},
 	{goType: "EntityCheckInRequest", typeOverrides: map[string]goTypeOverride{
 		"status":      {schemaType: "string", goType: "*string"},
@@ -50,24 +46,38 @@ var goStructContracts = []goStructContract{
 		"speed_m_s":   {schemaType: "float64", goType: "*float64"},
 		"heading_deg": {schemaType: "float64", goType: "*float64"},
 	}},
-	{goType: "EntityResource"},
-	{goType: "TaskResource"},
+	{goType: "EntityResource", typeOverrides: map[string]goTypeOverride{
+		"command_manifest": {schemaType: "[]CommandManifestEntry", goType: "*CommandManifest"},
+	}},
+	{goType: "TaskResource", typeOverrides: map[string]goTypeOverride{
+		"progress":     {schemaType: "float64", goType: "*float64"},
+		"failure":      {schemaType: "TaskFailure", goType: "*TaskFailure"},
+		"cancellation": {schemaType: "TaskCancellation", goType: "*TaskCancellation"},
+	}},
+	{goType: "TaskFailure"},
+	{goType: "TaskCancellation"},
+	{goType: "TaskCreateRequest"},
+	{goType: "TaskAcknowledgeRequest"},
+	{goType: "TaskStartRequest"},
+	{goType: "TaskProgressRequest"},
+	{goType: "TaskCompleteRequest"},
+	{goType: "TaskFailRequest"},
+	{goType: "TaskCancelRequest"},
+	{goType: "RuntimeRegistrationRequest"},
+	{goType: "RuntimeReadyRequest"},
+	{goType: "RuntimeTaskDeliveryResponse"},
 	{goType: "ObjectReference", typeOverrides: map[string]goTypeOverride{
 		"entity_id": {schemaType: "string", goType: "*string"},
 		"task_id":   {schemaType: "string", goType: "*string"},
 	}},
 	{goType: "ObjectResource"},
 	{goType: "ObjectDetailResource"},
-	{goType: "EntityCheckInMinimalTask", typeOverrides: map[string]goTypeOverride{
-		"parameters": {schemaType: "JSONValue", goType: "*JSONValue"},
-	}},
 	{goType: "EntityCheckInFullResponse"},
 	{goType: "EntityCheckInMinimalResponse"},
 	{goType: "FullDatasetResponse"},
 	{goType: "ChangedSinceResponse"},
 	{goType: "FeedEvent"},
 	{goType: "EntityDeleteEvent", syntheticFields: map[string]string{"event": "FeedEventDelete", "resource_type": "ResourceTypeEntity"}},
-	{goType: "TaskDeleteEvent", syntheticFields: map[string]string{"event": "FeedEventDelete", "resource_type": "ResourceTypeTask"}},
 	{goType: "ObjectDeleteEvent", syntheticFields: map[string]string{"event": "FeedEventDelete", "resource_type": "ResourceTypeObject"}},
 	{goType: "FeedAuthMessage"},
 	{goType: "FeedSubscriptionMessage", definitions: []string{"FeedSubscribeMessage", "FeedUnsubscribeMessage"}},
@@ -88,6 +98,10 @@ var goEnumContracts = []goEnumContract{
 	{goType: "ResourceType", aliasedFields: []string{"resource_type"}},
 	{goType: "FeedEventName", definitions: []string{"FeedEvent"}, property: "event", aliasedFields: []string{"event"}, constantPrefix: "FeedEvent"},
 	{goType: "ErrorCode"},
+	{goType: "CommandScheduling"},
+	{goType: "TaskStatus"},
+	{goType: "TaskFailureCode"},
+	{goType: "TaskCancellationCode"},
 	{goType: "FeedAction", definitions: []string{"FeedClientMessage"}, property: "action", aliasedFields: []string{"action"}},
 	{goType: "FeedFilter", definitions: []string{"FeedSubscribeMessage", "FeedUnsubscribeMessage"}, property: "filter", aliasedFields: []string{"filter"}},
 }
@@ -127,6 +141,9 @@ func validateGoContracts(root string, bundle schemaBundle) error {
 	if parsed.aliases["JSONValue"] != "any" {
 		return fmt.Errorf("go contract JSONValue must remain an alias of any, got %q", parsed.aliases["JSONValue"])
 	}
+	if parsed.aliases["CommandCatalog"] != "[]CommandDefinition" || parsed.aliases["CommandManifest"] != "[]CommandManifestEntry" {
+		return fmt.Errorf("go command catalog and manifest aliases must retain their typed array shapes")
+	}
 
 	defs, err := schemaDefs(bundle)
 	if err != nil {
@@ -139,7 +156,7 @@ func validateGoContracts(root string, bundle schemaBundle) error {
 }
 
 func validateGoTypeSurface(parsed parsedGoContracts) error {
-	expected := map[string]bool{"JSONValue": true}
+	expected := map[string]bool{"JSONValue": true, "CommandCatalog": true, "CommandManifest": true}
 	for _, contract := range goStructContracts {
 		expected[contract.goType] = true
 	}
@@ -201,6 +218,7 @@ func validateGoEnumContracts(parsed parsedGoContracts, defs map[string]any) erro
 	}
 	actualConstants := cloneBoolMap(parsed.exportedConstants)
 	delete(actualConstants, "ProtocolRevision")
+	delete(actualConstants, "CommandCatalogJSON")
 	if actual, expected := sortedBoolMapKeys(actualConstants), sortedBoolMapKeys(expectedConstantNames); !reflect.DeepEqual(actual, expected) {
 		return fmt.Errorf("authored Go constant surface drifted: Go=%v contracts=%v", actual, expected)
 	}
@@ -333,8 +351,8 @@ func parseGoContracts(directory string) (parsedGoContracts, error) {
 				}
 				if spec.Assign.IsValid() {
 					parsed.aliases[spec.Name.Name] = typeName
-					if exported && spec.Name.Name != "JSONValue" {
-						return parsedGoContracts{}, fmt.Errorf("go contract %s must be a defined type; only JSONValue may be an alias", spec.Name.Name)
+					if exported && spec.Name.Name != "JSONValue" && spec.Name.Name != "CommandCatalog" && spec.Name.Name != "CommandManifest" {
+						return parsedGoContracts{}, fmt.Errorf("go contract %s must be a defined type or an approved collection alias", spec.Name.Name)
 					}
 					continue
 				}

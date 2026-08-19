@@ -3,20 +3,16 @@
   "resource_type": "task",
   "id": "task-1",
   "version": 2,
-  "previous_entity_id": "asset-1",
   "resource": {
     "task_id": "task-1",
-    "status": "acknowledged",
-    "entity_id": "asset-2",
-    "components": {
-      "command": {
-        "type": "move_to_location"
-      }
+    "asset_id": "asset-1",
+    "command": "fixture.queued",
+    "input": {
+      "value": "inspect-sector-7"
     },
-    "metadata": {
-      "created_at": "2026-06-12T12:00:00Z",
-      "updated_at": "2026-06-12T12:01:00Z",
-      "version": 2
-    }
+    "status": "acknowledged",
+    "created_at": "2026-06-12T12:00:00Z",
+    "acknowledged_at": "2026-06-12T12:01:00Z",
+    "updated_at": "2026-06-12T12:01:00Z"
   }
 }

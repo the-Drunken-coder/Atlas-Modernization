@@ -1,0 +1,16 @@
+[
+  {
+    "command": "fixture.immediate",
+    "description": "Runs the independent fixture handler.",
+    "scheduling": "immediate",
+    "supports_cancel": true,
+    "supports_progress": false
+  },
+  {
+    "command": "fixture.queued",
+    "description": "Runs the bounded queued fixture handler.",
+    "scheduling": "queued",
+    "supports_cancel": true,
+    "supports_progress": true
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "name": "queued task completes",
+      "command": "fixture.queued",
+      "operations": ["acknowledge", "start", "progress", "complete"],
+      "statuses": ["acknowledged", "in_progress", "in_progress", "completed"]
+    },
+    {
+      "name": "immediate task starts without exposed acknowledgement",
+      "command": "fixture.immediate",
+      "operations": ["start", "complete"],
+      "statuses": ["in_progress", "completed"]
+    }
+  ]
+}

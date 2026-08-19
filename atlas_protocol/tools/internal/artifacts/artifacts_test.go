@@ -255,7 +255,6 @@ func TestTypeScriptSourceGeneratesInboundValidatorsFromCanonicalSchemas(t *testi
 	for _, name := range []string{
 		"ProtocolRevisionResponse",
 		"EntityCheckInRequest",
-		"EntityCheckInMinimalTask",
 		"EntityCheckInFullResponse",
 		"EntityCheckInMinimalResponse",
 		"EntityCheckInResponse",
@@ -324,12 +323,12 @@ func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
 				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
 			}
 		}`),
-		"TaskUpdateRequest": []byte(`{
+		"TaskProgressRequest": []byte(`{
 			"type": "object",
 			"additionalProperties": false,
 			"minProperties": 1,
 			"properties": {
-				"status": { "$ref": "#/$defs/%23NonEmptyString" }
+				"progress": { "type": "number", "minimum": 0, "maximum": 1 }
 			},
 			"$defs": {
 				"#NonEmptyString": { "type": "string", "pattern": "\\S" }
@@ -342,7 +341,7 @@ func TestTypeScriptSourceGeneratesMultipleRequestValidators(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"export function isEntityCreateRequest(value: unknown): value is EntityCreateRequest",
-		"export function isTaskUpdateRequest(value: unknown): value is TaskUpdateRequest",
+		"export function isTaskProgressRequest(value: unknown): value is TaskProgressRequest",
 		"Object.keys(value).length >= 1",
 	} {
 		if !strings.Contains(text, want) {
@@ -373,12 +372,7 @@ func TestRuntimeValidatorSourceDiscoversRequestDefinitions(t *testing.T) {
 
 func TestTypeScriptCommandCatalogValidatorIncludesSemanticValidation(t *testing.T) {
 	generator := &typeScriptGenerator{defs: map[string]typeScriptSchema{
-		"CommandCatalog": {
-			"type": "object",
-			"properties": map[string]any{
-				"commands": map[string]any{"type": "array"},
-			},
-		},
+		"CommandCatalog": {"type": "array"},
 	}}
 	source, err := runtimeValidatorSource(generator)
 	if err != nil {
@@ -387,7 +381,7 @@ func TestTypeScriptCommandCatalogValidatorIncludesSemanticValidation(t *testing.
 	if !strings.Contains(source, "atlasProtocolHasValidCommandCatalogSemantics(value)") {
 		t.Fatalf("command catalog validator missing semantic check:\n%s", source)
 	}
-	for _, want := range []string{"commandIDs.has", `parameter["type"] !== "number"`, `parameter["minimum"] as number`} {
+	for _, want := range []string{"commandIDs.has", `command["command"]`} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("command catalog validator helpers missing %q", want)
 		}

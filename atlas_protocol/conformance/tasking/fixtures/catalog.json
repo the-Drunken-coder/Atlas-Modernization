@@ -1,0 +1,16 @@
+[
+  {
+    "command": "fixture.immediate",
+    "name": "Immediate Fixture",
+    "description": "Execute independent fixture work immediately.",
+    "input_schema": "atlas.tasking.EmptyObject",
+    "scheduling": "immediate"
+  },
+  {
+    "command": "fixture.queued",
+    "name": "Queued Fixture",
+    "description": "Execute one bounded fixture operation from the Task Queue.",
+    "input_schema": "atlas.tasking.FixtureInput",
+    "output_schema": "atlas.tasking.FixtureOutput"
+  }
+]
