@@ -8,7 +8,7 @@ This project is greenfield: remove stale helpers and reshape contracts instead o
 
 - `src/auth/ui/` - the React login gate. It talks to Atlas Core `/admin/auth/*` through the SDK admin client.
 - `src/atlas/` - operational Atlas helpers for entities, tasks, objects, queries, sync, feed, geometry, typed command-catalog consumption, and command targeting.
-- `src/ui/` - the local design system.
+- `src/ui/` - the local design system and map rendering stack. MapLibre owns raster tiles and geographic camera projection; a Three.js custom layer shares its WebGL context and renders the live Atlas tactical scene.
 - `src/features/` - feature screens and panels.
 - `src/app/` - config loading, providers, routing, and the Vite entry point.
 
@@ -79,7 +79,7 @@ The generated local admin password is development-only. Set `ATLAS_ADMIN_PASSWOR
 
 ## Map Sources
 
-The authenticated workspace builds MapLibre raster styles from provider tile URL templates. `maptiler-osm-dark` (`MapTiler OSM Dark`) is the initial default when no explicit operator selection exists. Credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time. Google Satellite also requires a successful tile-session request; with a key but no session it remains visible as unavailable. If the configured default is unavailable, the interface uses its existing map-source error state instead of silently selecting another deployed source.
+The authenticated workspace builds MapLibre raster styles from provider tile URL templates. Atlas entities and geofeatures are rendered by Three.js in MapLibre's WebGL context, keeping GPU effects, selection pulses, headings, and geometry aligned to the basemap without a second canvas. `maptiler-osm-dark` (`MapTiler OSM Dark`) is the initial default when no explicit operator selection exists. Credentialed sources stay visible in the map selector and are disabled until their matching `VITE_*` env var is available at build/dev time. Google Satellite also requires a successful tile-session request; with a key but no session it remains visible as unavailable. If the configured default is unavailable, the interface uses its existing map-source error state instead of silently selecting another deployed source.
 
 Always available:
 

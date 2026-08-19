@@ -5,7 +5,7 @@
   grid-template-columns: auto 1fr;
   height: 100%;
   width: 100%;
-  background: var(--bg-app);
+  background: radial-gradient(circle at 68% 12%, #0b1b22 0, var(--bg-app) 38%, var(--bg-base) 100%);
 }
 
 .app-loading,
@@ -85,8 +85,11 @@
 .sidebar {
   display: grid;
   grid-template-columns: var(--rail-width) var(--panel-width) var(--sidebar-resizer-width, 8px);
-  background: var(--surface-1);
-  border-right: 1px solid var(--border);
+  position: relative;
+  z-index: 40;
+  background: color-mix(in srgb, var(--surface-1) 96%, transparent);
+  border-right: 1px solid var(--border-strong);
+  box-shadow: 10px 0 30px rgb(0 0 0 / 18%);
   min-height: 0;
 }
 
@@ -100,7 +103,9 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--rail-padding) 0;
-  background: var(--bg-base);
+  background:
+    linear-gradient(180deg, rgb(88 215 239 / 6%), transparent 22%),
+    var(--bg-base);
   border-right: 1px solid var(--border);
   width: var(--rail-width);
 }
@@ -110,7 +115,8 @@
   height: var(--rail-brand-size);
   display: grid;
   place-items: center;
-  color: var(--accent);
+  color: var(--accent-strong);
+  filter: drop-shadow(0 0 8px rgb(88 215 239 / 24%));
   margin-bottom: var(--space-2);
 }
 
@@ -228,8 +234,8 @@
 
 .rail-button {
   position: relative;
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
   border: 1px solid transparent;
@@ -242,12 +248,14 @@
 .rail-button:hover {
   background: var(--surface-2);
   color: var(--text-1);
+  border-color: var(--border);
 }
 
 .rail-button[data-active="true"] {
   background: var(--accent-muted);
   border-color: var(--border-strong);
   color: var(--accent-strong);
+  box-shadow: inset 3px 0 0 var(--accent), 0 0 18px rgb(88 215 239 / 8%);
 }
 
 .rail-button__badge {
@@ -314,17 +322,18 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);
-  min-height: 46px;
+  min-height: 56px;
+  background: linear-gradient(90deg, rgb(88 215 239 / 5%), transparent 68%);
 }
 
 .panel__title {
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--text-1);
 }
 
 .panel__body {

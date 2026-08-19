@@ -3,6 +3,8 @@ import type { Map as MlMap } from "maplibre-gl";
 import { displayGeometry } from "../../../atlas/geometry.js";
 import type { MapEditing } from "./map-editing.js";
 import { emptyFeatureCollection, type MapSources } from "./map-sources.js";
+import { THREE_TACTICAL_LAYER_ID } from "./three-layer-contract.js";
+import type { ThreeTacticalLayer } from "./three-tactical-layer.js";
 
 const COLORS = {
   geofeature: "#3fd27a",
@@ -28,7 +30,7 @@ export function pushEditingOverlay(map: MlMap, editing: MapEditing | undefined):
   );
 }
 
-export function registerSourcesAndLayers(map: MlMap): void {
+export function registerSourcesAndLayers(map: MlMap, tacticalLayer?: ThreeTacticalLayer): void {
   for (const id of ["geofeatures", "editing"]) {
     if (!map.getSource(id)) {
       map.addSource(id, { type: "geojson", data: emptyFeatureCollection() as never });
@@ -41,7 +43,7 @@ export function registerSourcesAndLayers(map: MlMap): void {
       type: "fill",
       source: "geofeatures",
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": COLORS.geofeatureFill, "fill-outline-color": COLORS.geofeature }
+      paint: { "fill-color": COLORS.geofeatureFill, "fill-opacity": 0.001, "fill-outline-color": "transparent" }
     });
   }
   if (!map.getLayer("geofeatures-line")) {
@@ -52,7 +54,8 @@ export function registerSourcesAndLayers(map: MlMap): void {
       filter: ["match", ["geometry-type"], ["LineString", "Polygon"], true, false],
       paint: {
         "line-color": COLORS.geofeature,
-        "line-width": ["case", ["boolean", ["get", "selected"], false], 3.5, 2]
+        "line-opacity": 0.001,
+        "line-width": ["case", ["boolean", ["get", "selected"], false], 8, 6]
       }
     });
   }
@@ -62,9 +65,11 @@ export function registerSourcesAndLayers(map: MlMap): void {
       type: "circle",
       source: "geofeatures",
       filter: ["==", ["geometry-type"], "Point"],
-      paint: circlePaint(COLORS.geofeature)
+      paint: { ...circlePaint(COLORS.geofeature), "circle-opacity": 0.001, "circle-stroke-opacity": 0.001 }
     });
   }
+
+  if (tacticalLayer && !map.getLayer(THREE_TACTICAL_LAYER_ID)) map.addLayer(tacticalLayer);
 
   if (!map.getLayer("editing-fill")) {
     map.addLayer({

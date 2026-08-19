@@ -24,7 +24,31 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #05070a;
+  background: #03080b;
+  isolation: isolate;
+}
+
+.map-stage::before {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background-image:
+    linear-gradient(rgb(88 215 239 / 2.5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(88 215 239 / 2.5%) 1px, transparent 1px);
+  background-size: 64px 64px;
+  content: "";
+  pointer-events: none;
+}
+
+.map-atmosphere {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  background:
+    linear-gradient(180deg, rgb(3 8 11 / 32%) 0, transparent 14%, transparent 76%, rgb(3 8 11 / 36%) 100%),
+    radial-gradient(circle at center, transparent 54%, rgb(3 8 11 / 28%) 100%);
+  box-shadow: inset 0 0 100px rgb(0 0 0 / 18%);
+  pointer-events: none;
 }
 
 .connection-badge__status {
@@ -41,20 +65,20 @@
 
 .connection-badge {
   position: absolute;
-  top: var(--space-3);
-  left: var(--space-3);
+  top: 18px;
+  left: 18px;
   z-index: 30;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--connection-color) 58%, var(--border-strong));
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: color-mix(in srgb, var(--surface-1) 86%, transparent);
   color: var(--text-1);
   font-size: 11px;
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.09em;
   line-height: 1;
   pointer-events: none;
   text-transform: uppercase;
@@ -99,6 +123,12 @@ button.connection-badge:hover:not([disabled]) {
   border-radius: 50%;
   background: var(--connection-color);
   box-shadow: 0 0 8px color-mix(in srgb, var(--connection-color) 72%, transparent);
+}
+
+.connection-badge[data-state="live"] .connection-badge__dot {
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--connection-color) 12%, transparent),
+    0 0 12px color-mix(in srgb, var(--connection-color) 80%, transparent);
 }
 
 .connection-detail {
@@ -154,19 +184,25 @@ button.connection-badge:hover:not([disabled]) {
 
 .map-overlay-tr {
   position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
+  top: 18px;
+  right: 18px;
   z-index: 30;
-  min-width: 190px;
-  padding: var(--space-2) var(--space-3);
+  min-width: 206px;
+  padding: 8px 10px;
   background: color-mix(in srgb, var(--surface-1) 88%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-panel);
 }
 
 .map-source-control .field {
   margin-bottom: 0;
+}
+
+.map-source-control .field__label {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .map-canvas {
@@ -174,6 +210,137 @@ button.connection-badge:hover:not([disabled]) {
   inset: 0;
   -webkit-user-select: none;
   user-select: none;
+}
+
+.tactical-hud {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: auto auto minmax(130px, 1fr);
+  align-items: center;
+  min-width: min(630px, calc(100% - 500px));
+  min-height: 52px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+  box-shadow: 0 16px 44px rgb(0 0 0 / 28%), inset 0 1px 0 rgb(255 255 255 / 3%);
+  backdrop-filter: blur(16px);
+  transform: translateX(-50%);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+  pointer-events: none;
+}
+
+.tactical-hud__identity,
+.tactical-hud__metrics,
+.tactical-hud__focus {
+  display: flex;
+  align-items: center;
+}
+
+.tactical-hud__identity {
+  gap: 10px;
+  padding: 0 16px;
+  border-right: 1px solid var(--border);
+}
+
+.tactical-hud__identity > span:last-child,
+.tactical-hud__focus,
+.tactical-hud__metric > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.tactical-hud strong {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tactical-hud small {
+  color: var(--text-3);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tactical-hud__mark {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background:
+    linear-gradient(var(--accent), var(--accent)) center / 1px 100% no-repeat,
+    linear-gradient(90deg, var(--accent), var(--accent)) center / 100% 1px no-repeat;
+  box-shadow: 0 0 16px rgb(88 215 239 / 22%);
+}
+
+.tactical-hud__metrics {
+  align-self: stretch;
+}
+
+.tactical-hud__metric {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 62px;
+  height: 100%;
+  padding: 0 10px;
+  border-right: 1px solid var(--border);
+}
+
+.tactical-hud__metric i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+  box-shadow: 0 0 7px currentColor;
+}
+
+.tactical-hud__metric[data-tone="cyan"] i {
+  background: var(--accent);
+}
+
+.tactical-hud__metric[data-tone="amber"] i {
+  background: var(--warning);
+}
+
+.tactical-hud__metric[data-tone="green"] i {
+  background: var(--success);
+}
+
+.tactical-hud__metric strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.tactical-hud__focus {
+  min-width: 0;
+  padding: 0 14px;
+}
+
+.tactical-hud__focus strong {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .tactical-hud {
+    grid-template-columns: auto 1fr;
+    min-width: 390px;
+  }
+
+  .tactical-hud__focus {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .tactical-hud {
+    display: none;
+  }
 }
 
 .map-canvas > .maplibre-host,
@@ -196,6 +363,19 @@ button.connection-badge:hover:not([disabled]) {
 .map-canvas .maplibregl-ctrl,
 .map-canvas .maplibregl-ctrl button {
   cursor: pointer;
+}
+
+.map-canvas .maplibregl-ctrl-group {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
+  box-shadow: var(--shadow-panel);
+}
+
+.map-canvas .maplibregl-ctrl-group button {
+  background-color: transparent;
+  filter: invert(88%) sepia(14%) saturate(250%);
 }
 
 .map-canvas .maplibregl-boxzoom {

@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useState }
 import type { MapSourceConfig } from "../app/config.js";
 import type { CommandCatalog } from "../atlas/command-model.js";
 import { type CommandAvailability, commandsForTargeting } from "../atlas/command-targeting.js";
-import { type EntityKind, entityKind } from "../atlas/entities.js";
+import { type EntityKind, entityDisplayName, entityKind } from "../atlas/entities.js";
 import type { UiGeometry } from "../atlas/geometry.js";
 import { countsByKind, entitiesByKind, getEntity } from "../atlas/selectors.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
@@ -239,6 +239,12 @@ export function MapConsole() {
                     <span>The configured default map source is unavailable.</span>
                   </div>
                 )}
+                <div className="map-atmosphere" aria-hidden="true" />
+                <TacticalHud
+                  counts={counts}
+                  taskCount={Object.keys(snapshot.tasks).length}
+                  selectedName={selectedEntity ? entityDisplayName(selectedEntity) : undefined}
+                />
                 <ConnectionBadge health={atlas.health} error={atlas.connectionError} onRetry={atlas.reconnect} />
                 <MapSourcePicker
                   sources={atlas.config.mapSources}
@@ -281,6 +287,50 @@ export function MapConsole() {
         />
       ) : null}
     </>
+  );
+}
+
+function TacticalHud({
+  counts,
+  taskCount,
+  selectedName
+}: {
+  counts: Record<EntityKind, number>;
+  taskCount: number;
+  selectedName?: string;
+}) {
+  return (
+    <div className="tactical-hud" aria-label="Operational picture summary">
+      <div className="tactical-hud__identity">
+        <span className="tactical-hud__mark" aria-hidden="true" />
+        <span>
+          <strong>ATLAS</strong>
+          <small>Operational picture</small>
+        </span>
+      </div>
+      <div className="tactical-hud__metrics">
+        <HudMetric label="Assets" value={counts.asset} tone="cyan" />
+        <HudMetric label="Tracks" value={counts.track} tone="amber" />
+        <HudMetric label="Zones" value={counts.geofeature} tone="green" />
+        <HudMetric label="Tasks" value={taskCount} />
+      </div>
+      <div className="tactical-hud__focus" title={selectedName}>
+        <small>{selectedName ? "Focus" : "Scene"}</small>
+        <strong>{selectedName ?? "Global overview"}</strong>
+      </div>
+    </div>
+  );
+}
+
+function HudMetric({ label, value, tone }: { label: string; value: number; tone?: string }) {
+  return (
+    <span className="tactical-hud__metric" data-tone={tone}>
+      <i aria-hidden="true" />
+      <span>
+        <small>{label}</small>
+        <strong>{value.toLocaleString()}</strong>
+      </span>
+    </span>
   );
 }
 

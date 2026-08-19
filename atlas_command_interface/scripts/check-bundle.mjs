@@ -15,11 +15,12 @@ const budgets = {
   initialCss: { raw: 30_000, gzip: 6_500 },
   shellJavaScript: { raw: 50_000, gzip: 16_000 },
   mapViewJavaScript: { raw: 50_000, gzip: 16_000 },
+  threeJavaScript: { raw: 650_000, gzip: 170_000 },
   mapLibreJavaScript: { raw: 1_100_000, gzip: 300_000 },
   milsymbolJavaScript: { raw: 900_000, gzip: 240_000 },
   mapLibreCss: { raw: 75_000, gzip: 11_000 },
   mapRoute: { raw: 2_100_000, gzip: 550_000 },
-  allJavaScript: { raw: 2_400_000, gzip: 650_000 },
+  allJavaScript: { raw: 3_050_000, gzip: 820_000 },
   allCss: { raw: 100_000, gzip: 18_000 }
 };
 
@@ -67,6 +68,7 @@ const checks = [
   checkGroup("initialCss", selectByExtension(selectRecords(records, initialFiles), ".css")),
   checkGroup("shellJavaScript", selectByExtension(selectRecords(records, shellFiles), ".js")),
   checkGroup("mapViewJavaScript", selectByExtension(selectRecords(records, new Set([mapView.file])), ".js")),
+  checkGroup("threeJavaScript", findByName(records, "three-tactical-layer", ".js")),
   checkGroup("mapLibreJavaScript", findByName(records, "maplibre-gl", ".js")),
   checkGroup("milsymbolJavaScript", findByName(records, "milsymbol", ".js")),
   checkGroup("mapLibreCss", findByName(records, "maplibre-gl", ".css")),

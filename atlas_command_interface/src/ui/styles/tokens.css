@@ -5,33 +5,33 @@
   color-scheme: dark;
 
   /* Backgrounds & surfaces */
-  --bg-base: #070a0f;
-  --bg-app: #0b0f16;
-  --surface-1: #111722;
-  --surface-2: #161d2b;
-  --surface-3: #1d2737;
-  --surface-hover: #222d40;
+  --bg-base: #04080b;
+  --bg-app: #070d12;
+  --surface-1: #0b141a;
+  --surface-2: #101c24;
+  --surface-3: #172630;
+  --surface-hover: #19303a;
 
   /* Borders */
-  --border: #232c3b;
-  --border-strong: #33415a;
+  --border: #18303a;
+  --border-strong: #28505c;
 
   /* Text levels */
-  --text-1: #e7edf4;
-  --text-2: #9aa7b8;
-  --text-3: #61708a;
-  --text-on-accent: #04121d;
+  --text-1: #e8f3f5;
+  --text-2: #91a9ae;
+  --text-3: #58767d;
+  --text-on-accent: #031215;
 
   /* Accent */
-  --accent: #3fb6ff;
-  --accent-strong: #6cc7ff;
-  --accent-muted: rgba(63, 182, 255, 0.16);
+  --accent: #58d7ef;
+  --accent-strong: #8cecff;
+  --accent-muted: rgba(88, 215, 239, 0.14);
 
   /* Feedback */
-  --success: #3fd27a;
-  --warning: #f5c451;
-  --error: #ff5d5d;
-  --info: #5aa0ff;
+  --success: #42e8b4;
+  --warning: #ffc857;
+  --error: #ff6b6b;
+  --info: #58d7ef;
 
   /* Selection / hover */
   --selected: #ffffff;
@@ -72,9 +72,9 @@
   --map-vertex-mid: rgba(255, 255, 255, 0.45);
 
   /* Geometry */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
 
   /* Spacing scale */
   --space-1: 4px;
@@ -83,16 +83,16 @@
   --space-4: 16px;
   --space-5: 24px;
 
-  --rail-width: 52px;
-  --rail-padding: var(--space-2);
-  --rail-brand-size: 30px;
-  --panel-width: 332px;
+  --rail-width: 60px;
+  --rail-padding: 10px;
+  --rail-brand-size: 34px;
+  --panel-width: 340px;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", roboto, sans-serif;
+  --font-sans: inter, "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", menlo, consolas, monospace;
 
-  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.42);
+  --shadow-menu: 0 18px 54px rgba(0, 0, 0, 0.56);
 }
 
 * {
@@ -113,6 +113,7 @@ body {
   font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button {

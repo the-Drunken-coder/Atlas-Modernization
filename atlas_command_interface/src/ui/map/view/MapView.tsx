@@ -19,6 +19,7 @@ import {
   symbolMarkerPresentationsEqual,
   updateSymbolMarkerElement
 } from "../rendering/map-symbol-markers.js";
+import type { ThreeTacticalLayer } from "../rendering/three-tactical-layer.js";
 import { getMapLibreRuntime, loadMapLibre, type MapLibreRuntime } from "../runtime/maplibre-runtime.js";
 import { MapCursorOverlay } from "./MapCursorOverlay.js";
 import { MapReticle } from "./MapReticle.js";
@@ -68,6 +69,7 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | undefined>(undefined);
   const mapLibreRef = useRef<MapLibreRuntime | undefined>(undefined);
+  const tacticalLayerRef = useRef<ThreeTacticalLayer | undefined>(undefined);
   const sourcesRef = useRef(sources);
   const editingRef = useRef(editing);
   const initialMapRef = useRef({ initialCenter, style, styleId });
@@ -150,7 +152,7 @@ export function MapView({
       requestAnimationFrame(() => mapInstance.resize({ [CAMERA_EVENT_TAG]: true }));
 
       const initializeLayers = () => {
-        registerSourcesAndLayers(mapInstance);
+        registerSourcesAndLayers(mapInstance, tacticalLayerRef.current);
         readyRef.current = true;
         setMapReady(true);
         pushSources(mapInstance, sourcesRef.current);
@@ -182,13 +184,24 @@ export function MapView({
         if (failedStyleId) {
           pendingStyleIdRef.current = undefined;
           if (readyRef.current && mapInstance.isStyleLoaded()) {
-            registerSourcesAndLayers(mapInstance);
+            registerSourcesAndLayers(mapInstance, tacticalLayerRef.current);
             pushSources(mapInstance, sourcesRef.current);
             pushEditingOverlay(mapInstance, editingRef.current);
           }
           styleSwitchErrorRef.current?.({ failedStyleId, activeStyleId: currentStyleIdRef.current ?? failedStyleId });
         }
       });
+
+      void import("../rendering/three-tactical-layer.js")
+        .then(({ ThreeTacticalLayer: TacticalLayer }) => {
+          if (cancelled || mapRef.current !== mapInstance) return;
+          const layer = new TacticalLayer(sourcesRef.current);
+          tacticalLayerRef.current = layer;
+          if (mapInstance.isStyleLoaded()) registerSourcesAndLayers(mapInstance, layer);
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setMapError(sanitizeConnectionError(error));
+        });
     };
 
     const maplibre = getMapLibreRuntime();
@@ -218,6 +231,7 @@ export function MapView({
       map?.remove();
       mapRef.current = undefined;
       mapLibreRef.current = undefined;
+      tacticalLayerRef.current = undefined;
     };
     // Changing props are synchronized through refs and the effects below.
   }, [mapError]);
@@ -235,7 +249,7 @@ export function MapView({
       pendingStyleIdRef.current = undefined;
       console.warn("Map style switch failed", sanitizeConnectionError(error));
       if (readyRef.current && map.isStyleLoaded()) {
-        registerSourcesAndLayers(map);
+        registerSourcesAndLayers(map, tacticalLayerRef.current);
         pushSources(map, sourcesRef.current);
         pushEditingOverlay(map, editingRef.current);
       }
@@ -263,6 +277,7 @@ export function MapView({
     const map = mapRef.current;
     if (map && readyRef.current) {
       pushSources(map, sources);
+      tacticalLayerRef.current?.updateSources(sources);
     }
   }, [sources]);
 

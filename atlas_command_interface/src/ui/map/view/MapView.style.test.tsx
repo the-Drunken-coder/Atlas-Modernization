@@ -1,6 +1,7 @@
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { THREE_TACTICAL_LAYER_ID } from "../rendering/three-layer-contract.js";
 import { markerSources, renderMapView, style } from "./MapView.test-harness.js";
 
 describe("MapView style switching", () => {
@@ -9,6 +10,7 @@ describe("MapView style switching", () => {
 
     await waitFor(() => expect(canvas.querySelectorAll(".map-symbol-marker")).toHaveLength(1));
     expect(map.sources.has("geofeatures")).toBe(true);
+    await waitFor(() => expect(map.layers.has(THREE_TACTICAL_LAYER_ID)).toBe(true));
   });
 
   it("keeps existing symbol markers when a style switch fails", async () => {
@@ -48,6 +50,7 @@ describe("MapView style switching", () => {
     act(() => map.fire("style.load"));
 
     await waitFor(() => expect(map.sources.has("geofeatures")).toBe(true));
+    expect(map.layers.has(THREE_TACTICAL_LAYER_ID)).toBe(true);
     expect(canvas.querySelector(".map-symbol-marker")).toBe(marker);
   });
 });
