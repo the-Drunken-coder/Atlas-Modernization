@@ -661,6 +661,8 @@ The rebuilt Task module should expose the small lifecycle interface described he
 
 ## Delivery sequence
 
+The executable module-by-module work plan, cutover rules, and validation gates are defined in [Commands and Tasking Implementation Plan](commands-and-tasking-implementation-plan.md).
+
 1. Add the Protocol namespace files, canonical schema definitions, lifecycle requests, outcome enums, examples, conformance corpus, generated Command Catalog, Task shape, lifecycle states, and manifest shape.
 2. Replace Core Task behavior and have Core serve the Protocol-owned catalog.
 3. Update the SDK and Asset runtime registration, local Task Queue, lifecycle operations, execution-module safety barrier, and runtime fencing.
