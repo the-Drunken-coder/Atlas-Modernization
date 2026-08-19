@@ -230,6 +230,13 @@
       "value": { "object_id": "object-with-content-type", "content_type": "image/png" }
     },
     {
+      "name": "object create rejects client-owned bucket",
+      "definition": "ObjectCreateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "object_id": "object-with-bucket", "bucket": "client-bucket" }
+    },
+    {
       "name": "object update rejects an empty patch",
       "definition": "ObjectUpdateRequest",
       "schema_valid": false,
@@ -249,6 +256,20 @@
       "schema_valid": false,
       "valid": false,
       "value": { "path": "objects/object-with-path/2" }
+    },
+    {
+      "name": "object update rejects client-owned content_type",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "content_type": "image/png" }
+    },
+    {
+      "name": "object update rejects client-owned bucket",
+      "definition": "ObjectUpdateRequest",
+      "schema_valid": false,
+      "valid": false,
+      "value": { "bucket": "client-bucket" }
     },
     {
       "name": "entity check-in accepts an empty object",
