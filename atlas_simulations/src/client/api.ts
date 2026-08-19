@@ -86,16 +86,6 @@ export async function startRun(request: StartRunRequest, apiKey?: string): Promi
   return sanitizeRunSummary(response.run);
 }
 
-export async function loadRun(id: string): Promise<RunSummary> {
-  const response = await apiJSON<{ run: RunSummary }>(
-    `/api/runs/${encodeURIComponent(id)}`,
-    undefined,
-    isRunResponse,
-    "run response"
-  );
-  return sanitizeRunSummary(response.run);
-}
-
 export async function stopRun(id: string): Promise<RunSummary> {
   const response = await apiJSON<{ run: RunSummary }>(
     `/api/runs/${encodeURIComponent(id)}/stop`,

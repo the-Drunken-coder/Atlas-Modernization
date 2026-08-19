@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupRun,
   loadHealth,
-  loadRun,
   loadRuns,
   loadScenarios,
   loadTargets,
@@ -62,9 +61,6 @@ describe("client API", () => {
       status: jsonNumber(200),
       message: "Unexpected health response (200)"
     });
-
-    stubJSON({ run: { id: "missing-fields" } });
-    await expect(loadRun(run.id)).rejects.toThrow("Expected run response");
 
     stubJSON({ run: { id: "missing-fields" } });
     await expect(stopRun(run.id)).rejects.toThrow("Expected run response");
