@@ -126,27 +126,6 @@ describe("sidebar rail + panel", () => {
     expect(screen.getByRole("button", { name: /Rover Two/ })).not.toHaveAttribute("aria-current");
   });
 
-  it("does not repeat preview callbacks on row pointer movement", () => {
-    const onPreview = vi.fn();
-    render(
-      <StatefulEntityList
-        entities={ASSETS}
-        selectedId={undefined}
-        emptyLabel="none"
-        onSelect={() => {}}
-        onPreview={onPreview}
-      />
-    );
-
-    const row = screen.getByRole("button", { name: /Rover One/ });
-    fireEvent.pointerEnter(row);
-    fireEvent.pointerMove(row);
-    fireEvent.pointerMove(row);
-
-    expect(onPreview).toHaveBeenCalledTimes(1);
-    expect(onPreview).toHaveBeenCalledWith(ASSETS[0]);
-  });
-
   it("filters entity rows without changing the source list", async () => {
     const user = userEvent.setup();
     render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);

@@ -25,7 +25,6 @@ type EntityListProps = {
   emptyLabel: string;
   onSelect: (entity: EntityResource) => void;
   onQueryChange: (query: string) => void;
-  onPreview?: (entity: EntityResource | null) => void;
 };
 
 export function EntityList({
@@ -35,8 +34,7 @@ export function EntityList({
   query,
   emptyLabel,
   onSelect,
-  onQueryChange,
-  onPreview
+  onQueryChange
 }: EntityListProps) {
   const now = useHeartbeatClock();
   const filterRef = useRef<HTMLInputElement>(null);
@@ -96,18 +94,11 @@ export function EntityList({
                 }
                 onBlur={() => {
                   focusedEntityIdRef.current = undefined;
-                  onPreview?.(null);
                 }}
-                onClick={() => {
-                  onPreview?.(null);
-                  onSelect(entity);
-                }}
+                onClick={() => onSelect(entity)}
                 onFocus={() => {
                   focusedEntityIdRef.current = entity.entity_id;
-                  onPreview?.(entity);
                 }}
-                onPointerEnter={() => onPreview?.(entity)}
-                onPointerLeave={() => onPreview?.(null)}
               >
                 <span className="entity-row__dot" style={{ background: entityDotColor(entity, now) }} />
                 <span className="entity-row__main">
