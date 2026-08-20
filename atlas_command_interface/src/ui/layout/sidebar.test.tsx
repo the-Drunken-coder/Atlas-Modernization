@@ -158,6 +158,26 @@ describe("sidebar rail + panel", () => {
     expect(screen.getByText("No matching entities.")).toBeInTheDocument();
   });
 
+  it("keeps filter focus when a selected row remounts", async () => {
+    const user = userEvent.setup();
+    render(
+      <EntityList
+        entities={ASSETS}
+        selectedId="asset-1"
+        restoreFocusId="asset-1"
+        emptyLabel="none"
+        onSelect={() => {}}
+      />
+    );
+
+    const filter = screen.getByRole("searchbox", { name: "Filter entities" });
+    await user.click(filter);
+    fireEvent.change(filter, { target: { value: "Two" } });
+    fireEvent.change(filter, { target: { value: "One" } });
+
+    expect(filter).toHaveFocus();
+  });
+
   it("does not move focus for a map-origin selection", async () => {
     const user = userEvent.setup();
     render(<Harness />);

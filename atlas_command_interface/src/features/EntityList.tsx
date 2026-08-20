@@ -65,7 +65,7 @@ export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, o
                 className="entity-row"
                 data-selected={entity.entity_id === selectedId}
                 aria-current={entity.entity_id === selectedId ? "true" : undefined}
-                autoFocus={entity.entity_id === selectedId && entity.entity_id === restoreFocusId}
+                autoFocus={entity.entity_id === selectedId && entity.entity_id === restoreFocusId && !query.trim()}
                 onBlur={() => onPreview?.(null)}
                 onClick={() => {
                   onPreview?.(null);
