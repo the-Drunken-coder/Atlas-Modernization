@@ -61,7 +61,7 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 	assertValidationDetailsContain(t, err, "published_at")
 }
 
-func openActionsTestPool(t *testing.T) *pgxpool.Pool {
+func openActionsTestPool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 	dbURL, explicitDBURL := actionsTestDatabaseURL()
 	if dbURL == "" {
@@ -94,7 +94,7 @@ func openActionsTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgxpool.Pool, entityID, taskID string) {
+func cleanupFinalBlobValidationRows(ctx context.Context, t testing.TB, pool *pgxpool.Pool, entityID, taskID string) {
 	t.Helper()
 	if taskID != "" {
 		if _, err := pool.Exec(ctx, `DELETE FROM tasks WHERE task_id = $1`, taskID); err != nil {
@@ -121,7 +121,7 @@ func cleanupFinalBlobValidationRows(ctx context.Context, t *testing.T, pool *pgx
 	}
 }
 
-func cleanupFinalBlobValidationRowsWithTimeout(t *testing.T, pool *pgxpool.Pool, entityID, taskID string) {
+func cleanupFinalBlobValidationRowsWithTimeout(t testing.TB, pool *pgxpool.Pool, entityID, taskID string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

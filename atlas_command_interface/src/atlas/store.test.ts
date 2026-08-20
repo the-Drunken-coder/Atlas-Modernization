@@ -44,19 +44,24 @@ describe("snapshot store", () => {
     const activeLater = {
       ...task("active-2", asset.entity_id),
       status: "in_progress" as const,
+      acknowledged_at: "2026-06-20T00:00:02Z",
+      started_at: "2026-06-20T00:00:02Z",
       created_at: "2026-06-20T00:00:02Z"
-    };
+    } satisfies TaskResource;
     const activeEarlier = {
       ...task("active-1", asset.entity_id),
       status: "in_progress" as const,
+      acknowledged_at: "2026-06-20T00:00:01Z",
+      started_at: "2026-06-20T00:00:01Z",
       created_at: "2026-06-20T00:00:01Z"
-    };
+    } satisfies TaskResource;
     const queuedLater = {
       ...task("queued-2", asset.entity_id),
       status: "acknowledged" as const,
+      acknowledged_at: "2026-06-20T00:00:04Z",
       created_at: "2026-06-20T00:00:04Z",
       updated_at: "2026-06-20T00:00:10Z"
-    };
+    } satisfies TaskResource;
     const queuedEarlier = {
       ...task("queued-1", asset.entity_id),
       created_at: "2026-06-20T00:00:03Z",

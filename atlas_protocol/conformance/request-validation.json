@@ -212,6 +212,13 @@
       "value": { "runtime_id": "runtime-conformance" }
     },
     {
+      "name": "runtime stop requires a runtime id",
+      "definition": "RuntimeStopRequest",
+      "schema_valid": true,
+      "valid": true,
+      "value": { "runtime_id": "runtime-conformance" }
+    },
+    {
       "name": "runtime ready accepts an empty initial manifest",
       "definition": "RuntimeReadyRequest",
       "schema_valid": true,

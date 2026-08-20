@@ -30,6 +30,7 @@ var runtimeValidatorTypeNames = []string{
 	"TaskFailRequest",
 	"TaskCancelRequest",
 	"RuntimeRegistrationRequest",
+	"RuntimeStopRequest",
 	"RuntimeReadyRequest",
 	"RuntimeTaskDeliveryResponse",
 	"EntityResource",

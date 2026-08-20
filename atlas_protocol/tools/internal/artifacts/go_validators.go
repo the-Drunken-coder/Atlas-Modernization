@@ -42,6 +42,7 @@ var goValidatorFunctions = []goValidatorFunction{
 	{name: "ValidateTaskFailRequest", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskFailRequest},
 	{name: "ValidateTaskCancelRequest", params: "value any", args: "value", validate: protocolvalidator.ValidateTaskCancelRequest},
 	{name: "ValidateRuntimeRegistrationRequest", params: "value any", args: "value", validate: protocolvalidator.ValidateRuntimeRegistrationRequest},
+	{name: "ValidateRuntimeStopRequest", params: "value any", args: "value", validate: protocolvalidator.ValidateRuntimeStopRequest},
 	{name: "ValidateRuntimeReadyRequest", params: "value any", args: "value", validate: protocolvalidator.ValidateRuntimeReadyRequest},
 	{name: "ValidateRuntimeTaskDeliveryResponse", params: "value any", args: "value", validate: protocolvalidator.ValidateRuntimeTaskDeliveryResponse},
 	{name: "ValidateObjectCreateRequest", params: "value any", args: "value", validate: protocolvalidator.ValidateObjectCreateRequest},

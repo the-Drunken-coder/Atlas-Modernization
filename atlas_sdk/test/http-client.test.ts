@@ -7,6 +7,7 @@ import {
   isEntityUpdateRequest,
   isObjectCreateRequest,
   isObjectUpdateRequest,
+  isRuntimeStopRequest,
   isTaskCreateRequest,
   ProtocolMismatchError
 } from "../src";
@@ -338,6 +339,8 @@ describe("AtlasClient HTTP", () => {
     ).toBe(true);
     expect(isTaskCreateRequest({ asset_id: "", command: "fixture.queued", input: {} })).toBe(false);
     expect(isTaskCreateRequest({ asset_id: "asset-command", input: {} })).toBe(false);
+    expect(isRuntimeStopRequest({ runtime_id: "runtime-1" })).toBe(true);
+    expect(isRuntimeStopRequest({ runtime_id: "" })).toBe(false);
 
     expect(isObjectCreateRequest({ object_id: "object-valid", referenced_by: [{ entity_id: "asset-valid" }] })).toBe(
       true
@@ -572,13 +575,15 @@ describe("AtlasClient HTTP", () => {
     await client.runtime.begin("asset-1", { runtime_id: " runtime-1 " });
     await client.runtime.ready("asset-1", { runtime_id: " runtime-1 ", manifest: [] });
     await client.runtime.tasks("asset-1", { runtimeId: " runtime-1 " });
+    await client.runtime.stop("asset-1", { runtime_id: " runtime-1 " });
     await client.tasks.create(
       { asset_id: "asset-1", command: "fixture.queued", input: {} },
       { idempotencyKey: " attempt-1 " }
     );
 
-    expect(core.runtimes.get("asset-1")?.runtimeId).toBe("runtime-1");
+    expect(core.runtimes.get("asset-1")).toEqual({ runtimeId: "runtime-1", ready: false });
     expect(core.requestHeaders.find((request) => request.path.endsWith("/runtime/tasks"))?.runtimeId).toBe("runtime-1");
+    expect(core.requestHeaders.some((request) => request.path.endsWith("/runtime/stop"))).toBe(true);
     expect(core.requestHeaders.find((request) => request.path === "/tasks")?.idempotencyKey).toBe("attempt-1");
   });
 

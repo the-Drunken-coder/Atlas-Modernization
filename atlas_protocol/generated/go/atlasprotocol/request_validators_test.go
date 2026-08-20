@@ -24,6 +24,7 @@ func TestPublicRequestValidatorsCoverConformanceCorpus(t *testing.T) {
 		"TaskFailRequest":            protocol.ValidateTaskFailRequest,
 		"TaskCancelRequest":          protocol.ValidateTaskCancelRequest,
 		"RuntimeRegistrationRequest": protocol.ValidateRuntimeRegistrationRequest,
+		"RuntimeStopRequest":         protocol.ValidateRuntimeStopRequest,
 		"RuntimeReadyRequest":        protocol.ValidateRuntimeReadyRequest,
 		"ObjectCreateRequest":        protocol.ValidateObjectCreateRequest,
 		"ObjectUpdateRequest":        protocol.ValidateObjectUpdateRequest,

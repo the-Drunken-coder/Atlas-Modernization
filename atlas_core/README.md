@@ -204,6 +204,7 @@ Key environment variables:
 - `GET /entities/alias/{alias}`
 - `POST /entities/{entity_id}/checkin`
 - `POST /entities/{entity_id}/runtime`
+- `POST /entities/{entity_id}/runtime/stop`
 - `POST /entities/{entity_id}/runtime/ready`
 - `GET /entities/{entity_id}/runtime/tasks`
 - `GET /entities/{entity_id}/tasks`

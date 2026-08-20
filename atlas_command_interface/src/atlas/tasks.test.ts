@@ -12,6 +12,9 @@ describe("taskStatusMessage", () => {
       status: "completed",
       progress: 1,
       output: { result: "done" },
+      acknowledged_at: "2026-08-20T00:00:00Z",
+      started_at: "2026-08-20T00:00:00Z",
+      finished_at: "2026-08-20T00:00:01Z",
       created_at: "2026-08-20T00:00:00Z",
       updated_at: "2026-08-20T00:00:01Z"
     };

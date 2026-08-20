@@ -1,4 +1,5 @@
 import {
+  AtlasAPIError,
   type AtlasClient,
   type CommandManifest,
   type CommandManifestEntry,
@@ -12,6 +13,7 @@ import { establishSafetyBarrier } from "./safety-barrier.js";
 
 const DEFAULT_CHECK_IN_INTERVAL_MS = 5_000;
 const TASK_RECONCILIATION_INTERVAL_MS = 5_000;
+const TASK_RECONCILIATION_CONCURRENCY = 8;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export type AssetTaskFailureCode = "precondition_failed" | "execution_failed";
@@ -30,7 +32,7 @@ export type AtlasAssetClient = Pick<AtlasClient, "handshake"> & {
   entities: {
     checkIn(id: string, options?: EntityCheckInOptions): Promise<unknown>;
   };
-  runtime: Pick<AtlasClient["runtime"], "begin" | "ready" | "tasks">;
+  runtime: Pick<AtlasClient["runtime"], "begin" | "stop" | "ready" | "tasks">;
   tasks: Pick<AtlasClient["tasks"], "get" | "acknowledge" | "start" | "progress" | "complete" | "fail">;
 };
 
@@ -64,6 +66,7 @@ type AcceptedTask = {
   task: TaskResource;
   command: CommandManifestEntry;
   controller: AbortController;
+  ready: boolean;
 };
 
 type TerminalTaskUpdate =
@@ -99,6 +102,7 @@ export class AtlasAssetRuntime {
   private queuedTail: Promise<void> = Promise.resolve();
   private readonly accepted = new Map<string, AcceptedTask>();
   private readonly executions = new Set<Promise<void>>();
+  private readonly acceptances = new Set<Promise<void>>();
   private readonly standaloneCheckIns = new Set<AbortController>();
   private queued: AcceptedTask[] = [];
   private externalAbort?: ExternalAbortRegistration;
@@ -205,7 +209,7 @@ export class AtlasAssetRuntime {
       const runtimeId = createRuntimeId();
       this.runtimeId = runtimeId;
       this.clearAcceptedWork();
-      await this.client.runtime.begin(this.entityId, { runtime_id: runtimeId }, { signal: controller.signal });
+      await this.beginRuntimeRegistration(runtimeId, controller.signal);
       await establishSafetyBarrier(this.executionModules, controller.signal);
       await this.client.runtime.ready(
         this.entityId,
@@ -221,12 +225,26 @@ export class AtlasAssetRuntime {
       this.checkInLoop = this.runCheckInLoop(controller.signal);
       void this.checkInLoop.catch((error) => this.reportError(error));
     } catch (error) {
-      if (this.controller === controller && this.state !== "stopping") {
-        controller.abort(error);
-        this.clearAcceptedWork();
-        this.controller = undefined;
-        this.runtimeId = undefined;
-        this.state = "stopped";
+      if (this.controller !== controller || this.state === "stopping") throw error;
+      controller.abort(error);
+      this.clearAcceptedWork();
+      const runtimeId = this.runtimeId;
+      let compensationError: unknown;
+      if (runtimeId) {
+        try {
+          await this.client.runtime.stop(this.entityId, { runtime_id: runtimeId });
+        } catch (stopError) {
+          compensationError = stopError;
+        }
+      }
+      this.controller = undefined;
+      this.runtimeId = undefined;
+      this.state = "stopped";
+      if (compensationError !== undefined) {
+        throw new AggregateError(
+          [error, compensationError],
+          "Atlas asset runtime startup failed and Core deactivation could not be confirmed"
+        );
       }
       throw error;
     }
@@ -235,6 +253,7 @@ export class AtlasAssetRuntime {
   private async stopRuntime(): Promise<void> {
     this.state = "stopping";
     const controller = this.controller;
+    const runtimeId = this.runtimeId;
     this.detachExternalAbort(controller);
     controller?.abort();
     for (const checkInController of this.standaloneCheckIns) checkInController.abort();
@@ -247,14 +266,38 @@ export class AtlasAssetRuntime {
       this.checkInTail,
       this.deliveryTail,
       this.queuedTail,
+      ...this.acceptances,
       ...this.executions
     ]);
+    let deactivationError: unknown;
+    if (runtimeId) {
+      try {
+        await this.client.runtime.stop(this.entityId, { runtime_id: runtimeId });
+      } catch (error) {
+        deactivationError = error;
+      }
+    }
     this.checkInLoop = undefined;
     this.deliveryLoop = undefined;
     this.reconciliationLoop = undefined;
     this.controller = undefined;
     this.runtimeId = undefined;
     this.state = "stopped";
+    if (deactivationError !== undefined) throw deactivationError;
+  }
+
+  private async beginRuntimeRegistration(runtimeId: string, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      signal.throwIfAborted();
+      try {
+        await this.client.runtime.begin(this.entityId, { runtime_id: runtimeId }, { signal });
+        return;
+      } catch (error) {
+        if (signal.aborted || !isRetryableLifecycleError(error)) throw error;
+        this.reportError(error);
+        await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
+      }
+    }
   }
 
   private detachExternalAbort(controller?: AbortController): void {
@@ -266,6 +309,8 @@ export class AtlasAssetRuntime {
 
   private onTaskChange(task: TaskResource | undefined): void {
     if (!task) return;
+    const accepted = this.accepted.get(task.task_id);
+    if (accepted) accepted.task = task;
     if (isTerminalTaskStatus(task.status)) {
       this.abortLocalTask(task.task_id, `Task became ${task.status}`);
       return;
@@ -302,13 +347,19 @@ export class AtlasAssetRuntime {
   }
 
   private async reconcileAcceptedTasks(signal: AbortSignal): Promise<void> {
-    await Promise.all(
-      [...this.accepted.keys()].map(async (taskId) => {
-        signal.throwIfAborted();
-        const task = await this.client.tasks.get(taskId, { fresh: true, signal });
-        this.onTaskChange(task);
-      })
-    );
+    const taskIds = [...this.accepted.keys()];
+    for (let offset = 0; offset < taskIds.length; offset += TASK_RECONCILIATION_CONCURRENCY) {
+      signal.throwIfAborted();
+      const results = await Promise.allSettled(
+        taskIds.slice(offset, offset + TASK_RECONCILIATION_CONCURRENCY).map(async (taskId) => {
+          const task = await this.client.tasks.get(taskId, { fresh: true, signal });
+          this.onTaskChange(task);
+        })
+      );
+      for (const result of results) {
+        if (result.status === "rejected" && !signal.aborted) this.reportError(result.reason);
+      }
+    }
   }
 
   private async deliver(): Promise<void> {
@@ -322,29 +373,75 @@ export class AtlasAssetRuntime {
         `Core delivered Task ${foreignTask.task_id} for Asset ${foreignTask.asset_id} to ${this.entityId}`
       );
     }
-    for (const task of response.tasks) {
+    const pending = response.tasks.filter((task) => !this.accepted.has(task.task_id) && task.status === "pending");
+    pending.sort(compareTaskOrder);
+    const immediate = pending.filter((task) => this.commands.get(task.command)?.scheduling === "immediate");
+    const queued = pending.filter((task) => this.commands.get(task.command)?.scheduling !== "immediate");
+    for (const task of [...immediate, ...queued]) {
       signal.throwIfAborted();
-      if (this.accepted.has(task.task_id) || task.status !== "pending") continue;
       const command = this.commands.get(task.command);
       const handler = this.handlers.get(task.command);
       if (!command || !handler) {
-        await this.client.tasks.fail(task.task_id, {
-          runtimeId,
+        const failed = await this.writeTaskLifecycle(
+          task.task_id,
           signal,
-          failure: { code: "unsupported_command", message: `Runtime does not advertise ${task.command}` }
-        });
+          () =>
+            this.client.tasks.fail(task.task_id, {
+              runtimeId,
+              signal,
+              failure: { code: "unsupported_command", message: `Runtime does not advertise ${task.command}` }
+            }),
+          isTerminalTask
+        );
+        this.onTaskChange(failed);
         continue;
       }
-      const accepted = { task, command, controller: new AbortController() };
+      const accepted = { task, command, controller: new AbortController(), ready: command.scheduling === "immediate" };
+      this.accepted.set(task.task_id, accepted);
       if (command.scheduling === "immediate") {
-        this.accepted.set(task.task_id, accepted);
         void this.executeTracked(accepted, handler, false).catch((error) => this.reportError(error));
         continue;
       }
-      await this.client.tasks.acknowledge(task.task_id, { runtimeId, signal });
-      this.accepted.set(task.task_id, accepted);
       this.queued.push(accepted);
+      this.queued.sort((left, right) => compareTaskOrder(left.task, right.task));
+      const acknowledgement = this.acknowledgeQueued(accepted, runtimeId, signal);
+      this.acceptances.add(acknowledgement);
+      void acknowledgement.then(
+        () => this.acceptances.delete(acknowledgement),
+        (error) => {
+          this.acceptances.delete(acknowledgement);
+          if (!signal.aborted) this.reportError(error);
+        }
+      );
+    }
+  }
+
+  private async acknowledgeQueued(
+    accepted: AcceptedTask,
+    runtimeId: string,
+    runtimeSignal: AbortSignal
+  ): Promise<void> {
+    const signal = AbortSignal.any([runtimeSignal, accepted.controller.signal]);
+    try {
+      const task = await this.writeTaskLifecycle(
+        accepted.task.task_id,
+        signal,
+        () => this.client.tasks.acknowledge(accepted.task.task_id, { runtimeId, signal }),
+        (current) => current.status !== "pending"
+      );
+      accepted.task = task;
+      if (isTerminalTaskStatus(task.status)) {
+        this.onTaskChange(task);
+        return;
+      }
+      if (task.status !== "acknowledged") {
+        throw new Error(`Core returned ${task.status} after acknowledging ${accepted.task.task_id}`);
+      }
+      accepted.ready = true;
       this.scheduleQueuedWork();
+    } catch (error) {
+      if (!signal.aborted) this.abortLocalTask(accepted.task.task_id, "Task acknowledgement was rejected");
+      throw error;
     }
   }
 
@@ -353,8 +450,9 @@ export class AtlasAssetRuntime {
       .catch(() => undefined)
       .then(async () => {
         for (;;) {
-          const accepted = this.queued.shift();
-          if (!accepted) return;
+          const accepted = this.queued[0];
+          if (!accepted || !accepted.ready) return;
+          this.queued.shift();
           const handler = this.handlers.get(accepted.task.command);
           if (!handler || accepted.controller.signal.aborted) continue;
           await this.executeTracked(accepted, handler, true);
@@ -385,7 +483,13 @@ export class AtlasAssetRuntime {
     const signal = AbortSignal.any([runtimeSignal, accepted.controller.signal]);
     let terminalUpdate: TerminalTaskUpdate;
     try {
-      const started = await this.client.tasks.start(accepted.task.task_id, { runtimeId, signal });
+      const started = await this.writeTaskLifecycle(
+        accepted.task.task_id,
+        signal,
+        () => this.client.tasks.start(accepted.task.task_id, { runtimeId, signal }),
+        (task) => task.status === "in_progress" || isTerminalTaskStatus(task.status)
+      );
+      accepted.task = started;
       if (started.status !== "in_progress") {
         if (isTerminalTaskStatus(started.status)) {
           this.onTaskChange(started);
@@ -404,7 +508,24 @@ export class AtlasAssetRuntime {
             throw new RangeError("progress must be between 0 and 1");
           }
           signal.throwIfAborted();
-          await this.client.tasks.progress(accepted.task.task_id, { progress }, { runtimeId, signal });
+          const progressed = await this.writeTaskLifecycle(
+            accepted.task.task_id,
+            signal,
+            () => this.client.tasks.progress(accepted.task.task_id, { progress }, { runtimeId, signal }),
+            (task) =>
+              isTerminalTaskStatus(task.status) ||
+              (task.status === "in_progress" && task.progress !== undefined && task.progress >= progress)
+          );
+          accepted.task = progressed;
+          if (isTerminalTaskStatus(progressed.status)) this.onTaskChange(progressed);
+          signal.throwIfAborted();
+          if (
+            progressed.status !== "in_progress" ||
+            progressed.progress === undefined ||
+            progressed.progress < progress
+          ) {
+            throw new Error(`Core did not confirm progress ${progress} for ${accepted.task.task_id}`);
+          }
         }
       });
       signal.throwIfAborted();
@@ -430,29 +551,58 @@ export class AtlasAssetRuntime {
     runtimeId: string,
     signal: AbortSignal
   ): Promise<void> {
-    while (!signal.aborted && this.accepted.has(accepted.task.task_id)) {
+    if (signal.aborted || !this.accepted.has(accepted.task.task_id)) return;
+    const task = await this.writeTaskLifecycle(
+      accepted.task.task_id,
+      signal,
+      () =>
+        update.kind === "complete"
+          ? this.client.tasks.complete(accepted.task.task_id, {
+              runtimeId,
+              signal,
+              ...(update.output === undefined ? {} : { output: update.output })
+            })
+          : this.client.tasks.fail(accepted.task.task_id, {
+              runtimeId,
+              signal,
+              failure: update.failure
+            }),
+      isTerminalTask
+    );
+    if (!isTerminalTaskStatus(task.status)) {
+      throw new Error(`Core returned ${task.status} after reporting ${accepted.task.task_id} terminal`);
+    }
+    this.onTaskChange(task);
+  }
+
+  private async writeTaskLifecycle(
+    taskId: string,
+    signal: AbortSignal,
+    write: () => Promise<TaskResource>,
+    authoritativeApplied: (task: TaskResource) => boolean
+  ): Promise<TaskResource> {
+    for (;;) {
+      signal.throwIfAborted();
       try {
-        const task =
-          update.kind === "complete"
-            ? await this.client.tasks.complete(accepted.task.task_id, {
-                runtimeId,
-                signal,
-                ...(update.output === undefined ? {} : { output: update.output })
-              })
-            : await this.client.tasks.fail(accepted.task.task_id, {
-                runtimeId,
-                signal,
-                failure: update.failure
-              });
-        if (!isTerminalTaskStatus(task.status)) {
-          throw new Error(`Core returned ${task.status} after reporting ${accepted.task.task_id} terminal`);
-        }
-        this.onTaskChange(task);
-        return;
+        return await write();
       } catch (error) {
-        if (signal.aborted) return;
-        this.reportError(error);
-        await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
+        if (signal.aborted) throw error;
+        if (isRetryableLifecycleError(error)) {
+          this.reportError(error);
+          await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
+          continue;
+        }
+        let authoritative: TaskResource;
+        try {
+          authoritative = await this.client.tasks.get(taskId, { fresh: true, signal });
+        } catch (readError) {
+          throw new AggregateError(
+            [error, readError],
+            `Task ${taskId} lifecycle write was rejected and its authoritative state could not be read`
+          );
+        }
+        if (authoritativeApplied(authoritative) || isTerminalTaskStatus(authoritative.status)) return authoritative;
+        throw error;
       }
     }
   }
@@ -509,6 +659,21 @@ function normalizeError(error: unknown): string {
 
 function isTerminalTaskStatus(status: TaskResource["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalTask(task: TaskResource): boolean {
+  return isTerminalTaskStatus(task.status);
+}
+
+function isRetryableLifecycleError(error: unknown): boolean {
+  if (error instanceof TypeError && error.message.startsWith("Atlas response failed validation")) return false;
+  if (!(error instanceof AtlasAPIError)) return true;
+  return error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+function compareTaskOrder(left: TaskResource, right: TaskResource): number {
+  const createdDifference = Date.parse(left.created_at) - Date.parse(right.created_at);
+  return createdDifference || left.task_id.localeCompare(right.task_id);
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

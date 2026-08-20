@@ -22,6 +22,20 @@ func (h *Handler) BeginAssetRuntime(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) StopAssetRuntime(w http.ResponseWriter, r *http.Request) {
+	assetID := chi.URLParam(r, "entity_id")
+	limitTaskingRequestBody(w, r)
+	var req protocol.RuntimeStopRequest
+	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateRuntimeStopRequest) {
+		return
+	}
+	if err := h.taskActions.StopRuntime(r.Context(), assetID, req.RuntimeID); err != nil {
+		h.handleActionError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) ReadyAssetRuntime(w http.ResponseWriter, r *http.Request) {
 	assetID := chi.URLParam(r, "entity_id")
 	limitTaskingRequestBody(w, r)

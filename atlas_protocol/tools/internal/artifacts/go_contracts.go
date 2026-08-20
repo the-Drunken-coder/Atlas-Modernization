@@ -65,6 +65,7 @@ var goStructContracts = []goStructContract{
 	{goType: "TaskFailRequest"},
 	{goType: "TaskCancelRequest"},
 	{goType: "RuntimeRegistrationRequest"},
+	{goType: "RuntimeStopRequest"},
 	{goType: "RuntimeReadyRequest"},
 	{goType: "RuntimeTaskDeliveryResponse"},
 	{goType: "ObjectReference", typeOverrides: map[string]goTypeOverride{

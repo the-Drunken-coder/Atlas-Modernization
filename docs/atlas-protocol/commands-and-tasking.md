@@ -418,7 +418,7 @@ A cancelled Task uses the same small shape under `cancellation`:
 
 Task outcomes use closed Protocol enums rather than arbitrary strings:
 
-- `TaskFailureCode`: `unsupported_command`, `precondition_failed`, `execution_failed`, `asset_restarted`, `immediate_start_timeout`, or `invalid_output`
+- `TaskFailureCode`: `unsupported_command`, `precondition_failed`, `execution_failed`, `asset_restarted`, `asset_stopped`, `immediate_start_timeout`, or `invalid_output`
 - `TaskCancellationCode`: `requested` or `superseded`
 
 `TaskFailure` and `TaskCancellation` each contain the applicable code and a human-readable message. Their codes use lowercase snake case. Transport and HTTP errors, such as `TASK_NOT_FOUND`, remain a separate concern and are never stored as Task outcomes. The meaning and valid use of each outcome code are documented in `docs/atlas-protocol/task-outcomes.md`.

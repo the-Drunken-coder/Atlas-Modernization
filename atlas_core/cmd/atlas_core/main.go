@@ -247,6 +247,7 @@ func main() {
 	r.Get("/entities/alias/{alias}", handler.GetEntityByAlias)
 	r.Post("/entities/{entity_id}/checkin", handler.EntityCheckin)
 	r.Post("/entities/{entity_id}/runtime", handler.BeginAssetRuntime)
+	r.Post("/entities/{entity_id}/runtime/stop", handler.StopAssetRuntime)
 	r.Post("/entities/{entity_id}/runtime/ready", handler.ReadyAssetRuntime)
 	r.Get("/entities/{entity_id}/runtime/tasks", handler.DeliverAssetTasks)
 	r.Get("/entities/{entity_id}/tasks", handler.GetTasksByEntity)

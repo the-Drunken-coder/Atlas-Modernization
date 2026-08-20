@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -219,7 +220,9 @@ func ReadChangeRecords(ctx context.Context, db changeRecordQuerier, afterVersion
 			hasMore = true
 			break
 		}
-		if err := json.Unmarshal(payload, &record.Event); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(payload))
+		decoder.UseNumber()
+		if err := decoder.Decode(&record.Event); err != nil {
 			return nil, false, fmt.Errorf("decode change event: %w", err)
 		}
 		records = append(records, record)

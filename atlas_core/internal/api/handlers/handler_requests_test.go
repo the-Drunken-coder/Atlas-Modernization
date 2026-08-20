@@ -389,6 +389,7 @@ func TestCRUDHandlersRejectInvalidConformanceRequests(t *testing.T) {
 		"TaskFailRequest":            {method: http.MethodPost, path: "/tasks/task-1/fail", handle: (*Handler).FailTask},
 		"TaskCancelRequest":          {method: http.MethodPost, path: "/tasks/task-1/cancel", handle: (*Handler).CancelTask},
 		"RuntimeRegistrationRequest": {method: http.MethodPost, path: "/entities/asset-1/runtime", handle: (*Handler).BeginAssetRuntime},
+		"RuntimeStopRequest":         {method: http.MethodPost, path: "/entities/asset-1/runtime/stop", handle: (*Handler).StopAssetRuntime},
 		"RuntimeReadyRequest":        {method: http.MethodPost, path: "/entities/asset-1/runtime/ready", handle: (*Handler).ReadyAssetRuntime},
 		"ObjectCreateRequest":        {method: http.MethodPost, path: "/objects", handle: (*Handler).CreateObject},
 		"ObjectUpdateRequest":        {method: http.MethodPatch, path: "/objects/object-1", handle: (*Handler).UpdateObject},

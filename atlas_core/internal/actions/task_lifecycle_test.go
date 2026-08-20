@@ -5,24 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-func fixtureTaskCatalog(t *testing.T) protocol.CommandCatalog {
+func fixtureTaskCatalog(t testing.TB) protocol.CommandCatalog {
 	t.Helper()
 	return loadTaskingFixture[protocol.CommandCatalog](t, "catalog.json")
 }
 
-func fixtureTaskManifest(t *testing.T) protocol.CommandManifest {
+func fixtureTaskManifest(t testing.TB) protocol.CommandManifest {
 	t.Helper()
 	return loadTaskingFixture[protocol.CommandManifest](t, "manifest.json")
 }
 
-func loadTaskingFixture[T any](t *testing.T, name string) T {
+func loadTaskingFixture[T any](t testing.TB, name string) T {
 	t.Helper()
 	var encoded []byte
 	var err error
@@ -246,6 +249,309 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	}); err == nil {
 		t.Fatal("cancelled Task accepted a different cancellation after runtime replacement")
 	}
+}
+
+func TestRuntimeStopFailsEveryNonterminalStateAndIsIdempotent(t *testing.T) {
+	pool := openActionsTestPool(t)
+	for _, status := range []protocol.TaskStatus{
+		protocol.TaskStatusPending,
+		protocol.TaskStatusAcknowledged,
+		protocol.TaskStatusInProgress,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			statusName := strings.ReplaceAll(string(status), "_", "-")
+			assetID := fmt.Sprintf("stop-%s-%d", statusName, time.Now().UnixNano())
+			defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+			entities := NewEntityActions(pool)
+			if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+				t.Fatalf("create Asset: %v", err)
+			}
+			tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+			if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-stop"); err != nil {
+				t.Fatalf("begin runtime: %v", err)
+			}
+			if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-stop", fixtureTaskManifest(t)); err != nil {
+				t.Fatalf("ready runtime: %v", err)
+			}
+			readyEntity, err := entities.Get(ctx, assetID)
+			if err != nil {
+				t.Fatalf("read ready Entity: %v", err)
+			}
+			task, _, err := tasks.Create(ctx, CreateTaskParams{
+				AssetID: assetID,
+				Command: "fixture.queued",
+				Input:   map[string]any{"value": string(status)},
+			}, "stop-"+string(status))
+			if err != nil {
+				t.Fatalf("create Task: %v", err)
+			}
+			if status == protocol.TaskStatusAcknowledged || status == protocol.TaskStatusInProgress {
+				task, err = tasks.Acknowledge(ctx, task.TaskID, "runtime-stop")
+				if err != nil {
+					t.Fatalf("acknowledge Task: %v", err)
+				}
+			}
+			if status == protocol.TaskStatusInProgress {
+				task, err = tasks.Start(ctx, task.TaskID, "runtime-stop")
+				if err != nil {
+					t.Fatalf("start Task: %v", err)
+				}
+			}
+			beforeTaskEvents := taskChangeEventCount(ctx, t, pool, task.TaskID)
+			beforeEntityEvents := entityChangeEventCount(ctx, t, pool, assetID)
+
+			if err := tasks.StopRuntime(ctx, assetID, "runtime-stop"); err != nil {
+				t.Fatalf("stop runtime: %v", err)
+			}
+			stopped, err := tasks.Get(ctx, task.TaskID)
+			if err != nil {
+				t.Fatalf("read stopped Task: %v", err)
+			}
+			if stopped.Status != string(protocol.TaskStatusFailed) || stopped.Version <= task.Version {
+				t.Fatalf("stopped Task = %#v, previous version %d", stopped, task.Version)
+			}
+			var failure protocol.TaskFailure
+			if err := json.Unmarshal(stopped.Failure, &failure); err != nil || failure.Code != protocol.TaskFailureCodeAssetStopped {
+				t.Fatalf("stopped Task failure = %#v, %v", failure, err)
+			}
+			manifest, err := tasks.RuntimeManifest(ctx, assetID)
+			if err != nil || manifest != nil {
+				t.Fatalf("stopped runtime manifest = %#v, %v", manifest, err)
+			}
+			var ready bool
+			var manifestJSON []byte
+			if err := pool.QueryRow(ctx, `SELECT ready, manifest FROM asset_runtimes WHERE asset_id = $1`, assetID).Scan(&ready, &manifestJSON); err != nil {
+				t.Fatalf("read stopped runtime: %v", err)
+			}
+			if ready || !jsonEqual(manifestJSON, []byte("[]")) {
+				t.Fatalf("stopped runtime ready=%t manifest=%s", ready, manifestJSON)
+			}
+			stoppedEntity, err := entities.Get(ctx, assetID)
+			if err != nil || stoppedEntity.Version <= readyEntity.Version {
+				t.Fatalf("stopped Entity = %#v after version %d, %v", stoppedEntity, readyEntity.Version, err)
+			}
+			if got := taskChangeEventCount(ctx, t, pool, task.TaskID); got != beforeTaskEvents+1 {
+				t.Fatalf("Task feed events after stop = %d, want %d", got, beforeTaskEvents+1)
+			}
+			if got := entityChangeEventCount(ctx, t, pool, assetID); got != beforeEntityEvents+1 {
+				t.Fatalf("Entity feed events after stop = %d, want %d", got, beforeEntityEvents+1)
+			}
+
+			if err := tasks.StopRuntime(ctx, assetID, "runtime-stop"); err != nil {
+				t.Fatalf("replay runtime stop: %v", err)
+			}
+			replayed, err := tasks.Get(ctx, task.TaskID)
+			if err != nil || replayed.Version != stopped.Version {
+				t.Fatalf("replayed stop Task = %#v, want version %d, %v", replayed, stopped.Version, err)
+			}
+			replayedEntity, err := entities.Get(ctx, assetID)
+			if err != nil || replayedEntity.Version != stoppedEntity.Version {
+				t.Fatalf("replayed stop Entity = %#v, want version %d, %v", replayedEntity, stoppedEntity.Version, err)
+			}
+		})
+	}
+}
+
+func TestRuntimeStopIgnoresMissingAndStaleRuntimeIDs(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("stop-stale-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.StopRuntime(ctx, "missing-stop-asset", "missing-runtime"); err != nil {
+		t.Fatalf("stop missing runtime: %v", err)
+	}
+	entities := NewEntityActions(pool)
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("begin runtime 1: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-1", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime 1: %v", err)
+	}
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-2"); err != nil {
+		t.Fatalf("begin runtime 2: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-2", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime 2: %v", err)
+	}
+	task, _, err := tasks.Create(ctx, CreateTaskParams{
+		AssetID: assetID,
+		Command: "fixture.queued",
+		Input:   map[string]any{"value": "new runtime"},
+	}, "stale-stop-new-runtime")
+	if err != nil {
+		t.Fatalf("create runtime 2 Task: %v", err)
+	}
+	beforeEntity, err := entities.Get(ctx, assetID)
+	if err != nil {
+		t.Fatalf("read runtime 2 Entity: %v", err)
+	}
+
+	if err := tasks.StopRuntime(ctx, assetID, "runtime-1"); err != nil {
+		t.Fatalf("stop stale runtime 1: %v", err)
+	}
+	retained, err := tasks.Get(ctx, task.TaskID)
+	if err != nil || retained.Status != string(protocol.TaskStatusPending) || retained.Version != task.Version {
+		t.Fatalf("runtime 2 Task after stale stop = %#v, %v", retained, err)
+	}
+	afterEntity, err := entities.Get(ctx, assetID)
+	if err != nil || afterEntity.Version != beforeEntity.Version {
+		t.Fatalf("runtime 2 Entity after stale stop = %#v, want version %d, %v", afterEntity, beforeEntity.Version, err)
+	}
+	manifest, err := tasks.RuntimeManifest(ctx, assetID)
+	if err != nil || len(manifest) != len(fixtureTaskManifest(t)) {
+		t.Fatalf("runtime 2 manifest after stale stop = %#v, %v", manifest, err)
+	}
+	if deliverable, err := tasks.Deliverable(ctx, assetID, "runtime-2"); err != nil || len(deliverable) != 1 || deliverable[0].TaskID != task.TaskID {
+		t.Fatalf("runtime 2 delivery after stale stop = %#v, %v", deliverable, err)
+	}
+}
+
+func TestRuntimeTaskDrainsUseCommittedBatches(t *testing.T) {
+	pool := openActionsTestPool(t)
+	t.Run("restart continues an interrupted drain", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		assetID := fmt.Sprintf("restart-batch-%d", time.Now().UnixNano())
+		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+			t.Fatalf("create restart batch Asset: %v", err)
+		}
+		tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+		if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-old"); err != nil {
+			t.Fatalf("begin old runtime: %v", err)
+		}
+		insertRuntimeTaskBacklog(ctx, t, pool, assetID, "runtime-old", "restart-batch", runtimeTaskBatchSize+1)
+
+		current, err := tasks.installRuntimeRegistration(ctx, assetID, "runtime-new")
+		if err != nil || !current {
+			t.Fatalf("install new runtime = %t, %v", current, err)
+		}
+		count, current, err := tasks.failRuntimeTaskBatch(ctx, assetID, "runtime-new", true, protocol.TaskFailure{
+			Code:    protocol.TaskFailureCodeAssetRestarted,
+			Message: "The Asset runtime restarted before the Task became terminal.",
+		})
+		if err != nil || !current || count != runtimeTaskBatchSize {
+			t.Fatalf("first restart drain = count:%d current:%t error:%v", count, current, err)
+		}
+		var failed, pending int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FILTER (WHERE status = 'failed'), COUNT(*) FILTER (WHERE status = 'pending')
+			FROM tasks WHERE asset_id = $1
+		`, assetID).Scan(&failed, &pending); err != nil {
+			t.Fatalf("count first restart batch: %v", err)
+		}
+		if failed != runtimeTaskBatchSize || pending != 1 {
+			t.Fatalf("first restart batch left failed:%d pending:%d", failed, pending)
+		}
+		if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-new", fixtureTaskManifest(t)); err == nil {
+			t.Fatal("runtime became ready before stale Task drain completed")
+		}
+
+		if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-new"); err != nil {
+			t.Fatalf("continue exact runtime registration: %v", err)
+		}
+		if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-new", fixtureTaskManifest(t)); err != nil {
+			t.Fatalf("ready runtime after completed drain: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM tasks
+			WHERE asset_id = $1 AND status = 'failed' AND failure->>'code' = 'asset_restarted'
+		`, assetID).Scan(&failed); err != nil {
+			t.Fatalf("count completed restart drain: %v", err)
+		}
+		if failed != runtimeTaskBatchSize+1 {
+			t.Fatalf("completed restart drain = %d, want %d", failed, runtimeTaskBatchSize+1)
+		}
+	})
+
+	t.Run("stop drains every committed batch", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		assetID := fmt.Sprintf("stop-batch-%d", time.Now().UnixNano())
+		defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+		if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+			t.Fatalf("create stop batch Asset: %v", err)
+		}
+		tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+		if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-stop-batch"); err != nil {
+			t.Fatalf("begin stop batch runtime: %v", err)
+		}
+		if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-stop-batch", fixtureTaskManifest(t)); err != nil {
+			t.Fatalf("ready stop batch runtime: %v", err)
+		}
+		insertRuntimeTaskBacklog(ctx, t, pool, assetID, "runtime-stop-batch", "stop-batch", runtimeTaskBatchSize+1)
+
+		if err := tasks.StopRuntime(ctx, assetID, "runtime-stop-batch"); err != nil {
+			t.Fatalf("stop runtime with Task backlog: %v", err)
+		}
+		var failed int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM tasks
+			WHERE asset_id = $1 AND status = 'failed' AND failure->>'code' = 'asset_stopped'
+		`, assetID).Scan(&failed); err != nil {
+			t.Fatalf("count stopped Task drain: %v", err)
+		}
+		if failed != runtimeTaskBatchSize+1 {
+			t.Fatalf("stopped Task drain = %d, want %d", failed, runtimeTaskBatchSize+1)
+		}
+	})
+}
+
+func insertRuntimeTaskBacklog(ctx context.Context, t *testing.T, pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, assetID, runtimeID, prefix string, count int) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (
+			task_id, asset_id, command, input, status, idempotency_key,
+			runtime_id, created_at, updated_at, version
+		)
+		SELECT
+			$1 || '-' || sequence,
+			$2,
+			'fixture.queued',
+			'{}'::jsonb,
+			'pending',
+			$1 || '-attempt-' || sequence,
+			$3,
+			clock_timestamp(),
+			clock_timestamp(),
+			1
+		FROM generate_series(1, $4) AS sequence
+	`, prefix, assetID, runtimeID, count); err != nil {
+		t.Fatalf("insert runtime Task backlog: %v", err)
+	}
+}
+
+func taskChangeEventCount(ctx context.Context, t *testing.T, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, taskID string) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM atlas_change_events WHERE event->>'resource_type' = 'task' AND event->>'id' = $1`, taskID).Scan(&count); err != nil {
+		t.Fatalf("count Task feed events: %v", err)
+	}
+	return count
+}
+
+func entityChangeEventCount(ctx context.Context, t *testing.T, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, entityID string) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM atlas_change_events WHERE event->>'resource_type' = 'entity' AND event->>'id' = $1`, entityID).Scan(&count); err != nil {
+		t.Fatalf("count Entity feed events: %v", err)
+	}
+	return count
 }
 
 func TestProductionCatalogRejectsEveryCommand(t *testing.T) {

@@ -22,7 +22,16 @@ import (
 func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	pool := openIsolatedFeedIntegrationPool(t)
 	handler := NewHandler(&atlasdb.DB{Pool: pool}, nil, zerolog.Nop(), &config.Config{})
-	handler.taskActions = actions.NewTaskActionsWithCatalog(pool, taskingHandlerFixture[protocol.CommandCatalog](t, "catalog.json"))
+	catalog := taskingHandlerFixture[protocol.CommandCatalog](t, "catalog.json")
+	catalog = append(catalog, protocol.CommandDefinition{
+		Command:      "fixture.precision",
+		Name:         "Precision Fixture",
+		Description:  "Preserve arbitrary JSON numbers across Task storage.",
+		InputSchema:  "atlas.protocol.JSONValue",
+		OutputSchema: "atlas.protocol.JSONValue",
+		Scheduling:   protocol.CommandSchedulingQueued,
+	})
+	handler.taskActions = actions.NewTaskActionsWithCatalog(pool, catalog)
 
 	assetID := "handler-tasking-" + time.Now().UTC().Format("20060102150405.000000000")
 	if _, err := handler.entityActions.Create(t.Context(), actions.CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
@@ -38,17 +47,27 @@ func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	router.Post("/tasks/{task_id}/fail", handler.FailTask)
 	router.Post("/tasks/{task_id}/cancel", handler.CancelTask)
 	router.Post("/entities/{entity_id}/runtime", handler.BeginAssetRuntime)
+	router.Post("/entities/{entity_id}/runtime/stop", handler.StopAssetRuntime)
 	router.Post("/entities/{entity_id}/runtime/ready", handler.ReadyAssetRuntime)
 	router.Get("/entities/{entity_id}/runtime/tasks", handler.DeliverAssetTasks)
 	router.Get("/entities/{entity_id}", handler.GetEntity)
+	router.Get("/tasks", handler.ListTasks)
+	router.Get("/tasks/{task_id}", handler.GetTask)
+	router.Get("/queries/changed-since", handler.GetChangedSince)
 
 	runtimeID := "runtime-1"
 	requestTaskingRoute(t, router, http.MethodPost, "/entities/"+assetID+"/runtime", map[string]any{
 		"runtime_id": runtimeID,
 	}, nil, http.StatusNoContent, nil)
+	manifest := taskingHandlerFixture[protocol.CommandManifest](t, "manifest.json")
+	manifest = append(manifest, protocol.CommandManifestEntry{
+		Command:     "fixture.precision",
+		Description: "Preserve arbitrary JSON numbers across Task storage.",
+		Scheduling:  protocol.CommandSchedulingQueued,
+	})
 	requestTaskingRoute(t, router, http.MethodPost, "/entities/"+assetID+"/runtime/ready", map[string]any{
 		"runtime_id": runtimeID,
-		"manifest":   taskingHandlerFixture[protocol.CommandManifest](t, "manifest.json"),
+		"manifest":   manifest,
 	}, nil, http.StatusNoContent, nil)
 
 	emptyManifestAssetID := assetID + "-empty"
@@ -64,8 +83,8 @@ func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	}, nil, http.StatusNoContent, nil)
 	var emptyManifestDetail map[string]any
 	requestTaskingRoute(t, router, http.MethodGet, "/entities/"+emptyManifestAssetID, nil, nil, http.StatusOK, &emptyManifestDetail)
-	manifest, present := emptyManifestDetail["command_manifest"].([]any)
-	if !present || len(manifest) != 0 {
+	detailManifest, present := emptyManifestDetail["command_manifest"].([]any)
+	if !present || len(detailManifest) != 0 {
 		t.Fatalf("ready empty Command Manifest = %#v, want []", emptyManifestDetail["command_manifest"])
 	}
 
@@ -143,6 +162,63 @@ func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	if len(delivery.Tasks) != 1 || delivery.Tasks[0].TaskID != immediateTwo.TaskID {
 		t.Fatalf("immediate delivery after first start = %#v, want Task %s", delivery.Tasks, immediateTwo.TaskID)
 	}
+
+	const exactInteger = "9007199254740993"
+	rawCreate := requestTaskingRouteRaw(t, router, http.MethodPost, "/tasks", `{"asset_id":"`+assetID+`","command":"fixture.precision","input":`+exactInteger+`}`, map[string]string{
+		"Idempotency-Key": "precision-attempt",
+	}, http.StatusCreated)
+	if !bytes.Contains(rawCreate, []byte(`"input":`+exactInteger)) {
+		t.Fatalf("raw Task create lost input precision: %s", rawCreate)
+	}
+	var precise protocol.TaskResource
+	if err := json.Unmarshal(rawCreate, &precise); err != nil {
+		t.Fatalf("decode precise Task response: %v", err)
+	}
+	for label, path := range map[string]string{
+		"GET":  "/tasks/" + precise.TaskID,
+		"list": "/tasks?limit=100",
+		"feed": "/queries/changed-since?since_version=0&limit=100",
+	} {
+		body := requestTaskingRouteRaw(t, router, http.MethodGet, path, "", nil, http.StatusOK)
+		if !bytes.Contains(body, []byte(exactInteger)) {
+			t.Fatalf("%s response lost stored input precision: %s", label, body)
+		}
+	}
+	assertTaskRouteStatus(t, router, precise.TaskID, "acknowledge", map[string]any{}, runtimeID, protocol.TaskStatusAcknowledged)
+	assertTaskRouteStatus(t, router, precise.TaskID, "start", map[string]any{}, runtimeID, protocol.TaskStatusInProgress)
+	rawComplete := requestTaskingRouteRaw(t, router, http.MethodPost, "/tasks/"+precise.TaskID+"/complete", `{"output":`+exactInteger+`}`, map[string]string{
+		"Atlas-Runtime-ID": runtimeID,
+	}, http.StatusOK)
+	if !bytes.Contains(rawComplete, []byte(`"output":`+exactInteger)) {
+		t.Fatalf("raw Task completion lost output precision: %s", rawComplete)
+	}
+	for label, path := range map[string]string{
+		"completed GET":  "/tasks/" + precise.TaskID,
+		"completed list": "/tasks?limit=100",
+		"completed feed": "/queries/changed-since?since_version=0&limit=100",
+	} {
+		body := requestTaskingRouteRaw(t, router, http.MethodGet, path, "", nil, http.StatusOK)
+		if !bytes.Contains(body, []byte(`"output":`+exactInteger)) {
+			t.Fatalf("%s response lost stored output precision: %s", label, body)
+		}
+	}
+
+	requestTaskingRoute(t, router, http.MethodPost, "/entities/"+assetID+"/runtime/stop", map[string]any{
+		"runtime_id": runtimeID,
+	}, nil, http.StatusNoContent, nil)
+	var stoppedImmediate protocol.TaskResource
+	requestTaskingRoute(t, router, http.MethodGet, "/tasks/"+immediateTwo.TaskID, nil, nil, http.StatusOK, &stoppedImmediate)
+	if stoppedImmediate.Status != protocol.TaskStatusFailed || stoppedImmediate.Failure == nil || stoppedImmediate.Failure.Code != protocol.TaskFailureCodeAssetStopped {
+		t.Fatalf("Task after runtime stop = %#v", stoppedImmediate)
+	}
+	var stoppedDetail map[string]any
+	requestTaskingRoute(t, router, http.MethodGet, "/entities/"+assetID, nil, nil, http.StatusOK, &stoppedDetail)
+	if _, present := stoppedDetail["command_manifest"]; present {
+		t.Fatalf("stopped Asset retained Command Manifest: %#v", stoppedDetail["command_manifest"])
+	}
+	requestTaskingRoute(t, router, http.MethodPost, "/entities/"+assetID+"/runtime/stop", map[string]any{
+		"runtime_id": runtimeID,
+	}, nil, http.StatusNoContent, nil)
 }
 
 func taskingHandlerFixture[T any](t *testing.T, name string) T {
@@ -245,4 +321,35 @@ func requestTaskingRoute(t *testing.T, router http.Handler, method, path string,
 	if err := json.NewDecoder(response.Body).Decode(result); err != nil {
 		t.Fatalf("decode %s %s response: %v", method, path, err)
 	}
+}
+
+func requestTaskingRouteRaw(t *testing.T, router http.Handler, method, path, payload string, headers map[string]string, wantStatus int) []byte {
+	t.Helper()
+	var body io.Reader
+	if payload != "" {
+		body = strings.NewReader(payload)
+	}
+	request := httptest.NewRequest(method, path, body)
+	if payload != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	response := recorder.Result()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close %s %s response: %v", method, path, err)
+		}
+	}()
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read %s %s response: %v", method, path, err)
+	}
+	if response.StatusCode != wantStatus {
+		t.Fatalf("%s %s status = %d, want %d, body=%s", method, path, response.StatusCode, wantStatus, data)
+	}
+	return data
 }

@@ -90,7 +90,7 @@ On process startup, the Asset runtime generates a fresh `runtime_id` and begins 
 POST /entities/{asset_id}/runtime
 ```
 
-Core atomically records the new runtime, fences the previous runtime, and fails its nonterminal Tasks with `asset_restarted`. The new runtime is not ready and receives no work.
+Core first records the new runtime as unready, so the previous process is fenced without holding one transaction across its entire Task backlog. It then fails the previous runtime's nonterminal Tasks with `asset_restarted` in committed batches of 100. An exact repeated Begin continues an interrupted drain. The new runtime receives no work, and Ready rejects until no stale nonterminal Task remains.
 
 The runtime then calls `establishSafeState` on every registered execution module. After they all succeed, it submits the fixed Command Manifest:
 
@@ -99,6 +99,14 @@ POST /entities/{asset_id}/runtime/ready
 ```
 
 Core accepts the ready transition only for the current `runtime_id`. Repeating either registration call with the same data is idempotent. An old process cannot become current again after a newer runtime has registered. Registration stores the manifest and exposes it read-only in Asset details; the initial empty catalog permits only an empty manifest.
+
+Deliberate process shutdown uses:
+
+```text
+POST /entities/{asset_id}/runtime/stop
+```
+
+A matching stop clears readiness and the manifest, publishes the Asset change, and fails that runtime's nonterminal Tasks with `asset_stopped` through the same committed batch drain. Missing and stale runtime IDs are successful no-ops, so a delayed shutdown cannot deactivate a newer process.
 
 A WebSocket reconnect keeps the same runtime and uses feed recovery. It does not repeat process registration, clear the local queue, or establish safe state again.
 
@@ -167,7 +175,9 @@ The runtime-scoped adapter asks the Task module for eligible work. It does not f
 
 An in-process Core timeout worker fails immediate Tasks that have not started before the 60-second deadline. It also reconciles overdue Tasks at startup before any delivery occurs. It is a small timer and database query, not a second job or message-queue system.
 
-The Asset runtime stops requesting pending Tasks through periodic Entity check-in. Check-in remains for telemetry and observed state. Independent five-second loops poll runtime-scoped delivery and reconcile accepted Task status. Slow reconciliation cannot delay new delivery.
+The Asset runtime stops requesting pending Tasks through periodic Entity check-in. Check-in remains for telemetry and observed state. Independent five-second loops poll runtime-scoped delivery and reconcile accepted Task status with at most eight concurrent reads. A failed status read is isolated from the others, and slow reconciliation cannot delay new delivery.
+
+Delivered immediate work is processed before queued acknowledgement. Queued Tasks enter a provisional local queue in authoritative `created_at`, `task_id` order before acknowledgement, so an ambiguous acknowledgement cannot drop or reorder work. The runtime confirms Start before calling the physical handler. Exact idempotent lifecycle writes retry after transport failures, HTTP 408, 429, and server errors; permanent responses are reconciled against a fresh authoritative Task. Startup uncertainty after runtime allocation is compensated through the exact runtime-stop request.
 
 ### Empty production catalog
 

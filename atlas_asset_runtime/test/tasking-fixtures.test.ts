@@ -38,6 +38,7 @@ function emptyClient(): AtlasAssetClient {
     entities: { checkIn: vi.fn(async () => undefined) },
     runtime: {
       begin: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
       ready: vi.fn(async () => undefined),
       tasks: vi.fn(async () => ({ tasks: [] }))
     },

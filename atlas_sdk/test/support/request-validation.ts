@@ -10,6 +10,7 @@ import {
   isObjectUpdateRequest,
   isRuntimeReadyRequest,
   isRuntimeRegistrationRequest,
+  isRuntimeStopRequest,
   isTaskAcknowledgeRequest,
   isTaskCancelRequest,
   isTaskCompleteRequest,
@@ -21,6 +22,7 @@ import {
   type ObjectUpdateRequest,
   type RuntimeReadyRequest,
   type RuntimeRegistrationRequest,
+  type RuntimeStopRequest,
   type TaskAcknowledgeRequest,
   type TaskCancelRequest,
   type TaskCompleteRequest,
@@ -41,6 +43,7 @@ export const requestValidators = {
   objectUpdate: isObjectUpdateRequest,
   runtimeReady: isRuntimeReadyRequest,
   runtimeRegistration: isRuntimeRegistrationRequest,
+  runtimeStop: isRuntimeStopRequest,
   taskAcknowledge: isTaskAcknowledgeRequest,
   taskCancel: isTaskCancelRequest,
   taskComplete: isTaskCompleteRequest,
@@ -56,6 +59,7 @@ export const requestValidators = {
   objectUpdate: RequestValidator<ObjectUpdateRequest>;
   runtimeReady: RequestValidator<RuntimeReadyRequest>;
   runtimeRegistration: RequestValidator<RuntimeRegistrationRequest>;
+  runtimeStop: RequestValidator<RuntimeStopRequest>;
   taskAcknowledge: RequestValidator<TaskAcknowledgeRequest>;
   taskCancel: RequestValidator<TaskCancelRequest>;
   taskComplete: RequestValidator<TaskCompleteRequest>;

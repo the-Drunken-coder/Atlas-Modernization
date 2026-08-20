@@ -54,7 +54,7 @@ const runtime = new AtlasAssetRuntime(client, {
 await runtime.start();
 ```
 
-`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, and runs every execution module's safety barrier. Publishing the manifest is the final fallible startup step. The running process then polls only its runtime delivery endpoint and accepted Task IDs instead of hydrating the global Atlas dataset. `stop()` aborts local work and waits for in-flight runtime work to settle. Task handlers and check-in report callbacks receive that cooperative cancellation signal and must settle when it aborts. Starting again creates a new runtime ID.
+`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, and runs every execution module's safety barrier. Publishing the manifest is the final fallible startup step. If startup fails after allocation, the runtime compensates by asking Core to deactivate that exact runtime ID. The running process then polls only its runtime delivery endpoint and accepted Task IDs instead of hydrating the global Atlas dataset. `stop()` aborts local work, waits for in-flight runtime work to settle, and independently deactivates the runtime in Core. Local state reaches `stopped` even when Core deactivation fails, and the stop promise then rejects. Task handlers and check-in report callbacks receive that cooperative cancellation signal and must settle when it aborts. Starting again creates a new runtime ID.
 
 The runtime exposes `stopped`, `starting`, `running`, and `stopping` states. `checkIn()` remains available for a caller-requested telemetry cycle; the background loop calls the same method at the configured interval. Check-in never carries or retrieves Tasks.
 
@@ -80,17 +80,18 @@ Pass modules through `executionModules`. Core never sees module IDs or procedure
 
 Core remains authoritative for Task eligibility and ordering. The runtime asks only for work released to its current runtime ID.
 
-- Queued Commands are acknowledged and executed by one serial local executor.
-- Immediate Commands start independently and may overlap queued or other immediate work.
+- Queued Tasks enter the local queue in authoritative `created_at`, `task_id` order before acknowledgement, then execute through one serial executor. A lost acknowledgement response cannot drop or reorder them.
+- Immediate Commands start independently and may overlap queued or other immediate work. Delivered immediate work is processed before queued acknowledgements.
 - Progress is available only when the manifest declares `supports_progress` and is reported from `0` to `1`.
 - A handler return value becomes Task output. Returning nothing completes without output. A thrown error fails the Task with `execution_failed`.
 - A handler throws `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution.
 - A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
-- Independent five-second loops request new delivery and refresh accepted Task IDs. A slow status refresh cannot delay delivery and consume an immediate Task's start window.
+- The runtime confirms Start before invoking a handler. Exact lifecycle writes retry after transport failures, HTTP 408, 429, and server errors. Permanent responses are reconciled against a fresh authoritative Task instead of retried forever.
+- Independent five-second loops request new delivery and refresh accepted Task IDs with at most eight concurrent reads. A slow or failed status refresh cannot delay delivery, block another refresh, or consume an immediate Task's start window.
 - A terminal Task state from Core aborts the matching local handler. This includes cancellation and failure caused by runtime fencing. The runtime does not issue a second cancellation or abort API call.
 - Handlers must observe their `AbortSignal`, finish physical cleanup, and settle. Runtime shutdown waits for every active handler before a later `start()` can establish a new safety barrier.
 
-Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. Temporary delivery failures keep the same runtime ID and are retried by the delivery loop; they are not process restarts.
+Process restart recovery is explicit. A new registration first installs the replacement runtime as unready, then fails the previous runtime's nonterminal Tasks with `asset_restarted` in committed batches of 100. An exact repeated Begin continues an interrupted drain, and Core refuses Ready until no stale nonterminal Task remains. Temporary delivery failures keep the same runtime ID and are retried by the delivery loop; they are not process restarts.
 
 ## Boundaries
 

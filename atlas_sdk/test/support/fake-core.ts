@@ -199,6 +199,13 @@ export class FakeCore {
       runtime.ready = true;
       return new Response(null, { status: 204 });
     }
+    if (segments.length === 4 && action === "runtime" && segments[3] === "stop" && method === "POST") {
+      const body = await readValidatedBody(init ?? {}, requestValidators.runtimeStop);
+      if (body instanceof Response) return body;
+      const runtime = this.runtimes.get(id);
+      if (runtime?.runtimeId === body.runtime_id) runtime.ready = false;
+      return new Response(null, { status: 204 });
+    }
     if (segments.length === 4 && action === "runtime" && segments[3] === "tasks" && method === "GET") {
       const runtime = this.runtimes.get(id);
       if (!runtime || !runtime.ready) return protocolError("runtime not ready", "VALIDATION_ERROR", 400);

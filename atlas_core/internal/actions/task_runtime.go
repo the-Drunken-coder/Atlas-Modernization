@@ -13,10 +13,19 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-const immediateTimeoutBatchSize = 100
+const (
+	immediateTimeoutBatchSize = 100
+	runtimeTaskBatchSize      = 100
+)
 
-// BeginRuntimeRegistration fences the previous process and fails all of its
-// nonterminal work before recording the new, not-ready runtime.
+var assetStoppedFailure = protocol.TaskFailure{
+	Code:    protocol.TaskFailureCodeAssetStopped,
+	Message: "The Asset runtime stopped before the Task became terminal.",
+}
+
+// BeginRuntimeRegistration first installs the new process as not ready, then
+// drains stale work in committed batches. An interrupted exact retry continues
+// the same drain without restoring readiness or replacing the runtime.
 func (a *TaskActions) BeginRuntimeRegistration(ctx context.Context, assetID, runtimeID string) error {
 	assetID = strings.TrimSpace(assetID)
 	runtimeID = strings.TrimSpace(runtimeID)
@@ -26,9 +35,31 @@ func (a *TaskActions) BeginRuntimeRegistration(ctx context.Context, assetID, run
 	if errors := protocol.ValidateRuntimeRegistrationRequest(protocol.RuntimeRegistrationRequest{RuntimeID: runtimeID}); len(errors) > 0 {
 		return NewValidationErrorWithDetails("Invalid runtime registration", errors)
 	}
-	tx, err := beginChangeTx(ctx, a.pool, "begin Asset runtime registration")
+	current, err := a.installRuntimeRegistration(ctx, assetID, runtimeID)
 	if err != nil {
 		return err
+	}
+	if !current {
+		return nil
+	}
+	for {
+		count, stillCurrent, err := a.failRuntimeTaskBatch(ctx, assetID, runtimeID, true, protocol.TaskFailure{
+			Code:    protocol.TaskFailureCodeAssetRestarted,
+			Message: "The Asset runtime restarted before the Task became terminal.",
+		})
+		if err != nil {
+			return err
+		}
+		if !stillCurrent || count == 0 {
+			return nil
+		}
+	}
+}
+
+func (a *TaskActions) installRuntimeRegistration(ctx context.Context, assetID, runtimeID string) (bool, error) {
+	tx, err := beginChangeTx(ctx, a.pool, "install Asset runtime registration")
+	if err != nil {
+		return false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var entity models.Entity
@@ -37,25 +68,23 @@ func (a *TaskActions) BeginRuntimeRegistration(ctx context.Context, assetID, run
 		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return NewEntityNotFoundError(assetID)
+			return false, NewEntityNotFoundError(assetID)
 		}
-		return fmt.Errorf("lock Asset Entity: %w", err)
+		return false, fmt.Errorf("lock Asset Entity: %w", err)
 	}
 	if entity.Type != "asset" {
-		return NewValidationError("only asset Entities can register a runtime")
+		return false, NewValidationError("only asset Entities can register a runtime")
 	}
 	var previousRuntimeID string
 	err = tx.QueryRow(ctx, `SELECT runtime_id FROM asset_runtimes WHERE asset_id = $1 FOR UPDATE`, assetID).Scan(&previousRuntimeID)
 	if err == nil && previousRuntimeID == runtimeID {
-		return tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit repeated Asset runtime registration: %w", err)
+		}
+		return true, nil
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("lock previous Asset runtime: %w", err)
-	}
-	if previousRuntimeID != "" {
-		if err := a.failRuntimeTasks(ctx, tx, assetID, previousRuntimeID, protocol.TaskFailure{Code: protocol.TaskFailureCodeAssetRestarted, Message: "The Asset runtime restarted before the Task became terminal."}); err != nil {
-			return err
-		}
+		return false, fmt.Errorf("lock previous Asset runtime: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO asset_runtimes (asset_id, runtime_id, ready, manifest, registered_at, ready_at)
@@ -63,15 +92,83 @@ func (a *TaskActions) BeginRuntimeRegistration(ctx context.Context, assetID, run
 		ON CONFLICT (asset_id) DO UPDATE SET runtime_id = EXCLUDED.runtime_id,
 			ready = FALSE, manifest = '[]', registered_at = clock_timestamp(), ready_at = NULL
 	`, assetID, runtimeID); err != nil {
-		return fmt.Errorf("record Asset runtime: %w", err)
+		return false, fmt.Errorf("record Asset runtime: %w", err)
 	}
 	if err := recordRuntimeManifestEntityChange(ctx, tx, &entity); err != nil {
-		return err
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Asset runtime registration: %w", err)
+		return false, fmt.Errorf("commit Asset runtime registration: %w", err)
 	}
-	return nil
+	return true, nil
+}
+
+// StopRuntime deactivates only the named current runtime. Missing and stale
+// runtime IDs are successful no-ops so a delayed shutdown cannot fence a newer
+// process.
+func (a *TaskActions) StopRuntime(ctx context.Context, assetID, runtimeID string) error {
+	assetID = strings.TrimSpace(assetID)
+	runtimeID = strings.TrimSpace(runtimeID)
+	if err := ValidateEntityID(assetID); err != nil {
+		return err
+	}
+	if errors := protocol.ValidateRuntimeStopRequest(protocol.RuntimeStopRequest{RuntimeID: runtimeID}); len(errors) > 0 {
+		return NewValidationErrorWithDetails("Invalid runtime stop", errors)
+	}
+	tx, err := beginChangeTx(ctx, a.pool, "stop Asset runtime")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var entity models.Entity
+	if err := tx.QueryRow(ctx, entitySelectSQL+` WHERE entity_id = $1 FOR UPDATE`, assetID).Scan(
+		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return tx.Commit(ctx)
+	} else if err != nil {
+		return fmt.Errorf("lock stopping Asset Entity: %w", err)
+	}
+
+	var currentRuntimeID string
+	var ready bool
+	var manifestJSON []byte
+	if err := tx.QueryRow(ctx, `SELECT runtime_id, ready, manifest FROM asset_runtimes WHERE asset_id = $1 FOR UPDATE`, assetID).Scan(
+		&currentRuntimeID, &ready, &manifestJSON,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return tx.Commit(ctx)
+	} else if err != nil {
+		return fmt.Errorf("lock stopping Asset runtime: %w", err)
+	}
+	if currentRuntimeID != runtimeID {
+		return tx.Commit(ctx)
+	}
+
+	stateChanged := ready || !jsonEqual(manifestJSON, []byte("[]"))
+	if _, err := tx.Exec(ctx, `
+		UPDATE asset_runtimes SET ready = FALSE, manifest = '[]', ready_at = NULL
+		WHERE asset_id = $1 AND runtime_id = $2
+	`, assetID, runtimeID); err != nil {
+		return fmt.Errorf("deactivate Asset runtime: %w", err)
+	}
+	if stateChanged {
+		if err := recordRuntimeManifestEntityChange(ctx, tx, &entity); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit Asset runtime stop: %w", err)
+	}
+	for {
+		count, stillCurrent, err := a.failRuntimeTaskBatch(ctx, assetID, runtimeID, false, assetStoppedFailure)
+		if err != nil {
+			return err
+		}
+		if !stillCurrent || count == 0 {
+			return nil
+		}
+	}
 }
 
 // CompleteRuntimeRegistration records the fixed manifest only for the current
@@ -116,6 +213,19 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 	}
 	if currentRuntimeID != runtimeID {
 		return NewValidationError("stale runtime cannot become ready")
+	}
+	var staleTasksRemain bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tasks
+			WHERE asset_id = $1 AND runtime_id <> $2
+				AND status IN ('pending', 'acknowledged', 'in_progress')
+		)
+	`, assetID, runtimeID).Scan(&staleTasksRemain); err != nil {
+		return fmt.Errorf("check stale runtime Tasks before readiness: %w", err)
+	}
+	if staleTasksRemain {
+		return NewValidationError("Asset runtime cannot become ready until stale Tasks are drained")
 	}
 	if ready {
 		if !jsonEqual(currentManifest, encoded) {
@@ -251,30 +361,68 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 	return deliverable, nil
 }
 
-func (a *TaskActions) failRuntimeTasks(ctx context.Context, tx pgx.Tx, assetID, runtimeID string, failure protocol.TaskFailure) error {
-	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status IN ('pending', 'acknowledged', 'in_progress') ORDER BY created_at, task_id FOR UPDATE`, assetID, runtimeID)
+func (a *TaskActions) failRuntimeTaskBatch(ctx context.Context, assetID, runtimeID string, stale bool, failure protocol.TaskFailure) (int, bool, error) {
+	tx, err := beginChangeTx(ctx, a.pool, "drain runtime Tasks")
 	if err != nil {
-		return fmt.Errorf("lock nonterminal runtime Tasks: %w", err)
+		return 0, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var lockedAssetID string
+	if err := tx.QueryRow(ctx, `SELECT entity_id FROM entities WHERE entity_id = $1 FOR UPDATE`, assetID).Scan(&lockedAssetID); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, false, fmt.Errorf("commit missing Asset runtime drain: %w", err)
+		}
+		return 0, false, nil
+	} else if err != nil {
+		return 0, false, fmt.Errorf("lock Asset for runtime Task drain: %w", err)
+	}
+	var currentRuntimeID string
+	if err := tx.QueryRow(ctx, `SELECT runtime_id FROM asset_runtimes WHERE asset_id = $1 FOR UPDATE`, assetID).Scan(&currentRuntimeID); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, false, fmt.Errorf("commit missing runtime Task drain: %w", err)
+		}
+		return 0, false, nil
+	} else if err != nil {
+		return 0, false, fmt.Errorf("lock Asset runtime for Task drain: %w", err)
+	}
+	if currentRuntimeID != runtimeID {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, false, fmt.Errorf("commit superseded runtime Task drain: %w", err)
+		}
+		return 0, false, nil
+	}
+
+	runtimePredicate := "runtime_id = $2"
+	if stale {
+		runtimePredicate = "runtime_id <> $2"
+	}
+	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE asset_id = $1 AND `+runtimePredicate+` AND status IN ('pending', 'acknowledged', 'in_progress') ORDER BY created_at, task_id LIMIT $3 FOR UPDATE`, assetID, runtimeID, runtimeTaskBatchSize)
+	if err != nil {
+		return 0, true, fmt.Errorf("lock nonterminal runtime Task batch: %w", err)
 	}
 	tasks, err := scanTaskRows(rows)
 	if err != nil {
-		return err
+		return 0, true, err
 	}
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-		return fmt.Errorf("read database time for runtime Task failure: %w", err)
+		return 0, true, fmt.Errorf("read database time for runtime Task failure: %w", err)
 	}
 	now = now.UTC()
 	for _, task := range tasks {
 		if _, err := failTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, now, failure); err != nil {
-			return err
+			return 0, true, err
 		}
 		_, err := persistTaskState(ctx, tx, task)
 		if err != nil {
-			return fmt.Errorf("fail fenced runtime Task: %w", err)
+			return 0, true, fmt.Errorf("fail fenced runtime Task: %w", err)
 		}
 	}
-	return nil
+	if err := tx.Commit(ctx); err != nil {
+		return 0, true, fmt.Errorf("commit runtime Task drain: %w", err)
+	}
+	return len(tasks), true, nil
 }
 
 // ReconcileImmediateTimeouts permanently fails one bounded batch of immediate

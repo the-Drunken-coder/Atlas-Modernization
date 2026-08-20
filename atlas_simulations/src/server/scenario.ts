@@ -259,6 +259,7 @@ function trackClientCreates(
     },
     runtime: {
       begin: (assetId, request, options) => guarded(() => client.runtime.begin(assetId, request, options)),
+      stop: (assetId, request, options) => client.runtime.stop(assetId, request, options),
       ready: (assetId, request, options) => guarded(() => client.runtime.ready(assetId, request, options)),
       tasks: (assetId, options) => guarded(() => client.runtime.tasks(assetId, options))
     },

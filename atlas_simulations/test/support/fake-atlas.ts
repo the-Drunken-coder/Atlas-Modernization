@@ -154,6 +154,38 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       begin: async (assetId, request) => {
         state.runtimes.set(assetId, { runtimeId: request.runtime_id, ready: false, manifest: [] });
       },
+      stop: async (assetId, request) => {
+        const runtime = state.runtimes.get(assetId);
+        if (!runtime || runtime.runtimeId !== request.runtime_id) return;
+        runtime.ready = false;
+        runtime.manifest = [];
+        const currentEntity = state.entities.get(assetId)?.at(-1)?.value;
+        if (currentEntity?.command_manifest !== undefined) {
+          const { command_manifest: _manifest, ...withoutManifest } = currentEntity;
+          const version = commitVersion(state, clientState);
+          saveValue(
+            state.entities,
+            assetId,
+            { ...withoutManifest, metadata: metadata(version, currentEntity.metadata.created_at) },
+            version
+          );
+        }
+        for (const task of currentValues(state, state.tasks, "task")) {
+          if (
+            task.asset_id !== assetId ||
+            task.status === "completed" ||
+            task.status === "failed" ||
+            task.status === "cancelled"
+          ) {
+            continue;
+          }
+          updateTask(state, clientState, task.task_id, {
+            status: "failed",
+            failure: { code: "asset_stopped", message: "The Asset runtime stopped before the Task became terminal." },
+            finished_at: timestamp()
+          });
+        }
+      },
       ready: async (assetId, request) => {
         const runtime = state.runtimes.get(assetId);
         if (!runtime || runtime.runtimeId !== request.runtime_id) throw conflict("runtime", request.runtime_id);

@@ -100,6 +100,10 @@ func ValidateRuntimeRegistrationRequest(value any) []string {
 	return validator.ValidateRuntimeRegistrationRequest(value)
 }
 
+func ValidateRuntimeStopRequest(value any) []string {
+	return validator.ValidateRuntimeStopRequest(value)
+}
+
 func ValidateRuntimeReadyRequest(value any) []string {
 	return validator.ValidateRuntimeReadyRequest(value)
 }

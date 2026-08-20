@@ -54,6 +54,7 @@ var exampleSets = []exampleSet{
 	{pattern: "requests/tasks/fail.json", definition: "TaskFailRequest", semanticValidation: protocolvalidator.ValidateTaskFailRequest},
 	{pattern: "requests/tasks/cancel.json", definition: "TaskCancelRequest", semanticValidation: protocolvalidator.ValidateTaskCancelRequest},
 	{pattern: "requests/runtime/register.json", definition: "RuntimeRegistrationRequest", semanticValidation: protocolvalidator.ValidateRuntimeRegistrationRequest},
+	{pattern: "requests/runtime/stop.json", definition: "RuntimeStopRequest", semanticValidation: protocolvalidator.ValidateRuntimeStopRequest},
 	{pattern: "requests/runtime/ready.json", definition: "RuntimeReadyRequest", semanticValidation: protocolvalidator.ValidateRuntimeReadyRequest},
 	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest", semanticValidation: protocolvalidator.ValidateObjectCreateRequest},
 	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest", semanticValidation: protocolvalidator.ValidateObjectUpdateRequest},

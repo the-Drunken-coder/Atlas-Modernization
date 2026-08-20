@@ -15,6 +15,7 @@ import type {
   ObjectUpdateRequest,
   RuntimeReadyRequest,
   RuntimeRegistrationRequest,
+  RuntimeStopRequest,
   RuntimeTaskDeliveryResponse,
   TaskCreateRequest,
   TaskProgressRequest,
@@ -178,6 +179,14 @@ export class AtlasClient {
       this.transport.empty(
         "POST",
         `/entities/${encodeURIComponent(assetId)}/runtime`,
+        { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
+        undefined,
+        options?.signal
+      ),
+    stop: (assetId: string, request: RuntimeStopRequest, options?: { signal?: AbortSignal }) =>
+      this.transport.empty(
+        "POST",
+        `/entities/${encodeURIComponent(assetId)}/runtime/stop`,
         { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
         undefined,
         options?.signal

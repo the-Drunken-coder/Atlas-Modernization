@@ -136,6 +136,7 @@ type TaskFailureCode string
 
 const (
 	TaskFailureCodeAssetRestarted        TaskFailureCode = "asset_restarted"
+	TaskFailureCodeAssetStopped          TaskFailureCode = "asset_stopped"
 	TaskFailureCodeExecutionFailed       TaskFailureCode = "execution_failed"
 	TaskFailureCodeImmediateStartTimeout TaskFailureCode = "immediate_start_timeout"
 	TaskFailureCodeInvalidOutput         TaskFailureCode = "invalid_output"
@@ -258,6 +259,10 @@ type TaskCancelRequest struct {
 }
 
 type RuntimeRegistrationRequest struct {
+	RuntimeID string `json:"runtime_id"`
+}
+
+type RuntimeStopRequest struct {
 	RuntimeID string `json:"runtime_id"`
 }
 

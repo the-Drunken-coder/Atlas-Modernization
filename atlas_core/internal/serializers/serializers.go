@@ -2,6 +2,7 @@
 package serializers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -92,7 +93,9 @@ func decodeTaskJSON(taskID, field string, value json.RawMessage) protocol.JSONVa
 		return nil
 	}
 	var decoded protocol.JSONValue
-	if err := json.Unmarshal(value, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
 		log.Error().Err(err).Str("task_id", taskID).Str("field", field).Msg("invalid stored Task JSON")
 		return nil
 	}

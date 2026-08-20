@@ -1686,6 +1686,18 @@
       ],
       "type": "object"
     },
+    "RuntimeStopRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "runtime_id": {
+          "$ref": "#/$defs/RuntimeID"
+        }
+      },
+      "required": [
+        "runtime_id"
+      ],
+      "type": "object"
+    },
     "RuntimeReadyRequest": {
       "additionalProperties": false,
       "properties": {
@@ -2294,6 +2306,7 @@
     "TaskFailureCode": {
       "enum": [
         "asset_restarted",
+        "asset_stopped",
         "execution_failed",
         "immediate_start_timeout",
         "invalid_output",
