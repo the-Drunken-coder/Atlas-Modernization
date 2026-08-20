@@ -9,6 +9,7 @@ import {
   entityHeartbeatLastSeen,
   entityKind,
   entityLastSeen,
+  entityLinkState,
   heartbeatLevel
 } from "../atlas/entities.js";
 import { formatPercent, formatRelativeTime } from "../atlas/format.js";
@@ -38,18 +39,26 @@ export function EntityList({
   onPreview
 }: EntityListProps) {
   const now = useHeartbeatClock();
+  const filterRef = useRef<HTMLInputElement>(null);
+  const focusedEntityIdRef = useRef<string | undefined>(undefined);
   const restoreFocusRef = useRef<HTMLButtonElement>(null);
   const visibleEntities = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return entities;
-    return entities.filter((entity) =>
-      `${entityDisplayName(entity)} ${entityMeta(entity, now)}`.toLocaleLowerCase().includes(normalized)
-    );
-  }, [entities, now, query]);
+    return entities.filter((entity) => entitySearchText(entity).toLocaleLowerCase().includes(normalized));
+  }, [entities, query]);
 
   useEffect(() => {
-    restoreFocusRef.current?.focus();
+    if (!restoreFocusId) return;
+    (restoreFocusRef.current ?? filterRef.current)?.focus();
   }, [restoreFocusId]);
+
+  useEffect(() => {
+    const focusedId = focusedEntityIdRef.current;
+    if (!focusedId || visibleEntities.some((entity) => entity.entity_id === focusedId)) return;
+    focusedEntityIdRef.current = undefined;
+    filterRef.current?.focus();
+  }, [visibleEntities]);
 
   if (entities.length === 0) {
     return <div className="panel__empty">{emptyLabel}</div>;
@@ -59,6 +68,7 @@ export function EntityList({
       <label className="bp6-input-group bp6-small entity-filter">
         <SearchIcon size={14} />
         <input
+          ref={filterRef}
           className="bp6-input"
           type="search"
           aria-label="Filter entities"
@@ -84,12 +94,18 @@ export function EntityList({
                 ref={
                   entity.entity_id === selectedId && entity.entity_id === restoreFocusId ? restoreFocusRef : undefined
                 }
-                onBlur={() => onPreview?.(null)}
+                onBlur={() => {
+                  focusedEntityIdRef.current = undefined;
+                  onPreview?.(null);
+                }}
                 onClick={() => {
                   onPreview?.(null);
                   onSelect(entity);
                 }}
-                onFocus={() => onPreview?.(entity)}
+                onFocus={() => {
+                  focusedEntityIdRef.current = entity.entity_id;
+                  onPreview?.(entity);
+                }}
                 onPointerEnter={() => onPreview?.(entity)}
                 onPointerLeave={() => onPreview?.(null)}
               >
@@ -106,6 +122,22 @@ export function EntityList({
       )}
     </div>
   );
+}
+
+function entitySearchText(entity: EntityResource): string {
+  const common = [entityDisplayName(entity), entity.entity_id, entity.entity_type, entity.subtype];
+  const kind = entityKind(entity);
+  if (kind === "asset") {
+    const battery = entityBattery(entity);
+    return [...common, entityLinkState(entity), battery !== undefined ? formatPercent(battery) : undefined]
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (kind === "track") {
+    return [...common, entityClassification(entity)].filter(Boolean).join(" ");
+  }
+  const geometry = entityGeometry(entity);
+  return [...common, geometry?.type].filter(Boolean).join(" ");
 }
 
 export function entityDotColor(entity: EntityResource, now: number = Date.now()): string {
