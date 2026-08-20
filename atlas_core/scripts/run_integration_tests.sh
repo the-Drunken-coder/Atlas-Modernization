@@ -229,6 +229,7 @@ assert_status 200 "GET /queries/full" && \
   assert_json '.objects  | type == "array"' "GET /queries/full objects" && \
   assert_json '.version  | type == "number"' "GET /queries/full version watermark" && \
   assert_json '.entities | length >= 1'     "GET /queries/full entity count"
+# shellcheck disable=SC2016 # $count is a jq --argjson variable, not a shell expansion
 assert_jq "GET /queries/full preserved Task baseline" --argjson count "$TASK_COUNT_BEFORE" '.tasks | length == $count'
 # shellcheck disable=SC2016 # $e is a jq --arg variable, not a shell expansion
 assert_jq "GET /queries/full contains ENTITY_ID" --arg e "$ENTITY_ID" 'any(.entities[]?; .entity_id == $e)'
