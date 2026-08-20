@@ -706,6 +706,24 @@ describe("AtlasClient HTTP", () => {
     });
   });
 
+  it("does not repeat watch events for idempotent Task create retries", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const watch = vi.fn();
+    client.watch({ filter: "type", resource_type: "task" }, watch);
+    const request = { asset_id: "asset-idempotent", command: "fixture.queued", input: {} };
+
+    const first = await client.tasks.create(request, { idempotencyKey: "task-idempotent" });
+    const repeated = await client.tasks.create(request, { idempotencyKey: "task-idempotent" });
+
+    expect(repeated).toEqual(first);
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(watch).toHaveBeenCalledWith(
+      client.sync.snapshot().tasks[first.task_id],
+      expect.objectContaining({ event: "create", id: first.task_id })
+    );
+  });
+
   it("assigns distinct UUID task IDs to repeated command requests", async () => {
     const core = new FakeCore();
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });

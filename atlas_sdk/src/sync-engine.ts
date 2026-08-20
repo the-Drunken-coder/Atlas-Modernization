@@ -445,8 +445,7 @@ export class SyncEngine {
     if (
       this.cache.cacheResource("task", task.task_id, task, {
         advanceCursor: false,
-        version,
-        replaceSameVersion: true
+        version
       })
     ) {
       const cachedTask = this.cache.value("task", task.task_id)!;
