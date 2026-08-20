@@ -75,7 +75,7 @@ export function useCommandFlow({
         if (pendingSubmissionRef.current === pending) pendingSubmissionRef.current = undefined;
         setCommandForm(null);
       } catch (cause) {
-        setSubmitError(sanitizeConnectionError(cause));
+        if (pendingSubmissionRef.current === pending) setSubmitError(sanitizeConnectionError(cause));
       } finally {
         if (activeSubmitIdRef.current === submitId) {
           activeSubmitIdRef.current = undefined;

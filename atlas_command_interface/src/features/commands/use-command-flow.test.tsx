@@ -80,4 +80,29 @@ describe("useCommandFlow", () => {
     expect(submitCommand.mock.calls[0]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000001");
     expect(submitCommand.mock.calls[1]?.[0].idempotencyKey).toBe("00000000-0000-4000-8000-000000000002");
   });
+
+  it("does not restore an error after the attempt is dismissed", async () => {
+    let rejectSubmission: ((reason: Error) => void) | undefined;
+    const submitCommand = vi.fn(
+      () =>
+        new Promise<TaskResource>((_resolve, reject) => {
+          rejectSubmission = reject;
+        })
+    );
+    const { result } = renderHook(() =>
+      useCommandFlow({ catalog: commandCatalog, selectedEntity: asset, selectedId: asset.entity_id, submitCommand })
+    );
+    let submission: Promise<void> | undefined;
+
+    act(() => {
+      submission = result.current.submit(availability, { value: "same" });
+    });
+    act(() => result.current.dismissCommandForm());
+    await act(async () => {
+      rejectSubmission?.(new Error("late failure"));
+      await submission;
+    });
+
+    expect(result.current.submitError).toBeUndefined();
+  });
 });
