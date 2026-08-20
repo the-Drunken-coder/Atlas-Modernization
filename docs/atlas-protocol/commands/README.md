@@ -5,7 +5,7 @@ Atlas Protocol owns every Command. The generated production catalog is currently
 1. Define stable operator intent, scheduling, cancellation, progress, preconditions, and the observable completion guarantee.
 2. Add or reuse named input and optional bounded-output schemas in `atlas_protocol/schema/jsonschema/atlas.schema.json`.
 3. Add the definition to `atlas_protocol/commands/<namespace>.json`. The namespace file must match the prefix of every Command it contains.
-4. Add `docs/atlas-protocol/commands/<namespace>/<command>.md` with semantics, preconditions, outcomes, durable resource effects, and examples.
+4. Add `docs/atlas-protocol/commands/<namespace>/<command>.md`, using the kebab-case Command name for `<command>` (for example, `sensing.scan_area` maps to `scan-area.md`), with semantics, preconditions, outcomes, durable resource effects, and examples.
 5. Add a purpose-built operator input to `atlas_command_interface/src/features/commands/command-input-registry.tsx`.
 6. Add the Asset handler and manifest entry. Add special Core scheduling, supersession, or safety policy only when the Command requires it.
 7. Extend the shared tasking conformance corpus and the focused consumers that exercise the new behavior.

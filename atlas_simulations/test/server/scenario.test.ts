@@ -358,6 +358,45 @@ describe("scenario input parsing", () => {
     expect(tracked).toEqual([{ type: "task", id: task.task_id }]);
   });
 
+  it("tracks a Task accepted while the simulation is being cancelled", async () => {
+    const controller = new AbortController();
+    const core = createFakeAtlasCore();
+    const tracked: Array<{ type: string; id: string }> = [];
+    const ctx = createScenarioContext({
+      runId: "sim-cancelled-task",
+      signal: controller.signal,
+      clientFactory: () => {
+        const client = core.factory();
+        return {
+          ...client,
+          tasks: {
+            ...client.tasks,
+            create: async (...args: Parameters<typeof client.tasks.create>) => {
+              const created = await client.tasks.create(...args);
+              controller.abort();
+              return created;
+            }
+          }
+        };
+      },
+      log: () => undefined,
+      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+      track: (resource) => tracked.push(resource),
+      registerClient: () => undefined
+    });
+
+    await expect(
+      ctx.createTask({
+        asset_id: ctx.id("asset"),
+        command: "fixture.queued",
+        input: { value: "accepted during cancellation" }
+      })
+    ).rejects.toThrow("Simulation cancelled");
+
+    expect(core.state.tasks.size).toBe(1);
+    expect(tracked).toEqual([{ type: "task", id: expect.stringMatching(/^task-/) }]);
+  });
+
   it("rejects created and tracked resources outside the run ID prefix", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const ctx = createScenarioContext({

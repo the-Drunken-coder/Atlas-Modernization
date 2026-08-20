@@ -657,7 +657,7 @@ The empty-catalog infrastructure is not complete until these behaviors are demon
 1. Task creation validates the Command, current Asset manifest, and input before persisting anything.
 2. Repeating a creation request with the same idempotency key returns one Task and causes at most one physical action.
 3. Queued Tasks are acknowledged and enter execution in authoritative `created_at` order.
-4. An immediate Task enters `in_progress` within 60 seconds of creation or fails permanently with `immediate_start_timeout`.
+4. An immediate Task enters `in_progress` less than 60 seconds after creation or fails permanently with `immediate_start_timeout`.
 5. An expired immediate Task never executes after reconnection or reconciliation.
 6. Progress is accepted only when advertised, only while in progress, and never decreases.
 7. Completion validates any required output and commits the output and terminal transition atomically.

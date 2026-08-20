@@ -3,6 +3,7 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/models"
+	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
 // EntityActions handles entity business logic.
@@ -22,6 +24,51 @@ type EntityActions struct {
 // NewEntityActions creates a new EntityActions instance.
 func NewEntityActions(pool *pgxpool.Pool) *EntityActions {
 	return &EntityActions{pool: pool}
+}
+
+// EntityDetail is the Entity resource plus its runtime-owned Command Manifest
+// read from one database snapshot.
+type EntityDetail struct {
+	Entity          *models.Entity
+	CommandManifest *protocol.CommandManifest
+}
+
+// GetDetail retrieves an Entity and its ready runtime manifest atomically.
+func (a *EntityActions) GetDetail(ctx context.Context, entityID string) (*EntityDetail, error) {
+	if err := ValidateEntityID(entityID); err != nil {
+		return nil, err
+	}
+	entityID = SanitizeID(entityID)
+	var entity models.Entity
+	var ready bool
+	var manifestJSON []byte
+	err := a.pool.QueryRow(ctx, `
+		SELECT e.entity_id, e.type, e.subtype, e.alias, e.json,
+			e.created_at, e.updated_at, e.version,
+			COALESCE(r.ready, FALSE), r.manifest
+		FROM entities e
+		LEFT JOIN asset_runtimes r ON r.asset_id = e.entity_id
+		WHERE e.entity_id = $1
+	`, entityID).Scan(
+		&entity.EntityID, &entity.Type, &entity.Subtype, &entity.Alias,
+		&entity.JSON, &entity.CreatedAt, &entity.UpdatedAt, &entity.Version,
+		&ready, &manifestJSON,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NewEntityNotFoundError(entityID)
+		}
+		return nil, fmt.Errorf("get Entity detail: %w", err)
+	}
+	detail := &EntityDetail{Entity: &entity}
+	if entity.Type == "asset" && ready {
+		var manifest protocol.CommandManifest
+		if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+			return nil, fmt.Errorf("decode Asset runtime manifest: %w", err)
+		}
+		detail.CommandManifest = &manifest
+	}
+	return detail, nil
 }
 
 // CreateEntityParams holds parameters for creating an entity.

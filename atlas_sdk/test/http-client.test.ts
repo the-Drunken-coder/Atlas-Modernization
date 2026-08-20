@@ -565,6 +565,23 @@ describe("AtlasClient HTTP", () => {
     await expect(client.tasks.acknowledge("missing-task", runtime)).rejects.toBeInstanceOf(AtlasAPIError);
   });
 
+  it("canonicalizes tasking identifiers before body and header use", async () => {
+    const core = new FakeCore();
+    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+
+    await client.runtime.begin("asset-1", { runtime_id: " runtime-1 " });
+    await client.runtime.ready("asset-1", { runtime_id: " runtime-1 ", manifest: [] });
+    await client.runtime.tasks("asset-1", { runtimeId: " runtime-1 " });
+    await client.tasks.create(
+      { asset_id: "asset-1", command: "fixture.queued", input: {} },
+      { idempotencyKey: " attempt-1 " }
+    );
+
+    expect(core.runtimes.get("asset-1")?.runtimeId).toBe("runtime-1");
+    expect(core.requestHeaders.find((request) => request.path.endsWith("/runtime/tasks"))?.runtimeId).toBe("runtime-1");
+    expect(core.requestHeaders.find((request) => request.path === "/tasks")?.idempotencyKey).toBe("attempt-1");
+  });
+
   it("checks in telemetry without polling Tasks", async () => {
     const core = new FakeCore();
     const baseEntity = core.upsertEntity(entity("asset-checkin"));

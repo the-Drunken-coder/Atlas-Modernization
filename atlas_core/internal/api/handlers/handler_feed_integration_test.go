@@ -80,10 +80,17 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	thirdID := prefix + "-third"
 	unregisteredAssetID := prefix + "-unregistered"
 	_ = postEntityIntegration(t, server.URL, unregisteredAssetID, http.StatusCreated)
-	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
-		t.Fatalf("subscribe to all feed events: %v", err)
+	for _, entityID := range []string{firstID, secondID, thirdID} {
+		message := fmt.Sprintf(`{"action":"subscribe","filter":"id","resource_type":"entity","id":%q}`, entityID)
+		if err := conn.Write(ctx, websocket.MessageText, []byte(message)); err != nil {
+			t.Fatalf("subscribe to entity %s feed events: %v", entityID, err)
+		}
+		waitForFeedSubscription(t, hub, feed.Subscription{
+			Filter:       protocol.FeedFilterID,
+			ResourceType: protocol.ResourceTypeEntity,
+			ID:           entityID,
+		})
 	}
-	waitForFeedSubscription(t, hub, feed.Subscription{Filter: protocol.FeedFilterAll})
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

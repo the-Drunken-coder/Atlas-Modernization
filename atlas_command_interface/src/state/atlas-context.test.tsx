@@ -17,6 +17,7 @@ function StatusProbe() {
       <span>{atlas.status}</span>
       <span data-testid="entity-names">{entityNames}</span>
       <span data-testid="catalog-name">{atlas.catalog?.[0]?.name}</span>
+      <span data-testid="entity-details-capability">{atlas.loadEntityDetails ? "available" : "unavailable"}</span>
       {atlas.health.error ? (
         <code data-testid="health-error">
           {atlas.health.error.source}: {atlas.health.error.message}
@@ -119,6 +120,19 @@ function catalogDataSource(loadCommandCatalog: () => Promise<CommandCatalog>) {
 }
 
 describe("AtlasProvider", () => {
+  it("does not advertise Entity detail loading when the data source omits it", async () => {
+    const { dataSource } = catalogDataSource(async () => catalog("Commands"));
+
+    render(
+      <AtlasProvider config={config} createDataSource={() => dataSource}>
+        <StatusProbe />
+      </AtlasProvider>
+    );
+
+    expect(await screen.findByText("ready")).toBeInTheDocument();
+    expect(screen.getByTestId("entity-details-capability")).toHaveTextContent("unavailable");
+  });
+
   it("does not classify configuration loading failures as connection errors", async () => {
     render(
       <AtlasProvider

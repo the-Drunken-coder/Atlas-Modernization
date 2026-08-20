@@ -8,6 +8,7 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import {
   AssetTaskFailure,
+  type AssetTaskHandler,
   type AtlasAssetClient,
   AtlasAssetRuntime,
   type ExecutionModule,
@@ -70,6 +71,45 @@ describe("AtlasAssetRuntime", () => {
     expect(runtime.status).toBe("stopped");
   });
 
+  it("copies caller-owned manifest and execution module arrays", async () => {
+    const { client } = fakeClient();
+    const manifest: CommandManifest = [manifestEntry("immediate.observe", "immediate")];
+    const establishSafeState = vi.fn(async () => undefined);
+    const modules: ExecutionModule[] = [{ id: "mobility", establishSafeState }];
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest,
+      handlers: { "immediate.observe": async () => undefined },
+      executionModules: modules
+    });
+
+    manifest[0]!.command = "changed.after-construction";
+    modules.length = 0;
+    await runtime.start();
+
+    expect(establishSafeState).toHaveBeenCalledOnce();
+    expect(client.runtime.ready).toHaveBeenCalledWith(
+      "asset-1",
+      expect.objectContaining({ manifest: [expect.objectContaining({ command: "immediate.observe" })] }),
+      expect.anything()
+    );
+    await runtime.stop();
+  });
+
+  it("does not publish running after the lifecycle aborts during readiness", async () => {
+    const controller = new AbortController();
+    const { client } = fakeClient();
+    client.runtime.ready.mockImplementation(async () => {
+      controller.abort();
+      return undefined;
+    });
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await expect(runtime.start({ signal: controller.signal })).rejects.toThrow();
+
+    expect(runtime.status).toBe("stopped");
+  });
+
   it("stays ready and retries when delivery fails after startup", async () => {
     vi.useFakeTimers();
     const { client } = fakeClient();
@@ -86,6 +126,79 @@ describe("AtlasAssetRuntime", () => {
 
       await vi.advanceTimersByTimeAsync(5_000);
       expect(client.runtime.tasks).toHaveBeenCalledTimes(2);
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries completion without rerunning the handler or releasing later queued work", async () => {
+    vi.useFakeTimers();
+    const first = task("queued-1", "queued.move");
+    const second = task("queued-2", "queued.move");
+    const { client } = fakeClient([first, second]);
+    const onError = vi.fn();
+    const handledTaskIDs: string[] = [];
+    const handler = vi.fn<AssetTaskHandler>(async ({ task }) => {
+      handledTaskIDs.push(task.task_id);
+      return { ok: true };
+    });
+    client.tasks.complete.mockRejectedValueOnce(new Error("completion unavailable"));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": handler },
+      onError
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.complete).toHaveBeenCalledTimes(1);
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "completion unavailable" }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(handledTaskIDs).toEqual(["queued-1", "queued-2"]);
+      expect(client.tasks.complete).toHaveBeenCalledTimes(3);
+      expect(client.tasks.fail).not.toHaveBeenCalled();
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries failure reporting without rerunning the handler", async () => {
+    vi.useFakeTimers();
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const onError = vi.fn();
+    const handler = vi.fn(async () => Promise.reject(new AssetTaskFailure("precondition_failed", "blocked")));
+    client.tasks.fail.mockRejectedValueOnce(new Error("failure reporting unavailable"));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler },
+      onError
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.fail).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "failure reporting unavailable" }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(client.tasks.fail).toHaveBeenCalledTimes(2);
+      expect(client.tasks.complete).not.toHaveBeenCalled();
       await runtime.stop();
     } finally {
       vi.useRealTimers();

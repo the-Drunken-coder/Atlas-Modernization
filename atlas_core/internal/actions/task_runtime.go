@@ -85,20 +85,7 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 	if errors := protocol.ValidateRuntimeReadyRequest(protocol.RuntimeReadyRequest{RuntimeID: runtimeID, Manifest: manifest}); len(errors) > 0 {
 		return NewValidationErrorWithDetails("Invalid runtime ready request", errors)
 	}
-	seen := make(map[string]struct{}, len(manifest))
-	for _, entry := range manifest {
-		if _, duplicate := seen[entry.Command]; duplicate {
-			return NewValidationError("Command Manifest contains a duplicate Command")
-		}
-		seen[entry.Command] = struct{}{}
-		command, ok := a.catalog[entry.Command]
-		if !ok {
-			return NewValidationError("Command Manifest contains a Command outside the production catalog")
-		}
-		if effectiveScheduling(entry.Scheduling) != effectiveScheduling(command.Scheduling) {
-			return NewValidationError("Command Manifest scheduling does not match the Command Catalog")
-		}
-	}
+	manifestValidationErr := validateCommandManifestCatalog(a.catalog, manifest)
 	encoded, _ := json.Marshal(manifest)
 	tx, err := beginChangeTx(ctx, a.pool, "complete Asset runtime registration")
 	if err != nil {
@@ -133,6 +120,9 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 		}
 		return tx.Commit(ctx)
 	}
+	if manifestValidationErr != nil {
+		return manifestValidationErr
+	}
 	if _, err := tx.Exec(ctx, `UPDATE asset_runtimes SET ready = TRUE, manifest = $3, ready_at = clock_timestamp() WHERE asset_id = $1 AND runtime_id = $2`, assetID, runtimeID, encoded); err != nil {
 		return fmt.Errorf("mark Asset runtime ready: %w", err)
 	}
@@ -140,6 +130,24 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func validateCommandManifestCatalog(catalog map[string]protocol.CommandDefinition, manifest protocol.CommandManifest) error {
+	seen := make(map[string]struct{}, len(manifest))
+	for _, entry := range manifest {
+		if _, duplicate := seen[entry.Command]; duplicate {
+			return NewValidationError("Command Manifest contains a duplicate Command")
+		}
+		seen[entry.Command] = struct{}{}
+		command, ok := catalog[entry.Command]
+		if !ok {
+			return NewValidationError("Command Manifest contains a Command outside the production catalog")
+		}
+		if effectiveScheduling(entry.Scheduling) != effectiveScheduling(command.Scheduling) {
+			return NewValidationError("Command Manifest scheduling does not match the Command Catalog")
+		}
+	}
+	return nil
 }
 
 // Runtime readiness changes the read-only Asset detail, so advance the Entity
@@ -197,6 +205,7 @@ func (a *TaskActions) RuntimeManifest(ctx context.Context, assetID string) (prot
 // eligible for this runtime. Reconcile again after the immediate Task starts or
 // the queued Task is acknowledged to release the next Task of that kind.
 func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string) ([]*models.Task, error) {
+	runtimeID = strings.TrimSpace(runtimeID)
 	var currentRuntimeID string
 	var ready bool
 	if err := a.pool.QueryRow(ctx, `SELECT runtime_id, ready FROM asset_runtimes WHERE asset_id = $1`, assetID).Scan(&currentRuntimeID, &ready); err != nil {
@@ -205,35 +214,31 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 		}
 		return nil, fmt.Errorf("read Asset runtime: %w", err)
 	}
-	if !ready || strings.TrimSpace(runtimeID) != currentRuntimeID {
+	if !ready || runtimeID != currentRuntimeID {
 		return nil, NewValidationError("Atlas-Runtime-ID does not identify the current ready runtime")
 	}
-	rows, err := a.pool.Query(ctx, taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status = 'pending' ORDER BY created_at, task_id`, assetID, runtimeID)
+	immediateCommands := make([]string, 0, len(a.catalog))
+	for name, command := range a.catalog {
+		if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
+			immediateCommands = append(immediateCommands, name)
+		}
+	}
+	rows, err := a.pool.Query(ctx, `
+		(`+taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status = 'pending'
+			AND command = ANY($3) ORDER BY created_at, task_id LIMIT 1)
+		UNION ALL
+		(`+taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status = 'pending'
+			AND NOT (command = ANY($3)) ORDER BY created_at, task_id LIMIT 1)
+		ORDER BY created_at, task_id
+	`, assetID, runtimeID, immediateCommands)
 	if err != nil {
 		return nil, fmt.Errorf("query deliverable Tasks: %w", err)
 	}
-	pending, err := scanTaskRows(rows)
+	deliverable, err := scanTaskRows(rows)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*models.Task, 0, len(pending))
-	queuedReleased := false
-	immediateReleased := false
-	for _, task := range pending {
-		command := a.catalog[task.Command]
-		if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
-			if !immediateReleased {
-				result = append(result, task)
-				immediateReleased = true
-			}
-			continue
-		}
-		if !queuedReleased {
-			result = append(result, task)
-			queuedReleased = true
-		}
-	}
-	return result, nil
+	return deliverable, nil
 }
 
 func (a *TaskActions) failRuntimeTasks(ctx context.Context, tx pgx.Tx, assetID, runtimeID string, failure protocol.TaskFailure) error {

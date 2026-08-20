@@ -213,14 +213,14 @@ func TestTaskActionValidationBeforePersistence(t *testing.T) {
 	if err := tasks.BeginRuntimeRegistration(ctx, "asset-1", ""); err == nil {
 		t.Fatal("runtime registration accepted an invalid runtime ID")
 	}
-	if err := tasks.CompleteRuntimeRegistration(ctx, "asset-1", "runtime-1", protocol.CommandManifest{{Command: "unknown", Description: "Unknown"}}); err == nil {
+	if err := validateCommandManifestCatalog(tasks.catalog, protocol.CommandManifest{{Command: "unknown", Description: "Unknown"}}); err == nil {
 		t.Fatal("runtime accepted a Command outside the catalog")
 	}
-	if err := tasks.CompleteRuntimeRegistration(ctx, "asset-1", "runtime-1", protocol.CommandManifest{{Command: "fixture.immediate", Description: "Immediate", Scheduling: protocol.CommandSchedulingQueued}}); err == nil {
+	if err := validateCommandManifestCatalog(tasks.catalog, protocol.CommandManifest{{Command: "fixture.immediate", Description: "Immediate", Scheduling: protocol.CommandSchedulingQueued}}); err == nil {
 		t.Fatal("runtime accepted mismatched scheduling")
 	}
 	manifest := fixtureTaskManifest(t)
-	if err := tasks.CompleteRuntimeRegistration(ctx, "asset-1", "runtime-1", append(manifest, manifest[0])); err == nil {
+	if err := validateCommandManifestCatalog(tasks.catalog, append(manifest, manifest[0])); err == nil {
 		t.Fatal("runtime accepted a duplicate Command Manifest entry")
 	}
 	if count, err := NewTaskActionsWithCatalog(nil, nil).ReconcileImmediateTimeouts(ctx); err != nil || count != 0 {
@@ -244,6 +244,15 @@ func TestTaskStateHelpers(t *testing.T) {
 	}
 	if !jsonEqual([]byte(`{"a":1,"b":2}`), []byte(`{"b":2,"a":1}`)) || jsonEqual([]byte(`{`), []byte(`[`)) {
 		t.Fatal("jsonEqual did not compare canonical and malformed JSON correctly")
+	}
+	if jsonEqual([]byte(`{"a":1} {"b":2}`), []byte(`{"a":1}`)) {
+		t.Fatal("jsonEqual ignored trailing JSON")
+	}
+	if jsonEqual([]byte(`{"value":9007199254740992}`), []byte(`{"value":9007199254740993}`)) {
+		t.Fatal("jsonEqual collapsed distinct large integers")
+	}
+	if !jsonEqual([]byte(`{"value":1}`), []byte(`{"value":1.0}`)) {
+		t.Fatal("jsonEqual rejected equivalent numeric forms")
 	}
 	if nullableJSON(nil) != nil || nullableJSON([]byte(`{}`)) == nil {
 		t.Fatal("nullableJSON did not preserve SQL null semantics")

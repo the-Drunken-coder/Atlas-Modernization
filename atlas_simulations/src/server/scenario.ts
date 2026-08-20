@@ -244,8 +244,10 @@ function trackClientCreates(
     tasks: {
       get: (id) => guarded(() => client.tasks.get(id)),
       create: async (task, options) => {
-        const created = await guarded(() => client.tasks.create(task, options));
+        throwIfCancelled();
+        const created = await client.tasks.create(task, options);
         track({ type: "task", id: created.task_id });
+        throwIfCancelled();
         return created;
       },
       acknowledge: (id, options) => guarded(() => client.tasks.acknowledge(id, options)),

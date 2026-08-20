@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
+	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
@@ -127,11 +130,44 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams, idemp
 }
 
 func jsonEqual(left, right []byte) bool {
-	var leftValue, rightValue any
-	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+	leftValue, leftErr := decodeExactJSON(left)
+	rightValue, rightErr := decodeExactJSON(right)
+	if leftErr != nil || rightErr != nil {
 		return bytes.Equal(left, right)
 	}
-	leftCanonical, _ := json.Marshal(leftValue)
-	rightCanonical, _ := json.Marshal(rightValue)
-	return bytes.Equal(leftCanonical, rightCanonical)
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+type exactJSONNumber string
+
+func decodeExactJSON(encoded []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("JSON contains trailing data")
+	}
+	return normalizeJSONNumbers(value), nil
+}
+
+func normalizeJSONNumbers(value any) any {
+	switch value := value.(type) {
+	case json.Number:
+		if number, ok := new(big.Rat).SetString(value.String()); ok {
+			return exactJSONNumber(number.RatString())
+		}
+		return exactJSONNumber(value.String())
+	case []any:
+		for index := range value {
+			value[index] = normalizeJSONNumbers(value[index])
+		}
+	case map[string]any:
+		for key := range value {
+			value[key] = normalizeJSONNumbers(value[key])
+		}
+	}
+	return value
 }

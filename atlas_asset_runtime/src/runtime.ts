@@ -62,6 +62,10 @@ type AcceptedTask = {
   controller: AbortController;
 };
 
+type TerminalTaskUpdate =
+  | { kind: "complete"; output?: JSONValue }
+  | { kind: "fail"; failure: { code: AssetTaskFailureCode; message: string } };
+
 type ExternalAbortRegistration = {
   controller: AbortController;
   signal: AbortSignal;
@@ -96,7 +100,7 @@ export class AtlasAssetRuntime {
   constructor(client: AtlasAssetClient, options: AtlasAssetRuntimeOptions) {
     if (!client || typeof client.handshake !== "function") throw new TypeError("client must be AtlasClient-compatible");
     this.entityId = requireIdentifier("entityId", options.entityId);
-    const manifest = options.manifest ?? [];
+    const manifest = (options.manifest ?? []).map((entry) => ({ ...entry }));
     if (!isCommandManifest(manifest)) throw new TypeError("manifest must satisfy the Atlas Protocol Command Manifest");
     const handlers = new Map(Object.entries(options.handlers ?? {}));
     const commands = new Map(manifest.map((entry) => [entry.command, entry]));
@@ -109,7 +113,7 @@ export class AtlasAssetRuntime {
     for (const command of handlers.keys()) {
       if (!commands.has(command)) throw new TypeError(`handler Command ${command} is not advertised in the manifest`);
     }
-    const executionModules = options.executionModules ?? [];
+    const executionModules = [...(options.executionModules ?? [])];
     const moduleIds = executionModules.map((module) => requireIdentifier("execution module id", module.id));
     if (new Set(moduleIds).size !== moduleIds.length) throw new TypeError("execution module ids must be unique");
     const interval = options.checkInIntervalMs ?? DEFAULT_CHECK_IN_INTERVAL_MS;
@@ -197,6 +201,7 @@ export class AtlasAssetRuntime {
         { runtime_id: runtimeId, manifest: this.manifest },
         { signal: controller.signal }
       );
+      controller.signal.throwIfAborted();
       this.state = "running";
       this.deliveryLoop = this.runDeliveryLoop(controller.signal);
       void this.deliveryLoop.catch((error) => this.reportError(error));
@@ -348,10 +353,14 @@ export class AtlasAssetRuntime {
     const runtimeSignal = this.controller?.signal;
     if (!runtimeId || !runtimeSignal || runtimeSignal.aborted || accepted.controller.signal.aborted) return;
     const signal = AbortSignal.any([runtimeSignal, accepted.controller.signal]);
+    let terminalUpdate: TerminalTaskUpdate;
     try {
       const started = await this.client.tasks.start(accepted.task.task_id, { runtimeId, signal });
       if (started.status !== "in_progress") {
-        if (isTerminalTaskStatus(started.status)) return;
+        if (isTerminalTaskStatus(started.status)) {
+          this.onTaskChange(started);
+          return;
+        }
         throw new Error(`Core returned ${started.status} after starting ${accepted.task.task_id}`);
       }
       if (!queued) void this.requestDelivery().catch((error) => this.reportError(error));
@@ -369,26 +378,52 @@ export class AtlasAssetRuntime {
         }
       });
       signal.throwIfAborted();
-      await this.client.tasks.complete(accepted.task.task_id, {
-        runtimeId,
-        signal,
-        ...(output === undefined ? {} : { output })
-      });
+      terminalUpdate = { kind: "complete", ...(output === undefined ? {} : { output }) };
     } catch (error) {
-      if (!signal.aborted) {
-        const failure =
+      if (signal.aborted) return;
+      terminalUpdate = {
+        kind: "fail",
+        failure:
           error instanceof AssetTaskFailure
             ? { code: error.code, message: normalizeError(error) }
-            : { code: "execution_failed" as const, message: normalizeError(error) };
-        await this.client.tasks.fail(accepted.task.task_id, {
-          runtimeId,
-          signal,
-          failure
-        });
-      }
+            : { code: "execution_failed", message: normalizeError(error) }
+      };
     } finally {
-      this.accepted.delete(accepted.task.task_id);
       void this.requestDelivery().catch((error) => this.reportError(error));
+    }
+    await this.reportTerminalUpdate(accepted, terminalUpdate, runtimeId, signal);
+  }
+
+  private async reportTerminalUpdate(
+    accepted: AcceptedTask,
+    update: TerminalTaskUpdate,
+    runtimeId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    while (!signal.aborted && this.accepted.has(accepted.task.task_id)) {
+      try {
+        const task =
+          update.kind === "complete"
+            ? await this.client.tasks.complete(accepted.task.task_id, {
+                runtimeId,
+                signal,
+                ...(update.output === undefined ? {} : { output: update.output })
+              })
+            : await this.client.tasks.fail(accepted.task.task_id, {
+                runtimeId,
+                signal,
+                failure: update.failure
+              });
+        if (!isTerminalTaskStatus(task.status)) {
+          throw new Error(`Core returned ${task.status} after reporting ${accepted.task.task_id} terminal`);
+        }
+        this.onTaskChange(task);
+        return;
+      } catch (error) {
+        if (signal.aborted) return;
+        this.reportError(error);
+        await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
+      }
     }
   }
 

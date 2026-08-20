@@ -80,6 +80,13 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if err != nil || len(manifest) != 2 {
 		t.Fatalf("ready runtime manifest = %#v, %v", manifest, err)
 	}
+	detail, err := entities.GetDetail(ctx, assetID)
+	if err != nil || detail.Entity.Version != readyEntity.Version || detail.CommandManifest == nil || len(*detail.CommandManifest) != 2 {
+		t.Fatalf("atomic Entity detail = %#v, %v", detail, err)
+	}
+	if err := NewTaskActionsWithCatalog(pool, nil).CompleteRuntimeRegistration(ctx, assetID, "runtime-1", manifest); err != nil {
+		t.Fatalf("idempotent ready after catalog change: %v", err)
+	}
 
 	first, created, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.queued", Input: map[string]any{"value": "first"}}, "attempt-1")
 	if err != nil || !created {
@@ -99,6 +106,10 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	deliverable, err := tasks.Deliverable(ctx, assetID, "runtime-1")
 	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != first.TaskID {
 		t.Fatalf("initial delivery = %#v, %v", deliverable, err)
+	}
+	deliverable, err = tasks.Deliverable(ctx, assetID, " runtime-1 ")
+	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != first.TaskID {
+		t.Fatalf("normalized runtime delivery = %#v, %v", deliverable, err)
 	}
 	if _, err := tasks.Acknowledge(ctx, first.TaskID, "stale-runtime"); err == nil {
 		t.Fatal("stale runtime acknowledged a Task")

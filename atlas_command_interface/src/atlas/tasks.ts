@@ -16,8 +16,8 @@ export function taskStatusLabel(status: TaskStatus): string {
 export function taskStatusMessage(task: TaskResource): string | undefined {
   if (task.failure) return task.failure.message;
   if (task.cancellation) return task.cancellation.message;
-  if (task.progress !== undefined) return `${Math.round(task.progress * 100)}%`;
   if (task.output !== undefined) return "Output available";
+  if (task.progress !== undefined) return `${Math.round(task.progress * 100)}%`;
   return undefined;
 }
 

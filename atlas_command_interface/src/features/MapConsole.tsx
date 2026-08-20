@@ -43,6 +43,7 @@ const LIST_TITLES: Record<ListKind, string> = {
 const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => ({ default: module.MapView })));
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
+type CommandManifestStatus = "ready" | "loading" | "unavailable";
 
 export function MapConsole() {
   const atlas = useAtlas();
@@ -53,7 +54,9 @@ export function MapConsole() {
 
   const selection = sidebar.selection;
   const selectedSnapshotEntity = getEntity(snapshot, selection?.id);
+  const selectedSnapshotEntityId = selectedSnapshotEntity?.entity_id;
   const [selectedEntityDetails, setSelectedEntityDetails] = useState<EntityResource>();
+  const [commandManifestStatus, setCommandManifestStatus] = useState<CommandManifestStatus>("ready");
   const commandDetailsRequired = Boolean(
     selectedSnapshotEntity &&
       entityKind(selectedSnapshotEntity) === "asset" &&
@@ -63,24 +66,36 @@ export function MapConsole() {
   useEffect(() => {
     let cancelled = false;
     setSelectedEntityDetails(undefined);
-    if (!commandDetailsRequired || !selectedSnapshotEntity || !atlas.loadEntityDetails) {
+    if (!commandDetailsRequired || !selectedSnapshotEntityId || !atlas.loadEntityDetails) {
+      setCommandManifestStatus("ready");
       return () => {
         cancelled = true;
       };
     }
+    setCommandManifestStatus("loading");
     void atlas
-      .loadEntityDetails(selectedSnapshotEntity.entity_id)
+      .loadEntityDetails(selectedSnapshotEntityId)
       .then((entity) => {
-        if (!cancelled) setSelectedEntityDetails(entity);
+        if (!cancelled) {
+          setSelectedEntityDetails(entity);
+          setCommandManifestStatus("ready");
+        }
       })
       .catch(() => {
-        // Command availability fails closed when the current runtime manifest
-        // cannot be loaded from Asset details.
+        if (!cancelled) setCommandManifestStatus("unavailable");
       });
     return () => {
       cancelled = true;
     };
-  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntity]);
+  }, [atlas.loadEntityDetails, commandDetailsRequired, selectedSnapshotEntityId]);
+  const resolvedCommandManifestStatus =
+    !commandDetailsRequired &&
+    selectedSnapshotEntity &&
+    entityKind(selectedSnapshotEntity) === "asset" &&
+    catalog?.length &&
+    selectedSnapshotEntity.command_manifest === undefined
+      ? "unavailable"
+      : commandManifestStatus;
   const selectedEntity =
     selectedSnapshotEntity && selectedEntityDetails?.entity_id === selectedSnapshotEntity.entity_id
       ? { ...selectedSnapshotEntity, command_manifest: selectedEntityDetails.command_manifest }
@@ -212,6 +227,7 @@ export function MapConsole() {
               sidebar={sidebar}
               selectedEntity={selectedEntity}
               catalog={catalog}
+              commandManifestStatus={resolvedCommandManifestStatus}
               edit={edit}
               saving={saving}
               saveError={saveError}
@@ -385,6 +401,7 @@ type PanelBodyProps = {
   sidebar: SidebarState;
   selectedEntity?: EntityResource;
   catalog?: CommandCatalog;
+  commandManifestStatus: CommandManifestStatus;
   edit: GeometryEditState | null;
   saving: boolean;
   saveError?: string;
@@ -445,6 +462,7 @@ function ListBody({
   sidebar,
   selectedEntity,
   catalog,
+  commandManifestStatus,
   onSelectEntity,
   onPickCommand
 }: { list: ListKind } & PanelBodyProps) {
@@ -460,9 +478,13 @@ function ListBody({
                 ? "Command Catalog unavailable"
                 : catalog.length === 0
                   ? "No Commands are defined in Atlas Protocol"
-                  : !selectedEntity.command_manifest?.length
-                    ? "This Asset has no Commands"
-                    : "No operator inputs are available for this Asset's Commands"
+                  : commandManifestStatus === "loading"
+                    ? "Loading Asset Commands"
+                    : commandManifestStatus === "unavailable"
+                      ? "Asset Commands unavailable"
+                      : !selectedEntity.command_manifest?.length
+                        ? "This Asset has no Commands"
+                        : "No operator inputs are available for this Asset's Commands"
             }
           />
         </div>

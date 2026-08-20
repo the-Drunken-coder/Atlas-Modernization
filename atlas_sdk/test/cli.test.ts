@@ -37,6 +37,16 @@ describe("Atlas CLI", () => {
     ).resolves.toBe(2);
     expect(invalidTask.stderr()).toContain("invalid task JSON");
 
+    const missingIdempotencyKey = captureIO();
+    missingIdempotencyKey.io.fetch = fetchSpy;
+    await expect(
+      runCLI(
+        ["tasks", "create", '{"asset_id":"asset-1","command":"fixture.queued","input":{}}'],
+        missingIdempotencyKey.io
+      )
+    ).resolves.toBe(2);
+    expect(missingIdempotencyKey.stderr()).toContain("requires --idempotency-key");
+
     const badFilter = captureIO();
     badFilter.io.fetch = fetchSpy;
     await expect(runCLI(["watch", "--subscribe", "id:not-a-type:x"], badFilter.io)).resolves.toBe(2);

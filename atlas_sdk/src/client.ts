@@ -123,7 +123,7 @@ export class AtlasClient {
     get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
     create: (task: TaskCreateRequest, options: TaskCreateOptions) =>
       this.engine.writeTask("POST", "/tasks", task, {
-        requestHeaders: { "Idempotency-Key": requireOpaqueHeader("idempotencyKey", options.idempotencyKey) },
+        requestHeaders: { "Idempotency-Key": normalizeOpaqueIdentifier("idempotencyKey", options.idempotencyKey) },
         signal: options.signal,
         eventName: "create"
       }),
@@ -177,7 +177,7 @@ export class AtlasClient {
       this.transport.empty(
         "POST",
         `/entities/${encodeURIComponent(assetId)}/runtime`,
-        request,
+        { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
         undefined,
         options?.signal
       ),
@@ -185,7 +185,7 @@ export class AtlasClient {
       this.transport.empty(
         "POST",
         `/entities/${encodeURIComponent(assetId)}/runtime/ready`,
-        request,
+        { ...request, runtime_id: normalizeOpaqueIdentifier("runtimeId", request.runtime_id) },
         undefined,
         options?.signal
       ),
@@ -381,10 +381,11 @@ function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
 }
 
 function runtimeHeaders(runtimeId: string): HeadersInit {
-  return { "Atlas-Runtime-ID": requireOpaqueHeader("runtimeId", runtimeId) };
+  return { "Atlas-Runtime-ID": normalizeOpaqueIdentifier("runtimeId", runtimeId) };
 }
 
-function requireOpaqueHeader(name: string, value: string): string {
-  if (!value.trim()) throw new TypeError(`${name} must not be empty`);
-  return value;
+function normalizeOpaqueIdentifier(name: string, value: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new TypeError(`${name} must not be empty`);
+  return normalized;
 }

@@ -53,7 +53,6 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       io.stdout.write(usage);
       return 0;
     }
-
     const client = new AtlasClient({
       baseUrl: command.options.baseUrl,
       apiKey: command.options.apiKey,
@@ -67,12 +66,10 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO()): Promise<n
       return 0;
     }
     if (command.kind === "tasks.create") {
+      const idempotencyKey = command.options.idempotencyKey;
+      if (!idempotencyKey) throw new UsageError("usage: tasks create requires --idempotency-key <key>");
       await client.handshake();
-      if (!command.options.idempotencyKey) throw new UsageError("usage: tasks create requires --idempotency-key <key>");
-      io.stdout.write(
-        JSON.stringify(await client.tasks.create(command.body, { idempotencyKey: command.options.idempotencyKey })) +
-          "\n"
-      );
+      io.stdout.write(JSON.stringify(await client.tasks.create(command.body, { idempotencyKey })) + "\n");
       return 0;
     }
 

@@ -204,11 +204,13 @@ assert_status 200 "GET /command-catalog" && \
   assert_json 'type == "array" and length == 0' "GET /command-catalog body" && \
   pass "GET /command-catalog - returns the empty production catalog"
 
-# 7. Tasks list is initially empty
+# 7. Record the retained Task baseline
 request GET /tasks
-assert_status 200 "GET /tasks" && \
-  assert_json 'type == "array" and length == 0' "GET /tasks body" && \
-  pass "GET /tasks - returns an empty array"
+TASK_COUNT_BEFORE=0
+if assert_status 200 "GET /tasks" && assert_json 'type == "array"' "GET /tasks body"; then
+  TASK_COUNT_BEFORE=$(printf '%s' "$BODY" | jq 'length')
+  pass "GET /tasks - returns retained Task baseline"
+fi
 
 # 8. Production tasking rejects Commands outside the empty catalog
 request POST /tasks \
@@ -219,15 +221,15 @@ assert_status 400 "POST /tasks with unsupported Command" && \
   assert_json '.error_code == "VALIDATION_ERROR"' "POST /tasks error" && \
   pass "POST /tasks - rejects Commands outside the production catalog"
 
-# 9. Full query contains the Entity and no Tasks
+# 9. Full query contains the Entity and no Task added by the rejected request
 request GET /queries/full
 assert_status 200 "GET /queries/full" && \
   assert_json '.entities | type == "array"' "GET /queries/full entities" && \
   assert_json '.tasks    | type == "array"' "GET /queries/full tasks" && \
   assert_json '.objects  | type == "array"' "GET /queries/full objects" && \
   assert_json '.version  | type == "number"' "GET /queries/full version watermark" && \
-  assert_json '.entities | length >= 1'     "GET /queries/full entity count" && \
-  assert_json '.tasks    | length == 0'     "GET /queries/full task count"
+  assert_json '.entities | length >= 1'     "GET /queries/full entity count"
+assert_jq "GET /queries/full preserved Task baseline" --argjson count "$TASK_COUNT_BEFORE" '.tasks | length == $count'
 # shellcheck disable=SC2016 # $e is a jq --arg variable, not a shell expansion
 assert_jq "GET /queries/full contains ENTITY_ID" --arg e "$ENTITY_ID" 'any(.entities[]?; .entity_id == $e)'
 pass "GET /queries/full — returns expected data"

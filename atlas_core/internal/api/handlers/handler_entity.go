@@ -55,24 +55,17 @@ func (h *Handler) CreateEntity(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetEntity(w http.ResponseWriter, r *http.Request) {
 	entityID := chi.URLParam(r, "entity_id")
 
-	entity, err := h.entityActions.Get(r.Context(), entityID)
+	detail, err := h.entityActions.GetDetail(r.Context(), entityID)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
 	}
 
-	serialized := serializers.SerializeEntity(entity)
-	if entity.Type == "asset" {
-		manifest, err := h.taskActions.RuntimeManifest(r.Context(), entity.EntityID)
-		if err != nil {
-			h.handleActionError(w, r, err)
-			return
-		}
-		if manifest != nil {
-			serialized.CommandManifest = &manifest
-		}
+	serialized := serializers.SerializeEntity(detail.Entity)
+	if detail.CommandManifest != nil {
+		serialized.CommandManifest = detail.CommandManifest
 	}
-	setResourceETag(w, entity.Version)
+	setResourceETag(w, detail.Entity.Version)
 	writeJSON(w, r, http.StatusOK, serialized)
 }
 
