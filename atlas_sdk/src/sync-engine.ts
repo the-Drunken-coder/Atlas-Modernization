@@ -449,7 +449,11 @@ export class SyncEngine {
         replaceSameVersion: true
       })
     ) {
-      this.notify(resourceUpsertEvent("task", options.eventName ?? "update", task.task_id, version, task), task);
+      const cachedTask = this.cache.value("task", task.task_id)!;
+      this.notify(
+        resourceUpsertEvent("task", options.eventName ?? "update", task.task_id, version, cachedTask),
+        cachedTask
+      );
       this.notifySnapshot();
     }
     return task;

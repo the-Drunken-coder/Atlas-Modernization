@@ -178,6 +178,34 @@ describe("AtlasClient inbound response validation", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("keeps Task lifecycle responses isolated from watch callback mutation", async () => {
+    const response = validTask("task-watched", "asset-1");
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json(response, { headers: { ETag: '"v1"' } })
+    });
+    const mutations: boolean[] = [];
+    let watchedValue: unknown;
+    let watchedEventResource: unknown;
+    client.tasks.watch(response.task_id, (value, event) => {
+      watchedValue = value;
+      if (value) mutations.push(Reflect.set(value, "status", "failed"));
+      if ("resource" in event) {
+        watchedEventResource = event.resource;
+        mutations.push(Reflect.set(event.resource, "status", "failed"));
+      }
+    });
+
+    const returned = await client.tasks.start(response.task_id, { runtimeId: "runtime-1" });
+    const cached = client.sync.snapshot().tasks[response.task_id];
+
+    expect(mutations).toEqual([false, false]);
+    expect(watchedValue).toBe(cached);
+    expect(watchedEventResource).toBe(cached);
+    expect(returned).not.toBe(cached);
+    expect(returned.status).toBe(response.status);
+  });
+
   it("requires a strong resource ETag on Task point responses", async () => {
     const response = validTask("task-without-etag", "asset-1");
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });
