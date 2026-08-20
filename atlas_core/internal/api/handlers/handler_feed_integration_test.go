@@ -79,6 +79,7 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	secondID := prefix + "-second"
 	thirdID := prefix + "-third"
 	unregisteredAssetID := prefix + "-unregistered"
+	_ = postEntityIntegration(t, server.URL, unregisteredAssetID, http.StatusCreated)
 	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"action":"subscribe","filter":"all"}`)); err != nil {
 		t.Fatalf("subscribe to all feed events: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, thirdID}); err != nil {
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM entities WHERE entity_id = ANY($1)`, []string{firstID, secondID, thirdID, unregisteredAssetID}); err != nil {
 			t.Errorf("cleanup feed integration entities: %v", err)
 		}
 	})
