@@ -122,61 +122,51 @@ export class AtlasClient {
   readonly tasks = {
     get: (id: string, options?: ReadOptions) => this.engine.readTask(id, options),
     create: (task: TaskCreateRequest, options: TaskCreateOptions) =>
-      this.engine.writeTask(
-        "POST",
-        "/tasks",
-        task,
-        { "Idempotency-Key": requireOpaqueHeader("idempotencyKey", options.idempotencyKey) },
-        options.signal,
-        "create"
-      ),
+      this.engine.writeTask("POST", "/tasks", task, {
+        requestHeaders: { "Idempotency-Key": requireOpaqueHeader("idempotencyKey", options.idempotencyKey) },
+        signal: options.signal,
+        eventName: "create"
+      }),
     acknowledge: (id: string, options: RuntimeContextOptions) =>
       this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(id)}/acknowledge`,
         {},
-        runtimeHeaders(options.runtimeId),
-        options.signal
+        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
       ),
     start: (id: string, options: RuntimeContextOptions) =>
       this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(id)}/start`,
         {},
-        runtimeHeaders(options.runtimeId),
-        options.signal
+        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
       ),
     progress: (id: string, request: TaskProgressRequest, options: RuntimeContextOptions) =>
-      this.engine.writeTask(
-        "POST",
-        `/tasks/${encodeURIComponent(id)}/progress`,
-        request,
-        runtimeHeaders(options.runtimeId),
-        options.signal
-      ),
+      this.engine.writeTask("POST", `/tasks/${encodeURIComponent(id)}/progress`, request, {
+        requestHeaders: runtimeHeaders(options.runtimeId),
+        signal: options.signal,
+        expectedID: id
+      }),
     complete: (id: string, options: TaskCompleteOptions) =>
       this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(id)}/complete`,
         options.output === undefined ? {} : { output: options.output },
-        runtimeHeaders(options.runtimeId),
-        options.signal
+        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
       ),
     fail: (id: string, options: TaskFailOptions) =>
       this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(id)}/fail`,
         { failure: options.failure },
-        runtimeHeaders(options.runtimeId),
-        options.signal
+        { requestHeaders: runtimeHeaders(options.runtimeId), signal: options.signal, expectedID: id }
       ),
     cancel: (id: string, options: TaskCancelOptions) =>
       this.engine.writeTask(
         "POST",
         `/tasks/${encodeURIComponent(id)}/cancel`,
         { cancellation: options.cancellation },
-        undefined,
-        options.signal
+        { signal: options.signal, expectedID: id }
       ),
     watch: (id: string, callback: WatchCallback<TaskResource>) =>
       this.engine.watch({ filter: "id", resource_type: "task", id }, callback)

@@ -161,6 +161,23 @@ describe("AtlasClient inbound response validation", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("rejects Task lifecycle responses for a different Task id without poisoning the cache", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () =>
+        Response.json(validTask("task-other", "asset-1"), {
+          headers: { ETag: '"v1"' }
+        })
+    });
+    const snapshot = client.sync.snapshot();
+
+    await expect(client.tasks.start("task-requested", { runtimeId: "runtime-1" })).rejects.toThrow(
+      "Atlas task response id task-other does not match requested id task-requested"
+    );
+    expect(client.sync.snapshot()).toBe(snapshot);
+    expect(client.sync.status().lastVersion).toBe(0);
+  });
+
   it("requires a strong resource ETag on Task point responses", async () => {
     const response = validTask("task-without-etag", "asset-1");
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: async () => Response.json(response) });

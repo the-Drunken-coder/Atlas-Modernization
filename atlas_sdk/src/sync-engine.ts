@@ -68,6 +68,13 @@ type FeedRecoveryBuffer = {
   bytes: number;
 };
 
+type TaskWriteOptions = {
+  requestHeaders?: HeadersInit;
+  signal?: AbortSignal;
+  expectedID?: string;
+  eventName?: "create" | "update";
+};
+
 const MAX_BUFFERED_FEED_EVENTS = 100;
 const MAX_BUFFERED_FEED_BYTES = 8 * 1024 * 1024;
 
@@ -425,22 +432,16 @@ export class SyncEngine {
     return task;
   }
 
-  async writeTask(
-    method: "POST",
-    path: string,
-    body: unknown,
-    requestHeaders?: HeadersInit,
-    signal?: AbortSignal,
-    eventName: "create" | "update" = "update"
-  ): Promise<TaskResource> {
+  async writeTask(method: "POST", path: string, body: unknown, options: TaskWriteOptions = {}): Promise<TaskResource> {
     const { value: task, version } = await this.transport.versionedJSON(
       method,
       path,
       isTaskResource,
       body,
-      signal,
-      requestHeaders
+      options.signal,
+      options.requestHeaders
     );
+    if (options.expectedID !== undefined) assertExpectedResourceID("task", options.expectedID, task);
     if (
       this.cache.cacheResource("task", task.task_id, task, {
         advanceCursor: false,
@@ -448,7 +449,7 @@ export class SyncEngine {
         replaceSameVersion: true
       })
     ) {
-      this.notify(resourceUpsertEvent("task", eventName, task.task_id, version, task), task);
+      this.notify(resourceUpsertEvent("task", options.eventName ?? "update", task.task_id, version, task), task);
       this.notifySnapshot();
     }
     return task;
