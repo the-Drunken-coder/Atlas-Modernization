@@ -5,12 +5,12 @@ import { taskStatusLabel } from "../../atlas/tasks.js";
 
 type StatusPillProps = {
   label: string;
-  color?: string;
+  accent?: string;
   dot?: boolean;
 };
 
-export function StatusPill({ label, color, dot = true }: StatusPillProps) {
-  const style = color ? ({ "--pill-color": color } as CSSProperties) : undefined;
+export function StatusPill({ label, accent, dot = true }: StatusPillProps) {
+  const style = accent ? ({ "--pill-accent": accent } as CSSProperties) : undefined;
   return (
     <span className="pill" style={style}>
       {dot ? <span className="pill__dot" /> : null}
@@ -20,11 +20,11 @@ export function StatusPill({ label, color, dot = true }: StatusPillProps) {
 }
 
 export function TaskStatusPill({ status }: { status: TaskStatus }) {
-  return <StatusPill label={taskStatusLabel(status)} color={`var(--status-${status})`} />;
+  return <StatusPill label={taskStatusLabel(status)} accent={`var(--status-${status})`} />;
 }
 
 export function ConnectionStatusPill({ status }: { status: EntityConnectionStatus }) {
-  return <StatusPill label={connectionStatusLabel(status)} color={connectionStatusColor(status)} />;
+  return <StatusPill label={connectionStatusLabel(status)} accent={connectionStatusColor(status)} />;
 }
 
 export function connectionStatusLabel({ reported, freshness }: EntityConnectionStatus): string {
@@ -41,7 +41,7 @@ export function connectionStatusColor({ reported, freshness }: EntityConnectionS
 }
 
 export function ClassificationPill({ value }: { value: Classification }) {
-  return <StatusPill label={titleCase(value)} color={`var(--class-${value})`} />;
+  return <StatusPill label={titleCase(value)} accent={`var(--class-${value})`} />;
 }
 
 const HEARTBEAT_COLORS: Record<HeartbeatLevel, string> = {

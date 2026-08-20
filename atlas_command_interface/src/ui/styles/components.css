@@ -294,9 +294,9 @@
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  border: 1px solid var(--pill-color, var(--border-strong));
-  color: var(--pill-color, var(--text-2));
-  background: color-mix(in srgb, var(--pill-color, var(--text-3)) 14%, transparent);
+  border: 1px solid var(--pill-accent, var(--border-strong));
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--pill-accent, var(--text-3)) 14%, transparent);
   white-space: nowrap;
 }
 
@@ -305,7 +305,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--pill-color, var(--text-2));
+  background: var(--pill-accent, var(--text-2));
 }
 
 /* ---------- Task / command rows ---------- */

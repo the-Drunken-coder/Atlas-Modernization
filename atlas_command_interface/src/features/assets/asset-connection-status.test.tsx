@@ -79,7 +79,7 @@ describe("asset connection status", () => {
       const heartbeat = fieldValue("Heartbeat");
       if (heartbeatLabel && heartbeatColor) {
         expect(heartbeat).toHaveTextContent(heartbeatLabel);
-        expect(heartbeat.querySelector(".pill")).toHaveStyle(`--pill-color: ${heartbeatColor}`);
+        expect(heartbeat.querySelector(".pill")).toHaveStyle(`--pill-accent: ${heartbeatColor}`);
       } else {
         expect(heartbeat).toHaveTextContent("—");
         expect(heartbeat.querySelector(".pill")).toBeNull();
