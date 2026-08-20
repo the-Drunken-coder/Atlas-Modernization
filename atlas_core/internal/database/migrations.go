@@ -25,8 +25,9 @@ const (
 	recoveryFloorMigrationName      = "recovery_log_floor_and_retention_index"
 	recoveryFloorMigrationChecksum  = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
 	taskingRuntimeMigrationName     = "immutable_tasks_and_asset_runtimes"
-	taskingRuntimeMigrationChecksum = "8109dede8ab513300e490d3d1fc19caf36a0371e67906bb233b2e1b1cc8c3d73"
+	taskingRuntimeMigrationChecksum = "cf7f05cff26ca1f39611175faa71dd6825f39efd0ddf7256af6cf0aea660b584"
 	fingerprintVersionV1            = 1
+	fingerprintVersionV2            = 2
 )
 
 var (
@@ -168,7 +169,7 @@ func coreSchemaMigrations() []schemaMigration {
 			version:            7,
 			name:               taskingRuntimeMigrationName,
 			checksum:           taskingRuntimeMigrationChecksum,
-			fingerprintVersion: fingerprintVersionV1,
+			fingerprintVersion: fingerprintVersionV2,
 			statements: []string{
 				`DO $$ BEGIN
 					IF EXISTS (SELECT 1 FROM tasks LIMIT 1) THEN
@@ -203,7 +204,7 @@ func coreSchemaMigrations() []schemaMigration {
 					asset_id VARCHAR(50) NOT NULL,
 					command VARCHAR(255) NOT NULL,
 					input JSONB NOT NULL,
-					status VARCHAR(32) NOT NULL DEFAULT 'pending',
+					status TEXT NOT NULL DEFAULT 'pending',
 					progress DOUBLE PRECISION,
 					output JSONB,
 					failure JSONB,

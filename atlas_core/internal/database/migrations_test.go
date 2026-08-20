@@ -118,6 +118,9 @@ func TestTaskingRuntimeMigrationDefinitionIsFrozen(t *testing.T) {
 	if actual := migrationChecksum(migration); actual != taskingRuntimeMigrationChecksum {
 		t.Fatalf("tasking-runtime migration checksum = %s, want %s", actual, taskingRuntimeMigrationChecksum)
 	}
+	if migration.fingerprintVersion != fingerprintVersionV2 {
+		t.Fatalf("tasking-runtime fingerprint version = %d, want %d", migration.fingerprintVersion, fingerprintVersionV2)
+	}
 	ddl := strings.Join(migration.statements, "\n")
 	for _, required := range []string{
 		"Atlas Task cutover requires an empty tasks table",
@@ -128,6 +131,7 @@ func TestTaskingRuntimeMigrationDefinitionIsFrozen(t *testing.T) {
 		"DROP TABLE tasks",
 		"CREATE TABLE asset_runtimes",
 		"CREATE TABLE tasks",
+		"status TEXT NOT NULL",
 		"idempotency_key TEXT NOT NULL UNIQUE",
 		"runtime_id VARCHAR(255) NOT NULL",
 	} {
@@ -140,6 +144,61 @@ func TestTaskingRuntimeMigrationDefinitionIsFrozen(t *testing.T) {
 func TestMigrationDefinitionsAreValid(t *testing.T) {
 	if err := validateMigrationDefinitions(coreSchemaMigrations()); err != nil {
 		t.Fatalf("migration definitions: %v", err)
+	}
+}
+
+func TestSchemaFingerprintV2IgnoresDroppedColumnAttributeGaps(t *testing.T) {
+	dbURL := migrationTestSchema(t)
+	db := openMigrationTestDB(t, dbURL, false)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin fingerprint test: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	schema, err := currentSchema(ctx, tx)
+	if err != nil {
+		t.Fatalf("read fingerprint test schema: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		CREATE TABLE fingerprint_probe (first_value TEXT, removed_value TEXT, last_value TEXT);
+		ALTER TABLE fingerprint_probe DROP COLUMN removed_value;
+	`); err != nil {
+		t.Fatalf("create table with dropped-column gap: %v", err)
+	}
+	v1WithGap, err := schemaFingerprint(ctx, tx, schema, fingerprintVersionV1)
+	if err != nil {
+		t.Fatalf("fingerprint v1 table with gap: %v", err)
+	}
+	v2WithGap, err := schemaFingerprint(ctx, tx, schema, fingerprintVersionV2)
+	if err != nil {
+		t.Fatalf("fingerprint v2 table with gap: %v", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		ALTER TABLE fingerprint_probe RENAME TO fingerprint_probe_with_gap;
+		CREATE TABLE fingerprint_probe (first_value TEXT, last_value TEXT);
+		DROP TABLE fingerprint_probe_with_gap;
+	`); err != nil {
+		t.Fatalf("rebuild equivalent compact table: %v", err)
+	}
+	v1Compact, err := schemaFingerprint(ctx, tx, schema, fingerprintVersionV1)
+	if err != nil {
+		t.Fatalf("fingerprint v1 compact table: %v", err)
+	}
+	v2Compact, err := schemaFingerprint(ctx, tx, schema, fingerprintVersionV2)
+	if err != nil {
+		t.Fatalf("fingerprint v2 compact table: %v", err)
+	}
+
+	if v1WithGap == v1Compact {
+		t.Fatal("fingerprint v1 did not preserve the dropped-column attribute gap")
+	}
+	if v2WithGap != v2Compact {
+		t.Fatalf("fingerprint v2 changed across equivalent column layouts: %s != %s", v2WithGap, v2Compact)
 	}
 }
 
@@ -164,7 +223,7 @@ func TestAppliedMigrationHistoryMustMatchKnownPrefix(t *testing.T) {
 		version:            known[len(known)-1].version + 1,
 		name:               "future",
 		checksum:           "future",
-		fingerprintVersion: fingerprintVersionV1,
+		fingerprintVersion: fingerprintVersionV2,
 		schemaFingerprint:  "future",
 	})
 
@@ -604,7 +663,7 @@ func TestCleanInstallRestoresSearchPathBeforeLaterMigration(t *testing.T) {
 	searchPathMigration := schemaMigration{
 		version:            len(migrations) + 1,
 		name:               "verify_search_path_restoration",
-		fingerprintVersion: fingerprintVersionV1,
+		fingerprintVersion: fingerprintVersionV2,
 		statements: []string{`DO $$
 		BEGIN
 			IF position('public' in current_setting('search_path')) = 0 THEN
@@ -823,7 +882,7 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	failing := schemaMigration{
 		version:            len(migrations) + 1,
 		name:               "deliberate_rollback_probe",
-		fingerprintVersion: fingerprintVersionV1,
+		fingerprintVersion: fingerprintVersionV2,
 		statements:         []string{`ALTER TABLE entities ADD COLUMN rollback_probe TEXT`, `THIS IS NOT VALID SQL`},
 	}
 	failing.checksum = migrationChecksum(failing)
@@ -922,7 +981,7 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 	adminMigration := schemaMigration{
 		version:            len(migrations) + 1,
 		name:               "add_admin_migration_probe",
-		fingerprintVersion: fingerprintVersionV1,
+		fingerprintVersion: fingerprintVersionV2,
 		statements:         []string{`ALTER TABLE admin_records ADD COLUMN migration_probe TEXT`},
 	}
 	adminMigration.checksum = migrationChecksum(adminMigration)
