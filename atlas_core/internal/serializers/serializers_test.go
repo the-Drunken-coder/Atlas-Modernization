@@ -123,6 +123,25 @@ func TestSerializeTaskUsesFlatProtocolResource(t *testing.T) {
 	}
 }
 
+func TestSerializeTaskPreservesExplicitNullOutput(t *testing.T) {
+	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	result := serializers.SerializeTask(&models.Task{
+		TaskID: "task-null", AssetID: "asset-1", Command: "fixture.null",
+		Input: []byte(`{}`), Output: []byte(`null`), Status: "completed",
+		CreatedAt: now, UpdatedAt: now, Version: 1,
+	})
+	if result.Output == nil || *result.Output != nil {
+		t.Fatalf("explicit null output = %#v", result.Output)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"output":null`)) {
+		t.Fatalf("serialized Task omitted explicit null output: %s", encoded)
+	}
+}
+
 func TestSerializeObject(t *testing.T) {
 	now := time.Now().UTC()
 	path := "objects/obj-1"

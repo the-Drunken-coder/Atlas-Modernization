@@ -423,6 +423,19 @@ func (a *EntityActions) Delete(ctx context.Context, entityID string) error {
 		return fmt.Errorf("failed to get entity for deletion: %w", err)
 	}
 
+	var hasNonterminalTasks bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tasks
+			WHERE asset_id = $1 AND status IN ('pending', 'acknowledged', 'in_progress')
+		)
+	`, entityID).Scan(&hasNonterminalTasks); err != nil {
+		return fmt.Errorf("check Entity Tasks before deletion: %w", err)
+	}
+	if hasNonterminalTasks {
+		return NewValidationError("Entity cannot be deleted while it has nonterminal Tasks")
+	}
+
 	result, err := tx.Exec(ctx, "DELETE FROM entities WHERE entity_id = $1", entityID)
 	if err != nil {
 		return fmt.Errorf("failed to delete entity: %w", err)

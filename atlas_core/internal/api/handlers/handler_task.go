@@ -1,12 +1,24 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
+
+const maxTaskingRequestBodyBytes = 512 * 1024
+
+type completeTaskRequest struct {
+	Output json.RawMessage `json:"output"`
+}
+
+func limitTaskingRequestBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxTaskingRequestBodyBytes)
+}
 
 // ListTasks handles GET /tasks.
 func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
@@ -28,8 +40,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 // CreateTask handles POST /tasks.
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	// Limit request body to 512KB for task operations
-	r.Body = http.MaxBytesReader(w, r.Body, 512*1024)
+	limitTaskingRequestBody(w, r)
 
 	var req createTaskRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskCreateRequest) {
@@ -66,6 +77,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) AcknowledgeTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.TaskAcknowledgeRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskAcknowledgeRequest) {
 		return
@@ -81,6 +93,7 @@ func (h *Handler) AcknowledgeTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.TaskStartRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskStartRequest) {
 		return
@@ -96,6 +109,7 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ProgressTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.TaskProgressRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskProgressRequest) {
 		return
@@ -111,11 +125,21 @@ func (h *Handler) ProgressTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
-	var req protocol.TaskCompleteRequest
+	limitTaskingRequestBody(w, r)
+	var req completeTaskRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskCompleteRequest) {
 		return
 	}
-	task, err := h.taskActions.Complete(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"), req.Output)
+	var output *actions.TaskOutput
+	if req.Output != nil {
+		var value protocol.JSONValue
+		if err := json.Unmarshal(req.Output, &value); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)
+			return
+		}
+		output = &actions.TaskOutput{Value: value}
+	}
+	task, err := h.taskActions.Complete(r.Context(), taskID, r.Header.Get("Atlas-Runtime-ID"), output)
 	if err != nil {
 		h.handleActionError(w, r, err)
 		return
@@ -126,6 +150,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.TaskFailRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskFailRequest) {
 		return
@@ -141,6 +166,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "task_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.TaskCancelRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateTaskCancelRequest) {
 		return

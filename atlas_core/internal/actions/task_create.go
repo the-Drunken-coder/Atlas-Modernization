@@ -62,6 +62,17 @@ func (a *TaskActions) Create(ctx context.Context, params CreateTaskParams, idemp
 		return nil, false, fmt.Errorf("look up Task idempotency key: %w", err)
 	}
 
+	var entityType string
+	if err := tx.QueryRow(ctx, `SELECT type FROM entities WHERE entity_id = $1 FOR UPDATE`, params.AssetID).Scan(&entityType); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, NewEntityNotFoundError(params.AssetID)
+		}
+		return nil, false, fmt.Errorf("lock Task target Entity: %w", err)
+	}
+	if entityType != "asset" {
+		return nil, false, NewValidationError("Tasks can target only asset Entities")
+	}
+
 	command, ok := a.catalog[params.Command]
 	if !ok {
 		return nil, false, NewValidationError("unsupported Command")

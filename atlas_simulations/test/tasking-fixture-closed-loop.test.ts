@@ -6,6 +6,7 @@ import { createFakeAtlasCore } from "./support/fake-atlas.js";
 
 describe("fixture Command closed loop", () => {
   it("delivers a Task through the runtime and retains its completed history", async () => {
+    vi.useFakeTimers();
     const manifest: unknown = fixtureManifestJSON;
     if (!isCommandManifest(manifest)) throw new Error("invalid shared fixture manifest");
     const core = createFakeAtlasCore();
@@ -24,21 +25,23 @@ describe("fixture Command closed loop", () => {
       }
     });
 
-    await runtime.start();
-    const task = await operator.tasks.create(
-      { asset_id: "asset-1", command: "fixture.queued", input: { value: "closed-loop" } },
-      { idempotencyKey: "closed-loop-attempt" }
-    );
-    asset.sync.status();
+    try {
+      await runtime.start();
+      const task = await operator.tasks.create(
+        { asset_id: "asset-1", command: "fixture.queued", input: { value: "closed-loop" } },
+        { idempotencyKey: "closed-loop-attempt" }
+      );
 
-    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
       await expect(operator.tasks.get(task.task_id)).resolves.toMatchObject({
         status: "completed",
         progress: 0.5,
         output: { result: "done" }
       });
-    });
-    expect(core.state.tasks.size).toBe(1);
-    await runtime.stop();
+      expect(core.state.tasks.size).toBe(1);
+    } finally {
+      await runtime.stop();
+      vi.useRealTimers();
+    }
   });
 });

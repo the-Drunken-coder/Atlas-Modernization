@@ -35,9 +35,6 @@ function emptyClient(): AtlasAssetClient {
   };
   return {
     handshake: vi.fn(async () => undefined),
-    subscribe: vi.fn(async () => undefined),
-    watch: vi.fn(() => () => undefined),
-    sync: { start: vi.fn(async () => undefined), stop: vi.fn() },
     entities: { checkIn: vi.fn(async () => undefined) },
     runtime: {
       begin: vi.fn(async () => undefined),
@@ -45,6 +42,7 @@ function emptyClient(): AtlasAssetClient {
       tasks: vi.fn(async () => ({ tasks: [] }))
     },
     tasks: {
+      get: task,
       acknowledge: task,
       start: task,
       progress: task,

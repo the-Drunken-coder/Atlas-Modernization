@@ -97,7 +97,12 @@ func progressTask(task *models.Task, _ protocol.CommandDefinition, manifest prot
 	return true, nil
 }
 
-func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, output protocol.JSONValue) (*models.Task, error) {
+// TaskOutput distinguishes an omitted output property from an explicit JSON null.
+type TaskOutput struct {
+	Value protocol.JSONValue
+}
+
+func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, output *TaskOutput) (*models.Task, error) {
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
@@ -106,7 +111,7 @@ func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, ou
 	})
 }
 
-func completeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time, output protocol.JSONValue) (bool, error) {
+func completeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time, output *TaskOutput) (bool, error) {
 	encoded, err := encodeTaskOutput(command, output)
 	if err != nil {
 		return false, err
@@ -341,7 +346,7 @@ func (a *TaskActions) lockCurrentRuntimeManifest(ctx context.Context, tx pgx.Tx,
 	return manifest, nil
 }
 
-func encodeTaskOutput(command protocol.CommandDefinition, output protocol.JSONValue) ([]byte, error) {
+func encodeTaskOutput(command protocol.CommandDefinition, output *TaskOutput) ([]byte, error) {
 	if command.OutputSchema == "" {
 		if output != nil {
 			return nil, NewValidationError("Command does not define Task output")
@@ -351,10 +356,10 @@ func encodeTaskOutput(command protocol.CommandDefinition, output protocol.JSONVa
 	if output == nil {
 		return nil, NewValidationError("Command requires Task output")
 	}
-	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.OutputSchema), output); len(validationErrors) > 0 {
+	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.OutputSchema), output.Value); len(validationErrors) > 0 {
 		return nil, NewValidationErrorWithDetails("Invalid Command output", validationErrors)
 	}
-	encoded, err := json.Marshal(output)
+	encoded, err := json.Marshal(output.Value)
 	if err != nil {
 		return nil, NewValidationError("output must be JSON encodable")
 	}

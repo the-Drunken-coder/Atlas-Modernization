@@ -398,7 +398,14 @@ export class SyncEngine {
     ) {
       return cached.value;
     }
-    const entity = await this.transport.json("GET", `/entities/${encodeURIComponent(id)}`, isEntityResource);
+    const entity = await this.transport.json(
+      "GET",
+      `/entities/${encodeURIComponent(id)}`,
+      isEntityResource,
+      undefined,
+      undefined,
+      options?.signal
+    );
     assertExpectedResourceID("entity", id, entity);
     if (this.cache.cacheResource("entity", id, entity, { advanceCursor: false })) this.notifySnapshot();
     return entity;
@@ -417,7 +424,9 @@ export class SyncEngine {
     const { value: task, version } = await this.transport.versionedJSON(
       "GET",
       `/tasks/${encodeURIComponent(id)}`,
-      isTaskResource
+      isTaskResource,
+      undefined,
+      options?.signal
     );
     assertExpectedResourceID("task", id, task);
     if (
@@ -463,7 +472,14 @@ export class SyncEngine {
     if (!options?.fresh && this.canServeFromCache({ filter: "id", resource_type: "object", id }) && cached) {
       return cached;
     }
-    const object = await this.transport.json("GET", `/objects/${encodeURIComponent(id)}`, isObjectDetailResource);
+    const object = await this.transport.json(
+      "GET",
+      `/objects/${encodeURIComponent(id)}`,
+      isObjectDetailResource,
+      undefined,
+      undefined,
+      options?.signal
+    );
     assertExpectedResourceID("object", id, object);
     if (this.cache.cacheResource("object", id, object, { detail: true, advanceCursor: false })) this.notifySnapshot();
     return object;

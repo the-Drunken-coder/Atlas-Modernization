@@ -1,19 +1,17 @@
 import {
   type AtlasClient,
-  type AtlasSubscription,
   type CommandManifest,
   type CommandManifestEntry,
   type EntityCheckInOptions,
   isCommandManifest,
   type JSONValue,
-  type RuntimeContextOptions,
-  type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { ExecutionModule } from "./execution-module.js";
 import { establishSafetyBarrier } from "./safety-barrier.js";
 
 const DEFAULT_CHECK_IN_INTERVAL_MS = 5_000;
+const TASK_RECONCILIATION_INTERVAL_MS = 5_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export type AssetTaskFailureCode = "precondition_failed" | "execution_failed";
@@ -28,32 +26,12 @@ export class AssetTaskFailure extends Error {
   }
 }
 
-export type AtlasAssetClient = Pick<AtlasClient, "handshake" | "subscribe" | "watch"> & {
-  sync: Pick<AtlasClient["sync"], "start" | "stop">;
+export type AtlasAssetClient = Pick<AtlasClient, "handshake"> & {
   entities: {
     checkIn(id: string, options?: EntityCheckInOptions): Promise<unknown>;
   };
-  runtime: {
-    begin(assetId: string, request: { runtime_id: string }, options?: { signal?: AbortSignal }): Promise<void>;
-    ready(
-      assetId: string,
-      request: { runtime_id: string; manifest: CommandManifest },
-      options?: { signal?: AbortSignal }
-    ): Promise<void>;
-    tasks(assetId: string, options: RuntimeContextOptions): Promise<RuntimeTaskDeliveryResponse>;
-  };
-  tasks: {
-    acknowledge(id: string, options: RuntimeContextOptions): Promise<TaskResource>;
-    start(id: string, options: RuntimeContextOptions): Promise<TaskResource>;
-    progress(id: string, request: { progress: number }, options: RuntimeContextOptions): Promise<TaskResource>;
-    complete(id: string, options: RuntimeContextOptions & { output?: JSONValue }): Promise<TaskResource>;
-    fail(
-      id: string,
-      options: RuntimeContextOptions & {
-        failure: { code: AssetTaskFailureCode | "unsupported_command"; message: string };
-      }
-    ): Promise<TaskResource>;
-  };
+  runtime: Pick<AtlasClient["runtime"], "begin" | "ready" | "tasks">;
+  tasks: Pick<AtlasClient["tasks"], "get" | "acknowledge" | "start" | "progress" | "complete" | "fail">;
 };
 
 export type AssetCheckInReport = Pick<EntityCheckInOptions, "components" | "status" | "telemetry">;
@@ -106,13 +84,13 @@ export class AtlasAssetRuntime {
   private startPromise?: Promise<void>;
   private stopPromise?: Promise<void>;
   private checkInLoop?: Promise<void>;
+  private deliveryLoop?: Promise<void>;
   private checkInTail: Promise<void> = Promise.resolve();
   private deliveryTail: Promise<void> = Promise.resolve();
   private queuedTail: Promise<void> = Promise.resolve();
   private readonly accepted = new Map<string, AcceptedTask>();
   private readonly executions = new Set<Promise<void>>();
   private queued: AcceptedTask[] = [];
-  private unwatch?: () => void;
   private externalAbort?: ExternalAbortRegistration;
 
   constructor(client: AtlasAssetClient, options: AtlasAssetRuntimeOptions) {
@@ -219,25 +197,17 @@ export class AtlasAssetRuntime {
         { runtime_id: runtimeId, manifest: this.manifest },
         { signal: controller.signal }
       );
-      const subscription = this.taskSubscription();
-      this.unwatch = this.client.watch(subscription, (task) => this.onTaskChange(task));
-      await this.client.subscribe(subscription);
-      await this.client.sync.start();
-      controller.signal.throwIfAborted();
-      await this.requestDelivery();
-      controller.signal.throwIfAborted();
       this.state = "running";
+      this.deliveryLoop = this.runDeliveryLoop(controller.signal);
+      void this.deliveryLoop.catch((error) => this.reportError(error));
       this.checkInLoop = this.runCheckInLoop(controller.signal);
       void this.checkInLoop.catch((error) => this.reportError(error));
     } catch (error) {
       if (this.controller === controller && this.state !== "stopping") {
         controller.abort(error);
         this.clearAcceptedWork();
-        this.client.sync.stop();
         this.controller = undefined;
         this.runtimeId = undefined;
-        this.unwatch?.();
-        this.unwatch = undefined;
         this.state = "stopped";
       }
       throw error;
@@ -250,18 +220,17 @@ export class AtlasAssetRuntime {
     this.detachExternalAbort(controller);
     controller?.abort();
     this.clearAcceptedWork();
-    this.unwatch?.();
-    this.unwatch = undefined;
-    this.client.sync.stop();
     await Promise.allSettled([
       this.startPromise,
       this.checkInLoop,
+      this.deliveryLoop,
       this.checkInTail,
       this.deliveryTail,
       this.queuedTail,
       ...this.executions
     ]);
     this.checkInLoop = undefined;
+    this.deliveryLoop = undefined;
     this.controller = undefined;
     this.runtimeId = undefined;
     this.state = "stopped";
@@ -272,10 +241,6 @@ export class AtlasAssetRuntime {
     if (!registration || (controller && registration.controller !== controller)) return;
     registration.signal.removeEventListener("abort", registration.listener);
     this.externalAbort = undefined;
-  }
-
-  private taskSubscription(): Extract<AtlasSubscription, { filter: "tasks_for_asset" }> {
-    return { filter: "tasks_for_asset", asset_id: this.entityId };
   }
 
   private onTaskChange(task: TaskResource | undefined): void {
@@ -291,6 +256,30 @@ export class AtlasAssetRuntime {
     const delivery = this.deliveryTail.catch(() => undefined).then(() => this.deliver());
     this.deliveryTail = delivery;
     return delivery;
+  }
+
+  private async runDeliveryLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        await this.reconcileAcceptedTasks(signal);
+      } catch (error) {
+        if (!signal.aborted) this.reportError(error);
+      }
+      try {
+        await this.requestDelivery();
+      } catch (error) {
+        if (!signal.aborted) this.reportError(error);
+      }
+      await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
+    }
+  }
+
+  private async reconcileAcceptedTasks(signal: AbortSignal): Promise<void> {
+    for (const taskId of this.accepted.keys()) {
+      signal.throwIfAborted();
+      const task = await this.client.tasks.get(taskId, { fresh: true, signal });
+      this.onTaskChange(task);
+    }
   }
 
   private async deliver(): Promise<void> {

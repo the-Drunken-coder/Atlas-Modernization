@@ -91,17 +91,17 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 	})
 
 	t.Run("complete", func(t *testing.T) {
-		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), immediate, protocol.CommandManifestEntry{}, taskStateTestTime, map[string]any{"unexpected": true}); err == nil {
+		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), immediate, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"unexpected": true}}); err == nil {
 			t.Fatal("Command without output schema accepted output")
 		}
 		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime, nil); err == nil {
 			t.Fatal("Command requiring output accepted nil")
 		}
-		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime, map[string]any{"result": ""}); err == nil {
+		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": ""}}); err == nil {
 			t.Fatal("Command accepted invalid output")
 		}
 		task := taskStateFixture(protocol.TaskStatusInProgress)
-		output := map[string]any{"result": "done"}
+		output := &TaskOutput{Value: map[string]any{"result": "done"}}
 		changed, err := completeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime, output)
 		if err != nil || !changed || task.Status != string(protocol.TaskStatusCompleted) || task.FinishedAt == nil {
 			t.Fatalf("complete Task = %#v, %t, %v", task, changed, err)
@@ -109,7 +109,7 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 		if changed, err = completeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime, output); err != nil || changed {
 			t.Fatalf("repeated completion = %t, %v", changed, err)
 		}
-		if _, err := completeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime, map[string]any{"result": "changed"}); err == nil {
+		if _, err := completeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": "changed"}}); err == nil {
 			t.Fatal("completed Task accepted different output")
 		}
 		if _, err := completeTask(taskStateFixture(protocol.TaskStatusPending), queued, protocol.CommandManifestEntry{}, taskStateTestTime, output); err == nil {
@@ -118,6 +118,14 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 		withoutOutput := taskStateFixture(protocol.TaskStatusInProgress)
 		if changed, err = completeTask(withoutOutput, immediate, protocol.CommandManifestEntry{}, taskStateTestTime, nil); err != nil || !changed || withoutOutput.Output != nil {
 			t.Fatalf("complete output-less Task = %#v, %t, %v", withoutOutput, changed, err)
+		}
+		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), immediate, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{}); err == nil {
+			t.Fatal("Command without output schema accepted explicit null")
+		}
+		nullable := protocol.CommandDefinition{OutputSchema: "atlas.protocol.JSONValue"}
+		withNull := taskStateFixture(protocol.TaskStatusInProgress)
+		if changed, err = completeTask(withNull, nullable, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{}); err != nil || !changed || string(withNull.Output) != "null" {
+			t.Fatalf("complete Task with explicit null = %#v, %t, %v", withNull, changed, err)
 		}
 	})
 
@@ -254,7 +262,7 @@ func TestTaskStateHelpers(t *testing.T) {
 	if invalidTaskTransition(taskStateFixture(protocol.TaskStatusPending), "complete") == nil {
 		t.Fatal("invalid Task transition did not return an error")
 	}
-	encoded, err := encodeTaskOutput(protocol.CommandDefinition{OutputSchema: "atlas.tasking.FixtureOutput"}, map[string]any{"result": "done"})
+	encoded, err := encodeTaskOutput(protocol.CommandDefinition{OutputSchema: "atlas.tasking.FixtureOutput"}, &TaskOutput{Value: map[string]any{"result": "done"}})
 	if err != nil {
 		t.Fatalf("encode valid output: %v", err)
 	}

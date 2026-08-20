@@ -37,6 +37,7 @@ export type AtlasSubscription = WithoutAction<FeedSubscribeMessage>;
 
 export type ReadOptions = {
   fresh?: boolean;
+  signal?: AbortSignal;
 };
 
 export type TaskCreateOptions = {

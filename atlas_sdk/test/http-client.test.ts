@@ -128,7 +128,7 @@ describe("AtlasClient HTTP", () => {
     }
   });
 
-  it("honors caller abort signals for handshake and check-in requests", async () => {
+  it("honors caller abort signals for handshake, check-in, and fresh reads", async () => {
     const fetchImpl: typeof fetch = (_url, init) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("caller aborted")), { once: true });
@@ -136,14 +136,18 @@ describe("AtlasClient HTTP", () => {
     const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: fetchImpl });
     const handshakeController = new AbortController();
     const checkInController = new AbortController();
+    const taskReadController = new AbortController();
 
     const handshake = client.handshake({ signal: handshakeController.signal });
     const checkIn = client.entities.checkIn("asset-1", { signal: checkInController.signal });
+    const taskRead = client.tasks.get("task-1", { fresh: true, signal: taskReadController.signal });
     handshakeController.abort();
     checkInController.abort();
+    taskReadController.abort();
 
     await expect(handshake).rejects.toThrow("caller aborted");
     await expect(checkIn).rejects.toThrow("caller aborted");
+    await expect(taskRead).rejects.toThrow("caller aborted");
   });
 
   it("rejects request timeouts outside the supported timer range", () => {

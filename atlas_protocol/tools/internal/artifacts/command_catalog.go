@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -98,6 +99,13 @@ func loadCommandDefinitions(root, directory string) ([]map[string]any, error) {
 		var definitions []map[string]any
 		if err := decoder.Decode(&definitions); err != nil {
 			return nil, fmt.Errorf("decode %s: %w", displayPath(root, filePath), err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			if err == nil {
+				return nil, fmt.Errorf("decode %s: multiple JSON values", displayPath(root, filePath))
+			}
+			return nil, fmt.Errorf("decode %s: trailing content: %w", displayPath(root, filePath), err)
 		}
 		if len(definitions) == 0 {
 			return nil, fmt.Errorf("%s is empty; remove it until the namespace has a Command", displayPath(root, filePath))

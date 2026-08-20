@@ -10,6 +10,7 @@ import (
 
 func (h *Handler) BeginAssetRuntime(w http.ResponseWriter, r *http.Request) {
 	assetID := chi.URLParam(r, "entity_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.RuntimeRegistrationRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateRuntimeRegistrationRequest) {
 		return
@@ -23,6 +24,7 @@ func (h *Handler) BeginAssetRuntime(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ReadyAssetRuntime(w http.ResponseWriter, r *http.Request) {
 	assetID := chi.URLParam(r, "entity_id")
+	limitTaskingRequestBody(w, r)
 	var req protocol.RuntimeReadyRequest
 	if !h.decodeProtocolRequestBody(w, r, &req, false, protocol.ValidateRuntimeReadyRequest) {
 		return

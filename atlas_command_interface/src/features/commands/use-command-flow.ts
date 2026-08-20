@@ -9,6 +9,7 @@ import type { CommandMapPoint } from "./command-input-registry.js";
 
 export type MapMenuState = { x: number; y: number; lat: number; lng: number };
 export type CommandFormState = { availability: CommandAvailability; mapPoint?: CommandMapPoint };
+type PendingSubmission = { identity: string; idempotencyKey: string };
 
 export function useCommandFlow({
   catalog,
@@ -25,12 +26,14 @@ export function useCommandFlow({
   const [commandForm, setCommandForm] = useState<CommandFormState | null>(null);
   const nextSubmitIdRef = useRef(1);
   const activeSubmitIdRef = useRef<number | undefined>(undefined);
+  const pendingSubmissionRef = useRef<PendingSubmission | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const selectedEntityId = selectedEntity?.entity_id;
 
   const closeMapMenu = useCallback(() => setMapMenu(null), []);
   const dismissCommandForm = useCallback(() => {
+    pendingSubmissionRef.current = undefined;
     setCommandForm(null);
     setSubmitError(undefined);
   }, []);
@@ -54,6 +57,10 @@ export function useCommandFlow({
   const submit = useCallback(
     async (availability: CommandAvailability, input: JSONValue) => {
       if (!selectedEntity) return;
+      const identity = JSON.stringify([selectedEntity.entity_id, availability.command.command, input]);
+      const existing = pendingSubmissionRef.current;
+      const pending = existing?.identity === identity ? existing : { identity, idempotencyKey: crypto.randomUUID() };
+      pendingSubmissionRef.current = pending;
       const submitId = nextSubmitIdRef.current++;
       activeSubmitIdRef.current = submitId;
       setSubmitting(true);
@@ -63,8 +70,9 @@ export function useCommandFlow({
           assetId: selectedEntity.entity_id,
           command: availability.command,
           input,
-          idempotencyKey: crypto.randomUUID()
+          idempotencyKey: pending.idempotencyKey
         });
+        if (pendingSubmissionRef.current === pending) pendingSubmissionRef.current = undefined;
         setCommandForm(null);
       } catch (cause) {
         setSubmitError(sanitizeConnectionError(cause));
@@ -83,6 +91,7 @@ export function useCommandFlow({
       if (submitting || !selectedEntity) return;
       closeMapMenu();
       if (availability.input.Form) {
+        pendingSubmissionRef.current = undefined;
         setSubmitError(undefined);
         setCommandForm({ availability, mapPoint });
         return;

@@ -51,7 +51,7 @@ const runtime = new AtlasAssetRuntime(client, {
 await runtime.start();
 ```
 
-`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, runs every execution module's safety barrier, publishes the manifest, subscribes to `tasks_for_asset`, starts SDK synchronization, and reconciles deliverable work. Only then does it enter `running`. `stop()` aborts local work, stops synchronization, and waits for in-flight runtime work to settle. Starting again creates a new runtime ID.
+`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, and runs every execution module's safety barrier. Publishing the manifest is the final fallible startup step. The running process then polls only its runtime delivery endpoint and accepted Task IDs instead of hydrating the global Atlas dataset. `stop()` aborts local work and waits for in-flight runtime work to settle. Starting again creates a new runtime ID.
 
 The runtime exposes `stopped`, `starting`, `running`, and `stopping` states. `checkIn()` remains available for a caller-requested telemetry cycle; the background loop calls the same method at the configured interval. Check-in never carries or retrieves Tasks.
 
@@ -83,10 +83,11 @@ Core remains authoritative for Task eligibility and ordering. The runtime asks o
 - A handler return value becomes Task output. Returning nothing completes without output. A thrown error fails the Task with `execution_failed`.
 - A handler throws `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution.
 - A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
-- A terminal Task update from Core aborts the matching local handler. This includes cancellation and failure caused by runtime fencing. The runtime does not issue a second cancellation or abort API call.
+- Five-second runtime reconciliation requests new delivery within the immediate start window and refreshes accepted Task IDs.
+- A terminal Task state from Core aborts the matching local handler. This includes cancellation and failure caused by runtime fencing. The runtime does not issue a second cancellation or abort API call.
 - Handlers must observe their `AbortSignal`, finish physical cleanup, and settle. Runtime shutdown waits for every active handler before a later `start()` can establish a new safety barrier.
 
-Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. A temporary WebSocket reconnect keeps the same runtime ID and relies on feed recovery; it is not a process restart.
+Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. Temporary delivery failures keep the same runtime ID and are retried by runtime reconciliation; they are not process restarts.
 
 ## Boundaries
 

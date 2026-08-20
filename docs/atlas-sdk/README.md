@@ -52,7 +52,7 @@ Rules that make this safe:
 - **Degraded fallthrough.** The engine tracks connection state and its last confirmed global version. If the feed is disconnected or a version gap is unreconciled, the engine marks itself degraded and reads fall through to the API until it catches up. The cache only answers when it is entitled to.
 - **Validated inbound state.** HTTP resources, full and changed-since pages, feed handshakes, and feed events pass generated Atlas Protocol predicates plus narrow envelope and ID/version-coherence checks before cache mutation. A malformed sync/feed payload leaves cached state untouched and marks a running sync degraded.
 - **An update path is required.** A runtime with neither a WebSocket implementation nor a positive polling interval remains degraded after hydration, so covered point reads continue to call Core instead of trusting a frozen cache.
-- **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state.
+- **`{ fresh: true }`** forces an API call for data-critical reads regardless of engine state. Pass `signal` in the same options object when the read belongs to a cancellable lifecycle.
 - **Plain returns + sync status.** Functions return plain data (no metadata envelope). Observability currently comes from `client.sync.status()`; read-source debug hooks are deferred until a real caller needs them.
 
 ### Watch API

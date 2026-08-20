@@ -62,12 +62,15 @@ func SerializeTask(t *models.Task) *protocol.TaskResource {
 		Input:          decodeTaskJSON(t.TaskID, "input", t.Input),
 		Status:         protocol.TaskStatus(t.Status),
 		Progress:       t.Progress,
-		Output:         decodeTaskJSON(t.TaskID, "output", t.Output),
 		CreatedAt:      t.CreatedAt.UTC().Format(APIMetadataTimeLayout),
 		AcknowledgedAt: formatOptionalTaskTime(t.AcknowledgedAt),
 		StartedAt:      formatOptionalTaskTime(t.StartedAt),
 		FinishedAt:     formatOptionalTaskTime(t.FinishedAt),
 		UpdatedAt:      t.UpdatedAt.UTC().Format(APIMetadataTimeLayout),
+	}
+	if len(t.Output) > 0 {
+		output := decodeTaskJSON(t.TaskID, "output", t.Output)
+		resource.Output = &output
 	}
 	if len(t.Failure) > 0 {
 		failure := protocol.TaskFailure{}

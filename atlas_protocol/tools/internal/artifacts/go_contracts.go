@@ -51,6 +51,7 @@ var goStructContracts = []goStructContract{
 	}},
 	{goType: "TaskResource", typeOverrides: map[string]goTypeOverride{
 		"progress":     {schemaType: "float64", goType: "*float64"},
+		"output":       {schemaType: "JSONValue", goType: "*JSONValue"},
 		"failure":      {schemaType: "TaskFailure", goType: "*TaskFailure"},
 		"cancellation": {schemaType: "TaskCancellation", goType: "*TaskCancellation"},
 	}},

@@ -211,7 +211,7 @@ type TaskResource struct {
 	Input          JSONValue         `json:"input"`
 	Status         TaskStatus        `json:"status"`
 	Progress       *float64          `json:"progress,omitempty"`
-	Output         JSONValue         `json:"output,omitempty"`
+	Output         *JSONValue        `json:"output,omitempty"`
 	Failure        *TaskFailure      `json:"failure,omitempty"`
 	Cancellation   *TaskCancellation `json:"cancellation,omitempty"`
 	CreatedAt      string            `json:"created_at"`

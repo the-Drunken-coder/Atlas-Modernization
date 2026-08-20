@@ -125,7 +125,7 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if _, err := tasks.Progress(ctx, first.TaskID, "runtime-1", 0.4); err == nil {
 		t.Fatal("decreasing progress was accepted")
 	}
-	completed, err := tasks.Complete(ctx, first.TaskID, "runtime-1", map[string]any{"result": "done"})
+	completed, err := tasks.Complete(ctx, first.TaskID, "runtime-1", &TaskOutput{Value: map[string]any{"result": "done"}})
 	if err != nil || completed.Status != string(protocol.TaskStatusCompleted) {
 		t.Fatalf("complete Task = %#v, %v", completed, err)
 	}
@@ -207,6 +207,117 @@ func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
 	}
 	if _, ok := NewTaskActionsWithCatalog(nil, catalog).catalog["fixture.immediate"]; ok {
 		t.Fatal("production Task module accepted fixture Command")
+	}
+}
+
+func TestEntityMutationAndDeletionRespectTaskingBoundary(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("tasking-entity-boundary-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	entities := NewEntityActions(pool)
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-boundary"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-boundary", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime: %v", err)
+	}
+
+	trackType := "track"
+	if _, err := entities.Update(ctx, assetID, UpdateEntityParams{EntityType: &trackType}); err != nil {
+		t.Fatalf("change Asset type: %v", err)
+	}
+	if _, _, err := tasks.Create(ctx, CreateTaskParams{
+		AssetID: assetID,
+		Command: "fixture.queued",
+		Input:   map[string]any{"value": "wrong-type"},
+	}, "wrong-type-attempt"); err == nil {
+		t.Fatal("Task creation accepted a non-Asset Entity with a stale runtime")
+	}
+
+	assetType := "asset"
+	if _, err := entities.Update(ctx, assetID, UpdateEntityParams{EntityType: &assetType}); err != nil {
+		t.Fatalf("restore Asset type: %v", err)
+	}
+	task, _, err := tasks.Create(ctx, CreateTaskParams{
+		AssetID: assetID,
+		Command: "fixture.queued",
+		Input:   map[string]any{"value": "pending"},
+	}, "pending-delete-attempt")
+	if err != nil {
+		t.Fatalf("create pending Task: %v", err)
+	}
+	if err := entities.Delete(ctx, assetID); err == nil {
+		t.Fatal("Entity deletion accepted a nonterminal Task")
+	}
+	if _, err := tasks.Cancel(ctx, task.TaskID, protocol.TaskCancellation{
+		Code:    protocol.TaskCancellationCodeRequested,
+		Message: "Delete Asset",
+	}); err != nil {
+		t.Fatalf("cancel Task before deletion: %v", err)
+	}
+	if err := entities.Delete(ctx, assetID); err != nil {
+		t.Fatalf("delete Entity after Task became terminal: %v", err)
+	}
+	retained, err := tasks.Get(ctx, task.TaskID)
+	if err != nil || retained.Status != string(protocol.TaskStatusCancelled) {
+		t.Fatalf("retained terminal Task = %#v, %v", retained, err)
+	}
+}
+
+func TestTaskCompletionPreservesExplicitNullOutput(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("tasking-null-output-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	command := protocol.CommandDefinition{
+		Command:      "fixture.null",
+		Name:         "Fixture null",
+		Description:  "Completes with explicit null.",
+		InputSchema:  "atlas.protocol.JSONValue",
+		OutputSchema: "atlas.protocol.JSONValue",
+		Scheduling:   protocol.CommandSchedulingQueued,
+	}
+	tasks := NewTaskActionsWithCatalog(pool, protocol.CommandCatalog{command})
+	manifest := protocol.CommandManifest{{
+		Command:     command.Command,
+		Description: command.Description,
+		Scheduling:  protocol.CommandSchedulingQueued,
+	}}
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-null"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-null", manifest); err != nil {
+		t.Fatalf("ready runtime: %v", err)
+	}
+	task, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: command.Command, Input: map[string]any{}}, "null-output-attempt")
+	if err != nil {
+		t.Fatalf("create Task: %v", err)
+	}
+	if _, err := tasks.Acknowledge(ctx, task.TaskID, "runtime-null"); err != nil {
+		t.Fatalf("acknowledge Task: %v", err)
+	}
+	if _, err := tasks.Start(ctx, task.TaskID, "runtime-null"); err != nil {
+		t.Fatalf("start Task: %v", err)
+	}
+	completed, err := tasks.Complete(ctx, task.TaskID, "runtime-null", &TaskOutput{})
+	if err != nil || string(completed.Output) != "null" {
+		t.Fatalf("complete with explicit null = %#v, %v", completed, err)
+	}
+	reloaded, err := tasks.Get(ctx, task.TaskID)
+	if err != nil || string(reloaded.Output) != "null" {
+		t.Fatalf("reloaded explicit null = %#v, %v", reloaded, err)
 	}
 }
 

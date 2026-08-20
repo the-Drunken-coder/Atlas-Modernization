@@ -50,6 +50,57 @@ func TestDecodeProtocolRequestBodyAllowsEmptyCheckInBody(t *testing.T) {
 	}
 }
 
+func TestTaskingHandlersRejectOversizedBodies(t *testing.T) {
+	body := `{"payload":"` + strings.Repeat("x", maxTaskingRequestBodyBytes) + `"}`
+	tests := map[string]func(*Handler, http.ResponseWriter, *http.Request){
+		"create":      (*Handler).CreateTask,
+		"acknowledge": (*Handler).AcknowledgeTask,
+		"start":       (*Handler).StartTask,
+		"progress":    (*Handler).ProgressTask,
+		"complete":    (*Handler).CompleteTask,
+		"fail":        (*Handler).FailTask,
+		"cancel":      (*Handler).CancelTask,
+		"runtime":     (*Handler).BeginAssetRuntime,
+		"ready":       (*Handler).ReadyAssetRuntime,
+	}
+	for name, handle := range tests {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/tasking", strings.NewReader(body))
+
+			handle(newTestHandler(), recorder, request)
+
+			if recorder.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
+			}
+			if response := decodeBody(t, recorder); response["error_code"] != string(protocol.ErrorCodeBodyTooLarge) {
+				t.Fatalf("error_code = %v, want %s", response["error_code"], protocol.ErrorCodeBodyTooLarge)
+			}
+		})
+	}
+}
+
+func TestCompleteTaskRequestPreservesExplicitNull(t *testing.T) {
+	handler := newTestHandler()
+	for name, body := range map[string]string{"omitted": `{}`, "null": `{"output":null}`} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/tasks/task-1/complete", strings.NewReader(body))
+			var decoded completeTaskRequest
+
+			if !handler.decodeProtocolRequestBody(recorder, request, &decoded, false, protocol.ValidateTaskCompleteRequest) {
+				t.Fatalf("request rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if name == "omitted" && decoded.Output != nil {
+				t.Fatalf("omitted output = %q, want nil", decoded.Output)
+			}
+			if name == "null" && string(decoded.Output) != "null" {
+				t.Fatalf("explicit null output = %q, want null", decoded.Output)
+			}
+		})
+	}
+}
+
 func TestEntityCheckInRejectsProtocolInvalidBodyBeforeActions(t *testing.T) {
 	handler := newTestHandler()
 	recorder := httptest.NewRecorder()
