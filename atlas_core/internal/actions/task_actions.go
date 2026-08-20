@@ -138,3 +138,41 @@ func effectiveScheduling(value protocol.CommandScheduling) protocol.CommandSched
 	}
 	return value
 }
+
+func (a *TaskActions) storedCommandDefinition(taskID, commandName string) (protocol.CommandDefinition, error) {
+	command, ok := a.catalog[commandName]
+	if !ok {
+		return protocol.CommandDefinition{}, fmt.Errorf("stored Task %s references unknown Command %s", taskID, commandName)
+	}
+	return command, nil
+}
+
+// persistTaskState is the single persistence boundary for lifecycle changes.
+// Callers retain ownership of policy, row locking, and transaction commit.
+func persistTaskState(ctx context.Context, tx pgx.Tx, task *models.Task) (*models.Task, error) {
+	version, err := nextChangeVersion(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	task.Version = version
+	updated, err := scanTask(tx.QueryRow(ctx, `
+		UPDATE tasks SET status = $2, progress = $3, output = $4, failure = $5,
+			cancellation = $6, acknowledged_at = $7, started_at = $8,
+			finished_at = $9, updated_at = clock_timestamp(), version = $10
+		WHERE task_id = $1 RETURNING `+taskColumns,
+		task.TaskID, task.Status, task.Progress, nullableJSON(task.Output), nullableJSON(task.Failure),
+		nullableJSON(task.Cancellation), task.AcknowledgedAt, task.StartedAt, task.FinishedAt, version))
+	if err != nil {
+		return nil, fmt.Errorf("persist Task transition: %w", err)
+	}
+	if err := RecordResourceChange(ctx, tx, ResourceChange{
+		Event:        ChangeEventUpdate,
+		ResourceType: ChangeResourceTask,
+		ID:           updated.TaskID,
+		Version:      updated.Version,
+		AfterTask:    cloneTaskModel(updated),
+	}); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}

@@ -251,6 +251,8 @@ The manifest also has no `produces` field. Durable effects belong to the Command
 
 The manifest is fixed for the lifetime of the current Asset `runtime_id`, so the scheduling and lifecycle rules governing accepted Tasks cannot change underneath them. Publishing a different manifest requires a fresh runtime registration. A process restart creates that registration and republishes the manifest before Atlas sends it work.
 
+An Entity with a registered Asset runtime cannot change `entity_type`. This keeps the runtime, manifest, and every bound Task under one Asset identity. Reclassify an unregistered Entity before starting its runtime, or delete and create a new Entity after its Tasks are terminal.
+
 Core exposes the current ready runtime's manifest read-only in the Asset's details. It is absent while no runtime is ready, updates atomically when registration completes, and cannot be changed through generic Entity patching. This is the manifest the command interface uses for Command availability and Asset-specific descriptions.
 
 ### Scheduling
@@ -466,15 +468,15 @@ All Tasks share one authoritative tasking order: ascending `created_at`, then `t
 
 Core's Task records are the source of truth. The Asset keeps the local queue it needs for execution, while operator interfaces derive the queue and current work from Tasks rather than from a second Entity component.
 
-Task creation and lifecycle changes are delivered as they happen:
+Task creation and lifecycle changes reach the Asset through bounded runtime-scoped polling:
 
 1. Core persists the new Task or lifecycle change.
-2. Core pushes the Task or change toward the assigned Asset through an available transport.
-3. Bounded retry and reconciliation handle missed delivery.
+2. The current Asset runtime requests eligible work on its five-second delivery loop while running.
+3. A separate reconciliation loop refreshes accepted Task states without delaying delivery.
 4. Stable Task IDs make repeated delivery safe.
 5. The Asset acknowledges only after validating, accepting, and placing queued work in its local Task Queue.
 
-Cancellation uses the same delivery path as Task creation. Commands later added with supersession or safety behavior also use this path. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
+Cancellation reaches an accepted handler through status reconciliation. Commands later added with supersession or safety behavior use the same authoritative Task state. A disconnected Asset receives the current authoritative state when it reconnects rather than acting on an obsolete local copy. An immediate Task that did not start inside its 60-second window is already failed and is never delivered for execution after reconnection.
 
 Core releases queued Tasks to a runtime in authoritative tasking order. It does not release a later queued Task until every earlier queued Task has been acknowledged or has become terminal. Immediate Tasks are released in tasking order without waiting for earlier immediate Tasks to finish. These rules prevent transport delay or reordering from changing execution order.
 
@@ -641,16 +643,16 @@ atlas_core/internal/integration/
 └── tasking_acceptance_test.go
 
 atlas_sdk/test/
-└── tasking-conformance.test.ts
+└── tasking-wire.test.ts
 
 atlas_asset_runtime/test/
-└── tasking-conformance.test.ts
+└── tasking-fixtures.test.ts
 
 atlas_simulations/test/
-└── tasking-fixture-closed-loop.test.ts
+└── fake-core-tasking.test.ts
 ```
 
-The JSON corpus defines portable inputs, events, and expected outcomes. Core, the SDK, and the Asset runtime consume the cases relevant to their boundary. Because the shipped catalog starts empty, lifecycle and scheduling conformance use test-only fixture Commands that are excluded from the generated catalog.
+The JSON corpus defines portable inputs, events, and expected outcomes. Concrete Core tests are authoritative for lifecycle, ordering, runtime fencing, expiry, and transactional persistence. The SDK test verifies wire mapping, the Asset runtime test verifies fixture compatibility, and the simulation test verifies its in-memory adapter. None of those fake-backed tests claim Core lifecycle conformance. Because the shipped catalog starts empty, the focused consumers use test-only fixture Commands that are excluded from the generated catalog.
 
 The empty-catalog infrastructure is not complete until these behaviors are demonstrated:
 

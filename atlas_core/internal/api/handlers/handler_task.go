@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/actions"
+	"github.com/the-drunken-coder/atlas/atlas_core/internal/jsondecode"
 	"github.com/the-drunken-coder/atlas/atlas_core/internal/serializers"
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
@@ -132,8 +134,8 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	var output *actions.TaskOutput
 	if req.Output != nil {
-		var value protocol.JSONValue
-		if err := json.Unmarshal(req.Output, &value); err != nil {
+		value, err := decodeTaskOutput(req.Output)
+		if err != nil {
 			h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)
 			return
 		}
@@ -146,6 +148,16 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	setResourceETag(w, task.Version)
 	writeJSON(w, r, http.StatusOK, serializers.SerializeTask(task))
+}
+
+func decodeTaskOutput(raw json.RawMessage) (protocol.JSONValue, error) {
+	var value protocol.JSONValue
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := jsondecode.Decode(decoder, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {

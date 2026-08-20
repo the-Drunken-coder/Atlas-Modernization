@@ -91,14 +91,26 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 	})
 
 	t.Run("complete", func(t *testing.T) {
-		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), immediate, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"unexpected": true}}); err == nil {
-			t.Fatal("Command without output schema accepted output")
-		}
-		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime, nil); err == nil {
-			t.Fatal("Command requiring output accepted nil")
-		}
-		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), queued, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": ""}}); err == nil {
-			t.Fatal("Command accepted invalid output")
+		for name, testCase := range map[string]struct {
+			command protocol.CommandDefinition
+			output  *TaskOutput
+		}{
+			"unexpected output": {command: immediate, output: &TaskOutput{Value: map[string]any{"unexpected": true}}},
+			"unexpected null":   {command: immediate, output: &TaskOutput{}},
+			"missing output":    {command: queued},
+			"invalid output":    {command: queued, output: &TaskOutput{Value: map[string]any{"result": ""}}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				task := taskStateFixture(protocol.TaskStatusInProgress)
+				changed, err := completeTask(task, testCase.command, protocol.CommandManifestEntry{}, taskStateTestTime, testCase.output)
+				if err != nil || !changed || task.Status != string(protocol.TaskStatusFailed) {
+					t.Fatalf("invalid completion = %#v, %t, %v", task, changed, err)
+				}
+				var failure protocol.TaskFailure
+				if err := json.Unmarshal(task.Failure, &failure); err != nil || failure.Code != protocol.TaskFailureCodeInvalidOutput {
+					t.Fatalf("invalid completion failure = %#v, %v", failure, err)
+				}
+			})
 		}
 		task := taskStateFixture(protocol.TaskStatusInProgress)
 		output := &TaskOutput{Value: map[string]any{"result": "done"}}
@@ -118,9 +130,6 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 		withoutOutput := taskStateFixture(protocol.TaskStatusInProgress)
 		if changed, err = completeTask(withoutOutput, immediate, protocol.CommandManifestEntry{}, taskStateTestTime, nil); err != nil || !changed || withoutOutput.Output != nil {
 			t.Fatalf("complete output-less Task = %#v, %t, %v", withoutOutput, changed, err)
-		}
-		if _, err := completeTask(taskStateFixture(protocol.TaskStatusInProgress), immediate, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{}); err == nil {
-			t.Fatal("Command without output schema accepted explicit null")
 		}
 		nullable := protocol.CommandDefinition{OutputSchema: "atlas.protocol.JSONValue"}
 		withNull := taskStateFixture(protocol.TaskStatusInProgress)

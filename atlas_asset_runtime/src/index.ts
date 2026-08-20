@@ -1,5 +1,6 @@
 export type { ExecutionModule, SafeStateContext } from "./execution-module.js";
 export {
+  type AssetCheckInContext,
   type AssetCheckInReport,
   type AssetTaskContext,
   AssetTaskFailure,

@@ -103,13 +103,21 @@ func TestTaskLifecycleRoutesWithFixtureCommands(t *testing.T) {
 	if completed.Output == nil {
 		t.Fatal("completed Task omitted output")
 	}
-
 	assertTaskRouteStatus(t, router, failed.TaskID, "start", map[string]any{}, runtimeID, protocol.TaskStatusInProgress)
 	failed = assertTaskRouteStatus(t, router, failed.TaskID, "fail", map[string]any{
 		"failure": map[string]any{"code": "execution_failed", "message": "fixture failed"},
 	}, runtimeID, protocol.TaskStatusFailed)
 	if failed.Failure == nil || failed.Failure.Code != protocol.TaskFailureCodeExecutionFailed {
 		t.Fatalf("Task failure = %#v", failed.Failure)
+	}
+	invalidOutput := createTaskThroughHandler(t, router, assetID, "invalid-output-attempt", "invalid-output")
+	assertTaskRouteStatus(t, router, invalidOutput.TaskID, "acknowledge", map[string]any{}, runtimeID, protocol.TaskStatusAcknowledged)
+	assertTaskRouteStatus(t, router, invalidOutput.TaskID, "start", map[string]any{}, runtimeID, protocol.TaskStatusInProgress)
+	invalidOutput = assertTaskRouteStatus(t, router, invalidOutput.TaskID, "complete", map[string]any{
+		"output": map[string]any{"result": ""},
+	}, runtimeID, protocol.TaskStatusFailed)
+	if invalidOutput.Failure == nil || invalidOutput.Failure.Code != protocol.TaskFailureCodeInvalidOutput {
+		t.Fatalf("invalid output failure = %#v", invalidOutput.Failure)
 	}
 
 	cancelled := createTaskThroughHandler(t, router, assetID, "cancel-attempt", "cancel")

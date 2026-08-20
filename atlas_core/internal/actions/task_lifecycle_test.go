@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,6 +115,9 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if _, err := tasks.Acknowledge(ctx, first.TaskID, "stale-runtime"); err == nil {
 		t.Fatal("stale runtime acknowledged a Task")
 	}
+	if _, err := tasks.Acknowledge(ctx, second.TaskID, "runtime-1"); err == nil {
+		t.Fatal("later queued Task was acknowledged before its pending predecessor")
+	}
 	if _, err := tasks.Acknowledge(ctx, first.TaskID, "runtime-1"); err != nil {
 		t.Fatalf("acknowledge first Task: %v", err)
 	}
@@ -123,6 +127,9 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	}
 	if _, err := tasks.Acknowledge(ctx, second.TaskID, "runtime-1"); err != nil {
 		t.Fatalf("acknowledge second Task: %v", err)
+	}
+	if _, err := tasks.Start(ctx, second.TaskID, "runtime-1"); err == nil {
+		t.Fatal("later queued Task started before its acknowledged predecessor")
 	}
 	if _, err := tasks.Start(ctx, first.TaskID, "runtime-1"); err != nil {
 		t.Fatalf("start Task: %v", err)
@@ -155,6 +162,9 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create second immediate Task: %v", err)
 	}
+	if _, err := tasks.Start(ctx, immediateTwo.TaskID, "runtime-1"); err == nil {
+		t.Fatal("later immediate Task started before its pending predecessor")
+	}
 	deliverable, err = tasks.Deliverable(ctx, assetID, "runtime-1")
 	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != immediateOne.TaskID {
 		t.Fatalf("initial immediate delivery = %#v, %v", deliverable, err)
@@ -180,6 +190,10 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE tasks SET created_at = clock_timestamp() - interval '61 seconds' WHERE task_id = $1`, expiredImmediate.TaskID); err != nil {
 		t.Fatalf("age immediate Task: %v", err)
 	}
+	deliverable, err = tasks.Deliverable(ctx, assetID, "runtime-1")
+	if err != nil || len(deliverable) != 1 || deliverable[0].TaskID != freshImmediate.TaskID {
+		t.Fatalf("delivery with an expired immediate predecessor = %#v, %v", deliverable, err)
+	}
 	if count, err := tasks.ReconcileImmediateTimeouts(ctx); err != nil || count != 1 {
 		t.Fatalf("reconcile immediate Task deadlines = %d, %v", count, err)
 	}
@@ -191,6 +205,20 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if err != nil || freshImmediate.Status != string(protocol.TaskStatusPending) {
 		t.Fatalf("fresh immediate Task = %#v, %v", freshImmediate, err)
 	}
+	cancelledBeforeRestart, _, err := tasks.Create(ctx, CreateTaskParams{
+		AssetID: assetID,
+		Command: "fixture.queued",
+		Input:   map[string]any{"value": "cancelled before restart"},
+	}, "attempt-cancelled-before-restart")
+	if err != nil {
+		t.Fatalf("create Task to cancel before restart: %v", err)
+	}
+	cancellation := protocol.TaskCancellation{Code: protocol.TaskCancellationCodeRequested, Message: "stop"}
+	cancelledBeforeRestart, err = tasks.Cancel(ctx, cancelledBeforeRestart.TaskID, cancellation)
+	if err != nil {
+		t.Fatalf("cancel Task before restart: %v", err)
+	}
+	cancelledVersion := cancelledBeforeRestart.Version
 
 	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-2"); err != nil {
 		t.Fatalf("restart runtime: %v", err)
@@ -206,6 +234,18 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if _, err := tasks.Deliverable(ctx, assetID, "runtime-1"); err == nil {
 		t.Fatal("old runtime remained eligible for delivery")
 	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-2", protocol.CommandManifest{}); err != nil {
+		t.Fatalf("ready replacement runtime: %v", err)
+	}
+	repeatedCancellation, err := tasks.Cancel(ctx, cancelledBeforeRestart.TaskID, cancellation)
+	if err != nil || repeatedCancellation.Version != cancelledVersion {
+		t.Fatalf("repeat cancellation after runtime replacement = %#v, %v", repeatedCancellation, err)
+	}
+	if _, err := tasks.Cancel(ctx, cancelledBeforeRestart.TaskID, protocol.TaskCancellation{
+		Code: protocol.TaskCancellationCodeRequested, Message: "different",
+	}); err == nil {
+		t.Fatal("cancelled Task accepted a different cancellation after runtime replacement")
+	}
 }
 
 func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
@@ -218,6 +258,75 @@ func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
 	}
 	if _, ok := NewTaskActionsWithCatalog(nil, catalog).catalog["fixture.immediate"]; ok {
 		t.Fatal("production Task module accepted fixture Command")
+	}
+}
+
+func TestConcurrentTaskCreateIdempotency(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("tasking-idempotency-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	entities := NewEntityActions(pool)
+	if _, err := entities.Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-idempotency"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-idempotency", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime: %v", err)
+	}
+
+	type result struct {
+		taskID  string
+		created bool
+		err     error
+	}
+	const callers = 8
+	results := make(chan result, callers)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range callers {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			task, created, err := tasks.Create(ctx, CreateTaskParams{
+				AssetID: assetID,
+				Command: "fixture.queued",
+				Input:   map[string]any{"value": "same"},
+			}, "concurrent-same")
+			var taskID string
+			if task != nil {
+				taskID = task.TaskID
+			}
+			results <- result{taskID: taskID, created: created, err: err}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+
+	createdCount := 0
+	var taskID string
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent identical create: %v", result.err)
+		}
+		if result.created {
+			createdCount++
+		}
+		if taskID == "" {
+			taskID = result.taskID
+		} else if result.taskID != taskID {
+			t.Fatalf("concurrent creates returned Task IDs %q and %q", taskID, result.taskID)
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("concurrent creates reported created %d times, want 1", createdCount)
 	}
 }
 
@@ -241,20 +350,8 @@ func TestEntityMutationAndDeletionRespectTaskingBoundary(t *testing.T) {
 	}
 
 	trackType := "track"
-	if _, err := entities.Update(ctx, assetID, UpdateEntityParams{EntityType: &trackType}); err != nil {
-		t.Fatalf("change Asset type: %v", err)
-	}
-	if _, _, err := tasks.Create(ctx, CreateTaskParams{
-		AssetID: assetID,
-		Command: "fixture.queued",
-		Input:   map[string]any{"value": "wrong-type"},
-	}, "wrong-type-attempt"); err == nil {
-		t.Fatal("Task creation accepted a non-Asset Entity with a stale runtime")
-	}
-
-	assetType := "asset"
-	if _, err := entities.Update(ctx, assetID, UpdateEntityParams{EntityType: &assetType}); err != nil {
-		t.Fatalf("restore Asset type: %v", err)
+	if _, err := entities.Update(ctx, assetID, UpdateEntityParams{EntityType: &trackType}); err == nil {
+		t.Fatal("Entity type changed after an Asset runtime registered")
 	}
 	task, _, err := tasks.Create(ctx, CreateTaskParams{
 		AssetID: assetID,
@@ -279,6 +376,42 @@ func TestEntityMutationAndDeletionRespectTaskingBoundary(t *testing.T) {
 	retained, err := tasks.Get(ctx, task.TaskID)
 	if err != nil || retained.Status != string(protocol.TaskStatusCancelled) {
 		t.Fatalf("retained terminal Task = %#v, %v", retained, err)
+	}
+}
+
+func TestDeliverableRejectsStoredUnknownCommand(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("unknown-command-asset-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	if _, err := NewEntityActions(pool).Create(ctx, CreateEntityParams{EntityID: assetID, EntityType: "asset"}); err != nil {
+		t.Fatalf("create Asset: %v", err)
+	}
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-unknown-command"); err != nil {
+		t.Fatalf("begin runtime: %v", err)
+	}
+	if err := tasks.CompleteRuntimeRegistration(ctx, assetID, "runtime-unknown-command", fixtureTaskManifest(t)); err != nil {
+		t.Fatalf("ready runtime: %v", err)
+	}
+	created, _, err := tasks.Create(ctx, CreateTaskParams{
+		AssetID: assetID,
+		Command: "fixture.queued",
+		Input:   map[string]any{"value": "catalog removal"},
+	}, "unknown-command-attempt")
+	if err != nil {
+		t.Fatalf("create Task before catalog removal: %v", err)
+	}
+
+	withoutCommand := NewTaskActionsWithCatalog(pool, nil)
+	if _, err := withoutCommand.Deliverable(ctx, assetID, "runtime-unknown-command"); err == nil {
+		t.Fatal("delivery silently treated a stored unknown Command as queued")
+	}
+	retained, err := tasks.Get(ctx, created.TaskID)
+	if err != nil || retained.Status != string(protocol.TaskStatusPending) {
+		t.Fatalf("unknown-command Task was not retained for recovery = %#v, %v", retained, err)
 	}
 }
 

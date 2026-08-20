@@ -41,17 +41,20 @@ const runtime = new AtlasAssetRuntime(client, {
       return { observations: 3 };
     }
   },
-  checkIn: () => ({
-    status: "online",
-    telemetry: { latitude: 38.8977, longitude: -77.0365 }
-  }),
+  checkIn: ({ signal }) => {
+    signal.throwIfAborted();
+    return {
+      status: "online",
+      telemetry: { latitude: 38.8977, longitude: -77.0365 }
+    };
+  },
   onError: console.error
 });
 
 await runtime.start();
 ```
 
-`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, and runs every execution module's safety barrier. Publishing the manifest is the final fallible startup step. The running process then polls only its runtime delivery endpoint and accepted Task IDs instead of hydrating the global Atlas dataset. `stop()` aborts local work and waits for in-flight runtime work to settle. Starting again creates a new runtime ID.
+`start()` performs the Protocol handshake, creates a fresh `runtime_id`, begins Core registration, and runs every execution module's safety barrier. Publishing the manifest is the final fallible startup step. The running process then polls only its runtime delivery endpoint and accepted Task IDs instead of hydrating the global Atlas dataset. `stop()` aborts local work and waits for in-flight runtime work to settle. Task handlers and check-in report callbacks receive that cooperative cancellation signal and must settle when it aborts. Starting again creates a new runtime ID.
 
 The runtime exposes `stopped`, `starting`, `running`, and `stopping` states. `checkIn()` remains available for a caller-requested telemetry cycle; the background loop calls the same method at the configured interval. Check-in never carries or retrieves Tasks.
 
@@ -83,11 +86,11 @@ Core remains authoritative for Task eligibility and ordering. The runtime asks o
 - A handler return value becomes Task output. Returning nothing completes without output. A thrown error fails the Task with `execution_failed`.
 - A handler throws `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution.
 - A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
-- Five-second runtime reconciliation requests new delivery within the immediate start window and refreshes accepted Task IDs.
+- Independent five-second loops request new delivery and refresh accepted Task IDs. A slow status refresh cannot delay delivery and consume an immediate Task's start window.
 - A terminal Task state from Core aborts the matching local handler. This includes cancellation and failure caused by runtime fencing. The runtime does not issue a second cancellation or abort API call.
 - Handlers must observe their `AbortSignal`, finish physical cleanup, and settle. Runtime shutdown waits for every active handler before a later `start()` can establish a new safety barrier.
 
-Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. Temporary delivery failures keep the same runtime ID and are retried by runtime reconciliation; they are not process restarts.
+Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. Temporary delivery failures keep the same runtime ID and are retried by the delivery loop; they are not process restarts.
 
 ## Boundaries
 

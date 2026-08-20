@@ -36,6 +36,10 @@ export type AtlasAssetClient = Pick<AtlasClient, "handshake"> & {
 
 export type AssetCheckInReport = Pick<EntityCheckInOptions, "components" | "status" | "telemetry">;
 
+export type AssetCheckInContext = {
+  signal: AbortSignal;
+};
+
 export type AssetTaskContext = {
   task: TaskResource;
   signal: AbortSignal;
@@ -49,7 +53,7 @@ export type AtlasAssetRuntimeOptions = {
   manifest?: CommandManifest;
   handlers?: Readonly<Record<string, AssetTaskHandler>>;
   executionModules?: readonly ExecutionModule[];
-  checkIn?: () => AssetCheckInReport | Promise<AssetCheckInReport>;
+  checkIn?: (context: AssetCheckInContext) => AssetCheckInReport | Promise<AssetCheckInReport>;
   checkInIntervalMs?: number;
   onError?: (error: unknown) => void;
 };
@@ -89,11 +93,13 @@ export class AtlasAssetRuntime {
   private stopPromise?: Promise<void>;
   private checkInLoop?: Promise<void>;
   private deliveryLoop?: Promise<void>;
+  private reconciliationLoop?: Promise<void>;
   private checkInTail: Promise<void> = Promise.resolve();
   private deliveryTail: Promise<void> = Promise.resolve();
   private queuedTail: Promise<void> = Promise.resolve();
   private readonly accepted = new Map<string, AcceptedTask>();
   private readonly executions = new Set<Promise<void>>();
+  private readonly standaloneCheckIns = new Set<AbortController>();
   private queued: AcceptedTask[] = [];
   private externalAbort?: ExternalAbortRegistration;
 
@@ -137,15 +143,20 @@ export class AtlasAssetRuntime {
 
   checkIn(report?: AssetCheckInReport): Promise<void> {
     if (this.state === "stopping") return Promise.reject(new Error("Atlas asset runtime is stopping"));
-    const signal = this.controller?.signal;
+    const standalone = this.controller ? undefined : new AbortController();
+    if (standalone) this.standaloneCheckIns.add(standalone);
+    const signal = this.controller?.signal ?? standalone!.signal;
     const cycle = this.checkInTail
       .catch(() => undefined)
       .then(async () => {
-        signal?.throwIfAborted();
+        signal.throwIfAborted();
         await this.client.handshake({ signal });
-        const body = report ?? (await this.report?.()) ?? {};
-        signal?.throwIfAborted();
+        const body = report ?? (await this.report?.({ signal })) ?? {};
+        signal.throwIfAborted();
         await this.client.entities.checkIn(this.entityId, { ...body, signal });
+      })
+      .finally(() => {
+        if (standalone) this.standaloneCheckIns.delete(standalone);
       });
     this.checkInTail = cycle;
     return cycle;
@@ -205,6 +216,8 @@ export class AtlasAssetRuntime {
       this.state = "running";
       this.deliveryLoop = this.runDeliveryLoop(controller.signal);
       void this.deliveryLoop.catch((error) => this.reportError(error));
+      this.reconciliationLoop = this.runReconciliationLoop(controller.signal);
+      void this.reconciliationLoop.catch((error) => this.reportError(error));
       this.checkInLoop = this.runCheckInLoop(controller.signal);
       void this.checkInLoop.catch((error) => this.reportError(error));
     } catch (error) {
@@ -224,11 +237,13 @@ export class AtlasAssetRuntime {
     const controller = this.controller;
     this.detachExternalAbort(controller);
     controller?.abort();
+    for (const checkInController of this.standaloneCheckIns) checkInController.abort();
     this.clearAcceptedWork();
     await Promise.allSettled([
       this.startPromise,
       this.checkInLoop,
       this.deliveryLoop,
+      this.reconciliationLoop,
       this.checkInTail,
       this.deliveryTail,
       this.queuedTail,
@@ -236,6 +251,7 @@ export class AtlasAssetRuntime {
     ]);
     this.checkInLoop = undefined;
     this.deliveryLoop = undefined;
+    this.reconciliationLoop = undefined;
     this.controller = undefined;
     this.runtimeId = undefined;
     this.state = "stopped";
@@ -266,11 +282,6 @@ export class AtlasAssetRuntime {
   private async runDeliveryLoop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        await this.reconcileAcceptedTasks(signal);
-      } catch (error) {
-        if (!signal.aborted) this.reportError(error);
-      }
-      try {
         await this.requestDelivery();
       } catch (error) {
         if (!signal.aborted) this.reportError(error);
@@ -279,12 +290,25 @@ export class AtlasAssetRuntime {
     }
   }
 
-  private async reconcileAcceptedTasks(signal: AbortSignal): Promise<void> {
-    for (const taskId of this.accepted.keys()) {
-      signal.throwIfAborted();
-      const task = await this.client.tasks.get(taskId, { fresh: true, signal });
-      this.onTaskChange(task);
+  private async runReconciliationLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        await this.reconcileAcceptedTasks(signal);
+      } catch (error) {
+        if (!signal.aborted) this.reportError(error);
+      }
+      await delay(TASK_RECONCILIATION_INTERVAL_MS, signal);
     }
+  }
+
+  private async reconcileAcceptedTasks(signal: AbortSignal): Promise<void> {
+    await Promise.all(
+      [...this.accepted.keys()].map(async (taskId) => {
+        signal.throwIfAborted();
+        const task = await this.client.tasks.get(taskId, { fresh: true, signal });
+        this.onTaskChange(task);
+      })
+    );
   }
 
   private async deliver(): Promise<void> {
@@ -292,6 +316,12 @@ export class AtlasAssetRuntime {
     const signal = this.controller?.signal;
     if (!runtimeId || !signal || signal.aborted) return;
     const response = await this.client.runtime.tasks(this.entityId, { runtimeId, signal });
+    const foreignTask = response.tasks.find((task) => task.asset_id !== this.entityId);
+    if (foreignTask) {
+      throw new Error(
+        `Core delivered Task ${foreignTask.task_id} for Asset ${foreignTask.asset_id} to ${this.entityId}`
+      );
+    }
     for (const task of response.tasks) {
       signal.throwIfAborted();
       if (this.accepted.has(task.task_id) || task.status !== "pending") continue;

@@ -21,7 +21,7 @@ func (a *TaskActions) Acknowledge(ctx context.Context, taskID, runtimeID string)
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, nil, acknowledgeTask)
+	return a.withTaskTransition(ctx, taskID, runtimeID, false, a.requireAcknowledgeOrder, acknowledgeTask)
 }
 
 func acknowledgeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time) (bool, error) {
@@ -43,7 +43,7 @@ func (a *TaskActions) Start(ctx context.Context, taskID, runtimeID string) (*mod
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, a.requireQueuedStartSlot, startTask)
+	return a.withTaskTransition(ctx, taskID, runtimeID, false, a.requireStartOrder, startTask)
 }
 
 func startTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time) (bool, error) {
@@ -70,7 +70,7 @@ func (a *TaskActions) Progress(ctx context.Context, taskID, runtimeID string, pr
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	return a.withTaskTransition(ctx, taskID, runtimeID, false, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return progressTask(task, command, manifest, now, progress)
 	})
 }
@@ -106,17 +106,17 @@ func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, ou
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	return a.withTaskTransition(ctx, taskID, runtimeID, false, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return completeTask(task, command, manifest, now, output)
 	})
 }
 
 func completeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time, output *TaskOutput) (bool, error) {
 	encoded, err := encodeTaskOutput(command, output)
-	if err != nil {
-		return false, err
-	}
 	if task.Status == string(protocol.TaskStatusCompleted) {
+		if err != nil {
+			return false, err
+		}
 		if jsonEqual(task.Output, encoded) {
 			return false, nil
 		}
@@ -124,6 +124,12 @@ func completeTask(task *models.Task, command protocol.CommandDefinition, _ proto
 	}
 	if task.Status != string(protocol.TaskStatusInProgress) {
 		return false, invalidTaskTransition(task, "complete")
+	}
+	if err != nil {
+		return failTask(task, command, protocol.CommandManifestEntry{}, now, protocol.TaskFailure{
+			Code:    protocol.TaskFailureCodeInvalidOutput,
+			Message: err.Error(),
+		})
 	}
 	task.Status = string(protocol.TaskStatusCompleted)
 	task.Output = encoded
@@ -138,7 +144,7 @@ func (a *TaskActions) Fail(ctx context.Context, taskID, runtimeID string, failur
 	if err := validateAssetFailureCode(failure.Code); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	return a.withTaskTransition(ctx, taskID, runtimeID, false, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return failTask(task, command, manifest, now, failure)
 	})
 }
@@ -164,7 +170,7 @@ func (a *TaskActions) Cancel(ctx context.Context, taskID string, cancellation pr
 	if cancellation.Code != protocol.TaskCancellationCodeRequested {
 		return nil, NewValidationError(fmt.Sprintf("cancellation code %q can only be applied by Core", cancellation.Code))
 	}
-	return a.withTaskTransition(ctx, taskID, "", nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	return a.withTaskTransition(ctx, taskID, "", true, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return cancelTask(task, command, manifest, now, cancellation)
 	})
 }
@@ -210,7 +216,7 @@ func cancelTask(task *models.Task, _ protocol.CommandDefinition, manifest protoc
 type taskMutation func(*models.Task, protocol.CommandDefinition, protocol.CommandManifestEntry, time.Time) (bool, error)
 type taskPrecondition func(context.Context, pgx.Tx, *models.Task, protocol.CommandDefinition) error
 
-func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID string, precondition taskPrecondition, mutate taskMutation) (*models.Task, error) {
+func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID string, allowTerminalRetryWithoutRuntime bool, precondition taskPrecondition, mutate taskMutation) (*models.Task, error) {
 	if err := ValidateTaskID(taskID); err != nil {
 		return nil, err
 	}
@@ -224,7 +230,31 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 	// runtime before the Task. Runtime replacement uses the same lock order and can
 	// therefore fence lifecycle calls without a task/runtime deadlock.
 	var assetID, boundRuntimeID string
-	if err := tx.QueryRow(ctx, `SELECT asset_id, runtime_id FROM tasks WHERE task_id = $1`, taskID).Scan(&assetID, &boundRuntimeID); errors.Is(err, pgx.ErrNoRows) {
+	if allowTerminalRetryWithoutRuntime {
+		// beginChangeTx holds the global change-clock lock, so a terminal Task
+		// cannot change while cancellation idempotency is checked.
+		task, err := scanTask(tx.QueryRow(ctx, taskSelectSQL+` WHERE task_id = $1`, taskID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NewTaskNotFoundError(taskID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read Task for terminal retry: %w", err)
+		}
+		assetID, boundRuntimeID = task.AssetID, task.RuntimeID
+		if taskTerminal(task.Status) {
+			changed, err := mutate(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, time.Time{})
+			if err != nil {
+				return nil, err
+			}
+			if changed {
+				return nil, errors.New("terminal retry unexpectedly changed Task state")
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, fmt.Errorf("commit idempotent terminal Task retry: %w", err)
+			}
+			return task, nil
+		}
+	} else if err := tx.QueryRow(ctx, `SELECT asset_id, runtime_id FROM tasks WHERE task_id = $1`, taskID).Scan(&assetID, &boundRuntimeID); errors.Is(err, pgx.ErrNoRows) {
 		return nil, NewTaskNotFoundError(taskID)
 	} else if err != nil {
 		return nil, fmt.Errorf("read Task runtime binding: %w", err)
@@ -240,9 +270,9 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 	if err != nil {
 		return nil, fmt.Errorf("lock Task: %w", err)
 	}
-	command, ok := a.catalog[task.Command]
-	if !ok {
-		return nil, fmt.Errorf("stored Task %s references unknown Command %s", task.TaskID, task.Command)
+	command, err := a.storedCommandDefinition(task.TaskID, task.Command)
+	if err != nil {
+		return nil, err
 	}
 	entry, ok := manifestEntry(manifest, task.Command)
 	if !ok {
@@ -267,22 +297,8 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 		}
 		return task, nil
 	}
-	version, err := nextChangeVersion(ctx, tx)
+	updated, err := persistTaskState(ctx, tx, task)
 	if err != nil {
-		return nil, err
-	}
-	task.Version = version
-	updated, err := scanTask(tx.QueryRow(ctx, `
-		UPDATE tasks SET status = $2, progress = $3, output = $4, failure = $5,
-			cancellation = $6, acknowledged_at = $7, started_at = $8,
-			finished_at = $9, updated_at = clock_timestamp(), version = $10
-		WHERE task_id = $1 RETURNING `+taskColumns,
-		task.TaskID, task.Status, task.Progress, nullableJSON(task.Output), nullableJSON(task.Failure),
-		nullableJSON(task.Cancellation), task.AcknowledgedAt, task.StartedAt, task.FinishedAt, version))
-	if err != nil {
-		return nil, fmt.Errorf("persist Task transition: %w", err)
-	}
-	if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, AfterTask: cloneTaskModel(updated)}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -291,34 +307,66 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 	return updated, nil
 }
 
-func (a *TaskActions) requireQueuedStartSlot(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition) error {
-	if task.Status != string(protocol.TaskStatusAcknowledged) || effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
+func (a *TaskActions) requireAcknowledgeOrder(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition) error {
+	if task.Status != string(protocol.TaskStatusPending) || effectiveScheduling(command.Scheduling) != protocol.CommandSchedulingQueued {
 		return nil
 	}
+	return a.requireNoSchedulingBlocker(ctx, tx, task, protocol.CommandSchedulingQueued, []string{string(protocol.TaskStatusPending)}, false, false, "an earlier queued Task is still pending")
+}
+
+func (a *TaskActions) requireStartOrder(ctx context.Context, tx pgx.Tx, task *models.Task, command protocol.CommandDefinition) error {
+	scheduling := effectiveScheduling(command.Scheduling)
+	if scheduling == protocol.CommandSchedulingImmediate {
+		if task.Status != string(protocol.TaskStatusPending) {
+			return nil
+		}
+		return a.requireNoSchedulingBlocker(ctx, tx, task, scheduling, []string{string(protocol.TaskStatusPending)}, false, true, "an earlier immediate Task has not started")
+	}
+	if task.Status != string(protocol.TaskStatusAcknowledged) {
+		return nil
+	}
+	return a.requireNoSchedulingBlocker(ctx, tx, task, scheduling, []string{string(protocol.TaskStatusPending), string(protocol.TaskStatusAcknowledged)}, true, false, "an earlier queued Task has not become terminal")
+}
+
+func (a *TaskActions) requireNoSchedulingBlocker(
+	ctx context.Context,
+	tx pgx.Tx,
+	task *models.Task,
+	scheduling protocol.CommandScheduling,
+	earlierStatuses []string,
+	includeAnyInProgress bool,
+	excludeExpired bool,
+	message string,
+) error {
 	rows, err := tx.Query(ctx, `
 		SELECT task_id, command FROM tasks
-		WHERE asset_id = $1 AND runtime_id = $2 AND status = 'in_progress'
+		WHERE asset_id = $1 AND runtime_id = $2
+			AND (
+				($5 AND status = 'in_progress')
+				OR ((created_at, task_id) < ($3, $4) AND status = ANY($6))
+			)
+			AND (NOT $7 OR created_at > clock_timestamp() - ($8 * interval '1 second'))
 		ORDER BY created_at, task_id FOR UPDATE
-	`, task.AssetID, task.RuntimeID)
+	`, task.AssetID, task.RuntimeID, task.CreatedAt, task.TaskID, includeAnyInProgress, earlierStatuses, excludeExpired, immediateStartWindow.Seconds())
 	if err != nil {
-		return fmt.Errorf("lock in-progress Tasks: %w", err)
+		return fmt.Errorf("lock Tasks that can block lifecycle order: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var taskID, commandName string
 		if err := rows.Scan(&taskID, &commandName); err != nil {
-			return fmt.Errorf("scan in-progress Task: %w", err)
+			return fmt.Errorf("scan Task that can block lifecycle order: %w", err)
 		}
-		activeCommand, ok := a.catalog[commandName]
-		if !ok {
-			return fmt.Errorf("stored Task %s references unknown Command %s", taskID, commandName)
+		blockingCommand, err := a.storedCommandDefinition(taskID, commandName)
+		if err != nil {
+			return err
 		}
-		if effectiveScheduling(activeCommand.Scheduling) == protocol.CommandSchedulingQueued {
-			return NewValidationError("another queued Task is already in progress")
+		if effectiveScheduling(blockingCommand.Scheduling) == scheduling {
+			return NewValidationError(message)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate in-progress Tasks: %w", err)
+		return fmt.Errorf("iterate Tasks that can block lifecycle order: %w", err)
 	}
 	return nil
 }

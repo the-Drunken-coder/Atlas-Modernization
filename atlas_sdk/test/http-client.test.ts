@@ -519,7 +519,7 @@ describe("AtlasClient HTTP", () => {
     const core = new FakeCore();
     core.upsertTask(task("task-ack", "asset-1"));
     core.upsertTask(task("task-start", "asset-1"));
-    core.upsertTask(task("task-progress", "asset-1"));
+    core.upsertTask({ ...task("task-progress", "asset-1"), status: "in_progress" });
     core.upsertTask(task("task-complete", "asset-1"));
     core.upsertTask(task("task-fail", "asset-1"));
     core.upsertTask(task("task-cancel", "asset-1"));

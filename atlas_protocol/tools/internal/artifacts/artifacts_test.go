@@ -105,6 +105,23 @@ func TestTypeScriptGeneratorAddDefAllowsIdenticalSchema(t *testing.T) {
 	}
 }
 
+func TestTypeScriptIntersectionParenthesizesUnion(t *testing.T) {
+	generator := &typeScriptGenerator{}
+	schema := typeScriptSchema{
+		"allOf": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"anyOf": []any{
+				map[string]any{"type": "number"},
+				map[string]any{"type": "boolean"},
+			}},
+		},
+	}
+
+	if got := generator.typeFor(schema, "Example", 0); got != "string & (number | boolean)" {
+		t.Fatalf("intersection type = %q", got)
+	}
+}
+
 func TestTypeScriptGeneratorAddDefAllowsIdenticalSchemaUnderDifferentName(t *testing.T) {
 	schema := typeScriptSchema{"type": "object"}
 	g := &typeScriptGenerator{defs: map[string]typeScriptSchema{}}

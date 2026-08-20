@@ -4,7 +4,7 @@ import lifecycleCorpus from "../../atlas_protocol/conformance/tasking/lifecycle.
 import { AtlasClient } from "../src";
 import { FakeCore } from "./support/fake-core.js";
 
-describe("Task lifecycle conformance", () => {
+describe("Task lifecycle SDK requests", () => {
   for (const testCase of lifecycleCorpus.cases) {
     it(testCase.name, async () => {
       const core = new FakeCore();

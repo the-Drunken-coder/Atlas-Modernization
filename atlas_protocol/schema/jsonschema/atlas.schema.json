@@ -1812,6 +1812,259 @@
     },
     "TaskResource": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "status": {
+                  "const": "pending"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "status": {
+                  "const": "acknowledged"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "acknowledged_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "in_progress"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "acknowledged_at",
+                "started_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "finished_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "output": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "completed"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "acknowledged_at",
+                "finished_at",
+                "started_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "failure": {
+                  "$ref": "#/$defs/TaskFailure"
+                },
+                "finished_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "failed"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "failure",
+                "finished_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledged_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "asset_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "cancellation": {
+                  "$ref": "#/$defs/TaskCancellation"
+                },
+                "command": {
+                  "$ref": "#/$defs/CommandName"
+                },
+                "created_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "finished_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "input": {
+                  "$ref": "#/$defs/JSONValue"
+                },
+                "progress": {
+                  "$ref": "#/$defs/FiniteNumber"
+                },
+                "started_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                },
+                "status": {
+                  "const": "cancelled"
+                },
+                "task_id": {
+                  "$ref": "#/$defs/NonEmptyString"
+                },
+                "updated_at": {
+                  "$ref": "#/$defs/RFC3339Timestamp"
+                }
+              },
+              "required": [
+                "cancellation",
+                "finished_at",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      ],
       "properties": {
         "acknowledged_at": {
           "$ref": "#/$defs/RFC3339Timestamp"

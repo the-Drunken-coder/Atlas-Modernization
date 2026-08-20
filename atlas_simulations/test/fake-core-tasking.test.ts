@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import fixtureManifestJSON from "../../atlas_protocol/conformance/tasking/fixtures/manifest.json" with { type: "json" };
 import { createFakeAtlasCore } from "./support/fake-atlas.js";
 
-describe("fixture Command closed loop", () => {
+describe("fake Core Tasking integration", () => {
   it("delivers a Task through the runtime and retains its completed history", async () => {
     vi.useFakeTimers();
     const manifest: unknown = fixtureManifestJSON;
@@ -33,7 +33,7 @@ describe("fixture Command closed loop", () => {
       );
 
       await vi.advanceTimersByTimeAsync(5_000);
-      await expect(operator.tasks.get(task.task_id)).resolves.toMatchObject({
+      await expect(operator.tasks.get(task.task_id, { fresh: true })).resolves.toMatchObject({
         status: "completed",
         progress: 0.5,
         output: { result: "done" }

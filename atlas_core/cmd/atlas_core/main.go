@@ -147,8 +147,14 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
 	taskActions := actions.NewTaskActions(db.Pool)
-	if _, err := taskActions.ReconcileImmediateTimeouts(ensureCtx); err != nil {
-		logger.Fatal().Err(err).Msg("Failed to reconcile immediate Task deadlines")
+	for {
+		reconciled, err := taskActions.ReconcileImmediateTimeouts(ensureCtx)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("Failed to reconcile immediate Task deadlines")
+		}
+		if reconciled == 0 {
+			break
+		}
 	}
 	adminAuth := admin.NewService(db.Pool, cfg)
 	if admin.UsesDefaultDevelopmentPassword() {

@@ -260,7 +260,12 @@ export class FakeCore {
         case "start": {
           const body = await readValidatedBody(init ?? {}, requestValidators.taskStart);
           if (body instanceof Response) return body;
-          const task = this.updateTask(id, { status: "in_progress", started_at: now() });
+          const startedAt = now();
+          const task = this.updateTask(id, {
+            status: "in_progress",
+            acknowledged_at: current.acknowledged_at ?? startedAt,
+            started_at: startedAt
+          });
           return versionedJSON(task, task.metadata.version);
         }
         case "progress": {
@@ -379,7 +384,8 @@ export class FakeCore {
 
   upsertTask(task: TaskResource): FakeTaskResource {
     const version = this.nextVersion();
-    const value = withTaskMetadata({ ...task, updated_at: now() }, version);
+    const updatedAt = now();
+    const value = withTaskMetadata(taskWithLifecycleFields({ ...task, updated_at: updatedAt }, updatedAt), version);
     this.tasks.set(value.task_id, value);
     this.record({ event: "update", resource_type: "task", id: value.task_id, version, resource: value });
     return value;
@@ -562,6 +568,31 @@ export class FakeCore {
     } else {
       this.objectExtras.delete(id);
     }
+  }
+}
+
+function taskWithLifecycleFields(task: TaskResource, timestamp: string): TaskResource {
+  switch (task.status) {
+    case "acknowledged":
+      return { ...task, acknowledged_at: task.acknowledged_at ?? timestamp };
+    case "in_progress":
+      return {
+        ...task,
+        acknowledged_at: task.acknowledged_at ?? timestamp,
+        started_at: task.started_at ?? timestamp
+      };
+    case "completed":
+      return {
+        ...task,
+        acknowledged_at: task.acknowledged_at ?? timestamp,
+        started_at: task.started_at ?? timestamp,
+        finished_at: task.finished_at ?? timestamp
+      };
+    case "failed":
+    case "cancelled":
+      return { ...task, finished_at: task.finished_at ?? timestamp };
+    case "pending":
+      return task;
   }
 }
 

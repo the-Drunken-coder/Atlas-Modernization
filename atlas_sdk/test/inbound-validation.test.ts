@@ -178,6 +178,17 @@ describe("AtlasClient inbound response validation", () => {
     expect(client.sync.status().lastVersion).toBe(0);
   });
 
+  it("rejects runtime delivery for a different Asset", async () => {
+    const client = new AtlasClient({
+      baseUrl: "http://atlas.test",
+      fetch: async () => Response.json({ tasks: [validTask("task-foreign", "asset-2")] })
+    });
+
+    await expect(client.runtime.tasks("asset-1", { runtimeId: "runtime-1" })).rejects.toThrow(
+      "Atlas response failed validation for GET /entities/asset-1/runtime/tasks"
+    );
+  });
+
   it("keeps Task lifecycle responses isolated from watch callback mutation", async () => {
     const response = validTask("task-watched", "asset-1");
     const client = new AtlasClient({

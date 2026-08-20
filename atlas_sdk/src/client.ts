@@ -15,6 +15,7 @@ import type {
   ObjectUpdateRequest,
   RuntimeReadyRequest,
   RuntimeRegistrationRequest,
+  RuntimeTaskDeliveryResponse,
   TaskCreateRequest,
   TaskProgressRequest,
   TaskResource
@@ -193,7 +194,8 @@ export class AtlasClient {
       this.transport.json(
         "GET",
         `/entities/${encodeURIComponent(assetId)}/runtime/tasks`,
-        isRuntimeTaskDeliveryResponse,
+        (value): value is RuntimeTaskDeliveryResponse =>
+          isRuntimeTaskDeliveryResponse(value) && value.tasks.every((task) => task.asset_id === assetId),
         undefined,
         undefined,
         options.signal,

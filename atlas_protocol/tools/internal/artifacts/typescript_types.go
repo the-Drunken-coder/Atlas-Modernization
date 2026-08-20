@@ -79,6 +79,9 @@ func (g *typeScriptGenerator) intersectionType(items []any, current string, inde
 	for _, item := range items {
 		if schema, ok := item.(map[string]any); ok {
 			if part := g.typeFor(schema, current, indent); part != "unknown" {
+				if strings.Contains(part, " | ") {
+					part = "(" + part + ")"
+				}
 				parts = append(parts, part)
 			}
 		}

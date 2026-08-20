@@ -101,6 +101,38 @@ func TestCompleteTaskRequestPreservesExplicitNull(t *testing.T) {
 	}
 }
 
+func TestTaskRequestPreservesExactJSONNumbers(t *testing.T) {
+	handler := newTestHandler()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(
+		`{"asset_id":"asset-1","command":"fixture.queued","input":{"value":9007199254740993}}`,
+	))
+	var decoded createTaskRequest
+
+	if !handler.decodeProtocolRequestBody(recorder, request, &decoded, false, protocol.ValidateTaskCreateRequest) {
+		t.Fatalf("request rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	input, ok := decoded.Input.(map[string]any)
+	if !ok {
+		t.Fatalf("decoded input = %#v", decoded.Input)
+	}
+	value, ok := input["value"].(json.Number)
+	if !ok || value.String() != "9007199254740993" {
+		t.Fatalf("decoded exact number = %#v", input["value"])
+	}
+}
+
+func TestTaskOutputPreservesExactJSONNumbers(t *testing.T) {
+	output, err := decodeTaskOutput(json.RawMessage(`{"value":9007199254740993}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok := output.(map[string]any)["value"].(json.Number)
+	if !ok || value.String() != "9007199254740993" {
+		t.Fatalf("decoded exact output number = %#v", output)
+	}
+}
+
 func TestEntityCheckInRejectsProtocolInvalidBodyBeforeActions(t *testing.T) {
 	handler := newTestHandler()
 	recorder := httptest.NewRecorder()

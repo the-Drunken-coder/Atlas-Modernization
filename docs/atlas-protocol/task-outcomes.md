@@ -13,7 +13,7 @@ Task outcomes are small Protocol-owned records. Every failure or cancellation ha
 | `immediate_start_timeout` | An immediate Task did not enter `in_progress` within its start window. | Core |
 | `invalid_output` | Completion output did not satisfy the Command's output contract. | Core |
 
-Invalid output is rejected before a terminal transition. Core may record `invalid_output` only when it deliberately terminates that Task; a rejected completion request alone leaves the Task nonterminal.
+When an in-progress Task reports missing or invalid output, Core atomically marks it failed with `invalid_output` and returns that terminal Task. The Asset runtime does not classify or retry a deterministic output-contract failure.
 
 ## Cancellation codes
 

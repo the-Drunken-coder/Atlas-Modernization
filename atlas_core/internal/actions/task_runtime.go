@@ -102,6 +102,9 @@ func (a *TaskActions) CompleteRuntimeRegistration(ctx context.Context, assetID, 
 		}
 		return fmt.Errorf("lock Asset Entity: %w", err)
 	}
+	if entity.Type != "asset" {
+		return NewValidationError("only asset Entities can complete runtime registration")
+	}
 	var currentRuntimeID string
 	var ready bool
 	var currentManifest []byte
@@ -225,18 +228,25 @@ func (a *TaskActions) Deliverable(ctx context.Context, assetID, runtimeID string
 	}
 	rows, err := a.pool.Query(ctx, `
 		(`+taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status = 'pending'
-			AND command = ANY($3) ORDER BY created_at, task_id LIMIT 1)
+			AND command = ANY($3)
+			AND created_at > clock_timestamp() - ($4 * interval '1 second')
+			ORDER BY created_at, task_id LIMIT 1)
 		UNION ALL
 		(`+taskSelectSQL+` WHERE asset_id = $1 AND runtime_id = $2 AND status = 'pending'
 			AND NOT (command = ANY($3)) ORDER BY created_at, task_id LIMIT 1)
 		ORDER BY created_at, task_id
-	`, assetID, runtimeID, immediateCommands)
+	`, assetID, runtimeID, immediateCommands, immediateStartWindow.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("query deliverable Tasks: %w", err)
 	}
 	deliverable, err := scanTaskRows(rows)
 	if err != nil {
 		return nil, err
+	}
+	for _, task := range deliverable {
+		if _, err := a.storedCommandDefinition(task.TaskID, task.Command); err != nil {
+			return nil, err
+		}
 	}
 	return deliverable, nil
 }
@@ -250,18 +260,18 @@ func (a *TaskActions) failRuntimeTasks(ctx context.Context, tx pgx.Tx, assetID, 
 	if err != nil {
 		return err
 	}
-	encoded, _ := json.Marshal(failure)
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return fmt.Errorf("read database time for runtime Task failure: %w", err)
+	}
+	now = now.UTC()
 	for _, task := range tasks {
-		version, err := nextChangeVersion(ctx, tx)
-		if err != nil {
+		if _, err := failTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, now, failure); err != nil {
 			return err
 		}
-		updated, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = 'failed', failure = $2, finished_at = clock_timestamp(), updated_at = clock_timestamp(), version = $3 WHERE task_id = $1 RETURNING `+taskColumns, task.TaskID, encoded, version))
+		_, err := persistTaskState(ctx, tx, task)
 		if err != nil {
 			return fmt.Errorf("fail fenced runtime Task: %w", err)
-		}
-		if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, AfterTask: cloneTaskModel(updated)}); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -298,18 +308,13 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	failure, _ := json.Marshal(immediateStartTimeoutFailure())
 	for _, task := range tasks {
-		version, err := nextChangeVersion(ctx, tx)
-		if err != nil {
+		if _, err := failTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, now, immediateStartTimeoutFailure()); err != nil {
 			return 0, err
 		}
-		updated, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = 'failed', failure = $2, finished_at = $3, updated_at = clock_timestamp(), version = $4 WHERE task_id = $1 RETURNING `+taskColumns, task.TaskID, failure, now, version))
+		_, err := persistTaskState(ctx, tx, task)
 		if err != nil {
 			return 0, fmt.Errorf("fail expired immediate Task: %w", err)
-		}
-		if err := RecordResourceChange(ctx, tx, ResourceChange{Event: ChangeEventUpdate, ResourceType: ChangeResourceTask, ID: updated.TaskID, Version: updated.Version, AfterTask: cloneTaskModel(updated)}); err != nil {
-			return 0, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

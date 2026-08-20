@@ -265,6 +265,64 @@ describe("AtlasAssetRuntime", () => {
     }
   });
 
+  it("keeps polling for delivery while accepted Task reconciliation is stalled", async () => {
+    vi.useFakeTimers();
+    const first = task("immediate-1", "immediate.observe");
+    const second = task("immediate-2", "immediate.observe");
+    const { client, emit } = fakeClient([first]);
+    const reconciliationStarted = deferred<void>();
+    client.tasks.get.mockImplementation(async (_id: string, options?: { signal?: AbortSignal }) => {
+      reconciliationStarted.resolve();
+      return rejectOnAbort(options?.signal);
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async ({ signal }) => rejectOnAbort(signal) }
+    });
+
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+
+      emit(second);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await reconciliationStarted.promise;
+
+      expect(client.tasks.start).toHaveBeenCalledWith("immediate-2", expect.anything());
+      await runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a delivered Task assigned to another Asset", async () => {
+    const foreign = { ...task("foreign-1", "immediate.observe"), asset_id: "asset-2" };
+    const { client } = fakeClient();
+    const onError = vi.fn();
+    client.runtime.tasks.mockResolvedValue({ tasks: [foreign] });
+    const handler = vi.fn(async () => undefined);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler },
+      onError
+    });
+
+    await runtime.start();
+    await vi.waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("asset-2") }))
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(client.tasks.acknowledge).not.toHaveBeenCalled();
+    expect(client.tasks.start).not.toHaveBeenCalled();
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("waits for immediate handler cleanup before stop resolves", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
@@ -322,6 +380,39 @@ describe("AtlasAssetRuntime", () => {
 
     await expect(checkIn).rejects.toThrow();
     await stopping;
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("aborts telemetry collection and waits for its cleanup during stop", async () => {
+    const { client } = fakeClient();
+    const reportStarted = deferred<AbortSignal>();
+    const reportStopped = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      checkIn: ({ signal }) =>
+        new Promise((resolve) => {
+          reportStarted.resolve(signal);
+          signal.addEventListener(
+            "abort",
+            () => {
+              reportStopped.resolve();
+              resolve({ status: "stopped" });
+            },
+            { once: true }
+          );
+        })
+    });
+
+    await runtime.start();
+    const checkIn = runtime.checkIn();
+    const signal = await reportStarted.promise;
+    const stopping = runtime.stop();
+
+    await reportStopped.promise;
+    expect(signal.aborted).toBe(true);
+    await expect(checkIn).rejects.toThrow();
+    await stopping;
+    expect(client.entities.checkIn).not.toHaveBeenCalled();
     expect(runtime.status).toBe("stopped");
   });
 
@@ -614,7 +705,8 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
   };
   const transition = (id: string, status: TaskResource["status"]): TaskResource => {
     const current = tasks.get(id) ?? task(id, id.startsWith("queued") ? "queued.move" : "immediate.observe");
-    const updated = { ...current, status };
+    const updatedAt = "2026-08-19T12:00:01Z";
+    const updated = taskWithStatus(current, status, updatedAt);
     tasks.set(id, updated);
     return updated;
   };
@@ -650,6 +742,48 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
   };
 }
 
+function taskWithStatus(task: TaskResource, status: TaskResource["status"], timestamp: string): TaskResource {
+  switch (status) {
+    case "pending":
+      return { ...task, status, updated_at: timestamp };
+    case "acknowledged":
+      return { ...task, status, acknowledged_at: task.acknowledged_at ?? timestamp, updated_at: timestamp };
+    case "in_progress":
+      return {
+        ...task,
+        status,
+        acknowledged_at: task.acknowledged_at ?? timestamp,
+        started_at: task.started_at ?? timestamp,
+        updated_at: timestamp
+      };
+    case "completed":
+      return {
+        ...task,
+        status,
+        acknowledged_at: task.acknowledged_at ?? timestamp,
+        started_at: task.started_at ?? timestamp,
+        finished_at: timestamp,
+        updated_at: timestamp
+      };
+    case "failed":
+      return {
+        ...task,
+        status,
+        failure: task.failure ?? { code: "execution_failed", message: "fixture failure" },
+        finished_at: timestamp,
+        updated_at: timestamp
+      };
+    case "cancelled":
+      return {
+        ...task,
+        status,
+        cancellation: task.cancellation ?? { code: "requested", message: "fixture cancellation" },
+        finished_at: timestamp,
+        updated_at: timestamp
+      };
+  }
+}
+
 function manifestEntry(
   command: string,
   scheduling: "queued" | "immediate" = "queued",
@@ -665,13 +799,13 @@ function manifestEntry(
   } as const;
 }
 
-function task(taskId: string, command: string, status: TaskResource["status"] = "pending"): TaskResource {
+function task(taskId: string, command: string): TaskResource {
   return {
     task_id: taskId,
     asset_id: "asset-1",
     command,
     input: { value: taskId },
-    status,
+    status: "pending",
     created_at: "2026-08-19T12:00:00Z",
     updated_at: "2026-08-19T12:00:00Z"
   };

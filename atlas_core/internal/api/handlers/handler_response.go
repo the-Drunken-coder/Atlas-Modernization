@@ -252,6 +252,7 @@ func (h *Handler) decodeProtocolRequestBody(
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	if err := jsondecode.Decode(decoder, v); err != nil {
 		h.writeError(w, r, http.StatusBadRequest, "Invalid JSON body", protocol.ErrorCodeInvalidJSON)

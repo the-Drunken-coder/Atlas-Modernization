@@ -258,6 +258,7 @@ func TestTelemetryValidation(t *testing.T) {
 			assertErrorsContainAll(t, protocol.ValidateTelemetryComponent(tt.telemetry), tt.contains...)
 		})
 	}
+
 }
 
 func TestGeometryValidation(t *testing.T) {
@@ -555,6 +556,39 @@ func TestTaskValidation(t *testing.T) {
 				resource[key] = value
 			}
 			assertErrorContains(t, protocol.ValidateTaskResource(resource), tt.contains)
+		})
+	}
+
+	impossible := map[string]map[string]any{
+		"pending with lifecycle timestamps": {
+			"status": "pending", "acknowledged_at": "2026-05-29T10:00:10Z", "started_at": "2026-05-29T10:00:20Z",
+		},
+		"acknowledged without timestamp": {"status": "acknowledged", "acknowledged_at": nil},
+		"in progress without start":      {"status": "in_progress", "started_at": nil},
+		"completed without finish":       {"status": "completed"},
+		"failed without failure":         {"status": "failed"},
+		"cancelled without cancellation": {"status": "cancelled"},
+		"completed with failure": {
+			"status": "completed", "finished_at": "2026-05-29T10:01:00Z",
+			"failure": map[string]any{"code": "execution_failed", "message": "bad"},
+		},
+	}
+	for name, patch := range impossible {
+		t.Run(name, func(t *testing.T) {
+			resource := make(map[string]any, len(valid)+len(patch))
+			for key, value := range valid {
+				resource[key] = value
+			}
+			for key, value := range patch {
+				if value == nil {
+					delete(resource, key)
+					continue
+				}
+				resource[key] = value
+			}
+			if errors := protocol.ValidateTaskResource(resource); len(errors) == 0 {
+				t.Fatalf("ValidateTaskResource accepted impossible %s Task: %#v", resource["status"], resource)
+			}
 		})
 	}
 }

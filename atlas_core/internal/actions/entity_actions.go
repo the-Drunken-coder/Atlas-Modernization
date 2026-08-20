@@ -344,6 +344,18 @@ func (a *EntityActions) Update(ctx context.Context, entityID string, params Upda
 	if err := checkExpectedVersion("entity", params.ExpectedVersion, entity.Version); err != nil {
 		return nil, err
 	}
+	if params.EntityType != nil {
+		requestedType := strings.TrimSpace(*params.EntityType)
+		if requestedType != entity.Type {
+			var registeredRuntime bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM asset_runtimes WHERE asset_id = $1)`, entityID).Scan(&registeredRuntime); err != nil {
+				return nil, fmt.Errorf("check Entity runtime before type change: %w", err)
+			}
+			if registeredRuntime {
+				return nil, NewValidationError("entity_type cannot change after an Asset runtime has registered")
+			}
+		}
+	}
 	if params.IsEmpty() {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit entity precondition transaction: %w", err)

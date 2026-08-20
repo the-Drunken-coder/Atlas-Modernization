@@ -4,7 +4,7 @@ import fixtureManifestJSON from "../../atlas_protocol/conformance/tasking/fixtur
 import schedulingCorpus from "../../atlas_protocol/conformance/tasking/scheduling.json" with { type: "json" };
 import { type AtlasAssetClient, AtlasAssetRuntime } from "../src/index.js";
 
-describe("shared Task scheduling fixtures", () => {
+describe("shared Task fixture compatibility", () => {
   it("form a valid runtime manifest with a handler for every advertised Command", () => {
     const manifest: unknown = fixtureManifestJSON;
     expect(isCommandManifest(manifest)).toBe(true);

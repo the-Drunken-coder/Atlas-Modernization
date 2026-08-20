@@ -7,11 +7,14 @@ import {
   type EntityCheckInOptions,
   type EntityCreateRequest,
   type EntityResource,
+  type JSONValue,
   type ObjectCreateRequest,
   type ObjectDetailResource,
   type ObjectResource,
   type ResourceType,
+  type TaskCancellation,
   type TaskCreateRequest,
+  type TaskFailure,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import type { AtlasClientFactory, AtlasClientLike, ClientMode } from "../../src/server/atlas.js";
@@ -122,7 +125,15 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       },
       acknowledge: async (id) =>
         updateTask(state, clientState, id, { status: "acknowledged", acknowledged_at: timestamp() }),
-      start: async (id) => updateTask(state, clientState, id, { status: "in_progress", started_at: timestamp() }),
+      start: async (id) => {
+        const startedAt = timestamp();
+        const current = requireActiveValue(state, state.tasks, id, "task").value;
+        return updateTask(state, clientState, id, {
+          status: "in_progress",
+          acknowledged_at: current.acknowledged_at ?? startedAt,
+          started_at: startedAt
+        });
+      },
       progress: async (id, request) => updateTask(state, clientState, id, { progress: request.progress }),
       complete: async (id, options) =>
         updateTask(state, clientState, id, {
@@ -162,7 +173,7 @@ function createClient(state: FakeCoreState, sync: ClientMode): AtlasClientLike {
       tasks: async (assetId, options) => {
         const runtime = state.runtimes.get(assetId);
         if (!runtime?.ready || runtime.runtimeId !== options.runtimeId) throw conflict("runtime", options.runtimeId);
-        const tasks = visibleValues(state, clientState, state.tasks, "task").filter(
+        const tasks = currentValues(state, state.tasks, "task").filter(
           (task) => task.asset_id === assetId && task.status === "pending"
         );
         return { tasks };
@@ -264,15 +275,45 @@ function objectFromCreate(request: ObjectCreateRequest, version: number): Object
   };
 }
 
-function updateTask(
-  state: FakeCoreState,
-  clientState: FakeClientState,
-  id: string,
-  patch: Partial<TaskResource>
-): TaskResource {
+type TaskPatch =
+  | { status: "acknowledged"; acknowledged_at: string }
+  | { status: "in_progress"; acknowledged_at: string; started_at: string }
+  | { progress: number }
+  | { status: "completed"; finished_at: string; output?: JSONValue }
+  | { status: "failed"; failure: TaskFailure; finished_at: string }
+  | { status: "cancelled"; cancellation: TaskCancellation; finished_at: string };
+
+function updateTask(state: FakeCoreState, clientState: FakeClientState, id: string, patch: TaskPatch): TaskResource {
   const current = requireActiveValue(state, state.tasks, id, "task").value;
   const version = commitVersion(state, clientState);
-  return saveValue(state.tasks, id, { ...current, ...patch, updated_at: timestamp() }, version);
+  const updatedAt = timestamp();
+  if ("progress" in patch) {
+    if (current.status !== "in_progress") throw new Error(`fake Core cannot progress ${current.status} Task ${id}`);
+    return saveValue(state.tasks, id, { ...current, progress: patch.progress, updated_at: updatedAt }, version);
+  }
+  switch (patch.status) {
+    case "acknowledged":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+    case "in_progress":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+    case "completed":
+      return saveValue(
+        state.tasks,
+        id,
+        {
+          ...current,
+          ...patch,
+          acknowledged_at: current.acknowledged_at ?? updatedAt,
+          started_at: current.started_at ?? updatedAt,
+          updated_at: updatedAt
+        },
+        version
+      );
+    case "failed":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+    case "cancelled":
+      return saveValue(state.tasks, id, { ...current, ...patch, updated_at: updatedAt }, version);
+  }
 }
 
 function metadata(version: number, createdAt?: string) {
@@ -346,6 +387,13 @@ function visibleValues<T>(
   return [...values.entries()].flatMap(([id, history]) => {
     const stored = visibleSnapshot(history, version);
     return stored && !isDeletedAt(state, type, id, version, stored.version) ? [cloneValue(stored.value)] : [];
+  });
+}
+
+function currentValues<T>(state: FakeCoreState, values: ResourceHistory<T>, type: ResourceType): T[] {
+  return [...values.entries()].flatMap(([id, history]) => {
+    const stored = history.at(-1);
+    return stored && !isDeletedAt(state, type, id, state.version, stored.version) ? [cloneValue(stored.value)] : [];
   });
 }
 
