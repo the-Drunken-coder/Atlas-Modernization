@@ -50,6 +50,15 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 		if changed, err = startTask(immediateTask, immediate, protocol.CommandManifestEntry{}, taskStateTestTime); err != nil || !changed || immediateTask.AcknowledgedAt == nil {
 			t.Fatalf("start immediate Task = %#v, %t, %v", immediateTask, changed, err)
 		}
+		expiredTask := taskStateFixture(protocol.TaskStatusPending)
+		expiredTask.CreatedAt = taskStateTestTime.Add(-immediateStartWindow)
+		if changed, err = startTask(expiredTask, immediate, protocol.CommandManifestEntry{}, taskStateTestTime); err != nil || !changed || expiredTask.Status != string(protocol.TaskStatusFailed) {
+			t.Fatalf("start expired immediate Task = %#v, %t, %v", expiredTask, changed, err)
+		}
+		var timeoutFailure protocol.TaskFailure
+		if err := json.Unmarshal(expiredTask.Failure, &timeoutFailure); err != nil || timeoutFailure.Code != protocol.TaskFailureCodeImmediateStartTimeout {
+			t.Fatalf("expired immediate Task failure = %#v, %v", timeoutFailure, err)
+		}
 		if _, err := startTask(taskStateFixture(protocol.TaskStatusPending), queued, protocol.CommandManifestEntry{}, taskStateTestTime); err == nil {
 			t.Fatal("pending queued Task started before acknowledgement")
 		}
@@ -184,6 +193,12 @@ func TestTaskActionValidationBeforePersistence(t *testing.T) {
 	if _, err := tasks.Cancel(ctx, "", protocol.TaskCancellation{Code: protocol.TaskCancellationCodeRequested, Message: "stop"}); err == nil {
 		t.Fatal("cancel accepted an invalid Task ID")
 	}
+	if _, err := tasks.Fail(ctx, "task-1", "runtime-1", protocol.TaskFailure{Code: protocol.TaskFailureCodeAssetRestarted, Message: "restart"}); err == nil {
+		t.Fatal("Asset failure accepted a Core-owned code")
+	}
+	if _, err := tasks.Cancel(ctx, "task-1", protocol.TaskCancellation{Code: protocol.TaskCancellationCodeSuperseded, Message: "superseded"}); err == nil {
+		t.Fatal("tasking cancellation accepted a Core-owned code")
+	}
 	if err := tasks.BeginRuntimeRegistration(ctx, "", "runtime-1"); err == nil {
 		t.Fatal("runtime registration accepted an invalid Asset ID")
 	}
@@ -250,5 +265,11 @@ func TestTaskStateHelpers(t *testing.T) {
 }
 
 func taskStateFixture(status protocol.TaskStatus) *models.Task {
-	return &models.Task{TaskID: "task-1", AssetID: "asset-1", Command: "fixture.queued", Status: string(status)}
+	return &models.Task{
+		TaskID:    "task-1",
+		AssetID:   "asset-1",
+		Command:   "fixture.queued",
+		Status:    string(status),
+		CreatedAt: taskStateTestTime.Add(-time.Second),
+	}
 }

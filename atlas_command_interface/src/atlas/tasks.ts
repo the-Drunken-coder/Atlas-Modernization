@@ -30,3 +30,11 @@ export function sortTasksByRecency(tasks: TaskResource[]): TaskResource[] {
     return a.task_id.localeCompare(b.task_id);
   });
 }
+
+export function sortTasksByTaskingOrder(tasks: TaskResource[]): TaskResource[] {
+  return [...tasks].sort((a, b) => {
+    const byCreated = Date.parse(a.created_at) - Date.parse(b.created_at);
+    if (Number.isFinite(byCreated) && byCreated !== 0) return byCreated;
+    return a.task_id.localeCompare(b.task_id);
+  });
+}

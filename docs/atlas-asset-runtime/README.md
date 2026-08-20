@@ -81,8 +81,9 @@ Core remains authoritative for Task eligibility and ordering. The runtime asks o
 - Immediate Commands start independently and may overlap queued or other immediate work.
 - Progress is available only when the manifest declares `supports_progress` and is reported from `0` to `1`.
 - A handler return value becomes Task output. Returning nothing completes without output. A thrown error fails the Task with `execution_failed`.
+- A handler throws `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution.
 - A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
-- A Core cancellation aborts the matching local handler immediately. The cancellation route belongs to the tasking client; the runtime does not issue a second cancellation or abort API call.
+- A terminal Task update from Core aborts the matching local handler. This includes cancellation and failure caused by runtime fencing. The runtime does not issue a second cancellation or abort API call.
 
 Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. A temporary WebSocket reconnect keeps the same runtime ID and relies on feed recovery; it is not a process restart.
 

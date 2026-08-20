@@ -1,6 +1,6 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
-import { listEntities, tasksForAsset } from "./selectors.js";
+import { activeTasks, listEntities, queuedTasks, tasksForAsset } from "./selectors.js";
 import { type AtlasSnapshot, emptySnapshot } from "./store.js";
 
 const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
@@ -37,5 +37,42 @@ describe("snapshot store", () => {
 
     expect(listEntities(snapshot).map((entry) => entry.entity_id)).toEqual(["a", "z"]);
     expect(tasksForAsset(snapshot, "a").map((entry) => entry.task_id)).toEqual(["t2", "t1"]);
+  });
+
+  it("derives every active Task and the authoritative queue order", () => {
+    const asset = entity("a");
+    const activeLater = {
+      ...task("active-2", asset.entity_id),
+      status: "in_progress" as const,
+      created_at: "2026-06-20T00:00:02Z"
+    };
+    const activeEarlier = {
+      ...task("active-1", asset.entity_id),
+      status: "in_progress" as const,
+      created_at: "2026-06-20T00:00:01Z"
+    };
+    const queuedLater = {
+      ...task("queued-2", asset.entity_id),
+      status: "acknowledged" as const,
+      created_at: "2026-06-20T00:00:04Z",
+      updated_at: "2026-06-20T00:00:10Z"
+    };
+    const queuedEarlier = {
+      ...task("queued-1", asset.entity_id),
+      created_at: "2026-06-20T00:00:03Z",
+      updated_at: "2026-06-20T00:00:11Z"
+    };
+    const snapshot: AtlasSnapshot = {
+      entities: { [asset.entity_id]: asset },
+      tasks: {
+        [activeLater.task_id]: activeLater,
+        [queuedLater.task_id]: queuedLater,
+        [activeEarlier.task_id]: activeEarlier,
+        [queuedEarlier.task_id]: queuedEarlier
+      }
+    };
+
+    expect(activeTasks(snapshot, asset).map((entry) => entry.task_id)).toEqual(["active-1", "active-2"]);
+    expect(queuedTasks(snapshot, asset).map((entry) => entry.task_id)).toEqual(["queued-1", "queued-2"]);
   });
 });

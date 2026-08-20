@@ -277,7 +277,7 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context, now time.T
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE command = ANY($1) AND status = 'pending' AND created_at <= $2 ORDER BY created_at, task_id FOR UPDATE`, immediate, now.Add(-60*time.Second))
+	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE command = ANY($1) AND status = 'pending' AND created_at <= $2 ORDER BY created_at, task_id FOR UPDATE`, immediate, now.Add(-immediateStartWindow))
 	if err != nil {
 		return 0, fmt.Errorf("lock expired immediate Tasks: %w", err)
 	}
@@ -285,7 +285,7 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context, now time.T
 	if err != nil {
 		return 0, err
 	}
-	failure, _ := json.Marshal(protocol.TaskFailure{Code: protocol.TaskFailureCodeImmediateStartTimeout, Message: "The immediate Task did not start within 60 seconds."})
+	failure, _ := json.Marshal(immediateStartTimeoutFailure())
 	for _, task := range tasks {
 		version, err := nextChangeVersion(ctx, tx)
 		if err != nil {

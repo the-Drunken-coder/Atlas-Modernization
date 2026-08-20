@@ -13,7 +13,7 @@ import {
   heartbeatLevel
 } from "../../atlas/entities.js";
 import { formatNumber, formatPercent, formatRelativeTime } from "../../atlas/format.js";
-import { currentTask, queuedTasks, tasksForAsset } from "../../atlas/selectors.js";
+import { activeTasks, queuedTasks, tasksForAsset } from "../../atlas/selectors.js";
 import type { AtlasSnapshot } from "../../atlas/store.js";
 import { JsonDrawer } from "../../ui/primitives/JsonDrawer.js";
 import { ConnectionStatusPill, heartbeatColor, StatusPill } from "../../ui/primitives/StatusPill.js";
@@ -38,7 +38,7 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
   const battery = entityBattery(entity);
   const lastSeen = entityHeartbeatLastSeen(entity);
   const level = heartbeatLevel(lastSeen, now);
-  const active = currentTask(snapshot, entity);
+  const active = activeTasks(snapshot, entity);
   const queued = queuedTasks(snapshot, entity);
   const history = tasksForAsset(snapshot, entity.entity_id).slice(0, MAX_HISTORY);
   const sidebarCommands = catalog
@@ -91,7 +91,11 @@ export function AssetInspector({ entity, snapshot, catalog, onPickCommand }: Ass
       </Section>
 
       <Section title="Active & Queued Tasks">
-        {active ? <TaskRow task={active} /> : <div style={{ color: "var(--text-3)" }}>No active task</div>}
+        {active.length > 0 ? (
+          active.map((task) => <TaskRow key={task.task_id} task={task} />)
+        ) : (
+          <div style={{ color: "var(--text-3)" }}>No active task</div>
+        )}
         {queued.length > 0 ? queued.map((task) => <TaskRow key={task.task_id} task={task} />) : null}
       </Section>
 

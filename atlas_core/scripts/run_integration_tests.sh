@@ -26,7 +26,6 @@ PASS=0
 FAIL=0
 RUN_ID="$(date +%s)-$$"
 ENTITY_ID="test-entity-${RUN_ID}"
-TASK_ID="test-task-${RUN_ID}"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -199,26 +198,28 @@ assert_status 200 "GET /entities/${ENTITY_ID}" && \
   assert_json ".entity_id == \"${ENTITY_ID}\"" "GET /entities/${ENTITY_ID} body" && \
   pass "GET /entities/${ENTITY_ID} — entity retrieved"
 
-# 6. Tasks list (initially empty)
+# 6. Production Command Catalog is intentionally empty
+request GET /command-catalog
+assert_status 200 "GET /command-catalog" && \
+  assert_json 'type == "array" and length == 0' "GET /command-catalog body" && \
+  pass "GET /command-catalog - returns the empty production catalog"
+
+# 7. Tasks list is initially empty
 request GET /tasks
 assert_status 200 "GET /tasks" && \
-  pass "GET /tasks — returns OK"
+  assert_json 'type == "array" and length == 0' "GET /tasks body" && \
+  pass "GET /tasks - returns an empty array"
 
-# 7. Create a task
+# 8. Production tasking rejects Commands outside the empty catalog
 request POST /tasks \
   -H "Content-Type: application/json" \
-  -d "{\"task_id\": \"${TASK_ID}\", \"entity_id\": \"${ENTITY_ID}\"}"
-assert_status 201 "POST /tasks" && \
-  assert_json ".task_id == \"${TASK_ID}\"" "POST /tasks task_id" && \
-  pass "POST /tasks — task created"
+  -H "Idempotency-Key: integration-${RUN_ID}" \
+  -d "{\"asset_id\": \"${ENTITY_ID}\", \"command\": \"fixture.queued\", \"input\": {\"value\": \"test\"}}"
+assert_status 400 "POST /tasks with unsupported Command" && \
+  assert_json '.error_code == "VALIDATION_ERROR"' "POST /tasks error" && \
+  pass "POST /tasks - rejects Commands outside the production catalog"
 
-# 8. Get the task
-request GET "/tasks/${TASK_ID}"
-assert_status 200 "GET /tasks/${TASK_ID}" && \
-  assert_json ".task_id == \"${TASK_ID}\"" "GET /tasks/${TASK_ID} body" && \
-  pass "GET /tasks/${TASK_ID} — task retrieved"
-
-# 9. Full query (assert created entity/task ids appear in payload)
+# 9. Full query contains the Entity and no Tasks
 request GET /queries/full
 assert_status 200 "GET /queries/full" && \
   assert_json '.entities | type == "array"' "GET /queries/full entities" && \
@@ -226,11 +227,9 @@ assert_status 200 "GET /queries/full" && \
   assert_json '.objects  | type == "array"' "GET /queries/full objects" && \
   assert_json '.version  | type == "number"' "GET /queries/full version watermark" && \
   assert_json '.entities | length >= 1'     "GET /queries/full entity count" && \
-  assert_json '.tasks    | length >= 1'     "GET /queries/full task count"
-# shellcheck disable=SC2016 # $e/$t are jq --arg variables, not shell expansions
+  assert_json '.tasks    | length == 0'     "GET /queries/full task count"
+# shellcheck disable=SC2016 # $e is a jq --arg variable, not a shell expansion
 assert_jq "GET /queries/full contains ENTITY_ID" --arg e "$ENTITY_ID" 'any(.entities[]?; .entity_id == $e)'
-# shellcheck disable=SC2016
-assert_jq "GET /queries/full contains TASK_ID" --arg t "$TASK_ID" 'any(.tasks[]?; .task_id == $t)'
 pass "GET /queries/full — returns expected data"
 
 # ── summary ──────────────────────────────────────────────────────────────────

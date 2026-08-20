@@ -16,6 +16,18 @@ import { establishSafetyBarrier } from "./safety-barrier.js";
 const DEFAULT_CHECK_IN_INTERVAL_MS = 5_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
+export type AssetTaskFailureCode = "precondition_failed" | "execution_failed";
+
+export class AssetTaskFailure extends Error {
+  constructor(
+    readonly code: AssetTaskFailureCode,
+    message: string
+  ) {
+    super(message);
+    this.name = "AssetTaskFailure";
+  }
+}
+
 export type AtlasAssetClient = Pick<AtlasClient, "handshake" | "subscribe" | "watch"> & {
   sync: Pick<AtlasClient["sync"], "start" | "stop">;
   entities: {
@@ -38,7 +50,7 @@ export type AtlasAssetClient = Pick<AtlasClient, "handshake" | "subscribe" | "wa
     fail(
       id: string,
       options: RuntimeContextOptions & {
-        failure: { code: "execution_failed" | "unsupported_command"; message: string };
+        failure: { code: AssetTaskFailureCode | "unsupported_command"; message: string };
       }
     ): Promise<TaskResource>;
   };
@@ -237,8 +249,8 @@ export class AtlasAssetRuntime {
 
   private onTaskChange(task: TaskResource | undefined): void {
     if (!task) return;
-    if (task.status === "cancelled") {
-      this.cancelLocalTask(task.task_id);
+    if (isTerminalTaskStatus(task.status)) {
+      this.abortLocalTask(task.task_id, `Task became ${task.status}`);
       return;
     }
     if (task.status === "pending") void this.requestDelivery().catch((error) => this.reportError(error));
@@ -302,7 +314,11 @@ export class AtlasAssetRuntime {
     if (!runtimeId || !runtimeSignal || runtimeSignal.aborted || accepted.controller.signal.aborted) return;
     const signal = AbortSignal.any([runtimeSignal, accepted.controller.signal]);
     try {
-      await this.client.tasks.start(accepted.task.task_id, { runtimeId, signal });
+      const started = await this.client.tasks.start(accepted.task.task_id, { runtimeId, signal });
+      if (started.status !== "in_progress") {
+        if (isTerminalTaskStatus(started.status)) return;
+        throw new Error(`Core returned ${started.status} after starting ${accepted.task.task_id}`);
+      }
       if (!queued) void this.requestDelivery().catch((error) => this.reportError(error));
       const output = await handler({
         task: accepted.task,
@@ -325,10 +341,14 @@ export class AtlasAssetRuntime {
       });
     } catch (error) {
       if (!signal.aborted) {
+        const failure =
+          error instanceof AssetTaskFailure
+            ? { code: error.code, message: normalizeError(error) }
+            : { code: "execution_failed" as const, message: normalizeError(error) };
         await this.client.tasks.fail(accepted.task.task_id, {
           runtimeId,
           signal,
-          failure: { code: "execution_failed", message: normalizeError(error) }
+          failure
         });
       }
     } finally {
@@ -337,10 +357,10 @@ export class AtlasAssetRuntime {
     }
   }
 
-  private cancelLocalTask(taskId: string): void {
+  private abortLocalTask(taskId: string, reason: string): void {
     const accepted = this.accepted.get(taskId);
     if (!accepted) return;
-    accepted.controller.abort(new Error("Task cancelled"));
+    accepted.controller.abort(new Error(reason));
     this.queued = this.queued.filter((item) => item.task.task_id !== taskId);
     this.accepted.delete(taskId);
   }
@@ -385,6 +405,10 @@ function requireIdentifier(name: string, value: string): string {
 function normalizeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.trim() || "Execution failed";
+}
+
+function isTerminalTaskStatus(status: TaskResource["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

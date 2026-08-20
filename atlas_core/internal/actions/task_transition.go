@@ -14,6 +14,9 @@ import (
 	protocolvalidator "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 )
 
+const immediateStartWindow = time.Minute
+const immediateStartTimeoutMessage = "The immediate Task did not start within 60 seconds."
+
 func (a *TaskActions) Acknowledge(ctx context.Context, taskID, runtimeID string) (*models.Task, error) {
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
@@ -50,6 +53,9 @@ func startTask(task *models.Task, command protocol.CommandDefinition, _ protocol
 	if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
 		if task.Status != string(protocol.TaskStatusPending) {
 			return false, invalidTaskTransition(task, "start")
+		}
+		if !now.Before(task.CreatedAt.Add(immediateStartWindow)) {
+			return failTask(task, command, protocol.CommandManifestEntry{}, now, immediateStartTimeoutFailure())
 		}
 		task.AcknowledgedAt = &now
 	} else if task.Status != string(protocol.TaskStatusAcknowledged) {
@@ -124,6 +130,9 @@ func (a *TaskActions) Fail(ctx context.Context, taskID, runtimeID string, failur
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
+	if err := validateAssetFailureCode(failure.Code); err != nil {
+		return nil, err
+	}
 	return a.withTaskTransition(ctx, taskID, runtimeID, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return failTask(task, command, manifest, now, failure)
 	})
@@ -147,9 +156,30 @@ func failTask(task *models.Task, _ protocol.CommandDefinition, _ protocol.Comman
 }
 
 func (a *TaskActions) Cancel(ctx context.Context, taskID string, cancellation protocol.TaskCancellation) (*models.Task, error) {
+	if cancellation.Code != protocol.TaskCancellationCodeRequested {
+		return nil, NewValidationError(fmt.Sprintf("cancellation code %q can only be applied by Core", cancellation.Code))
+	}
 	return a.withTaskTransition(ctx, taskID, "", nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return cancelTask(task, command, manifest, now, cancellation)
 	})
+}
+
+func validateAssetFailureCode(code protocol.TaskFailureCode) error {
+	switch code {
+	case protocol.TaskFailureCodeUnsupportedCommand,
+		protocol.TaskFailureCodePreconditionFailed,
+		protocol.TaskFailureCodeExecutionFailed:
+		return nil
+	default:
+		return NewValidationError(fmt.Sprintf("failure code %q can only be applied by Core", code))
+	}
+}
+
+func immediateStartTimeoutFailure() protocol.TaskFailure {
+	return protocol.TaskFailure{
+		Code:    protocol.TaskFailureCodeImmediateStartTimeout,
+		Message: immediateStartTimeoutMessage,
+	}
 }
 
 func cancelTask(task *models.Task, _ protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time, cancellation protocol.TaskCancellation) (bool, error) {

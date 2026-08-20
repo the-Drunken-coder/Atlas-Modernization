@@ -6,7 +6,13 @@ import type {
   TaskResource
 } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { type AtlasAssetClient, AtlasAssetRuntime, type ExecutionModule, SafetyBarrierError } from "../src/index.js";
+import {
+  AssetTaskFailure,
+  type AtlasAssetClient,
+  AtlasAssetRuntime,
+  type ExecutionModule,
+  SafetyBarrierError
+} from "../src/index.js";
 
 describe("AtlasAssetRuntime", () => {
   it("requires handlers to match the advertised manifest", () => {
@@ -159,6 +165,98 @@ describe("AtlasAssetRuntime", () => {
     await aborted.promise;
     expect(client.tasks.complete).not.toHaveBeenCalled();
     expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("aborts local execution when Core fences the runtime", async () => {
+    const runningTask = task("immediate-1", "immediate.observe");
+    const { client, emit } = fakeClient([runningTask]);
+    const aborted = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                aborted.resolve();
+                resolve();
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything()));
+    emit({
+      ...runningTask,
+      status: "failed",
+      failure: { code: "asset_restarted", message: "A new runtime replaced this one" },
+      finished_at: "2026-08-19T12:00:01Z",
+      updated_at: "2026-08-19T12:00:01Z"
+    });
+
+    await aborted.promise;
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("does not execute a Task that Core fails during start", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client, emit } = fakeClient([pending]);
+    const handler = vi.fn(async () => undefined);
+    const failed: TaskResource = {
+      ...pending,
+      status: "failed",
+      failure: { code: "immediate_start_timeout", message: "The start window expired" },
+      finished_at: "2026-08-19T12:01:00Z",
+      updated_at: "2026-08-19T12:01:00Z"
+    };
+    client.tasks.start.mockImplementationOnce(async () => {
+      emit(failed);
+      return failed;
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": handler }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledOnce());
+    expect(handler).not.toHaveBeenCalled();
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("reports typed precondition failures", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": async () => {
+          throw new AssetTaskFailure("precondition_failed", "Camera is unavailable");
+        }
+      }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() =>
+      expect(client.tasks.fail).toHaveBeenCalledWith(
+        "immediate-1",
+        expect.objectContaining({
+          failure: { code: "precondition_failed", message: "Camera is unavailable" }
+        })
+      )
+    );
     await runtime.stop();
   });
 
