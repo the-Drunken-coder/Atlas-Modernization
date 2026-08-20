@@ -144,6 +144,20 @@ describe("sidebar rail + panel", () => {
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
   });
 
+  it("normalizes the filter query and shows the no-match state", async () => {
+    const user = userEvent.setup();
+    render(<EntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+
+    const filter = screen.getByRole("searchbox", { name: "Filter entities" });
+    await user.type(filter, "   ");
+    expect(screen.getByText("2 total")).toBeInTheDocument();
+
+    await user.clear(filter);
+    await user.type(filter, "missing");
+    expect(screen.getByText("0 of 2")).toBeInTheDocument();
+    expect(screen.getByText("No matching entities.")).toBeInTheDocument();
+  });
+
   it("does not move focus for a map-origin selection", async () => {
     const user = userEvent.setup();
     render(<Harness />);

@@ -11,5 +11,4 @@ if (!container) {
   throw new Error("Root container #root is missing");
 }
 
-container.classList.add("bp6-dark");
 createRoot(container).render(<AppRoutes />);

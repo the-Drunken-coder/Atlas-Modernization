@@ -1,7 +1,6 @@
 /* Atlas maps Blueprint's dark palette onto product-specific operational states.
    Feature styles consume semantic tokens; Blueprint owns control primitives. */
 :root,
-.atlas-dark,
 .bp6-dark {
   color-scheme: dark;
 

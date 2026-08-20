@@ -52,7 +52,7 @@ export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, o
         />
       </label>
       <div className="entity-list__summary" aria-live="polite">
-        {query ? `${visibleEntities.length} of ${entities.length}` : `${entities.length} total`}
+        {query.trim() ? `${visibleEntities.length} of ${entities.length}` : `${entities.length} total`}
       </div>
       {visibleEntities.length === 0 ? (
         <div className="panel__empty">No matching entities.</div>
