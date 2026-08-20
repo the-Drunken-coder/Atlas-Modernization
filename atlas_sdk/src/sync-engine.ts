@@ -150,8 +150,15 @@ export class SyncEngine {
     }
   }
 
-  async handshake(): Promise<void> {
-    const response = await this.transport.json("GET", "/protocol/revision", isProtocolRevisionResponse);
+  async handshake(signal?: AbortSignal): Promise<void> {
+    const response = await this.transport.json(
+      "GET",
+      "/protocol/revision",
+      isProtocolRevisionResponse,
+      undefined,
+      undefined,
+      signal
+    );
     assertRevision(response.protocol_revision);
   }
 
@@ -487,14 +494,16 @@ export class SyncEngine {
     path: string,
     body: EntityCheckInRequest,
     fields: "full" | "minimal",
-    ifMatchVersion?: number
+    ifMatchVersion?: number,
+    signal?: AbortSignal
   ): Promise<EntityCheckInResponse> {
     const response = await this.transport.json(
       "POST",
       path,
       entityCheckInResponseValidator(id, fields),
       body,
-      ifMatchVersion
+      ifMatchVersion,
+      signal
     );
     this.applyEvent(
       {

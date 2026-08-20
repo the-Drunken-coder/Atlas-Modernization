@@ -2,6 +2,7 @@ import type {
   AtlasSubscription,
   AtlasWatchEvent,
   CommandManifest,
+  EntityCheckInOptions,
   RuntimeContextOptions,
   RuntimeTaskDeliveryResponse,
   TaskResource
@@ -119,6 +120,66 @@ describe("AtlasAssetRuntime", () => {
     expect(client.sync.stop).toHaveBeenCalledOnce();
     expect(client.tasks.complete).not.toHaveBeenCalled();
     expect(client.tasks.fail).not.toHaveBeenCalled();
+  });
+
+  it("waits for immediate handler cleanup before stop resolves", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const cleanupStarted = deferred<void>();
+    const cleanupFinished = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                cleanupStarted.resolve();
+                void cleanupFinished.promise.then(() => resolve());
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledOnce());
+    let stopped = false;
+    const stopping = runtime.stop().then(() => {
+      stopped = true;
+    });
+
+    await cleanupStarted.promise;
+    expect(stopped).toBe(false);
+    expect(runtime.status).toBe("stopping");
+    cleanupFinished.resolve();
+    await stopping;
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("aborts stalled check-in network work during stop", async () => {
+    const { client } = fakeClient();
+    const requestStarted = deferred<void>();
+    client.entities.checkIn.mockImplementationOnce(
+      async (_id: string, options?: EntityCheckInOptions): Promise<Record<string, never>> => {
+        requestStarted.resolve();
+        await rejectOnAbort(options?.signal);
+        return {};
+      }
+    );
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await runtime.start();
+    const checkIn = runtime.checkIn();
+    await requestStarted.promise;
+    const stopping = runtime.stop();
+
+    await expect(checkIn).rejects.toThrow();
+    await stopping;
+    expect(runtime.status).toBe("stopped");
   });
 
   it("retries queued delivery after acknowledgement fails", async () => {
@@ -399,7 +460,7 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
     return updated;
   };
   const client = {
-    handshake: vi.fn(async () => void order.push("handshake")),
+    handshake: vi.fn(async (_options?: { signal?: AbortSignal }) => void order.push("handshake")),
     subscribe: vi.fn(async (_subscription: AtlasSubscription) => void order.push("subscribe")),
     watch: vi.fn((_subscription: AtlasSubscription, callback: typeof listener) => {
       listener = callback;
@@ -411,7 +472,7 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
       start: vi.fn(async () => void order.push("sync:start")),
       stop: vi.fn(() => void order.push("sync:stop"))
     },
-    entities: { checkIn: vi.fn(async () => ({})) },
+    entities: { checkIn: vi.fn(async (_id: string, _options?: EntityCheckInOptions) => ({})) },
     runtime: {
       begin: vi.fn(async (_assetId: string, _request: { runtime_id: string }) => void order.push("begin")),
       ready: vi.fn(
@@ -480,4 +541,16 @@ function deferred<T>() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function rejectOnAbort(signal?: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (!signal) return;
+    const fail = () => reject(signal.reason ?? new Error("aborted"));
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener("abort", fail, { once: true });
+  });
 }

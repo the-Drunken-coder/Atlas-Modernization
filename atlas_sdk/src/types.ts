@@ -77,6 +77,7 @@ type EntityCheckInBaseOptions = {
   telemetry?: EntityCheckInTelemetry;
   components?: EntityComponents;
   ifMatchVersion?: number;
+  signal?: AbortSignal;
 };
 
 export type EntityCheckInOptions<TFields extends EntityCheckInFields = EntityCheckInFields> = EntityCheckInBaseOptions &

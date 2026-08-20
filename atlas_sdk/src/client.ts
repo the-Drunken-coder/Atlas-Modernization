@@ -287,8 +287,8 @@ export class AtlasClient {
     });
   }
 
-  async handshake(): Promise<void> {
-    await this.engine.handshake();
+  async handshake(options?: { signal?: AbortSignal }): Promise<void> {
+    await this.engine.handshake(options?.signal);
   }
 
   async subscribe(filter: AtlasSubscription): Promise<void> {
@@ -385,7 +385,7 @@ function createEntityCheckIn(engine: () => SyncEngine): EntityCheckInMethod {
   function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse>;
   function checkIn(id: string, options?: EntityCheckInOptions): Promise<EntityCheckInResponse> {
     const { path, body } = checkInRequest(id, options);
-    return engine().checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion);
+    return engine().checkInEntity(id, path, body, options?.fields ?? "full", options?.ifMatchVersion, options?.signal);
   }
   return checkIn;
 }

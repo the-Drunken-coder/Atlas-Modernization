@@ -84,6 +84,7 @@ Core remains authoritative for Task eligibility and ordering. The runtime asks o
 - A handler throws `AssetTaskFailure("precondition_failed", message)` when a physical or operational precondition prevents execution.
 - A pending unsupported Command is failed with `unsupported_command` instead of remaining silently pending.
 - A terminal Task update from Core aborts the matching local handler. This includes cancellation and failure caused by runtime fencing. The runtime does not issue a second cancellation or abort API call.
+- Handlers must observe their `AbortSignal`, finish physical cleanup, and settle. Runtime shutdown waits for every active handler before a later `start()` can establish a new safety barrier.
 
 Process restart recovery is explicit. A new registration fences the previous runtime in Core and fails its nonterminal Tasks with `asset_restarted`. A temporary WebSocket reconnect keeps the same runtime ID and relies on feed recovery; it is not a process restart.
 

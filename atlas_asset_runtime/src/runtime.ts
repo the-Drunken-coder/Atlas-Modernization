@@ -110,6 +110,7 @@ export class AtlasAssetRuntime {
   private deliveryTail: Promise<void> = Promise.resolve();
   private queuedTail: Promise<void> = Promise.resolve();
   private readonly accepted = new Map<string, AcceptedTask>();
+  private readonly executions = new Set<Promise<void>>();
   private queued: AcceptedTask[] = [];
   private unwatch?: () => void;
   private externalAbort?: ExternalAbortRegistration;
@@ -159,10 +160,10 @@ export class AtlasAssetRuntime {
       .catch(() => undefined)
       .then(async () => {
         signal?.throwIfAborted();
-        await this.client.handshake();
+        await this.client.handshake({ signal });
         const body = report ?? (await this.report?.()) ?? {};
         signal?.throwIfAborted();
-        await this.client.entities.checkIn(this.entityId, body);
+        await this.client.entities.checkIn(this.entityId, { ...body, signal });
       });
     this.checkInTail = cycle;
     return cycle;
@@ -207,7 +208,7 @@ export class AtlasAssetRuntime {
   private async startRuntime(controller: AbortController): Promise<void> {
     try {
       controller.signal.throwIfAborted();
-      await this.client.handshake();
+      await this.client.handshake({ signal: controller.signal });
       const runtimeId = createRuntimeId();
       this.runtimeId = runtimeId;
       this.clearAcceptedWork();
@@ -257,7 +258,8 @@ export class AtlasAssetRuntime {
       this.checkInLoop,
       this.checkInTail,
       this.deliveryTail,
-      this.queuedTail
+      this.queuedTail,
+      ...this.executions
     ]);
     this.checkInLoop = undefined;
     this.controller = undefined;
@@ -312,7 +314,7 @@ export class AtlasAssetRuntime {
       const accepted = { task, command, controller: new AbortController() };
       if (command.scheduling === "immediate") {
         this.accepted.set(task.task_id, accepted);
-        void this.execute(accepted, handler, false).catch((error) => this.reportError(error));
+        void this.executeTracked(accepted, handler, false).catch((error) => this.reportError(error));
         continue;
       }
       await this.client.tasks.acknowledge(task.task_id, { runtimeId, signal });
@@ -331,11 +333,25 @@ export class AtlasAssetRuntime {
           if (!accepted) return;
           const handler = this.handlers.get(accepted.task.command);
           if (!handler || accepted.controller.signal.aborted) continue;
-          await this.execute(accepted, handler, true);
+          await this.executeTracked(accepted, handler, true);
         }
       });
     this.queuedTail = run;
     void run.catch((error) => this.reportError(error));
+  }
+
+  private executeTracked(accepted: AcceptedTask, handler: AssetTaskHandler, queued: boolean): Promise<void> {
+    const execution = this.execute(accepted, handler, queued);
+    this.executions.add(execution);
+    void execution.then(
+      () => {
+        this.executions.delete(execution);
+      },
+      () => {
+        this.executions.delete(execution);
+      }
+    );
+    return execution;
   }
 
   private async execute(accepted: AcceptedTask, handler: AssetTaskHandler, queued: boolean): Promise<void> {
