@@ -450,23 +450,26 @@
   color: var(--error);
 }
 
-.input.bp6-input,
+.input,
 .select-shell,
 .select-shell > select {
   width: 100%;
+  padding: 6px 8px;
   border-radius: var(--radius-sm);
   font-size: 12px;
 }
 
-.input.bp6-input {
+.input {
   border: 1px solid var(--border-strong);
   background: var(--bg-base);
   box-shadow: none;
   color: var(--text-1);
+  font-family: inherit;
 }
 
-.input.bp6-input:focus,
+.input:focus,
 .select-shell > select:focus {
+  outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
