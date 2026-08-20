@@ -84,6 +84,12 @@ type AcceptedTask = {
   controller: AbortController;
 };
 
+type ExternalAbortRegistration = {
+  controller: AbortController;
+  signal: AbortSignal;
+  listener: () => void;
+};
+
 export class AtlasAssetRuntime {
   private readonly client: AtlasAssetClient;
   private readonly entityId: string;
@@ -106,6 +112,7 @@ export class AtlasAssetRuntime {
   private readonly accepted = new Map<string, AcceptedTask>();
   private queued: AcceptedTask[] = [];
   private unwatch?: () => void;
+  private externalAbort?: ExternalAbortRegistration;
 
   constructor(client: AtlasAssetClient, options: AtlasAssetRuntimeOptions) {
     if (!client || typeof client.handshake !== "function") throw new TypeError("client must be AtlasClient-compatible");
@@ -168,11 +175,20 @@ export class AtlasAssetRuntime {
     this.state = "starting";
     const controller = new AbortController();
     this.controller = controller;
-    const externalAbort = () => controller.abort(options?.signal?.reason);
-    options?.signal?.addEventListener("abort", externalAbort, { once: true });
-    if (options?.signal?.aborted) externalAbort();
+    const externalSignal = options?.signal;
+    if (externalSignal) {
+      const listener = () => {
+        controller.abort(externalSignal.reason);
+        if (this.controller === controller && this.state === "running") {
+          void this.stop().catch((error) => this.reportError(error));
+        }
+      };
+      this.externalAbort = { controller, signal: externalSignal, listener };
+      externalSignal.addEventListener("abort", listener, { once: true });
+      if (externalSignal.aborted) listener();
+    }
     const start = this.startRuntime(controller).finally(() => {
-      options?.signal?.removeEventListener("abort", externalAbort);
+      if (this.state !== "running") this.detachExternalAbort(controller);
       if (this.startPromise === start) this.startPromise = undefined;
     });
     this.startPromise = start;
@@ -208,6 +224,7 @@ export class AtlasAssetRuntime {
       await this.client.sync.start();
       controller.signal.throwIfAborted();
       await this.requestDelivery();
+      controller.signal.throwIfAborted();
       this.state = "running";
       this.checkInLoop = this.runCheckInLoop(controller.signal);
       void this.checkInLoop.catch((error) => this.reportError(error));
@@ -228,7 +245,9 @@ export class AtlasAssetRuntime {
 
   private async stopRuntime(): Promise<void> {
     this.state = "stopping";
-    this.controller?.abort();
+    const controller = this.controller;
+    this.detachExternalAbort(controller);
+    controller?.abort();
     this.clearAcceptedWork();
     this.unwatch?.();
     this.unwatch = undefined;
@@ -244,6 +263,13 @@ export class AtlasAssetRuntime {
     this.controller = undefined;
     this.runtimeId = undefined;
     this.state = "stopped";
+  }
+
+  private detachExternalAbort(controller?: AbortController): void {
+    const registration = this.externalAbort;
+    if (!registration || (controller && registration.controller !== controller)) return;
+    registration.signal.removeEventListener("abort", registration.listener);
+    this.externalAbort = undefined;
   }
 
   private taskSubscription(): Extract<AtlasSubscription, { filter: "tasks_for_asset" }> {

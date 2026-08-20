@@ -13,6 +13,8 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
+const immediateTimeoutBatchSize = 100
+
 // BeginRuntimeRegistration fences the previous process and fails all of its
 // nonterminal work before recording the new, not-ready runtime.
 func (a *TaskActions) BeginRuntimeRegistration(ctx context.Context, assetID, runtimeID string) error {
@@ -260,8 +262,9 @@ func (a *TaskActions) failRuntimeTasks(ctx context.Context, tx pgx.Tx, assetID, 
 	return nil
 }
 
-// ReconcileImmediateTimeouts permanently fails immediate Tasks that did not
-// start within the Protocol deadline. It is safe to run at startup and on a timer.
+// ReconcileImmediateTimeouts permanently fails one bounded batch of immediate
+// Tasks that did not start within the Protocol deadline. Repeated calls drain a
+// backlog without holding one transaction for the entire backlog.
 func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, error) {
 	var immediate []string
 	for name, command := range a.catalog {
@@ -282,7 +285,7 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, erro
 		return 0, fmt.Errorf("read database time for immediate Task deadlines: %w", err)
 	}
 	now = now.UTC()
-	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE command = ANY($1) AND status = 'pending' AND created_at <= $2 ORDER BY created_at, task_id FOR UPDATE`, immediate, now.Add(-immediateStartWindow))
+	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE command = ANY($1) AND status = 'pending' AND created_at <= $2 ORDER BY created_at, task_id LIMIT $3 FOR UPDATE SKIP LOCKED`, immediate, now.Add(-immediateStartWindow), immediateTimeoutBatchSize)
 	if err != nil {
 		return 0, fmt.Errorf("lock expired immediate Tasks: %w", err)
 	}

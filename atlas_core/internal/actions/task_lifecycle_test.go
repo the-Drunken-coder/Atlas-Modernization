@@ -209,3 +209,61 @@ func TestProductionCatalogRejectsEveryCommand(t *testing.T) {
 		t.Fatal("production Task module accepted fixture Command")
 	}
 }
+
+func TestImmediateTimeoutReconciliationCommitsBoundedBatches(t *testing.T) {
+	pool := openActionsTestPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	assetID := fmt.Sprintf("timeout-batch-asset-%d", time.Now().UnixNano())
+	taskPrefix := fmt.Sprintf("timeout-batch-task-%d", time.Now().UnixNano())
+	defer cleanupFinalBlobValidationRowsWithTimeout(t, pool, assetID, "")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tasks (
+			task_id, asset_id, command, input, status, idempotency_key,
+			runtime_id, created_at, updated_at, version
+		)
+		SELECT
+			$1 || '-' || sequence,
+			$2,
+			'fixture.immediate',
+			'{}'::jsonb,
+			'pending',
+			$1 || '-attempt-' || sequence,
+			'runtime-1',
+			clock_timestamp() - interval '61 seconds',
+			clock_timestamp(),
+			1
+		FROM generate_series(1, $3) AS sequence
+	`, taskPrefix, assetID, immediateTimeoutBatchSize+1); err != nil {
+		t.Fatalf("insert expired immediate Task backlog: %v", err)
+	}
+
+	tasks := NewTaskActionsWithCatalog(pool, fixtureTaskCatalog(t))
+	if count, err := tasks.ReconcileImmediateTimeouts(ctx); err != nil || count != immediateTimeoutBatchSize {
+		t.Fatalf("first immediate timeout batch = %d, %v", count, err)
+	}
+	var failed, pending int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'failed'),
+			COUNT(*) FILTER (WHERE status = 'pending')
+		FROM tasks
+		WHERE asset_id = $1
+	`, assetID).Scan(&failed, &pending); err != nil {
+		t.Fatalf("count first immediate timeout batch: %v", err)
+	}
+	if failed != immediateTimeoutBatchSize || pending != 1 {
+		t.Fatalf("first immediate timeout batch left failed:%d pending:%d", failed, pending)
+	}
+
+	if count, err := tasks.ReconcileImmediateTimeouts(ctx); err != nil || count != 1 {
+		t.Fatalf("second immediate timeout batch = %d, %v", count, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM tasks WHERE asset_id = $1 AND status = 'failed'`, assetID).Scan(&failed); err != nil {
+		t.Fatalf("count completed immediate timeout backlog: %v", err)
+	}
+	if failed != immediateTimeoutBatchSize+1 {
+		t.Fatalf("completed immediate timeout backlog = %d, want %d", failed, immediateTimeoutBatchSize+1)
+	}
+}

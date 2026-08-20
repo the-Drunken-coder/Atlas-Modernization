@@ -87,6 +87,40 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("stops when its lifecycle signal is aborted after startup", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const lifecycle = new AbortController();
+    const handlerAborted = deferred<void>();
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: {
+        "immediate.observe": ({ signal }) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                handlerAborted.resolve();
+                resolve();
+              },
+              { once: true }
+            );
+          })
+      }
+    });
+
+    await runtime.start({ signal: lifecycle.signal });
+    await vi.waitFor(() => expect(client.tasks.start).toHaveBeenCalledOnce());
+    lifecycle.abort(new Error("process stopping"));
+
+    await handlerAborted.promise;
+    await vi.waitFor(() => expect(runtime.status).toBe("stopped"));
+    expect(client.sync.stop).toHaveBeenCalledOnce();
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+  });
+
   it("retries queued delivery after acknowledgement fails", async () => {
     const pending = task("queued-1", "queued.move");
     const { client, emit } = fakeClient();
