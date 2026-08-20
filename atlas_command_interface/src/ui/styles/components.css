@@ -447,7 +447,7 @@
 
 .field__error {
   font-size: 11px;
-  color: var(--error);
+  color: var(--error-text);
 }
 
 .input,

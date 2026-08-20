@@ -1,5 +1,5 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   entityBattery,
   entityClassification,
@@ -20,14 +20,25 @@ type EntityListProps = {
   entities: EntityResource[];
   selectedId?: string;
   restoreFocusId?: string;
+  query: string;
   emptyLabel: string;
   onSelect: (entity: EntityResource) => void;
+  onQueryChange: (query: string) => void;
   onPreview?: (entity: EntityResource | null) => void;
 };
 
-export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, onSelect, onPreview }: EntityListProps) {
+export function EntityList({
+  entities,
+  selectedId,
+  restoreFocusId,
+  query,
+  emptyLabel,
+  onSelect,
+  onQueryChange,
+  onPreview
+}: EntityListProps) {
   const now = useHeartbeatClock();
-  const [query, setQuery] = useState("");
+  const restoreFocusRef = useRef<HTMLButtonElement>(null);
   const visibleEntities = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return entities;
@@ -35,6 +46,11 @@ export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, o
       `${entityDisplayName(entity)} ${entityMeta(entity, now)}`.toLocaleLowerCase().includes(normalized)
     );
   }, [entities, now, query]);
+
+  useEffect(() => {
+    restoreFocusRef.current?.focus();
+  }, [restoreFocusId]);
+
   if (entities.length === 0) {
     return <div className="panel__empty">{emptyLabel}</div>;
   }
@@ -48,7 +64,7 @@ export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, o
           aria-label="Filter entities"
           placeholder="Filter entities"
           value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          onChange={(event) => onQueryChange(event.currentTarget.value)}
         />
       </label>
       <div className="entity-list__summary" aria-live="polite">
@@ -65,7 +81,9 @@ export function EntityList({ entities, selectedId, restoreFocusId, emptyLabel, o
                 className="entity-row"
                 data-selected={entity.entity_id === selectedId}
                 aria-current={entity.entity_id === selectedId ? "true" : undefined}
-                autoFocus={entity.entity_id === selectedId && entity.entity_id === restoreFocusId && !query.trim()}
+                ref={
+                  entity.entity_id === selectedId && entity.entity_id === restoreFocusId ? restoreFocusRef : undefined
+                }
                 onBlur={() => onPreview?.(null)}
                 onClick={() => {
                   onPreview?.(null);

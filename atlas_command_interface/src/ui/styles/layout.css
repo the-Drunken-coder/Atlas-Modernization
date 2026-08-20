@@ -20,14 +20,14 @@
 }
 
 .app-error code {
-  color: var(--error);
+  color: var(--error-text);
   font-family: var(--font-mono);
   max-width: 60ch;
   text-align: center;
 }
 
 .app-error__detail {
-  color: var(--error);
+  color: var(--error-text);
   font-size: 12px;
 }
 
@@ -216,12 +216,12 @@
 }
 
 .account-menu__item--danger {
-  color: var(--error);
+  color: var(--error-text);
 }
 
 .account-menu__error {
   padding: var(--space-2);
-  color: var(--error);
+  color: var(--error-text);
   font-size: 11px;
 }
 

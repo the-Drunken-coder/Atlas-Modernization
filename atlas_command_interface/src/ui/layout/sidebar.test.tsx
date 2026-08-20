@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { useReducer } from "react";
+import { type ComponentProps, useReducer, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { EntityList } from "../../features/EntityList.js";
 import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
@@ -17,6 +17,7 @@ const ASSETS: EntityResource[] = [
 
 function Harness() {
   const [state, dispatch] = useReducer(sidebarReducer, initialSidebarState);
+  const [query, setQuery] = useState("");
   const activeList =
     state.view.mode === "list" ? state.view.list : state.selection ? listForKind(state.selection.kind) : null;
 
@@ -47,10 +48,12 @@ function Harness() {
               entities={ASSETS}
               selectedId={state.selection?.id}
               restoreFocusId={state.focusRequest?.id}
+              query={query}
               emptyLabel="none"
               onSelect={(entity) =>
                 dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })
               }
+              onQueryChange={setQuery}
             />
           ) : (
             <div>
@@ -61,6 +64,11 @@ function Harness() {
       </div>
     </>
   );
+}
+
+function StatefulEntityList(props: Omit<ComponentProps<typeof EntityList>, "query" | "onQueryChange">) {
+  const [query, setQuery] = useState("");
+  return <EntityList {...props} query={query} onQueryChange={setQuery} />;
 }
 
 describe("sidebar rail + panel", () => {
@@ -115,7 +123,7 @@ describe("sidebar rail + panel", () => {
   it("does not repeat preview callbacks on row pointer movement", () => {
     const onPreview = vi.fn();
     render(
-      <EntityList
+      <StatefulEntityList
         entities={ASSETS}
         selectedId={undefined}
         emptyLabel="none"
@@ -135,7 +143,7 @@ describe("sidebar rail + panel", () => {
 
   it("filters entity rows without changing the source list", async () => {
     const user = userEvent.setup();
-    render(<EntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+    render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
 
     await user.type(screen.getByRole("searchbox", { name: "Filter entities" }), "Two");
 
@@ -146,7 +154,7 @@ describe("sidebar rail + panel", () => {
 
   it("normalizes the filter query and shows the no-match state", async () => {
     const user = userEvent.setup();
-    render(<EntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+    render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
 
     const filter = screen.getByRole("searchbox", { name: "Filter entities" });
     await user.type(filter, "   ");
@@ -161,7 +169,7 @@ describe("sidebar rail + panel", () => {
   it("keeps filter focus when a selected row remounts", async () => {
     const user = userEvent.setup();
     render(
-      <EntityList
+      <StatefulEntityList
         entities={ASSETS}
         selectedId="asset-1"
         restoreFocusId="asset-1"
@@ -173,7 +181,7 @@ describe("sidebar rail + panel", () => {
     const filter = screen.getByRole("searchbox", { name: "Filter entities" });
     await user.click(filter);
     fireEvent.change(filter, { target: { value: "Two" } });
-    fireEvent.change(filter, { target: { value: "One" } });
+    fireEvent.change(filter, { target: { value: "" } });
 
     expect(filter).toHaveFocus();
   });

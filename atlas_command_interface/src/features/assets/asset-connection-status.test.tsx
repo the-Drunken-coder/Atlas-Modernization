@@ -66,7 +66,9 @@ describe("asset connection status", () => {
     "shows %s heartbeat qualification consistently",
     (_case, lastSeen, label, color, heartbeatLabel, heartbeatColor) => {
       const entity = asset(lastSeen);
-      const { unmount } = render(<EntityList entities={[entity]} emptyLabel="none" onSelect={() => {}} />);
+      const { unmount } = render(
+        <EntityList entities={[entity]} query="" emptyLabel="none" onSelect={() => {}} onQueryChange={() => {}} />
+      );
 
       expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
       expect(document.querySelector<HTMLElement>(".entity-row__dot")).toHaveStyle({ background: color });
@@ -86,7 +88,15 @@ describe("asset connection status", () => {
   );
 
   it("updates the entity list when a fresh heartbeat becomes stale without a snapshot change", () => {
-    render(<EntityList entities={[asset("2026-06-20T00:09:50Z")]} emptyLabel="none" onSelect={() => {}} />);
+    render(
+      <EntityList
+        entities={[asset("2026-06-20T00:09:50Z")]}
+        query=""
+        emptyLabel="none"
+        onSelect={() => {}}
+        onQueryChange={() => {}}
+      />
+    );
     expect(screen.getByText(/Connected/)).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(21_000));
@@ -111,7 +121,7 @@ describe("asset connection status", () => {
     const entity = asset();
     entity.components = { telemetry: { last_update: "2026-06-20T00:09:50Z" } };
 
-    render(<EntityList entities={[entity]} emptyLabel="none" onSelect={() => {}} />);
+    render(<EntityList entities={[entity]} query="" emptyLabel="none" onSelect={() => {}} onQueryChange={() => {}} />);
 
     expect(document.querySelector<HTMLElement>(".entity-row__dot")).toHaveStyle({ background: "var(--map-asset)" });
   });

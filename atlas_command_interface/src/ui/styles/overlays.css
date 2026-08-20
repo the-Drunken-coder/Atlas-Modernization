@@ -79,7 +79,7 @@
 .banner--error {
   background: color-mix(in srgb, var(--error) 16%, transparent);
   border: 1px solid var(--error);
-  color: var(--error);
+  color: var(--error-text);
 }
 
 .banner--info {
