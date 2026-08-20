@@ -215,7 +215,7 @@ func TestTaskActionValidationBeforePersistence(t *testing.T) {
 	if err := tasks.CompleteRuntimeRegistration(ctx, "asset-1", "runtime-1", append(manifest, manifest[0])); err == nil {
 		t.Fatal("runtime accepted a duplicate Command Manifest entry")
 	}
-	if count, err := NewTaskActionsWithCatalog(nil, nil).ReconcileImmediateTimeouts(ctx, taskStateTestTime); err != nil || count != 0 {
+	if count, err := NewTaskActionsWithCatalog(nil, nil).ReconcileImmediateTimeouts(ctx); err != nil || count != 0 {
 		t.Fatalf("empty-catalog reconciliation = %d, %v", count, err)
 	}
 }

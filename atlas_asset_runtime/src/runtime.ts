@@ -213,6 +213,9 @@ export class AtlasAssetRuntime {
       void this.checkInLoop.catch((error) => this.reportError(error));
     } catch (error) {
       if (this.controller === controller && this.state !== "stopping") {
+        controller.abort(error);
+        this.clearAcceptedWork();
+        this.client.sync.stop();
         this.controller = undefined;
         this.runtimeId = undefined;
         this.unwatch?.();
@@ -281,12 +284,13 @@ export class AtlasAssetRuntime {
         continue;
       }
       const accepted = { task, command, controller: new AbortController() };
-      this.accepted.set(task.task_id, accepted);
       if (command.scheduling === "immediate") {
+        this.accepted.set(task.task_id, accepted);
         void this.execute(accepted, handler, false).catch((error) => this.reportError(error));
         continue;
       }
       await this.client.tasks.acknowledge(task.task_id, { runtimeId, signal });
+      this.accepted.set(task.task_id, accepted);
       this.queued.push(accepted);
       this.scheduleQueuedWork();
     }

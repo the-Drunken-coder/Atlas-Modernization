@@ -262,7 +262,7 @@ func (a *TaskActions) failRuntimeTasks(ctx context.Context, tx pgx.Tx, assetID, 
 
 // ReconcileImmediateTimeouts permanently fails immediate Tasks that did not
 // start within the Protocol deadline. It is safe to run at startup and on a timer.
-func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context, now time.Time) (int, error) {
+func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context) (int, error) {
 	var immediate []string
 	for name, command := range a.catalog {
 		if effectiveScheduling(command.Scheduling) == protocol.CommandSchedulingImmediate {
@@ -277,6 +277,11 @@ func (a *TaskActions) ReconcileImmediateTimeouts(ctx context.Context, now time.T
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return 0, fmt.Errorf("read database time for immediate Task deadlines: %w", err)
+	}
+	now = now.UTC()
 	rows, err := tx.Query(ctx, taskSelectSQL+` WHERE command = ANY($1) AND status = 'pending' AND created_at <= $2 ORDER BY created_at, task_id FOR UPDATE`, immediate, now.Add(-immediateStartWindow))
 	if err != nil {
 		return 0, fmt.Errorf("lock expired immediate Tasks: %w", err)

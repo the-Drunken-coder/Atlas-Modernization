@@ -158,6 +158,28 @@ func TestTaskLifecycleIdempotencyOrderingAndRuntimeFencing(t *testing.T) {
 	if _, err := tasks.Start(ctx, immediateTwo.TaskID, "runtime-1"); err != nil {
 		t.Fatalf("start second immediate Task: %v", err)
 	}
+	expiredImmediate, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.immediate", Input: map[string]any{}}, "attempt-immediate-expired")
+	if err != nil {
+		t.Fatalf("create expired immediate Task: %v", err)
+	}
+	freshImmediate, _, err := tasks.Create(ctx, CreateTaskParams{AssetID: assetID, Command: "fixture.immediate", Input: map[string]any{}}, "attempt-immediate-fresh")
+	if err != nil {
+		t.Fatalf("create fresh immediate Task: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tasks SET created_at = clock_timestamp() - interval '61 seconds' WHERE task_id = $1`, expiredImmediate.TaskID); err != nil {
+		t.Fatalf("age immediate Task: %v", err)
+	}
+	if count, err := tasks.ReconcileImmediateTimeouts(ctx); err != nil || count != 1 {
+		t.Fatalf("reconcile immediate Task deadlines = %d, %v", count, err)
+	}
+	expiredImmediate, err = tasks.Get(ctx, expiredImmediate.TaskID)
+	if err != nil || expiredImmediate.Status != string(protocol.TaskStatusFailed) {
+		t.Fatalf("expired immediate Task = %#v, %v", expiredImmediate, err)
+	}
+	freshImmediate, err = tasks.Get(ctx, freshImmediate.TaskID)
+	if err != nil || freshImmediate.Status != string(protocol.TaskStatusPending) {
+		t.Fatalf("fresh immediate Task = %#v, %v", freshImmediate, err)
+	}
 
 	if err := tasks.BeginRuntimeRegistration(ctx, assetID, "runtime-2"); err != nil {
 		t.Fatalf("restart runtime: %v", err)

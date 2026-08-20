@@ -248,7 +248,11 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 			return nil, err
 		}
 	}
-	changed, err := mutate(task, command, entry, time.Now().UTC())
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return nil, fmt.Errorf("read database time for Task transition: %w", err)
+	}
+	changed, err := mutate(task, command, entry, now.UTC())
 	if err != nil {
 		return nil, err
 	}

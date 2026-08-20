@@ -2,6 +2,7 @@ import type {
   AtlasSubscription,
   AtlasWatchEvent,
   CommandManifest,
+  RuntimeContextOptions,
   RuntimeTaskDeliveryResponse,
   TaskResource
 } from "@the-drunken-coder/atlas-sdk";
@@ -68,6 +69,48 @@ describe("AtlasAssetRuntime", () => {
     expect(client.runtime.ready).not.toHaveBeenCalled();
     expect(client.runtime.tasks).not.toHaveBeenCalled();
     expect(runtime.status).toBe("stopped");
+  });
+
+  it("cleans up synchronization when initial delivery fails", async () => {
+    const { client } = fakeClient();
+    client.runtime.tasks.mockRejectedValueOnce(new Error("delivery unavailable"));
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    await expect(runtime.start()).rejects.toThrow("delivery unavailable");
+
+    expect(runtime.status).toBe("stopped");
+    expect(client.runtime.tasks.mock.calls.at(0)?.[1].signal?.aborted).toBe(true);
+    expect(client.sync.stop).toHaveBeenCalledOnce();
+
+    await runtime.start();
+    expect(runtime.status).toBe("running");
+    await runtime.stop();
+  });
+
+  it("retries queued delivery after acknowledgement fails", async () => {
+    const pending = task("queued-1", "queued.move");
+    const { client, emit } = fakeClient();
+    const onError = vi.fn();
+    const handler = vi.fn(async () => undefined);
+    client.tasks.acknowledge.mockRejectedValueOnce(new Error("acknowledgement unavailable"));
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("queued.move")],
+      handlers: { "queued.move": handler },
+      onError
+    });
+
+    await runtime.start();
+    emit(pending);
+    await vi.waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "acknowledgement unavailable" }))
+    );
+
+    emit(pending);
+    await vi.waitFor(() => expect(client.tasks.acknowledge).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+
+    await runtime.stop();
   });
 
   it("runs queued work serially while immediate work overlaps", async () => {
@@ -341,7 +384,7 @@ function fakeClient(initialTasks: TaskResource[] = [], order: string[] = []) {
         async (_assetId: string, _request: { runtime_id: string; manifest: CommandManifest }) =>
           void order.push("ready")
       ),
-      tasks: vi.fn(async () => response())
+      tasks: vi.fn(async (_assetId: string, _options: RuntimeContextOptions) => response())
     },
     tasks: {
       acknowledge: vi.fn(async (id: string) => transition(id, "acknowledged")),

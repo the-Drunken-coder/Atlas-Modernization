@@ -147,7 +147,7 @@ func main() {
 		logger.Fatal().Err(err).Msg("Failed to ensure database tables")
 	}
 	taskActions := actions.NewTaskActions(db.Pool)
-	if _, err := taskActions.ReconcileImmediateTimeouts(ensureCtx, time.Now().UTC()); err != nil {
+	if _, err := taskActions.ReconcileImmediateTimeouts(ensureCtx); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to reconcile immediate Task deadlines")
 	}
 	adminAuth := admin.NewService(db.Pool, cfg)
@@ -307,8 +307,8 @@ func runImmediateTaskTimeouts(ctx context.Context, logger zerolog.Logger, tasks 
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
-			if _, err := tasks.ReconcileImmediateTimeouts(ctx, now.UTC()); err != nil && ctx.Err() == nil {
+		case <-ticker.C:
+			if _, err := tasks.ReconcileImmediateTimeouts(ctx); err != nil && ctx.Err() == nil {
 				logger.Error().Err(err).Msg("Immediate Task deadline reconciliation failed")
 			}
 		}
