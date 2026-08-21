@@ -1147,6 +1147,67 @@ describe("AtlasAssetRuntime", () => {
     }
   });
 
+  it.each<[string, () => unknown, string]>([
+    [
+      "an array whose ownKeys trap mutates an element",
+      () => {
+        const output = [1];
+        return new Proxy(output, {
+          ownKeys(target) {
+            target[0] = 2;
+            return Reflect.ownKeys(target);
+          }
+        });
+      },
+      "[1]"
+    ],
+    [
+      "a record whose prototype trap mutates a value",
+      () => {
+        const output = { value: 1 };
+        return new Proxy(output, {
+          getPrototypeOf(target) {
+            target.value = 2;
+            return Object.prototype;
+          }
+        });
+      },
+      '{"value":1}'
+    ],
+    [
+      "an enumerable toJSON getter",
+      () => {
+        let reads = 0;
+        return Object.defineProperty({}, "toJSON", { enumerable: true, get: () => ++reads });
+      },
+      '{"toJSON":2}'
+    ],
+    [
+      "an array proxy with a coercible length",
+      () =>
+        new Proxy([], {
+          get(target, key, receiver) {
+            return key === "length" ? "0" : Reflect.get(target, key, receiver);
+          }
+        }),
+      "[]"
+    ]
+  ])("preserves JSON serialization order for %s", async (_label, output, expected) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output() as never }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(JSON.stringify(client.tasks.complete.mock.calls[0]![1].output)).toBe(expected);
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("copies deeply nested JSON output without using the call stack", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);

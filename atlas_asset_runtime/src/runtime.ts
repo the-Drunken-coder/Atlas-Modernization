@@ -701,11 +701,11 @@ function snapshotTaskOutput(output: JSONValue): JSONValue {
 type JSONContainer = JSONValue[] | Record<string, JSONValue>;
 
 type JSONCopyFrame = {
+  kind: "array" | "record";
   source: object;
   target: JSONContainer;
   keys: string[];
   index: number;
-  ownToJSON?: { value: unknown };
 };
 
 type PendingJSONMember = {
@@ -744,15 +744,14 @@ function copyJSONValue(value: unknown): JSONValue {
 
     const frame = frames.at(-1)!;
     if (frame.index === frame.keys.length) {
+      validateJSONCopyFrame(frame);
       ancestors.delete(frame.source);
       frames.pop();
       continue;
     }
 
     const key = frame.keys[frame.index++]!;
-    const source =
-      key === "toJSON" && frame.ownToJSON !== undefined ? frame.ownToJSON.value : Reflect.get(frame.source, key);
-    pending = { key, source, target: frame.target };
+    pending = { key, source: Reflect.get(frame.source, key), target: frame.target };
   }
 
   if (snapshot === undefined) throw new TypeError();
@@ -769,36 +768,47 @@ function copyJSONPrimitive(value: unknown): JSONValue | undefined {
 function createJSONCopyFrame(source: object): JSONCopyFrame {
   const toJSON = Reflect.get(source, "toJSON");
   if (typeof toJSON === "function") throw new TypeError();
-  const ownKeys = Reflect.ownKeys(source);
-  if (ownKeys.some((key) => typeof key === "symbol")) throw new TypeError();
-  const keys = ownKeys as string[];
 
   if (Array.isArray(source)) {
-    const length = source.length;
+    const length = Reflect.get(source, "length");
     const entries = Array.from({ length }, (_, index) => String(index));
-    const entrySet = new Set(entries);
-    if (!keys.includes("length") || keys.some((key) => key !== "length" && !entrySet.has(key))) {
-      throw new TypeError();
-    }
     return {
       index: 0,
+      kind: "array",
       keys: entries,
       source,
-      target: Object.setPrototypeOf(new Array<JSONValue>(length), null)
+      target: Object.setPrototypeOf(new Array<JSONValue>(entries.length), null)
     };
   }
 
-  if (!hasJSONRecordPrototype(source)) throw new TypeError();
+  const ownKeys = Reflect.ownKeys(source);
+  if (ownKeys.some((key) => typeof key === "symbol")) throw new TypeError();
+  const keys = ownKeys as string[];
   for (const key of keys) {
     if (!Reflect.getOwnPropertyDescriptor(source, key)?.enumerable) throw new TypeError();
   }
   return {
     index: 0,
+    kind: "record",
     keys,
-    ownToJSON: keys.includes("toJSON") ? { value: toJSON } : undefined,
     source,
     target: Object.create(null) as Record<string, JSONValue>
   };
+}
+
+function validateJSONCopyFrame(frame: JSONCopyFrame): void {
+  if (frame.kind === "array") {
+    const entries = new Set(frame.keys);
+    const keys = Reflect.ownKeys(frame.source);
+    if (
+      !keys.includes("length") ||
+      keys.some((key) => typeof key === "symbol" || (key !== "length" && !entries.has(key)))
+    ) {
+      throw new TypeError();
+    }
+    return;
+  }
+  if (!hasJSONRecordPrototype(frame.source)) throw new TypeError();
 }
 
 function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {
