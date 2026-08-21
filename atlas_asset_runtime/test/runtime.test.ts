@@ -1038,6 +1038,10 @@ describe("AtlasAssetRuntime", () => {
     ["nested undefined", () => ({ value: undefined })],
     ["nested function", () => ({ value: () => "ignored" })],
     ["nested symbol", () => ({ value: Symbol("ignored") })],
+    [
+      "symbol-keyed property",
+      () => Object.defineProperty({ value: 1 }, Symbol("ignored"), { value: 2, enumerable: true })
+    ],
     ["sparse array", () => Array(1)]
   ])("fails %s handler output without attempting completion", async (_label, output) => {
     const pending = task("immediate-1", "immediate.observe");
@@ -1100,6 +1104,25 @@ describe("AtlasAssetRuntime", () => {
     await runtime.start();
     await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
     expect(reads).toBe(1);
+    expect(client.tasks.complete).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({ output: { value: 1 } })
+    );
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("snapshots transparent proxy output through JSON serialization", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => new Proxy({ value: 1 }, {}) }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
     expect(client.tasks.complete).toHaveBeenCalledWith(
       pending.task_id,
       expect.objectContaining({ output: { value: 1 } })

@@ -690,26 +690,31 @@ function isRetryableLifecycleError(error: unknown): boolean {
 function snapshotTaskOutput(output: JSONValue): JSONValue {
   let snapshot: unknown;
   try {
-    snapshot = structuredClone(output);
+    const serialized = JSON.stringify(output, (_key, value: unknown) => {
+      if (!isLosslessJSONMember(value)) throw new TypeError();
+      return value;
+    });
+    if (serialized === undefined) throw new TypeError();
+    snapshot = JSON.parse(serialized);
   } catch {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
   }
-  if (!isJSONValue(snapshot) || hasLossyJSONShape(snapshot)) {
+  if (!isJSONValue(snapshot)) {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
   }
   return snapshot;
 }
 
-function hasLossyJSONShape(value: JSONValue): boolean {
-  if (typeof value === "number") return Object.is(value, -0);
-  if (Array.isArray(value)) {
-    if (Object.keys(value).length !== value.length) return true;
-    for (let index = 0; index < value.length; index++) {
-      if (!Object.hasOwn(value, index) || hasLossyJSONShape(value[index])) return true;
-    }
+function isLosslessJSONMember(value: unknown): boolean {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
+  if (typeof value === "number") return Number.isFinite(value) && !Object.is(value, -0);
+  if (typeof value !== "object") return false;
+  if (Object.getOwnPropertySymbols(value).some((key) => Object.prototype.propertyIsEnumerable.call(value, key))) {
     return false;
   }
-  return value !== null && typeof value === "object" && Object.values(value).some(hasLossyJSONShape);
+  if (!Array.isArray(value)) return true;
+  const keys = Object.keys(value);
+  return keys.length === value.length && keys.every((key, index) => key === String(index));
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
