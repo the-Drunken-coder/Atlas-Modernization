@@ -18,7 +18,7 @@ func TestSchemaLoadsFromEmbeddedFiles(t *testing.T) {
 		"latitude":  40.7,
 		"longitude": -73.9,
 	}
-	if errors := ValidateTelemetryComponent(telemetry); len(errors) > 0 {
+	if errors := ValidateDefinition("TelemetryComponent", telemetry); len(errors) > 0 {
 		t.Fatalf("ValidateTelemetryComponent(valid) errors = %v", errors)
 	}
 }
@@ -28,7 +28,7 @@ func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
 		"command": "fixture.immediate", "name": "Immediate", "description": "Run now.",
 		"input_schema": "atlas.tasking.FixtureInput", "scheduling": "immediate",
 	}}
-	if errors := ValidateCommandCatalog(valid); len(errors) != 0 {
+	if errors := ValidateDefinition("CommandCatalog", valid); len(errors) != 0 {
 		t.Fatalf("ValidateCommandCatalog(valid) errors = %v", errors)
 	}
 
@@ -36,7 +36,7 @@ func TestValidateCommandCatalogIncludesSemanticRules(t *testing.T) {
 		map[string]any{"command": "fixture.duplicate", "name": "First", "description": "First.", "input_schema": "atlas.tasking.FixtureInput"},
 		map[string]any{"command": "fixture.duplicate", "name": "Second", "description": "Second.", "input_schema": "atlas.tasking.FixtureInput"},
 	}
-	errors := ValidateCommandCatalog(invalid)
+	errors := ValidateDefinition("CommandCatalog", invalid)
 	joined := strings.Join(errors, "\n")
 	for _, want := range []string{"duplicated", "fixture.duplicate"} {
 		if !strings.Contains(joined, want) {
@@ -63,10 +63,10 @@ func TestConcurrentValidationIsSafe(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			if i%2 == 0 {
-				results <- ValidateTelemetryComponent(map[string]any{"latitude": 40.7})
+				results <- ValidateDefinition("TelemetryComponent", map[string]any{"latitude": 40.7})
 				return
 			}
-			results <- ValidateTelemetryComponent(map[string]any{"latitude": 91.0})
+			results <- ValidateDefinition("TelemetryComponent", map[string]any{"latitude": 91.0})
 		}(i)
 	}
 	wg.Wait()
@@ -90,7 +90,7 @@ func TestUnknownComponentValidationUsesSchemaFields(t *testing.T) {
 		"telemetry":    map[string]any{},
 		"custom_notes": "operator supplied",
 	}
-	if errors := ValidateEntityComponents(valid); len(errors) > 0 {
+	if errors := ValidateDefinition("EntityComponents", valid); len(errors) > 0 {
 		t.Fatalf("ValidateEntityComponents(valid schema/custom fields) errors = %v", errors)
 	}
 
@@ -105,7 +105,7 @@ func TestNonFinitePaths(t *testing.T) {
 	}{
 		{
 			name:     "nested map path",
-			validate: ValidateEntityBlob,
+			validate: validatorFor("EntityBlob"),
 			value: map[string]any{
 				"components": map[string]any{
 					"telemetry": map[string]any{"speed_m_s": math.NaN()},
@@ -115,7 +115,7 @@ func TestNonFinitePaths(t *testing.T) {
 		},
 		{
 			name:     "positive infinity inside slice",
-			validate: ValidateGeometryComponent,
+			validate: validatorFor("GeometryComponent"),
 			value: map[string]any{
 				"type":        "Point",
 				"coordinates": []any{math.Inf(1), 40.0},
@@ -124,25 +124,25 @@ func TestNonFinitePaths(t *testing.T) {
 		},
 		{
 			name:     "negative infinity in top-level slice",
-			validate: ValidateMediaRefsComponent,
+			validate: validatorFor("MediaRefsComponent"),
 			value:    []any{map[string]any{"object_id": math.Inf(-1)}},
 			want:     "[0].object_id: must be finite",
 		},
 		{
 			name:     "bare non-finite value",
-			validate: ValidateTelemetryComponent,
+			validate: validatorFor("TelemetryComponent"),
 			value:    math.NaN(),
 			want:     "value: must be finite",
 		},
 		{
 			name:     "float32 NaN",
-			validate: ValidateTelemetryComponent,
+			validate: validatorFor("TelemetryComponent"),
 			value:    map[string]any{"latitude": float32(math.NaN())},
 			want:     "latitude: must be finite",
 		},
 		{
 			name:     "typed float slice",
-			validate: ValidateGeometryComponent,
+			validate: validatorFor("GeometryComponent"),
 			value: map[string]any{
 				"type":        "Point",
 				"coordinates": []float64{math.Inf(1), 40.0},
@@ -169,7 +169,7 @@ func TestMultipleViolationsAreSorted(t *testing.T) {
 		"latitude":  91.0,
 		"longitude": -181.0,
 	}
-	errors := ValidateTelemetryComponent(invalid)
+	errors := ValidateDefinition("TelemetryComponent", invalid)
 	if len(errors) < 2 {
 		t.Fatalf("errors = %v, want at least two", errors)
 	}
@@ -186,7 +186,7 @@ func TestObjectBlobAcceptsTypedUsageHints(t *testing.T) {
 		"size_bytes":  int64(7966),
 		"usage_hints": []string{"mission_plan"},
 	}
-	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
+	if errors := ValidateDefinition("ObjectBlob", blob); len(errors) > 0 {
 		t.Fatalf("ValidateObjectBlob(typed usage_hints) errors = %v", errors)
 	}
 }
@@ -199,7 +199,7 @@ func TestObjectBlobAcceptsJSONNumberSizeBytes(t *testing.T) {
 			"mission_plan",
 		},
 	}
-	if errors := ValidateObjectBlob(blob); len(errors) > 0 {
+	if errors := ValidateDefinition("ObjectBlob", blob); len(errors) > 0 {
 		t.Fatalf("ValidateObjectBlob(json.Number size_bytes) errors = %v", errors)
 	}
 }
@@ -208,7 +208,7 @@ func TestObjectBlobRejectsOversizedJSONNumberSizeBytes(t *testing.T) {
 	blob := map[string]any{
 		"size_bytes": json.Number("1e10000"),
 	}
-	errors := ValidateObjectBlob(blob)
+	errors := ValidateDefinition("ObjectBlob", blob)
 	if len(errors) == 0 {
 		t.Fatal("ValidateObjectBlob(oversized json.Number size_bytes) returned no errors")
 	}
@@ -231,10 +231,10 @@ func TestObjectDetailResourceUsesExtraWithoutWideningFeedResources(t *testing.T)
 		},
 		"extra": map[string]any{"source": "local import"},
 	}
-	if errors := ValidateObjectDetailResource(detail); len(errors) > 0 {
+	if errors := ValidateDefinition("ObjectDetailResource", detail); len(errors) > 0 {
 		t.Fatalf("ValidateObjectDetailResource(extra) errors = %v", errors)
 	}
-	if errors := ValidateObjectResource(detail); len(errors) == 0 {
+	if errors := ValidateDefinition("ObjectResource", detail); len(errors) == 0 {
 		t.Fatal("ValidateObjectResource accepted full-detail extra")
 	}
 
@@ -244,26 +244,26 @@ func TestObjectDetailResourceUsesExtraWithoutWideningFeedResources(t *testing.T)
 			missingExtra[key] = value
 		}
 	}
-	if errors := ValidateObjectDetailResource(missingExtra); len(errors) == 0 {
+	if errors := ValidateDefinition("ObjectDetailResource", missingExtra); len(errors) == 0 {
 		t.Fatal("ValidateObjectDetailResource accepted missing required extra")
 	}
 
 	detail["payload"] = detail["extra"]
 	delete(detail, "extra")
-	if errors := ValidateObjectDetailResource(detail); len(errors) == 0 {
+	if errors := ValidateDefinition("ObjectDetailResource", detail); len(errors) == 0 {
 		t.Fatal("ValidateObjectDetailResource accepted legacy payload field")
 	}
 }
 
 func TestRawJSONUsesJSONNumberNormalization(t *testing.T) {
 	raw := json.RawMessage(`{"bucket":"atlas-media","size_bytes":7966}`)
-	if errors := ValidateObjectBlob(raw); len(errors) > 0 {
+	if errors := ValidateDefinition("ObjectBlob", raw); len(errors) > 0 {
 		t.Fatalf("ValidateObjectBlob(raw JSON) errors = %v", errors)
 	}
 }
 
 func TestRawJSONRejectsTrailingValues(t *testing.T) {
-	errors := ValidateObjectBlob(json.RawMessage(`{"size_bytes":1}{"bad":true}`))
+	errors := ValidateDefinition("ObjectBlob", json.RawMessage(`{"size_bytes":1}{"bad":true}`))
 	if len(errors) != 1 {
 		t.Fatalf("errors = %v, want exactly one", errors)
 	}
@@ -278,20 +278,20 @@ func TestRequestExamplesValidate(t *testing.T) {
 		path     string
 		validate func(any) []string
 	}{
-		{"entity_create", "../examples/requests/entity-create.json", ValidateEntityCreateRequest},
-		{"entity_update", "../examples/requests/entity-update.json", ValidateEntityUpdateRequest},
-		{"task_create", "../examples/requests/task-create.json", ValidateTaskCreateRequest},
-		{"task_acknowledge", "../examples/requests/tasks/acknowledge.json", ValidateTaskAcknowledgeRequest},
-		{"task_start", "../examples/requests/tasks/start.json", ValidateTaskStartRequest},
-		{"task_progress", "../examples/requests/tasks/progress.json", ValidateTaskProgressRequest},
-		{"task_complete", "../examples/requests/tasks/complete.json", ValidateTaskCompleteRequest},
-		{"task_fail", "../examples/requests/tasks/fail.json", ValidateTaskFailRequest},
-		{"task_cancel", "../examples/requests/tasks/cancel.json", ValidateTaskCancelRequest},
-		{"runtime_register", "../examples/requests/runtime/register.json", ValidateRuntimeRegistrationRequest},
-		{"runtime_stop", "../examples/requests/runtime/stop.json", ValidateRuntimeStopRequest},
-		{"runtime_ready", "../examples/requests/runtime/ready.json", ValidateRuntimeReadyRequest},
-		{"object_create", "../examples/requests/object-create.json", ValidateObjectCreateRequest},
-		{"object_update", "../examples/requests/object-update.json", ValidateObjectUpdateRequest},
+		{"entity_create", "../examples/requests/entity-create.json", validatorFor("EntityCreateRequest")},
+		{"entity_update", "../examples/requests/entity-update.json", validatorFor("EntityUpdateRequest")},
+		{"task_create", "../examples/requests/task-create.json", validatorFor("TaskCreateRequest")},
+		{"task_acknowledge", "../examples/requests/tasks/acknowledge.json", validatorFor("TaskAcknowledgeRequest")},
+		{"task_start", "../examples/requests/tasks/start.json", validatorFor("TaskStartRequest")},
+		{"task_progress", "../examples/requests/tasks/progress.json", validatorFor("TaskProgressRequest")},
+		{"task_complete", "../examples/requests/tasks/complete.json", validatorFor("TaskCompleteRequest")},
+		{"task_fail", "../examples/requests/tasks/fail.json", validatorFor("TaskFailRequest")},
+		{"task_cancel", "../examples/requests/tasks/cancel.json", validatorFor("TaskCancelRequest")},
+		{"runtime_register", "../examples/requests/runtime/register.json", validatorFor("RuntimeRegistrationRequest")},
+		{"runtime_stop", "../examples/requests/runtime/stop.json", validatorFor("RuntimeStopRequest")},
+		{"runtime_ready", "../examples/requests/runtime/ready.json", validatorFor("RuntimeReadyRequest")},
+		{"object_create", "../examples/requests/object-create.json", validatorFor("ObjectCreateRequest")},
+		{"object_update", "../examples/requests/object-update.json", validatorFor("ObjectUpdateRequest")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -315,7 +315,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			request: func(value string) any {
 				return map[string]any{"entity_id": value, "entity_type": "asset"}
 			},
-			validate: ValidateEntityCreateRequest,
+			validate: validatorFor("EntityCreateRequest"),
 		},
 		{
 			name:  "entity type",
@@ -323,7 +323,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			request: func(value string) any {
 				return map[string]any{"entity_id": "entity-1", "entity_type": value}
 			},
-			validate: ValidateEntityCreateRequest,
+			validate: validatorFor("EntityCreateRequest"),
 		},
 		{
 			name:  "entity subtype",
@@ -331,7 +331,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			request: func(value string) any {
 				return map[string]any{"entity_id": "entity-1", "entity_type": "asset", "subtype": value}
 			},
-			validate: ValidateEntityCreateRequest,
+			validate: validatorFor("EntityCreateRequest"),
 		},
 		{
 			name:  "entity alias",
@@ -339,7 +339,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			request: func(value string) any {
 				return map[string]any{"entity_id": "entity-1", "entity_type": "asset", "alias": value}
 			},
-			validate: ValidateEntityCreateRequest,
+			validate: validatorFor("EntityCreateRequest"),
 		},
 		{
 			name:  "object id",
@@ -347,7 +347,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			request: func(value string) any {
 				return map[string]any{"object_id": value}
 			},
-			validate: ValidateObjectCreateRequest,
+			validate: validatorFor("ObjectCreateRequest"),
 		},
 		{
 			name:  "object type",
@@ -355,7 +355,7 @@ func TestPromotedStringRequestLengthBoundaries(t *testing.T) {
 			request: func(value string) any {
 				return map[string]any{"object_id": "object-1", "type": value}
 			},
-			validate: ValidateObjectCreateRequest,
+			validate: validatorFor("ObjectCreateRequest"),
 		},
 	}
 
@@ -379,24 +379,6 @@ func TestRequestValidationConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	validators := map[string]func(any) []string{
-		"EntityCreateRequest":        ValidateEntityCreateRequest,
-		"EntityCheckInRequest":       ValidateEntityCheckInRequest,
-		"EntityUpdateRequest":        ValidateEntityUpdateRequest,
-		"TaskCreateRequest":          ValidateTaskCreateRequest,
-		"TaskAcknowledgeRequest":     ValidateTaskAcknowledgeRequest,
-		"TaskStartRequest":           ValidateTaskStartRequest,
-		"TaskProgressRequest":        ValidateTaskProgressRequest,
-		"TaskCompleteRequest":        ValidateTaskCompleteRequest,
-		"TaskFailRequest":            ValidateTaskFailRequest,
-		"TaskCancelRequest":          ValidateTaskCancelRequest,
-		"RuntimeRegistrationRequest": ValidateRuntimeRegistrationRequest,
-		"RuntimeStopRequest":         ValidateRuntimeStopRequest,
-		"RuntimeReadyRequest":        ValidateRuntimeReadyRequest,
-		"ObjectCreateRequest":        ValidateObjectCreateRequest,
-		"ObjectUpdateRequest":        ValidateObjectUpdateRequest,
-	}
-
 	for _, testCase := range cases {
 		t.Run(testCase.Name, func(t *testing.T) {
 			compiled, ok := schema.schemas[testCase.Definition]
@@ -412,11 +394,7 @@ func TestRequestValidationConformance(t *testing.T) {
 				t.Fatalf("canonical schema valid = %t, want %t", schemaValid, testCase.SchemaValid)
 			}
 
-			validate, ok := validators[testCase.Definition]
-			if !ok {
-				t.Fatalf("no Go validator for %q", testCase.Definition)
-			}
-			runtimeErrors := validate(testCase.Value)
+			runtimeErrors := ValidateDefinition(testCase.Definition, testCase.Value)
 			if valid := len(runtimeErrors) == 0; valid != testCase.Valid {
 				t.Fatalf("Go runtime valid = %t, want %t; errors = %v", valid, testCase.Valid, runtimeErrors)
 			}
@@ -435,13 +413,13 @@ func TestObjectSizeBytesUsesJavaScriptSafeIntegerRange(t *testing.T) {
 		value    func(int64) any
 		validate func(any) []string
 	}{
-		{name: "blob", value: func(size int64) any { return map[string]any{"size_bytes": size} }, validate: ValidateObjectBlob},
+		{name: "blob", value: func(size int64) any { return map[string]any{"size_bytes": size} }, validate: validatorFor("ObjectBlob")},
 		{name: "resource", value: func(size int64) any {
 			return map[string]any{"object_id": "object-1", "path": nil, "content_type": nil, "type": nil, "bucket": nil, "size_bytes": size, "usage_hints": []any{}, "referenced_by": []any{}, "metadata": metadata}
-		}, validate: ValidateObjectResource},
+		}, validate: validatorFor("ObjectResource")},
 		{name: "detail", value: func(size int64) any {
 			return map[string]any{"object_id": "object-1", "path": nil, "content_type": nil, "type": nil, "bucket": nil, "size_bytes": size, "usage_hints": []any{}, "referenced_by": []any{}, "metadata": metadata, "extra": map[string]any{}}
-		}, validate: ValidateObjectDetailResource},
+		}, validate: validatorFor("ObjectDetailResource")},
 	}
 
 	for _, tt := range tests {
@@ -471,8 +449,8 @@ func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
 		path     string
 		validate func(any) []string
 	}{
-		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", ValidateEntityUpdateRequest},
-		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", ValidateObjectUpdateRequest},
+		{"entity_update_empty", "../examples/requests/invalid-entity-update-empty.json", validatorFor("EntityUpdateRequest")},
+		{"object_update_empty", "../examples/requests/invalid-object-update-empty.json", validatorFor("ObjectUpdateRequest")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -481,7 +459,7 @@ func TestRequestValidationRejectsEmptyUpdatesAndUnknownFields(t *testing.T) {
 		})
 	}
 
-	errors := ValidateTaskCreateRequest(json.RawMessage(`{"asset_id":"asset-unknown","command":"fixture.immediate","input":{},"unknown":true}`))
+	errors := ValidateDefinition("TaskCreateRequest", json.RawMessage(`{"asset_id":"asset-unknown","command":"fixture.immediate","input":{},"unknown":true}`))
 	assertAnyContains(t, errors, "unknown")
 }
 
@@ -491,8 +469,8 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 		payload  string
 		validate func(any) []string
 	}{
-		{"entity_create", `{"entity_id":"asset-unknown","entity_type":"asset","components":{"typo":true}}`, ValidateEntityCreateRequest},
-		{"entity_update", `{"components":{"typo":true}}`, ValidateEntityUpdateRequest},
+		{"entity_create", `{"entity_id":"asset-unknown","entity_type":"asset","components":{"typo":true}}`, validatorFor("EntityCreateRequest")},
+		{"entity_update", `{"components":{"typo":true}}`, validatorFor("EntityUpdateRequest")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -504,7 +482,7 @@ func TestRequestValidationRejectsUnknownComponents(t *testing.T) {
 
 func TestTaskCreateRequestRequiresImmutableTaskingInput(t *testing.T) {
 	valid := json.RawMessage(`{"asset_id":"asset-command","command":"fixture.immediate","input":{"value":1}}`)
-	if errors := ValidateTaskCreateRequest(valid); len(errors) > 0 {
+	if errors := ValidateDefinition("TaskCreateRequest", valid); len(errors) > 0 {
 		t.Fatalf("ValidateTaskCreateRequest(valid) errors = %v", errors)
 	}
 
@@ -516,7 +494,7 @@ func TestTaskCreateRequestRequiresImmutableTaskingInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errors := ValidateTaskCreateRequest(json.RawMessage(tt.payload))
+			errors := ValidateDefinition("TaskCreateRequest", json.RawMessage(tt.payload))
 			assertAnyContains(t, errors, tt.want)
 		})
 	}
@@ -529,7 +507,7 @@ func TestUnencodableInputReturnsError(t *testing.T) {
 	}
 	for i, value := range values {
 		t.Run(fmt.Sprintf("value_%d", i), func(t *testing.T) {
-			errors := ValidateTelemetryComponent(value)
+			errors := ValidateDefinition("TelemetryComponent", value)
 			if len(errors) != 1 {
 				t.Fatalf("errors = %v, want exactly one", errors)
 			}
@@ -551,6 +529,12 @@ func readJSONExample(t *testing.T, path string) json.RawMessage {
 		t.Fatalf("decode %s: %v", path, err)
 	}
 	return json.RawMessage(data)
+}
+
+func validatorFor(definition string) func(any) []string {
+	return func(value any) []string {
+		return ValidateDefinition(definition, value)
+	}
 }
 
 func assertAnyContains(t *testing.T, errors []string, want string) {

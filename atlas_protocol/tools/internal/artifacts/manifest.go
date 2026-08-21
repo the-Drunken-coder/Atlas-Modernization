@@ -21,9 +21,6 @@ func BuildArtifacts(root string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateGoValidatorFunctions(defs); err != nil {
-		return nil, err
-	}
 	definitions := make([]string, 0, len(defs))
 	for definition := range defs {
 		definitions = append(definitions, definition)
@@ -46,7 +43,7 @@ func BuildArtifacts(root string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	goValidators, err := goValidatorsSource()
+	goValidators, err := goValidatorsSource(defs)
 	if err != nil {
 		return nil, err
 	}

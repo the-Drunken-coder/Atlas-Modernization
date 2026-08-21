@@ -5,201 +5,201 @@ package atlasprotocol
 import "github.com/the-drunken-coder/atlas/atlas_protocol/validator"
 
 func ValidateEntityBlob(value any) []string {
-	return validator.ValidateEntityBlob(value)
+	return validator.ValidateDefinition("EntityBlob", value)
 }
 
 func ValidateObjectBlob(value any) []string {
-	return validator.ValidateObjectBlob(value)
+	return validator.ValidateDefinition("ObjectBlob", value)
 }
 
 func ValidateEntityResource(value any) []string {
-	return validator.ValidateEntityResource(value)
+	return validator.ValidateDefinition("EntityResource", value)
 }
 
 func ValidateTaskResource(value any) []string {
-	return validator.ValidateTaskResource(value)
+	return validator.ValidateDefinition("TaskResource", value)
 }
 
 func ValidateObjectResource(value any) []string {
-	return validator.ValidateObjectResource(value)
+	return validator.ValidateDefinition("ObjectResource", value)
 }
 
 func ValidateObjectDetailResource(value any) []string {
-	return validator.ValidateObjectDetailResource(value)
+	return validator.ValidateDefinition("ObjectDetailResource", value)
 }
 
 func ValidateErrorResponse(value any) []string {
-	return validator.ValidateErrorResponse(value)
+	return validator.ValidateDefinition("ErrorResponse", value)
 }
 
 func ValidateProtocolRevisionResponse(value any) []string {
-	return validator.ValidateProtocolRevisionResponse(value)
+	return validator.ValidateDefinition("ProtocolRevisionResponse", value)
 }
 
 func ValidateEntityCheckInRequest(value any) []string {
-	return validator.ValidateEntityCheckInRequest(value)
+	return validator.ValidateDefinition("EntityCheckInRequest", value)
 }
 
 func ValidateEntityCheckInFullResponse(value any) []string {
-	return validator.ValidateEntityCheckInFullResponse(value)
+	return validator.ValidateDefinition("EntityCheckInFullResponse", value)
 }
 
 func ValidateEntityCheckInMinimalResponse(value any) []string {
-	return validator.ValidateEntityCheckInMinimalResponse(value)
+	return validator.ValidateDefinition("EntityCheckInMinimalResponse", value)
 }
 
 func ValidateEntityCheckInResponse(value any) []string {
-	return validator.ValidateEntityCheckInResponse(value)
+	return validator.ValidateDefinition("EntityCheckInResponse", value)
 }
 
 func ValidateFullDatasetResponse(value any) []string {
-	return validator.ValidateFullDatasetResponse(value)
+	return validator.ValidateDefinition("FullDatasetResponse", value)
 }
 
 func ValidateChangedSinceResponse(value any) []string {
-	return validator.ValidateChangedSinceResponse(value)
+	return validator.ValidateDefinition("ChangedSinceResponse", value)
 }
 
 func ValidateEntityCreateRequest(value any) []string {
-	return validator.ValidateEntityCreateRequest(value)
+	return validator.ValidateDefinition("EntityCreateRequest", value)
 }
 
 func ValidateEntityUpdateRequest(value any) []string {
-	return validator.ValidateEntityUpdateRequest(value)
+	return validator.ValidateDefinition("EntityUpdateRequest", value)
 }
 
 func ValidateTaskCreateRequest(value any) []string {
-	return validator.ValidateTaskCreateRequest(value)
+	return validator.ValidateDefinition("TaskCreateRequest", value)
 }
 
 func ValidateTaskAcknowledgeRequest(value any) []string {
-	return validator.ValidateTaskAcknowledgeRequest(value)
+	return validator.ValidateDefinition("TaskAcknowledgeRequest", value)
 }
 
 func ValidateTaskStartRequest(value any) []string {
-	return validator.ValidateTaskStartRequest(value)
+	return validator.ValidateDefinition("TaskStartRequest", value)
 }
 
 func ValidateTaskProgressRequest(value any) []string {
-	return validator.ValidateTaskProgressRequest(value)
+	return validator.ValidateDefinition("TaskProgressRequest", value)
 }
 
 func ValidateTaskCompleteRequest(value any) []string {
-	return validator.ValidateTaskCompleteRequest(value)
+	return validator.ValidateDefinition("TaskCompleteRequest", value)
 }
 
 func ValidateTaskFailRequest(value any) []string {
-	return validator.ValidateTaskFailRequest(value)
+	return validator.ValidateDefinition("TaskFailRequest", value)
 }
 
 func ValidateTaskCancelRequest(value any) []string {
-	return validator.ValidateTaskCancelRequest(value)
+	return validator.ValidateDefinition("TaskCancelRequest", value)
 }
 
 func ValidateRuntimeRegistrationRequest(value any) []string {
-	return validator.ValidateRuntimeRegistrationRequest(value)
+	return validator.ValidateDefinition("RuntimeRegistrationRequest", value)
 }
 
 func ValidateRuntimeStopRequest(value any) []string {
-	return validator.ValidateRuntimeStopRequest(value)
+	return validator.ValidateDefinition("RuntimeStopRequest", value)
 }
 
 func ValidateRuntimeReadyRequest(value any) []string {
-	return validator.ValidateRuntimeReadyRequest(value)
+	return validator.ValidateDefinition("RuntimeReadyRequest", value)
 }
 
 func ValidateRuntimeTaskDeliveryResponse(value any) []string {
-	return validator.ValidateRuntimeTaskDeliveryResponse(value)
+	return validator.ValidateDefinition("RuntimeTaskDeliveryResponse", value)
 }
 
 func ValidateObjectCreateRequest(value any) []string {
-	return validator.ValidateObjectCreateRequest(value)
+	return validator.ValidateDefinition("ObjectCreateRequest", value)
 }
 
 func ValidateObjectUpdateRequest(value any) []string {
-	return validator.ValidateObjectUpdateRequest(value)
+	return validator.ValidateDefinition("ObjectUpdateRequest", value)
 }
 
 func ValidateFeedEvent(value any) []string {
-	return validator.ValidateFeedEvent(value)
+	return validator.ValidateDefinition("FeedEvent", value)
 }
 
 func ValidateFeedAuthMessage(value any) []string {
-	return validator.ValidateFeedAuthMessage(value)
+	return validator.ValidateDefinition("FeedAuthMessage", value)
 }
 
 func ValidateFeedSubscribeMessage(value any) []string {
-	return validator.ValidateFeedSubscribeMessage(value)
+	return validator.ValidateDefinition("FeedSubscribeMessage", value)
 }
 
 func ValidateFeedUnsubscribeMessage(value any) []string {
-	return validator.ValidateFeedUnsubscribeMessage(value)
+	return validator.ValidateDefinition("FeedUnsubscribeMessage", value)
 }
 
 func ValidateFeedClientMessage(value any) []string {
-	return validator.ValidateFeedClientMessage(value)
+	return validator.ValidateDefinition("FeedClientMessage", value)
 }
 
 func ValidateFeedHandshakeMessage(value any) []string {
-	return validator.ValidateFeedHandshakeMessage(value)
+	return validator.ValidateDefinition("FeedHandshakeMessage", value)
 }
 
 func ValidateFeedSubscriptionBarrierMessage(value any) []string {
-	return validator.ValidateFeedSubscriptionBarrierMessage(value)
+	return validator.ValidateDefinition("FeedSubscriptionBarrierMessage", value)
 }
 
 func ValidateFeedSubscriptionsReadyMessage(value any) []string {
-	return validator.ValidateFeedSubscriptionsReadyMessage(value)
+	return validator.ValidateDefinition("FeedSubscriptionsReadyMessage", value)
 }
 
 func ValidateEntityComponents(value any) []string {
-	return validator.ValidateEntityComponents(value)
+	return validator.ValidateDefinition("EntityComponents", value)
 }
 
 func ValidateCommandCatalog(value any) []string {
-	return validator.ValidateCommandCatalog(value)
+	return validator.ValidateDefinition("CommandCatalog", value)
 }
 
 func ValidateCommandManifest(value any) []string {
-	return validator.ValidateCommandManifest(value)
+	return validator.ValidateDefinition("CommandManifest", value)
 }
 
 func ValidateCommandManifestEntry(value any) []string {
-	return validator.ValidateCommandManifestEntry(value)
+	return validator.ValidateDefinition("CommandManifestEntry", value)
 }
 
 func ValidateMediaRefsComponent(value any) []string {
-	return validator.ValidateMediaRefsComponent(value)
+	return validator.ValidateDefinition("MediaRefsComponent", value)
 }
 
 func ValidateMilViewComponent(value any) []string {
-	return validator.ValidateMilViewComponent(value)
+	return validator.ValidateDefinition("MilViewComponent", value)
 }
 
 func ValidateHealthComponent(value any) []string {
-	return validator.ValidateHealthComponent(value)
+	return validator.ValidateDefinition("HealthComponent", value)
 }
 
 func ValidateSensorRefsComponent(value any) []string {
-	return validator.ValidateSensorRefsComponent(value)
+	return validator.ValidateDefinition("SensorRefsComponent", value)
 }
 
 func ValidateCommunicationsComponent(value any) []string {
-	return validator.ValidateCommunicationsComponent(value)
+	return validator.ValidateDefinition("CommunicationsComponent", value)
 }
 
 func ValidateStatusComponent(value any) []string {
-	return validator.ValidateStatusComponent(value)
+	return validator.ValidateDefinition("StatusComponent", value)
 }
 
 func ValidateHeartbeatComponent(value any) []string {
-	return validator.ValidateHeartbeatComponent(value)
+	return validator.ValidateDefinition("HeartbeatComponent", value)
 }
 
 func ValidateTelemetryComponent(value any) []string {
-	return validator.ValidateTelemetryComponent(value)
+	return validator.ValidateDefinition("TelemetryComponent", value)
 }
 
 func ValidateGeometryComponent(value any) []string {
-	return validator.ValidateGeometryComponent(value)
+	return validator.ValidateDefinition("GeometryComponent", value)
 }

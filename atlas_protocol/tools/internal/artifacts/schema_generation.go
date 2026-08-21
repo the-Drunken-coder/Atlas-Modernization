@@ -21,43 +21,42 @@ const (
 type schemaBundle map[string]any
 
 type exampleSet struct {
-	pattern            string
-	definition         string
-	semanticValidation func(any) []string
+	pattern    string
+	definition string
 }
 
 var exampleSets = []exampleSet{
-	{pattern: "entities/*.json", definition: "EntityBlob", semanticValidation: protocolvalidator.ValidateEntityBlob},
-	{pattern: "catalogs/*.json", definition: "CommandCatalog", semanticValidation: protocolvalidator.ValidateCommandCatalog},
-	{pattern: "manifests/*.json", definition: "CommandManifest", semanticValidation: protocolvalidator.ValidateCommandManifest},
-	{pattern: "responses/tasks/*.json", definition: "TaskResource", semanticValidation: protocolvalidator.ValidateTaskResource},
-	{pattern: "objects/*.json", definition: "ObjectBlob", semanticValidation: protocolvalidator.ValidateObjectBlob},
-	{pattern: "responses/object-detail.json", definition: "ObjectDetailResource", semanticValidation: protocolvalidator.ValidateObjectDetailResource},
-	{pattern: "responses/entity-check-in-full.json", definition: "EntityCheckInFullResponse", semanticValidation: protocolvalidator.ValidateEntityCheckInFullResponse},
-	{pattern: "responses/entity-check-in-minimal.json", definition: "EntityCheckInMinimalResponse", semanticValidation: protocolvalidator.ValidateEntityCheckInMinimalResponse},
-	{pattern: "responses/full-dataset.json", definition: "FullDatasetResponse", semanticValidation: protocolvalidator.ValidateFullDatasetResponse},
-	{pattern: "responses/changed-since.json", definition: "ChangedSinceResponse", semanticValidation: protocolvalidator.ValidateChangedSinceResponse},
-	{pattern: "responses/protocol-revision.json", definition: "ProtocolRevisionResponse", semanticValidation: protocolvalidator.ValidateProtocolRevisionResponse},
-	{pattern: "errors/*.json", definition: "ErrorResponse", semanticValidation: protocolvalidator.ValidateErrorResponse},
-	{pattern: "feed/events/*.json", definition: "FeedEvent", semanticValidation: protocolvalidator.ValidateFeedEvent},
-	{pattern: "feed/messages/*.json", definition: "FeedClientMessage", semanticValidation: protocolvalidator.ValidateFeedClientMessage},
-	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage", semanticValidation: protocolvalidator.ValidateFeedHandshakeMessage},
-	{pattern: "feed/server-ready/*.json", definition: "FeedSubscriptionsReadyMessage", semanticValidation: protocolvalidator.ValidateFeedSubscriptionsReadyMessage},
-	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest", semanticValidation: protocolvalidator.ValidateEntityCreateRequest},
-	{pattern: "requests/entity-check-in.json", definition: "EntityCheckInRequest", semanticValidation: protocolvalidator.ValidateEntityCheckInRequest},
-	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest", semanticValidation: protocolvalidator.ValidateEntityUpdateRequest},
-	{pattern: "requests/task-create.json", definition: "TaskCreateRequest", semanticValidation: protocolvalidator.ValidateTaskCreateRequest},
-	{pattern: "requests/tasks/acknowledge.json", definition: "TaskAcknowledgeRequest", semanticValidation: protocolvalidator.ValidateTaskAcknowledgeRequest},
-	{pattern: "requests/tasks/start.json", definition: "TaskStartRequest", semanticValidation: protocolvalidator.ValidateTaskStartRequest},
-	{pattern: "requests/tasks/progress.json", definition: "TaskProgressRequest", semanticValidation: protocolvalidator.ValidateTaskProgressRequest},
-	{pattern: "requests/tasks/complete.json", definition: "TaskCompleteRequest", semanticValidation: protocolvalidator.ValidateTaskCompleteRequest},
-	{pattern: "requests/tasks/fail.json", definition: "TaskFailRequest", semanticValidation: protocolvalidator.ValidateTaskFailRequest},
-	{pattern: "requests/tasks/cancel.json", definition: "TaskCancelRequest", semanticValidation: protocolvalidator.ValidateTaskCancelRequest},
-	{pattern: "requests/runtime/register.json", definition: "RuntimeRegistrationRequest", semanticValidation: protocolvalidator.ValidateRuntimeRegistrationRequest},
-	{pattern: "requests/runtime/stop.json", definition: "RuntimeStopRequest", semanticValidation: protocolvalidator.ValidateRuntimeStopRequest},
-	{pattern: "requests/runtime/ready.json", definition: "RuntimeReadyRequest", semanticValidation: protocolvalidator.ValidateRuntimeReadyRequest},
-	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest", semanticValidation: protocolvalidator.ValidateObjectCreateRequest},
-	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest", semanticValidation: protocolvalidator.ValidateObjectUpdateRequest},
+	{pattern: "entities/*.json", definition: "EntityBlob"},
+	{pattern: "catalogs/*.json", definition: "CommandCatalog"},
+	{pattern: "manifests/*.json", definition: "CommandManifest"},
+	{pattern: "responses/tasks/*.json", definition: "TaskResource"},
+	{pattern: "objects/*.json", definition: "ObjectBlob"},
+	{pattern: "responses/object-detail.json", definition: "ObjectDetailResource"},
+	{pattern: "responses/entity-check-in-full.json", definition: "EntityCheckInFullResponse"},
+	{pattern: "responses/entity-check-in-minimal.json", definition: "EntityCheckInMinimalResponse"},
+	{pattern: "responses/full-dataset.json", definition: "FullDatasetResponse"},
+	{pattern: "responses/changed-since.json", definition: "ChangedSinceResponse"},
+	{pattern: "responses/protocol-revision.json", definition: "ProtocolRevisionResponse"},
+	{pattern: "errors/*.json", definition: "ErrorResponse"},
+	{pattern: "feed/events/*.json", definition: "FeedEvent"},
+	{pattern: "feed/messages/*.json", definition: "FeedClientMessage"},
+	{pattern: "feed/server/*.json", definition: "FeedHandshakeMessage"},
+	{pattern: "feed/server-ready/*.json", definition: "FeedSubscriptionsReadyMessage"},
+	{pattern: "requests/entity-create.json", definition: "EntityCreateRequest"},
+	{pattern: "requests/entity-check-in.json", definition: "EntityCheckInRequest"},
+	{pattern: "requests/entity-update.json", definition: "EntityUpdateRequest"},
+	{pattern: "requests/task-create.json", definition: "TaskCreateRequest"},
+	{pattern: "requests/tasks/acknowledge.json", definition: "TaskAcknowledgeRequest"},
+	{pattern: "requests/tasks/start.json", definition: "TaskStartRequest"},
+	{pattern: "requests/tasks/progress.json", definition: "TaskProgressRequest"},
+	{pattern: "requests/tasks/complete.json", definition: "TaskCompleteRequest"},
+	{pattern: "requests/tasks/fail.json", definition: "TaskFailRequest"},
+	{pattern: "requests/tasks/cancel.json", definition: "TaskCancelRequest"},
+	{pattern: "requests/runtime/register.json", definition: "RuntimeRegistrationRequest"},
+	{pattern: "requests/runtime/stop.json", definition: "RuntimeStopRequest"},
+	{pattern: "requests/runtime/ready.json", definition: "RuntimeReadyRequest"},
+	{pattern: "requests/object-create.json", definition: "ObjectCreateRequest"},
+	{pattern: "requests/object-update.json", definition: "ObjectUpdateRequest"},
 }
 
 func ValidateExamples(root string) error {
@@ -108,10 +107,8 @@ func validateExampleSet(root string, compiler *jsonschema.Compiler, set exampleS
 		if err := schema.Validate(value); err != nil {
 			return fmt.Errorf("%s: validate %s: %w", displayPath(root, example), set.definition, err)
 		}
-		if set.semanticValidation != nil {
-			if errors := set.semanticValidation(value); len(errors) > 0 {
-				return fmt.Errorf("%s: validate %s semantics: %s", displayPath(root, example), set.definition, strings.Join(errors, "; "))
-			}
+		if errors := protocolvalidator.ValidateDefinition(set.definition, value); len(errors) > 0 {
+			return fmt.Errorf("%s: validate %s semantics: %s", displayPath(root, example), set.definition, strings.Join(errors, "; "))
 		}
 	}
 	return nil

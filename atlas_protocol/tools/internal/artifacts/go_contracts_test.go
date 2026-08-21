@@ -378,20 +378,31 @@ func TestBuildArtifactsIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestGoValidatorFunctionsReferenceSchemaDefinitions(t *testing.T) {
+func TestGoValidatorsSourceCoversPublicDefinitions(t *testing.T) {
 	_, bundle := canonicalGoContractFixture(t)
 	defs, err := schemaDefs(bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateGoValidatorFunctions(defs); err != nil {
-		t.Fatalf("canonical Go validators: %v", err)
+	source, err := goValidatorsSource(defs)
+	if err != nil {
+		t.Fatal(err)
 	}
+	generated := string(source)
+	if got := strings.Count(generated, "func Validate"); got != len(publicGoValidatorDefinitions) {
+		t.Fatalf("generated %d validators for %d public definitions", got, len(publicGoValidatorDefinitions))
+	}
+	for _, definition := range publicGoValidatorDefinitions {
+		want := "return validator.ValidateDefinition(\"" + definition + "\", value)"
+		if !strings.Contains(generated, want) {
+			t.Errorf("generated validator for %s is missing %q", definition, want)
+		}
+	}
+
 	missing := cloneJSONValue(defs).(map[string]any)
-	delete(missing, "EntityBlob")
-	err = validateGoValidatorFunctions(missing)
-	if err == nil || !strings.Contains(err.Error(), "ValidateEntityBlob") {
-		t.Fatalf("missing schema definition error = %v", err)
+	delete(missing, publicGoValidatorDefinitions[0])
+	if _, err := goValidatorsSource(missing); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing public definition error = %v", err)
 	}
 }
 
