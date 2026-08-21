@@ -1024,6 +1024,35 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it.each([
+    [
+      "cyclic",
+      () => {
+        const output: Record<string, unknown> = {};
+        output.self = output;
+        return output;
+      }
+    ],
+    ["unsafe integer", () => ({ value: Number.MAX_SAFE_INTEGER + 1 })]
+  ])("fails %s handler output without attempting completion", async (_label, output) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output() as never }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.fail).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({ failure: expect.objectContaining({ code: "execution_failed" }) })
+    );
+    await runtime.stop();
+  });
+
   it("keeps lost queued acknowledgements in authoritative local order", async () => {
     vi.useFakeTimers();
     const first = task("queued-1", "queued.move");

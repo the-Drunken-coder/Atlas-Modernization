@@ -534,6 +534,7 @@ export class AtlasAssetRuntime {
         }
       });
       signal.throwIfAborted();
+      if (output !== undefined) assertSerializableTaskOutput(output);
       terminalUpdate = { kind: "complete", ...(output === undefined ? {} : { output }) };
     } catch (error) {
       if (signal.aborted) return;
@@ -683,6 +684,19 @@ function isRetryableLifecycleError(error: unknown): boolean {
   if (isAtlasTransportError(error)) return true;
   if (!isAtlasAPIError(error)) return false;
   return error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+function assertSerializableTaskOutput(output: JSONValue): void {
+  const serialized = JSON.stringify(output, (_key, value: unknown) => {
+    if (
+      typeof value === "number" &&
+      (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))
+    ) {
+      throw new TypeError("Task handler returned a number that JavaScript cannot serialize without changing it");
+    }
+    return value;
+  });
+  if (serialized === undefined) throw new TypeError("Task handler returned output that is not JSON serializable");
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
