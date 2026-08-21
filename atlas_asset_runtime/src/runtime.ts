@@ -691,6 +691,7 @@ function snapshotTaskOutput(output: JSONValue): JSONValue {
   try {
     const snapshot = copyJSONValue(output);
     if (!isJSONValue(snapshot)) throw new TypeError();
+    JSON.stringify(snapshot);
     return snapshot;
   } catch {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
@@ -766,17 +767,17 @@ function copyJSONPrimitive(value: unknown): JSONValue | undefined {
 }
 
 function createJSONCopyFrame(source: object): JSONCopyFrame {
+  const toJSON = Reflect.get(source, "toJSON");
+  if (typeof toJSON === "function") throw new TypeError();
   const ownKeys = Reflect.ownKeys(source);
   if (ownKeys.some((key) => typeof key === "symbol")) throw new TypeError();
   const keys = ownKeys as string[];
-  const toJSON = Reflect.get(source, "toJSON");
-  if (typeof toJSON === "function") throw new TypeError();
 
   if (Array.isArray(source)) {
     const length = source.length;
     const entries = Array.from({ length }, (_, index) => String(index));
-    const keySet = new Set(keys);
-    if (keys.length !== entries.length + 1 || !keySet.has("length") || entries.some((key) => !keySet.has(key))) {
+    const entrySet = new Set(entries);
+    if (!keys.includes("length") || keys.some((key) => key !== "length" && !entrySet.has(key))) {
       throw new TypeError();
     }
     return {
@@ -812,17 +813,7 @@ function assignJSONMember(member: PendingJSONMember, value: JSONValue): void {
 
 function hasJSONRecordPrototype(value: object): boolean {
   const prototype = Object.getPrototypeOf(value);
-  if (prototype === null) return true;
-  const visited = new WeakSet<object>();
-  visited.add(value);
-  let basePrototype = prototype;
-  while (!visited.has(basePrototype)) {
-    visited.add(basePrototype);
-    const parent = Object.getPrototypeOf(basePrototype);
-    if (parent === null) return prototype === basePrototype;
-    basePrototype = parent;
-  }
-  return false;
+  return prototype === null || Object.getPrototypeOf(prototype) === null;
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

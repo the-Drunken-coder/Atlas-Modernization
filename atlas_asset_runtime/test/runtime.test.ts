@@ -1052,6 +1052,21 @@ describe("AtlasAssetRuntime", () => {
         return output;
       }
     ],
+    [
+      "unbounded proxy prototype",
+      () => {
+        const createPrototype = (): object => new Proxy({}, { getPrototypeOf: createPrototype });
+        return createPrototype();
+      }
+    ],
+    [
+      "transport-depth overflow",
+      () => {
+        let output: unknown = 1;
+        for (let depth = 0; depth < 10_000; depth++) output = [output];
+        return output;
+      }
+    ],
     ["non-enumerable property", () => Object.defineProperty({ value: 1 }, "secret", { value: 2 })],
     [
       "symbol-keyed property",
@@ -1155,6 +1170,25 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
+  it("copies array values supplied by the prototype chain", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const prototype = Object.create(Array.prototype) as unknown[];
+    Object.defineProperty(prototype, "0", { get: () => 1 });
+    const output = Object.setPrototypeOf(new Array<JSONValue>(1), prototype);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: [1] }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
   it("snapshots stateful handler output before reporting completion", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
@@ -1184,17 +1218,25 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
-  it("enumerates proxy output once while creating its snapshot", async () => {
+  it("reads toJSON before enumerating proxy output once", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
     let enumerations = 0;
+    let toJSONRead = false;
     const output = new Proxy(
-      { value: 1 },
+      { before: 1, after: 2 },
       {
-        ownKeys(target) {
+        get(target, key, receiver) {
+          if (key === "toJSON") {
+            toJSONRead = true;
+            return undefined;
+          }
+          return Reflect.get(target, key, receiver);
+        },
+        ownKeys() {
           enumerations++;
           if (enumerations > 1) throw new Error("output was enumerated twice");
-          return Reflect.ownKeys(target);
+          return [toJSONRead ? "after" : "before"];
         }
       }
     );
@@ -1209,7 +1251,7 @@ describe("AtlasAssetRuntime", () => {
     expect(enumerations).toBe(1);
     expect(client.tasks.complete).toHaveBeenCalledWith(
       pending.task_id,
-      expect.objectContaining({ output: { value: 1 } })
+      expect.objectContaining({ output: { after: 2 } })
     );
     expect(client.tasks.fail).not.toHaveBeenCalled();
     await runtime.stop();
