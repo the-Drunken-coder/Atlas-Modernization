@@ -93,6 +93,7 @@ export {
   isEntityUpdateRequest,
   isFullDatasetResponse,
   isGeometryComponent,
+  isJSONValue,
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isProtocolRevisionResponse,

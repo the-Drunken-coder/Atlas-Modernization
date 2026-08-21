@@ -6,6 +6,7 @@ import {
   isAtlasAPIError,
   isAtlasTransportError,
   isCommandManifest,
+  isJSONValue,
   type JSONValue,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
@@ -534,8 +535,8 @@ export class AtlasAssetRuntime {
         }
       });
       signal.throwIfAborted();
-      if (output !== undefined) assertSerializableTaskOutput(output);
-      terminalUpdate = { kind: "complete", ...(output === undefined ? {} : { output }) };
+      const snapshot = output === undefined ? undefined : snapshotTaskOutput(output);
+      terminalUpdate = { kind: "complete", ...(snapshot === undefined ? {} : { output: snapshot }) };
     } catch (error) {
       if (signal.aborted) return;
       terminalUpdate = {
@@ -686,17 +687,29 @@ function isRetryableLifecycleError(error: unknown): boolean {
   return error.status === 408 || error.status === 429 || error.status >= 500;
 }
 
-function assertSerializableTaskOutput(output: JSONValue): void {
-  const serialized = JSON.stringify(output, (_key, value: unknown) => {
-    if (
-      typeof value === "number" &&
-      (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))
-    ) {
-      throw new TypeError("Task handler returned a number that JavaScript cannot serialize without changing it");
+function snapshotTaskOutput(output: JSONValue): JSONValue {
+  let snapshot: unknown;
+  try {
+    snapshot = structuredClone(output);
+  } catch {
+    throw new TypeError("Task handler returned output that JSON cannot preserve");
+  }
+  if (!isJSONValue(snapshot) || hasLossyJSONShape(snapshot)) {
+    throw new TypeError("Task handler returned output that JSON cannot preserve");
+  }
+  return snapshot;
+}
+
+function hasLossyJSONShape(value: JSONValue): boolean {
+  if (typeof value === "number") return Object.is(value, -0);
+  if (Array.isArray(value)) {
+    if (Object.keys(value).length !== value.length) return true;
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.hasOwn(value, index) || hasLossyJSONShape(value[index])) return true;
     }
-    return value;
-  });
-  if (serialized === undefined) throw new TypeError("Task handler returned output that is not JSON serializable");
+    return false;
+  }
+  return value !== null && typeof value === "object" && Object.values(value).some(hasLossyJSONShape);
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

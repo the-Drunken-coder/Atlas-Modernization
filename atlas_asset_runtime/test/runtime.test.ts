@@ -1029,11 +1029,16 @@ describe("AtlasAssetRuntime", () => {
       "cyclic",
       () => {
         const output: Record<string, unknown> = {};
-        output.self = output;
+        output["cycle".repeat(150_000)] = output;
         return output;
       }
     ],
-    ["unsafe integer", () => ({ value: Number.MAX_SAFE_INTEGER + 1 })]
+    ["non-finite number", () => ({ value: Number.POSITIVE_INFINITY })],
+    ["negative zero", () => ({ value: -0 })],
+    ["nested undefined", () => ({ value: undefined })],
+    ["nested function", () => ({ value: () => "ignored" })],
+    ["nested symbol", () => ({ value: Symbol("ignored") })],
+    ["sparse array", () => Array(1)]
   ])("fails %s handler output without attempting completion", async (_label, output) => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
@@ -1048,8 +1053,58 @@ describe("AtlasAssetRuntime", () => {
     expect(client.tasks.complete).not.toHaveBeenCalled();
     expect(client.tasks.fail).toHaveBeenCalledWith(
       pending.task_id,
-      expect.objectContaining({ failure: expect.objectContaining({ code: "execution_failed" }) })
+      expect.objectContaining({
+        failure: {
+          code: "execution_failed",
+          message: "Task handler returned output that JSON cannot preserve"
+        }
+      })
     );
+    await runtime.stop();
+  });
+
+  it.each([2 ** 53, 2 ** 54, 1e20])("completes exactly representable integer output %s", async (value) => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => ({ value }) }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(client.tasks.complete).toHaveBeenCalledWith(pending.task_id, expect.objectContaining({ output: { value } }));
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it("snapshots stateful handler output before reporting completion", async () => {
+    const pending = task("immediate-1", "immediate.observe");
+    const { client } = fakeClient([pending]);
+    let reads = 0;
+    const output = Object.defineProperty({}, "value", {
+      enumerable: true,
+      get() {
+        reads++;
+        if (reads > 1) throw new Error("output was read twice");
+        return 1;
+      }
+    });
+    const runtime = new AtlasAssetRuntime(client, {
+      entityId: "asset-1",
+      manifest: [manifestEntry("immediate.observe", "immediate")],
+      handlers: { "immediate.observe": async () => output as never }
+    });
+
+    await runtime.start();
+    await vi.waitFor(() => expect(client.tasks.complete).toHaveBeenCalledOnce());
+    expect(reads).toBe(1);
+    expect(client.tasks.complete).toHaveBeenCalledWith(
+      pending.task_id,
+      expect.objectContaining({ output: { value: 1 } })
+    );
+    expect(client.tasks.fail).not.toHaveBeenCalled();
     await runtime.stop();
   });
 
