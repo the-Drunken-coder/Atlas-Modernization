@@ -8,6 +8,7 @@ import {
   isAtlasTransportError,
   isEntityCreateRequest,
   isEntityUpdateRequest,
+  isJSONValue,
   isObjectCreateRequest,
   isObjectUpdateRequest,
   isRuntimeStopRequest,
@@ -299,6 +300,15 @@ describe("AtlasClient HTTP", () => {
     expect(
       isTaskCreateRequest({ asset_id: "asset-map", command: "fixture.queued", input: new Map([["priority", "high"]]) })
     ).toBe(false);
+  });
+
+  it("rejects proxies with non-terminating prototype chains", () => {
+    let cyclicPrototype!: object;
+    cyclicPrototype = new Proxy({}, { getPrototypeOf: () => cyclicPrototype });
+    const createPrototype = (): object => new Proxy({}, { getPrototypeOf: createPrototype });
+
+    expect(isJSONValue(cyclicPrototype)).toBe(false);
+    expect(isJSONValue(createPrototype())).toBe(false);
   });
 
   it("rejects malformed generated entity create validator geometry and timestamps", () => {

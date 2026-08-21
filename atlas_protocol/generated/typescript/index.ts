@@ -760,11 +760,7 @@ function atlasProtocolIsRecord(value: unknown): value is Record<string, unknown>
   if (prototype === null) {
     return true;
   }
-  let basePrototype = prototype;
-  while (Object.getPrototypeOf(basePrototype) !== null) {
-    basePrototype = Object.getPrototypeOf(basePrototype);
-  }
-  return prototype === basePrototype;
+  return Object.getPrototypeOf(prototype) === null;
 }
 
 const atlasProtocolMaxGeometryPositions = 10000;
