@@ -11,23 +11,25 @@ import (
 )
 
 const (
-	migrationTableName              = "atlas_schema_migrations"
-	baselineMigrationName           = "baseline_current_schema"
-	baselineMigrationChecksum       = "ef8c1f811a672ee5c1394f494e9b3d8b196aea564242437ed6fae55b00d72f23"
-	uploadIntentsMigrationName      = "durable_storage_upload_intents"
-	uploadIntentsMigrationChecksum  = "397e1731dbc7b9f0a5258d8084e7086ad1d674a164db8118ed58cc928189345c"
-	pathTombstonesMigrationName     = "index_storage_path_tombstones"
-	pathTombstonesMigrationChecksum = "fc9d12136384e8f4bdcd15d96c6ec8a1b802092a66a8b6b78f33c5548241d19f"
-	changeStreamMigrationName       = "transactional_change_stream"
-	changeStreamMigrationChecksum   = "362d2f71c1d51c7d172e0818b68a7eec725104aeec91002558ebac7d74a978eb"
-	recoveryLogMigrationName        = "bounded_recovery_log"
-	recoveryLogMigrationChecksum    = "7ae3a729125b872f1dc3a4265196dde2473ccc61ca3b5b820120d81278f917d8"
-	recoveryFloorMigrationName      = "recovery_log_floor_and_retention_index"
-	recoveryFloorMigrationChecksum  = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
-	taskingRuntimeMigrationName     = "immutable_tasks_and_asset_runtimes"
-	taskingRuntimeMigrationChecksum = "cf7f05cff26ca1f39611175faa71dd6825f39efd0ddf7256af6cf0aea660b584"
-	fingerprintVersionV1            = 1
-	fingerprintVersionV2            = 2
+	migrationTableName                  = "atlas_schema_migrations"
+	baselineMigrationName               = "baseline_current_schema"
+	baselineMigrationChecksum           = "ef8c1f811a672ee5c1394f494e9b3d8b196aea564242437ed6fae55b00d72f23"
+	uploadIntentsMigrationName          = "durable_storage_upload_intents"
+	uploadIntentsMigrationChecksum      = "397e1731dbc7b9f0a5258d8084e7086ad1d674a164db8118ed58cc928189345c"
+	pathTombstonesMigrationName         = "index_storage_path_tombstones"
+	pathTombstonesMigrationChecksum     = "fc9d12136384e8f4bdcd15d96c6ec8a1b802092a66a8b6b78f33c5548241d19f"
+	changeStreamMigrationName           = "transactional_change_stream"
+	changeStreamMigrationChecksum       = "362d2f71c1d51c7d172e0818b68a7eec725104aeec91002558ebac7d74a978eb"
+	recoveryLogMigrationName            = "bounded_recovery_log"
+	recoveryLogMigrationChecksum        = "7ae3a729125b872f1dc3a4265196dde2473ccc61ca3b5b820120d81278f917d8"
+	recoveryFloorMigrationName          = "recovery_log_floor_and_retention_index"
+	recoveryFloorMigrationChecksum      = "ac7ed32b7d9f4331bd0f8db417ea69e52148f1f5bbdb74f1b82a8b8ba3e62ead"
+	taskingRuntimeMigrationName         = "immutable_tasks_and_asset_runtimes"
+	taskingRuntimeMigrationChecksum     = "cf7f05cff26ca1f39611175faa71dd6825f39efd0ddf7256af6cf0aea660b584"
+	runtimeGenerationsMigrationName     = "retired_asset_runtime_generations"
+	runtimeGenerationsMigrationChecksum = "7b3c6a5ea1a3642a28c75b9c0361faf228175b34d121fdae7cbf83d3b90c51e0"
+	fingerprintVersionV1                = 1
+	fingerprintVersionV2                = 2
 )
 
 var (
@@ -229,6 +231,30 @@ func coreSchemaMigrations() []schemaMigration {
 				`CREATE INDEX idx_tasks_asset_created_cursor ON tasks(asset_id, created_at DESC, task_id DESC)`,
 				`CREATE INDEX idx_tasks_asset_updated_cursor ON tasks(asset_id, updated_at DESC, task_id DESC)`,
 				`CREATE INDEX idx_tasks_version ON tasks(version DESC, task_id DESC)`,
+			},
+		},
+		{
+			version:            8,
+			name:               runtimeGenerationsMigrationName,
+			checksum:           runtimeGenerationsMigrationChecksum,
+			fingerprintVersion: fingerprintVersionV2,
+			statements: []string{
+				`CREATE TABLE asset_runtime_generations (
+					asset_id VARCHAR(50) NOT NULL,
+					runtime_id VARCHAR(255) NOT NULL,
+					generation BIGINT GENERATED ALWAYS AS IDENTITY,
+					stopped BOOLEAN NOT NULL DEFAULT FALSE,
+					PRIMARY KEY (asset_id, runtime_id),
+					UNIQUE (runtime_id),
+					UNIQUE (asset_id, generation)
+				)`,
+				`INSERT INTO asset_runtime_generations (asset_id, runtime_id, stopped)
+				 SELECT asset_id, runtime_id, NOT ready FROM asset_runtimes`,
+				`ALTER TABLE asset_runtimes ADD COLUMN stopped BOOLEAN NOT NULL DEFAULT FALSE`,
+				`UPDATE asset_runtimes SET stopped = TRUE WHERE NOT ready`,
+				`ALTER TABLE tasks ADD COLUMN completion_attempt JSONB`,
+				`ALTER TABLE asset_runtimes ADD CONSTRAINT asset_runtimes_generation_fk
+				 FOREIGN KEY (asset_id, runtime_id) REFERENCES asset_runtime_generations(asset_id, runtime_id)`,
 			},
 		},
 	}

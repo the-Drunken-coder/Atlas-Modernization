@@ -14,7 +14,7 @@ import (
 	protocol "github.com/the-drunken-coder/atlas/atlas_protocol/generated/go/atlasprotocol"
 )
 
-const taskColumns = `task_id, asset_id, command, input, status, progress, output, failure, cancellation, idempotency_key, runtime_id, created_at, acknowledged_at, started_at, finished_at, updated_at, version`
+const taskColumns = `task_id, asset_id, command, input, status, progress, output, completion_attempt, failure, cancellation, idempotency_key, runtime_id, created_at, acknowledged_at, started_at, finished_at, updated_at, version`
 const taskSelectSQL = `SELECT ` + taskColumns + ` FROM tasks`
 
 // TaskActions owns Task validation, persistence, lifecycle, ordering, and
@@ -48,7 +48,7 @@ func scanTask(row rowScanner) (*models.Task, error) {
 	var task models.Task
 	err := row.Scan(
 		&task.TaskID, &task.AssetID, &task.Command, &task.Input, &task.Status,
-		&task.Progress, &task.Output, &task.Failure, &task.Cancellation,
+		&task.Progress, &task.Output, &task.CompletionAttempt, &task.Failure, &task.Cancellation,
 		&task.IdempotencyKey, &task.RuntimeID, &task.CreatedAt,
 		&task.AcknowledgedAt, &task.StartedAt, &task.FinishedAt,
 		&task.UpdatedAt, &task.Version,
@@ -143,11 +143,11 @@ func persistTaskState(ctx context.Context, tx pgx.Tx, task *models.Task) (*model
 	}
 	task.Version = version
 	updated, err := scanTask(tx.QueryRow(ctx, `
-		UPDATE tasks SET status = $2, progress = $3, output = $4, failure = $5,
-			cancellation = $6, acknowledged_at = $7, started_at = $8,
-			finished_at = $9, updated_at = clock_timestamp(), version = $10
+		UPDATE tasks SET status = $2, progress = $3, output = $4, completion_attempt = $5, failure = $6,
+			cancellation = $7, acknowledged_at = $8, started_at = $9,
+			finished_at = $10, updated_at = clock_timestamp(), version = $11
 		WHERE task_id = $1 RETURNING `+taskColumns,
-		task.TaskID, task.Status, task.Progress, nullableJSON(task.Output), nullableJSON(task.Failure),
+		task.TaskID, task.Status, task.Progress, nullableJSON(task.Output), nullableJSON(task.CompletionAttempt), nullableJSON(task.Failure),
 		nullableJSON(task.Cancellation), task.AcknowledgedAt, task.StartedAt, task.FinishedAt, version))
 	if err != nil {
 		return nil, fmt.Errorf("persist Task transition: %w", err)

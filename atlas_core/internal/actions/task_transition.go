@@ -43,10 +43,13 @@ func (a *TaskActions) Start(ctx context.Context, taskID, runtimeID string) (*mod
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, false, a.requireStartOrder, startTask)
+	return a.withTaskTransition(ctx, taskID, runtimeID, true, a.requireStartOrder, startTask)
 }
 
 func startTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	if task.Status == string(protocol.TaskStatusFailed) && jsonEqual(task.Failure, mustMarshalTaskFailure(immediateStartTimeoutFailure())) {
+		return false, nil
+	}
 	if task.Status == string(protocol.TaskStatusInProgress) {
 		return false, nil
 	}
@@ -106,33 +109,43 @@ func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, ou
 	if err := requireRuntimeID(runtimeID); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, false, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	return a.withTaskTransition(ctx, taskID, runtimeID, true, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return completeTask(task, command, manifest, now, output)
 	})
 }
 
 func completeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time, output *TaskOutput) (bool, error) {
-	encoded, err := encodeTaskOutput(command, output)
+	attempt, err := encodeTaskOutputAttempt(output)
+	if err != nil {
+		return false, err
+	}
+	storedAttempt, err := encodeStoredCompletionAttempt(output, attempt)
+	if err != nil {
+		return false, err
+	}
 	if task.Status == string(protocol.TaskStatusCompleted) {
-		if err != nil {
-			return false, err
-		}
-		if jsonEqual(task.Output, encoded) {
+		if jsonEqual(task.Output, attempt) {
 			return false, nil
 		}
 		return false, NewValidationError("Task was already completed with different output")
 	}
+	if taskFailedWithCode(task, protocol.TaskFailureCodeInvalidOutput) {
+		if jsonEqual(task.CompletionAttempt, storedAttempt) {
+			return false, nil
+		}
+		return false, NewValidationError("Task was already failed after a different output")
+	}
 	if task.Status != string(protocol.TaskStatusInProgress) {
 		return false, invalidTaskTransition(task, "complete")
 	}
+	err = validateTaskOutput(command, output)
 	if err != nil {
-		return failTask(task, command, protocol.CommandManifestEntry{}, now, protocol.TaskFailure{
-			Code:    protocol.TaskFailureCodeInvalidOutput,
-			Message: err.Error(),
-		})
+		task.CompletionAttempt = storedAttempt
+		return failTask(task, command, protocol.CommandManifestEntry{}, now, invalidOutputFailure(err))
 	}
 	task.Status = string(protocol.TaskStatusCompleted)
-	task.Output = encoded
+	task.Output = attempt
+	task.CompletionAttempt = nil
 	task.FinishedAt = &now
 	return true, nil
 }
@@ -144,7 +157,7 @@ func (a *TaskActions) Fail(ctx context.Context, taskID, runtimeID string, failur
 	if err := validateAssetFailureCode(failure.Code); err != nil {
 		return nil, err
 	}
-	return a.withTaskTransition(ctx, taskID, runtimeID, false, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
+	return a.withTaskTransition(ctx, taskID, runtimeID, true, nil, func(task *models.Task, command protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time) (bool, error) {
 		return failTask(task, command, manifest, now, failure)
 	})
 }
@@ -193,6 +206,23 @@ func immediateStartTimeoutFailure() protocol.TaskFailure {
 	}
 }
 
+func invalidOutputFailure(err error) protocol.TaskFailure {
+	return protocol.TaskFailure{Code: protocol.TaskFailureCodeInvalidOutput, Message: err.Error()}
+}
+
+func taskFailedWithCode(task *models.Task, code protocol.TaskFailureCode) bool {
+	if task.Status != string(protocol.TaskStatusFailed) {
+		return false
+	}
+	var failure protocol.TaskFailure
+	return json.Unmarshal(task.Failure, &failure) == nil && failure.Code == code
+}
+
+func mustMarshalTaskFailure(failure protocol.TaskFailure) []byte {
+	encoded, _ := json.Marshal(failure)
+	return encoded
+}
+
 func cancelTask(task *models.Task, _ protocol.CommandDefinition, manifest protocol.CommandManifestEntry, now time.Time, cancellation protocol.TaskCancellation) (bool, error) {
 	encoded, _ := json.Marshal(cancellation)
 	if task.Status == string(protocol.TaskStatusCancelled) {
@@ -216,7 +246,7 @@ func cancelTask(task *models.Task, _ protocol.CommandDefinition, manifest protoc
 type taskMutation func(*models.Task, protocol.CommandDefinition, protocol.CommandManifestEntry, time.Time) (bool, error)
 type taskPrecondition func(context.Context, pgx.Tx, *models.Task, protocol.CommandDefinition) error
 
-func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID string, allowTerminalRetryWithoutRuntime bool, precondition taskPrecondition, mutate taskMutation) (*models.Task, error) {
+func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID string, allowTerminalRetryWithoutCurrentRuntime bool, precondition taskPrecondition, mutate taskMutation) (*models.Task, error) {
 	if err := ValidateTaskID(taskID); err != nil {
 		return nil, err
 	}
@@ -230,9 +260,9 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 	// runtime before the Task. Runtime replacement uses the same lock order and can
 	// therefore fence lifecycle calls without a task/runtime deadlock.
 	var assetID, boundRuntimeID string
-	if allowTerminalRetryWithoutRuntime {
+	if allowTerminalRetryWithoutCurrentRuntime {
 		// beginChangeTx holds the global change-clock lock, so a terminal Task
-		// cannot change while cancellation idempotency is checked.
+		// cannot change while an exact retry is checked.
 		task, err := scanTask(tx.QueryRow(ctx, taskSelectSQL+` WHERE task_id = $1`, taskID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NewTaskNotFoundError(taskID)
@@ -242,7 +272,11 @@ func (a *TaskActions) withTaskTransition(ctx context.Context, taskID, runtimeID 
 		}
 		assetID, boundRuntimeID = task.AssetID, task.RuntimeID
 		if taskTerminal(task.Status) {
-			changed, err := mutate(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, time.Time{})
+			if runtimeID != "" && strings.TrimSpace(runtimeID) != boundRuntimeID {
+				return nil, NewValidationError("Atlas-Runtime-ID does not identify the Task runtime")
+			}
+			command := a.catalog[task.Command]
+			changed, err := mutate(task, command, protocol.CommandManifestEntry{}, time.Time{})
 			if err != nil {
 				return nil, err
 			}
@@ -395,23 +429,53 @@ func (a *TaskActions) lockCurrentRuntimeManifest(ctx context.Context, tx pgx.Tx,
 }
 
 func encodeTaskOutput(command protocol.CommandDefinition, output *TaskOutput) ([]byte, error) {
-	if command.OutputSchema == "" {
-		if output != nil {
-			return nil, NewValidationError("Command does not define Task output")
-		}
-		return nil, nil
+	encoded, err := encodeTaskOutputAttempt(output)
+	if err != nil {
+		return nil, err
 	}
+	if err := validateTaskOutput(command, output); err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func encodeTaskOutputAttempt(output *TaskOutput) ([]byte, error) {
 	if output == nil {
-		return nil, NewValidationError("Command requires Task output")
-	}
-	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.OutputSchema), output.Value); len(validationErrors) > 0 {
-		return nil, NewValidationErrorWithDetails("Invalid Command output", validationErrors)
+		return nil, nil
 	}
 	encoded, err := json.Marshal(output.Value)
 	if err != nil {
 		return nil, NewValidationError("output must be JSON encodable")
 	}
 	return encoded, nil
+}
+
+func encodeStoredCompletionAttempt(output *TaskOutput, encoded json.RawMessage) ([]byte, error) {
+	attempt := struct {
+		OutputProvided bool            `json:"output_provided"`
+		Output         json.RawMessage `json:"output,omitempty"`
+	}{OutputProvided: output != nil, Output: encoded}
+	stored, err := json.Marshal(attempt)
+	if err != nil {
+		return nil, NewValidationError("output must be JSON encodable")
+	}
+	return stored, nil
+}
+
+func validateTaskOutput(command protocol.CommandDefinition, output *TaskOutput) error {
+	if command.OutputSchema == "" {
+		if output != nil {
+			return NewValidationError("Command does not define Task output")
+		}
+		return nil
+	}
+	if output == nil {
+		return NewValidationError("Command requires Task output")
+	}
+	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.OutputSchema), output.Value); len(validationErrors) > 0 {
+		return NewValidationErrorWithDetails("Invalid Command output", validationErrors)
+	}
+	return nil
 }
 
 func nullableJSON(value []byte) any {

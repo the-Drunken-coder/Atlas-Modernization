@@ -75,7 +75,8 @@ func TestCloneTaskModelCopiesPublicFields(t *testing.T) {
 	original := &models.Task{
 		TaskID: "task-1", AssetID: "asset-1", Command: "fixture.queued",
 		Input: json.RawMessage(`{"value":1}`), Status: "in_progress", Progress: &progress,
-		RuntimeID: "runtime-1", IdempotencyKey: "attempt-1",
+		CompletionAttempt: json.RawMessage(`{"result":"rejected"}`),
+		RuntimeID:         "runtime-1", IdempotencyKey: "attempt-1",
 		CreatedAt: now, AcknowledgedAt: &now, StartedAt: &now,
 		UpdatedAt: now.Add(time.Second), Version: 5,
 	}
@@ -87,6 +88,7 @@ func TestCloneTaskModelCopiesPublicFields(t *testing.T) {
 		t.Fatalf("cloneTaskModel did not copy scalar fields: %#v", cloned)
 	}
 	assertIndependentJSON(t, original.Input, cloned.Input)
+	assertIndependentJSON(t, original.CompletionAttempt, cloned.CompletionAttempt)
 	if cloned.Progress == original.Progress || cloned.AcknowledgedAt == original.AcknowledgedAt {
 		t.Fatal("cloneTaskModel returned aliased pointers")
 	}

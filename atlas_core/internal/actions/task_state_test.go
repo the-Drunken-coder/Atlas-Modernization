@@ -110,7 +110,27 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 				if err := json.Unmarshal(task.Failure, &failure); err != nil || failure.Code != protocol.TaskFailureCodeInvalidOutput {
 					t.Fatalf("invalid completion failure = %#v, %v", failure, err)
 				}
+				encoded, err := encodeTaskOutputAttempt(testCase.output)
+				attempt, storedErr := encodeStoredCompletionAttempt(testCase.output, encoded)
+				if err != nil || storedErr != nil || !jsonEqual(task.CompletionAttempt, attempt) {
+					t.Fatalf("stored completion attempt = %s, want %s, %v, %v", task.CompletionAttempt, attempt, err, storedErr)
+				}
+				if changed, err = completeTask(task, testCase.command, protocol.CommandManifestEntry{}, taskStateTestTime, testCase.output); err != nil || changed {
+					t.Fatalf("repeated invalid completion = %t, %v", changed, err)
+				}
 			})
+		}
+		rejected := taskStateFixture(protocol.TaskStatusInProgress)
+		if changed, err := completeTask(rejected, queued, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": ""}}); err != nil || !changed {
+			t.Fatalf("reject first invalid output = %t, %v", changed, err)
+		}
+		if _, err := completeTask(rejected, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": 17}}); err == nil {
+			t.Fatal("invalid-output Task accepted a different rejected payload as an exact retry")
+		}
+		legacyRejected := taskStateFixture(protocol.TaskStatusFailed)
+		legacyRejected.Failure = mustMarshalTaskFailure(protocol.TaskFailure{Code: protocol.TaskFailureCodeInvalidOutput, Message: "Invalid Command output"})
+		if _, err := completeTask(legacyRejected, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, taskStateTestTime, nil); err == nil {
+			t.Fatal("legacy invalid-output Task accepted an unrecorded completion attempt as an exact retry")
 		}
 		task := taskStateFixture(protocol.TaskStatusInProgress)
 		output := &TaskOutput{Value: map[string]any{"result": "done"}}
@@ -123,6 +143,9 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 		}
 		if _, err := completeTask(task, queued, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": "changed"}}); err == nil {
 			t.Fatal("completed Task accepted different output")
+		}
+		if _, err := completeTask(task, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: func() {}}); err == nil {
+			t.Fatal("completed Task accepted output that cannot be encoded as JSON")
 		}
 		if _, err := completeTask(taskStateFixture(protocol.TaskStatusPending), queued, protocol.CommandManifestEntry{}, taskStateTestTime, output); err == nil {
 			t.Fatal("pending Task completed")
@@ -287,6 +310,18 @@ func TestTaskStateHelpers(t *testing.T) {
 	var output map[string]any
 	if err := json.Unmarshal(encoded, &output); err != nil || output["result"] != "done" {
 		t.Fatalf("encoded output = %#v, %v", output, err)
+	}
+	drainTasks := []*models.Task{{RuntimeID: "runtime-running"}, {RuntimeID: "runtime-stopped"}}
+	if runtimeIDs := taskRuntimeIDs(drainTasks); len(runtimeIDs) != 2 || runtimeIDs[0] != "runtime-running" || runtimeIDs[1] != "runtime-stopped" {
+		t.Fatalf("taskRuntimeIDs = %#v", runtimeIDs)
+	}
+	restarted := protocol.TaskFailure{Code: protocol.TaskFailureCodeAssetRestarted, Message: "restarted"}
+	stoppedRuntimeIDs := map[string]struct{}{"runtime-stopped": {}}
+	if got := runtimeDrainFailure(drainTasks[0], restarted, stoppedRuntimeIDs); got != restarted {
+		t.Fatalf("running runtime drain failure = %#v", got)
+	}
+	if got := runtimeDrainFailure(drainTasks[1], restarted, stoppedRuntimeIDs); got != assetStoppedFailure {
+		t.Fatalf("stopped runtime drain failure = %#v", got)
 	}
 }
 

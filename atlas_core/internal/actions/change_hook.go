@@ -85,7 +85,8 @@ func cloneTaskModel(task *models.Task) *models.Task {
 	return &models.Task{
 		TaskID: task.TaskID, AssetID: task.AssetID, Command: task.Command,
 		Input: cloneRawMessage(task.Input), Status: task.Status, Progress: cloneFloatPointer(task.Progress),
-		Output: cloneRawMessage(task.Output), Failure: cloneRawMessage(task.Failure), Cancellation: cloneRawMessage(task.Cancellation),
+		Output: cloneRawMessage(task.Output), CompletionAttempt: cloneRawMessage(task.CompletionAttempt),
+		Failure: cloneRawMessage(task.Failure), Cancellation: cloneRawMessage(task.Cancellation),
 		IdempotencyKey: task.IdempotencyKey, RuntimeID: task.RuntimeID,
 		CreatedAt: task.CreatedAt, AcknowledgedAt: cloneTimePointer(task.AcknowledgedAt), StartedAt: cloneTimePointer(task.StartedAt),
 		FinishedAt: cloneTimePointer(task.FinishedAt), UpdatedAt: task.UpdatedAt, Version: task.Version,
