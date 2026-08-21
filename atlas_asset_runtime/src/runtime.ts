@@ -688,33 +688,52 @@ function isRetryableLifecycleError(error: unknown): boolean {
 }
 
 function snapshotTaskOutput(output: JSONValue): JSONValue {
-  let snapshot: unknown;
   try {
-    const serialized = JSON.stringify(output, (_key, value: unknown) => {
-      if (!isLosslessJSONMember(value)) throw new TypeError();
-      return value;
-    });
-    if (serialized === undefined) throw new TypeError();
-    snapshot = JSON.parse(serialized);
+    const snapshot = copyJSONValue(output, new WeakSet());
+    if (!isJSONValue(snapshot)) throw new TypeError();
+    return snapshot;
   } catch {
     throw new TypeError("Task handler returned output that JSON cannot preserve");
   }
-  if (!isJSONValue(snapshot)) {
-    throw new TypeError("Task handler returned output that JSON cannot preserve");
-  }
-  return snapshot;
 }
 
-function isLosslessJSONMember(value: unknown): boolean {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
-  if (typeof value === "number") return Number.isFinite(value) && !Object.is(value, -0);
-  if (typeof value !== "object") return false;
-  if (Object.getOwnPropertySymbols(value).some((key) => Object.prototype.propertyIsEnumerable.call(value, key))) {
-    return false;
+function copyJSONValue(value: unknown, ancestors: WeakSet<object>): JSONValue {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError();
+    return value;
   }
-  if (!Array.isArray(value)) return true;
+  if (typeof value !== "object" || ancestors.has(value)) throw new TypeError();
+
+  const symbols = Object.getOwnPropertySymbols(value);
+  if (symbols.some((key) => Object.prototype.propertyIsEnumerable.call(value, key))) throw new TypeError();
+
   const keys = Object.keys(value);
-  return keys.length === value.length && keys.every((key, index) => key === String(index));
+  if (Array.isArray(value) && (keys.length !== value.length || !keys.every((key, index) => key === String(index)))) {
+    throw new TypeError();
+  }
+
+  ancestors.add(value);
+  try {
+    if (!keys.includes("toJSON") && typeof Reflect.get(value, "toJSON") === "function") throw new TypeError();
+
+    if (Array.isArray(value)) return keys.map((key) => copyJSONValue(Reflect.get(value, key), ancestors));
+
+    const snapshot: Record<string, JSONValue> = {};
+    for (const key of keys) {
+      const member = Reflect.get(value, key);
+      if (key === "toJSON" && typeof member === "function") throw new TypeError();
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        value: copyJSONValue(member, ancestors),
+        writable: true
+      });
+    }
+    return snapshot;
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {

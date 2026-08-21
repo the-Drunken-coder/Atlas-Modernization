@@ -1038,6 +1038,8 @@ describe("AtlasAssetRuntime", () => {
     ["nested undefined", () => ({ value: undefined })],
     ["nested function", () => ({ value: () => "ignored" })],
     ["nested symbol", () => ({ value: Symbol("ignored") })],
+    ["toJSON transformation", () => ({ reading: 1, toJSON: () => ({ reading: 2 }) })],
+    ["nested toJSON transformation", () => ({ value: { reading: 1, toJSON: () => ({ reading: 2 }) } })],
     [
       "symbol-keyed property",
       () => Object.defineProperty({ value: 1 }, Symbol("ignored"), { value: 2, enumerable: true })
