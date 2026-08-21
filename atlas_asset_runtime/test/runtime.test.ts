@@ -657,6 +657,63 @@ describe("AtlasAssetRuntime", () => {
     expect(runtime.status).toBe("stopped");
   });
 
+  it("orders Core deactivation after an in-flight readiness request settles", async () => {
+    const order: string[] = [];
+    const readinessStarted = deferred<void>();
+    const finishReadiness = deferred<void>();
+    const { client } = fakeClient();
+    client.runtime.ready.mockImplementationOnce(async () => {
+      order.push("ready:start");
+      readinessStarted.resolve();
+      await finishReadiness.promise;
+      order.push("ready:end");
+    });
+    client.runtime.stop.mockImplementationOnce(async () => void order.push("stop"));
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    const startResult = runtime.start().then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    await readinessStarted.promise;
+    const stopping = runtime.stop();
+
+    expect(client.runtime.stop).not.toHaveBeenCalled();
+    finishReadiness.resolve();
+    expect(await startResult).toBeInstanceOf(Error);
+    await stopping;
+    expect(order).toEqual(["ready:start", "ready:end", "stop"]);
+    expect(runtime.status).toBe("stopped");
+  });
+
+  it("shares failed-start compensation with an overlapping stop", async () => {
+    const startupError = new Error("ready response lost");
+    const duplicateError = new Error("duplicate stop failed");
+    const compensationStarted = deferred<void>();
+    const finishCompensation = deferred<void>();
+    const { client } = fakeClient();
+    client.runtime.ready.mockRejectedValueOnce(startupError);
+    client.runtime.stop
+      .mockImplementationOnce(async () => {
+        compensationStarted.resolve();
+        await finishCompensation.promise;
+      })
+      .mockRejectedValueOnce(duplicateError);
+    const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
+
+    const starting = runtime.start();
+    await compensationStarted.promise;
+    const stopping = runtime.stop();
+
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    const startResult = expect(starting).rejects.toBe(startupError);
+    finishCompensation.resolve();
+    await startResult;
+    await expect(stopping).resolves.toBeUndefined();
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(runtime.status).toBe("stopped");
+  });
+
   it("retries the exact runtime registration after an ambiguous transport failure", async () => {
     vi.useFakeTimers();
     const { client } = fakeClient();

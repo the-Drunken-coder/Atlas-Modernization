@@ -259,9 +259,10 @@ export class AtlasAssetRuntime {
     controller?.abort();
     for (const checkInController of this.standaloneCheckIns) checkInController.abort();
     this.clearAcceptedWork();
-    let deactivation = this.runtimeId ? this.deactivate(this.runtimeId) : undefined;
+    // Ready may commit after its abort signal fires, so Stop must not race ahead of startup.
+    if (this.startPromise) await Promise.allSettled([this.startPromise]);
+    const deactivation = this.runtimeId ? this.deactivate(this.runtimeId) : undefined;
     await Promise.allSettled([
-      this.startPromise,
       this.checkInLoop,
       this.deliveryLoop,
       this.reconciliationLoop,
@@ -271,7 +272,6 @@ export class AtlasAssetRuntime {
       ...this.acceptances,
       ...this.executions
     ]);
-    if (!deactivation && this.runtimeId) deactivation = this.deactivate(this.runtimeId);
     const deactivationResult = await deactivation;
     this.checkInLoop = undefined;
     this.deliveryLoop = undefined;
