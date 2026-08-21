@@ -261,7 +261,6 @@ export class AtlasAssetRuntime {
     this.clearAcceptedWork();
     // Ready may commit after its abort signal fires, so Stop must not race ahead of startup.
     if (this.startPromise !== undefined) await Promise.allSettled([this.startPromise]);
-    const deactivation = this.runtimeId ? this.deactivate(this.runtimeId) : undefined;
     await Promise.allSettled([
       this.checkInLoop,
       this.deliveryLoop,
@@ -272,7 +271,8 @@ export class AtlasAssetRuntime {
       ...this.acceptances,
       ...this.executions
     ]);
-    const deactivationResult = await deactivation;
+    // Core may authorize a replacement after Stop, so retain its fence through local cleanup.
+    const deactivationResult = this.runtimeId ? await this.deactivate(this.runtimeId) : undefined;
     this.checkInLoop = undefined;
     this.deliveryLoop = undefined;
     this.reconciliationLoop = undefined;

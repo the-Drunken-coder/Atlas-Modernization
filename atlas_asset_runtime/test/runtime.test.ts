@@ -307,9 +307,13 @@ describe("AtlasAssetRuntime", () => {
     await runtime.stop();
   });
 
-  it("waits for immediate handler cleanup before stop resolves", async () => {
+  it("holds the Core runtime fence until immediate handler cleanup settles", async () => {
     const pending = task("immediate-1", "immediate.observe");
     const { client } = fakeClient([pending]);
+    let replacementAuthorized = false;
+    client.runtime.stop.mockImplementationOnce(async () => {
+      replacementAuthorized = true;
+    });
     const cleanupStarted = deferred<void>();
     const cleanupFinished = deferred<void>();
     const runtime = new AtlasAssetRuntime(client, {
@@ -340,9 +344,12 @@ describe("AtlasAssetRuntime", () => {
     await cleanupStarted.promise;
     expect(stopped).toBe(false);
     expect(runtime.status).toBe("stopping");
-    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(client.runtime.stop).not.toHaveBeenCalled();
+    expect(replacementAuthorized).toBe(false);
     cleanupFinished.resolve();
     await stopping;
+    expect(client.runtime.stop).toHaveBeenCalledOnce();
+    expect(replacementAuthorized).toBe(true);
     expect(runtime.status).toBe("stopped");
   });
 
