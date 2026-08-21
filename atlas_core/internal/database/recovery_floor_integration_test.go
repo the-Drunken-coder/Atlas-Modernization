@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"testing"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 )
 
 func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
-	dbURL, explicitDBURL := recoveryFloorTestURL()
+	dbURL, explicitDBURL := testenv.DatabaseURL("ATLAS_DATABASE_TEST_URL")
 	if dbURL == "" {
 		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run migration integration tests")
 	}
@@ -141,23 +140,4 @@ func TestRecoveryFloorMigrationExpiresUnrepresentedLegacyCursor(t *testing.T) {
 	if len(recovered.Events) != 1 || recovered.Events[0].ID != created.EntityID || recovered.Events[0].Version != created.Version {
 		t.Fatalf("post-migration recovery = %+v, want entity %s at version %d", recovered.Events, created.EntityID, created.Version)
 	}
-}
-
-func recoveryFloorTestURL() (string, bool) {
-	if dbURL := os.Getenv("ATLAS_DATABASE_TEST_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	password := os.Getenv("POSTGRES_PASSWORD")
-	if password == "" {
-		return "", false
-	}
-	return (&url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword("atlas", password),
-		Host:   "localhost:5432",
-		Path:   "/atlas_core",
-	}).String(), false
 }

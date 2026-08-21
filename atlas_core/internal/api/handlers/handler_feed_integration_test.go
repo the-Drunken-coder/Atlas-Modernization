@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"testing"
 	"time"
 
@@ -135,7 +134,7 @@ func TestFeedReadsCommittedEventsWithoutRejectedWriteGaps(t *testing.T) {
 
 func openIsolatedFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL, explicitDBURL := feedIntegrationDatabaseURL()
+	dbURL, explicitDBURL := testenv.DatabaseURL("ATLAS_ACTIONS_DATABASE_URL")
 	if dbURL == "" {
 		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
 	}
@@ -284,54 +283,15 @@ func assertEntityCreateFeedEventIntegration(t *testing.T, event protocol.FeedEve
 
 func openFeedIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL, explicitDBURL := feedIntegrationDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
-	}
-
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed feed integration tests")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	if err := pool.Ping(ctx); err != nil {
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if ok, err := feedIntegrationCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
 		testenv.SkipOrFatal(t, "core schema is not present in test database")
 	}
 	return pool
-}
-
-func feedIntegrationDatabaseURL() (string, bool) {
-	if dbURL := os.Getenv("ATLAS_ACTIONS_DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	password := os.Getenv("POSTGRES_PASSWORD")
-	if password == "" {
-		return "", false
-	}
-	dbURL := url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword("atlas", password),
-		Host:   "localhost:5432",
-		Path:   "/atlas_core",
-	}
-	return dbURL.String(), false
 }
 
 func feedIntegrationCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {

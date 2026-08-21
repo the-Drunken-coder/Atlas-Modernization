@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { FeedEvent } from "../src";
 import { AtlasClient } from "../src";
 import { FeedConnectionManager } from "../src/feed-connection.js";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata, task } from "./support/fake-core.js";
 
 describe("AtlasClient feed connection", () => {
@@ -82,9 +83,7 @@ describe("AtlasClient feed connection", () => {
 
   it("does not reconnect after an intentional sync.stop feed close", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -297,9 +296,7 @@ describe("AtlasClient feed connection", () => {
 
   it("uses websocket feed events and converges through changed-since after a forced gap", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -330,9 +327,7 @@ describe("AtlasClient feed connection", () => {
 
   it("starts the websocket feed when sync starts and a WebSocket implementation is available", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -438,9 +433,7 @@ describe("AtlasClient feed connection", () => {
 
   it("replaces an existing feed socket on repeated connect calls", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -457,9 +450,7 @@ describe("AtlasClient feed connection", () => {
 
   it("lets the latest concurrent feed connection own the socket", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -495,9 +486,7 @@ describe("AtlasClient feed connection", () => {
 
   it("retries after feed gap recovery fails", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -540,9 +529,7 @@ describe("AtlasClient feed connection", () => {
 
   it("recovers explicit subscription gaps through changed-since", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: false,
       pollIntervalMs: 0
@@ -592,9 +579,7 @@ describe("AtlasClient feed connection", () => {
 
   it("keeps feed healthy when watch callbacks throw", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0

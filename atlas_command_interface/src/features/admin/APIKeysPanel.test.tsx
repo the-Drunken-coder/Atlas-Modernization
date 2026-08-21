@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { styleFixture } from "../../../test/fixtures.js";
 import { emptySnapshot } from "../../atlas/store.js";
 import { type AtlasContextValue, AtlasStaticProvider } from "../../state/atlas-context.js";
 import { APIKeysPanel } from "./APIKeysPanel.js";
@@ -12,7 +12,9 @@ const atlasValue: AtlasContextValue = {
     atlasBaseUrl: "https://core.test",
     protocolRevision: "rev",
     defaultMapSourceId: "openstreetmap-default",
-    mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
+    mapSources: [
+      { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
+    ]
   },
   snapshot: emptySnapshot(),
   health: { running: true, healthy: true, degraded: false },
@@ -24,10 +26,6 @@ const atlasValue: AtlasContextValue = {
     throw new Error("not used");
   }
 };
-
-function style(id: string): StyleSpecification {
-  return { version: 8, sources: {}, layers: [], metadata: { id } };
-}
 
 afterEach(() => {
   vi.unstubAllGlobals();

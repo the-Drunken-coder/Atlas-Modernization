@@ -12,20 +12,17 @@ describe("RunStore", () => {
   it("runs a scenario, records resources and assertions, and cleans up explicitly", async () => {
     vi.useFakeTimers();
     try {
-      const core = createFakeAtlasCore();
-      const store = new RunStore(core.factory);
-      const scenario: Scenario = {
+      const { core, store } = runStoreFixture();
+      const scenario = scenarioFixture({
         id: "store-test",
         name: "Store test",
         summary: "Stores run state",
-        acceptsJson: false,
-        inputFields: [],
         async run(ctx) {
           await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
           await ctx.createTask({ asset_id: ctx.id("asset"), command: "fixture.queued", input: { value: "run" } });
           ctx.assert("created", true, "resources tracked");
         }
-      };
+      });
 
       const started = store.start(scenario, { fields: {} });
       await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -46,16 +43,14 @@ describe("RunStore", () => {
     const writer = core.factory();
     await writer.entities.create({ entity_id: "external-asset", entity_type: "asset" });
     const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "external-id",
       name: "External ID",
       summary: "Attempts to create an existing non-run resource",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.createEntity({ entity_id: "external-asset", entity_type: "asset" });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -86,17 +81,15 @@ describe("RunStore", () => {
       };
     });
     let entityId = "";
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "response-failure-cleanup",
       name: "Response failure cleanup",
       summary: "Cleans up a create whose response failed after persistence",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         entityId = ctx.id("asset");
         await ctx.createEntity({ entity_id: entityId, entity_type: "asset" });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -108,18 +101,15 @@ describe("RunStore", () => {
   });
 
   it("reports cancelled status after a stopped run unwinds", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "slow-run",
       name: "Slow run",
       summary: "Waits until stopped",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.wait(60_000);
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     const stopped = store.stop(started.id);
@@ -130,16 +120,13 @@ describe("RunStore", () => {
   });
 
   it("preserves stop event ordering and ignores callbacks after settlement", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
+    const { store } = runStoreFixture();
     let lateCallback!: () => void;
     let lateAssertion: { id: string; name: string } | undefined;
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "late-callbacks",
       name: "Late callbacks",
       summary: "Stops before delayed callbacks run",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         lateCallback = () => {
           ctx.log("late log");
@@ -148,7 +135,7 @@ describe("RunStore", () => {
         };
         await ctx.wait(60_000);
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     const eventOrder: string[] = [];
@@ -167,18 +154,15 @@ describe("RunStore", () => {
   });
 
   it("marks the run failed when a scenario records a failed assertion", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "failed-assertion",
       name: "Failed assertion",
       summary: "Records a failed assertion",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.assert("expected convergence", false, "not converged");
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
 
@@ -187,20 +171,17 @@ describe("RunStore", () => {
   });
 
   it("fails runs that exceed the assertion history byte cap", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "assertion-byte-cap",
       name: "Assertion byte cap",
       summary: "Records oversized assertion history",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         for (let index = 0; index < 40; index += 1) {
           ctx.assert("x".repeat(8_100), true, "y".repeat(8_100));
         }
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
 
@@ -223,16 +204,14 @@ describe("RunStore", () => {
         }
       };
     });
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "teardown-failure",
       name: "Teardown failure",
       summary: "Fails during client cleanup",
-      acceptsJson: false,
-      inputFields: [],
       async run() {
         return undefined;
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
 
@@ -241,9 +220,8 @@ describe("RunStore", () => {
   });
 
   it("returns snapshots for summaries and events", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "snapshot-run",
       name: "Snapshot run",
       summary: "Checks snapshot isolation",
@@ -253,7 +231,7 @@ describe("RunStore", () => {
         await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
         ctx.assert("created", true);
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {}, json: { nested: { value: "original" } } });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -273,11 +251,10 @@ describe("RunStore", () => {
   });
 
   it("isolates running scenarios from later input mutations", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
+    const { store } = runStoreFixture();
     let release!: () => void;
     let observedInput: ScenarioInput | undefined;
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "input-isolation",
       name: "Input isolation",
       summary: "Reads inputs after start returns",
@@ -289,7 +266,7 @@ describe("RunStore", () => {
         });
         observedInput = input;
       }
-    };
+    });
     const input: ScenarioInput = { fields: { name: "original" }, json: { nested: { value: "original" } } };
 
     const started = store.start(scenario, input);
@@ -303,21 +280,18 @@ describe("RunStore", () => {
   });
 
   it("keeps cleanup blocked until a cancelled scenario has unwound", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
+    const { store } = runStoreFixture();
     let release!: () => void;
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "blocked-cleanup",
       name: "Blocked cleanup",
       summary: "Does not unwind immediately",
-      acceptsJson: false,
-      inputFields: [],
       async run() {
         await new Promise<void>((resolve) => {
           release = resolve;
         });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
@@ -329,24 +303,21 @@ describe("RunStore", () => {
   });
 
   it("retries when a generated run ID collides with an existing run", () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
+    const { store } = runStoreFixture();
     const dateNow = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const random = vi
       .spyOn(Math, "random")
       .mockReturnValueOnce(0.123456)
       .mockReturnValueOnce(0.123456)
       .mockReturnValueOnce(0.654321);
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "id-collision",
       name: "ID collision",
       summary: "Completes immediately",
-      acceptsJson: false,
-      inputFields: [],
       async run() {
         return undefined;
       }
-    };
+    });
 
     try {
       const first = store.start(scenario, { fields: {} });
@@ -377,16 +348,14 @@ describe("RunStore", () => {
         }
       };
     });
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "concurrent-cleanup",
       name: "Concurrent cleanup",
       summary: "Creates one resource",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -417,16 +386,14 @@ describe("RunStore", () => {
         }
       };
     });
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "cleanup-stop-failure",
       name: "Cleanup stop failure",
       summary: "Creates one resource",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -461,16 +428,14 @@ describe("RunStore", () => {
           }
         };
       });
-      const scenario: Scenario = {
+      const scenario = scenarioFixture({
         id: "cleanup-timeout",
         name: "Cleanup timeout",
         summary: "Creates one resource",
-        acceptsJson: false,
-        inputFields: [],
         async run(ctx) {
           await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
         }
-      };
+      });
 
       const started = store.start(scenario, { fields: {} });
       await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -487,8 +452,7 @@ describe("RunStore", () => {
   });
 
   it("treats already-deleted cleanup resources as successful", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
+    const { core, store } = runStoreFixture();
     const scenario = createOneEntityScenario();
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -505,18 +469,15 @@ describe("RunStore", () => {
   });
 
   it("does not mark unsupported cleanup resource types as deleted", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "unsupported-cleanup",
       name: "Unsupported cleanup",
       summary: "Tracks an unsupported resource type",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.track({ type: "track", id: ctx.id("track") } as unknown as Parameters<typeof ctx.track>[0]);
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -546,18 +507,16 @@ describe("RunStore", () => {
         }
       };
     });
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "cleanup-resource-cap",
       name: "Cleanup resource cap",
       summary: "Tracks many cleanup resources",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         for (let index = 0; index < 1_005; index += 1) {
           ctx.track({ type: "entity", id: ctx.id(`asset-${index}`) });
         }
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -583,12 +542,10 @@ describe("RunStore", () => {
         }
       };
     });
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "repeated-cleanup-resource-cap",
       name: "Repeated cleanup resource cap",
       summary: "Keeps trying after cleanup tracking overflows",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         for (let index = 0; index < 1_005; index += 1) {
           try {
@@ -598,7 +555,7 @@ describe("RunStore", () => {
           }
         }
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -610,14 +567,11 @@ describe("RunStore", () => {
   });
 
   it("cleans resources by dependency type and newest-to-oldest within a type", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { core, store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "cleanup-order",
       name: "Cleanup order",
       summary: "Creates mixed resources",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         const entityId = ctx.id("asset");
         await ctx.createEntity({ entity_id: entityId, entity_type: "asset" });
@@ -625,7 +579,7 @@ describe("RunStore", () => {
         await ctx.createObject({ object_id: ctx.id("object-2") });
         await ctx.createTask({ asset_id: entityId, command: "fixture.queued", input: { value: "run" } });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -719,18 +673,15 @@ describe("RunStore", () => {
   });
 
   it("evicts cleaned runs before refusing new runs at capacity", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "capacity",
       name: "Capacity",
       summary: "Completes immediately",
-      acceptsJson: false,
-      inputFields: [],
       async run() {
         return undefined;
       }
-    };
+    });
     const runs = Array.from({ length: 100 }, () => store.start(scenario, { fields: {} }));
     await vi.waitFor(() => expect(store.get(runs[0]!.id)?.status).toBe("completed"));
     await vi.waitFor(() => expect(store.get(runs[50]!.id)?.status).toBe("completed"));
@@ -744,20 +695,17 @@ describe("RunStore", () => {
   });
 
   it("trims old events from long runs", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "event-cap",
       name: "Event cap",
       summary: "Emits many events",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         for (let index = 0; index < 510; index += 1) {
           ctx.log(`event ${index}`);
         }
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -769,20 +717,17 @@ describe("RunStore", () => {
   });
 
   it("keeps the terminal status event when cleanup events trim history", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "cleanup-event-cap",
       name: "Cleanup event cap",
       summary: "Creates enough resources to trim cleanup events",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         for (let index = 0; index < 510; index += 1) {
           await ctx.createObject({ object_id: ctx.id(`object-${index}`) });
         }
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -795,18 +740,15 @@ describe("RunStore", () => {
   });
 
   it("keeps subscribers added after completion until cleanup finishes", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "terminal-subscribe",
       name: "Terminal subscribe",
       summary: "Creates a cleanup target",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.createObject({ object_id: ctx.id("object") });
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -818,19 +760,16 @@ describe("RunStore", () => {
   });
 
   it("clears live subscribers after terminal status", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "terminal-live-subscribe",
       name: "Terminal live subscribe",
       summary: "Creates a cleanup target after a short wait",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.createObject({ object_id: ctx.id("object") });
         await ctx.wait(20);
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     const messages: string[] = [];
@@ -843,18 +782,15 @@ describe("RunStore", () => {
   });
 
   it("rejects overly deep structured event data before storing the log event", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "deep-event-data",
       name: "Deep event data",
       summary: "Emits nested data",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.log("too deep", JSON.parse(`${"[".repeat(202)}null${"]".repeat(202)}`));
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -864,21 +800,18 @@ describe("RunStore", () => {
   });
 
   it("rejects event data with too many structured values before storing the log event", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "wide-event-data",
       name: "Wide event data",
       summary: "Emits wide data",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.log(
           "too wide",
           Array.from({ length: 10_001 }, () => null)
         );
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -888,18 +821,15 @@ describe("RunStore", () => {
   });
 
   it("rejects oversized event data before storing the log event", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "oversized-event-data",
       name: "Oversized event data",
       summary: "Emits oversized data",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.log("too large", "x".repeat(200_001));
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("failed"));
@@ -909,18 +839,15 @@ describe("RunStore", () => {
   });
 
   it("truncates oversized event messages before storing them", async () => {
-    const core = createFakeAtlasCore();
-    const store = new RunStore(core.factory);
-    const scenario: Scenario = {
+    const { store } = runStoreFixture();
+    const scenario = scenarioFixture({
       id: "oversized-event-message",
       name: "Oversized event message",
       summary: "Emits an oversized message",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.log("x".repeat(200_001));
       }
-    };
+    });
 
     const started = store.start(scenario, { fields: {} });
     await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -1060,12 +987,10 @@ describe("RunStore", () => {
     try {
       const core = createFakeAtlasCore();
       const store = new RunStore(core.factory, { ledger });
-      const scenario: Scenario = {
+      const scenario = scenarioFixture({
         id: "generated-deployed-task",
         name: "Generated deployed task",
         summary: "Retains Task execution history",
-        acceptsJson: false,
-        inputFields: [],
         async run(ctx) {
           await ctx.createTask({
             asset_id: ctx.id("asset"),
@@ -1073,7 +998,7 @@ describe("RunStore", () => {
             input: { value: "deployed" }
           });
         }
-      };
+      });
 
       const started = store.start(scenario, { fields: {} }, deployedTarget(core.factory));
       await vi.waitFor(() => expect(store.get(started.id)?.status).toBe("completed"));
@@ -1091,17 +1016,26 @@ describe("RunStore", () => {
   });
 });
 
+function scenarioFixture(
+  definition: Pick<Scenario, "id" | "name" | "summary" | "run"> & Partial<Pick<Scenario, "acceptsJson" | "inputFields">>
+): Scenario {
+  return { acceptsJson: false, inputFields: [], ...definition };
+}
+
+function runStoreFixture() {
+  const core = createFakeAtlasCore();
+  return { core, store: new RunStore(core.factory) };
+}
+
 function createOneEntityScenario(): Scenario {
-  return {
+  return scenarioFixture({
     id: "durable-entity",
     name: "Durable entity",
     summary: "Creates one cleanup target",
-    acceptsJson: false,
-    inputFields: [],
     async run(ctx) {
       await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset" });
     }
-  };
+  });
 }
 
 function deployedTarget(

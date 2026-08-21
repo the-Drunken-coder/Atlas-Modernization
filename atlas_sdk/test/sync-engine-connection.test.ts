@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient } from "../src";
+import { createAtlasClient } from "./support/client.js";
 import { FakeCore } from "./support/fake-core.js";
 
 describe("AtlasClient sync: connection and startup", () => {
@@ -18,9 +19,7 @@ describe("AtlasClient sync: connection and startup", () => {
 
   it("configures sync presets without starting hydration or feed side effects", () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -39,9 +38,7 @@ describe("AtlasClient sync: connection and startup", () => {
 
   it("does not report a stopped engine healthy after a manual changed-since call", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       sync: false,
       pollIntervalMs: 60_000
     });

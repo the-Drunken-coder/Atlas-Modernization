@@ -1,19 +1,16 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it } from "vitest";
+import { taskFixture } from "../../../test/fixtures.js";
 import { TaskRow } from "./TaskRow.js";
 
 afterEach(cleanup);
 
-const base = {
-  task_id: "task-1",
-  asset_id: "asset-1",
-  command: "fixture.queued",
+const base = taskFixture({
   input: { value: "fixture" },
-  status: "pending",
   created_at: "2026-08-19T12:00:00Z",
   updated_at: "2026-08-19T12:00:00Z"
-} satisfies TaskResource;
+});
 
 const lifecycleCases: ReadonlyArray<readonly [TaskResource, string, string]> = [
   [

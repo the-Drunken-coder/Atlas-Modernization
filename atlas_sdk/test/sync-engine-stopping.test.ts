@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient } from "../src";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata } from "./support/fake-core.js";
 
 describe("AtlasClient sync: stopping and lifecycle generations", () => {
@@ -228,7 +229,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
       releaseCurrentConnect = resolve;
     });
     const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: false, pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: false, pollIntervalMs: 0 });
     const engine = (client as unknown as { engine: { feed: { connect: () => Promise<void> } } }).engine;
     const connect = vi
       .spyOn(engine.feed, "connect")
@@ -302,9 +303,7 @@ describe("AtlasClient sync: stopping and lifecycle generations", () => {
   it("does not mutate recovery state after a watcher stops the final recovery event", async () => {
     const core = new FakeCore();
     const recovered = core.upsertEntity(entity("asset-stop-during-recovery"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       sync: false,
       pollIntervalMs: 0
     });

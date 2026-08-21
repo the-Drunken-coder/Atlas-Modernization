@@ -400,17 +400,15 @@ describe("simulation HTTP server", () => {
       `failed https://user:${secrets[0]}@core.test?api_key=${secrets[1]} ` +
       `Bearer ${secrets[2]} Basic ${secrets[3]} ${secrets[4]} \u001b[31m\nstack-canary`;
     const store = new RunStore(createFakeAtlasCore().factory);
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "unsafe-errors",
       name: "Unsafe errors",
       summary: "Exercises error boundaries",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         ctx.assert("unsafe assertion", false, unsafeMessage);
         throw new Error(unsafeMessage);
       }
-    };
+    });
     const started = store.start(scenario, { fields: {} });
     await waitFor(async () => expect(store.get(started.id)?.status).toBe("failed"));
     server = createSimulationServer({
@@ -510,16 +508,14 @@ describe("simulation HTTP server", () => {
       };
     };
     const store = new RunStore(failingFactory);
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "cleanup-failure",
       name: "Cleanup failure",
       summary: "Creates one resource and then fails cleanup deletion",
-      acceptsJson: false,
-      inputFields: [],
       async run(ctx) {
         await ctx.createEntity({ entity_id: ctx.id("asset"), entity_type: "asset", components: {} });
       }
-    };
+    });
     const run = store.start(scenario, { fields: {} });
     await waitFor(async () => expect(store.get(run.id)?.status).toBe("completed"));
     server = createSimulationServer({
@@ -543,18 +539,16 @@ describe("simulation HTTP server", () => {
     const core = createFakeAtlasCore();
     const store = new RunStore(core.factory);
     let release!: () => void;
-    const scenario: Scenario = {
+    const scenario = scenarioFixture({
       id: "blocked-cleanup",
       name: "Blocked cleanup",
       summary: "Stays unsettled after stop",
-      acceptsJson: false,
-      inputFields: [],
       async run() {
         await new Promise<void>((resolve) => {
           release = resolve;
         });
       }
-    };
+    });
     const started = store.start(scenario, { fields: {} });
     await waitFor(async () => expect(release).toBeTypeOf("function"));
     store.stop(started.id);
@@ -957,6 +951,12 @@ async function rawRequest(url: string, method: string): Promise<{ status: number
 
 function tempPackageRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "atlas-simulations-http-"));
+}
+
+function scenarioFixture(
+  definition: Pick<Scenario, "id" | "name" | "summary" | "run"> & Partial<Pick<Scenario, "acceptsJson" | "inputFields">>
+): Scenario {
+  return { acceptsJson: false, inputFields: [], ...definition };
 }
 
 function durableStore(clientFactory: AtlasClientFactory): RunStore {

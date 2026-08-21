@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -143,28 +141,9 @@ func TestCleanupUploadedPathAfterFailureReportsDeleteFailure(t *testing.T) {
 }
 
 func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
-	dbURL, explicitDBURL := actionsTestDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
-	}
-
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
@@ -179,7 +158,7 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 	actions := NewObjectActions(pool, storageClient)
 	cause := errors.New("commit failed")
 
-	err = actions.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, cause)
+	err := actions.cleanupUploadedPathAfterFailure(ctx, objectID, objectPath, cause)
 
 	if !errors.Is(err, cause) || !errors.Is(err, storageClient.deleteErr) {
 		t.Fatalf("cleanupUploadedPathAfterFailure error = %v, want cause and delete error", err)
@@ -209,28 +188,9 @@ func TestCleanupUploadedPathAfterFailureQueuesDeleteRetry(t *testing.T) {
 }
 
 func TestObjectDeletePublishesChangeBeforeStorageCleanup(t *testing.T) {
-	dbURL, explicitDBURL := actionsTestDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object delete ordering test")
-	}
-
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object delete ordering test")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
@@ -360,28 +320,9 @@ func TestStorageDeletionRetryDelay(t *testing.T) {
 }
 
 func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
-	dbURL, explicitDBURL := actionsTestDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
-	}
-
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed storage deletion outbox test")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
@@ -428,28 +369,9 @@ func TestReconcileStorageDeletionsDeletesQueuedPath(t *testing.T) {
 }
 
 func TestUploadDoesNotResurrectObjectDeletedDuringBlobWrite(t *testing.T) {
-	dbURL, explicitDBURL := actionsTestDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object upload race test")
-	}
-
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed object upload race test")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {
@@ -529,48 +451,32 @@ func ptrString(value string) *string {
 }
 
 type recordingObjectStorage struct {
+	noopObjectStorage
 	deletedPaths []string
 	deleteErr    error
-	pathCounter  atomic.Int64
 }
 
-func (s *recordingObjectStorage) Bucket() string {
-	return "atlas-media"
-}
+var _ objectStorage = (*recordingObjectStorage)(nil)
 
 func (s *recordingObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
 	s.deletedPaths = append(s.deletedPaths, path)
 	return s.deleteErr
 }
 
-func (s *recordingObjectStorage) NewObjectPath(objectID string) string {
-	return nextVersionedObjectPath(&s.pathCounter, objectID)
-}
-
-func (s *recordingObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
-	return nil, nil, nil
-}
-
-func (s *recordingObjectStorage) UploadObjectFromReaderToPath(context.Context, string, string, io.Reader, int64, string) (*storage.ObjectInfo, error) {
-	return nil, nil
-}
-
 type pausingDeleteObjectStorage struct {
+	noopObjectStorage
 	deleteStarted chan string
 	release       chan struct{}
 	releaseOnce   sync.Once
-	pathCounter   atomic.Int64
 }
+
+var _ objectStorage = (*pausingDeleteObjectStorage)(nil)
 
 func newPausingDeleteObjectStorage() *pausingDeleteObjectStorage {
 	return &pausingDeleteObjectStorage{
 		deleteStarted: make(chan string, 1),
 		release:       make(chan struct{}),
 	}
-}
-
-func (s *pausingDeleteObjectStorage) Bucket() string {
-	return "atlas-media"
 }
 
 func (s *pausingDeleteObjectStorage) DeleteObjectPath(ctx context.Context, path string) error {
@@ -581,18 +487,6 @@ func (s *pausingDeleteObjectStorage) DeleteObjectPath(ctx context.Context, path 
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func (s *pausingDeleteObjectStorage) NewObjectPath(objectID string) string {
-	return nextVersionedObjectPath(&s.pathCounter, objectID)
-}
-
-func (s *pausingDeleteObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
-	return nil, nil, nil
-}
-
-func (s *pausingDeleteObjectStorage) UploadObjectFromReaderToPath(context.Context, string, string, io.Reader, int64, string) (*storage.ObjectInfo, error) {
-	return nil, nil
 }
 
 func (s *pausingDeleteObjectStorage) releaseDelete() {
@@ -613,6 +507,7 @@ func (s *pausingDeleteObjectStorage) waitForDeleteStart(t *testing.T) string {
 }
 
 type blockingObjectStorage struct {
+	noopObjectStorage
 	uploadStarted  chan string
 	continueUpload chan struct{}
 	releaseOnce    sync.Once
@@ -622,15 +517,13 @@ type blockingObjectStorage struct {
 	deletedPaths []string
 }
 
+var _ objectStorage = (*blockingObjectStorage)(nil)
+
 func newBlockingObjectStorage() *blockingObjectStorage {
 	return &blockingObjectStorage{
 		uploadStarted:  make(chan string, 1),
 		continueUpload: make(chan struct{}),
 	}
-}
-
-func (s *blockingObjectStorage) Bucket() string {
-	return "atlas-media"
 }
 
 func (s *blockingObjectStorage) DeleteObjectPath(_ context.Context, path string) error {
@@ -642,10 +535,6 @@ func (s *blockingObjectStorage) DeleteObjectPath(_ context.Context, path string)
 
 func (s *blockingObjectStorage) NewObjectPath(objectID string) string {
 	return nextVersionedObjectPath(&s.pathCounter, objectID)
-}
-
-func (s *blockingObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
-	return nil, nil, nil
 }
 
 func (s *blockingObjectStorage) UploadObjectFromReaderToPath(_ context.Context, objectID, path string, reader io.Reader, size int64, contentType string) (*storage.ObjectInfo, error) {
@@ -706,26 +595,6 @@ func nextVersionedObjectPath(counter *atomic.Int64, objectID string) string {
 			return fmt.Sprintf("objects/%s/%d", objectID, version)
 		}
 	}
-}
-
-func actionsTestDatabaseURL() (string, bool) {
-	if dbURL := os.Getenv("ATLAS_ACTIONS_DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	password := os.Getenv("POSTGRES_PASSWORD")
-	if password == "" {
-		return "", false
-	}
-	dbURL := url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword("atlas", password),
-		Host:   "localhost:5432",
-		Path:   "/atlas_core",
-	}
-	return dbURL.String(), false
 }
 
 func actionsTestCoreSchemaPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {

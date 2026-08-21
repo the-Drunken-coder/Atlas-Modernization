@@ -283,20 +283,25 @@ func TestUploadHeartbeatRetriesTransientRenewalFailure(t *testing.T) {
 }
 
 type crashFileObjectStorage struct {
+	noopObjectStorage
 	crashAfterWrite bool
 }
 
 type cancelAwareObjectStorage struct {
+	noopObjectStorage
 	uploadStarted chan string
 	mu            sync.Mutex
 	deletedPaths  []string
 }
 
+var (
+	_ objectStorage = (*crashFileObjectStorage)(nil)
+	_ objectStorage = (*cancelAwareObjectStorage)(nil)
+)
+
 func newCancelAwareObjectStorage() *cancelAwareObjectStorage {
 	return &cancelAwareObjectStorage{uploadStarted: make(chan string, 1)}
 }
-
-func (s *cancelAwareObjectStorage) Bucket() string { return "atlas-media" }
 
 func (s *cancelAwareObjectStorage) NewObjectPath(objectID string) string {
 	return fmt.Sprintf("objects/%s/heartbeat-blob", objectID)
@@ -315,10 +320,6 @@ func (s *cancelAwareObjectStorage) DeleteObjectPath(_ context.Context, path stri
 	defer s.mu.Unlock()
 	s.deletedPaths = append(s.deletedPaths, path)
 	return nil
-}
-
-func (s *cancelAwareObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
-	return nil, nil, errors.New("not implemented")
 }
 
 func (s *cancelAwareObjectStorage) waitForUploadStart(t *testing.T) string {
@@ -344,8 +345,6 @@ func (s *cancelAwareObjectStorage) deletedPath(path string) bool {
 }
 
 func crashStoragePath(objectID string) string { return fmt.Sprintf("objects/%s/crash-blob", objectID) }
-
-func (s *crashFileObjectStorage) Bucket() string { return "atlas-media" }
 
 func (s *crashFileObjectStorage) NewObjectPath(objectID string) string {
 	return crashStoragePath(objectID)
@@ -377,10 +376,6 @@ func (s *crashFileObjectStorage) DeleteObjectPath(_ context.Context, _ string) e
 		return nil
 	}
 	return err
-}
-
-func (s *crashFileObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
-	return nil, nil, errors.New("not implemented")
 }
 
 func TestReconcileStorageUploadIntentDeletesUnreferencedBlob(t *testing.T) {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient } from "../src";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: recovery and hydration", () => {
@@ -7,9 +8,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
     core.upsertTask(task("task-1", "asset-1"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -24,9 +23,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
   it("serves object details from the full-dataset cache", async () => {
     const core = new FakeCore();
     const hydrated = core.createObject({ object_id: "object-hydrated-detail", extra: { label: "hydrated" } });
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -41,9 +38,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
 
   it("recovers object summaries and refreshes details on demand", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -61,7 +56,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
   it("emits the original feed event for changed-since upserts", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-1"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
     const watch = vi.fn();
     client.watch({ filter: "type", resource_type: "task" }, watch);
@@ -155,9 +150,7 @@ describe("AtlasClient sync: recovery and hydration", () => {
     const core = new FakeCore();
     const retained = core.upsertEntity(entity("asset-retention"));
     const deleted = core.upsertEntity(entity("asset-deleted"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0

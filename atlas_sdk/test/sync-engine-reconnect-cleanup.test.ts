@@ -3,6 +3,7 @@ import { AtlasClient, type ResourceType } from "../src";
 import { ResourceCache } from "../src/cache.js";
 import { parseSubscriptionKey } from "../src/subscriptions.js";
 import { type ResourceValue } from "../src/types.js";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
@@ -22,9 +23,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
   it("does not start duplicate polling intervals when sync.start is called twice sequentially", async () => {
     vi.useFakeTimers();
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       sync: "all",
       pollIntervalMs: 100
     });
@@ -173,9 +172,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
     const automaticConnect = new Promise<void>((_resolve, reject) => {
       rejectAutomaticConnect = reject;
     });
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 60_000
@@ -303,9 +300,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("shares one startup path across concurrent sync.start calls", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -388,7 +383,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
   it("evicts local cache entries after successful deletes", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-delete"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
 
     await expect(client.entities.get("asset-delete")).resolves.toMatchObject({ entity_id: "asset-delete" });
@@ -403,9 +398,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
   it("emits a local delete notification without fabricating a feed version", async () => {
     const core = new FakeCore();
     core.upsertEntity(entity("asset-delete-uncached"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -432,9 +425,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
   it("keeps local delete markers ahead of stale feed updates", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-delete-stale"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -542,9 +533,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("keeps successful writes successful when watch callbacks throw", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -574,9 +563,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("isolates cache state and later watchers from watch callback mutation", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -609,9 +596,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("honors explicit tasks-for-asset subscriptions across lifecycle updates", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: false,
       pollIntervalMs: 0
@@ -650,9 +635,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
   it("sends unsubscribe frames and stops delivering removed watch callbacks", async () => {
     const core = new FakeCore();
     const filter = { filter: "type", resource_type: "task" } as const;
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: false,
       pollIntervalMs: 0
@@ -727,9 +710,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
         core.upsertObject({ ...object(id), type: "log" });
       }
     };
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       sync: "all",
       pollIntervalMs: 0,
       objectContentCacheEntries: 4
@@ -745,7 +726,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("exposes typed watch helpers for all resource surfaces", () => {
     const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const client = createAtlasClient(core);
 
     expect(typeof client.entities.watch("asset-watch", vi.fn())).toBe("function");
     expect(typeof client.tasks.watch("task-watch", vi.fn())).toBe("function");
@@ -784,9 +765,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("recovers when a feed event payload crosses resource types", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -834,7 +813,7 @@ describe("AtlasClient sync: polling, reconnect timers, and cleanup", () => {
 
   it("stops delivering events after unwatch without affecting other watchers", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
     const beforeWatch = vi.fn();
     const removedWatch = vi.fn();

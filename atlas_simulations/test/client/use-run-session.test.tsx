@@ -3,20 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanupRun, loadRuns, startRun, stopRun } from "../../src/client/api.js";
 import { useRunSession } from "../../src/client/use-run-session.js";
 import type { RunSummary } from "../../src/shared/types.js";
+import { runFixture } from "./fixtures.js";
 
 vi.mock("../../src/client/api.js");
 
-const run: RunSummary = {
+const run = runFixture({
   id: "sim-hook",
   scenarioId: "moving-assets",
   scenarioName: "Moving assets",
-  status: "completed",
-  startedAt: new Date().toISOString(),
-  inputs: {},
-  createdResources: [],
-  assertions: [],
-  cleaned: false
-};
+  status: "completed"
+});
 
 class FakeEventSource {
   onmessage: ((message: MessageEvent<string>) => void) | null = null;

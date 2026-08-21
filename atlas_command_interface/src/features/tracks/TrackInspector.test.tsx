@@ -1,12 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { entityFixture } from "../../../test/fixtures.js";
 import { TrackInspector } from "./TrackInspector.js";
 
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
-
 function track(components: EntityResource["components"] = {}, alias: string | null = null): EntityResource {
-  return { entity_id: "track-1", entity_type: "track", subtype: null, alias, components, metadata };
+  return entityFixture({ entity_id: "track-1", entity_type: "track", alias, components });
 }
 
 function fieldValue(label: string): HTMLElement {

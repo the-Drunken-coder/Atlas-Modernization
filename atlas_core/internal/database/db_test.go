@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -187,7 +185,7 @@ func TestScratchDataResetClearsResourcesOnly(t *testing.T) {
 }
 
 func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
-	dbURL, explicitDBURL := databaseTestURL()
+	dbURL, explicitDBURL := testenv.DatabaseURL("ATLAS_DATABASE_TEST_URL")
 	if dbURL == "" {
 		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed schema constraint tests")
 	}
@@ -300,26 +298,6 @@ func TestCoreSchemaPositiveVersionConstraintsRejectInvalidWrites(t *testing.T) {
 			t.Fatalf("context entity_id = %q, want asset-1", entityID)
 		}
 	})
-}
-
-func databaseTestURL() (string, bool) {
-	if dbURL := os.Getenv("ATLAS_DATABASE_TEST_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	password := os.Getenv("POSTGRES_PASSWORD")
-	if password == "" {
-		return "", false
-	}
-	dbURL := url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword("atlas", password),
-		Host:   "localhost:5432",
-		Path:   "/atlas_core",
-	}
-	return dbURL.String(), false
 }
 
 func assertConstraintViolation(t *testing.T, err error, constraint string) {

@@ -1,13 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent } from "../src";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient simulation", () => {
   it("matches the simulation ledger at checkpoints and run end", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0

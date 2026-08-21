@@ -255,22 +255,17 @@ func cleanupActionsLiveRows(ctx context.Context, t *testing.T, pool *pgxpool.Poo
 }
 
 type boundaryObjectStorage struct {
+	noopObjectStorage
 	path        string
 	pathCalls   int
 	uploadCalls int
 }
 
-func (s *boundaryObjectStorage) Bucket() string { return "atlas-media" }
-
-func (s *boundaryObjectStorage) DeleteObjectPath(context.Context, string) error { return nil }
+var _ objectStorage = (*boundaryObjectStorage)(nil)
 
 func (s *boundaryObjectStorage) NewObjectPath(string) string {
 	s.pathCalls++
 	return s.path
-}
-
-func (s *boundaryObjectStorage) StreamObjectPath(context.Context, string, string) (io.ReadCloser, *storage.ObjectInfo, error) {
-	return nil, nil, nil
 }
 
 func (s *boundaryObjectStorage) UploadObjectFromReaderToPath(_ context.Context, objectID, path string, _ io.Reader, size int64, contentType string) (*storage.ObjectInfo, error) {

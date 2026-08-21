@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { CommandCatalog, EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
-import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
+import { styleFixture as style } from "../../test/fixtures.js";
 import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource, CommandSubmission, ConnectionHealth } from "../atlas/data-source.js";
 import type { UiGeometry } from "../atlas/geometry.js";
@@ -194,10 +194,6 @@ function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ],
     ...overrides
   };
-}
-
-function style(id: string): StyleSpecification {
-  return { version: 8, sources: {}, layers: [], metadata: { id } };
 }
 
 function deferred<T>() {
