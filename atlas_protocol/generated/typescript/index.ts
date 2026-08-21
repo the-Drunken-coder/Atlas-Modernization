@@ -860,6 +860,7 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     if (typeof current !== "object" || (!Array.isArray(current) && !atlasProtocolIsRecord(current))) {
       return false;
     }
+    if (Array.isArray(current) && !atlasProtocolHasOnlyArrayEntries(current)) return false;
     if (active.has(current)) return false;
     active.add(current);
     work.push({ leave: current });
@@ -871,4 +872,13 @@ function atlasProtocolIsJSONValue(value: unknown): value is JSONValue {
     }
   }
   return true;
+}
+
+function atlasProtocolHasOnlyArrayEntries(value: unknown[]): boolean {
+  return Reflect.ownKeys(value).every((key) => {
+    if (key === "length") return true;
+    if (typeof key !== "string") return false;
+    const index = Number(key);
+    return Number.isInteger(index) && index >= 0 && index < value.length && String(index) === key;
+  });
 }
