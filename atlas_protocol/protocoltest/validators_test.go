@@ -569,7 +569,7 @@ func TestTaskValidation(t *testing.T) {
 		"failed without failure":         {"status": "failed"},
 		"cancelled without cancellation": {"status": "cancelled"},
 		"failed start without acknowledgement": {
-			"status": "failed", "acknowledged_at": nil,
+			"status": "failed", "acknowledged_at": nil, "progress": nil,
 			"failure":     map[string]any{"code": "execution_failed", "message": "bad"},
 			"finished_at": "2026-05-29T10:01:00Z",
 		},
