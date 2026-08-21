@@ -1,24 +1,20 @@
 import { act, render, screen } from "@testing-library/react";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { entityFixture } from "../../../test/fixtures.js";
 import { emptySnapshot } from "../../atlas/store.js";
 import { EntityList } from "../EntityList.js";
 import { AssetInspector } from "./AssetInspector.js";
 
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
-
 function asset(lastSeen?: string): EntityResource {
-  return {
+  return entityFixture({
     entity_id: "asset-1",
-    entity_type: "asset",
-    subtype: null,
     alias: "Rover One",
     components: {
       communications: { link_state: "connected" },
       ...(lastSeen ? { heartbeat: { last_seen: lastSeen } } : {})
-    },
-    metadata
-  };
+    }
+  });
 }
 
 function fieldValue(label: string): HTMLElement {

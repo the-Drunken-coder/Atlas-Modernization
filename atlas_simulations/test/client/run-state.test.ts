@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildStartRunRequest, parseRunEvent } from "../../src/client/run-state.js";
-import { type AtlasTargetSummary, jsonNumber, type ScenarioDescriptor } from "../../src/shared/types.js";
+import { type AtlasTargetSummary, jsonNumber } from "../../src/shared/types.js";
+import { scenarioFixture } from "./fixtures.js";
 
-const scenario: ScenarioDescriptor = {
+const scenario = scenarioFixture({
   id: "sync-entity",
   name: "Sync entity",
   summary: "Synchronizes an entity",
@@ -11,7 +12,7 @@ const scenario: ScenarioDescriptor = {
     { key: "entityId", label: "Entity ID", type: "text", defaultValue: "entity-1" },
     { key: "attempts", label: "Attempts", type: "number", defaultValue: jsonNumber(1), min: jsonNumber(1) }
   ]
-};
+});
 
 const target: AtlasTargetSummary = {
   id: "deployed-core",

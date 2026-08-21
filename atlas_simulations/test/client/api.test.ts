@@ -8,32 +8,20 @@ import {
   startRun,
   stopRun
 } from "../../src/client/api.js";
-import {
-  type AtlasTargetSummary,
-  jsonNumber,
-  type RunSummary,
-  type ScenarioDescriptor
-} from "../../src/shared/types.js";
+import { type AtlasTargetSummary, jsonNumber } from "../../src/shared/types.js";
+import { runFixture, scenarioFixture } from "./fixtures.js";
 
-const scenario: ScenarioDescriptor = {
+const scenario = scenarioFixture({
   id: "moving-assets",
   name: "Moving assets",
-  summary: "Moves assets",
-  acceptsJson: false,
-  inputFields: []
-};
+  summary: "Moves assets"
+});
 
-const run: RunSummary = {
-  id: "sim-test",
+const run = runFixture({
   scenarioId: "moving-assets",
   scenarioName: "Moving assets",
-  status: "completed",
-  startedAt: new Date().toISOString(),
-  inputs: { assetCount: jsonNumber(1) },
-  createdResources: [],
-  assertions: [],
-  cleaned: false
-};
+  inputs: { assetCount: jsonNumber(1) }
+});
 
 const target: AtlasTargetSummary = {
   id: "deployed",

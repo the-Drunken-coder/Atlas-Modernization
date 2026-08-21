@@ -16,8 +16,9 @@ import type {
   ScenarioDescriptor
 } from "../../src/shared/types.js";
 import { jsonNumber } from "../../src/shared/types.js";
+import { runFixture, scenarioFixture } from "./fixtures.js";
 
-export const scenario: ScenarioDescriptor = {
+export const scenario = scenarioFixture({
   id: "moving-assets",
   name: "Moving assets",
   summary: "Creates assets",
@@ -32,15 +33,13 @@ export const scenario: ScenarioDescriptor = {
       max: jsonNumber(4)
     }
   ]
-};
+});
 
-export const syncScenario: ScenarioDescriptor = {
+export const syncScenario = scenarioFixture({
   id: "multi-client-sync",
   name: "Multi-client sync",
-  summary: "Checks sync",
-  acceptsJson: false,
-  inputFields: []
-};
+  summary: "Checks sync"
+});
 
 export const localTarget: AtlasTargetSummary = {
   id: "local",
@@ -58,28 +57,17 @@ export const deployedTarget: AtlasTargetSummary = {
   apiKeyConfigured: true
 };
 
-export const run: RunSummary = {
-  id: "sim-test",
+export const run = runFixture({
   scenarioId: "moving-assets",
   scenarioName: "Moving assets",
   status: "running",
-  startedAt: new Date().toISOString(),
-  inputs: { assetCount: jsonNumber(2) },
-  createdResources: [],
-  assertions: [],
-  cleaned: false
-};
+  inputs: { assetCount: jsonNumber(2) }
+});
 
 export let eventSources: FakeEventSource[] = [];
 
 export function cloneRun(overrides: Partial<RunSummary> = {}): RunSummary {
-  return {
-    ...run,
-    inputs: { ...run.inputs },
-    createdResources: [...run.createdResources],
-    assertions: [...run.assertions],
-    ...overrides
-  };
+  return runFixture({ ...run, ...overrides });
 }
 
 export function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(reason?: unknown): void } {

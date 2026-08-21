@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-
 import lifecycleCorpus from "../../atlas_protocol/conformance/tasking/lifecycle.json" with { type: "json" };
 import { AtlasClient } from "../src";
+import { createAtlasClient } from "./support/client.js";
 import { FakeCore } from "./support/fake-core.js";
 
 describe("Task lifecycle SDK requests", () => {
   for (const testCase of lifecycleCorpus.cases) {
     it(testCase.name, async () => {
       const core = new FakeCore();
-      const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+      const client = createAtlasClient(core);
       const task = await client.tasks.create(
         { asset_id: "asset-1", command: testCase.command, input: { value: testCase.name } },
         { idempotencyKey: `conformance-${testCase.command}` }

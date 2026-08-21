@@ -1,5 +1,6 @@
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
+import { entityFixture as entity } from "../../test/fixtures.js";
 import {
   entityClassification,
   entityConnectionStatus,
@@ -10,12 +11,6 @@ import {
   heartbeatLevel,
   isSelectableKind
 } from "./entities.js";
-
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
-
-function entity(overrides: Partial<EntityResource>): EntityResource {
-  return { entity_id: "e1", entity_type: "asset", subtype: null, alias: null, components: {}, metadata, ...overrides };
-}
 
 describe("entity accessors", () => {
   it("classifies known entity kinds and ignores others", () => {

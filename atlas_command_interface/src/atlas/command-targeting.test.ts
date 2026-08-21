@@ -1,9 +1,9 @@
 import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
+import { entityFixture } from "../../test/fixtures.js";
 import type { CommandInputRegistry } from "../features/commands/command-input-registry.js";
 import { commandsForTargeting } from "./command-targeting.js";
 
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 const catalog: CommandCatalog = [
   {
     command: "fixture.queued",
@@ -17,15 +17,11 @@ const registry: CommandInputRegistry = {
 };
 
 function asset(commandManifest: EntityResource["command_manifest"]): EntityResource {
-  return {
+  return entityFixture({
     entity_id: "asset-1",
-    entity_type: "asset",
-    subtype: null,
     alias: "Rover 1",
-    components: {},
-    command_manifest: commandManifest,
-    metadata
-  };
+    command_manifest: commandManifest
+  });
 }
 
 const manifest = [

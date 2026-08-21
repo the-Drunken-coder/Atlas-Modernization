@@ -3,16 +3,15 @@ import userEvent from "@testing-library/user-event";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
 import { type ComponentProps, useReducer, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { entityFixture } from "../../../test/fixtures.js";
 import { EntityList } from "../../features/EntityList.js";
 import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
 import { SidebarPanel } from "./SidebarPanel.js";
 import { SidebarRail } from "./SidebarRail.js";
 
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
-
 const ASSETS: EntityResource[] = [
-  { entity_id: "asset-1", entity_type: "asset", subtype: null, alias: "Rover One", components: {}, metadata },
-  { entity_id: "asset-2", entity_type: "asset", subtype: null, alias: "Rover Two", components: {}, metadata }
+  entityFixture({ entity_id: "asset-1", alias: "Rover One" }),
+  entityFixture({ entity_id: "asset-2", alias: "Rover Two" })
 ];
 
 function Harness({

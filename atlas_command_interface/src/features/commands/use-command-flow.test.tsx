@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
-import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
+import type { TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { entityFixture, taskFixture } from "../../../test/fixtures.js";
 import type { CommandAvailability } from "../../atlas/command-targeting.js";
 import { useCommandFlow } from "./use-command-flow.js";
 
@@ -22,25 +23,20 @@ const availability: CommandAvailability = {
 };
 const commandCatalog = [availability.command];
 
-const asset: EntityResource = {
+const asset = entityFixture({
   entity_id: "asset-1",
-  entity_type: "asset",
-  subtype: null,
   alias: "Rover 1",
-  components: {},
   command_manifest: [availability.manifest],
   metadata: { created_at: "2026-08-20T00:00:00Z", updated_at: "2026-08-20T00:00:00Z", version: 1 }
-};
+});
 
-const task: TaskResource = {
-  task_id: "task-1",
+const task = taskFixture({
   asset_id: asset.entity_id,
   command: availability.command.command,
   input: { value: "same" },
-  status: "pending",
   created_at: "2026-08-20T00:00:00Z",
   updated_at: "2026-08-20T00:00:00Z"
-};
+});
 
 afterEach(() => vi.restoreAllMocks());
 

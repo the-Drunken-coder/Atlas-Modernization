@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent } from "../src";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata } from "./support/fake-core.js";
 
 describe("AtlasClient sync: feed connections and recovery handoff", () => {
@@ -56,9 +57,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
 
   it("buffers and deduplicates a live mutation received before subscriptions are acknowledged", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -306,9 +305,7 @@ describe("AtlasClient sync: feed connections and recovery handoff", () => {
 
   it("keeps a closed-feed error after a socket-only reconnect", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0

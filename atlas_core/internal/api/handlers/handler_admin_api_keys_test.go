@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -166,26 +165,9 @@ func loginAdminCookie(t *testing.T, service *admin.Service) *http.Cookie {
 
 func openHandlerAdminTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL, explicit := handlerAdminTestDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed handler admin tests")
-	}
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed handler admin tests")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicit {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	if err := pool.Ping(ctx); err != nil {
-		if explicit {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if _, err := pool.Exec(ctx, `SELECT 1 FROM admin_records LIMIT 1`); err != nil {
 		testenv.SkipOrFatal(t, "admin_records table is not present: %v", err)
 	}
@@ -218,24 +200,4 @@ func cleanupHandlerAdminRows(ctx context.Context, t *testing.T, pool *pgxpool.Po
 	if _, err := pool.Exec(ctx, `DELETE FROM admin_records`); err != nil {
 		t.Fatalf("cleanup admin records: %v", err)
 	}
-}
-
-func handlerAdminTestDatabaseURL() (string, bool) {
-	if dbURL := os.Getenv("ATLAS_ACTIONS_DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		return dbURL, true
-	}
-	password := os.Getenv("POSTGRES_PASSWORD")
-	if password == "" {
-		return "", false
-	}
-	dbURL := url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword("atlas", password),
-		Host:   "localhost:5432",
-		Path:   "/atlas_core",
-	}
-	return dbURL.String(), false
 }

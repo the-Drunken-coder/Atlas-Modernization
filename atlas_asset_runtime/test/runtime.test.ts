@@ -6,7 +6,7 @@ import {
   type RuntimeTaskDeliveryResponse,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AssetTaskFailure,
   type AssetTaskHandler,
@@ -15,6 +15,8 @@ import {
   type ExecutionModule,
   SafetyBarrierError
 } from "../src/index.js";
+
+afterEach(() => vi.useRealTimers());
 
 describe("AtlasAssetRuntime", () => {
   it("requires handlers to match the advertised manifest", () => {
@@ -118,19 +120,15 @@ describe("AtlasAssetRuntime", () => {
     client.runtime.tasks.mockRejectedValueOnce(new Error("delivery unavailable"));
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1", onError });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
 
-      expect(runtime.status).toBe("running");
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "delivery unavailable" }));
+    expect(runtime.status).toBe("running");
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "delivery unavailable" }));
 
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(client.runtime.tasks).toHaveBeenCalledTimes(2);
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.runtime.tasks).toHaveBeenCalledTimes(2);
+    await runtime.stop();
   });
 
   it("retries completion without rerunning the handler or releasing later queued work", async () => {
@@ -152,25 +150,21 @@ describe("AtlasAssetRuntime", () => {
       onError
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
 
-      expect(handler).toHaveBeenCalledOnce();
-      expect(client.tasks.complete).toHaveBeenCalledTimes(1);
-      expect(client.tasks.fail).not.toHaveBeenCalled();
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "completion unavailable" }));
+    expect(handler).toHaveBeenCalledOnce();
+    expect(client.tasks.complete).toHaveBeenCalledTimes(1);
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "completion unavailable" }));
 
-      await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
-      expect(handler).toHaveBeenCalledTimes(2);
-      expect(handledTaskIDs).toEqual(["queued-1", "queued-2"]);
-      expect(client.tasks.complete).toHaveBeenCalledTimes(3);
-      expect(client.tasks.fail).not.toHaveBeenCalled();
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handledTaskIDs).toEqual(["queued-1", "queued-2"]);
+    expect(client.tasks.complete).toHaveBeenCalledTimes(3);
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
   });
 
   it("retries failure reporting without rerunning the handler", async () => {
@@ -187,23 +181,19 @@ describe("AtlasAssetRuntime", () => {
       onError
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
 
-      expect(handler).toHaveBeenCalledOnce();
-      expect(client.tasks.fail).toHaveBeenCalledTimes(1);
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "failure reporting unavailable" }));
+    expect(handler).toHaveBeenCalledOnce();
+    expect(client.tasks.fail).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "failure reporting unavailable" }));
 
-      await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
-      expect(handler).toHaveBeenCalledOnce();
-      expect(client.tasks.fail).toHaveBeenCalledTimes(2);
-      expect(client.tasks.complete).not.toHaveBeenCalled();
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(handler).toHaveBeenCalledOnce();
+    expect(client.tasks.fail).toHaveBeenCalledTimes(2);
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    await runtime.stop();
   });
 
   it("stops when its lifecycle signal is aborted after startup", async () => {
@@ -250,20 +240,16 @@ describe("AtlasAssetRuntime", () => {
       handlers: { "immediate.observe": handler }
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.tasks.start).not.toHaveBeenCalled();
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).not.toHaveBeenCalled();
 
-      emit(pending);
-      await vi.advanceTimersByTimeAsync(5_000);
+    emit(pending);
+    await vi.advanceTimersByTimeAsync(5_000);
 
-      expect(client.tasks.start).toHaveBeenCalledWith("immediate-late", expect.anything());
-      expect(handler).toHaveBeenCalledOnce();
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(client.tasks.start).toHaveBeenCalledWith("immediate-late", expect.anything());
+    expect(handler).toHaveBeenCalledOnce();
+    await runtime.stop();
   });
 
   it("keeps polling for delivery while accepted Task reconciliation is stalled", async () => {
@@ -282,20 +268,16 @@ describe("AtlasAssetRuntime", () => {
       handlers: { "immediate.observe": async ({ signal }) => rejectOnAbort(signal) }
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
 
-      emit(second);
-      await vi.advanceTimersByTimeAsync(5_000);
-      await reconciliationStarted.promise;
+    emit(second);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await reconciliationStarted.promise;
 
-      expect(client.tasks.start).toHaveBeenCalledWith("immediate-2", expect.anything());
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(client.tasks.start).toHaveBeenCalledWith("immediate-2", expect.anything());
+    await runtime.stop();
   });
 
   it("rejects a delivered Task assigned to another Asset", async () => {
@@ -431,19 +413,15 @@ describe("AtlasAssetRuntime", () => {
       onError
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "acknowledgement unavailable" }));
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "acknowledgement unavailable" }));
 
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(client.tasks.acknowledge).toHaveBeenCalledTimes(2);
-      expect(handler).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(client.tasks.acknowledge).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledOnce();
 
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await runtime.stop();
   });
 
   it("runs queued work serially while immediate work overlaps", async () => {
@@ -530,25 +508,21 @@ describe("AtlasAssetRuntime", () => {
       }
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
-      emit({
-        ...runningTask,
-        status: "cancelled",
-        cancellation: { code: "requested", message: "Operator cancelled" },
-        finished_at: "2026-08-19T12:00:01Z",
-        updated_at: "2026-08-19T12:00:01Z"
-      });
-      await vi.advanceTimersByTimeAsync(5_000);
-      await aborted.promise;
-      expect(client.tasks.complete).not.toHaveBeenCalled();
-      expect(client.tasks.fail).not.toHaveBeenCalled();
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+    emit({
+      ...runningTask,
+      status: "cancelled",
+      cancellation: { code: "requested", message: "Operator cancelled" },
+      finished_at: "2026-08-19T12:00:01Z",
+      updated_at: "2026-08-19T12:00:01Z"
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await aborted.promise;
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
   });
 
   it("aborts local execution when Core fences the runtime", async () => {
@@ -574,26 +548,22 @@ describe("AtlasAssetRuntime", () => {
       }
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
-      emit({
-        ...runningTask,
-        status: "failed",
-        failure: { code: "asset_restarted", message: "A new runtime replaced this one" },
-        finished_at: "2026-08-19T12:00:01Z",
-        updated_at: "2026-08-19T12:00:01Z"
-      });
-      await vi.advanceTimersByTimeAsync(5_000);
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledWith("immediate-1", expect.anything());
+    emit({
+      ...runningTask,
+      status: "failed",
+      failure: { code: "asset_restarted", message: "A new runtime replaced this one" },
+      finished_at: "2026-08-19T12:00:01Z",
+      updated_at: "2026-08-19T12:00:01Z"
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
 
-      await aborted.promise;
-      expect(client.tasks.complete).not.toHaveBeenCalled();
-      expect(client.tasks.fail).not.toHaveBeenCalled();
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await aborted.promise;
+    expect(client.tasks.complete).not.toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
   });
 
   it("does not execute a Task that Core fails during start", async () => {
@@ -691,21 +661,17 @@ describe("AtlasAssetRuntime", () => {
     client.runtime.begin.mockRejectedValueOnce(new Error("registration response lost"));
     const runtime = new AtlasAssetRuntime(client, { entityId: "asset-1" });
 
-    try {
-      const starting = runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.runtime.begin).toHaveBeenCalledOnce();
-      expect(client.runtime.ready).not.toHaveBeenCalled();
+    const starting = runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.runtime.begin).toHaveBeenCalledOnce();
+    expect(client.runtime.ready).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(5_000);
-      await starting;
-      expect(client.runtime.begin).toHaveBeenCalledTimes(2);
-      expect(client.runtime.begin.mock.calls[0]?.[1]).toEqual(client.runtime.begin.mock.calls[1]?.[1]);
-      expect(runtime.status).toBe("running");
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await vi.advanceTimersByTimeAsync(5_000);
+    await starting;
+    expect(client.runtime.begin).toHaveBeenCalledTimes(2);
+    expect(client.runtime.begin.mock.calls[0]?.[1]).toEqual(client.runtime.begin.mock.calls[1]?.[1]);
+    expect(runtime.status).toBe("running");
+    await runtime.stop();
   });
 
   it("returns both startup and compensation failures", async () => {
@@ -757,21 +723,17 @@ describe("AtlasAssetRuntime", () => {
       handlers: { "queued.move": async ({ task }) => void executionOrder.push(task.task_id) }
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.tasks.acknowledge.mock.calls.map((call) => call[0])).toEqual(["queued-1", "queued-2"]);
-      expect(executionOrder).toEqual([]);
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.acknowledge.mock.calls.map((call) => call[0])).toEqual(["queued-1", "queued-2"]);
+    expect(executionOrder).toEqual([]);
 
-      await vi.advanceTimersByTimeAsync(5_000);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(executionOrder).toEqual(["queued-1", "queued-2"]);
-      expect(client.tasks.acknowledge.mock.calls.filter((call) => call[0] === "queued-1")).toHaveLength(2);
-      expect(client.tasks.start.mock.calls.map((call) => call[0])).toEqual(["queued-1", "queued-2"]);
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(executionOrder).toEqual(["queued-1", "queued-2"]);
+    expect(client.tasks.acknowledge.mock.calls.filter((call) => call[0] === "queued-1")).toHaveLength(2);
+    expect(client.tasks.start.mock.calls.map((call) => call[0])).toEqual(["queued-1", "queued-2"]);
+    await runtime.stop();
   });
 
   it("starts immediate work without waiting for a slow queued acknowledgement", async () => {
@@ -843,25 +805,21 @@ describe("AtlasAssetRuntime", () => {
       handlers: { "immediate.observe": handler }
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(handler).not.toHaveBeenCalled();
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handler).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(handler).toHaveBeenCalledOnce();
-      await vi.advanceTimersByTimeAsync(5_000);
-      await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(handler).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
 
-      expect(handler).toHaveBeenCalledOnce();
-      expect(client.tasks.start).toHaveBeenCalledTimes(2);
-      expect(client.tasks.progress).toHaveBeenCalledTimes(2);
-      expect(client.tasks.complete).toHaveBeenCalled();
-      expect(client.tasks.fail).not.toHaveBeenCalled();
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(handler).toHaveBeenCalledOnce();
+    expect(client.tasks.start).toHaveBeenCalledTimes(2);
+    expect(client.tasks.progress).toHaveBeenCalledTimes(2);
+    expect(client.tasks.complete).toHaveBeenCalled();
+    expect(client.tasks.fail).not.toHaveBeenCalled();
+    await runtime.stop();
   });
 
   it("isolates reconciliation failures and caps reads at eight", async () => {
@@ -892,24 +850,20 @@ describe("AtlasAssetRuntime", () => {
       onError
     });
 
-    try {
-      await runtime.start();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.tasks.start).toHaveBeenCalledTimes(9);
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.tasks.start).toHaveBeenCalledTimes(9);
 
-      await vi.advanceTimersByTimeAsync(5_000);
-      await firstBatchStarted.promise;
-      expect(readCount).toBe(8);
-      expect(maximumReads).toBeLessThanOrEqual(8);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await firstBatchStarted.promise;
+    expect(readCount).toBe(8);
+    expect(maximumReads).toBeLessThanOrEqual(8);
 
-      releaseReads.resolve();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(readCount).toBe(9);
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "isolated reconciliation failure" }));
-      await runtime.stop();
-    } finally {
-      vi.useRealTimers();
-    }
+    releaseReads.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readCount).toBe(9);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "isolated reconciliation failure" }));
+    await runtime.stop();
   });
 
   it("creates a fresh runtime fence on each process start", async () => {

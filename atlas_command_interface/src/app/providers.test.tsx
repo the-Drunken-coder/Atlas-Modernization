@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { styleFixture } from "../../test/fixtures.js";
 import type { AtlasDataSource } from "../atlas/data-source.js";
 import { useAtlas } from "../state/atlas-context.js";
 import type { AppConfig, CoreConfig } from "./config.js";
@@ -16,7 +16,9 @@ const config: AppConfig = {
   atlasBaseUrl: "https://core.test",
   protocolRevision: "rev",
   defaultMapSourceId: "openstreetmap-default",
-  mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
+  mapSources: [
+    { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
+  ]
 };
 const coreConfig: CoreConfig = { atlasBaseUrl: config.atlasBaseUrl, protocolRevision: config.protocolRevision };
 
@@ -160,8 +162,4 @@ function fakeDataSource(calls: string[]): AtlasDataSource {
       calls.push("dispose");
     }
   };
-}
-
-function style(id: string): StyleSpecification {
-  return { version: 8, sources: {}, layers: [], metadata: { id } };
 }

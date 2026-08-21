@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CommandCatalog, EntityResource } from "@the-drunken-coder/atlas-sdk";
-import type { StyleSpecification } from "maplibre-gl";
 import { describe, expect, it, vi } from "vitest";
+import { entityFixture, metadataFixture, styleFixture } from "../../test/fixtures.js";
 import type { AppConfig } from "../app/config.js";
 import type { AtlasDataSource, ConnectionHealth } from "../atlas/data-source.js";
 import type { AtlasSnapshot } from "../atlas/store.js";
@@ -57,27 +57,21 @@ function GeometryActionProbe() {
   );
 }
 
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 const config: AppConfig = {
   atlasBaseUrl: "/atlas",
   protocolRevision: "rev",
   defaultMapSourceId: "openstreetmap-default",
-  mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
+  mapSources: [
+    { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
+  ]
 };
 
-function style(id: string): StyleSpecification {
-  return { version: 8, sources: {}, layers: [], metadata: { id } };
-}
-
 function entity(alias: string, version: number): EntityResource {
-  return {
+  return entityFixture({
     entity_id: "asset-1",
-    entity_type: "asset",
-    subtype: null,
     alias,
-    components: {},
-    metadata: { ...metadata, version }
-  };
+    metadata: metadataFixture(version)
+  });
 }
 
 function catalog(name: string): CommandCatalog {

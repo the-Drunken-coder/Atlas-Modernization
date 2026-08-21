@@ -63,29 +63,9 @@ func TestUpdateEntityValidatesFinalBlobBeforeUpdate(t *testing.T) {
 
 func openActionsTestPool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
-	dbURL, explicitDBURL := actionsTestDatabaseURL()
-	if dbURL == "" {
-		testenv.SkipOrFatal(t, "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
-	}
-
+	pool := testenv.OpenDatabasePool(t, "ATLAS_ACTIONS_DATABASE_URL", "set ATLAS_ACTIONS_DATABASE_URL, DATABASE_URL, or POSTGRES_PASSWORD to run DB-backed action tests")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		if explicitDBURL {
-			t.Fatalf("connect test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	if err := pool.Ping(ctx); err != nil {
-		if explicitDBURL {
-			t.Fatalf("ping test database: %v", err)
-		}
-		testenv.SkipOrFatal(t, "test database unavailable: %v", err)
-	}
 	if ok, err := actionsTestCoreSchemaPresent(ctx, pool); err != nil {
 		t.Fatalf("check core schema: %v", err)
 	} else if !ok {

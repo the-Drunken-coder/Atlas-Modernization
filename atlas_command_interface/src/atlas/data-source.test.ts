@@ -5,8 +5,8 @@ import {
   type FeedEvent,
   type TaskResource
 } from "@the-drunken-coder/atlas-sdk";
-import type { StyleSpecification } from "maplibre-gl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { entityFixture, metadataFixture, styleFixture, taskFixture } from "../../test/fixtures.js";
 import { createSdkDataSource } from "./data-source.js";
 import type { UiGeometry } from "./geometry.js";
 
@@ -14,9 +14,10 @@ const config = {
   atlasBaseUrl: "https://core.test",
   protocolRevision: "rev",
   defaultMapSourceId: "openstreetmap-default",
-  mapSources: [{ id: "openstreetmap-default", label: "OpenStreetMap Default", style: style("openstreetmap-default") }]
+  mapSources: [
+    { id: "openstreetmap-default", label: "OpenStreetMap Default", style: styleFixture("openstreetmap-default") }
+  ]
 };
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
 const holdPositionCommand: CommandDefinition = {
   command: "fixture.queued",
   name: "Fixture queued",
@@ -29,32 +30,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function style(id: string): StyleSpecification {
-  return { version: 8, sources: {}, layers: [], metadata: { id } };
-}
-
 function entity(id: string, version = 1): EntityResource {
-  return {
-    entity_id: id,
-    entity_type: "asset",
-    subtype: null,
-    alias: id,
-    components: {},
-    metadata: { ...metadata, version }
-  };
+  return entityFixture({ entity_id: id, alias: id, metadata: metadataFixture(version) });
 }
 
 function task(id: string, assetId: string, version = 1): TaskResource {
   const timestamp = `2026-06-20T00:00:0${version}Z`;
-  return {
+  return taskFixture({
     task_id: id,
     asset_id: assetId,
-    command: "fixture.queued",
     input: { value: id },
-    status: "pending",
     created_at: timestamp,
     updated_at: timestamp
-  };
+  });
 }
 
 describe("sdk data source", () => {

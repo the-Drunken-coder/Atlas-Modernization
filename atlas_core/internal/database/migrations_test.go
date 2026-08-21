@@ -1006,7 +1006,7 @@ func TestScratchSchemaKeepsLedgerAcrossAdminMigration(t *testing.T) {
 
 func migrationTestSchema(t *testing.T) string {
 	t.Helper()
-	dbURL, explicitDBURL := databaseTestURL()
+	dbURL, explicitDBURL := testenv.DatabaseURL("ATLAS_DATABASE_TEST_URL")
 	if dbURL == "" {
 		testenv.SkipOrFatal(t, "set ATLAS_DATABASE_TEST_URL, DATABASE_URL, or POSTGRES_PASSWORD to run migration integration tests")
 	}

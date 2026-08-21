@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { AtlasClient, type FeedEvent, type TaskResource } from "../src";
 import { ObjectContentCache, ResourceCache } from "../src/cache.js";
+import { createAtlasClient } from "./support/client.js";
 import { entity, FakeCore, metadata, object, task } from "./support/fake-core.js";
 
 describe("AtlasClient sync: cache projection and reads", () => {
   it("unsubscribes duplicate snapshot watcher registrations independently", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const client = createAtlasClient(core);
     const watcher = vi.fn();
     const unsubscribeFirst = client.sync.watchSnapshot(watcher);
     const unsubscribeSecond = client.sync.watchSnapshot(watcher);
@@ -48,7 +49,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("does not advance the global change cursor from point reads", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-read"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
 
     const unseenTask = core.upsertTask(task("task-unseen-before-read", "asset-baseline-read"));
@@ -69,7 +70,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("projects an uncached Task point read without advancing the change cursor", async () => {
     const core = new FakeCore();
     const taskResource = core.upsertTask(task("task-point-read", "asset-point-read"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch });
+    const client = createAtlasClient(core);
     const snapshots = vi.fn();
     client.sync.watchSnapshot(snapshots);
 
@@ -85,7 +86,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("replaces pre-start point-read cache state at the hydration watermark", async () => {
     const core = new FakeCore();
     const cached = core.upsertEntity(entity("asset-deleted-before-hydration"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
 
     await expect(client.entities.get(cached.entity_id)).resolves.toEqual(cached);
     expect(client.sync.snapshot().entities).toEqual({ [cached.entity_id]: cached });
@@ -105,7 +106,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("does not advance the global change cursor from optimistic local writes", async () => {
     const core = new FakeCore();
     const baseline = core.upsertEntity(entity("asset-baseline-write"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
 
     const unseenTask = core.upsertTask(task("task-unseen-before-write", "asset-baseline-write"));
@@ -125,7 +126,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("lets changed-since recovery replace a delete marker with a later recreated resource", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-recreated"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
     const watch = vi.fn();
     client.entities.watch("asset-recreated", watch);
@@ -143,7 +144,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
   it("does not let stale changed-since recovery resurrect an uncached local delete", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
     await client.sync.start();
     const live = core.upsertEntity(entity("asset-delete-race"));
     const watch = vi.fn();
@@ -178,9 +179,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("does not acknowledge a pending local delete from a stale feed delete event", async () => {
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-stale-delete"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       sync: "all",
       pollIntervalMs: 0
     });
@@ -232,7 +231,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     core.upsertEntity(entity("asset-page-2"));
     core.upsertTask(task("task-hydrate-1", "asset-page-1"));
     core.upsertTask(task("task-hydrate-2", "asset-page-2"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
 
     await client.sync.start();
 
@@ -466,7 +465,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     vi.stubGlobal("WebSocket", undefined);
     const core = new FakeCore();
     const original = core.upsertEntity(entity("asset-without-updates"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
 
     try {
       await client.sync.start();
@@ -486,9 +485,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("treats polling as the update path when WebSocket is unavailable", async () => {
     vi.stubGlobal("WebSocket", undefined);
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       sync: "all",
       pollIntervalMs: 60_000
     });
@@ -504,9 +501,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
   it("treats polling as the update path while WebSocket is disconnected", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 60_000
@@ -533,7 +528,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
     const firstTask = core.upsertTask(task("task-snapshot-1", firstEntity.entity_id));
     const secondTask = core.upsertTask(task("task-snapshot-2", secondEntity.entity_id));
     const cachedObject = core.upsertObject(object("object-snapshot"));
-    const client = new AtlasClient({ baseUrl: "http://atlas.test", fetch: core.fetch, sync: "all", pollIntervalMs: 0 });
+    const client = createAtlasClient(core, { sync: "all", pollIntervalMs: 0 });
 
     await client.sync.start();
     const requestCount = core.requests.length;
@@ -638,9 +633,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
 
   it("projects feed, recovery, remote-delete, and local-delete changes through snapshots", async () => {
     const core = new FakeCore();
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0
@@ -813,9 +806,7 @@ describe("AtlasClient sync: cache projection and reads", () => {
   it("routes immutable Task updates by asset without exposing cached mutations", async () => {
     const core = new FakeCore();
     const original = core.upsertTask(task("task-owned-previous", "asset-old"));
-    const client = new AtlasClient({
-      baseUrl: "http://atlas.test",
-      fetch: core.fetch,
+    const client = createAtlasClient(core, {
       WebSocket: core.attachWebSocketGlobal(),
       sync: "all",
       pollIntervalMs: 0

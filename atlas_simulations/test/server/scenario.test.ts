@@ -25,6 +25,20 @@ const scenario: Scenario = {
   run: async () => undefined
 };
 
+type ScenarioContextOptions = Parameters<typeof createScenarioContext>[0];
+
+function scenarioContext(overrides: Pick<ScenarioContextOptions, "runId"> & Partial<ScenarioContextOptions>) {
+  return createScenarioContext({
+    signal: new AbortController().signal,
+    clientFactory: createFakeAtlasCore().factory,
+    log: () => undefined,
+    assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
+    track: () => undefined,
+    registerClient: () => undefined,
+    ...overrides
+  });
+}
+
 describe("scenario input parsing", () => {
   it("rejects malformed start request shapes", () => {
     expect(() => parseStartRequest(scenario, null)).toThrow("Start request must be a JSON object");
@@ -169,14 +183,8 @@ describe("scenario input parsing", () => {
   });
 
   it("keeps generated resource IDs unique after slug and hash collisions", () => {
-    const ctx = createScenarioContext({
-      runId: "sim-collision",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: () => undefined,
-      registerClient: () => undefined
+    const ctx = scenarioContext({
+      runId: "sim-collision"
     });
 
     const direct = ctx.id("a-b-212u");
@@ -191,14 +199,8 @@ describe("scenario input parsing", () => {
   });
 
   it("bounds the readable slug in generated resource IDs", () => {
-    const ctx = createScenarioContext({
-      runId: "sim-long",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: () => undefined,
-      registerClient: () => undefined
+    const ctx = scenarioContext({
+      runId: "sim-long"
     });
 
     expect(ctx.id("a".repeat(200))).toMatch(/^sim-long-a{64}-[a-z0-9]+$/);
@@ -206,14 +208,9 @@ describe("scenario input parsing", () => {
 
   it("tracks resources created through exposed clients", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-track",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: (resource) => tracked.push(resource),
-      registerClient: () => undefined
+      track: (resource) => tracked.push(resource)
     });
 
     const entityId = ctx.id("asset");
@@ -228,14 +225,8 @@ describe("scenario input parsing", () => {
   });
 
   it("preserves full and minimal check-in response inference", () => {
-    const ctx = createScenarioContext({
-      runId: "sim-check-in-types",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: () => undefined,
-      registerClient: () => undefined
+    const ctx = scenarioContext({
+      runId: "sim-check-in-types"
     });
 
     expectTypeOf(ctx.client.entities.checkIn).toEqualTypeOf<EntityCheckInMethod>();
@@ -244,9 +235,8 @@ describe("scenario input parsing", () => {
   it("does not track resources when Core rejects the create", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const core = createFakeAtlasCore();
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-rejected-create",
-      signal: new AbortController().signal,
       clientFactory: () => {
         const client = core.factory();
         return {
@@ -259,10 +249,7 @@ describe("scenario input parsing", () => {
           }
         };
       },
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: (resource) => tracked.push(resource),
-      registerClient: () => undefined
+      track: (resource) => tracked.push(resource)
     });
 
     await expect(ctx.client.entities.create({ entity_id: ctx.id("asset"), entity_type: "asset" })).rejects.toThrow(
@@ -277,7 +264,7 @@ describe("scenario input parsing", () => {
     const cleanupCandidates: Array<{ type: string; id: string }> = [];
     const core = createFakeAtlasCore();
     const controller = new AbortController();
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-aborted-create",
       signal: controller.signal,
       clientFactory: () => {
@@ -294,11 +281,8 @@ describe("scenario input parsing", () => {
           }
         };
       },
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
       track: (resource) => tracked.push(resource),
-      trackCleanupCandidate: (resource) => cleanupCandidates.push(resource),
-      registerClient: () => undefined
+      trackCleanupCandidate: (resource) => cleanupCandidates.push(resource)
     });
 
     const entityId = ctx.id("asset");
@@ -314,15 +298,10 @@ describe("scenario input parsing", () => {
   it("tracks generated command task IDs from Core responses", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
     const cleanupCandidates: Array<{ type: string; id: string }> = [];
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-command-task",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
       track: (resource) => tracked.push(resource),
-      trackCleanupCandidate: (resource) => cleanupCandidates.push(resource),
-      registerClient: () => undefined
+      trackCleanupCandidate: (resource) => cleanupCandidates.push(resource)
     });
 
     const task = await ctx.createTask({
@@ -339,14 +318,10 @@ describe("scenario input parsing", () => {
   it("tracks server-generated Task IDs without adding cleanup candidates", async () => {
     const core = createFakeAtlasCore();
     const tracked: Array<{ type: string; id: string }> = [];
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-deployed-task",
-      signal: new AbortController().signal,
       clientFactory: core.factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: (resource) => tracked.push(resource),
-      registerClient: () => undefined
+      track: (resource) => tracked.push(resource)
     });
 
     const task = await ctx.createTask({
@@ -362,7 +337,7 @@ describe("scenario input parsing", () => {
     const controller = new AbortController();
     const core = createFakeAtlasCore();
     const tracked: Array<{ type: string; id: string }> = [];
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-cancelled-task",
       signal: controller.signal,
       clientFactory: () => {
@@ -379,10 +354,7 @@ describe("scenario input parsing", () => {
           }
         };
       },
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: (resource) => tracked.push(resource),
-      registerClient: () => undefined
+      track: (resource) => tracked.push(resource)
     });
 
     await expect(
@@ -399,14 +371,9 @@ describe("scenario input parsing", () => {
 
   it("rejects created and tracked resources outside the run ID prefix", async () => {
     const tracked: Array<{ type: string; id: string }> = [];
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-owned",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: (resource) => tracked.push(resource),
-      registerClient: () => undefined
+      track: (resource) => tracked.push(resource)
     });
 
     await expect(ctx.client.entities.create({ entity_id: "external-entity", entity_type: "asset" })).rejects.toThrow(
@@ -423,14 +390,9 @@ describe("scenario input parsing", () => {
 
   it("blocks exposed client operations after cancellation", async () => {
     const controller = new AbortController();
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-cancelled",
-      signal: controller.signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: () => undefined,
-      registerClient: () => undefined
+      signal: controller.signal
     });
 
     controller.abort();
@@ -442,7 +404,7 @@ describe("scenario input parsing", () => {
   it("unsubscribes watches after cancellation", () => {
     const controller = new AbortController();
     let unsubscribed = 0;
-    const ctx = createScenarioContext({
+    const ctx = scenarioContext({
       runId: "sim-watch-cancelled",
       signal: controller.signal,
       clientFactory: () => ({
@@ -450,11 +412,7 @@ describe("scenario input parsing", () => {
         watch: () => () => {
           unsubscribed += 1;
         }
-      }),
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: () => undefined,
-      registerClient: () => undefined
+      })
     });
     const stop = ctx.client.watch({ filter: "all" } as Parameters<typeof ctx.client.watch>[0], () => undefined);
 
@@ -466,14 +424,8 @@ describe("scenario input parsing", () => {
   });
 
   it("rejects invalid wait durations", async () => {
-    const ctx = createScenarioContext({
-      runId: "sim-wait",
-      signal: new AbortController().signal,
-      clientFactory: createFakeAtlasCore().factory,
-      log: () => undefined,
-      assert: (name, passed, message) => ({ id: name, name, passed, message, timestamp: new Date().toISOString() }),
-      track: () => undefined,
-      registerClient: () => undefined
+    const ctx = scenarioContext({
+      runId: "sim-wait"
     });
 
     await expect(ctx.wait(-1)).rejects.toThrow("Wait duration must be between 0 and 2147483647 milliseconds");

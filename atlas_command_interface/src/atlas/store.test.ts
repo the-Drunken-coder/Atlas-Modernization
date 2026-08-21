@@ -1,24 +1,15 @@
 import type { EntityResource, TaskResource } from "@the-drunken-coder/atlas-sdk";
 import { describe, expect, it } from "vitest";
+import { entityFixture, taskFixture } from "../../test/fixtures.js";
 import { activeTasks, listEntities, queuedTasks, tasksForAsset } from "./selectors.js";
 import { type AtlasSnapshot, emptySnapshot } from "./store.js";
 
-const metadata = { created_at: "2026-06-20T00:00:00Z", updated_at: "2026-06-20T00:00:00Z", version: 1 };
-
 function entity(id: string): EntityResource {
-  return { entity_id: id, entity_type: "asset", subtype: null, alias: id.toUpperCase(), components: {}, metadata };
+  return entityFixture({ entity_id: id, alias: id.toUpperCase() });
 }
 
 function task(id: string, entityId: string): TaskResource {
-  return {
-    task_id: id,
-    asset_id: entityId,
-    command: "fixture.queued",
-    input: {},
-    status: "pending",
-    created_at: metadata.created_at,
-    updated_at: metadata.updated_at
-  };
+  return taskFixture({ task_id: id, asset_id: entityId });
 }
 
 describe("snapshot store", () => {
