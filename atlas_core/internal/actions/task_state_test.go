@@ -110,10 +110,27 @@ func TestTaskLifecycleStateMachine(t *testing.T) {
 				if err := json.Unmarshal(task.Failure, &failure); err != nil || failure.Code != protocol.TaskFailureCodeInvalidOutput {
 					t.Fatalf("invalid completion failure = %#v, %v", failure, err)
 				}
+				encoded, err := encodeTaskOutputAttempt(testCase.output)
+				attempt, storedErr := encodeStoredCompletionAttempt(testCase.output, encoded)
+				if err != nil || storedErr != nil || !jsonEqual(task.CompletionAttempt, attempt) {
+					t.Fatalf("stored completion attempt = %s, want %s, %v, %v", task.CompletionAttempt, attempt, err, storedErr)
+				}
 				if changed, err = completeTask(task, testCase.command, protocol.CommandManifestEntry{}, taskStateTestTime, testCase.output); err != nil || changed {
 					t.Fatalf("repeated invalid completion = %t, %v", changed, err)
 				}
 			})
+		}
+		rejected := taskStateFixture(protocol.TaskStatusInProgress)
+		if changed, err := completeTask(rejected, queued, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": ""}}); err != nil || !changed {
+			t.Fatalf("reject first invalid output = %t, %v", changed, err)
+		}
+		if _, err := completeTask(rejected, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, taskStateTestTime, &TaskOutput{Value: map[string]any{"result": 17}}); err == nil {
+			t.Fatal("invalid-output Task accepted a different rejected payload as an exact retry")
+		}
+		legacyRejected := taskStateFixture(protocol.TaskStatusFailed)
+		legacyRejected.Failure = mustMarshalTaskFailure(protocol.TaskFailure{Code: protocol.TaskFailureCodeInvalidOutput, Message: "Invalid Command output"})
+		if _, err := completeTask(legacyRejected, protocol.CommandDefinition{}, protocol.CommandManifestEntry{}, taskStateTestTime, nil); err == nil {
+			t.Fatal("legacy invalid-output Task accepted an unrecorded completion attempt as an exact retry")
 		}
 		task := taskStateFixture(protocol.TaskStatusInProgress)
 		output := &TaskOutput{Value: map[string]any{"result": "done"}}

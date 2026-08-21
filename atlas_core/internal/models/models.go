@@ -173,23 +173,24 @@ func (e *Entity) GetExtra() map[string]interface{} {
 
 // Task is the immutable tasking request plus its explicit lifecycle state.
 type Task struct {
-	TaskID         string          `json:"task_id" db:"task_id"`
-	AssetID        string          `json:"asset_id" db:"asset_id"`
-	Command        string          `json:"command" db:"command"`
-	Input          json.RawMessage `json:"input" db:"input"`
-	Status         string          `json:"status" db:"status"`
-	Progress       *float64        `json:"progress,omitempty" db:"progress"`
-	Output         json.RawMessage `json:"output,omitempty" db:"output"`
-	Failure        json.RawMessage `json:"failure,omitempty" db:"failure"`
-	Cancellation   json.RawMessage `json:"cancellation,omitempty" db:"cancellation"`
-	IdempotencyKey string          `json:"-" db:"idempotency_key"`
-	RuntimeID      string          `json:"-" db:"runtime_id"`
-	CreatedAt      time.Time       `json:"created_at" db:"created_at"`
-	AcknowledgedAt *time.Time      `json:"acknowledged_at,omitempty" db:"acknowledged_at"`
-	StartedAt      *time.Time      `json:"started_at,omitempty" db:"started_at"`
-	FinishedAt     *time.Time      `json:"finished_at,omitempty" db:"finished_at"`
-	UpdatedAt      time.Time       `json:"updated_at" db:"updated_at"`
-	Version        int64           `json:"-" db:"version"`
+	TaskID            string          `json:"task_id" db:"task_id"`
+	AssetID           string          `json:"asset_id" db:"asset_id"`
+	Command           string          `json:"command" db:"command"`
+	Input             json.RawMessage `json:"input" db:"input"`
+	Status            string          `json:"status" db:"status"`
+	Progress          *float64        `json:"progress,omitempty" db:"progress"`
+	Output            json.RawMessage `json:"output,omitempty" db:"output"`
+	CompletionAttempt json.RawMessage `json:"-" db:"completion_attempt"`
+	Failure           json.RawMessage `json:"failure,omitempty" db:"failure"`
+	Cancellation      json.RawMessage `json:"cancellation,omitempty" db:"cancellation"`
+	IdempotencyKey    string          `json:"-" db:"idempotency_key"`
+	RuntimeID         string          `json:"-" db:"runtime_id"`
+	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
+	AcknowledgedAt    *time.Time      `json:"acknowledged_at,omitempty" db:"acknowledged_at"`
+	StartedAt         *time.Time      `json:"started_at,omitempty" db:"started_at"`
+	FinishedAt        *time.Time      `json:"finished_at,omitempty" db:"finished_at"`
+	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
+	Version           int64           `json:"-" db:"version"`
 }
 
 // MediaObject represents a stored object/file.

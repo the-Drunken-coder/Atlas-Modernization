@@ -115,32 +115,37 @@ func (a *TaskActions) Complete(ctx context.Context, taskID, runtimeID string, ou
 }
 
 func completeTask(task *models.Task, command protocol.CommandDefinition, _ protocol.CommandManifestEntry, now time.Time, output *TaskOutput) (bool, error) {
+	attempt, err := encodeTaskOutputAttempt(output)
+	if err != nil {
+		return false, err
+	}
+	storedAttempt, err := encodeStoredCompletionAttempt(output, attempt)
+	if err != nil {
+		return false, err
+	}
 	if task.Status == string(protocol.TaskStatusCompleted) {
-		var encoded []byte
-		if output != nil {
-			var err error
-			encoded, err = json.Marshal(output.Value)
-			if err != nil {
-				return false, NewValidationError("output must be JSON encodable")
-			}
-		}
-		if jsonEqual(task.Output, encoded) {
+		if jsonEqual(task.Output, attempt) {
 			return false, nil
 		}
 		return false, NewValidationError("Task was already completed with different output")
 	}
-	encoded, err := encodeTaskOutput(command, output)
-	if task.Status == string(protocol.TaskStatusFailed) && err != nil && jsonEqual(task.Failure, mustMarshalTaskFailure(invalidOutputFailure(err))) {
-		return false, nil
+	if taskFailedWithCode(task, protocol.TaskFailureCodeInvalidOutput) {
+		if jsonEqual(task.CompletionAttempt, storedAttempt) {
+			return false, nil
+		}
+		return false, NewValidationError("Task was already failed after a different output")
 	}
 	if task.Status != string(protocol.TaskStatusInProgress) {
 		return false, invalidTaskTransition(task, "complete")
 	}
+	err = validateTaskOutput(command, output)
 	if err != nil {
+		task.CompletionAttempt = storedAttempt
 		return failTask(task, command, protocol.CommandManifestEntry{}, now, invalidOutputFailure(err))
 	}
 	task.Status = string(protocol.TaskStatusCompleted)
-	task.Output = encoded
+	task.Output = attempt
+	task.CompletionAttempt = nil
 	task.FinishedAt = &now
 	return true, nil
 }
@@ -203,6 +208,14 @@ func immediateStartTimeoutFailure() protocol.TaskFailure {
 
 func invalidOutputFailure(err error) protocol.TaskFailure {
 	return protocol.TaskFailure{Code: protocol.TaskFailureCodeInvalidOutput, Message: err.Error()}
+}
+
+func taskFailedWithCode(task *models.Task, code protocol.TaskFailureCode) bool {
+	if task.Status != string(protocol.TaskStatusFailed) {
+		return false
+	}
+	var failure protocol.TaskFailure
+	return json.Unmarshal(task.Failure, &failure) == nil && failure.Code == code
 }
 
 func mustMarshalTaskFailure(failure protocol.TaskFailure) []byte {
@@ -416,23 +429,53 @@ func (a *TaskActions) lockCurrentRuntimeManifest(ctx context.Context, tx pgx.Tx,
 }
 
 func encodeTaskOutput(command protocol.CommandDefinition, output *TaskOutput) ([]byte, error) {
-	if command.OutputSchema == "" {
-		if output != nil {
-			return nil, NewValidationError("Command does not define Task output")
-		}
-		return nil, nil
+	encoded, err := encodeTaskOutputAttempt(output)
+	if err != nil {
+		return nil, err
 	}
+	if err := validateTaskOutput(command, output); err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func encodeTaskOutputAttempt(output *TaskOutput) ([]byte, error) {
 	if output == nil {
-		return nil, NewValidationError("Command requires Task output")
-	}
-	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.OutputSchema), output.Value); len(validationErrors) > 0 {
-		return nil, NewValidationErrorWithDetails("Invalid Command output", validationErrors)
+		return nil, nil
 	}
 	encoded, err := json.Marshal(output.Value)
 	if err != nil {
 		return nil, NewValidationError("output must be JSON encodable")
 	}
 	return encoded, nil
+}
+
+func encodeStoredCompletionAttempt(output *TaskOutput, encoded json.RawMessage) ([]byte, error) {
+	attempt := struct {
+		OutputProvided bool            `json:"output_provided"`
+		Output         json.RawMessage `json:"output,omitempty"`
+	}{OutputProvided: output != nil, Output: encoded}
+	stored, err := json.Marshal(attempt)
+	if err != nil {
+		return nil, NewValidationError("output must be JSON encodable")
+	}
+	return stored, nil
+}
+
+func validateTaskOutput(command protocol.CommandDefinition, output *TaskOutput) error {
+	if command.OutputSchema == "" {
+		if output != nil {
+			return NewValidationError("Command does not define Task output")
+		}
+		return nil
+	}
+	if output == nil {
+		return NewValidationError("Command requires Task output")
+	}
+	if validationErrors := protocolvalidator.ValidateDefinition(commandDefinitionName(command.OutputSchema), output.Value); len(validationErrors) > 0 {
+		return NewValidationErrorWithDetails("Invalid Command output", validationErrors)
+	}
+	return nil
 }
 
 func nullableJSON(value []byte) any {

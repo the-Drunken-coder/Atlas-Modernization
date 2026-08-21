@@ -751,8 +751,11 @@ func TestTerminalLifecycleOperationsReplayExactlyAfterRuntimeReplacement(t *test
 	if replayed, err := cataloglessTasks.Start(ctx, expired.TaskID, "runtime-1"); err != nil || replayed.Version != expired.Version {
 		t.Fatalf("expired Start replay after replacement = %#v, want version %d, %v", replayed, expired.Version, err)
 	}
-	if replayed, err := tasks.Complete(ctx, invalid.TaskID, "runtime-1", nil); err != nil || replayed.Version != invalid.Version {
+	if replayed, err := cataloglessTasks.Complete(ctx, invalid.TaskID, "runtime-1", nil); err != nil || replayed.Version != invalid.Version {
 		t.Fatalf("invalid completion replay after replacement = %#v, want version %d, %v", replayed, invalid.Version, err)
+	}
+	if _, err := cataloglessTasks.Complete(ctx, invalid.TaskID, "runtime-1", &TaskOutput{Value: map[string]any{"result": 17}}); err == nil {
+		t.Fatal("invalid completion replay accepted a different rejected payload without the current Command catalog")
 	}
 	if replayed, err := cataloglessTasks.Complete(ctx, completed.TaskID, "runtime-1", output); err != nil || replayed.Version != completed.Version {
 		t.Fatalf("completion replay after replacement = %#v, want version %d, %v", replayed, completed.Version, err)

@@ -152,8 +152,11 @@ func TestRuntimeGenerationsMigrationDefinitionIsFrozen(t *testing.T) {
 	ddl := strings.Join(migration.statements, "\n")
 	for _, required := range []string{
 		"CREATE TABLE asset_runtime_generations",
-		"INSERT INTO asset_runtime_generations",
+		"INSERT INTO asset_runtime_generations (asset_id, runtime_id, stopped)",
+		"SELECT asset_id, runtime_id, NOT ready",
 		"ADD COLUMN stopped BOOLEAN NOT NULL",
+		"UPDATE asset_runtimes SET stopped = TRUE WHERE NOT ready",
+		"ADD COLUMN completion_attempt JSONB",
 		"asset_runtimes_generation_fk",
 	} {
 		if !strings.Contains(ddl, required) {
@@ -477,9 +480,13 @@ func TestRuntimeGenerationsMigrationPreservesCurrentRuntime(t *testing.T) {
 	}
 	if _, err := db.Pool.Exec(ctx, `
 		UPDATE atlas_change_clock SET version = 1 WHERE singleton;
-		INSERT INTO entities (entity_id, type, json, version) VALUES ('migration-runtime-asset', 'asset', '{}', 1);
+		INSERT INTO entities (entity_id, type, json, version) VALUES
+			('migration-runtime-asset', 'asset', '{}', 1),
+			('migration-stopped-asset', 'asset', '{}', 1);
 		INSERT INTO asset_runtimes (asset_id, runtime_id, ready, manifest)
-		VALUES ('migration-runtime-asset', 'migration-runtime-1', TRUE, '[]');
+		VALUES
+			('migration-runtime-asset', 'migration-runtime-1', TRUE, '[]'),
+			('migration-stopped-asset', 'migration-runtime-stopped', FALSE, '[]');
 	`); err != nil {
 		t.Fatalf("seed version-seven runtime: %v", err)
 	}
@@ -499,6 +506,29 @@ func TestRuntimeGenerationsMigrationPreservesCurrentRuntime(t *testing.T) {
 	}
 	if generation != 1 || generationStopped || runtimeStopped {
 		t.Fatalf("migrated runtime generation = %d, generation-stopped:%t runtime-stopped:%t", generation, generationStopped, runtimeStopped)
+	}
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT generations.stopped, runtimes.stopped
+		FROM asset_runtime_generations AS generations
+		JOIN asset_runtimes AS runtimes USING (asset_id, runtime_id)
+		WHERE asset_id = 'migration-stopped-asset' AND runtime_id = 'migration-runtime-stopped'
+	`).Scan(&generationStopped, &runtimeStopped); err != nil {
+		t.Fatalf("read migrated stopped runtime: %v", err)
+	}
+	if !generationStopped || !runtimeStopped {
+		t.Fatalf("migrated stopped runtime = generation-stopped:%t runtime-stopped:%t", generationStopped, runtimeStopped)
+	}
+	var completionAttemptColumn bool
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'tasks' AND column_name = 'completion_attempt'
+		)
+	`).Scan(&completionAttemptColumn); err != nil {
+		t.Fatalf("check completion attempt column: %v", err)
+	}
+	if !completionAttemptColumn {
+		t.Fatal("migration did not add the completion attempt column")
 	}
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM entities WHERE entity_id = 'migration-runtime-asset'`); err != nil {
 		t.Fatalf("delete migrated Asset: %v", err)

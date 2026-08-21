@@ -27,7 +27,7 @@ const (
 	taskingRuntimeMigrationName         = "immutable_tasks_and_asset_runtimes"
 	taskingRuntimeMigrationChecksum     = "cf7f05cff26ca1f39611175faa71dd6825f39efd0ddf7256af6cf0aea660b584"
 	runtimeGenerationsMigrationName     = "retired_asset_runtime_generations"
-	runtimeGenerationsMigrationChecksum = "4e29a28e953733eb34f5f996757d227e5799d333e0656213d14326d29a2f591b"
+	runtimeGenerationsMigrationChecksum = "7b3c6a5ea1a3642a28c75b9c0361faf228175b34d121fdae7cbf83d3b90c51e0"
 	fingerprintVersionV1                = 1
 	fingerprintVersionV2                = 2
 )
@@ -248,9 +248,11 @@ func coreSchemaMigrations() []schemaMigration {
 					UNIQUE (runtime_id),
 					UNIQUE (asset_id, generation)
 				)`,
-				`INSERT INTO asset_runtime_generations (asset_id, runtime_id)
-				 SELECT asset_id, runtime_id FROM asset_runtimes`,
+				`INSERT INTO asset_runtime_generations (asset_id, runtime_id, stopped)
+				 SELECT asset_id, runtime_id, NOT ready FROM asset_runtimes`,
 				`ALTER TABLE asset_runtimes ADD COLUMN stopped BOOLEAN NOT NULL DEFAULT FALSE`,
+				`UPDATE asset_runtimes SET stopped = TRUE WHERE NOT ready`,
+				`ALTER TABLE tasks ADD COLUMN completion_attempt JSONB`,
 				`ALTER TABLE asset_runtimes ADD CONSTRAINT asset_runtimes_generation_fk
 				 FOREIGN KEY (asset_id, runtime_id) REFERENCES asset_runtime_generations(asset_id, runtime_id)`,
 			},

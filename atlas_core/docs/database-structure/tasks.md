@@ -19,6 +19,7 @@ Implementation references:
 - `status`: `pending`, `acknowledged`, `in_progress`, `completed`, `failed`, or `cancelled`
 - `progress`: optional monotonic value from `0` to `1`
 - `output`: optional validated terminal output
+- `completion_attempt`: private rejected completion payload used to recognize an exact retry
 - `failure`: optional structured terminal failure
 - `cancellation`: optional structured terminal cancellation
 - `created_at`, `acknowledged_at`, `started_at`, `finished_at`, `updated_at`: lifecycle timestamps
@@ -26,7 +27,7 @@ Implementation references:
 - `runtime_id`: private current process fence bound to the Task
 - `version`: global feed change value
 
-`asset_id`, `command`, `input`, and the runtime binding never change after creation. The Task resource intentionally does not expose the private idempotency key, runtime binding, or a generic metadata blob.
+`asset_id`, `command`, `input`, and the runtime binding never change after creation. The Task resource intentionally does not expose the private idempotency key, runtime binding, rejected completion attempt, or a generic metadata blob.
 
 ## Creation and lifecycle
 
@@ -41,7 +42,7 @@ Generic Task patching and deletion do not exist. Lifecycle changes use the named
 - `POST /tasks/{task_id}/fail`
 - `POST /tasks/{task_id}/cancel`
 
-The current Asset runtime supplies `Atlas-Runtime-ID` for acknowledge, start, progress, complete, and fail. Operator cancellation does not use runtime context. Every accepted transition and its feed event commit together. Identical repeats are idempotent; the first accepted terminal transition wins.
+The current Asset runtime supplies `Atlas-Runtime-ID` for acknowledge, start, progress, complete, and fail. Operator cancellation does not use runtime context. Every accepted transition and its feed event commit together. Identical repeats are idempotent; the first accepted terminal transition wins. If output validation fails, Core retains the rejected JSON privately so only that same completion attempt can replay the resulting terminal failure.
 
 ## Runtime state
 
