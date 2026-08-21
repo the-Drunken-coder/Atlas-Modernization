@@ -11,6 +11,7 @@ export function stringifyAtlasJSON(value: unknown): string {
     return item;
   });
   if (serialized === undefined) throw new TypeError("Atlas request body is not JSON serializable");
+  rejectUnsafeJSONNumbers(serialized);
   return serialized;
 }
 

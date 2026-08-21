@@ -1124,6 +1124,17 @@ describe("AtlasClient HTTP", () => {
         { idempotencyKey: "unsafe-number" }
       )
     ).rejects.toThrow("integer that JavaScript cannot represent exactly");
+
+    await expect(
+      outboundClient.tasks.create(
+        {
+          asset_id: "asset-1",
+          command: "fixture.queued",
+          input: { value: new Number(Number.MAX_SAFE_INTEGER + 1) } as never
+        },
+        { idempotencyKey: "boxed-unsafe-number" }
+      )
+    ).rejects.toThrow("integer that JavaScript cannot represent exactly");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
