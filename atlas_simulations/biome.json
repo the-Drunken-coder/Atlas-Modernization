@@ -1,5 +1,4 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
   "root": true,
   "extends": ["../biome.json"],
   "files": {
@@ -7,17 +6,6 @@
   },
   "vcs": {
     "root": ".."
-  },
-  "linter": {
-    "domains": {
-      "types": "recommended"
-    },
-    "rules": {
-      "nursery": {
-        "noFloatingPromises": "error",
-        "noMisusedPromises": "error"
-      }
-    }
   },
   "overrides": [
     {
