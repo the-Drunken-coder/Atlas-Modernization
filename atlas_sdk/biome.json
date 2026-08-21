@@ -1,4 +1,5 @@
 {
+  "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
   "root": true,
   "extends": ["../biome.json"],
   "files": {
