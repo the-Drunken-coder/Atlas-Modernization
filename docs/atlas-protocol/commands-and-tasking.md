@@ -246,6 +246,8 @@ Every entry explicitly declares:
 
 The manifest does not repeat the Command's input or output schema references. Those always resolve through the Protocol catalog.
 
+The manifest also has no `produces` field. Durable effects belong to the Command's behavioral documentation and normal Atlas resource systems, while bounded Task results belong to the optional output schema. A generic output list would duplicate those contracts and would misrepresent Commands such as `sensing.scan_area`, whose Track publications may be unbounded while it runs.
+
 The manifest is fixed for the lifetime of the current Asset `runtime_id`, so the scheduling and lifecycle rules governing accepted Tasks cannot change underneath them. Publishing a different manifest requires a fresh runtime registration. A process restart creates that registration and republishes the manifest before Atlas sends it work.
 
 Core exposes the current ready runtime's manifest read-only in the Asset's details. It is absent while no runtime is ready, updates atomically when registration completes, and cannot be changed through generic Entity patching. This is the manifest the command interface uses for Command availability and Asset-specific descriptions.
@@ -261,6 +263,8 @@ Scheduling is the sole canonical term for how a Task enters execution. Atlas doe
 Multiple immediate Tasks begin in tasking order without waiting for one another to finish. Core does not release a later immediate Task until the earlier one has entered `in_progress` or become terminal. Protocol-defined supersession rules may make an older Task terminal during creation of a newer one. Core alone records the resulting `cancelled` state; Assets do not invent supersession relationships.
 
 The one-at-a-time rule applies to queued Tasks. Immediate Tasks may overlap a queued Task and one another when prompt interruption or an independent action is required. This hybrid is intentional; it does not create operator-visible execution groups.
+
+Asset hardware does not change this operator-visible rule. A drone with a forward-facing camera may need to coordinate movement and sensing differently from a drone with a gimballed camera, but both still accept queued Tasks through the same single queue. Those physical resource constraints stay inside the Asset's Command implementation rather than becoming Atlas execution groups.
 
 When emergency stop is added, it is the deliberate exception to ordinary immediate delivery. Its Core interlock persists even if the physical Task cannot start within the immediate window. A current or newly registered runtime establishes the required safe condition through its safety barrier rather than executing an expired Task.
 
@@ -418,7 +422,9 @@ Task outcomes use closed Protocol enums rather than arbitrary strings:
 
 Command-specific cancellation codes are added with the Commands that require them. Adding `mobility.stop` adds `mobility_stop`; adding `safety.emergency_stop` adds `emergency_stop`.
 
-Pending and acknowledged Tasks can always be cancelled because execution has not begun. An `in_progress` Task can be ordinarily cancelled only when its manifest entry declares `supports_cancel: true`. When added, `mobility.stop` and emergency stop apply their Protocol-defined supersession rules regardless of that declaration.
+Pending and acknowledged Tasks can ordinarily be cancelled because execution has not begun. An `in_progress` Task can be ordinarily cancelled only when its manifest entry declares `supports_cancel: true`. When added, `mobility.stop` and emergency stop apply their Protocol-defined supersession rules regardless of that declaration.
+
+`safety.emergency_stop` is the exception to client cancellation. After Core accepts it, tasking clients cannot cancel that Task in any nonterminal state. The `emergency_stop` cancellation code describes the earlier Tasks cancelled by the safety transition, not cancellation of the emergency-stop Task itself. Only the reset flow described below can withdraw the persistent safety interlock.
 
 When completion and cancellation race, the first terminal change accepted by Core wins. Cancellation describes Atlas intent; the Asset publishes its current observed physical state separately.
 
@@ -549,9 +555,11 @@ The initial empty catalog does not include `mobility.stop`, and the initial impl
 
 That change also adds `mobility_stop` to `TaskCancellationCode`.
 
-`mobility.stop` is an immediate controlled halt. Core atomically creates it and cancels every earlier queued Task for the same Asset, regardless of domain. This deliberately favors a simple and safe rule over trying to model which Asset-specific operations might use mobility.
+`mobility.stop` is an immediate controlled halt. Core atomically creates it, engages a mobility-stop barrier, and cancels every earlier queued Task for the same Asset, regardless of domain. This deliberately favors a simple and safe rule over trying to model which Asset-specific operations might use mobility.
 
-No later queued Task may enter `in_progress` until the stop Task completes. This prevents the Asset from stopping and immediately resuming queued work before the halt is physically confirmed.
+No later queued Task may enter `in_progress` while the barrier is engaged. Successful completion of a stop Task confirms the physical halt and clears the barrier.
+
+Failure, cancellation, or `immediate_start_timeout` does not clear the barrier because none confirms that movement stopped. Core accepts a replacement `mobility.stop` while the barrier is engaged; successful completion of that replacement clears the barrier and releases later queued work. This prevents both unsafe automatic release and a failed stop from becoming an unrecoverable queue block.
 
 Movement Tasks created after the stop remain valid.
 
@@ -652,7 +660,7 @@ The empty-catalog infrastructure is not complete until these behaviors are demon
 
 Command-specific acceptance travels with the change that adds that Command. In particular:
 
-- adding `mobility.stop` must prove it cancels earlier queued work and blocks later queued execution until the halt is confirmed
+- adding `mobility.stop` must prove it cancels earlier queued work, blocks later queued execution until the halt is confirmed, retains the barrier after a failed stop, and releases it after a replacement stop completes
 - adding `safety.emergency_stop` and `safety.reset_emergency_stop` must prove the interlock, cancellation, reset, and stale-runtime rules in this document
 - adding `sensing.scan_area` must prove optional-duration completion and that different Asset implementations can publish their distinct Track types through the Entity system
 
@@ -708,5 +716,6 @@ The design does not add:
 - individual Task deletion
 - fine-grained tasking identity or provenance
 - special credentials for safety reset
+- catalog generations, per-Command generations, or compatibility negotiation
 
 These should be reconsidered only after a real operating need appears.

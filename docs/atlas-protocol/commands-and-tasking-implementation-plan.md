@@ -38,12 +38,17 @@ No implementation phase creates a second runtime path. When a replacement is com
 
 ## Discrepancy resolutions
 
-The planning audit resolved four points that were previously missing or ambiguous:
+The planning audit resolved seven points that were previously missing or ambiguous:
 
 1. One queued Task may be in progress at a time. Immediate Tasks may overlap queued and other immediate work when prompt interruption or independent action is required.
 2. `sensing.scan_area` accepts an optional positive duration. Without one, an Asset performs one bounded scan under its documented completion rule; it never silently runs forever.
 3. The initial generated Command Catalog contains no Commands. Test-only fixture Commands exercise tasking conformance but never enter the production catalog.
 4. Core exposes the current ready runtime's manifest read-only in Asset details. The command interface does not infer support from the catalog or use a separate editable field.
+5. Command Manifests have no `produces` field. Command documentation and optional output schemas describe results without duplicating resource-system behavior in each Asset.
+6. Forward-facing and gimballed sensors do not create different Atlas scheduling models. Their physical coordination remains private to the Asset while Atlas exposes one queued executor plus immediate work.
+7. The greenfield cutover changes the canonical catalog and schemas directly. It does not add catalog generations, per-Command generations, negotiation tables, or parallel compatibility contracts.
+
+The numbered questions used to discover these decisions are not a second specification. The target-state design and this implementation plan are the authoritative result; future changes must update them rather than relying on conversation history.
 
 ## Core module seam
 
@@ -251,7 +256,7 @@ Own this phase in `atlas_sdk/` and `atlas_asset_runtime/`.
 6. Require a Protocol-valid manifest entry and handler for every advertised Command; the initial production runtime can publish only an empty manifest.
 7. Run the safety barrier before marking a runtime ready.
 8. Maintain one local queued executor plus independently abortable immediate executions.
-9. Start, progress, complete, fail, and abort work only through the explicit lifecycle methods.
+9. Start, progress, complete, and fail work only through the explicit lifecycle methods; abort execution locally when cancellation is delivered.
 10. Apply cancellation changes from runtime-scoped delivery immediately.
 11. Remove periodic Task polling and the old `setStatus` behavior.
 
@@ -306,10 +311,12 @@ npm ci
 npm run lint --workspace @the-drunken-coder/atlas-sdk
 npm run format:check --workspace @the-drunken-coder/atlas-sdk
 npm test --workspace @the-drunken-coder/atlas-sdk
+npm run test:package --workspace @the-drunken-coder/atlas-sdk
 npm run lint --workspace @the-drunken-coder/atlas-asset-runtime
 npm run format:check --workspace @the-drunken-coder/atlas-asset-runtime
 npm run typecheck --workspace @the-drunken-coder/atlas-asset-runtime
 npm test --workspace @the-drunken-coder/atlas-asset-runtime
+npm run test:package --workspace @the-drunken-coder/atlas-asset-runtime
 npm run lint --workspace @the-drunken-coder/atlas-command-interface
 npm run format:check --workspace @the-drunken-coder/atlas-command-interface
 npm run typecheck --workspace @the-drunken-coder/atlas-command-interface
@@ -353,5 +360,6 @@ Do not add:
 - individual Task deletion
 - a special safety-reset credential
 - a separate job or message-queue platform
+- catalog generations, per-Command generations, negotiation tables, or parallel compatibility contracts
 
 If a real implementation constraint requires one of these, stop and change the target-state design deliberately before adding it.
