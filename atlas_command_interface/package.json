@@ -20,6 +20,7 @@
     "deploy:pages": "npm run build && wrangler pages deploy dist/client --project-name atlas"
   },
   "dependencies": {
+    "@blueprintjs/icons": "^6.13.0",
     "@the-drunken-coder/atlas-sdk": "0.1.0",
     "maplibre-gl": "^6.3.0",
     "milsymbol": "3.0.4",

@@ -44,11 +44,13 @@ const MapView = lazy(() => import("../ui/map/view/MapView.js").then((module) => 
 
 const KIND_TITLES: Record<EntityKind, string> = { asset: "Asset", track: "Track", geofeature: "Geo Feature" };
 type CommandManifestStatus = "ready" | "loading" | "unavailable";
+const EMPTY_ENTITY_QUERIES: Record<EntityKind, string> = { asset: "", track: "", geofeature: "" };
 
 export function MapConsole() {
   const atlas = useAtlas();
   const { snapshot, catalog } = atlas;
   const [sidebar, dispatch] = useReducer(sidebarReducer, initialSidebarState);
+  const [entityQueries, setEntityQueries] = useState(EMPTY_ENTITY_QUERIES);
 
   const [selectedMapSourceId, setSelectedMapSourceId] = useState<string>();
 
@@ -151,6 +153,9 @@ export function MapConsole() {
     },
     [snapshot.entities]
   );
+  const setEntityQuery = useCallback((kind: EntityKind, query: string) => {
+    setEntityQueries((current) => (current[kind] === query ? current : { ...current, [kind]: query }));
+  }, []);
 
   if (atlas.status === "loading") {
     return (
@@ -225,6 +230,7 @@ export function MapConsole() {
             <PanelBody
               snapshot={snapshot}
               sidebar={sidebar}
+              entityQueries={entityQueries}
               selectedEntity={selectedEntity}
               catalog={catalog}
               commandManifestStatus={resolvedCommandManifestStatus}
@@ -236,6 +242,7 @@ export function MapConsole() {
                 if (kind === "other") return;
                 dispatch({ type: "selectEntity", kind, id: entity.entity_id, origin: "sidebar" });
               }}
+              onEntityQueryChange={setEntityQuery}
               onPickCommand={commandFlow.pickSidebarCommand}
               onStartEdit={geometryEdit.startEdit}
               onChangeDraft={geometryEdit.changeDraft}
@@ -399,6 +406,7 @@ function availableMapSource(source: MapSourceConfig | undefined): AvailableMapSo
 type PanelBodyProps = {
   snapshot: AtlasSnapshot;
   sidebar: SidebarState;
+  entityQueries: Record<EntityKind, string>;
   selectedEntity?: EntityResource;
   catalog?: CommandCatalog;
   commandManifestStatus: CommandManifestStatus;
@@ -406,6 +414,7 @@ type PanelBodyProps = {
   saving: boolean;
   saveError?: string;
   onSelectEntity: (entity: EntityResource) => void;
+  onEntityQueryChange: (kind: EntityKind, query: string) => void;
   onPickCommand: (availability: CommandAvailability) => void;
   onStartEdit: () => void;
   onChangeDraft: (geometry: UiGeometry) => void;
@@ -460,10 +469,12 @@ function ListBody({
   list,
   snapshot,
   sidebar,
+  entityQueries,
   selectedEntity,
   catalog,
   commandManifestStatus,
   onSelectEntity,
+  onEntityQueryChange,
   onPickCommand
 }: { list: ListKind } & PanelBodyProps) {
   if (list === "commands") {
@@ -501,9 +512,11 @@ function ListBody({
     <EntityList
       entities={entitiesByKind(snapshot, kind)}
       selectedId={selectedEntity?.entity_id}
-      restoreFocusId={sidebar.focusRequest?.id}
+      restoreFocusId={sidebar.restoreFocusId ?? undefined}
+      query={entityQueries[kind]}
       emptyLabel={`No ${LIST_TITLES[list].toLowerCase()} yet`}
       onSelect={onSelectEntity}
+      onQueryChange={(query) => onEntityQueryChange(kind, query)}
     />
   );
 }

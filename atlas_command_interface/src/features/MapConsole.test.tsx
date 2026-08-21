@@ -365,6 +365,26 @@ describe("MapConsole", () => {
     expect(map).toHaveAttribute("data-camera-seq", "2");
   });
 
+  it("retains each entity-list filter through inspector navigation", async () => {
+    const user = userEvent.setup();
+    const { fake } = makeFakeDataSource();
+    renderConsole(fake);
+
+    const assetFilter = await screen.findByRole("searchbox", { name: "Filter entities" });
+    await user.type(assetFilter, "Rov");
+    await user.click(screen.getByRole("button", { name: /Rover/ }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveValue("Rov");
+
+    await user.click(screen.getByRole("button", { name: "Geo Features" }));
+    const geofeatureFilter = screen.getByRole("searchbox", { name: "Filter entities" });
+    expect(geofeatureFilter).toHaveValue("");
+    await user.type(geofeatureFilter, "Alpha");
+
+    await user.click(screen.getByRole("button", { name: "Assets" }));
+    expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveValue("Rov");
+  });
+
   it("selects entities from map clicks without issuing a camera command", async () => {
     const user = userEvent.setup();
     const { fake } = makeFakeDataSource();

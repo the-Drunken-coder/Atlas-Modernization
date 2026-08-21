@@ -6,6 +6,7 @@ import {
   type SelectHTMLAttributes,
   useId
 } from "react";
+import { DoubleCaretVerticalIcon } from "./icons.js";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "primary" | "ghost";
@@ -15,9 +16,15 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   { variant = "default", className, ...props },
   ref
 ) {
-  const variantClass = variant === "primary" ? " btn--primary" : variant === "ghost" ? " btn--ghost" : "";
+  const variantClass =
+    variant === "primary" ? " bp6-intent-primary btn--primary" : variant === "ghost" ? " bp6-minimal btn--ghost" : "";
   return (
-    <button ref={ref} type="button" className={`btn${variantClass}${className ? ` ${className}` : ""}`} {...props} />
+    <button
+      ref={ref}
+      type="button"
+      className={`bp6-button btn${variantClass}${className ? ` ${className}` : ""}`}
+      {...props}
+    />
   );
 });
 
@@ -30,7 +37,7 @@ export function IconButton({ label, children, className, ...props }: IconButtonP
   return (
     <button
       type="button"
-      className={`icon-button${className ? ` ${className}` : ""}`}
+      className={`bp6-button bp6-minimal bp6-small icon-button${className ? ` ${className}` : ""}`}
       aria-label={label}
       title={label}
       {...props}
@@ -50,9 +57,13 @@ export function TextField({ label, hint, mono, id: providedId, className, ...pro
   const generatedId = useId();
   const id = providedId ?? generatedId;
   return (
-    <label className="field" htmlFor={id}>
+    <label className="bp6-label field" htmlFor={id}>
       {label ? <span className="field__label">{label}</span> : null}
-      <input id={id} className={`input${mono ? " input--mono" : ""}${className ? ` ${className}` : ""}`} {...props} />
+      <input
+        id={id}
+        className={`bp6-input bp6-fill input${mono ? " input--mono" : ""}${className ? ` ${className}` : ""}`}
+        {...props}
+      />
       {hint ? <span className="field__hint">{hint}</span> : null}
     </label>
   );
@@ -67,15 +78,18 @@ export function SelectField({ label, options, id: providedId, className, ...prop
   const generatedId = useId();
   const id = providedId ?? generatedId;
   return (
-    <label className="field" htmlFor={id}>
+    <label className="bp6-label field" htmlFor={id}>
       {label ? <span className="field__label">{label}</span> : null}
-      <select id={id} className={`select${className ? ` ${className}` : ""}`} {...props}>
-        {options.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <span className="bp6-html-select bp6-fill select-shell">
+        <select id={id} className={`select${className ? ` ${className}` : ""}`} {...props}>
+          {options.map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <DoubleCaretVerticalIcon size={12} />
+      </span>
     </label>
   );
 }

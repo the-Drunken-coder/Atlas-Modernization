@@ -48,7 +48,7 @@ export function SidebarRail({ collapsed, activeList, counts, onSelectList, onTog
       <Tooltip label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
         <button
           type="button"
-          className="rail-button"
+          className="bp6-button bp6-minimal rail-button"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-pressed={collapsed}
           onClick={onToggleCollapsed}
@@ -75,7 +75,7 @@ function RailButton({
     <Tooltip label={item.label}>
       <button
         type="button"
-        className="rail-button"
+        className="bp6-button bp6-minimal rail-button"
         aria-label={item.label}
         aria-pressed={active}
         data-active={active}

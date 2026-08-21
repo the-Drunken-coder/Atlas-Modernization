@@ -7,7 +7,7 @@ type AppShellProps = {
   map: ReactNode;
 };
 
-const DEFAULT_PANEL_WIDTH = 275;
+const DEFAULT_PANEL_WIDTH = 300;
 const MIN_PANEL_WIDTH = 180;
 const MAX_PANEL_WIDTH = 520;
 const PANEL_WIDTH_STEP = 24;

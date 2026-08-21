@@ -1,4 +1,4 @@
-import { maplibreCssUrl } from "../../runtime-asset-urls.js";
+import { maplibreCssUrl, maplibreWorkerUrl } from "../../runtime-asset-urls.js";
 
 export type MapLibreRuntime = typeof import("maplibre-gl");
 
@@ -24,6 +24,7 @@ export function loadMapLibre(): Promise<MapLibreRuntime> {
 function loadRuntime(): Promise<MapLibreRuntime> {
   const stylesheet = getOrCreateStylesheet();
   return Promise.all([loadStylesheet(stylesheet), import("maplibre-gl")]).then(([, loadedRuntime]) => {
+    loadedRuntime.setWorkerUrl(maplibreWorkerUrl);
     runtime = loadedRuntime;
     return loadedRuntime;
   });

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { maplibreRuntime } = vi.hoisted(() => ({ maplibreRuntime: { Map: class {} } }));
+const { maplibreRuntime } = vi.hoisted(() => ({ maplibreRuntime: { Map: class {}, setWorkerUrl: vi.fn() } }));
 
 vi.mock("maplibre-gl", () => maplibreRuntime);
 vi.mock("../../runtime-asset-urls.js", () => ({
   maplibreCssUrl: "/assets/maplibre.css",
+  maplibreWorkerUrl: "/assets/maplibre-worker.js",
   milsymbolScriptUrl: "/assets/milsymbol.js"
 }));
 
@@ -15,6 +16,7 @@ let loadMapLibre: typeof import("./maplibre-runtime.js").loadMapLibre;
 
 beforeEach(async () => {
   vi.resetModules();
+  maplibreRuntime.setWorkerUrl.mockClear();
   ({ getSidcRuntime, loadSidcRuntime } = await import("../../symbols/sidc-runtime.js"));
   ({ getMapLibreRuntime, loadMapLibre } = await import("./maplibre-runtime.js"));
 });
@@ -77,6 +79,8 @@ describe("map runtime loaders", () => {
     stylesheet?.dispatchEvent(new Event("load"));
     const runtime = await attempt;
     expect(runtime.Map).toBe(maplibreRuntime.Map);
+    expect(maplibreRuntime.setWorkerUrl).toHaveBeenCalledOnce();
+    expect(maplibreRuntime.setWorkerUrl).toHaveBeenCalledWith("/assets/maplibre-worker.js");
     expect(getMapLibreRuntime()).toBe(runtime);
   });
 

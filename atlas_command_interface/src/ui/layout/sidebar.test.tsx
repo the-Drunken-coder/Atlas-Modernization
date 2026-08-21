@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EntityResource } from "@the-drunken-coder/atlas-sdk";
-import { useReducer } from "react";
+import { type ComponentProps, useReducer, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { EntityList } from "../../features/EntityList.js";
 import { initialSidebarState, listForKind, sidebarReducer } from "../../state/selection.js";
@@ -15,8 +15,15 @@ const ASSETS: EntityResource[] = [
   { entity_id: "asset-2", entity_type: "asset", subtype: null, alias: "Rover Two", components: {}, metadata }
 ];
 
-function Harness() {
+function Harness({
+  entities = ASSETS,
+  initialQuery = ""
+}: {
+  entities?: EntityResource[];
+  initialQuery?: string;
+} = {}) {
   const [state, dispatch] = useReducer(sidebarReducer, initialSidebarState);
+  const [query, setQuery] = useState(initialQuery);
   const activeList =
     state.view.mode === "list" ? state.view.list : state.selection ? listForKind(state.selection.kind) : null;
 
@@ -32,7 +39,7 @@ function Harness() {
         <SidebarRail
           collapsed={state.collapsed}
           activeList={activeList}
-          counts={{ asset: ASSETS.length, track: 0, geofeature: 0 }}
+          counts={{ asset: entities.length, track: 0, geofeature: 0 }}
           onSelectList={(list) => dispatch({ type: "openList", list })}
           onToggleCollapsed={() => dispatch({ type: "toggleCollapsed" })}
         />
@@ -44,13 +51,15 @@ function Harness() {
         >
           {state.view.mode === "list" && state.view.list === "assets" ? (
             <EntityList
-              entities={ASSETS}
+              entities={entities}
               selectedId={state.selection?.id}
-              restoreFocusId={state.focusRequest?.id}
+              restoreFocusId={state.restoreFocusId ?? undefined}
+              query={query}
               emptyLabel="none"
               onSelect={(entity) =>
                 dispatch({ type: "selectEntity", kind: "asset", id: entity.entity_id, origin: "sidebar" })
               }
+              onQueryChange={setQuery}
             />
           ) : (
             <div>
@@ -61,6 +70,11 @@ function Harness() {
       </div>
     </>
   );
+}
+
+function StatefulEntityList(props: Omit<ComponentProps<typeof EntityList>, "query" | "onQueryChange">) {
+  const [query, setQuery] = useState("");
+  return <EntityList {...props} query={query} onQueryChange={setQuery} />;
 }
 
 describe("sidebar rail + panel", () => {
@@ -112,25 +126,117 @@ describe("sidebar rail + panel", () => {
     expect(screen.getByRole("button", { name: /Rover Two/ })).not.toHaveAttribute("aria-current");
   });
 
-  it("does not repeat preview callbacks on row pointer movement", () => {
-    const onPreview = vi.fn();
+  it("keeps focus on the rail when navigating directly from an inspector", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: /Rover One/ }));
+    const assetsButton = screen.getByRole("button", { name: "Assets" });
+    await user.click(assetsButton);
+
+    expect(assetsButton).toHaveFocus();
+    expect(screen.getByRole("button", { name: /Rover One/ })).not.toHaveFocus();
+  });
+
+  it("filters entity rows without changing the source list", async () => {
+    const user = userEvent.setup();
+    render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Filter entities" }), "Two");
+
+    expect(screen.queryByRole("button", { name: /Rover One/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rover Two/ })).toBeInTheDocument();
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("normalizes the filter query and shows the no-match state", async () => {
+    const user = userEvent.setup();
+    render(<StatefulEntityList entities={ASSETS} emptyLabel="none" onSelect={() => {}} />);
+
+    const filter = screen.getByRole("searchbox", { name: "Filter entities" });
+    await user.type(filter, "   ");
+    expect(screen.getByText("2 total")).toBeInTheDocument();
+
+    await user.clear(filter);
+    await user.type(filter, "missing");
+    expect(screen.getByText("0 of 2")).toBeInTheDocument();
+    expect(screen.getByText("No matching entities.")).toBeInTheDocument();
+  });
+
+  it("does not filter on clock-dependent relative labels", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-06-20T00:10:00Z");
+    const entity: EntityResource = {
+      ...ASSETS[0],
+      components: {
+        communications: { link_state: "connected" },
+        heartbeat: { last_seen: "2026-06-20T00:09:58Z" }
+      }
+    };
+    const { unmount } = render(
+      <EntityList entities={[entity]} query="just now" emptyLabel="none" onSelect={() => {}} onQueryChange={() => {}} />
+    );
+
+    try {
+      expect(screen.queryByRole("button", { name: /Rover One/ })).not.toBeInTheDocument();
+      expect(screen.getByText("No matching entities.")).toBeInTheDocument();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("focuses the filter when the selected row no longer matches on Back", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<Harness initialQuery="Rover One" />);
+
+    await user.click(screen.getByRole("button", { name: /Rover One/ }));
+    const renamed = ASSETS.map((entity) =>
+      entity.entity_id === "asset-1" ? { ...entity, alias: "Renamed Rover" } : entity
+    );
+    rerender(<Harness entities={renamed} initialQuery="Rover One" />);
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveFocus();
+  });
+
+  it("focuses the filter when a focused row stops matching", async () => {
+    const user = userEvent.setup();
+    const props = {
+      query: "Rover One",
+      emptyLabel: "none",
+      onSelect: () => {},
+      onQueryChange: () => {}
+    };
+    const { rerender } = render(<EntityList {...props} entities={ASSETS} />);
+
+    await user.click(screen.getByRole("button", { name: /Rover One/ }));
+    const renamed = ASSETS.map((entity) =>
+      entity.entity_id === "asset-1" ? { ...entity, alias: "Renamed Rover" } : entity
+    );
+    rerender(<EntityList {...props} entities={renamed} />);
+
+    expect(screen.getByRole("searchbox", { name: "Filter entities" })).toHaveFocus();
+  });
+
+  it("keeps filter focus when a selected row remounts", async () => {
+    const user = userEvent.setup();
     render(
-      <EntityList
+      <StatefulEntityList
         entities={ASSETS}
-        selectedId={undefined}
+        selectedId="asset-1"
+        restoreFocusId="asset-1"
         emptyLabel="none"
         onSelect={() => {}}
-        onPreview={onPreview}
       />
     );
 
-    const row = screen.getByRole("button", { name: /Rover One/ });
-    fireEvent.pointerEnter(row);
-    fireEvent.pointerMove(row);
-    fireEvent.pointerMove(row);
+    const filter = screen.getByRole("searchbox", { name: "Filter entities" });
+    await user.click(filter);
+    fireEvent.change(filter, { target: { value: "Two" } });
+    fireEvent.change(filter, { target: { value: "" } });
 
-    expect(onPreview).toHaveBeenCalledTimes(1);
-    expect(onPreview).toHaveBeenCalledWith(ASSETS[0]);
+    expect(filter).toHaveFocus();
   });
 
   it("does not move focus for a map-origin selection", async () => {

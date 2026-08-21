@@ -19,7 +19,10 @@ export function SidebarPanel({ title, onBack, autoFocusBack, onCollapse, childre
             <BackIcon size={18} />
           </IconButton>
         ) : null}
-        <span className="panel__title">{title}</span>
+        <div className="panel__heading">
+          <span className="panel__kicker">Atlas / Command Interface</span>
+          <span className="panel__title">{title}</span>
+        </div>
         <span style={{ flex: 1 }} />
         <IconButton label="Collapse panel" onClick={onCollapse}>
           <CollapseIcon size={18} />
